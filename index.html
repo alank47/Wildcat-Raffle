@@ -540,7 +540,7 @@
             <button class="tab admin-only" id="studentsTab" onclick="switchTab('students')">Students</button>
             <button class="tab active" onclick="switchTab('tickets')">Award Tickets</button>
             <button class="tab admin-only" id="raffleTab" onclick="switchTab('raffle')">Run Raffle</button>
-            <button class="tab admin-only" id="bigRaffleTab" onclick="switchTab('bigRaffle')">Big Raffle</button>
+            <button class="tab admin-only" id="bigRaffleTab" onclick="switchTab('bigRaffle')">Wildcat Jackpot</button>
             <button class="tab admin-only" id="dataTab" onclick="switchTab('data')">Data & Analytics</button>
             <button class="tab admin-only" id="auditTab" onclick="switchTab('audit')">Audit Log</button>
             <button class="tab admin-only" id="teachersTab" onclick="switchTab('teachers')">Teachers</button>
@@ -568,7 +568,7 @@
                     </div>
                     <div class="stat-card">
                         <h3 id="qualifiedStudents">0</h3>
-                        <p>Qualified for Big Raffle</p>
+                        <p>Qualified for Wildcat Jackpot</p>
                     </div>
                 </div>
 
@@ -586,7 +586,7 @@
                                 <th>PBIS Tickets</th>
                                 <th>Attendance Tickets</th>
                                 <th>Academic Tickets</th>
-                                <th>Big Raffle</th>
+                                <th>Wildcat Jackpot</th>
                             </tr>
                         </thead>
                         <tbody id="studentsTableBody">
@@ -686,7 +686,7 @@
                 </div>
             </div>
 
-            <!-- Big Raffle Tab -->
+            <!-- Wildcat Jackpot Tab -->
             <div id="bigRaffle" class="tab-content">
                 <h2>🏆 Big Ticket Item Raffle</h2>
                 <p style="margin: 15px 0; color: #666;">Students who received tickets in all 3 categories during a week qualify for the grand prize</p>
@@ -697,7 +697,7 @@
                 </div>
 
                 <div class="alert alert-info">
-                    <strong>ℹ️ Qualification:</strong> Students must receive at least one ticket in all three categories (PBIS, Attendance, and Academics) during a single week to qualify for the Big Raffle. Qualification happens automatically when you complete the week.<br><br>
+                    <strong>ℹ️ Qualification:</strong> Students must receive at least one ticket in all three categories (PBIS, Attendance, and Academics) during a single week to qualify for the Wildcat Jackpot. Qualification happens automatically when you complete the week.<br><br>
                     <strong>📊 Multiple Entries:</strong> Students who qualify multiple weeks get more entries! For example, qualifying 3 weeks = 3 entries = 3x better odds of winning.
                 </div>
 
@@ -712,7 +712,7 @@
                     </div>
                 </div>
 
-                <button class="btn" onclick="drawBigRaffleWinner()" style="margin-bottom: 20px;">🎊 Draw Big Raffle Winner</button>
+                <button class="btn" onclick="drawBigRaffleWinner()" style="margin-bottom: 20px;">🎊 Draw Wildcat Jackpot Winner</button>
                 <button class="btn btn-secondary" onclick="resetBigRaffle()">Reset 5-Week Cycle</button>
 
                 <div id="bigWinnerDisplay"></div>
@@ -788,7 +788,7 @@
                     <h3 style="margin-top: 40px;">Week-over-Week Ticket Growth</h3>
                     <canvas id="weekChart" style="max-height: 400px; margin: 20px 0;"></canvas>
 
-                    <h3 style="margin-top: 40px;">Big Raffle Qualification Rate</h3>
+                    <h3 style="margin-top: 40px;">Wildcat Jackpot Qualification Rate</h3>
                     <canvas id="qualificationChart" style="max-height: 300px; margin: 20px 0;"></canvas>
                 </div>
 
@@ -966,7 +966,7 @@
 
             <div id="qualifiedBanner" class="hidden" style="background: #d4edda; border: 2px solid #28a745; border-radius: 8px; padding: 20px; text-align: center; margin-bottom: 20px;">
                 <h2 style="color: #155724; margin-bottom: 10px;">🏆 Congratulations!</h2>
-                <p style="color: #155724; font-size: 18px;">You're qualified for the Big Raffle!</p>
+                <p style="color: #155724; font-size: 18px;">You're qualified for the Wildcat Jackpot!</p>
             </div>
 
             <h2 style="margin-bottom: 20px;">My Ticket History</h2>
@@ -1689,7 +1689,7 @@
                     <td>${currentTotal - prevTotal > 0 ? '+' : ''}${currentTotal - prevTotal}</td>
                 </tr>
                 <tr>
-                    <td>Qualified for Big Raffle</td>
+                    <td>Qualified for Wildcat Jackpot</td>
                     <td>${currentQualified}</td>
                     <td>${prevQualified}</td>
                     <td>${currentQualified - prevQualified > 0 ? '+' : ''}${currentQualified - prevQualified}</td>
@@ -1764,7 +1764,7 @@
             const summaryData = [];
             summaryData.push(['Metric', 'Value']);
             summaryData.push(['Total Students', students.length]);
-            summaryData.push(['Qualified for Big Raffle', students.filter(s => s.bigRaffleQualified).length]);
+            summaryData.push(['Qualified for Wildcat Jackpot', students.filter(s => s.bigRaffleQualified).length]);
             summaryData.push(['Current Week', currentWeek]);
             summaryData.push(['Total PBIS Tickets', students.reduce((sum, s) => sum + (s.pbisTickets || 0), 0)]);
             summaryData.push(['Total Attendance Tickets', students.reduce((sum, s) => sum + (s.attendanceTickets || 0), 0)]);
@@ -2556,14 +2556,14 @@
 
         function drawBigRaffleWinner() {
             if (currentUser.role !== 'admin') {
-                alert('Only admins can run the Big Raffle');
+                alert('Only admins can run the Wildcat Jackpot');
                 return;
             }
 
             const qualified = students.filter(s => s.bigRaffleQualified);
             
             if (qualified.length === 0) {
-                alert('No students qualified for the Big Raffle yet!');
+                alert('No students qualified for the Wildcat Jackpot yet!');
                 return;
             }
 
@@ -2586,13 +2586,13 @@
                 weeksQualified: winner.weeksQualified
             });
 
-            // Log the big raffle win
-            addToAuditLog('Big Raffle Winner', winner.id, 'Grand Prize', null, `Qualified for ${winner.weeksQualified} week(s)`);
+            // Log the Wildcat Jackpot win
+            addToAuditLog('Wildcat Jackpot Winner', winner.id, 'Grand Prize', null, `Qualified for ${winner.weeksQualified} week(s)`);
 
             const display = document.getElementById('bigWinnerDisplay');
             display.innerHTML = `
                 <div class="winner-box" style="background: #d4edda; border-color: #28a745;">
-                    <h2>🏆 BIG RAFFLE WINNER!</h2>
+                    <h2>🏆 Wildcat Jackpot WINNER!</h2>
                     <h2>${winner.firstName} ${winner.lastName}</h2>
                     <p>Student ID: ${winner.id}</p>
                     <p>Qualified for ${winner.weeksQualified} week(s) = ${winner.weeksQualified} ${winner.weeksQualified === 1 ? 'entry' : 'entries'}</p>
@@ -2605,7 +2605,7 @@
 
         function nextWeek() {
             if (currentWeek >= 5) {
-                if (confirm('You\'ve completed 5 weeks! Run the Big Raffle before starting a new cycle?')) {
+                if (confirm('You\'ve completed 5 weeks! Run the Wildcat Jackpot before starting a new cycle?')) {
                     return;
                 }
             }
@@ -2635,13 +2635,13 @@
                 date: new Date().toISOString()
             };
 
-            // Check which students should qualify for big raffle
+            // Check which students should qualify for Wildcat Jackpot
             students.forEach(s => {
                 // Student qualifies if they have tickets in ALL 3 categories
                 if (s.pbisTickets > 0 && s.attendanceTickets > 0 && s.academicTickets > 0) {
                     if (!s.bigRaffleQualified) {
                         s.bigRaffleQualified = true;
-                        addToAuditLog('Qualified for Big Raffle', s.id, null, null, 'Received tickets in all 3 categories');
+                        addToAuditLog('Qualified for Wildcat Jackpot', s.id, null, null, 'Received tickets in all 3 categories');
                     }
                     s.weeksQualified++;
                     weekData.studentsQualified++;
@@ -2666,16 +2666,16 @@
             currentWeek++;
             saveData();
             updateAllDisplays();
-            alert(`Week ${weekData.week} completed! ${weekData.studentsQualified} student(s) qualified for Big Raffle. Ticket counts reset.`);
+            alert(`Week ${weekData.week} completed! ${weekData.studentsQualified} student(s) qualified for Wildcat Jackpot. Ticket counts reset.`);
         }
 
         function resetBigRaffle() {
             if (currentUser.role !== 'admin') {
-                alert('Only admins can reset the Big Raffle cycle');
+                alert('Only admins can reset the Wildcat Jackpot cycle');
                 return;
             }
 
-            if (!confirm('This will reset the 5-week cycle and clear all Big Raffle qualifications. Continue?')) return;
+            if (!confirm('This will reset the 5-week cycle and clear all Wildcat Jackpot qualifications. Continue?')) return;
 
             students.forEach(s => {
                 s.bigRaffleQualified = false;
@@ -2689,11 +2689,11 @@
             weeklyWinners = [];
             weeklyHistory = []; // Clear history for new cycle
             
-            addToAuditLog('Reset Big Raffle Cycle', null, null, null, null);
+            addToAuditLog('Reset Wildcat Jackpot Cycle', null, null, null, null);
             
             saveData();
             updateAllDisplays();
-            alert('Big Raffle cycle reset! Starting fresh from Week 1.');
+            alert('Wildcat Jackpot cycle reset! Starting fresh from Week 1.');
         }
 
         function switchTab(tabName) {
