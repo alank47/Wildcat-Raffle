@@ -4452,7 +4452,7 @@
         }
 
         function resetTeacherPassword(teacherId) {
-            if (currentUser.role !== 'admin') {
+            if (currentUser.role !== 'admin' && currentUser.role !== 'superadmin') {
                 alert('Only admins can reset passwords');
                 return;
             }
@@ -5307,7 +5307,7 @@
         }
 
         function drawBigRaffleWinner() {
-            if (currentUser.role !== 'admin') {
+            if (currentUser.role !== 'admin' && currentUser.role !== 'superadmin') {
                 alert('Only admins can run the Wildcat Jackpot');
                 return;
             }
@@ -5422,7 +5422,7 @@
         }
 
         function resetBigRaffle() {
-            if (currentUser.role !== 'admin') {
+            if (currentUser.role !== 'admin' && currentUser.role !== 'superadmin') {
                 alert('Only admins can reset the Wildcat Jackpot cycle');
                 return;
             }
