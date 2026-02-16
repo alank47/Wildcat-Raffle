@@ -138,6 +138,38 @@
             border-bottom: 3px solid #667eea;
         }
 
+        /* Subtab styles for Data & Analytics */
+        .subtab-button {
+            padding: 12px 24px;
+            border: 2px solid #e0e0e0;
+            background: white;
+            border-radius: 8px 8px 0 0;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 500;
+            transition: all 0.3s;
+            color: #666;
+        }
+
+        .subtab-button:hover {
+            background: #f5f5f5;
+            border-color: #667eea;
+        }
+
+        .subtab-button.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .data-subtab {
+            display: none;
+        }
+
+        .data-subtab.active {
+            display: block;
+        }
+
         .content {
             padding: 30px;
         }
@@ -1293,77 +1325,194 @@
                 <h2>📊 Data & Analytics</h2>
                 <p style="margin: 15px 0; color: #666;">Track program effectiveness and student engagement</p>
 
+                <!-- Subtabs for MS, HS, Academy-Wide -->
+                <div style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px;">
+                    <button class="subtab-button active" onclick="switchDataSubtab('academy')" id="academySubtab">
+                        🏫 Academy-Wide
+                    </button>
+                    <button class="subtab-button" onclick="switchDataSubtab('middleschool')" id="middleschoolSubtab">
+                        🎓 Middle School (6-8)
+                    </button>
+                    <button class="subtab-button" onclick="switchDataSubtab('highschool')" id="highschoolSubtab">
+                        🎓 High School (9-12)
+                    </button>
+                </div>
+
+                <!-- Export/View Controls -->
                 <div style="display: flex; gap: 10px; margin-bottom: 20px;">
                     <button class="btn" onclick="toggleDataView('charts')">📈 View Charts</button>
                     <button class="btn btn-secondary" onclick="toggleDataView('tables')">📋 View Tables</button>
                     <button class="btn btn-success" onclick="exportAnalyticsData()">📥 Export to Excel</button>
                 </div>
 
-                <!-- Charts View -->
-                <div id="chartsView">
-                    <h3 style="margin-top: 30px;">Tickets by Grade Level (Current Week)</h3>
-                    <canvas id="gradeChart" style="max-height: 400px; margin: 20px 0;"></canvas>
+                <!-- Academy-Wide Data -->
+                <div id="academyData" class="data-subtab active">
+                    <h3 style="color: #667eea; margin-bottom: 20px;">📊 Academy-Wide Statistics</h3>
+                    
+                    <!-- Charts View -->
+                    <div id="chartsViewAcademy">
+                        <h3 style="margin-top: 30px;">Tickets by Grade Level (Current Week)</h3>
+                        <canvas id="gradeChartAcademy" style="max-height: 400px; margin: 20px 0;"></canvas>
 
-                    <h3 style="margin-top: 40px;">Week-over-Week Ticket Growth</h3>
-                    <canvas id="weekChart" style="max-height: 400px; margin: 20px 0;"></canvas>
+                        <h3 style="margin-top: 40px;">Week-over-Week Ticket Growth</h3>
+                        <canvas id="weekChartAcademy" style="max-height: 400px; margin: 20px 0;"></canvas>
 
-                    <h3 style="margin-top: 40px;">Wildcat Jackpot Qualification Rate</h3>
-                    <canvas id="qualificationChart" style="max-height: 300px; margin: 20px 0;"></canvas>
+                        <h3 style="margin-top: 40px;">Wildcat Jackpot Qualification Rate</h3>
+                        <canvas id="qualificationChartAcademy" style="max-height: 300px; margin: 20px 0;"></canvas>
+                    </div>
+
+                    <!-- Tables View -->
+                    <div id="tablesViewAcademy" class="hidden">
+                        <h3 style="margin-top: 30px;">Tickets by Grade Level</h3>
+                        <div style="overflow-x: auto;">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Grade</th>
+                                        <th>PBIS Tickets</th>
+                                        <th>Attendance Tickets</th>
+                                        <th>Academic Tickets</th>
+                                        <th>Total Tickets</th>
+                                        <th>Students</th>
+                                        <th>Avg per Student</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="gradeDataTableAcademy">
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <h3 style="margin-top: 40px;">Weekly Summary</h3>
+                        <div style="overflow-x: auto;">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Week</th>
+                                        <th>PBIS Tickets</th>
+                                        <th>Attendance Tickets</th>
+                                        <th>Academic Tickets</th>
+                                        <th>Students Qualified</th>
+                                        <th>Qualification Rate</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="weeklyDataTableAcademy">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- Tables View -->
-                <div id="tablesView" class="hidden">
-                    <h3 style="margin-top: 30px;">Tickets by Grade Level</h3>
-                    <div style="overflow-x: auto;">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Grade</th>
-                                    <th>PBIS Tickets</th>
-                                    <th>Attendance Tickets</th>
-                                    <th>Academic Tickets</th>
-                                    <th>Total Tickets</th>
-                                    <th>Students</th>
-                                    <th>Avg per Student</th>
-                                </tr>
-                            </thead>
-                            <tbody id="gradeDataTable">
-                            </tbody>
-                        </table>
+                <!-- Middle School Data -->
+                <div id="middleschoolData" class="data-subtab hidden">
+                    <h3 style="color: #2196F3; margin-bottom: 20px;">🎓 Middle School Statistics (Grades 6-8)</h3>
+                    
+                    <!-- Charts View -->
+                    <div id="chartsViewMS">
+                        <h3 style="margin-top: 30px;">Tickets by Grade Level (Current Week)</h3>
+                        <canvas id="gradeChartMS" style="max-height: 400px; margin: 20px 0;"></canvas>
+
+                        <h3 style="margin-top: 40px;">Week-over-Week Ticket Growth</h3>
+                        <canvas id="weekChartMS" style="max-height: 400px; margin: 20px 0;"></canvas>
+
+                        <h3 style="margin-top: 40px;">Wildcat Jackpot Qualification Rate</h3>
+                        <canvas id="qualificationChartMS" style="max-height: 300px; margin: 20px 0;"></canvas>
                     </div>
 
-                    <h3 style="margin-top: 40px;">Weekly Summary</h3>
-                    <div style="overflow-x: auto;">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Week</th>
-                                    <th>PBIS Tickets</th>
-                                    <th>Attendance Tickets</th>
-                                    <th>Academic Tickets</th>
-                                    <th>Students Qualified</th>
-                                    <th>Qualification Rate</th>
-                                </tr>
-                            </thead>
-                            <tbody id="weeklyDataTable">
-                            </tbody>
-                        </table>
+                    <!-- Tables View -->
+                    <div id="tablesViewMS" class="hidden">
+                        <h3 style="margin-top: 30px;">Tickets by Grade Level</h3>
+                        <div style="overflow-x: auto;">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Grade</th>
+                                        <th>PBIS Tickets</th>
+                                        <th>Attendance Tickets</th>
+                                        <th>Academic Tickets</th>
+                                        <th>Total Tickets</th>
+                                        <th>Students</th>
+                                        <th>Avg per Student</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="gradeDataTableMS">
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <h3 style="margin-top: 40px;">Weekly Summary</h3>
+                        <div style="overflow-x: auto;">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Week</th>
+                                        <th>PBIS Tickets</th>
+                                        <th>Attendance Tickets</th>
+                                        <th>Academic Tickets</th>
+                                        <th>Students Qualified</th>
+                                        <th>Qualification Rate</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="weeklyDataTableMS">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- High School Data -->
+                <div id="highschoolData" class="data-subtab hidden">
+                    <h3 style="color: #9c27b0; margin-bottom: 20px;">🎓 High School Statistics (Grades 9-12)</h3>
+                    
+                    <!-- Charts View -->
+                    <div id="chartsViewHS">
+                        <h3 style="margin-top: 30px;">Tickets by Grade Level (Current Week)</h3>
+                        <canvas id="gradeChartHS" style="max-height: 400px; margin: 20px 0;"></canvas>
+
+                        <h3 style="margin-top: 40px;">Week-over-Week Ticket Growth</h3>
+                        <canvas id="weekChartHS" style="max-height: 400px; margin: 20px 0;"></canvas>
+
+                        <h3 style="margin-top: 40px;">Wildcat Jackpot Qualification Rate</h3>
+                        <canvas id="qualificationChartHS" style="max-height: 300px; margin: 20px 0;"></canvas>
                     </div>
 
-                    <h3 style="margin-top: 40px;">Program Overview</h3>
-                    <div style="overflow-x: auto;">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Metric</th>
-                                    <th>Current Cycle</th>
-                                    <th>Previous Cycle</th>
-                                    <th>Change</th>
-                                </tr>
-                            </thead>
-                            <tbody id="programDataTable">
-                            </tbody>
-                        </table>
+                    <!-- Tables View -->
+                    <div id="tablesViewHS" class="hidden">
+                        <h3 style="margin-top: 30px;">Tickets by Grade Level</h3>
+                        <div style="overflow-x: auto;">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Grade</th>
+                                        <th>PBIS Tickets</th>
+                                        <th>Attendance Tickets</th>
+                                        <th>Academic Tickets</th>
+                                        <th>Total Tickets</th>
+                                        <th>Students</th>
+                                        <th>Avg per Student</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="gradeDataTableHS">
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <h3 style="margin-top: 40px;">Weekly Summary</h3>
+                        <div style="overflow-x: auto;">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Week</th>
+                                        <th>PBIS Tickets</th>
+                                        <th>Attendance Tickets</th>
+                                        <th>Academic Tickets</th>
+                                        <th>Students Qualified</th>
+                                        <th>Qualification Rate</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="weeklyDataTableHS">
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -2702,37 +2851,91 @@
         let weekChartInstance = null;
         let qualificationChartInstance = null;
 
+        let currentDataSubtab = 'academy'; // Track current subtab
+
+        function switchDataSubtab(subtab) {
+            // Update button states
+            document.querySelectorAll('.subtab-button').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(`${subtab}Subtab`).classList.add('active');
+            
+            // Update content visibility
+            document.querySelectorAll('.data-subtab').forEach(tab => tab.classList.remove('active'));
+            document.getElementById(`${subtab}Data`).classList.add('active');
+            
+            currentDataSubtab = subtab;
+            
+            // Refresh charts and tables for the new subtab
+            const currentView = document.getElementById('chartsViewAcademy').classList.contains('hidden') ? 'tables' : 'charts';
+            toggleDataView(currentView);
+        }
+
         function toggleDataView(view) {
+            const suffix = currentDataSubtab === 'academy' ? 'Academy' : 
+                          currentDataSubtab === 'middleschool' ? 'MS' : 'HS';
+            
             if (view === 'charts') {
-                document.getElementById('chartsView').classList.remove('hidden');
-                document.getElementById('tablesView').classList.add('hidden');
+                // Hide all table views
+                document.getElementById('tablesViewAcademy')?.classList.add('hidden');
+                document.getElementById('tablesViewMS')?.classList.add('hidden');
+                document.getElementById('tablesViewHS')?.classList.add('hidden');
+                
+                // Show appropriate chart view
+                document.getElementById(`chartsView${suffix}`)?.classList.remove('hidden');
+                
                 updateAnalyticsCharts();
             } else {
-                document.getElementById('chartsView').classList.add('hidden');
-                document.getElementById('tablesView').classList.remove('hidden');
+                // Hide all chart views
+                document.getElementById('chartsViewAcademy')?.classList.add('hidden');
+                document.getElementById('chartsViewMS')?.classList.add('hidden');
+                document.getElementById('chartsViewHS')?.classList.add('hidden');
+                
+                // Show appropriate table view
+                document.getElementById(`tablesView${suffix}`)?.classList.remove('hidden');
+                
                 updateAnalyticsTables();
             }
         }
 
         function updateAnalyticsCharts() {
-            updateGradeChart();
-            updateWeekChart();
-            updateQualificationChart();
+            const suffix = currentDataSubtab === 'academy' ? 'Academy' : 
+                          currentDataSubtab === 'middleschool' ? 'MS' : 'HS';
+            
+            updateGradeChart(suffix);
+            updateWeekChart(suffix);
+            updateQualificationChart(suffix);
         }
 
-        function updateGradeChart() {
-            const ctx = document.getElementById('gradeChart');
+        function updateGradeChart(suffix) {
+            const ctx = document.getElementById(`gradeChart${suffix}`);
             if (!ctx) return;
+
+            // Filter students based on subtab
+            let filteredStudents = students;
+            if (suffix === 'MS') {
+                filteredStudents = students.filter(s => {
+                    const grade = parseInt(s.grade);
+                    return grade >= 6 && grade <= 8;
+                });
+            } else if (suffix === 'HS') {
+                filteredStudents = students.filter(s => {
+                    const grade = parseInt(s.grade);
+                    return grade >= 9 && grade <= 12;
+                });
+            }
 
             // Calculate tickets by grade
             const gradeData = {};
-            for (let grade = 6; grade <= 12; grade++) {
+            const gradeRange = suffix === 'MS' ? [6, 7, 8] : 
+                              suffix === 'HS' ? [9, 10, 11, 12] : 
+                              [6, 7, 8, 9, 10, 11, 12];
+            
+            gradeRange.forEach(grade => {
                 gradeData[grade] = { pbis: 0, attendance: 0, academic: 0 };
-            }
+            });
 
-            students.forEach(s => {
+            filteredStudents.forEach(s => {
                 const grade = parseInt(s.grade);
-                if (grade >= 6 && grade <= 12) {
+                if (gradeData[grade]) {
                     gradeData[grade].pbis += s.pbisTickets || 0;
                     gradeData[grade].attendance += s.attendanceTickets || 0;
                     gradeData[grade].academic += s.academicTickets || 0;
@@ -2745,12 +2948,13 @@
             const academicData = Object.values(gradeData).map(d => d.academic);
 
             // Destroy existing chart
-            if (gradeChartInstance) {
-                gradeChartInstance.destroy();
+            const chartInstanceName = `gradeChartInstance${suffix}`;
+            if (window[chartInstanceName]) {
+                window[chartInstanceName].destroy();
             }
 
             // Create new chart
-            gradeChartInstance = new Chart(ctx, {
+            window[chartInstanceName] = new Chart(ctx, {
                 type: 'bar',
                 data: {
                     labels: grades,
@@ -2794,30 +2998,46 @@
             });
         }
 
-        function updateWeekChart() {
-            const ctx = document.getElementById('weekChart');
+        function updateWeekChart(suffix) {
+            const ctx = document.getElementById(`weekChart${suffix}`);
             if (!ctx) return;
 
-            // Use actual historical data
+            // Filter students based on suffix
+            let filteredStudents = students;
+            if (suffix === 'MS') {
+                filteredStudents = students.filter(s => {
+                    const grade = parseInt(s.grade);
+                    return grade >= 6 && grade <= 8;
+                });
+            } else if (suffix === 'HS') {
+                filteredStudents = students.filter(s => {
+                    const grade = parseInt(s.grade);
+                    return grade >= 9 && grade <= 12;
+                });
+            }
+
+            // Use actual historical data (Note: weeklyHistory doesn't split by MS/HS, so Academy view is most accurate)
             const weekData = {};
             for (let week = 1; week <= 5; week++) {
                 weekData[week] = { pbis: 0, attendance: 0, academic: 0 };
             }
 
-            // Fill in data from history
-            weeklyHistory.forEach(h => {
-                if (h.week >= 1 && h.week <= 5) {
-                    weekData[h.week].pbis = h.pbisTickets || 0;
-                    weekData[h.week].attendance = h.attendanceTickets || 0;
-                    weekData[h.week].academic = h.academicTickets || 0;
-                }
-            });
-
-            // Add current week's data (not yet saved to history)
+            // For current week, calculate from filtered students
             if (currentWeek >= 1 && currentWeek <= 5) {
-                weekData[currentWeek].pbis = students.reduce((sum, s) => sum + (s.pbisTickets || 0), 0);
-                weekData[currentWeek].attendance = students.reduce((sum, s) => sum + (s.attendanceTickets || 0), 0);
-                weekData[currentWeek].academic = students.reduce((sum, s) => sum + (s.academicTickets || 0), 0);
+                weekData[currentWeek].pbis = filteredStudents.reduce((sum, s) => sum + (s.pbisTickets || 0), 0);
+                weekData[currentWeek].attendance = filteredStudents.reduce((sum, s) => sum + (s.attendanceTickets || 0), 0);
+                weekData[currentWeek].academic = filteredStudents.reduce((sum, s) => sum + (s.academicTickets || 0), 0);
+            }
+
+            // For Academy-wide, include historical data
+            if (suffix === 'Academy') {
+                weeklyHistory.forEach(h => {
+                    if (h.week >= 1 && h.week <= 5 && h.week !== currentWeek) {
+                        weekData[h.week].pbis = h.pbisTickets || 0;
+                        weekData[h.week].attendance = h.attendanceTickets || 0;
+                        weekData[h.week].academic = h.academicTickets || 0;
+                    }
+                });
             }
 
             const weeks = Object.keys(weekData).map(w => `Week ${w}`);
@@ -2826,12 +3046,13 @@
             const academicData = Object.values(weekData).map(d => d.academic);
 
             // Destroy existing chart
-            if (weekChartInstance) {
-                weekChartInstance.destroy();
+            const chartInstanceName = `weekChartInstance${suffix}`;
+            if (window[chartInstanceName]) {
+                window[chartInstanceName].destroy();
             }
 
             // Create new chart
-            weekChartInstance = new Chart(ctx, {
+            window[chartInstanceName] = new Chart(ctx, {
                 type: 'line',
                 data: {
                     labels: weeks,
@@ -2881,21 +3102,36 @@
             });
         }
 
-        function updateQualificationChart() {
-            const ctx = document.getElementById('qualificationChart');
+        function updateQualificationChart(suffix) {
+            const ctx = document.getElementById(`qualificationChart${suffix}`);
             if (!ctx) return;
 
-            const totalStudents = students.length;
-            const qualifiedStudents = students.filter(s => s.bigRaffleQualified).length;
+            // Filter students based on suffix
+            let filteredStudents = students;
+            if (suffix === 'MS') {
+                filteredStudents = students.filter(s => {
+                    const grade = parseInt(s.grade);
+                    return grade >= 6 && grade <= 8;
+                });
+            } else if (suffix === 'HS') {
+                filteredStudents = students.filter(s => {
+                    const grade = parseInt(s.grade);
+                    return grade >= 9 && grade <= 12;
+                });
+            }
+
+            const totalStudents = filteredStudents.length;
+            const qualifiedStudents = filteredStudents.filter(s => s.bigRaffleQualified).length;
             const notQualified = totalStudents - qualifiedStudents;
 
             // Destroy existing chart
-            if (qualificationChartInstance) {
-                qualificationChartInstance.destroy();
+            const chartInstanceName = `qualificationChartInstance${suffix}`;
+            if (window[chartInstanceName]) {
+                window[chartInstanceName].destroy();
             }
 
             // Create new chart
-            qualificationChartInstance = new Chart(ctx, {
+            window[chartInstanceName] = new Chart(ctx, {
                 type: 'doughnut',
                 data: {
                     labels: ['Qualified', 'Not Qualified'],
@@ -2925,28 +3161,48 @@
         }
 
         function updateAnalyticsTables() {
-            updateGradeDataTable();
-            updateWeeklyDataTable();
-            updateProgramDataTable();
+            const suffix = currentDataSubtab === 'academy' ? 'Academy' : 
+                          currentDataSubtab === 'middleschool' ? 'MS' : 'HS';
+            
+            updateGradeDataTable(suffix);
+            updateWeeklyDataTable(suffix);
         }
 
-        function updateGradeDataTable() {
-            const tbody = document.getElementById('gradeDataTable');
+        function updateGradeDataTable(suffix) {
+            const tbody = document.getElementById(`gradeDataTable${suffix}`);
             if (!tbody) return;
 
+            // Filter students based on suffix
+            let filteredStudents = students;
+            const gradeRange = suffix === 'MS' ? [6, 7, 8] : 
+                              suffix === 'HS' ? [9, 10, 11, 12] : 
+                              [6, 7, 8, 9, 10, 11, 12];
+            
+            if (suffix === 'MS') {
+                filteredStudents = students.filter(s => {
+                    const grade = parseInt(s.grade);
+                    return grade >= 6 && grade <= 8;
+                });
+            } else if (suffix === 'HS') {
+                filteredStudents = students.filter(s => {
+                    const grade = parseInt(s.grade);
+                    return grade >= 9 && grade <= 12;
+                });
+            }
+
             const gradeData = {};
-            for (let grade = 6; grade <= 12; grade++) {
+            gradeRange.forEach(grade => {
                 gradeData[grade] = { 
                     pbis: 0, 
                     attendance: 0, 
                     academic: 0,
                     count: 0
                 };
-            }
+            });
 
-            students.forEach(s => {
+            filteredStudents.forEach(s => {
                 const grade = parseInt(s.grade);
-                if (grade >= 6 && grade <= 12) {
+                if (gradeData[grade]) {
                     gradeData[grade].pbis += s.pbisTickets || 0;
                     gradeData[grade].attendance += s.attendanceTickets || 0;
                     gradeData[grade].academic += s.academicTickets || 0;
@@ -2971,30 +3227,46 @@
             }).join('');
         }
 
-        function updateWeeklyDataTable() {
-            const tbody = document.getElementById('weeklyDataTable');
+        function updateWeeklyDataTable(suffix) {
+            const tbody = document.getElementById(`weeklyDataTable${suffix}`);
             if (!tbody) return;
+
+            // Filter students based on suffix
+            let filteredStudents = students;
+            if (suffix === 'MS') {
+                filteredStudents = students.filter(s => {
+                    const grade = parseInt(s.grade);
+                    return grade >= 6 && grade <= 8;
+                });
+            } else if (suffix === 'HS') {
+                filteredStudents = students.filter(s => {
+                    const grade = parseInt(s.grade);
+                    return grade >= 9 && grade <= 12;
+                });
+            }
 
             const weekData = [];
             
-            // Add historical weeks
-            weeklyHistory.forEach(h => {
-                weekData.push({
-                    week: h.week,
-                    pbis: h.pbisTickets || 0,
-                    attendance: h.attendanceTickets || 0,
-                    academic: h.academicTickets || 0,
-                    qualified: h.studentsQualified || 0,
-                    rate: students.length > 0 ? Math.round((h.studentsQualified || 0) / students.length * 100) : 0
+            // For Academy view, add historical weeks
+            if (suffix === 'Academy') {
+                weeklyHistory.forEach(h => {
+                    weekData.push({
+                        week: h.week,
+                        pbis: h.pbisTickets || 0,
+                        attendance: h.attendanceTickets || 0,
+                        academic: h.academicTickets || 0,
+                        qualified: h.studentsQualified || 0,
+                        rate: students.length > 0 ? Math.round((h.studentsQualified || 0) / students.length * 100) : 0
+                    });
                 });
-            });
+            }
 
-            // Add current week if not already in history
-            if (!weeklyHistory.find(h => h.week === currentWeek)) {
-                const currentPbis = students.reduce((sum, s) => sum + (s.pbisTickets || 0), 0);
-                const currentAttendance = students.reduce((sum, s) => sum + (s.attendanceTickets || 0), 0);
-                const currentAcademic = students.reduce((sum, s) => sum + (s.academicTickets || 0), 0);
-                const currentQualified = students.filter(s => 
+            // Add current week data
+            if (!weeklyHistory.find(h => h.week === currentWeek) || suffix !== 'Academy') {
+                const currentPbis = filteredStudents.reduce((sum, s) => sum + (s.pbisTickets || 0), 0);
+                const currentAttendance = filteredStudents.reduce((sum, s) => sum + (s.attendanceTickets || 0), 0);
+                const currentAcademic = filteredStudents.reduce((sum, s) => sum + (s.academicTickets || 0), 0);
+                const currentQualified = filteredStudents.filter(s => 
                     s.pbisTickets > 0 && s.attendanceTickets > 0 && s.academicTickets > 0
                 ).length;
 
@@ -3004,23 +3276,27 @@
                     attendance: currentAttendance,
                     academic: currentAcademic,
                     qualified: currentQualified,
-                    rate: students.length > 0 ? Math.round(currentQualified / students.length * 100) : 0
+                    rate: filteredStudents.length > 0 ? Math.round(currentQualified / filteredStudents.length * 100) : 0
                 });
             }
 
             // Sort by week
             weekData.sort((a, b) => a.week - b.week);
 
-            tbody.innerHTML = weekData.map(w => `
-                <tr>
-                    <td>Week ${w.week}${w.week === currentWeek ? ' (Current)' : ''}</td>
-                    <td>${w.pbis}</td>
-                    <td>${w.attendance}</td>
-                    <td>${w.academic}</td>
-                    <td>${w.qualified}</td>
-                    <td>${w.rate}%</td>
-                </tr>
-            `).join('');
+            if (weekData.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px; color: #999;">No data available yet</td></tr>';
+            } else {
+                tbody.innerHTML = weekData.map(w => `
+                    <tr>
+                        <td>Week ${w.week}${w.week === currentWeek ? ' (Current)' : ''}</td>
+                        <td>${w.pbis}</td>
+                        <td>${w.attendance}</td>
+                        <td>${w.academic}</td>
+                        <td>${w.qualified}</td>
+                        <td>${w.rate}%</td>
+                    </tr>
+                `).join('');
+            }
         }
 
         function updateProgramDataTable() {
