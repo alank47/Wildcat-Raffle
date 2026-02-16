@@ -2852,6 +2852,7 @@
         let qualificationChartInstance = null;
 
         let currentDataSubtab = 'academy'; // Track current subtab
+        let currentDataView = 'charts'; // Track current view (charts or tables)
 
         function switchDataSubtab(subtab) {
             // Update button states
@@ -2864,14 +2865,17 @@
             
             currentDataSubtab = subtab;
             
-            // Refresh charts and tables for the new subtab
-            const currentView = document.getElementById('chartsViewAcademy').classList.contains('hidden') ? 'tables' : 'charts';
-            toggleDataView(currentView);
+            // Refresh the current view (charts or tables)
+            toggleDataView(currentDataView);
         }
 
         function toggleDataView(view) {
+            currentDataView = view; // Store current view
+            
             const suffix = currentDataSubtab === 'academy' ? 'Academy' : 
                           currentDataSubtab === 'middleschool' ? 'MS' : 'HS';
+            
+            console.log('toggleDataView:', view, 'suffix:', suffix); // Debug
             
             if (view === 'charts') {
                 // Hide all table views
@@ -2880,7 +2884,11 @@
                 document.getElementById('tablesViewHS')?.classList.add('hidden');
                 
                 // Show appropriate chart view
-                document.getElementById(`chartsView${suffix}`)?.classList.remove('hidden');
+                const chartElement = document.getElementById(`chartsView${suffix}`);
+                console.log('Showing chart element:', `chartsView${suffix}`, chartElement); // Debug
+                if (chartElement) {
+                    chartElement.classList.remove('hidden');
+                }
                 
                 updateAnalyticsCharts();
             } else {
@@ -2890,7 +2898,11 @@
                 document.getElementById('chartsViewHS')?.classList.add('hidden');
                 
                 // Show appropriate table view
-                document.getElementById(`tablesView${suffix}`)?.classList.remove('hidden');
+                const tableElement = document.getElementById(`tablesView${suffix}`);
+                console.log('Showing table element:', `tablesView${suffix}`, tableElement); // Debug
+                if (tableElement) {
+                    tableElement.classList.remove('hidden');
+                }
                 
                 updateAnalyticsTables();
             }
@@ -2906,8 +2918,14 @@
         }
 
         function updateGradeChart(suffix) {
-            const ctx = document.getElementById(`gradeChart${suffix}`);
-            if (!ctx) return;
+            const elementId = `gradeChart${suffix}`;
+            const ctx = document.getElementById(elementId);
+            console.log('updateGradeChart called with suffix:', suffix, 'Element:', elementId, 'Found:', ctx); // Debug
+            
+            if (!ctx) {
+                console.error('Chart element not found:', elementId);
+                return;
+            }
 
             // Filter students based on subtab
             let filteredStudents = students;
@@ -2922,6 +2940,8 @@
                     return grade >= 9 && grade <= 12;
                 });
             }
+
+            console.log('Filtered students:', filteredStudents.length); // Debug
 
             // Calculate tickets by grade
             const gradeData = {};
