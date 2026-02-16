@@ -1067,53 +1067,113 @@
                     <p style="color: #333;"><strong>📅 Current Week:</strong> Week <span id="leaderboardWeek">1</span> of 5</p>
                 </div>
 
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
-                    <!-- PBIS Leaderboard -->
-                    <div style="background: white; border: 2px solid #667eea; border-radius: 8px; padding: 20px;">
-                        <h3 style="color: #667eea; margin-bottom: 15px;">🌟 PBIS Behaviors</h3>
-                        <table style="width: 100%;">
-                            <thead>
-                                <tr style="border-bottom: 2px solid #667eea;">
-                                    <th style="text-align: left; padding: 8px;">Rank</th>
-                                    <th style="text-align: left; padding: 8px;">Student</th>
-                                    <th style="text-align: right; padding: 8px;">Tickets</th>
-                                </tr>
-                            </thead>
-                            <tbody id="pbisLeaderboard">
-                            </tbody>
-                        </table>
-                    </div>
+                <!-- Middle School Leaderboard -->
+                <div style="margin-bottom: 40px;">
+                    <h3 style="color: #2196F3; margin-bottom: 20px; padding: 10px; background: #e3f2fd; border-radius: 8px;">🎓 Middle School (Grades 6-8)</h3>
+                    
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+                        <!-- PBIS Leaderboard -->
+                        <div style="background: white; border: 2px solid #667eea; border-radius: 8px; padding: 20px;">
+                            <h4 style="color: #667eea; margin-bottom: 15px;">🌟 PBIS Behaviors</h4>
+                            <table style="width: 100%;">
+                                <thead>
+                                    <tr style="border-bottom: 2px solid #667eea;">
+                                        <th style="text-align: left; padding: 8px;">Rank</th>
+                                        <th style="text-align: left; padding: 8px;">Student</th>
+                                        <th style="text-align: right; padding: 8px;">Tickets</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pbisLeaderboardMS">
+                                </tbody>
+                            </table>
+                        </div>
 
-                    <!-- Attendance Leaderboard -->
-                    <div style="background: white; border: 2px solid #28a745; border-radius: 8px; padding: 20px;">
-                        <h3 style="color: #28a745; margin-bottom: 15px;">📅 Perfect Attendance</h3>
-                        <table style="width: 100%;">
-                            <thead>
-                                <tr style="border-bottom: 2px solid #28a745;">
-                                    <th style="text-align: left; padding: 8px;">Rank</th>
-                                    <th style="text-align: left; padding: 8px;">Student</th>
-                                    <th style="text-align: right; padding: 8px;">Tickets</th>
-                                </tr>
-                            </thead>
-                            <tbody id="attendanceLeaderboard">
-                            </tbody>
-                        </table>
-                    </div>
+                        <!-- Attendance Leaderboard -->
+                        <div style="background: white; border: 2px solid #28a745; border-radius: 8px; padding: 20px;">
+                            <h4 style="color: #28a745; margin-bottom: 15px;">📅 Perfect Attendance</h4>
+                            <table style="width: 100%;">
+                                <thead>
+                                    <tr style="border-bottom: 2px solid #28a745;">
+                                        <th style="text-align: left; padding: 8px;">Rank</th>
+                                        <th style="text-align: left; padding: 8px;">Student</th>
+                                        <th style="text-align: right; padding: 8px;">Tickets</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="attendanceLeaderboardMS">
+                                </tbody>
+                            </table>
+                        </div>
 
-                    <!-- Academic Leaderboard -->
-                    <div style="background: white; border: 2px solid #ffc107; border-radius: 8px; padding: 20px;">
-                        <h3 style="color: #856404; margin-bottom: 15px;">📚 Academics</h3>
-                        <table style="width: 100%;">
-                            <thead>
-                                <tr style="border-bottom: 2px solid #ffc107;">
-                                    <th style="text-align: left; padding: 8px;">Rank</th>
-                                    <th style="text-align: left; padding: 8px;">Student</th>
-                                    <th style="text-align: right; padding: 8px;">Tickets</th>
-                                </tr>
-                            </thead>
-                            <tbody id="academicLeaderboard">
-                            </tbody>
-                        </table>
+                        <!-- Academic Leaderboard -->
+                        <div style="background: white; border: 2px solid #ffc107; border-radius: 8px; padding: 20px;">
+                            <h4 style="color: #856404; margin-bottom: 15px;">📚 Academics</h4>
+                            <table style="width: 100%;">
+                                <thead>
+                                    <tr style="border-bottom: 2px solid #ffc107;">
+                                        <th style="text-align: left; padding: 8px;">Rank</th>
+                                        <th style="text-align: left; padding: 8px;">Student</th>
+                                        <th style="text-align: right; padding: 8px;">Tickets</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="academicLeaderboardMS">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- High School Leaderboard -->
+                <div>
+                    <h3 style="color: #9c27b0; margin-bottom: 20px; padding: 10px; background: #f3e5f5; border-radius: 8px;">🎓 High School (Grades 9-12)</h3>
+                    
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+                        <!-- PBIS Leaderboard -->
+                        <div style="background: white; border: 2px solid #667eea; border-radius: 8px; padding: 20px;">
+                            <h4 style="color: #667eea; margin-bottom: 15px;">🌟 PBIS Behaviors</h4>
+                            <table style="width: 100%;">
+                                <thead>
+                                    <tr style="border-bottom: 2px solid #667eea;">
+                                        <th style="text-align: left; padding: 8px;">Rank</th>
+                                        <th style="text-align: left; padding: 8px;">Student</th>
+                                        <th style="text-align: right; padding: 8px;">Tickets</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pbisLeaderboardHS">
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Attendance Leaderboard -->
+                        <div style="background: white; border: 2px solid #28a745; border-radius: 8px; padding: 20px;">
+                            <h4 style="color: #28a745; margin-bottom: 15px;">📅 Perfect Attendance</h4>
+                            <table style="width: 100%;">
+                                <thead>
+                                    <tr style="border-bottom: 2px solid #28a745;">
+                                        <th style="text-align: left; padding: 8px;">Rank</th>
+                                        <th style="text-align: left; padding: 8px;">Student</th>
+                                        <th style="text-align: right; padding: 8px;">Tickets</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="attendanceLeaderboardHS">
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Academic Leaderboard -->
+                        <div style="background: white; border: 2px solid #ffc107; border-radius: 8px; padding: 20px;">
+                            <h4 style="color: #856404; margin-bottom: 15px;">📚 Academics</h4>
+                            <table style="width: 100%;">
+                                <thead>
+                                    <tr style="border-bottom: 2px solid #ffc107;">
+                                        <th style="text-align: left; padding: 8px;">Rank</th>
+                                        <th style="text-align: left; padding: 8px;">Student</th>
+                                        <th style="text-align: right; padding: 8px;">Tickets</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="academicLeaderboardHS">
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1461,28 +1521,6 @@
                     <strong>⚠️ Warning:</strong> These operations cannot be undone. Use with extreme caution!
                 </div>
 
-                <!-- PowerSchool Sync -->
-                <div style="margin: 30px 0; padding: 20px; background: #e7f3ff; border: 2px solid #2196F3; border-radius: 8px;">
-                    <h3 style="color: #1976D2; margin-bottom: 15px;">🔄 PowerSchool Integration</h3>
-                    <p style="color: #0d47a1; font-size: 14px; margin-bottom: 15px;">
-                        Sync student, teacher, and enrollment data from PowerSchool
-                    </p>
-                    
-                    <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
-                        <p style="margin: 0; color: #666;">
-                            <strong>Last Sync:</strong> <span id="lastSyncTime">Never</span>
-                        </p>
-                    </div>
-                    
-                    <button class="btn" id="powerSchoolSyncBtn" style="background: #2196F3; width: 100%; padding: 12px; font-size: 16px;" onclick="syncFromPowerSchool()">
-                        🔄 Sync with PowerSchool Now
-                    </button>
-                    
-                    <p style="color: #666; font-size: 13px; margin-top: 10px;">
-                        This will update student rosters, teacher schedules, and class sections. Existing ticket data will be preserved.
-                    </p>
-                </div>
-
                 <!-- Role Management -->
                 <div style="margin: 30px 0; padding: 20px; background: #f7f7f7; border-radius: 8px;">
                     <h3 style="color: #667eea; margin-bottom: 15px;">👑 Promote Admin to Super Admin</h3>
@@ -1685,7 +1723,8 @@
             <!-- Student Leaderboard -->
             <div style="margin-bottom: 40px;">
                 <h2 style="margin-bottom: 15px;">🏆 This Week's Leaderboard</h2>
-                <p style="color: #666; margin-bottom: 20px;">See where you rank against your peers!</p>
+                <p style="color: #666; margin-bottom: 10px;">See where you rank against your peers!</p>
+                <p id="studentLeaderboardLevel" style="color: #2196F3; font-weight: bold; margin-bottom: 20px;"></p>
 
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px;">
                     <!-- PBIS Leaderboard -->
@@ -1967,6 +2006,22 @@
             } else {
                 document.getElementById('qualifiedBanner').classList.add('hidden');
             }
+            
+            // Set leaderboard level text
+            const currentGrade = parseInt(currentStudent.grade);
+            const isMiddleSchool = currentGrade >= 6 && currentGrade <= 8;
+            const isHighSchool = currentGrade >= 9 && currentGrade <= 12;
+            
+            const levelElement = document.getElementById('studentLeaderboardLevel');
+            if (levelElement) {
+                if (isMiddleSchool) {
+                    levelElement.textContent = '🎓 Middle School Leaderboard (Grades 6-8)';
+                    levelElement.style.color = '#2196F3';
+                } else if (isHighSchool) {
+                    levelElement.textContent = '🎓 High School Leaderboard (Grades 9-12)';
+                    levelElement.style.color = '#9c27b0';
+                }
+            }
 
             // Update student leaderboards
             updateStudentLeaderboards();
@@ -1995,18 +2050,37 @@
         }
 
         function updateStudentLeaderboards() {
-            // Get top 10 for each category
-            const pbisTop = [...students]
+            // Determine if current student is MS (6-8) or HS (9-12)
+            const currentGrade = parseInt(currentStudent.grade);
+            const isMiddleSchool = currentGrade >= 6 && currentGrade <= 8;
+            const isHighSchool = currentGrade >= 9 && currentGrade <= 12;
+            
+            // Filter students to only show same level (MS or HS)
+            let relevantStudents = students;
+            if (isMiddleSchool) {
+                relevantStudents = students.filter(s => {
+                    const grade = parseInt(s.grade);
+                    return grade >= 6 && grade <= 8;
+                });
+            } else if (isHighSchool) {
+                relevantStudents = students.filter(s => {
+                    const grade = parseInt(s.grade);
+                    return grade >= 9 && grade <= 12;
+                });
+            }
+            
+            // Get top 10 for each category from relevant students
+            const pbisTop = [...relevantStudents]
                 .filter(s => (s.pbisTickets || 0) > 0)
                 .sort((a, b) => (b.pbisTickets || 0) - (a.pbisTickets || 0))
                 .slice(0, 10);
 
-            const attendanceTop = [...students]
+            const attendanceTop = [...relevantStudents]
                 .filter(s => (s.attendanceTickets || 0) > 0)
                 .sort((a, b) => (b.attendanceTickets || 0) - (a.attendanceTickets || 0))
                 .slice(0, 10);
 
-            const academicTop = [...students]
+            const academicTop = [...relevantStudents]
                 .filter(s => (s.academicTickets || 0) > 0)
                 .sort((a, b) => (b.academicTickets || 0) - (a.academicTickets || 0))
                 .slice(0, 10);
@@ -3234,28 +3308,40 @@
         function updateLeaderboard() {
             document.getElementById('leaderboardWeek').textContent = currentWeek;
 
+            // Split students by grade level
+            const msStudents = students.filter(s => {
+                const grade = parseInt(s.grade);
+                return grade >= 6 && grade <= 8;
+            });
+            
+            const hsStudents = students.filter(s => {
+                const grade = parseInt(s.grade);
+                return grade >= 9 && grade <= 12;
+            });
+
+            // MIDDLE SCHOOL LEADERBOARDS
             // Get top 10 for each category
-            const pbisTop = [...students]
+            const msPbisTop = [...msStudents]
                 .filter(s => (s.pbisTickets || 0) > 0)
                 .sort((a, b) => (b.pbisTickets || 0) - (a.pbisTickets || 0))
                 .slice(0, 10);
 
-            const attendanceTop = [...students]
+            const msAttendanceTop = [...msStudents]
                 .filter(s => (s.attendanceTickets || 0) > 0)
                 .sort((a, b) => (b.attendanceTickets || 0) - (a.attendanceTickets || 0))
                 .slice(0, 10);
 
-            const academicTop = [...students]
+            const msAcademicTop = [...msStudents]
                 .filter(s => (s.academicTickets || 0) > 0)
                 .sort((a, b) => (b.academicTickets || 0) - (a.academicTickets || 0))
                 .slice(0, 10);
 
-            // Update PBIS leaderboard
-            const pbisTable = document.getElementById('pbisLeaderboard');
-            if (pbisTop.length === 0) {
-                pbisTable.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #999;">No tickets awarded yet</td></tr>';
+            // Update MS PBIS leaderboard
+            const msPbisTable = document.getElementById('pbisLeaderboardMS');
+            if (msPbisTop.length === 0) {
+                msPbisTable.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #999;">No tickets awarded yet</td></tr>';
             } else {
-                pbisTable.innerHTML = pbisTop.map((s, i) => {
+                msPbisTable.innerHTML = msPbisTop.map((s, i) => {
                     const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
                     return `
                         <tr>
@@ -3267,12 +3353,12 @@
                 }).join('');
             }
 
-            // Update Attendance leaderboard
-            const attendanceTable = document.getElementById('attendanceLeaderboard');
-            if (attendanceTop.length === 0) {
-                attendanceTable.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #999;">No tickets awarded yet</td></tr>';
+            // Update MS Attendance leaderboard
+            const msAttendanceTable = document.getElementById('attendanceLeaderboardMS');
+            if (msAttendanceTop.length === 0) {
+                msAttendanceTable.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #999;">No tickets awarded yet</td></tr>';
             } else {
-                attendanceTable.innerHTML = attendanceTop.map((s, i) => {
+                msAttendanceTable.innerHTML = msAttendanceTop.map((s, i) => {
                     const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
                     return `
                         <tr>
@@ -3284,12 +3370,80 @@
                 }).join('');
             }
 
-            // Update Academic leaderboard
-            const academicTable = document.getElementById('academicLeaderboard');
-            if (academicTop.length === 0) {
-                academicTable.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #999;">No tickets awarded yet</td></tr>';
+            // Update MS Academic leaderboard
+            const msAcademicTable = document.getElementById('academicLeaderboardMS');
+            if (msAcademicTop.length === 0) {
+                msAcademicTable.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #999;">No tickets awarded yet</td></tr>';
             } else {
-                academicTable.innerHTML = academicTop.map((s, i) => {
+                msAcademicTable.innerHTML = msAcademicTop.map((s, i) => {
+                    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+                    return `
+                        <tr>
+                            <td style="padding: 8px;">${medal}</td>
+                            <td style="padding: 8px;">${s.firstName} ${s.lastName}</td>
+                            <td style="padding: 8px; text-align: right; font-weight: bold; color: #ffc107;">${s.academicTickets}</td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            // HIGH SCHOOL LEADERBOARDS
+            // Get top 10 for each category
+            const hsPbisTop = [...hsStudents]
+                .filter(s => (s.pbisTickets || 0) > 0)
+                .sort((a, b) => (b.pbisTickets || 0) - (a.pbisTickets || 0))
+                .slice(0, 10);
+
+            const hsAttendanceTop = [...hsStudents]
+                .filter(s => (s.attendanceTickets || 0) > 0)
+                .sort((a, b) => (b.attendanceTickets || 0) - (a.attendanceTickets || 0))
+                .slice(0, 10);
+
+            const hsAcademicTop = [...hsStudents]
+                .filter(s => (s.academicTickets || 0) > 0)
+                .sort((a, b) => (b.academicTickets || 0) - (a.academicTickets || 0))
+                .slice(0, 10);
+
+            // Update HS PBIS leaderboard
+            const hsPbisTable = document.getElementById('pbisLeaderboardHS');
+            if (hsPbisTop.length === 0) {
+                hsPbisTable.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #999;">No tickets awarded yet</td></tr>';
+            } else {
+                hsPbisTable.innerHTML = hsPbisTop.map((s, i) => {
+                    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+                    return `
+                        <tr>
+                            <td style="padding: 8px;">${medal}</td>
+                            <td style="padding: 8px;">${s.firstName} ${s.lastName}</td>
+                            <td style="padding: 8px; text-align: right; font-weight: bold; color: #667eea;">${s.pbisTickets}</td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            // Update HS Attendance leaderboard
+            const hsAttendanceTable = document.getElementById('attendanceLeaderboardHS');
+            if (hsAttendanceTop.length === 0) {
+                hsAttendanceTable.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #999;">No tickets awarded yet</td></tr>';
+            } else {
+                hsAttendanceTable.innerHTML = hsAttendanceTop.map((s, i) => {
+                    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+                    return `
+                        <tr>
+                            <td style="padding: 8px;">${medal}</td>
+                            <td style="padding: 8px;">${s.firstName} ${s.lastName}</td>
+                            <td style="padding: 8px; text-align: right; font-weight: bold; color: #28a745;">${s.attendanceTickets}</td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            // Update HS Academic leaderboard
+            const hsAcademicTable = document.getElementById('academicLeaderboardHS');
+            if (hsAcademicTop.length === 0) {
+                hsAcademicTable.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #999;">No tickets awarded yet</td></tr>';
+            } else {
+                hsAcademicTable.innerHTML = hsAcademicTop.map((s, i) => {
                     const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
                     return `
                         <tr>
