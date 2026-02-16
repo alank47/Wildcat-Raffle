@@ -2859,11 +2859,19 @@
             document.querySelectorAll('.subtab-button').forEach(btn => btn.classList.remove('active'));
             document.getElementById(`${subtab}Subtab`).classList.add('active');
             
-            // Update content visibility
-            document.querySelectorAll('.data-subtab').forEach(tab => tab.classList.remove('active'));
-            document.getElementById(`${subtab}Data`).classList.add('active');
+            // Update content visibility - remove both 'active' and 'hidden' from all, then add 'active' to selected
+            document.querySelectorAll('.data-subtab').forEach(tab => {
+                tab.classList.remove('active');
+                tab.classList.add('hidden'); // Add hidden to non-active tabs
+            });
+            
+            const selectedTab = document.getElementById(`${subtab}Data`);
+            selectedTab.classList.remove('hidden'); // Remove hidden from active tab
+            selectedTab.classList.add('active');
             
             currentDataSubtab = subtab;
+            
+            console.log('Switched to subtab:', subtab, 'Element visible:', !selectedTab.classList.contains('hidden')); // Debug
             
             // Refresh the current view (charts or tables)
             toggleDataView(currentDataView);
