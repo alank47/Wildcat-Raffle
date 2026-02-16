@@ -2277,15 +2277,17 @@
         }
         
         function generateWeeklyReport(teacher) {
-            // Get this week's tickets awarded by this teacher
+            // Get tickets awarded in the CURRENT RAFFLE WEEK (not calendar week)
+            // This ensures we capture all tickets since the last "End Week" was clicked
             const weekTickets = auditLog.filter(entry => 
                 entry.teacherId === teacher.id &&
-                entry.action === 'Awarded Tickets' &&
-                new Date(entry.timestamp).getTime() >= getWeekStartDate().getTime()
+                entry.action === 'Awarded Tickets'
+                // No date filter - show all tickets for current raffle week
+                // They get reset when admin clicks "End Week"
             );
             
             if (weekTickets.length === 0) {
-                return `Hi ${teacher.name},\n\nYou didn't award any raffle tickets this week.\n\nNo Kickboard points to enter.\n\nThank you!`;
+                return `Hi ${teacher.name},\n\nYou haven't awarded any raffle tickets in Week ${currentWeek} yet.\n\nNo Kickboard points to enter.\n\nThank you!`;
             }
             
             // Group by category and student
@@ -2306,7 +2308,7 @@
                 }
             });
             
-            let report = `Hi ${teacher.name},\n\nHere are the raffle tickets you awarded this week:\n\n`;
+            let report = `Hi ${teacher.name},\n\nHere are the raffle tickets you awarded in Week ${currentWeek}:\n\n`;
             
             let totalPBIS = 0, totalAttendance = 0, totalAcademic = 0;
             
