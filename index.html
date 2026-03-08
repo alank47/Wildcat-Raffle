@@ -2900,6 +2900,32 @@
                         </div>
                     </div>
 
+                    <!-- School Campus Selector -->
+                    <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px;">
+                        <h3 style="margin-bottom: 15px;">🏫 School Campus</h3>
+                        <p style="color: #666; margin-bottom: 15px;">Select which school's passes to monitor. This filters the passes shown below.</p>
+                        
+                        <div style="display: flex; gap: 15px;">
+                            <label style="flex: 1; cursor: pointer;">
+                                <input type="radio" name="monitorSchoolCampus" value="highschool" onclick="switchSchool('highschool')" style="display: none;">
+                                <div id="monitorHsSchoolCard" style="border: 3px solid #667eea; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 12px; text-align: center; transition: all 0.3s;">
+                                    <div style="font-size: 32px; margin-bottom: 10px;">🎓</div>
+                                    <div style="font-weight: 600; font-size: 18px;">High School</div>
+                                    <div style="font-size: 14px; opacity: 0.9; margin-top: 5px;">Grades 9-12</div>
+                                </div>
+                            </label>
+                            
+                            <label style="flex: 1; cursor: pointer;">
+                                <input type="radio" name="monitorSchoolCampus" value="middleschool" onclick="switchSchool('middleschool')" style="display: none;">
+                                <div id="monitorMsSchoolCard" style="border: 3px solid #e0e0e0; background: white; color: #666; padding: 20px; border-radius: 12px; text-align: center; transition: all 0.3s;">
+                                    <div style="font-size: 32px; margin-bottom: 10px;">📚</div>
+                                    <div style="font-weight: 600; font-size: 18px;">Middle School</div>
+                                    <div style="font-size: 14px; opacity: 0.7; margin-top: 5px;">Grades 6-8</div>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
                     <!-- Filters and Search -->
                     <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px;">
                         <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: center;">
@@ -3096,41 +3122,6 @@
                 <!-- Pass Settings Tab -->
                 <div id="passSettingsTab" class="hall-pass-tab" style="display: none;">
                     <h2 style="margin-bottom: 20px;">⚙️ Hall Pass Settings</h2>
-                    
-                    <!-- School Campus Selector -->
-                    <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 25px;">
-                        <h3 style="margin-bottom: 15px;">🏫 School Campus</h3>
-                        <p style="color: #666; margin-bottom: 20px;">Select which school campus you're managing. This determines which schedules are used and which passes are displayed in Hall Monitor.</p>
-                        
-                        <div style="display: flex; gap: 15px; margin-bottom: 15px;">
-                            <label style="flex: 1; cursor: pointer;">
-                                <input type="radio" name="schoolCampus" value="highschool" onclick="switchSchool('highschool')" style="display: none;">
-                                <div id="hsSchoolCard" style="border: 3px solid #667eea; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 12px; text-align: center; transition: all 0.3s;">
-                                    <div style="font-size: 32px; margin-bottom: 10px;">🎓</div>
-                                    <div style="font-weight: 600; font-size: 18px;">High School</div>
-                                    <div style="font-size: 14px; opacity: 0.9; margin-top: 5px;">Grades 9-12</div>
-                                </div>
-                            </label>
-                            
-                            <label style="flex: 1; cursor: pointer;">
-                                <input type="radio" name="schoolCampus" value="middleschool" onclick="switchSchool('middleschool')" style="display: none;">
-                                <div id="msSchoolCard" style="border: 3px solid #e0e0e0; background: white; color: #666; padding: 20px; border-radius: 12px; text-align: center; transition: all 0.3s;">
-                                    <div style="font-size: 32px; margin-bottom: 10px;">📚</div>
-                                    <div style="font-weight: 600; font-size: 18px;">Middle School</div>
-                                    <div style="font-size: 14px; opacity: 0.7; margin-top: 5px;">Grades 6-8</div>
-                                </div>
-                            </label>
-                        </div>
-                        
-                        <div style="background: #fff3cd; padding: 15px; border-radius: 8px; border-left: 4px solid #ffc107;">
-                            <div style="display: flex; align-items: start; gap: 10px;">
-                                <span style="font-size: 20px;">💡</span>
-                                <div style="font-size: 14px; color: #856404;">
-                                    <strong>Automatic Detection:</strong> When students create passes, their school is auto-detected from their grade level. This setting controls which schedules and passes YOU see as staff.
-                                </div>
-                            </div>
-                        </div>
-                    </div>
                     
                     <!-- Bell Schedule Configuration -->
                     <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 25px;">
@@ -7387,6 +7378,31 @@
             
             // Load data for the tab
             if (tabName === 'hallMonitor') {
+                // Set school selector cards based on current school
+                const currentSchool = passSettings.currentSchool || 'highschool';
+                const monitorHsCard = document.getElementById('monitorHsSchoolCard');
+                const monitorMsCard = document.getElementById('monitorMsSchoolCard');
+                
+                if (monitorHsCard && monitorMsCard) {
+                    if (currentSchool === 'highschool') {
+                        monitorHsCard.style.border = '3px solid #667eea';
+                        monitorHsCard.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+                        monitorHsCard.style.color = 'white';
+                        
+                        monitorMsCard.style.border = '3px solid #e0e0e0';
+                        monitorMsCard.style.background = 'white';
+                        monitorMsCard.style.color = '#666';
+                    } else {
+                        monitorMsCard.style.border = '3px solid #10b981';
+                        monitorMsCard.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
+                        monitorMsCard.style.color = 'white';
+                        
+                        monitorHsCard.style.border = '3px solid #e0e0e0';
+                        monitorHsCard.style.background = 'white';
+                        monitorHsCard.style.color = '#666';
+                    }
+                }
+                
                 updateHallMonitor();
                 // Auto-refresh every 30 seconds
                 if (hallMonitorInterval) clearInterval(hallMonitorInterval);
@@ -8102,6 +8118,20 @@
                 return passSchool === passSettings.currentSchool;
             });
             
+            // AUTO-HIDE returned passes older than 2 minutes
+            allPasses = allPasses.filter(pass => {
+                if (pass.status === 'returned' && pass.returnedAt) {
+                    const returnedTime = new Date(pass.returnedAt);
+                    const minutesSinceReturn = (now - returnedTime) / 1000 / 60;
+                    
+                    // Hide if returned more than 2 minutes ago
+                    if (minutesSinceReturn > 2) {
+                        return false;
+                    }
+                }
+                return true;
+            });
+            
             // Apply filters
             let filtered = allPasses;
             
@@ -8632,26 +8662,28 @@
             passSettings.currentSchool = school;
             await saveData();
             
-            // Update UI to show selected school
-            const hsCard = document.getElementById('hsSchoolCard');
-            const msCard = document.getElementById('msSchoolCard');
+            // Update UI cards in Hall Monitor
+            const monitorHsCard = document.getElementById('monitorHsSchoolCard');
+            const monitorMsCard = document.getElementById('monitorMsSchoolCard');
             
-            if (school === 'highschool') {
-                hsCard.style.border = '3px solid #667eea';
-                hsCard.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
-                hsCard.style.color = 'white';
-                
-                msCard.style.border = '3px solid #e0e0e0';
-                msCard.style.background = 'white';
-                msCard.style.color = '#666';
-            } else {
-                msCard.style.border = '3px solid #10b981';
-                msCard.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
-                msCard.style.color = 'white';
-                
-                hsCard.style.border = '3px solid #e0e0e0';
-                hsCard.style.background = 'white';
-                hsCard.style.color = '#666';
+            if (monitorHsCard && monitorMsCard) {
+                if (school === 'highschool') {
+                    monitorHsCard.style.border = '3px solid #667eea';
+                    monitorHsCard.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+                    monitorHsCard.style.color = 'white';
+                    
+                    monitorMsCard.style.border = '3px solid #e0e0e0';
+                    monitorMsCard.style.background = 'white';
+                    monitorMsCard.style.color = '#666';
+                } else {
+                    monitorMsCard.style.border = '3px solid #10b981';
+                    monitorMsCard.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
+                    monitorMsCard.style.color = 'white';
+                    
+                    monitorHsCard.style.border = '3px solid #e0e0e0';
+                    monitorHsCard.style.background = 'white';
+                    monitorHsCard.style.color = '#666';
+                }
             }
             
             // Update schedule dropdown options
@@ -9050,33 +9082,6 @@
         function initializePassSettingsUI() {
             // Ensure bell schedules exist first
             ensureBellSchedulesExist();
-            
-            // Set school selector based on current school
-            const currentSchool = passSettings.currentSchool || 'highschool';
-            const hsCard = document.getElementById('hsSchoolCard');
-            const msCard = document.getElementById('msSchoolCard');
-            
-            if (currentSchool === 'highschool') {
-                hsCard.style.border = '3px solid #667eea';
-                hsCard.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
-                hsCard.style.color = 'white';
-                
-                msCard.style.border = '3px solid #e0e0e0';
-                msCard.style.background = 'white';
-                msCard.style.color = '#666';
-                
-                document.querySelector('input[value="highschool"]').checked = true;
-            } else {
-                msCard.style.border = '3px solid #10b981';
-                msCard.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
-                msCard.style.color = 'white';
-                
-                hsCard.style.border = '3px solid #e0e0e0';
-                hsCard.style.background = 'white';
-                hsCard.style.color = '#666';
-                
-                document.querySelector('input[value="middleschool"]').checked = true;
-            }
             
             // Update schedule dropdown for current school
             updateScheduleDropdownForSchool();
