@@ -3218,6 +3218,46 @@
                             💾 Save Settings
                         </button>
                     </div>
+                    
+                    <!-- Data Management (Beta Testing) -->
+                    <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-top: 25px; border: 2px solid #ef4444;">
+                        <h3 style="margin-bottom: 15px; color: #ef4444;">🗑️ Data Management</h3>
+                        <p style="color: #666; margin-bottom: 20px;">Use these options to reset ClawPass data after beta testing or at the end of a school year.</p>
+                        
+                        <div style="background: #fee2e2; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #ef4444;">
+                            <div style="display: flex; align-items: start; gap: 10px;">
+                                <span style="font-size: 24px;">⚠️</span>
+                                <div>
+                                    <div style="font-weight: 600; color: #991b1b; margin-bottom: 8px;">Warning: This Cannot Be Undone!</div>
+                                    <div style="font-size: 14px; color: #991b1b;">
+                                        Resetting ClawPass data will permanently delete all hall pass history. Student schedules, raffle tickets, and Wildcat Cash will NOT be affected.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div style="background: #f9fafb; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                            <h4 style="margin-bottom: 15px; color: #333;">What will be deleted:</h4>
+                            <ul style="margin: 0; padding-left: 20px; color: #666;">
+                                <li style="margin-bottom: 8px;">❌ All hall pass history (active, returned, overtime)</li>
+                                <li style="margin-bottom: 8px;">❌ All student daily pass limits</li>
+                                <li style="margin-bottom: 8px;">❌ Pass statistics and analytics data</li>
+                            </ul>
+                            
+                            <h4 style="margin: 20px 0 15px 0; color: #333;">What will be preserved:</h4>
+                            <ul style="margin: 0; padding-left: 20px; color: #10b981; font-weight: 600;">
+                                <li style="margin-bottom: 8px;">✅ Student information and schedules</li>
+                                <li style="margin-bottom: 8px;">✅ Teacher accounts and class rosters</li>
+                                <li style="margin-bottom: 8px;">✅ All raffle tickets and history</li>
+                                <li style="margin-bottom: 8px;">✅ All Wildcat Cash balances and transactions</li>
+                                <li style="margin-bottom: 8px;">✅ Bell schedules and settings</li>
+                            </ul>
+                        </div>
+                        
+                        <button class="btn" onclick="confirmClawPassReset()" style="width: 100%; padding: 15px; font-size: 16px; background: #ef4444; color: white;">
+                            🗑️ Reset All ClawPass Data
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -3330,6 +3370,52 @@
                     💾 Save Limit
                 </button>
                 <button class="btn btn-secondary" onclick="closePassLimitModal()" style="flex: 1;">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ClawPass Data Reset Confirmation Modal -->
+    <div id="clawPassResetModal" class="modal hidden">
+        <div class="modal-content" style="max-width: 600px;">
+            <h2 style="color: #ef4444;">⚠️ Reset ClawPass Data</h2>
+            <p style="color: #666; margin-bottom: 20px;">You are about to permanently delete all ClawPass data. This action cannot be undone!</p>
+            
+            <div style="background: #fee2e2; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #ef4444;">
+                <h3 style="color: #991b1b; margin-bottom: 15px;">The following will be deleted:</h3>
+                <ul style="margin: 0; padding-left: 20px; color: #991b1b;">
+                    <li style="margin-bottom: 8px;">All hall pass history (current count: <span id="resetPassCount">0</span> passes)</li>
+                    <li style="margin-bottom: 8px;">All student daily pass limits</li>
+                    <li style="margin-bottom: 8px;">All ClawPass statistics</li>
+                </ul>
+            </div>
+            
+            <div style="background: #d1fae5; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #10b981;">
+                <h3 style="color: #065f46; margin-bottom: 15px;">The following will be preserved:</h3>
+                <ul style="margin: 0; padding-left: 20px; color: #065f46;">
+                    <li style="margin-bottom: 8px;">✅ All student information and schedules</li>
+                    <li style="margin-bottom: 8px;">✅ All raffle tickets and history</li>
+                    <li style="margin-bottom: 8px;">✅ All Wildcat Cash balances and transactions</li>
+                    <li style="margin-bottom: 8px;">✅ Bell schedules and settings</li>
+                </ul>
+            </div>
+            
+            <div style="background: #fff3cd; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                <p style="margin: 0; font-size: 14px; color: #856404;">
+                    <strong>Confirmation Required:</strong> Type <code style="background: #ffc107; padding: 2px 8px; border-radius: 4px; font-weight: 600;">DELETE</code> below to proceed.
+                </p>
+            </div>
+            
+            <div style="margin-bottom: 20px;">
+                <input type="text" id="resetConfirmationInput" placeholder="Type DELETE to confirm" style="width: 100%; padding: 12px; border: 2px solid #ef4444; border-radius: 8px; font-size: 16px;">
+            </div>
+            
+            <div style="display: flex; gap: 10px;">
+                <button class="btn" onclick="executeClawPassReset()" style="flex: 1; background: #ef4444; color: white;">
+                    🗑️ Yes, Delete All ClawPass Data
+                </button>
+                <button class="btn btn-secondary" onclick="closeClawPassResetModal()" style="flex: 1;">
                     Cancel
                 </button>
             </div>
@@ -9401,6 +9487,94 @@
                 alert(`✅ Pass limit removed for ${selectedSnapshotStudent.firstName} ${selectedSnapshotStudent.lastName}`);
             } else {
                 alert(`✅ Daily pass limit set to ${limit} for ${selectedSnapshotStudent.firstName} ${selectedSnapshotStudent.lastName}`);
+            }
+        }
+
+        // ============================================
+        // CLAWPASS DATA RESET FUNCTIONS
+        // ============================================
+        
+        function confirmClawPassReset() {
+            // Show pass count in modal
+            document.getElementById('resetPassCount').textContent = hallPasses.length;
+            
+            // Clear confirmation input
+            document.getElementById('resetConfirmationInput').value = '';
+            
+            // Show modal
+            document.getElementById('clawPassResetModal').classList.remove('hidden');
+        }
+        
+        function closeClawPassResetModal() {
+            document.getElementById('clawPassResetModal').classList.add('hidden');
+            document.getElementById('resetConfirmationInput').value = '';
+        }
+        
+        async function executeClawPassReset() {
+            const confirmation = document.getElementById('resetConfirmationInput').value;
+            
+            // Check confirmation
+            if (confirmation !== 'DELETE') {
+                alert('❌ Incorrect confirmation.\n\nPlease type DELETE (in all caps) to proceed.');
+                return;
+            }
+            
+            // Double-check with native confirm dialog
+            const finalConfirm = confirm(
+                `⚠️ FINAL WARNING ⚠️\n\n` +
+                `You are about to PERMANENTLY DELETE:\n` +
+                `• ${hallPasses.length} hall passes\n` +
+                `• All pass limits\n` +
+                `• All ClawPass statistics\n\n` +
+                `This CANNOT be undone!\n\n` +
+                `Click OK to proceed, or Cancel to abort.`
+            );
+            
+            if (!finalConfirm) {
+                closeClawPassResetModal();
+                return;
+            }
+            
+            // Perform the reset
+            try {
+                console.log('🗑️ Starting ClawPass data reset...');
+                console.log('Deleting', hallPasses.length, 'hall passes');
+                
+                // Clear all hall passes
+                hallPasses = [];
+                
+                // Remove daily pass limits from all students
+                students.forEach(student => {
+                    if (student.dailyPassLimit) {
+                        delete student.dailyPassLimit;
+                    }
+                });
+                
+                console.log('✅ ClawPass data reset complete');
+                
+                // Save to database
+                await saveData();
+                
+                // Close modal
+                closeClawPassResetModal();
+                
+                // Refresh displays
+                updateHallMonitor();
+                updatePassHistory();
+                
+                // Success message
+                alert(
+                    `✅ ClawPass Data Reset Complete!\n\n` +
+                    `All hall pass data has been permanently deleted.\n\n` +
+                    `• Hall passes: Cleared\n` +
+                    `• Pass limits: Removed\n` +
+                    `• Statistics: Reset\n\n` +
+                    `All other data (students, tickets, cash) remains intact.`
+                );
+                
+            } catch (error) {
+                console.error('Error resetting ClawPass data:', error);
+                alert('❌ Error resetting data. Please try again or contact support.');
             }
         }
 
