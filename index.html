@@ -3194,7 +3194,7 @@
                                         🎲 Generate Random Test Patterns
                                     </button>
                                     <small style="color: #666; display: block; margin-top: 5px;">
-                                        Creates 10 fake students and 50 passes with 3-5 suspicious patterns
+                                        Creates 10 fake students (IDs: TEST1001-TEST1010) and 50 passes with 3-5 suspicious patterns
                                     </small>
                                 </div>
 
@@ -3203,8 +3203,15 @@
                                         💨 Generate Vaping Scenario
                                     </button>
                                     <small style="color: #666; display: block; margin-top: 5px;">
-                                        Creates 2 students with 7 bathroom overlaps (high suspicion)
+                                        Creates 2 students (IDs: TEST2001, TEST2002) with 7 bathroom overlaps (high suspicion)
                                     </small>
+                                </div>
+                                
+                                <div style="background: #e0e7ff; padding: 15px; border-radius: 8px; border-left: 4px solid #667eea;">
+                                    <strong style="color: #3730a3;">💡 Testing Tip:</strong>
+                                    <p style="margin: 8px 0 0 0; color: #3730a3; font-size: 14px;">
+                                        After generating test data, go to Student Kiosk and enter any test ID (TEST1001-TEST1010 or TEST2001-TEST2002) to create overlapping test passes and see blocking in action!
+                                    </p>
                                 </div>
 
                                 <div>
@@ -9989,13 +9996,26 @@
             const testStudents = [];
             const testPasses = [];
             
-            // Create 10 test students
+            // Create 10 test students with all required fields
             for (let i = 1; i <= 10; i++) {
                 testStudents.push({
                     id: `TEST${1000 + i}`,
                     firstName: `TestStudent${String.fromCharCode(64 + i)}`,
                     lastName: 'Test',
-                    grade: Math.floor(Math.random() * 4) + 9, // Grades 9-12
+                    grade: `${Math.floor(Math.random() * 4) + 9}`, // Grades 9-12 as strings
+                    pbisTickets: 0,
+                    attendanceTickets: 0,
+                    academicTickets: 0,
+                    bigRaffleQualified: false,
+                    weeksQualified: 0,
+                    ticketHistory: [],
+                    wildcatCashBalance: 0,
+                    wildcatCashEarned: 0,
+                    wildcatCashSpent: 0,
+                    wildcatCashDeducted: 0,
+                    wildcatCashTransactions: [],
+                    wildcatCashRewardsRedeemed: [],
+                    sections: [], // Empty schedule for test students
                     isTestData: true
                 });
             }
@@ -10121,6 +10141,19 @@
                     firstName: 'VapeTest',
                     lastName: 'StudentA',
                     grade: '10',
+                    pbisTickets: 0,
+                    attendanceTickets: 0,
+                    academicTickets: 0,
+                    bigRaffleQualified: false,
+                    weeksQualified: 0,
+                    ticketHistory: [],
+                    wildcatCashBalance: 0,
+                    wildcatCashEarned: 0,
+                    wildcatCashSpent: 0,
+                    wildcatCashDeducted: 0,
+                    wildcatCashTransactions: [],
+                    wildcatCashRewardsRedeemed: [],
+                    sections: [],
                     isTestData: true
                 },
                 {
@@ -10128,6 +10161,19 @@
                     firstName: 'VapeTest',
                     lastName: 'StudentB',
                     grade: '10',
+                    pbisTickets: 0,
+                    attendanceTickets: 0,
+                    academicTickets: 0,
+                    bigRaffleQualified: false,
+                    weeksQualified: 0,
+                    ticketHistory: [],
+                    wildcatCashBalance: 0,
+                    wildcatCashEarned: 0,
+                    wildcatCashSpent: 0,
+                    wildcatCashDeducted: 0,
+                    wildcatCashTransactions: [],
+                    wildcatCashRewardsRedeemed: [],
+                    sections: [],
                     isTestData: true
                 }
             ];
