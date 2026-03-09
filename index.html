@@ -7799,11 +7799,21 @@
             }
             
             // CHECK ENCOUNTER PREVENTION
+            console.log('=== ENCOUNTER PREVENTION CHECK ===');
+            console.log('Student ID:', selectedKioskStudent.id);
+            console.log('Destination:', destination);
+            console.log('Test Mode:', encounterTestMode);
+            console.log('Prevention Groups:', preventionGroups);
+            
             const encounterCheck = checkEncounterPrevention(selectedKioskStudent.id, destination);
+            console.log('Encounter Check Result:', encounterCheck);
+            
             if (encounterCheck && encounterCheck.blocked) {
+                console.log('🚨 BLOCKING PASS!');
                 alert(`❌ Pass Request Denied\n\nYou cannot create a pass to this location at this time.\n\nPlease see an administrator if you need assistance.`);
                 return;
             }
+            console.log('✅ Pass allowed - no blocking');
             
             const now = new Date();
             const expiresAt = new Date(now.getTime() + (duration * 60 * 1000));
@@ -10740,21 +10750,46 @@
         
         // Check if pass should be blocked by prevention groups
         function checkEncounterPrevention(studentId, destination) {
+            console.log('>>> checkEncounterPrevention called');
+            console.log('>>> studentId:', studentId);
+            console.log('>>> destination:', destination);
+            
             const now = new Date();
             
             // Check if this student is test data
             const student = students.find(s => s.id === studentId);
-            if (!student) return null;
+            console.log('>>> Found student:', student);
+            
+            if (!student) {
+                console.log('>>> Student not found - returning null');
+                return null;
+            }
             
             const isTestStudent = student.isTestData === true;
+            console.log('>>> Is test student:', isTestStudent);
+            console.log('>>> encounterTestMode:', encounterTestMode);
             
             // Test Mode: Only check test students (ignore real students)
             // Live Mode: Only check real students (ignore test students)
-            if (encounterTestMode && !isTestStudent) return null;
-            if (!encounterTestMode && isTestStudent) return null;
+            if (encounterTestMode && !isTestStudent) {
+                console.log('>>> Test mode but not a test student - returning null');
+                return null;
+            }
+            if (!encounterTestMode && isTestStudent) {
+                console.log('>>> Live mode but is a test student - returning null');
+                return null;
+            }
+            
+            console.log('>>> Checking prevention groups...');
+            console.log('>>> Total prevention groups:', preventionGroups.length);
             
             // Find all groups this student is in (matching test/live mode)
             const studentGroups = preventionGroups.filter(g => {
+                console.log('>>> Checking group:', g.name);
+                console.log('>>>   - active:', g.active);
+                console.log('>>>   - includes student:', g.students.includes(studentId));
+                console.log('>>>   - isTestData:', g.isTestData);
+                
                 if (!g.active) return false;
                 if (!g.students.includes(studentId)) return false;
                 // In test mode, only use test groups; in live mode, only use live groups
@@ -10763,13 +10798,22 @@
                 return true;
             });
             
+            console.log('>>> Student groups found:', studentGroups.length);
+            
             for (const group of studentGroups) {
+                console.log('>>> Processing group:', group.name);
+                console.log('>>>   - locations:', group.rules.locations);
+                console.log('>>>   - destination match:', group.rules.locations.includes(destination));
+                
                 // Check if destination applies
                 if (!group.rules.locations.includes(destination)) continue;
                 
+                console.log('>>> Checking other students in group...');
                 // Check for other students in group with recent/active passes
                 for (const otherStudentId of group.students) {
                     if (otherStudentId === studentId) continue;
+                    
+                    console.log('>>>   - Checking student:', otherStudentId);
                     
                     // Find recent passes from other student
                     const otherPasses = hallPasses.filter(p => 
@@ -10778,7 +10822,10 @@
                         p.destination === destination
                     );
                     
+                    console.log('>>>   - Other student passes:', otherPasses);
+                    
                     if (otherPasses.length > 0) {
+                        console.log('>>> 🚨 CONFLICT FOUND! Blocking...');
                         const otherStudent = students.find(s => s.id === otherStudentId);
                         
                         // Log the block
@@ -10803,6 +10850,7 @@
                 }
             }
             
+            console.log('>>> No conflicts found - returning null');
             return null;
         }
         
