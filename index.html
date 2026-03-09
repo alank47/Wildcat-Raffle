@@ -17,6 +17,32 @@
             min-height: 100vh;
             padding: 20px;
         }
+        
+        /* Stat Box Hover Effects */
+        #statBoxActive:hover, #statBoxExpiring:hover, #statBoxExpired:hover, #statBoxAll:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+        }
+        
+        #statBoxActive.selected {
+            border: 3px solid rgba(79, 172, 254, 0.5) !important;
+            box-shadow: 0 0 20px rgba(79, 172, 254, 0.4);
+        }
+        
+        #statBoxExpiring.selected {
+            border: 3px solid rgba(245, 158, 11, 0.5) !important;
+            box-shadow: 0 0 20px rgba(245, 158, 11, 0.4);
+        }
+        
+        #statBoxExpired.selected {
+            border: 3px solid rgba(239, 68, 68, 0.5) !important;
+            box-shadow: 0 0 20px rgba(239, 68, 68, 0.4);
+        }
+        
+        #statBoxAll.selected {
+            border: 3px solid rgba(102, 126, 234, 0.5) !important;
+            box-shadow: 0 0 20px rgba(102, 126, 234, 0.4);
+        }
 
         .login-container {
             max-width: 400px;
@@ -2881,21 +2907,25 @@
                     <!-- Summary Stats -->
                     <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px;">
                         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px;">
-                            <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); border-radius: 10px;">
+                            <div id="statBoxActive" onclick="filterByStatBox('active')" style="text-align: center; padding: 20px; background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); border-radius: 10px; cursor: pointer; transition: all 0.3s; position: relative; border: 3px solid transparent;">
                                 <div style="font-size: 36px; font-weight: 700; color: white;" id="totalActivePasses">0</div>
                                 <div style="color: white; font-size: 14px; margin-top: 5px;">Active Now</div>
+                                <div id="checkActive" style="display: none; position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.3); border-radius: 50%; width: 30px; height: 30px; line-height: 30px; font-size: 18px;">✓</div>
                             </div>
-                            <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #ffd89b 0%, #f59e0b 100%); border-radius: 10px;">
+                            <div id="statBoxExpiring" onclick="filterByStatBox('expiring')" style="text-align: center; padding: 20px; background: linear-gradient(135deg, #ffd89b 0%, #f59e0b 100%); border-radius: 10px; cursor: pointer; transition: all 0.3s; position: relative; border: 3px solid transparent;">
                                 <div style="font-size: 36px; font-weight: 700; color: white;" id="expiringSoonPasses">0</div>
                                 <div style="color: white; font-size: 14px; margin-top: 5px;">⚠️ Expiring Soon</div>
+                                <div id="checkExpiring" style="display: none; position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.3); border-radius: 50%; width: 30px; height: 30px; line-height: 30px; font-size: 18px;">✓</div>
                             </div>
-                            <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); border-radius: 10px;">
+                            <div id="statBoxExpired" onclick="filterByStatBox('expired')" style="text-align: center; padding: 20px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); border-radius: 10px; cursor: pointer; transition: all 0.3s; position: relative; border: 3px solid transparent;">
                                 <div style="font-size: 36px; font-weight: 700; color: white;" id="expiredPasses">0</div>
-                                <div style="color: white; font-size: 14px; margin-top: 5px;">🔴 Expired</div>
+                                <div style="color: white; font-size: 14px; margin-top: 5px;">🔴 Overtime</div>
+                                <div id="checkExpired" style="display: none; position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.3); border-radius: 50%; width: 30px; height: 30px; line-height: 30px; font-size: 18px;">✓</div>
                             </div>
-                            <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 10px;">
+                            <div id="statBoxAll" onclick="filterByStatBox('all')" style="text-align: center; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 10px; cursor: pointer; transition: all 0.3s; position: relative; border: 3px solid transparent;">
                                 <div style="font-size: 36px; font-weight: 700; color: white;" id="todayTotalPasses">0</div>
-                                <div style="color: white; font-size: 14px; margin-top: 5px;">Today's Total</div>
+                                <div style="color: white; font-size: 14px; margin-top: 5px;">All Passes Today</div>
+                                <div id="checkAll" style="display: none; position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.3); border-radius: 50%; width: 30px; height: 30px; line-height: 30px; font-size: 18px;">✓</div>
                             </div>
                         </div>
                     </div>
@@ -2937,7 +2967,7 @@
                                 <option value="classroom">📚 Classroom</option>
                                 <option value="wellness">💚 Wellness</option>
                             </select>
-                            <select id="monitorStatusFilter" onchange="updateHallMonitor()" style="padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
+                            <select id="monitorStatusFilter" onchange="syncStatBoxes(); updateHallMonitor();" style="padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
                                 <option value="all">All Statuses</option>
                                 <option value="active">✅ Active Only</option>
                                 <option value="expiring">⚠️ Expiring Soon</option>
@@ -7403,6 +7433,9 @@
                     }
                 }
                 
+                // Sync stat boxes with current filter
+                syncStatBoxes();
+                
                 updateHallMonitor();
                 // Auto-refresh every 30 seconds
                 if (hallMonitorInterval) clearInterval(hallMonitorInterval);
@@ -8081,6 +8114,78 @@
         }
 
         // Update Hall Monitor display with real-time monitoring
+        // Sync stat box highlighting when dropdown changes
+        function syncStatBoxes() {
+            const statusDropdown = document.getElementById('monitorStatusFilter');
+            const currentFilter = statusDropdown.value;
+            
+            // Remove all selections
+            document.getElementById('statBoxActive').classList.remove('selected');
+            document.getElementById('statBoxExpiring').classList.remove('selected');
+            document.getElementById('statBoxExpired').classList.remove('selected');
+            document.getElementById('statBoxAll').classList.remove('selected');
+            
+            // Hide all checkmarks
+            document.getElementById('checkActive').style.display = 'none';
+            document.getElementById('checkExpiring').style.display = 'none';
+            document.getElementById('checkExpired').style.display = 'none';
+            document.getElementById('checkAll').style.display = 'none';
+            
+            // Highlight matching box
+            if (currentFilter === 'active') {
+                document.getElementById('statBoxActive').classList.add('selected');
+                document.getElementById('checkActive').style.display = 'block';
+            } else if (currentFilter === 'expiring') {
+                document.getElementById('statBoxExpiring').classList.add('selected');
+                document.getElementById('checkExpiring').style.display = 'block';
+            } else if (currentFilter === 'expired') {
+                document.getElementById('statBoxExpired').classList.add('selected');
+                document.getElementById('checkExpired').style.display = 'block';
+            } else if (currentFilter === 'all') {
+                document.getElementById('statBoxAll').classList.add('selected');
+                document.getElementById('checkAll').style.display = 'block';
+            }
+        }
+
+        // Filter Hall Monitor by clicking stat boxes
+        function filterByStatBox(filter) {
+            const statusDropdown = document.getElementById('monitorStatusFilter');
+            
+            // Remove selection from all boxes
+            document.getElementById('statBoxActive').classList.remove('selected');
+            document.getElementById('statBoxExpiring').classList.remove('selected');
+            document.getElementById('statBoxExpired').classList.remove('selected');
+            document.getElementById('statBoxAll').classList.remove('selected');
+            
+            // Hide all checkmarks
+            document.getElementById('checkActive').style.display = 'none';
+            document.getElementById('checkExpiring').style.display = 'none';
+            document.getElementById('checkExpired').style.display = 'none';
+            document.getElementById('checkAll').style.display = 'none';
+            
+            // Set dropdown and highlight selected box
+            if (filter === 'active') {
+                statusDropdown.value = 'active';
+                document.getElementById('statBoxActive').classList.add('selected');
+                document.getElementById('checkActive').style.display = 'block';
+            } else if (filter === 'expiring') {
+                statusDropdown.value = 'expiring';
+                document.getElementById('statBoxExpiring').classList.add('selected');
+                document.getElementById('checkExpiring').style.display = 'block';
+            } else if (filter === 'expired') {
+                statusDropdown.value = 'expired';
+                document.getElementById('statBoxExpired').classList.add('selected');
+                document.getElementById('checkExpired').style.display = 'block';
+            } else if (filter === 'all') {
+                statusDropdown.value = 'all';
+                document.getElementById('statBoxAll').classList.add('selected');
+                document.getElementById('checkAll').style.display = 'block';
+            }
+            
+            // Trigger filter update
+            updateHallMonitor();
+        }
+
         function updateHallMonitor() {
             try {
                 const now = new Date();
