@@ -5218,7 +5218,10 @@
                                 }
                                 
                                 // MERGE PREVENTION GROUPS
-                                if (cloudRecord.preventionGroups && Array.isArray(cloudRecord.preventionGroups)) {
+                                // Important: Only overwrite if cloud has prevention groups
+                                // If cloud doesn't have them, keep local ones
+                                if (cloudRecord.preventionGroups && Array.isArray(cloudRecord.preventionGroups) && cloudRecord.preventionGroups.length > 0) {
+                                    // Cloud has prevention groups - merge them
                                     cloudRecord.preventionGroups.forEach(cloudGroup => {
                                         const localGroup = preventionGroups.find(g => g.id === cloudGroup.id);
                                         if (!localGroup) {
@@ -5237,6 +5240,10 @@
                                             }
                                         }
                                     });
+                                } else if (preventionGroups.length > 0) {
+                                    // Cloud doesn't have prevention groups but we do locally
+                                    // Keep our local groups - don't let cloud overwrite with empty array
+                                    console.log('📝 Keeping local prevention groups (cloud has none)');
                                 }
                             }
                         }
