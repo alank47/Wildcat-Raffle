@@ -4698,6 +4698,7 @@
                     emailJSConfig = data.emailJSConfig || emailJSConfig;
                     hallPasses = data.hallPasses || [];
                     passSettings = data.passSettings || passSettings;
+                    preventionGroups = data.preventionGroups || [];
                     lastSaveTimestamp = data.lastSaveTimestamp || 0; // Track cloud timestamp
                     
                     // Ensure bell schedules exist (initialize if needed)
@@ -4739,6 +4740,7 @@
                 emailJSConfig = data.emailJSConfig || emailJSConfig;
                 hallPasses = data.hallPasses || [];
                 passSettings = data.passSettings || passSettings;
+                preventionGroups = data.preventionGroups || [];
                 lastSaveTimestamp = data.lastSaveTimestamp || 0; // Track local timestamp
                 
                 // Ensure bell schedules exist (initialize if needed)
@@ -5124,6 +5126,7 @@
                     emailJSConfig,
                     hallPasses,
                     passSettings,
+                    preventionGroups,
                     lastSaveTimestamp: Date.now() // Track when we saved
                 }));
 
@@ -5213,6 +5216,28 @@
                                         }
                                     });
                                 }
+                                
+                                // MERGE PREVENTION GROUPS
+                                if (cloudRecord.preventionGroups && Array.isArray(cloudRecord.preventionGroups)) {
+                                    cloudRecord.preventionGroups.forEach(cloudGroup => {
+                                        const localGroup = preventionGroups.find(g => g.id === cloudGroup.id);
+                                        if (!localGroup) {
+                                            // Cloud has a group we don't have locally - add it
+                                            preventionGroups.push(cloudGroup);
+                                        } else {
+                                            // Merge block logs from cloud
+                                            if (cloudGroup.blockLog && Array.isArray(cloudGroup.blockLog)) {
+                                                if (!localGroup.blockLog) localGroup.blockLog = [];
+                                                const localLogTimestamps = new Set(localGroup.blockLog.map(l => l.timestamp));
+                                                const newLogs = cloudGroup.blockLog.filter(l => !localLogTimestamps.has(l.timestamp));
+                                                if (newLogs.length > 0) {
+                                                    localGroup.blockLog.push(...newLogs);
+                                                    localGroup.blockLog.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                                                }
+                                            }
+                                        }
+                                    });
+                                }
                             }
                         }
                         
@@ -5239,6 +5264,7 @@
                                 emailJSConfig,
                                 hallPasses,
                                 passSettings,
+                                preventionGroups,
                                 lastSaveTimestamp: Date.now()
                             })
                         });
