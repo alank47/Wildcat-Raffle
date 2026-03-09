@@ -10545,10 +10545,21 @@
             const select = document.getElementById('addStudentSelect');
             const studentId = select.value;
             
-            if (!studentId) return;
+            console.log('=== ADD STUDENT TO GROUP ===');
+            console.log('Selected student ID:', studentId);
+            
+            if (!studentId) {
+                console.log('No student ID selected');
+                return;
+            }
             
             const student = students.find(s => s.id === studentId);
-            if (!student) return;
+            console.log('Found student:', student);
+            
+            if (!student) {
+                console.log('Student not found in students array');
+                return;
+            }
             
             if (groupStudents.find(s => s.id === studentId)) {
                 alert('This student is already in the group');
@@ -10556,6 +10567,7 @@
             }
             
             groupStudents.push(student);
+            console.log('Student added. groupStudents now:', groupStudents);
             updateGroupStudentsList();
             select.value = '';
         }
@@ -10585,6 +10597,9 @@
         
         // Save prevention group
         async function savePreventionGroup() {
+            console.log('=== SAVE PREVENTION GROUP ===');
+            console.log('groupStudents:', groupStudents);
+            
             const name = document.getElementById('groupName').value.trim();
             
             if (!name) {
@@ -10594,6 +10609,7 @@
             
             if (groupStudents.length < 2) {
                 alert('Please add at least 2 students to the group');
+                console.log('Not enough students - need at least 2, have:', groupStudents.length);
                 return;
             }
             
@@ -10620,12 +10636,17 @@
                 isTestData: encounterTestMode
             };
             
+            console.log('Created group object:', group);
+            console.log('Group students array:', group.students);
+            
             if (encounterGroupToEdit) {
                 const index = preventionGroups.findIndex(g => g.id === encounterGroupToEdit.id);
                 preventionGroups[index] = group;
             } else {
                 preventionGroups.push(group);
             }
+            
+            console.log('preventionGroups after save:', preventionGroups);
             
             await saveData();
             
