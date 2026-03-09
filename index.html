@@ -2829,6 +2829,9 @@
                     <button class="subtab-button" onclick="switchHallPassTab('snapshot')" id="snapshotTabBtn" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
                         📊 Student Snapshot
                     </button>
+                    <button class="subtab-button" onclick="switchHallPassTab('encounterPrevention')" id="encounterPreventionTabBtn" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
+                        🚨 Encounter Prevention
+                    </button>
                     <button class="subtab-button" onclick="switchHallPassTab('history')" id="historyTabBtn" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
                         📋 Pass History
                     </button>
@@ -3104,6 +3107,130 @@
                             </div>
                         </div>
 
+                    </div>
+                </div>
+
+                <!-- Encounter Prevention Tab -->
+                <div id="encounterPreventionTab" class="hall-pass-tab" style="display: none;">
+                    <!-- Test Mode Banner -->
+                    <div id="testModeBanner" style="background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%); color: white; padding: 20px; border-radius: 12px; margin-bottom: 25px; display: none;">
+                        <div style="display: flex; align-items: center; gap: 15px;">
+                            <div style="font-size: 36px;">🧪</div>
+                            <div style="flex: 1;">
+                                <h3 style="margin: 0 0 5px 0;">Test Mode Active</h3>
+                                <p style="margin: 0; opacity: 0.9; font-size: 14px;">You are using simulated data. No real students are affected.</p>
+                            </div>
+                            <button class="btn" onclick="toggleEncounterTestMode()" style="background: rgba(255,255,255,0.2); border: 2px solid white;">
+                                🔴 Switch to Live Mode
+                            </button>
+                        </div>
+                    </div>
+
+                    <h2 style="margin-bottom: 20px;">🚨 Encounter Prevention System</h2>
+                    <p style="color: #666; margin-bottom: 25px;">Detect patterns of coordinated hall pass usage and prevent unwanted student encounters.</p>
+
+                    <!-- Sub-tabs -->
+                    <div style="display: flex; gap: 10px; margin-bottom: 25px; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px;">
+                        <button class="encounter-subtab active" onclick="switchEncounterTab('patterns')" id="patternsSubtabBtn" style="padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
+                            📊 Pattern Detection
+                        </button>
+                        <button class="encounter-subtab" onclick="switchEncounterTab('groups')" id="groupsSubtabBtn" style="padding: 10px 20px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
+                            🛡️ Prevention Groups
+                        </button>
+                        <button class="encounter-subtab" onclick="switchEncounterTab('test')" id="testSubtabBtn" style="padding: 10px 20px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
+                            🧪 Test Mode
+                        </button>
+                    </div>
+
+                    <!-- Pattern Detection Subtab -->
+                    <div id="patternsSubtab" class="encounter-subtab-content">
+                        <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 25px;">
+                            <h3 style="margin-bottom: 15px;">Analysis Settings</h3>
+                            <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                                <select id="patternTimeRange" onchange="analyzeEncounterPatterns()" style="padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
+                                    <option value="7">Last 7 Days</option>
+                                    <option value="14">Last 14 Days</option>
+                                    <option value="30" selected>Last 30 Days</option>
+                                    <option value="90">Last 90 Days</option>
+                                </select>
+                                <button class="btn" onclick="analyzeEncounterPatterns()" style="padding: 12px 20px; background: #667eea;">
+                                    🔍 Analyze Patterns
+                                </button>
+                                <div id="patternAnalysisStatus" style="color: #666; font-size: 14px;"></div>
+                            </div>
+                        </div>
+
+                        <div id="detectedPatternsContainer"></div>
+                    </div>
+
+                    <!-- Prevention Groups Subtab -->
+                    <div id="groupsSubtab" class="encounter-subtab-content" style="display: none;">
+                        <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 25px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <h3 style="margin: 0;">Active Prevention Groups</h3>
+                                <button class="btn" onclick="openCreateGroupModal()" style="padding: 12px 20px; background: #10b981;">
+                                    ➕ Create New Group
+                                </button>
+                            </div>
+                        </div>
+
+                        <div id="preventionGroupsContainer"></div>
+                    </div>
+
+                    <!-- Test Mode Subtab -->
+                    <div id="testSubtab" class="encounter-subtab-content" style="display: none;">
+                        <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                            <h3 style="margin-bottom: 20px;">🧪 Test Mode Controls</h3>
+                            
+                            <div style="background: #fef3c7; padding: 20px; border-radius: 8px; border-left: 4px solid #fbbf24; margin-bottom: 25px;">
+                                <p style="margin: 0; color: #92400e;">
+                                    <strong>Test Mode</strong> allows you to safely test the Encounter Prevention system with simulated data before using it with real students.
+                                </p>
+                            </div>
+
+                            <div style="display: grid; gap: 20px;">
+                                <div>
+                                    <button class="btn" onclick="generateTestData()" style="width: 100%; padding: 15px; background: #3b82f6;">
+                                        🎲 Generate Random Test Patterns
+                                    </button>
+                                    <small style="color: #666; display: block; margin-top: 5px;">
+                                        Creates 10 fake students and 50 passes with 3-5 suspicious patterns
+                                    </small>
+                                </div>
+
+                                <div>
+                                    <button class="btn" onclick="generateVapingScenario()" style="width: 100%; padding: 15px; background: #8b5cf6;">
+                                        💨 Generate Vaping Scenario
+                                    </button>
+                                    <small style="color: #666; display: block; margin-top: 5px;">
+                                        Creates 2 students with 7 bathroom overlaps (high suspicion)
+                                    </small>
+                                </div>
+
+                                <div>
+                                    <button class="btn" onclick="clearTestData()" style="width: 100%; padding: 15px; background: #ef4444;">
+                                        🗑️ Clear All Test Data
+                                    </button>
+                                    <small style="color: #666; display: block; margin-top: 5px;">
+                                        Removes all test students, passes, and patterns
+                                    </small>
+                                </div>
+
+                                <div style="border-top: 2px solid #e0e0e0; padding-top: 20px;">
+                                    <div style="background: #e0e7ff; padding: 20px; border-radius: 8px; margin-bottom: 15px;">
+                                        <p style="margin: 0; color: #3730a3;">
+                                            <strong>Current Mode:</strong> <span id="currentModeDisplay">🧪 Test Mode</span>
+                                        </p>
+                                    </div>
+                                    <button class="btn" onclick="toggleEncounterTestMode()" id="modeToggleBtn" style="width: 100%; padding: 15px; background: #dc2626;">
+                                        🔴 Switch to Live Mode
+                                    </button>
+                                    <small style="color: #666; display: block; margin-top: 5px;">
+                                        Live mode uses real student data for pattern detection
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -3437,6 +3564,86 @@
                     🗑️ Yes, Delete All ClawPass Data
                 </button>
                 <button class="btn btn-secondary" onclick="closeClawPassResetModal()" style="flex: 1;">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create/Edit Prevention Group Modal -->
+    <div id="preventionGroupModal" class="modal hidden">
+        <div class="modal-content" style="max-width: 700px; max-height: 90vh; overflow-y: auto;">
+            <h2 id="groupModalTitle">Create Prevention Group</h2>
+            <p style="color: #666; margin-bottom: 20px;">Configure automatic blocking when these students try to create overlapping passes.</p>
+            
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 600;">Group Name</label>
+                <input type="text" id="groupName" placeholder="e.g., Vaping Concerns, Fighting Risk" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
+            </div>
+            
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 600;">Students in Group</label>
+                <div id="groupStudentsList" style="background: #f9fafb; padding: 15px; border-radius: 8px; margin-bottom: 10px; min-height: 60px;">
+                    <p style="color: #999; margin: 0;">No students selected</p>
+                </div>
+                <select id="addStudentSelect" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; margin-bottom: 10px;">
+                    <option value="">Select student to add...</option>
+                </select>
+                <button class="btn btn-secondary" onclick="addStudentToGroup()" style="width: 100%;">
+                    ➕ Add Student
+                </button>
+            </div>
+            
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 600;">Blocking Rules</label>
+                <div style="background: #f9fafb; padding: 15px; border-radius: 8px;">
+                    <label style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px; cursor: pointer;">
+                        <input type="checkbox" id="blockIfWithinTime" checked style="width: 20px; height: 20px;">
+                        <span>Block if pass created within <input type="number" id="blockTimeWindow" value="10" min="1" max="60" style="width: 60px; padding: 4px; border: 1px solid #e0e0e0; border-radius: 4px;"> minutes</span>
+                    </label>
+                    
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600; margin-top: 15px;">Apply to locations:</label>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" class="groupLocation" value="bathroom" checked>
+                            <span>🚻 Bathroom</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" class="groupLocation" value="wellness" checked>
+                            <span>💚 Wellness</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" class="groupLocation" value="office" checked>
+                            <span>🏢 Office</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" class="groupLocation" value="classroom" checked>
+                            <span>📚 Classroom</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="margin-bottom: 20px;">
+                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                    <input type="checkbox" id="monitorOnlyMode" style="width: 20px; height: 20px;">
+                    <span style="font-weight: 600;">👁️ Monitor Only (Don't Actually Block)</span>
+                </label>
+                <small style="color: #666; display: block; margin-top: 5px; margin-left: 30px;">
+                    Log what would be blocked without actually denying passes
+                </small>
+            </div>
+            
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 600;">Reason/Notes (Optional)</label>
+                <textarea id="groupReason" placeholder="e.g., Students caught vaping together" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; min-height: 80px; font-family: inherit;"></textarea>
+            </div>
+            
+            <div style="display: flex; gap: 10px;">
+                <button class="btn" onclick="savePreventionGroup()" style="flex: 1; background: #10b981;">
+                    💾 Save Group
+                </button>
+                <button class="btn btn-secondary" onclick="closePreventionGroupModal()" style="flex: 1;">
                     Cancel
                 </button>
             </div>
@@ -7398,6 +7605,7 @@
             const btnId = tabName === 'kiosk' ? 'kioskTabBtn' : 
                           tabName === 'hallMonitor' ? 'hallMonitorTabBtn' :
                           tabName === 'snapshot' ? 'snapshotTabBtn' :
+                          tabName === 'encounterPrevention' ? 'encounterPreventionTabBtn' :
                           tabName === 'history' ? 'historyTabBtn' : 'passSettingsTabBtn';
             const btn = document.getElementById(btnId);
             
@@ -7451,6 +7659,13 @@
                 document.getElementById('snapshotSearchResults').style.display = 'none';
                 selectedSnapshotStudent = null;
                 document.getElementById('snapshotContent').style.display = 'none';
+            }
+            
+            if (tabName === 'encounterPrevention') {
+                // Show/hide test mode banner
+                document.getElementById('testModeBanner').style.display = encounterTestMode ? 'block' : 'none';
+                // Initialize pattern detection subtab
+                switchEncounterTab('patterns');
             }
             
             if (tabName === 'history') {
@@ -7574,6 +7789,13 @@
                     alert(`❌ Pass Limit Reached\n\nYou have reached your daily pass limit of ${selectedKioskStudent.dailyPassLimit} passes.\n\nPlease speak with your teacher or administrator.`);
                     return;
                 }
+            }
+            
+            // CHECK ENCOUNTER PREVENTION
+            const encounterCheck = checkEncounterPrevention(selectedKioskStudent.id, destination);
+            if (encounterCheck && encounterCheck.blocked) {
+                alert(`❌ Pass Request Denied\n\nYou cannot create a pass to this location at this time.\n\nPlease see an administrator if you need assistance.`);
+                return;
             }
             
             const now = new Date();
@@ -9686,6 +9908,848 @@
                 console.error('Error resetting ClawPass data:', error);
                 alert('❌ Error resetting data. Please try again or contact support.');
             }
+        }
+
+        // ============================================
+        // ENCOUNTER PREVENTION SYSTEM
+        // ============================================
+        
+        // Global state
+        let encounterTestMode = true; // Start in test mode by default
+        let preventionGroups = [];
+        let detectedPatterns = [];
+        let encounterGroupToEdit = null;
+        let groupStudents = [];
+        
+        // Switch encounter prevention subtabs
+        function switchEncounterTab(tabName) {
+            document.querySelectorAll('.encounter-subtab').forEach(btn => {
+                btn.style.background = '#f5f5f5';
+                btn.style.color = '#333';
+            });
+            document.querySelectorAll('.encounter-subtab-content').forEach(content => {
+                content.style.display = 'none';
+            });
+            
+            const btnId = tabName === 'patterns' ? 'patternsSubtabBtn' :
+                          tabName === 'groups' ? 'groupsSubtabBtn' : 'testSubtabBtn';
+            const contentId = tabName + 'Subtab';
+            
+            document.getElementById(btnId).style.background = '#667eea';
+            document.getElementById(btnId).style.color = 'white';
+            document.getElementById(contentId).style.display = 'block';
+            
+            // Load data for the tab
+            if (tabName === 'patterns') {
+                analyzeEncounterPatterns();
+            } else if (tabName === 'groups') {
+                updatePreventionGroupsDisplay();
+            }
+        }
+        
+        // Toggle test mode
+        function toggleEncounterTestMode() {
+            if (encounterTestMode) {
+                // Switching to live mode
+                const confirm = window.confirm(
+                    '⚠️ Switch to Live Mode?\n\n' +
+                    'This will:\n' +
+                    '• Use real student data for pattern detection\n' +
+                    '• Enable actual pass blocking (if prevention groups are active)\n' +
+                    '• Clear all test data\n\n' +
+                    'Are you sure?'
+                );
+                
+                if (!confirm) return;
+                
+                encounterTestMode = false;
+                clearTestData();
+                document.getElementById('testModeBanner').style.display = 'none';
+                document.getElementById('currentModeDisplay').textContent = '🔴 Live Mode';
+                document.getElementById('modeToggleBtn').textContent = '🧪 Switch to Test Mode';
+                document.getElementById('modeToggleBtn').style.background = '#3b82f6';
+                
+                alert('✅ Switched to Live Mode\n\nThe system is now using real student data.');
+            } else {
+                // Switching to test mode
+                encounterTestMode = true;
+                document.getElementById('testModeBanner').style.display = 'block';
+                document.getElementById('currentModeDisplay').textContent = '🧪 Test Mode';
+                document.getElementById('modeToggleBtn').textContent = '🔴 Switch to Live Mode';
+                document.getElementById('modeToggleBtn').style.background = '#dc2626';
+                
+                alert('✅ Switched to Test Mode\n\nYou can now safely test with simulated data.');
+            }
+            
+            analyzeEncounterPatterns();
+        }
+        
+        // Generate random test data
+        function generateTestData() {
+            const testStudents = [];
+            const testPasses = [];
+            
+            // Create 10 test students
+            for (let i = 1; i <= 10; i++) {
+                testStudents.push({
+                    id: `TEST${1000 + i}`,
+                    firstName: `TestStudent${String.fromCharCode(64 + i)}`,
+                    lastName: 'Test',
+                    grade: Math.floor(Math.random() * 4) + 9, // Grades 9-12
+                    isTestData: true
+                });
+            }
+            
+            // Add test students to main array
+            students.push(...testStudents);
+            
+            // Generate 50 passes with patterns
+            const now = new Date();
+            const destinations = ['bathroom', 'office', 'wellness', 'classroom'];
+            
+            // Create suspicious pair: Student A & B (7 bathroom overlaps)
+            for (let i = 0; i < 7; i++) {
+                const date = new Date(now.getTime() - (i * 2 * 24 * 60 * 60 * 1000)); // Every 2 days
+                const baseTime = new Date(date);
+                baseTime.setHours(14, 10 + i, 0, 0);
+                
+                hallPasses.push({
+                    id: `testpass_${Date.now()}_${i}_a`,
+                    studentId: testStudents[0].id,
+                    studentName: `${testStudents[0].firstName} ${testStudents[0].lastName}`,
+                    grade: testStudents[0].grade,
+                    destination: 'bathroom',
+                    duration: 5,
+                    createdAt: baseTime.toISOString(),
+                    status: 'returned',
+                    returnedAt: new Date(baseTime.getTime() + 5 * 60000).toISOString(),
+                    school: 'highschool',
+                    isTestData: true
+                });
+                
+                // Second student 2 minutes later
+                const time2 = new Date(baseTime.getTime() + 2 * 60000);
+                hallPasses.push({
+                    id: `testpass_${Date.now()}_${i}_b`,
+                    studentId: testStudents[1].id,
+                    studentName: `${testStudents[1].firstName} ${testStudents[1].lastName}`,
+                    grade: testStudents[1].grade,
+                    destination: 'bathroom',
+                    duration: 5,
+                    createdAt: time2.toISOString(),
+                    status: 'returned',
+                    returnedAt: new Date(time2.getTime() + 5 * 60000).toISOString(),
+                    school: 'highschool',
+                    isTestData: true
+                });
+            }
+            
+            // Create medium suspicion pair: Student C & D (4 overlaps, mixed locations)
+            for (let i = 0; i < 4; i++) {
+                const date = new Date(now.getTime() - (i * 3 * 24 * 60 * 60 * 1000));
+                const baseTime = new Date(date);
+                baseTime.setHours(13, 30 + i * 5, 0, 0);
+                const dest = i % 2 === 0 ? 'bathroom' : 'wellness';
+                
+                hallPasses.push({
+                    id: `testpass_${Date.now()}_med_${i}_a`,
+                    studentId: testStudents[2].id,
+                    studentName: `${testStudents[2].firstName} ${testStudents[2].lastName}`,
+                    grade: testStudents[2].grade,
+                    destination: dest,
+                    duration: 10,
+                    createdAt: baseTime.toISOString(),
+                    status: 'returned',
+                    returnedAt: new Date(baseTime.getTime() + 10 * 60000).toISOString(),
+                    school: 'highschool',
+                    isTestData: true
+                });
+                
+                const time2 = new Date(baseTime.getTime() + 4 * 60000);
+                hallPasses.push({
+                    id: `testpass_${Date.now()}_med_${i}_b`,
+                    studentId: testStudents[3].id,
+                    studentName: `${testStudents[3].firstName} ${testStudents[3].lastName}`,
+                    grade: testStudents[3].grade,
+                    destination: dest,
+                    duration: 10,
+                    createdAt: time2.toISOString(),
+                    status: 'returned',
+                    returnedAt: new Date(time2.getTime() + 10 * 60000).toISOString(),
+                    school: 'highschool',
+                    isTestData: true
+                });
+            }
+            
+            // Add some random noise passes
+            for (let i = 0; i < 20; i++) {
+                const studentIdx = Math.floor(Math.random() * testStudents.length);
+                const dest = destinations[Math.floor(Math.random() * destinations.length)];
+                const daysAgo = Math.floor(Math.random() * 30);
+                const date = new Date(now.getTime() - (daysAgo * 24 * 60 * 60 * 1000));
+                date.setHours(Math.floor(Math.random() * 7) + 9, Math.floor(Math.random() * 60), 0, 0);
+                
+                hallPasses.push({
+                    id: `testpass_noise_${i}`,
+                    studentId: testStudents[studentIdx].id,
+                    studentName: `${testStudents[studentIdx].firstName} ${testStudents[studentIdx].lastName}`,
+                    grade: testStudents[studentIdx].grade,
+                    destination: dest,
+                    duration: 5,
+                    createdAt: date.toISOString(),
+                    status: 'returned',
+                    returnedAt: new Date(date.getTime() + 5 * 60000).toISOString(),
+                    school: 'highschool',
+                    isTestData: true
+                });
+            }
+            
+            alert('✅ Test Data Generated!\n\n' +
+                  '• 10 test students created\n' +
+                  '• 50 test passes generated\n' +
+                  '• 2-3 suspicious patterns included\n\n' +
+                  'Go to Pattern Detection to analyze!');
+            
+            analyzeEncounterPatterns();
+        }
+        
+        // Generate specific vaping scenario
+        function generateVapingScenario() {
+            const testStudents = [
+                {
+                    id: 'TEST2001',
+                    firstName: 'VapeTest',
+                    lastName: 'StudentA',
+                    grade: '10',
+                    isTestData: true
+                },
+                {
+                    id: 'TEST2002',
+                    firstName: 'VapeTest',
+                    lastName: 'StudentB',
+                    grade: '10',
+                    isTestData: true
+                }
+            ];
+            
+            students.push(...testStudents);
+            
+            const now = new Date();
+            
+            // Create 7 highly suspicious bathroom overlaps
+            for (let i = 0; i < 7; i++) {
+                const date = new Date(now.getTime() - (i * 2 * 24 * 60 * 60 * 1000));
+                const baseTime = new Date(date);
+                baseTime.setHours(14, 15, 0, 0);
+                
+                hallPasses.push({
+                    id: `vapetest_${i}_a`,
+                    studentId: testStudents[0].id,
+                    studentName: `${testStudents[0].firstName} ${testStudents[0].lastName}`,
+                    grade: testStudents[0].grade,
+                    destination: 'bathroom',
+                    duration: 5,
+                    createdAt: baseTime.toISOString(),
+                    status: 'returned',
+                    returnedAt: new Date(baseTime.getTime() + 5 * 60000).toISOString(),
+                    school: 'highschool',
+                    isTestData: true
+                });
+                
+                const time2 = new Date(baseTime.getTime() + (1 + Math.random()) * 60000); // 1-2 min later
+                hallPasses.push({
+                    id: `vapetest_${i}_b`,
+                    studentId: testStudents[1].id,
+                    studentName: `${testStudents[1].firstName} ${testStudents[1].lastName}`,
+                    grade: testStudents[1].grade,
+                    destination: 'bathroom',
+                    duration: 5,
+                    createdAt: time2.toISOString(),
+                    status: 'returned',
+                    returnedAt: new Date(time2.getTime() + 5 * 60000).toISOString(),
+                    school: 'highschool',
+                    isTestData: true
+                });
+            }
+            
+            alert('✅ Vaping Scenario Generated!\n\n' +
+                  '• 2 students created\n' +
+                  '• 7 bathroom overlaps (all within 2 min)\n' +
+                  '• High suspicion pattern (Score: ~28)\n\n' +
+                  'This should appear as a red alert in Pattern Detection!');
+            
+            analyzeEncounterPatterns();
+        }
+        
+        // Clear all test data
+        function clearTestData() {
+            const originalStudentCount = students.length;
+            const originalPassCount = hallPasses.length;
+            
+            students = students.filter(s => !s.isTestData);
+            hallPasses = hallPasses.filter(p => !p.isTestData);
+            preventionGroups = preventionGroups.filter(g => !g.isTestData);
+            
+            const removedStudents = originalStudentCount - students.length;
+            const removedPasses = originalPassCount - hallPasses.length;
+            
+            alert(`✅ Test Data Cleared!\n\n` +
+                  `• ${removedStudents} test students removed\n` +
+                  `• ${removedPasses} test passes removed\n` +
+                  `• Test prevention groups removed`);
+            
+            analyzeEncounterPatterns();
+            updatePreventionGroupsDisplay();
+        }
+        
+        // Analyze encounter patterns
+        async function analyzeEncounterPatterns() {
+            document.getElementById('patternAnalysisStatus').textContent = '🔄 Analyzing...';
+            
+            const timeRange = parseInt(document.getElementById('patternTimeRange').value);
+            const cutoffDate = new Date();
+            cutoffDate.setDate(cutoffDate.getDate() - timeRange);
+            
+            // Get passes in time range
+            let passesToAnalyze = hallPasses.filter(p => new Date(p.createdAt) >= cutoffDate);
+            
+            // Filter by test mode
+            if (encounterTestMode) {
+                passesToAnalyze = passesToAnalyze.filter(p => p.isTestData);
+            } else {
+                passesToAnalyze = passesToAnalyze.filter(p => !p.isTestData);
+            }
+            
+            // Find overlaps
+            const overlaps = [];
+            for (let i = 0; i < passesToAnalyze.length; i++) {
+                for (let j = i + 1; j < passesToAnalyze.length; j++) {
+                    const pass1 = passesToAnalyze[i];
+                    const pass2 = passesToAnalyze[j];
+                    
+                    if (pass1.studentId === pass2.studentId) continue;
+                    if (pass1.destination !== pass2.destination) continue;
+                    
+                    const time1 = new Date(pass1.createdAt);
+                    const time2 = new Date(pass2.createdAt);
+                    const diffMinutes = Math.abs(time2 - time1) / 60000;
+                    
+                    if (diffMinutes <= 10) {
+                        overlaps.push({
+                            students: [pass1.studentId, pass2.studentId].sort(),
+                            studentNames: [pass1.studentName, pass2.studentName],
+                            location: pass1.destination,
+                            timeDiff: diffMinutes,
+                            date: pass1.createdAt
+                        });
+                    }
+                }
+            }
+            
+            // Group by student pairs
+            const patterns = {};
+            overlaps.forEach(overlap => {
+                const key = overlap.students.join('_');
+                if (!patterns[key]) {
+                    patterns[key] = {
+                        students: overlap.students,
+                        studentNames: overlap.studentNames,
+                        overlaps: []
+                    };
+                }
+                patterns[key].overlaps.push(overlap);
+            });
+            
+            // Calculate suspicion scores
+            detectedPatterns = Object.values(patterns).map(pattern => {
+                const score = calculateSuspicionScore(pattern);
+                return { ...pattern, suspicionScore: score };
+            }).sort((a, b) => b.suspicionScore - a.suspicionScore);
+            
+            displayPatterns();
+            
+            document.getElementById('patternAnalysisStatus').textContent = 
+                `✅ Found ${detectedPatterns.length} pattern(s) in last ${timeRange} days`;
+        }
+        
+        // Calculate suspicion score
+        function calculateSuspicionScore(pattern) {
+            const overlaps = pattern.overlaps;
+            
+            // Frequency (0-15 points)
+            const frequency = overlaps.length;
+            const frequencyScore = Math.min(frequency * 2, 15);
+            
+            // Consistency - same location? (0-10 points)
+            const locations = overlaps.map(o => o.location);
+            const uniqueLocations = [...new Set(locations)];
+            const consistencyScore = uniqueLocations.length === 1 ? 10 : 5;
+            
+            // Location risk (0-5 points) - bathroom is highest risk
+            const bathroomCount = locations.filter(l => l === 'bathroom').length;
+            const locationScore = (bathroomCount / locations.length) * 5;
+            
+            // Timing tightness (0-5 points)
+            const avgTimeDiff = overlaps.reduce((sum, o) => sum + o.timeDiff, 0) / overlaps.length;
+            const timingScore = avgTimeDiff <= 3 ? 5 : (avgTimeDiff <= 5 ? 3 : 1);
+            
+            return Math.round(frequencyScore + consistencyScore + locationScore + timingScore);
+        }
+        
+        // Display detected patterns
+        function displayPatterns() {
+            const container = document.getElementById('detectedPatternsContainer');
+            
+            if (detectedPatterns.length === 0) {
+                container.innerHTML = `
+                    <div style="background: white; padding: 40px; border-radius: 12px; text-align: center;">
+                        <div style="font-size: 48px; margin-bottom: 15px;">📊</div>
+                        <h3 style="color: #666; margin: 0;">No Patterns Detected</h3>
+                        <p style="color: #999; margin-top: 10px;">No overlapping pass patterns found in the selected time range.</p>
+                        ${encounterTestMode ? '<button class="btn" onclick="generateTestData()" style="margin-top: 20px;">🎲 Generate Test Data</button>' : ''}
+                    </div>
+                `;
+                return;
+            }
+            
+            const highSuspicion = detectedPatterns.filter(p => p.suspicionScore >= 25);
+            const mediumSuspicion = detectedPatterns.filter(p => p.suspicionScore >= 15 && p.suspicionScore < 25);
+            const lowSuspicion = detectedPatterns.filter(p => p.suspicionScore < 15);
+            
+            let html = '';
+            
+            // High suspicion patterns
+            if (highSuspicion.length > 0) {
+                html += '<h3 style="color: #ef4444; margin-bottom: 15px;">🔴 High Suspicion Patterns</h3>';
+                highSuspicion.forEach(pattern => {
+                    html += renderPatternCard(pattern, 'high');
+                });
+            }
+            
+            // Medium suspicion patterns
+            if (mediumSuspicion.length > 0) {
+                html += '<h3 style="color: #f59e0b; margin: 25px 0 15px 0;">🟡 Medium Suspicion Patterns</h3>';
+                mediumSuspicion.forEach(pattern => {
+                    html += renderPatternCard(pattern, 'medium');
+                });
+            }
+            
+            // Low suspicion patterns  
+            if (lowSuspicion.length > 0) {
+                html += '<h3 style="color: #10b981; margin: 25px 0 15px 0;">🟢 Low Suspicion Patterns</h3>';
+                lowSuspicion.forEach(pattern => {
+                    html += renderPatternCard(pattern, 'low');
+                });
+            }
+            
+            container.innerHTML = html;
+        }
+        
+        // Render individual pattern card
+        function renderPatternCard(pattern, level) {
+            const borderColor = level === 'high' ? '#ef4444' : level === 'medium' ? '#f59e0b' : '#10b981';
+            const bgColor = level === 'high' ? '#fee2e2' : level === 'medium' ? '#fef3c7' : '#d1fae5';
+            
+            const locations = pattern.overlaps.map(o => o.location);
+            const uniqueLocations = [...new Set(locations)];
+            const avgTime = (pattern.overlaps.reduce((sum, o) => sum + o.timeDiff, 0) / pattern.overlaps.length).toFixed(1);
+            
+            const locationCounts = {};
+            locations.forEach(loc => {
+                locationCounts[loc] = (locationCounts[loc] || 0) + 1;
+            });
+            
+            const recommendation = level === 'high' 
+                ? 'High frequency, consistent location, tight timing - likely coordinated.'
+                : level === 'medium'
+                ? 'Moderate frequency - may be coincidence. Monitor for 2 more weeks.'
+                : 'Likely coincidence - no action needed.';
+            
+            let timeline = '';
+            pattern.overlaps.slice(0, 7).forEach((overlap, idx) => {
+                const date = new Date(overlap.date).toLocaleDateString();
+                timeline += `<div style="padding: 8px; background: white; border-radius: 6px; margin-bottom: 6px;">
+                    ${date} - ${overlap.location.charAt(0).toUpperCase() + overlap.location.slice(1)} (${overlap.timeDiff.toFixed(1)} min gap)
+                </div>`;
+            });
+            
+            if (pattern.overlaps.length > 7) {
+                timeline += `<div style="color: #666; font-size: 13px; margin-top: 5px;">+ ${pattern.overlaps.length - 7} more occurrences</div>`;
+            }
+            
+            return `
+                <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px; border-left: 4px solid ${borderColor};">
+                    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 20px;">
+                        <div>
+                            <h4 style="margin: 0 0 5px 0; font-size: 18px;">${pattern.studentNames[0]} & ${pattern.studentNames[1]}</h4>
+                            <div style="font-size: 14px; color: #666;">Suspicion Score: ${pattern.suspicionScore} / 35</div>
+                        </div>
+                        <div style="background: ${bgColor}; color: ${borderColor}; padding: 8px 16px; border-radius: 20px; font-weight: 600; font-size: 14px;">
+                            ${level.toUpperCase()}
+                        </div>
+                    </div>
+                    
+                    <div style="background: #f9fafb; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                        <strong>📊 Statistics:</strong>
+                        <div style="margin-top: 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px;">
+                            <div>• ${pattern.overlaps.length} overlapping passes</div>
+                            <div>• Avg gap: ${avgTime} minutes</div>
+                            <div>• Locations: ${uniqueLocations.join(', ')}</div>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <strong>📅 Recent Timeline:</strong>
+                        <div style="margin-top: 10px; max-height: 200px; overflow-y: auto;">
+                            ${timeline}
+                        </div>
+                    </div>
+                    
+                    <div style="background: ${bgColor}; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                        <strong>💡 Recommendation:</strong>
+                        <div style="margin-top: 5px;">${recommendation}</div>
+                    </div>
+                    
+                    <div style="display: flex; gap: 10px;">
+                        <button class="btn" onclick='createGroupFromPattern(${JSON.stringify(pattern.students)}, "${pattern.studentNames[0]} & ${pattern.studentNames[1]}")' style="background: #10b981;">
+                            🛡️ Create Prevention Group
+                        </button>
+                        ${level !== 'low' ? `<button class="btn btn-secondary" onclick="dismissPattern()">❌ Dismiss</button>` : ''}
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Create prevention group from detected pattern
+        function createGroupFromPattern(studentIds, suggestedName) {
+            groupStudents = studentIds.map(id => students.find(s => s.id === id));
+            document.getElementById('groupName').value = suggestedName;
+            openCreateGroupModal();
+        }
+        
+        // Open create/edit group modal
+        function openCreateGroupModal() {
+            encounterGroupToEdit = null;
+            document.getElementById('groupModalTitle').textContent = 'Create Prevention Group';
+            
+            // Populate student dropdown
+            const select = document.getElementById('addStudentSelect');
+            select.innerHTML = '<option value="">Select student to add...</option>';
+            
+            let studentsToShow = encounterTestMode 
+                ? students.filter(s => s.isTestData)
+                : students.filter(s => !s.isTestData);
+            
+            studentsToShow.forEach(student => {
+                const option = document.createElement('option');
+                option.value = student.id;
+                option.textContent = `${student.firstName} ${student.lastName} (${student.id})`;
+                select.appendChild(option);
+            });
+            
+            updateGroupStudentsList();
+            document.getElementById('preventionGroupModal').classList.remove('hidden');
+        }
+        
+        // Add student to group
+        function addStudentToGroup() {
+            const select = document.getElementById('addStudentSelect');
+            const studentId = select.value;
+            
+            if (!studentId) return;
+            
+            const student = students.find(s => s.id === studentId);
+            if (!student) return;
+            
+            if (groupStudents.find(s => s.id === studentId)) {
+                alert('This student is already in the group');
+                return;
+            }
+            
+            groupStudents.push(student);
+            updateGroupStudentsList();
+            select.value = '';
+        }
+        
+        // Update group students list display
+        function updateGroupStudentsList() {
+            const container = document.getElementById('groupStudentsList');
+            
+            if (groupStudents.length === 0) {
+                container.innerHTML = '<p style="color: #999; margin: 0;">No students selected</p>';
+                return;
+            }
+            
+            container.innerHTML = groupStudents.map(s => `
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px; background: white; border-radius: 6px; margin-bottom: 8px;">
+                    <span><strong>${s.firstName} ${s.lastName}</strong> (${s.id})</span>
+                    <button onclick="removeStudentFromGroup('${s.id}')" style="background: #ef4444; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer;">Remove</button>
+                </div>
+            `).join('');
+        }
+        
+        // Remove student from group
+        function removeStudentFromGroup(studentId) {
+            groupStudents = groupStudents.filter(s => s.id !== studentId);
+            updateGroupStudentsList();
+        }
+        
+        // Save prevention group
+        async function savePreventionGroup() {
+            const name = document.getElementById('groupName').value.trim();
+            
+            if (!name) {
+                alert('Please enter a group name');
+                return;
+            }
+            
+            if (groupStudents.length < 2) {
+                alert('Please add at least 2 students to the group');
+                return;
+            }
+            
+            const timeWindow = parseInt(document.getElementById('blockTimeWindow').value);
+            const locations = Array.from(document.querySelectorAll('.groupLocation:checked')).map(cb => cb.value);
+            const monitorOnly = document.getElementById('monitorOnlyMode').checked;
+            const reason = document.getElementById('groupReason').value.trim();
+            
+            const group = {
+                id: encounterGroupToEdit?.id || `group_${Date.now()}`,
+                name: name,
+                students: groupStudents.map(s => s.id),
+                rules: {
+                    blockIfWithinMinutes: timeWindow,
+                    locations: locations,
+                    allDay: true
+                },
+                monitorOnly: monitorOnly,
+                reason: reason,
+                createdAt: encounterGroupToEdit?.createdAt || new Date().toISOString(),
+                createdBy: currentUser.email,
+                active: true,
+                blockLog: encounterGroupToEdit?.blockLog || [],
+                isTestData: encounterTestMode
+            };
+            
+            if (encounterGroupToEdit) {
+                const index = preventionGroups.findIndex(g => g.id === encounterGroupToEdit.id);
+                preventionGroups[index] = group;
+            } else {
+                preventionGroups.push(group);
+            }
+            
+            await saveData();
+            
+            closePreventionGroupModal();
+            updatePreventionGroupsDisplay();
+            
+            alert(`✅ Prevention Group ${encounterGroupToEdit ? 'Updated' : 'Created'}!\n\n` +
+                  `Group: ${name}\n` +
+                  `Students: ${groupStudents.length}\n` +
+                  `Mode: ${monitorOnly ? 'Monitor Only' : 'Active Blocking'}`);
+        }
+        
+        // Close prevention group modal
+        function closePreventionGroupModal() {
+            document.getElementById('preventionGroupModal').classList.add('hidden');
+            groupStudents = [];
+            encounterGroupToEdit = null;
+        }
+        
+        // Update prevention groups display
+        function updatePreventionGroupsDisplay() {
+            const container = document.getElementById('preventionGroupsContainer');
+            
+            let groupsToShow = encounterTestMode
+                ? preventionGroups.filter(g => g.isTestData)
+                : preventionGroups.filter(g => !g.isTestData);
+            
+            if (groupsToShow.length === 0) {
+                container.innerHTML = `
+                    <div style="background: white; padding: 40px; border-radius: 12px; text-align: center;">
+                        <div style="font-size: 48px; margin-bottom: 15px;">🛡️</div>
+                        <h3 style="color: #666; margin: 0;">No Prevention Groups</h3>
+                        <p style="color: #999; margin-top: 10px;">Create a prevention group to block coordinated pass attempts.</p>
+                        <button class="btn" onclick="openCreateGroupModal()" style="margin-top: 20px; background: #10b981;">➕ Create New Group</button>
+                    </div>
+                `;
+                return;
+            }
+            
+            container.innerHTML = groupsToShow.map(group => {
+                const studentNames = group.students
+                    .map(id => students.find(s => s.id === id))
+                    .filter(s => s)
+                    .map(s => `${s.firstName} ${s.lastName}`)
+                    .join(', ');
+                
+                const recentBlocks = group.blockLog?.slice(-3).reverse() || [];
+                
+                return `
+                    <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px; border-left: 4px solid ${group.monitorOnly ? '#3b82f6' : '#ef4444'};">
+                        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px;">
+                            <div>
+                                <h3 style="margin: 0 0 5px 0;">${group.name}</h3>
+                                <div style="font-size: 14px; color: #666;">
+                                    ${group.monitorOnly ? '👁️ Monitor Only' : '🔴 Active Blocking'} | Created ${new Date(group.createdAt).toLocaleDateString()}
+                                </div>
+                            </div>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary" onclick='editPreventionGroup("${group.id}")' style="padding: 8px 16px;">✏️ Edit</button>
+                                <button class="btn" onclick='deletePreventionGroup("${group.id}")' style="padding: 8px 16px; background: #ef4444;">🗑️</button>
+                            </div>
+                        </div>
+                        
+                        <div style="background: #f9fafb; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                            <strong>Students:</strong> ${studentNames}
+                        </div>
+                        
+                        <div style="background: #f9fafb; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                            <strong>Rules:</strong>
+                            <div style="margin-top: 8px;">
+                                • Block if within ${group.rules.blockIfWithinMinutes} minutes
+                                <br>• Locations: ${group.rules.locations.join(', ')}
+                            </div>
+                        </div>
+                        
+                        ${group.reason ? `
+                            <div style="background: #fef3c7; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                                <strong>Reason:</strong> ${group.reason}
+                            </div>
+                        ` : ''}
+                        
+                        ${recentBlocks.length > 0 ? `
+                            <div style="margin-top: 15px;">
+                                <strong>${group.monitorOnly ? '👁️ Monitored Events' : '🚨 Recent Blocks'} (Last 3):</strong>
+                                <div style="margin-top: 10px;">
+                                    ${recentBlocks.map(block => `
+                                        <div style="padding: 10px; background: #f9fafb; border-radius: 6px; margin-bottom: 8px; font-size: 14px;">
+                                            ${new Date(block.timestamp).toLocaleString()} - ${block.blockedStudent} ${group.monitorOnly ? 'would have been blocked' : 'blocked'} (${block.activeStudent} had active ${block.location} pass)
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        // Edit prevention group
+        function editPreventionGroup(groupId) {
+            const group = preventionGroups.find(g => g.id === groupId);
+            if (!group) return;
+            
+            encounterGroupToEdit = group;
+            groupStudents = group.students
+                .map(id => students.find(s => s.id === id))
+                .filter(s => s);
+            
+            document.getElementById('groupModalTitle').textContent = 'Edit Prevention Group';
+            document.getElementById('groupName').value = group.name;
+            document.getElementById('blockTimeWindow').value = group.rules.blockIfWithinMinutes;
+            document.getElementById('monitorOnlyMode').checked = group.monitorOnly;
+            document.getElementById('groupReason').value = group.reason || '';
+            
+            // Set location checkboxes
+            document.querySelectorAll('.groupLocation').forEach(cb => {
+                cb.checked = group.rules.locations.includes(cb.value);
+            });
+            
+            updateGroupStudentsList();
+            
+            // Populate student dropdown
+            const select = document.getElementById('addStudentSelect');
+            select.innerHTML = '<option value="">Select student to add...</option>';
+            
+            let studentsToShow = encounterTestMode 
+                ? students.filter(s => s.isTestData)
+                : students.filter(s => !s.isTestData);
+            
+            studentsToShow.forEach(student => {
+                const option = document.createElement('option');
+                option.value = student.id;
+                option.textContent = `${student.firstName} ${student.lastName} (${student.id})`;
+                select.appendChild(option);
+            });
+            
+            document.getElementById('preventionGroupModal').classList.remove('hidden');
+        }
+        
+        // Delete prevention group
+        async function deletePreventionGroup(groupId) {
+            const group = preventionGroups.find(g => g.id === groupId);
+            if (!group) return;
+            
+            if (!confirm(`Delete prevention group "${group.name}"?\n\nThis cannot be undone.`)) {
+                return;
+            }
+            
+            preventionGroups = preventionGroups.filter(g => g.id !== groupId);
+            await saveData();
+            
+            updatePreventionGroupsDisplay();
+            alert(`✅ Prevention group "${group.name}" deleted.`);
+        }
+        
+        // Check if pass should be blocked by prevention groups
+        function checkEncounterPrevention(studentId, destination) {
+            // Only check if in live mode (test mode doesn't block real passes)
+            if (encounterTestMode) return null;
+            
+            const now = new Date();
+            
+            // Find all groups this student is in
+            const studentGroups = preventionGroups.filter(g => 
+                g.active && g.students.includes(studentId)
+            );
+            
+            for (const group of studentGroups) {
+                // Check if destination applies
+                if (!group.rules.locations.includes(destination)) continue;
+                
+                // Check for other students in group with recent/active passes
+                for (const otherStudentId of group.students) {
+                    if (otherStudentId === studentId) continue;
+                    
+                    // Find recent passes from other student
+                    const otherPasses = hallPasses.filter(p => 
+                        p.studentId === otherStudentId &&
+                        (p.status === 'active' || p.status === 'expiring') &&
+                        p.destination === destination
+                    );
+                    
+                    if (otherPasses.length > 0) {
+                        const otherStudent = students.find(s => s.id === otherStudentId);
+                        
+                        // Log the block
+                        if (!group.blockLog) group.blockLog = [];
+                        group.blockLog.push({
+                            timestamp: now.toISOString(),
+                            blockedStudent: students.find(s => s.id === studentId)?.firstName + ' ' + students.find(s => s.id === studentId)?.lastName,
+                            activeStudent: otherStudent?.firstName + ' ' + otherStudent?.lastName,
+                            location: destination,
+                            groupId: group.id
+                        });
+                        
+                        saveData();
+                        
+                        return {
+                            blocked: !group.monitorOnly,
+                            group: group,
+                            conflictingStudent: otherStudent,
+                            monitorOnly: group.monitorOnly
+                        };
+                    }
+                }
+            }
+            
+            return null;
+        }
+        
+        // Dismiss pattern (placeholder)
+        function dismissPattern() {
+            alert('Pattern dismissed (feature placeholder)');
         }
 
         // ============================================
