@@ -5245,6 +5245,25 @@
                                     // Keep our local groups - don't let cloud overwrite with empty array
                                     console.log('📝 Keeping local prevention groups (cloud has none)');
                                 }
+                                
+                                // MERGE HALL PASSES
+                                // Critical: Merge passes by ID to avoid losing newly created passes
+                                if (cloudRecord.hallPasses && Array.isArray(cloudRecord.hallPasses)) {
+                                    // Create a map of local passes by ID for quick lookup
+                                    const localPassIds = new Set(hallPasses.map(p => p.id));
+                                    
+                                    // Add any cloud passes we don't have locally
+                                    cloudRecord.hallPasses.forEach(cloudPass => {
+                                        if (!localPassIds.has(cloudPass.id)) {
+                                            hallPasses.push(cloudPass);
+                                        }
+                                    });
+                                    
+                                    console.log('📝 Merged hall passes (kept local + added cloud)');
+                                } else if (hallPasses.length > 0) {
+                                    // Cloud doesn't have passes but we do locally - keep ours
+                                    console.log('📝 Keeping local hall passes (cloud has none)');
+                                }
                             }
                         }
                         
