@@ -10740,15 +10740,28 @@
         
         // Check if pass should be blocked by prevention groups
         function checkEncounterPrevention(studentId, destination) {
-            // Only check if in live mode (test mode doesn't block real passes)
-            if (encounterTestMode) return null;
-            
             const now = new Date();
             
-            // Find all groups this student is in
-            const studentGroups = preventionGroups.filter(g => 
-                g.active && g.students.includes(studentId)
-            );
+            // Check if this student is test data
+            const student = students.find(s => s.id === studentId);
+            if (!student) return null;
+            
+            const isTestStudent = student.isTestData === true;
+            
+            // Test Mode: Only check test students (ignore real students)
+            // Live Mode: Only check real students (ignore test students)
+            if (encounterTestMode && !isTestStudent) return null;
+            if (!encounterTestMode && isTestStudent) return null;
+            
+            // Find all groups this student is in (matching test/live mode)
+            const studentGroups = preventionGroups.filter(g => {
+                if (!g.active) return false;
+                if (!g.students.includes(studentId)) return false;
+                // In test mode, only use test groups; in live mode, only use live groups
+                if (encounterTestMode && !g.isTestData) return false;
+                if (!encounterTestMode && g.isTestData) return false;
+                return true;
+            });
             
             for (const group of studentGroups) {
                 // Check if destination applies
