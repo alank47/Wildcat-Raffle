@@ -7821,6 +7821,12 @@
         }
 
         async function createHallPass() {
+            // SYNC WITH CLOUD FIRST to get any new passes from other devices
+            // This ensures we have the latest pass data before checking for conflicts
+            console.log('🔄 Syncing with cloud before creating pass...');
+            await loadData();
+            console.log('✅ Cloud sync complete - checking for conflicts...');
+            
             const destination = document.getElementById('selectedDestination').value;
             const duration = parseInt(document.getElementById('selectedDuration').value);
             const notes = document.getElementById('passNotes').value.trim();
