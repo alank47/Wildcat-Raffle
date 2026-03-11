@@ -1841,172 +1841,113 @@
                     <p style="color: white; margin: 0; font-size: 16px;"><strong>📅 Current Week:</strong> Week <span id="leaderboardWeek">1</span> of <span id="cycleDurationLeaderboard">5</span></p>
                 </div>
 
-                <!-- Middle School Leaderboard -->
-                <div style="margin-bottom: 50px;">
-                    <div style="background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%); padding: 15px 25px; border-radius: 12px; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(33, 150, 243, 0.3);">
-                        <h3 style="color: white; margin: 0; font-size: 22px;">🎓 Middle School (Grades 6-8)</h3>
-                    </div>
+                <!-- Side-by-Side School Leaderboards -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 30px;">
                     
-                    <!-- Overall Leader - Full Width on Top -->
-                    <div style="margin-bottom: 25px;">
-                        <div style="background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%); padding: 25px; border-radius: 12px; max-width: 700px; margin: 0 auto; box-shadow: 0 4px 15px rgba(255, 107, 107, 0.4);">
-                            <h3 style="color: white; margin: 0 0 20px 0; text-align: center; font-size: 20px;">🏆 Overall Leader</h3>
-                            <div style="background: rgba(255,255,255,0.95); border-radius: 8px; padding: 15px;">
-                                <table style="width: 100%;">
-                                    <thead>
-                                        <tr style="border-bottom: 2px solid #ff6b6b;">
-                                            <th style="text-align: left; padding: 10px; color: #333; font-weight: 700;">Rank</th>
-                                            <th style="text-align: left; padding: 10px; color: #333; font-weight: 700;">Student</th>
-                                            <th style="text-align: right; padding: 10px; color: #333; font-weight: 700;">Total</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="overallLeaderboardMS">
-                                    </tbody>
-                                </table>
+                    <!-- MIDDLE SCHOOL (LEFT SIDE - ORANGE) -->
+                    <div style="background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); padding: 4px; border-radius: 16px; box-shadow: 0 6px 20px rgba(255, 152, 0, 0.3);">
+                        <div style="background: white; border-radius: 12px; padding: 25px;">
+                            <!-- School Header -->
+                            <div style="text-align: center; margin-bottom: 25px;">
+                                <div style="display: inline-block; background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); padding: 15px 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(255, 152, 0, 0.3);">
+                                    <h3 style="color: white; margin: 0; font-size: 22px; font-weight: 700;">🎓 Middle School</h3>
+                                    <p style="color: rgba(255,255,255,0.9); margin: 5px 0 0 0; font-size: 14px;">Grades 6-8</p>
+                                </div>
                             </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Three Categories Below -->
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px;">
-                        <!-- PBIS Leaderboard -->
-                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);">
-                            <h3 style="color: white; margin: 0 0 20px 0; font-size: 18px;">🌟 PBIS Behaviors</h3>
-                            <div style="background: rgba(255,255,255,0.95); border-radius: 8px; padding: 15px;">
-                                <table style="width: 100%;">
-                                    <thead>
-                                        <tr style="border-bottom: 2px solid #667eea;">
-                                            <th style="text-align: left; padding: 8px; color: #333; font-size: 13px;">Rank</th>
-                                            <th style="text-align: left; padding: 8px; color: #333; font-size: 13px;">Student</th>
-                                            <th style="text-align: right; padding: 8px; color: #333; font-size: 13px;">Tickets</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="pbisLeaderboardMS">
-                                    </tbody>
-                                </table>
+                            
+                            <!-- Overall Leader Card -->
+                            <div style="background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(255, 152, 0, 0.2);">
+                                <h4 style="color: white; margin: 0 0 15px 0; text-align: center; font-size: 18px; font-weight: 600;">🏆 Overall Leader</h4>
+                                <div style="background: rgba(255,255,255,0.95); border-radius: 8px; padding: 15px;">
+                                    <table style="width: 100%;">
+                                        <thead>
+                                            <tr style="border-bottom: 2px solid #ff9800;">
+                                                <th style="text-align: left; padding: 8px; color: #333; font-weight: 600; font-size: 13px;">Rank</th>
+                                                <th style="text-align: left; padding: 8px; color: #333; font-weight: 600; font-size: 13px;">Student</th>
+                                                <th style="text-align: right; padding: 8px; color: #333; font-weight: 600; font-size: 13px;">Total</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="overallLeaderboardMS">
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
-                        </div>
-
-                        <!-- Attendance Leaderboard -->
-                        <div style="background: linear-gradient(135deg, #28a745 0%, #218838 100%); padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);">
-                            <h3 style="color: white; margin: 0 0 20px 0; font-size: 18px;">📅 Perfect Attendance</h3>
-                            <div style="background: rgba(255,255,255,0.95); border-radius: 8px; padding: 15px;">
-                                <table style="width: 100%;">
-                                    <thead>
-                                        <tr style="border-bottom: 2px solid #28a745;">
-                                            <th style="text-align: left; padding: 8px; color: #333; font-size: 13px;">Rank</th>
-                                            <th style="text-align: left; padding: 8px; color: #333; font-size: 13px;">Student</th>
-                                            <th style="text-align: right; padding: 8px; color: #333; font-size: 13px;">Tickets</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="attendanceLeaderboardMS">
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        <!-- Academic Leaderboard -->
-                        <div style="background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%); padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(255, 193, 7, 0.3);">
-                            <h3 style="color: white; margin: 0 0 20px 0; font-size: 18px;">📚 Academics</h3>
-                            <div style="background: rgba(255,255,255,0.95); border-radius: 8px; padding: 15px;">
-                                <table style="width: 100%;">
-                                    <thead>
-                                        <tr style="border-bottom: 2px solid #ffc107;">
-                                            <th style="text-align: left; padding: 8px; color: #333; font-size: 13px;">Rank</th>
-                                            <th style="text-align: left; padding: 8px; color: #333; font-size: 13px;">Student</th>
-                                            <th style="text-align: right; padding: 8px; color: #333; font-size: 13px;">Tickets</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="academicLeaderboardMS">
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- High School Leaderboard -->
-                <div>
-                    <div style="background: linear-gradient(135deg, #9c27b0 0%, #7b1fa2 100%); padding: 15px 25px; border-radius: 12px; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(156, 39, 176, 0.3);">
-                        <h3 style="color: white; margin: 0; font-size: 22px;">🎓 High School (Grades 9-12)</h3>
-                    </div>
-                    
-                    <!-- Overall Leader - Full Width on Top -->
-                    <div style="margin-bottom: 25px;">
-                        <div style="background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%); padding: 25px; border-radius: 12px; max-width: 700px; margin: 0 auto; box-shadow: 0 4px 15px rgba(255, 107, 107, 0.4);">
-                            <h3 style="color: white; margin: 0 0 20px 0; text-align: center; font-size: 20px;">🏆 Overall Leader</h3>
-                            <div style="background: rgba(255,255,255,0.95); border-radius: 8px; padding: 15px;">
-                                <table style="width: 100%;">
-                                    <thead>
-                                        <tr style="border-bottom: 2px solid #ff6b6b;">
-                                            <th style="text-align: left; padding: 10px; color: #333; font-weight: 700;">Rank</th>
-                                            <th style="text-align: left; padding: 10px; color: #333; font-weight: 700;">Student</th>
-                                            <th style="text-align: right; padding: 10px; color: #333; font-weight: 700;">Total</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="overallLeaderboardHS">
-                                    </tbody>
-                                </table>
+                            
+                            <!-- Category Leaders -->
+                            <div style="display: grid; gap: 15px;">
+                                <!-- PBIS -->
+                                <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; border-left: 4px solid #ef4444;">
+                                    <h5 style="margin: 0 0 10px 0; color: #ef4444; font-size: 15px; font-weight: 600;">🎯 PBIS Leader</h5>
+                                    <div id="pbisLeaderMS" style="color: #333; font-size: 14px;"></div>
+                                </div>
+                                
+                                <!-- Attendance -->
+                                <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; border-left: 4px solid #10b981;">
+                                    <h5 style="margin: 0 0 10px 0; color: #10b981; font-size: 15px; font-weight: 600;">📅 Attendance Leader</h5>
+                                    <div id="attendanceLeaderMS" style="color: #333; font-size: 14px;"></div>
+                                </div>
+                                
+                                <!-- Academic -->
+                                <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; border-left: 4px solid #3b82f6;">
+                                    <h5 style="margin: 0 0 10px 0; color: #3b82f6; font-size: 15px; font-weight: 600;">📚 Academic Leader</h5>
+                                    <div id="academicLeaderMS" style="color: #333; font-size: 14px;"></div>
+                                </div>
                             </div>
                         </div>
                     </div>
                     
-                    <!-- Three Categories Below -->
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px;">
-                        <!-- PBIS Leaderboard -->
-                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);">
-                            <h3 style="color: white; margin: 0 0 20px 0; font-size: 18px;">🌟 PBIS Behaviors</h3>
-                            <div style="background: rgba(255,255,255,0.95); border-radius: 8px; padding: 15px;">
-                                <table style="width: 100%;">
-                                    <thead>
-                                        <tr style="border-bottom: 2px solid #667eea;">
-                                            <th style="text-align: left; padding: 8px; color: #333; font-size: 13px;">Rank</th>
-                                            <th style="text-align: left; padding: 8px; color: #333; font-size: 13px;">Student</th>
-                                            <th style="text-align: right; padding: 8px; color: #333; font-size: 13px;">Tickets</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="pbisLeaderboardHS">
-                                    </tbody>
-                                </table>
+                    <!-- HIGH SCHOOL (RIGHT SIDE - BLUE) -->
+                    <div style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); padding: 4px; border-radius: 16px; box-shadow: 0 6px 20px rgba(59, 130, 246, 0.3);">
+                        <div style="background: white; border-radius: 12px; padding: 25px;">
+                            <!-- School Header -->
+                            <div style="text-align: center; margin-bottom: 25px;">
+                                <div style="display: inline-block; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); padding: 15px 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);">
+                                    <h3 style="color: white; margin: 0; font-size: 22px; font-weight: 700;">🏫 High School</h3>
+                                    <p style="color: rgba(255,255,255,0.9); margin: 5px 0 0 0; font-size: 14px;">Grades 9-12</p>
+                                </div>
                             </div>
-                        </div>
-
-                        <!-- Attendance Leaderboard -->
-                        <div style="background: linear-gradient(135deg, #28a745 0%, #218838 100%); padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);">
-                            <h3 style="color: white; margin: 0 0 20px 0; font-size: 18px;">📅 Perfect Attendance</h3>
-                            <div style="background: rgba(255,255,255,0.95); border-radius: 8px; padding: 15px;">
-                                <table style="width: 100%;">
-                                    <thead>
-                                        <tr style="border-bottom: 2px solid #28a745;">
-                                            <th style="text-align: left; padding: 8px; color: #333; font-size: 13px;">Rank</th>
-                                            <th style="text-align: left; padding: 8px; color: #333; font-size: 13px;">Student</th>
-                                            <th style="text-align: right; padding: 8px; color: #333; font-size: 13px;">Tickets</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="attendanceLeaderboardHS">
-                                    </tbody>
-                                </table>
+                            
+                            <!-- Overall Leader Card -->
+                            <div style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);">
+                                <h4 style="color: white; margin: 0 0 15px 0; text-align: center; font-size: 18px; font-weight: 600;">🏆 Overall Leader</h4>
+                                <div style="background: rgba(255,255,255,0.95); border-radius: 8px; padding: 15px;">
+                                    <table style="width: 100%;">
+                                        <thead>
+                                            <tr style="border-bottom: 2px solid #3b82f6;">
+                                                <th style="text-align: left; padding: 8px; color: #333; font-weight: 600; font-size: 13px;">Rank</th>
+                                                <th style="text-align: left; padding: 8px; color: #333; font-weight: 600; font-size: 13px;">Student</th>
+                                                <th style="text-align: right; padding: 8px; color: #333; font-weight: 600; font-size: 13px;">Total</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="overallLeaderboardHS">
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
-                        </div>
-
-                        <!-- Academic Leaderboard -->
-                        <div style="background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%); padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(255, 193, 7, 0.3);">
-                            <h3 style="color: white; margin: 0 0 20px 0; font-size: 18px;">📚 Academics</h3>
-                            <div style="background: rgba(255,255,255,0.95); border-radius: 8px; padding: 15px;">
-                                <table style="width: 100%;">
-                                    <thead>
-                                        <tr style="border-bottom: 2px solid #ffc107;">
-                                            <th style="text-align: left; padding: 8px; color: #333; font-size: 13px;">Rank</th>
-                                            <th style="text-align: left; padding: 8px; color: #333; font-size: 13px;">Student</th>
-                                            <th style="text-align: right; padding: 8px; color: #333; font-size: 13px;">Tickets</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="academicLeaderboardHS">
-                                    </tbody>
-                                </table>
+                            
+                            <!-- Category Leaders -->
+                            <div style="display: grid; gap: 15px;">
+                                <!-- PBIS -->
+                                <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; border-left: 4px solid #ef4444;">
+                                    <h5 style="margin: 0 0 10px 0; color: #ef4444; font-size: 15px; font-weight: 600;">🎯 PBIS Leader</h5>
+                                    <div id="pbisLeaderHS" style="color: #333; font-size: 14px;"></div>
+                                </div>
+                                
+                                <!-- Attendance -->
+                                <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; border-left: 4px solid #10b981;">
+                                    <h5 style="margin: 0 0 10px 0; color: #10b981; font-size: 15px; font-weight: 600;">📅 Attendance Leader</h5>
+                                    <div id="attendanceLeaderHS" style="color: #333; font-size: 14px;"></div>
+                                </div>
+                                
+                                <!-- Academic -->
+                                <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; border-left: 4px solid #3b82f6;">
+                                    <h5 style="margin: 0 0 10px 0; color: #3b82f6; font-size: 15px; font-weight: 600;">📚 Academic Leader</h5>
+                                    <div id="academicLeaderHS" style="color: #333; font-size: 14px;"></div>
+                                </div>
                             </div>
                         </div>
                     </div>
+                    
                 </div>
             </div>
 
@@ -6894,79 +6835,50 @@
                     const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
                     return `
                         <tr>
-                            <td style="padding: 8px;">${medal}</td>
-                            <td style="padding: 8px;">${s.firstName} ${s.lastName}</td>
-                            <td style="padding: 8px; text-align: right; font-weight: bold; color: #ff6b6b;">${s.totalTickets}</td>
+                            <td style="padding: 8px; font-size: 16px;">${medal}</td>
+                            <td style="padding: 8px; font-weight: 600;">${s.firstName} ${s.lastName}</td>
+                            <td style="padding: 8px; text-align: right; font-weight: bold; color: #ff9800; font-size: 16px;">${s.totalTickets} 🎫</td>
                         </tr>
                     `;
                 }).join('');
             }
             
-            // Get top 10 for each category
+            // Get top student for each category (simplified view)
             const msPbisTop = [...msStudents]
                 .filter(s => (s.pbisTickets || 0) > 0)
-                .sort((a, b) => (b.pbisTickets || 0) - (a.pbisTickets || 0))
-                .slice(0, 10);
-
+                .sort((a, b) => (b.pbisTickets || 0) - (a.pbisTickets || 0));
+            
             const msAttendanceTop = [...msStudents]
                 .filter(s => (s.attendanceTickets || 0) > 0)
-                .sort((a, b) => (b.attendanceTickets || 0) - (a.attendanceTickets || 0))
-                .slice(0, 10);
-
+                .sort((a, b) => (b.attendanceTickets || 0) - (a.attendanceTickets || 0));
+            
             const msAcademicTop = [...msStudents]
                 .filter(s => (s.academicTickets || 0) > 0)
-                .sort((a, b) => (b.academicTickets || 0) - (a.academicTickets || 0))
-                .slice(0, 10);
+                .sort((a, b) => (b.academicTickets || 0) - (a.academicTickets || 0));
 
-            // Update MS PBIS leaderboard
-            const msPbisTable = document.getElementById('pbisLeaderboardMS');
+            // Update MS category leaders (simplified cards)
+            const msPbisLeader = document.getElementById('pbisLeaderMS');
             if (msPbisTop.length === 0) {
-                msPbisTable.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #999;">No tickets awarded yet</td></tr>';
+                msPbisLeader.innerHTML = '<span style="color: #999; font-style: italic;">No tickets yet</span>';
             } else {
-                msPbisTable.innerHTML = msPbisTop.map((s, i) => {
-                    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-                    return `
-                        <tr>
-                            <td style="padding: 8px;">${medal}</td>
-                            <td style="padding: 8px;">${s.firstName} ${s.lastName}</td>
-                            <td style="padding: 8px; text-align: right; font-weight: bold; color: #667eea;">${s.pbisTickets}</td>
-                        </tr>
-                    `;
-                }).join('');
+                const top = msPbisTop[0];
+                msPbisLeader.innerHTML = `<strong>${top.firstName} ${top.lastName}</strong> - ${top.pbisTickets} 🎫`;
             }
-
-            // Update MS Attendance leaderboard
-            const msAttendanceTable = document.getElementById('attendanceLeaderboardMS');
+            
+            const msAttendanceLeader = document.getElementById('attendanceLeaderMS');
             if (msAttendanceTop.length === 0) {
-                msAttendanceTable.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #999;">No tickets awarded yet</td></tr>';
+                msAttendanceLeader.innerHTML = '<span style="color: #999; font-style: italic;">No tickets yet</span>';
             } else {
-                msAttendanceTable.innerHTML = msAttendanceTop.map((s, i) => {
-                    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-                    return `
-                        <tr>
-                            <td style="padding: 8px;">${medal}</td>
-                            <td style="padding: 8px;">${s.firstName} ${s.lastName}</td>
-                            <td style="padding: 8px; text-align: right; font-weight: bold; color: #28a745;">${s.attendanceTickets}</td>
-                        </tr>
-                    `;
-                }).join('');
+                const top = msAttendanceTop[0];
+                msAttendanceLeader.innerHTML = `<strong>${top.firstName} ${top.lastName}</strong> - ${top.attendanceTickets} 🎫`;
             }
-
-            // Update MS Academic leaderboard
-            const msAcademicTable = document.getElementById('academicLeaderboardMS');
+            
+            const msAcademicLeader = document.getElementById('academicLeaderMS');
             if (msAcademicTop.length === 0) {
-                msAcademicTable.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #999;">No tickets awarded yet</td></tr>';
+                msAcademicLeader.innerHTML = '<span style="color: #999; font-style: italic;">No tickets yet</span>';
             } else {
-                msAcademicTable.innerHTML = msAcademicTop.map((s, i) => {
-                    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-                    return `
-                        <tr>
-                            <td style="padding: 8px;">${medal}</td>
-                            <td style="padding: 8px;">${s.firstName} ${s.lastName}</td>
-                            <td style="padding: 8px; text-align: right; font-weight: bold; color: #ffc107;">${s.academicTickets}</td>
-                        </tr>
-                    `;
-                }).join('');
+                const top = msAcademicTop[0];
+                msAcademicLeader.innerHTML = `<strong>${top.firstName} ${top.lastName}</strong> - ${top.academicTickets} 🎫`;
             }
 
             // HIGH SCHOOL LEADERBOARDS
@@ -6989,79 +6901,50 @@
                     const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
                     return `
                         <tr>
-                            <td style="padding: 8px;">${medal}</td>
-                            <td style="padding: 8px;">${s.firstName} ${s.lastName}</td>
-                            <td style="padding: 8px; text-align: right; font-weight: bold; color: #ff6b6b;">${s.totalTickets}</td>
+                            <td style="padding: 8px; font-size: 16px;">${medal}</td>
+                            <td style="padding: 8px; font-weight: 600;">${s.firstName} ${s.lastName}</td>
+                            <td style="padding: 8px; text-align: right; font-weight: bold; color: #3b82f6; font-size: 16px;">${s.totalTickets} 🎫</td>
                         </tr>
                     `;
                 }).join('');
             }
             
-            // Get top 10 for each category
+            // Get top student for each category
             const hsPbisTop = [...hsStudents]
                 .filter(s => (s.pbisTickets || 0) > 0)
-                .sort((a, b) => (b.pbisTickets || 0) - (a.pbisTickets || 0))
-                .slice(0, 10);
+                .sort((a, b) => (b.pbisTickets || 0) - (a.pbisTickets || 0));
 
             const hsAttendanceTop = [...hsStudents]
                 .filter(s => (s.attendanceTickets || 0) > 0)
-                .sort((a, b) => (b.attendanceTickets || 0) - (a.attendanceTickets || 0))
-                .slice(0, 10);
+                .sort((a, b) => (b.attendanceTickets || 0) - (a.attendanceTickets || 0));
 
             const hsAcademicTop = [...hsStudents]
                 .filter(s => (s.academicTickets || 0) > 0)
-                .sort((a, b) => (b.academicTickets || 0) - (a.academicTickets || 0))
-                .slice(0, 10);
+                .sort((a, b) => (b.academicTickets || 0) - (a.academicTickets || 0));
 
-            // Update HS PBIS leaderboard
-            const hsPbisTable = document.getElementById('pbisLeaderboardHS');
+            // Update HS category leaders (simplified cards)
+            const hsPbisLeader = document.getElementById('pbisLeaderHS');
             if (hsPbisTop.length === 0) {
-                hsPbisTable.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #999;">No tickets awarded yet</td></tr>';
+                hsPbisLeader.innerHTML = '<span style="color: #999; font-style: italic;">No tickets yet</span>';
             } else {
-                hsPbisTable.innerHTML = hsPbisTop.map((s, i) => {
-                    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-                    return `
-                        <tr>
-                            <td style="padding: 8px;">${medal}</td>
-                            <td style="padding: 8px;">${s.firstName} ${s.lastName}</td>
-                            <td style="padding: 8px; text-align: right; font-weight: bold; color: #667eea;">${s.pbisTickets}</td>
-                        </tr>
-                    `;
-                }).join('');
+                const top = hsPbisTop[0];
+                hsPbisLeader.innerHTML = `<strong>${top.firstName} ${top.lastName}</strong> - ${top.pbisTickets} 🎫`;
             }
-
-            // Update HS Attendance leaderboard
-            const hsAttendanceTable = document.getElementById('attendanceLeaderboardHS');
+            
+            const hsAttendanceLeader = document.getElementById('attendanceLeaderHS');
             if (hsAttendanceTop.length === 0) {
-                hsAttendanceTable.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #999;">No tickets awarded yet</td></tr>';
+                hsAttendanceLeader.innerHTML = '<span style="color: #999; font-style: italic;">No tickets yet</span>';
             } else {
-                hsAttendanceTable.innerHTML = hsAttendanceTop.map((s, i) => {
-                    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-                    return `
-                        <tr>
-                            <td style="padding: 8px;">${medal}</td>
-                            <td style="padding: 8px;">${s.firstName} ${s.lastName}</td>
-                            <td style="padding: 8px; text-align: right; font-weight: bold; color: #28a745;">${s.attendanceTickets}</td>
-                        </tr>
-                    `;
-                }).join('');
+                const top = hsAttendanceTop[0];
+                hsAttendanceLeader.innerHTML = `<strong>${top.firstName} ${top.lastName}</strong> - ${top.attendanceTickets} 🎫`;
             }
-
-            // Update HS Academic leaderboard
-            const hsAcademicTable = document.getElementById('academicLeaderboardHS');
+            
+            const hsAcademicLeader = document.getElementById('academicLeaderHS');
             if (hsAcademicTop.length === 0) {
-                hsAcademicTable.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #999;">No tickets awarded yet</td></tr>';
+                hsAcademicLeader.innerHTML = '<span style="color: #999; font-style: italic;">No tickets yet</span>';
             } else {
-                hsAcademicTable.innerHTML = hsAcademicTop.map((s, i) => {
-                    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-                    return `
-                        <tr>
-                            <td style="padding: 8px;">${medal}</td>
-                            <td style="padding: 8px;">${s.firstName} ${s.lastName}</td>
-                            <td style="padding: 8px; text-align: right; font-weight: bold; color: #ffc107;">${s.academicTickets}</td>
-                        </tr>
-                    `;
-                }).join('');
+                const top = hsAcademicTop[0];
+                hsAcademicLeader.innerHTML = `<strong>${top.firstName} ${top.lastName}</strong> - ${top.academicTickets} 🎫`;
             }
         }
 
