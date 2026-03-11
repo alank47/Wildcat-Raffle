@@ -6251,9 +6251,27 @@
         let currentDataView = 'charts'; // Track current view (charts or tables)
 
         function switchDataSubtab(subtab) {
-            // Update button states
-            document.querySelectorAll('.subtab-button').forEach(btn => btn.classList.remove('active'));
-            document.getElementById(`${subtab}Subtab`).classList.add('active');
+            // Update button states with inline styles
+            document.querySelectorAll('.subtab-button').forEach(btn => {
+                btn.classList.remove('active');
+                btn.style.background = '#f5f5f5';
+                btn.style.color = '#333';
+                btn.style.boxShadow = 'none';
+            });
+            
+            const activeBtn = document.getElementById(`${subtab}Subtab`);
+            activeBtn.classList.add('active');
+            
+            // Set gradient based on which tab
+            if (subtab === 'academy') {
+                activeBtn.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+            } else if (subtab === 'middleschool') {
+                activeBtn.style.background = 'linear-gradient(135deg, #ff9800 0%, #f57c00 100%)';
+            } else if (subtab === 'highschool') {
+                activeBtn.style.background = 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)';
+            }
+            activeBtn.style.color = 'white';
+            activeBtn.style.boxShadow = '0 2px 8px rgba(102, 126, 234, 0.3)';
             
             // Update content visibility - remove both 'active' and 'hidden' from all, then add 'active' to selected
             document.querySelectorAll('.data-subtab').forEach(tab => {
@@ -6316,9 +6334,79 @@
             const suffix = currentDataSubtab === 'academy' ? 'Academy' : 
                           currentDataSubtab === 'middleschool' ? 'MS' : 'HS';
             
+            updateMetricCards(suffix); // NEW: Update metric cards
             updateGradeChart(suffix);
             updateWeekChart(suffix);
             updateQualificationChart(suffix);
+        }
+        
+        // NEW FUNCTION: Update metric cards for Data & Analytics
+        function updateMetricCards(suffix) {
+            // Filter students based on suffix
+            let filteredStudents = students;
+            if (suffix === 'MS') {
+                filteredStudents = students.filter(s => {
+                    const grade = parseInt(s.grade);
+                    return grade >= 6 && grade <= 8;
+                });
+            } else if (suffix === 'HS') {
+                filteredStudents = students.filter(s => {
+                    const grade = parseInt(s.grade);
+                    return grade >= 9 && grade <= 12;
+                });
+            }
+            
+            // Calculate totals
+            let totalTickets = 0;
+            let pbisTickets = 0;
+            let attendanceTickets = 0;
+            let academicTickets = 0;
+            let qualifiedCount = 0;
+            
+            filteredStudents.forEach(s => {
+                const pbis = s.pbisTickets || 0;
+                const attendance = s.attendanceTickets || 0;
+                const academic = s.academicTickets || 0;
+                
+                pbisTickets += pbis;
+                attendanceTickets += attendance;
+                academicTickets += academic;
+                totalTickets += pbis + attendance + academic;
+                
+                // Count qualified students (has tickets in all 3 categories)
+                if (pbis > 0 && attendance > 0 && academic > 0) {
+                    qualifiedCount++;
+                }
+            });
+            
+            // Calculate metrics
+            const totalStudents = filteredStudents.length;
+            const qualificationRate = totalStudents > 0 ? Math.round((qualifiedCount / totalStudents) * 100) : 0;
+            const avgTickets = totalStudents > 0 ? (totalTickets / totalStudents).toFixed(1) : '0.0';
+            
+            // Determine prefix for element IDs
+            const prefix = suffix === 'Academy' ? 'academy' : 
+                          suffix === 'MS' ? 'ms' : 'hs';
+            
+            // Update metric cards
+            const totalTicketsEl = document.getElementById(`${prefix}TotalTickets`);
+            const qualifiedEl = document.getElementById(`${prefix}QualifiedStudents`);
+            const qualificationRateEl = document.getElementById(`${prefix}QualificationRate`);
+            const avgTicketsEl = document.getElementById(`${prefix}AvgTickets`);
+            
+            if (totalTicketsEl) totalTicketsEl.textContent = totalTickets;
+            if (qualifiedEl) qualifiedEl.textContent = qualifiedCount;
+            if (qualificationRateEl) qualificationRateEl.textContent = qualificationRate + '%';
+            if (avgTicketsEl) avgTicketsEl.textContent = avgTickets;
+            
+            // Update category breakdown cards
+            const pbisEl = document.getElementById(`${prefix}PbisTickets`);
+            const attendanceEl = document.getElementById(`${prefix}AttendanceTickets`);
+            const academicEl = document.getElementById(`${prefix}AcademicTickets`);
+            
+            if (pbisEl) pbisEl.textContent = pbisTickets;
+            if (attendanceEl) attendanceEl.textContent = attendanceTickets;
+            if (academicEl) academicEl.textContent = academicTickets;
         }
 
         function updateGradeChart(suffix) {
