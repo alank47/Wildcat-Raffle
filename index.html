@@ -2158,196 +2158,419 @@
 
             <!-- Data & Analytics Tab -->
             <div id="data" class="tab-content">
-                <h2>📊 Data & Analytics</h2>
-                <p style="margin: 15px 0; color: #666;">Track program effectiveness and student engagement</p>
+                <h2 style="margin-bottom: 10px;">📊 Data & Analytics</h2>
+                <p style="margin: 0 0 30px 0; color: #666; font-size: 15px;">Track program effectiveness and student engagement across all schools</p>
 
-                <!-- Subtabs for MS, HS, Academy-Wide -->
-                <div style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px;">
-                    <button class="subtab-button active" onclick="switchDataSubtab('academy')" id="academySubtab">
+                <!-- Beautiful Subtabs -->
+                <div style="display: flex; gap: 10px; margin-bottom: 30px; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px; overflow-x: auto;">
+                    <button class="subtab-button active" onclick="switchDataSubtab('academy')" id="academySubtab" style="padding: 12px 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s; box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);">
                         🏫 Academy-Wide
                     </button>
-                    <button class="subtab-button" onclick="switchDataSubtab('middleschool')" id="middleschoolSubtab">
+                    <button class="subtab-button" onclick="switchDataSubtab('middleschool')" id="middleschoolSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
                         🎓 Middle School (6-8)
                     </button>
-                    <button class="subtab-button" onclick="switchDataSubtab('highschool')" id="highschoolSubtab">
+                    <button class="subtab-button" onclick="switchDataSubtab('highschool')" id="highschoolSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
                         🎓 High School (9-12)
                     </button>
                 </div>
 
-                <!-- Export/View Controls -->
-                <div style="display: flex; gap: 10px; margin-bottom: 20px;">
-                    <button class="btn" onclick="toggleDataView('charts')">📈 View Charts</button>
-                    <button class="btn btn-secondary" onclick="toggleDataView('tables')">📋 View Tables</button>
-                    <button class="btn btn-success" onclick="exportAnalyticsData()">📥 Export to Excel</button>
+                <!-- Export Controls -->
+                <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 30px; display: flex; gap: 15px; flex-wrap: wrap; align-items: center; justify-content: space-between;">
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button class="btn" onclick="toggleDataView('charts')" style="padding: 12px 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);">📈 View Charts</button>
+                        <button class="btn btn-secondary" onclick="toggleDataView('tables')" style="padding: 12px 24px;">📋 View Tables</button>
+                    </div>
+                    <button class="btn btn-success" onclick="exportAnalyticsData()" style="padding: 12px 24px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);">📥 Export to Excel</button>
                 </div>
 
                 <!-- Academy-Wide Data -->
                 <div id="academyData" class="data-subtab active">
-                    <h3 style="color: #667eea; margin-bottom: 20px;">📊 Academy-Wide Statistics</h3>
+                    <!-- Key Metrics Cards -->
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; margin-bottom: 30px;">
+                        <!-- Total Tickets This Week -->
+                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 25px; border-radius: 16px; box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3); position: relative; overflow: hidden;">
+                            <div style="position: absolute; top: -20px; right: -20px; width: 100px; height: 100px; background: rgba(255,255,255,0.1); border-radius: 50%;"></div>
+                            <div style="position: relative; z-index: 1;">
+                                <div style="font-size: 14px; color: rgba(255,255,255,0.9); font-weight: 500; margin-bottom: 8px;">🎫 Total Tickets This Week</div>
+                                <div id="academyTotalTickets" style="font-size: 42px; font-weight: 700; color: white; line-height: 1;">0</div>
+                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 8px;">All Categories Combined</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Students Qualified -->
+                        <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 25px; border-radius: 16px; box-shadow: 0 8px 24px rgba(16, 185, 129, 0.3); position: relative; overflow: hidden;">
+                            <div style="position: absolute; top: -20px; right: -20px; width: 100px; height: 100px; background: rgba(255,255,255,0.1); border-radius: 50%;"></div>
+                            <div style="position: relative; z-index: 1;">
+                                <div style="font-size: 14px; color: rgba(255,255,255,0.9); font-weight: 500; margin-bottom: 8px;">🏆 Students Qualified</div>
+                                <div id="academyQualifiedStudents" style="font-size: 42px; font-weight: 700; color: white; line-height: 1;">0</div>
+                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 8px;">For Wildcat Jackpot</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Qualification Rate -->
+                        <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 25px; border-radius: 16px; box-shadow: 0 8px 24px rgba(240, 147, 251, 0.3); position: relative; overflow: hidden;">
+                            <div style="position: absolute; top: -20px; right: -20px; width: 100px; height: 100px; background: rgba(255,255,255,0.1); border-radius: 50%;"></div>
+                            <div style="position: relative; z-index: 1;">
+                                <div style="font-size: 14px; color: rgba(255,255,255,0.9); font-weight: 500; margin-bottom: 8px;">📊 Qualification Rate</div>
+                                <div id="academyQualificationRate" style="font-size: 42px; font-weight: 700; color: white; line-height: 1;">0%</div>
+                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 8px;">Students with all 3 categories</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Average Tickets per Student -->
+                        <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); padding: 25px; border-radius: 16px; box-shadow: 0 8px 24px rgba(79, 172, 254, 0.3); position: relative; overflow: hidden;">
+                            <div style="position: absolute; top: -20px; right: -20px; width: 100px; height: 100px; background: rgba(255,255,255,0.1); border-radius: 50%;"></div>
+                            <div style="position: relative; z-index: 1;">
+                                <div style="font-size: 14px; color: rgba(255,255,255,0.9); font-weight: 500; margin-bottom: 8px;">📈 Avg Tickets / Student</div>
+                                <div id="academyAvgTickets" style="font-size: 42px; font-weight: 700; color: white; line-height: 1;">0</div>
+                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 8px;">Engagement metric</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Category Breakdown Cards -->
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-bottom: 30px;">
+                        <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-left: 4px solid #ef4444;">
+                            <div style="font-size: 13px; color: #666; margin-bottom: 8px; font-weight: 500;">🎯 PBIS Tickets</div>
+                            <div id="academyPbisTickets" style="font-size: 32px; font-weight: 700; color: #ef4444; margin-bottom: 5px;">0</div>
+                            <div style="font-size: 12px; color: #999;">Positive behaviors recognized</div>
+                        </div>
+                        
+                        <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-left: 4px solid #10b981;">
+                            <div style="font-size: 13px; color: #666; margin-bottom: 8px; font-weight: 500;">📅 Attendance Tickets</div>
+                            <div id="academyAttendanceTickets" style="font-size: 32px; font-weight: 700; color: #10b981; margin-bottom: 5px;">0</div>
+                            <div style="font-size: 12px; color: #999;">Perfect attendance this week</div>
+                        </div>
+                        
+                        <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-left: 4px solid #3b82f6;">
+                            <div style="font-size: 13px; color: #666; margin-bottom: 8px; font-weight: 500;">📚 Academic Tickets</div>
+                            <div id="academyAcademicTickets" style="font-size: 32px; font-weight: 700; color: #3b82f6; margin-bottom: 5px;">0</div>
+                            <div style="font-size: 12px; color: #999;">Academic achievements</div>
+                        </div>
+                    </div>
                     
                     <!-- Charts View -->
                     <div id="chartsViewAcademy">
-                        <h3 style="margin-top: 30px;">Tickets by Grade Level (Current Week)</h3>
-                        <canvas id="gradeChartAcademy" style="max-height: 400px; margin: 20px 0;"></canvas>
+                        <!-- Tickets by Grade Chart -->
+                        <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 25px;">
+                            <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px;">📊 Tickets by Grade Level (Current Week)</h3>
+                            <canvas id="gradeChartAcademy" style="max-height: 400px;"></canvas>
+                        </div>
 
-                        <h3 style="margin-top: 40px;">Week-over-Week Ticket Growth</h3>
-                        <canvas id="weekChartAcademy" style="max-height: 400px; margin: 20px 0;"></canvas>
+                        <!-- Week-over-Week Growth Chart -->
+                        <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 25px;">
+                            <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px;">📈 Week-over-Week Ticket Growth</h3>
+                            <canvas id="weekChartAcademy" style="max-height: 400px;"></canvas>
+                        </div>
 
-                        <h3 style="margin-top: 40px;">Wildcat Jackpot Qualification Rate</h3>
-                        <canvas id="qualificationChartAcademy" style="max-height: 300px; margin: 20px 0;"></canvas>
+                        <!-- Qualification Rate Chart -->
+                        <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+                            <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px;">🏆 Wildcat Jackpot Qualification Rate</h3>
+                            <canvas id="qualificationChartAcademy" style="max-height: 300px;"></canvas>
+                        </div>
                     </div>
 
                     <!-- Tables View -->
                     <div id="tablesViewAcademy" class="hidden">
-                        <h3 style="margin-top: 30px;">Tickets by Grade Level</h3>
-                        <div style="overflow-x: auto;">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>Grade</th>
-                                        <th>PBIS Tickets</th>
-                                        <th>Attendance Tickets</th>
-                                        <th>Academic Tickets</th>
-                                        <th>Total Tickets</th>
-                                        <th>Students</th>
-                                        <th>Avg per Student</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="gradeDataTableAcademy">
-                                </tbody>
-                            </table>
+                        <!-- Grade Level Table -->
+                        <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 25px;">
+                            <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px;">📊 Tickets by Grade Level</h3>
+                            <div style="overflow-x: auto;">
+                                <table style="width: 100%; border-collapse: collapse;">
+                                    <thead>
+                                        <tr style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;">
+                                            <th style="padding: 16px 20px; text-align: left; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Grade</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">PBIS Tickets</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Attendance Tickets</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Academic Tickets</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Total Tickets</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Students</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Avg per Student</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="gradeDataTableAcademy">
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
 
-                        <h3 style="margin-top: 40px;">Weekly Summary</h3>
-                        <div style="overflow-x: auto;">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>Week</th>
-                                        <th>PBIS Tickets</th>
-                                        <th>Attendance Tickets</th>
-                                        <th>Academic Tickets</th>
-                                        <th>Students Qualified</th>
-                                        <th>Qualification Rate</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="weeklyDataTableAcademy">
-                                </tbody>
-                            </table>
+                        <!-- Weekly Summary Table -->
+                        <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+                            <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px;">📅 Weekly Summary</h3>
+                            <div style="overflow-x: auto;">
+                                <table style="width: 100%; border-collapse: collapse;">
+                                    <thead>
+                                        <tr style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;">
+                                            <th style="padding: 16px 20px; text-align: left; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Week</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">PBIS Tickets</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Attendance Tickets</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Academic Tickets</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Students Qualified</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Qualification Rate</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="weeklyDataTableAcademy">
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Middle School Data -->
                 <div id="middleschoolData" class="data-subtab hidden">
-                    <h3 style="color: #2196F3; margin-bottom: 20px;">🎓 Middle School Statistics (Grades 6-8)</h3>
+                    <!-- Key Metrics Cards -->
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; margin-bottom: 30px;">
+                        <!-- Total Tickets This Week -->
+                        <div style="background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); padding: 25px; border-radius: 16px; box-shadow: 0 8px 24px rgba(255, 152, 0, 0.3); position: relative; overflow: hidden;">
+                            <div style="position: absolute; top: -20px; right: -20px; width: 100px; height: 100px; background: rgba(255,255,255,0.1); border-radius: 50%;"></div>
+                            <div style="position: relative; z-index: 1;">
+                                <div style="font-size: 14px; color: rgba(255,255,255,0.9); font-weight: 500; margin-bottom: 8px;">🎫 MS Total Tickets</div>
+                                <div id="msTotalTickets" style="font-size: 42px; font-weight: 700; color: white; line-height: 1;">0</div>
+                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 8px;">Grades 6-8 This Week</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Students Qualified -->
+                        <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 25px; border-radius: 16px; box-shadow: 0 8px 24px rgba(16, 185, 129, 0.3); position: relative; overflow: hidden;">
+                            <div style="position: absolute; top: -20px; right: -20px; width: 100px; height: 100px; background: rgba(255,255,255,0.1); border-radius: 50%;"></div>
+                            <div style="position: relative; z-index: 1;">
+                                <div style="font-size: 14px; color: rgba(255,255,255,0.9); font-weight: 500; margin-bottom: 8px;">🏆 MS Qualified</div>
+                                <div id="msQualifiedStudents" style="font-size: 42px; font-weight: 700; color: white; line-height: 1;">0</div>
+                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 8px;">For Wildcat Jackpot</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Qualification Rate -->
+                        <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 25px; border-radius: 16px; box-shadow: 0 8px 24px rgba(240, 147, 251, 0.3); position: relative; overflow: hidden;">
+                            <div style="position: absolute; top: -20px; right: -20px; width: 100px; height: 100px; background: rgba(255,255,255,0.1); border-radius: 50%;"></div>
+                            <div style="position: relative; z-index: 1;">
+                                <div style="font-size: 14px; color: rgba(255,255,255,0.9); font-weight: 500; margin-bottom: 8px;">📊 MS Qualification Rate</div>
+                                <div id="msQualificationRate" style="font-size: 42px; font-weight: 700; color: white; line-height: 1;">0%</div>
+                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 8px;">All 3 categories</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Average Tickets per Student -->
+                        <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); padding: 25px; border-radius: 16px; box-shadow: 0 8px 24px rgba(79, 172, 254, 0.3); position: relative; overflow: hidden;">
+                            <div style="position: absolute; top: -20px; right: -20px; width: 100px; height: 100px; background: rgba(255,255,255,0.1); border-radius: 50%;"></div>
+                            <div style="position: relative; z-index: 1;">
+                                <div style="font-size: 14px; color: rgba(255,255,255,0.9); font-weight: 500; margin-bottom: 8px;">📈 MS Avg / Student</div>
+                                <div id="msAvgTickets" style="font-size: 42px; font-weight: 700; color: white; line-height: 1;">0</div>
+                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 8px;">Engagement metric</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Category Breakdown Cards -->
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-bottom: 30px;">
+                        <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-left: 4px solid #ef4444;">
+                            <div style="font-size: 13px; color: #666; margin-bottom: 8px; font-weight: 500;">🎯 PBIS Tickets</div>
+                            <div id="msPbisTickets" style="font-size: 32px; font-weight: 700; color: #ef4444; margin-bottom: 5px;">0</div>
+                            <div style="font-size: 12px; color: #999;">MS positive behaviors</div>
+                        </div>
+                        
+                        <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-left: 4px solid #10b981;">
+                            <div style="font-size: 13px; color: #666; margin-bottom: 8px; font-weight: 500;">📅 Attendance Tickets</div>
+                            <div id="msAttendanceTickets" style="font-size: 32px; font-weight: 700; color: #10b981; margin-bottom: 5px;">0</div>
+                            <div style="font-size: 12px; color: #999;">MS perfect attendance</div>
+                        </div>
+                        
+                        <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-left: 4px solid #3b82f6;">
+                            <div style="font-size: 13px; color: #666; margin-bottom: 8px; font-weight: 500;">📚 Academic Tickets</div>
+                            <div id="msAcademicTickets" style="font-size: 32px; font-weight: 700; color: #3b82f6; margin-bottom: 5px;">0</div>
+                            <div style="font-size: 12px; color: #999;">MS academic achievements</div>
+                        </div>
+                    </div>
                     
                     <!-- Charts View -->
                     <div id="chartsViewMS">
-                        <h3 style="margin-top: 30px;">Tickets by Grade Level (Current Week)</h3>
-                        <canvas id="gradeChartMS" style="max-height: 400px; margin: 20px 0;"></canvas>
+                        <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 25px;">
+                            <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px;">📊 MS Tickets by Grade (Current Week)</h3>
+                            <canvas id="gradeChartMS" style="max-height: 400px;"></canvas>
+                        </div>
 
-                        <h3 style="margin-top: 40px;">Week-over-Week Ticket Growth</h3>
-                        <canvas id="weekChartMS" style="max-height: 400px; margin: 20px 0;"></canvas>
+                        <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 25px;">
+                            <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px;">📈 MS Week-over-Week Growth</h3>
+                            <canvas id="weekChartMS" style="max-height: 400px;"></canvas>
+                        </div>
 
-                        <h3 style="margin-top: 40px;">Wildcat Jackpot Qualification Rate</h3>
-                        <canvas id="qualificationChartMS" style="max-height: 300px; margin: 20px 0;"></canvas>
+                        <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+                            <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px;">🏆 MS Qualification Rate</h3>
+                            <canvas id="qualificationChartMS" style="max-height: 300px;"></canvas>
+                        </div>
                     </div>
 
                     <!-- Tables View -->
                     <div id="tablesViewMS" class="hidden">
-                        <h3 style="margin-top: 30px;">Tickets by Grade Level</h3>
-                        <div style="overflow-x: auto;">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>Grade</th>
-                                        <th>PBIS Tickets</th>
-                                        <th>Attendance Tickets</th>
-                                        <th>Academic Tickets</th>
-                                        <th>Total Tickets</th>
-                                        <th>Students</th>
-                                        <th>Avg per Student</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="gradeDataTableMS">
-                                </tbody>
-                            </table>
+                        <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 25px;">
+                            <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px;">📊 MS Tickets by Grade</h3>
+                            <div style="overflow-x: auto;">
+                                <table style="width: 100%; border-collapse: collapse;">
+                                    <thead>
+                                        <tr style="background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%) !important;">
+                                            <th style="padding: 16px 20px; text-align: left; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Grade</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">PBIS</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Attendance</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Academic</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Total</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Students</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Avg/Student</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="gradeDataTableMS">
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
 
-                        <h3 style="margin-top: 40px;">Weekly Summary</h3>
-                        <div style="overflow-x: auto;">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>Week</th>
-                                        <th>PBIS Tickets</th>
-                                        <th>Attendance Tickets</th>
-                                        <th>Academic Tickets</th>
-                                        <th>Students Qualified</th>
-                                        <th>Qualification Rate</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="weeklyDataTableMS">
-                                </tbody>
-                            </table>
+                        <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+                            <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px;">📅 MS Weekly Summary</h3>
+                            <div style="overflow-x: auto;">
+                                <table style="width: 100%; border-collapse: collapse;">
+                                    <thead>
+                                        <tr style="background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%) !important;">
+                                            <th style="padding: 16px 20px; text-align: left; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Week</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">PBIS</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Attendance</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Academic</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Qualified</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Rate</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="weeklyDataTableMS">
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- High School Data -->
                 <div id="highschoolData" class="data-subtab hidden">
-                    <h3 style="color: #9c27b0; margin-bottom: 20px;">🎓 High School Statistics (Grades 9-12)</h3>
+                    <!-- Key Metrics Cards -->
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; margin-bottom: 30px;">
+                        <!-- Total Tickets This Week -->
+                        <div style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); padding: 25px; border-radius: 16px; box-shadow: 0 8px 24px rgba(59, 130, 246, 0.3); position: relative; overflow: hidden;">
+                            <div style="position: absolute; top: -20px; right: -20px; width: 100px; height: 100px; background: rgba(255,255,255,0.1); border-radius: 50%;"></div>
+                            <div style="position: relative; z-index: 1;">
+                                <div style="font-size: 14px; color: rgba(255,255,255,0.9); font-weight: 500; margin-bottom: 8px;">🎫 HS Total Tickets</div>
+                                <div id="hsTotalTickets" style="font-size: 42px; font-weight: 700; color: white; line-height: 1;">0</div>
+                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 8px;">Grades 9-12 This Week</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Students Qualified -->
+                        <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 25px; border-radius: 16px; box-shadow: 0 8px 24px rgba(16, 185, 129, 0.3); position: relative; overflow: hidden;">
+                            <div style="position: absolute; top: -20px; right: -20px; width: 100px; height: 100px; background: rgba(255,255,255,0.1); border-radius: 50%;"></div>
+                            <div style="position: relative; z-index: 1;">
+                                <div style="font-size: 14px; color: rgba(255,255,255,0.9); font-weight: 500; margin-bottom: 8px;">🏆 HS Qualified</div>
+                                <div id="hsQualifiedStudents" style="font-size: 42px; font-weight: 700; color: white; line-height: 1;">0</div>
+                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 8px;">For Wildcat Jackpot</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Qualification Rate -->
+                        <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 25px; border-radius: 16px; box-shadow: 0 8px 24px rgba(240, 147, 251, 0.3); position: relative; overflow: hidden;">
+                            <div style="position: absolute; top: -20px; right: -20px; width: 100px; height: 100px; background: rgba(255,255,255,0.1); border-radius: 50%;"></div>
+                            <div style="position: relative; z-index: 1;">
+                                <div style="font-size: 14px; color: rgba(255,255,255,0.9); font-weight: 500; margin-bottom: 8px;">📊 HS Qualification Rate</div>
+                                <div id="hsQualificationRate" style="font-size: 42px; font-weight: 700; color: white; line-height: 1;">0%</div>
+                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 8px;">All 3 categories</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Average Tickets per Student -->
+                        <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); padding: 25px; border-radius: 16px; box-shadow: 0 8px 24px rgba(79, 172, 254, 0.3); position: relative; overflow: hidden;">
+                            <div style="position: absolute; top: -20px; right: -20px; width: 100px; height: 100px; background: rgba(255,255,255,0.1); border-radius: 50%;"></div>
+                            <div style="position: relative; z-index: 1;">
+                                <div style="font-size: 14px; color: rgba(255,255,255,0.9); font-weight: 500; margin-bottom: 8px;">📈 HS Avg / Student</div>
+                                <div id="hsAvgTickets" style="font-size: 42px; font-weight: 700; color: white; line-height: 1;">0</div>
+                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 8px;">Engagement metric</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Category Breakdown Cards -->
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-bottom: 30px;">
+                        <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-left: 4px solid #ef4444;">
+                            <div style="font-size: 13px; color: #666; margin-bottom: 8px; font-weight: 500;">🎯 PBIS Tickets</div>
+                            <div id="hsPbisTickets" style="font-size: 32px; font-weight: 700; color: #ef4444; margin-bottom: 5px;">0</div>
+                            <div style="font-size: 12px; color: #999;">HS positive behaviors</div>
+                        </div>
+                        
+                        <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-left: 4px solid #10b981;">
+                            <div style="font-size: 13px; color: #666; margin-bottom: 8px; font-weight: 500;">📅 Attendance Tickets</div>
+                            <div id="hsAttendanceTickets" style="font-size: 32px; font-weight: 700; color: #10b981; margin-bottom: 5px;">0</div>
+                            <div style="font-size: 12px; color: #999;">HS perfect attendance</div>
+                        </div>
+                        
+                        <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-left: 4px solid #3b82f6;">
+                            <div style="font-size: 13px; color: #666; margin-bottom: 8px; font-weight: 500;">📚 Academic Tickets</div>
+                            <div id="hsAcademicTickets" style="font-size: 32px; font-weight: 700; color: #3b82f6; margin-bottom: 5px;">0</div>
+                            <div style="font-size: 12px; color: #999;">HS academic achievements</div>
+                        </div>
+                    </div>
                     
                     <!-- Charts View -->
                     <div id="chartsViewHS">
-                        <h3 style="margin-top: 30px;">Tickets by Grade Level (Current Week)</h3>
-                        <canvas id="gradeChartHS" style="max-height: 400px; margin: 20px 0;"></canvas>
+                        <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 25px;">
+                            <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px;">📊 HS Tickets by Grade (Current Week)</h3>
+                            <canvas id="gradeChartHS" style="max-height: 400px;"></canvas>
+                        </div>
 
-                        <h3 style="margin-top: 40px;">Week-over-Week Ticket Growth</h3>
-                        <canvas id="weekChartHS" style="max-height: 400px; margin: 20px 0;"></canvas>
+                        <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 25px;">
+                            <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px;">📈 HS Week-over-Week Growth</h3>
+                            <canvas id="weekChartHS" style="max-height: 400px;"></canvas>
+                        </div>
 
-                        <h3 style="margin-top: 40px;">Wildcat Jackpot Qualification Rate</h3>
-                        <canvas id="qualificationChartHS" style="max-height: 300px; margin: 20px 0;"></canvas>
+                        <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+                            <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px;">🏆 HS Qualification Rate</h3>
+                            <canvas id="qualificationChartHS" style="max-height: 300px;"></canvas>
+                        </div>
                     </div>
 
                     <!-- Tables View -->
                     <div id="tablesViewHS" class="hidden">
-                        <h3 style="margin-top: 30px;">Tickets by Grade Level</h3>
-                        <div style="overflow-x: auto;">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>Grade</th>
-                                        <th>PBIS Tickets</th>
-                                        <th>Attendance Tickets</th>
-                                        <th>Academic Tickets</th>
-                                        <th>Total Tickets</th>
-                                        <th>Students</th>
-                                        <th>Avg per Student</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="gradeDataTableHS">
-                                </tbody>
-                            </table>
+                        <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 25px;">
+                            <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px;">📊 HS Tickets by Grade</h3>
+                            <div style="overflow-x: auto;">
+                                <table style="width: 100%; border-collapse: collapse;">
+                                    <thead>
+                                        <tr style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;">
+                                            <th style="padding: 16px 20px; text-align: left; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Grade</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">PBIS</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Attendance</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Academic</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Total</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Students</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Avg/Student</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="gradeDataTableHS">
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
 
-                        <h3 style="margin-top: 40px;">Weekly Summary</h3>
-                        <div style="overflow-x: auto;">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>Week</th>
-                                        <th>PBIS Tickets</th>
-                                        <th>Attendance Tickets</th>
-                                        <th>Academic Tickets</th>
-                                        <th>Students Qualified</th>
-                                        <th>Qualification Rate</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="weeklyDataTableHS">
-                                </tbody>
-                            </table>
+                        <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+                            <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px;">📅 HS Weekly Summary</h3>
+                            <div style="overflow-x: auto;">
+                                <table style="width: 100%; border-collapse: collapse;">
+                                    <thead>
+                                        <tr style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;">
+                                            <th style="padding: 16px 20px; text-align: left; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Week</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">PBIS</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Attendance</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Academic</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Qualified</th>
+                                            <th style="padding: 16px 20px; text-align: center; color: #ffffff !important; font-weight: 600; font-size: 14px; border: none;">Rate</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="weeklyDataTableHS">
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </div>
