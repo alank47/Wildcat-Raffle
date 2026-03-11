@@ -1776,6 +1776,7 @@
                                     <th style="padding: 15px 12px; text-align: center; color: #ffffff; font-weight: 700; border: none; text-shadow: 0 1px 3px rgba(0,0,0,0.3);">🎭 PBIS</th>
                                     <th style="padding: 15px 12px; text-align: center; color: #ffffff; font-weight: 700; border: none; text-shadow: 0 1px 3px rgba(0,0,0,0.3);">📅 Attendance</th>
                                     <th style="padding: 15px 12px; text-align: center; color: #ffffff; font-weight: 700; border: none; text-shadow: 0 1px 3px rgba(0,0,0,0.3);">📚 Academic</th>
+                                    <th style="padding: 15px 12px; text-align: center; color: #ffffff; font-weight: 700; border: none; text-shadow: 0 1px 3px rgba(0,0,0,0.3);">🏆 Qualified</th>
                                 </tr>
                             </thead>
                             <tbody id="ticketsTableBody">
@@ -12432,9 +12433,10 @@
             }
             
             tbody.innerHTML = studentsToRender.map(s => {
-                const totalTickets = (s.pbisTickets || 0) + (s.attendanceTickets || 0) + (s.academicTickets || 0);
-                const progressPercent = Math.min((totalTickets / 5) * 100, 100);
-                const progressColor = totalTickets >= 5 ? '#10b981' : totalTickets >= 3 ? '#f59e0b' : '#ef4444';
+                // Generate category status indicators
+                const pbisColor = s.pbisTickets > 0 ? '#ef4444' : '#e5e7eb';  // Red if has tickets, gray if not
+                const attendanceColor = s.attendanceTickets > 0 ? '#10b981' : '#e5e7eb';  // Green if has tickets, gray if not
+                const academicColor = s.academicTickets > 0 ? '#3b82f6' : '#e5e7eb';  // Blue if has tickets, gray if not
                 
                 return `
                 <tr>
@@ -12454,16 +12456,10 @@
                     <td>
                         ${s.bigRaffleQualified ? 
                             '<span class="qualified-badge pulse-animation">✓ Qualified</span>' : 
-                            `<div style="display: inline-flex; align-items: center; gap: 8px;">
-                                <div class="mini-progress-ring">
-                                    <svg width="40" height="40">
-                                        <circle cx="20" cy="20" r="16" stroke="#e5e7eb" stroke-width="4" fill="none"/>
-                                        <circle cx="20" cy="20" r="16" stroke="${progressColor}" stroke-width="4" fill="none"
-                                            stroke-dasharray="100" stroke-dashoffset="${100 - progressPercent}"
-                                            style="transform: rotate(-90deg); transform-origin: center; transition: stroke-dashoffset 0.8s ease;"/>
-                                    </svg>
-                                    <span style="position: absolute; font-size: 11px; font-weight: 600; color: ${progressColor};">${totalTickets}/5</span>
-                                </div>
+                            `<div style="display: inline-flex; align-items: center; gap: 6px; justify-content: center;">
+                                <div style="width: 16px; height: 16px; border-radius: 50%; background: ${pbisColor}; transition: all 0.3s; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="PBIS"></div>
+                                <div style="width: 16px; height: 16px; border-radius: 50%; background: ${attendanceColor}; transition: all 0.3s; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="Attendance"></div>
+                                <div style="width: 16px; height: 16px; border-radius: 50%; background: ${academicColor}; transition: all 0.3s; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="Academic"></div>
                             </div>`
                         }
                     </td>
@@ -13372,6 +13368,12 @@
             // Render table with better styling
             tbody.innerHTML = displayStudents.map((s, index) => {
                 const rowBg = index % 2 === 0 ? '#f9f9f9' : 'white';
+                
+                // Generate category status indicators
+                const pbisColor = s.pbisTickets > 0 ? '#ef4444' : '#e5e7eb';  // Red if has tickets, gray if not
+                const attendanceColor = s.attendanceTickets > 0 ? '#10b981' : '#e5e7eb';  // Green if has tickets, gray if not
+                const academicColor = s.academicTickets > 0 ? '#3b82f6' : '#e5e7eb';  // Blue if has tickets, gray if not
+                
                 return `
                 <tr style="background: ${rowBg}; transition: all 0.2s; border-bottom: 1px solid #eee;" 
                     onmouseover="this.style.background='#e8f4ff'; this.style.transform='scale(1.01)'" 
@@ -13396,6 +13398,16 @@
                     </td>
                     <td style="padding: 12px; border: none; text-align: center;">
                         <span style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 6px 12px; border-radius: 20px; font-weight: 700; font-size: 14px; display: inline-block; min-width: 35px;">${s.academicTickets}</span>
+                    </td>
+                    <td style="padding: 12px; border: none; text-align: center;">
+                        ${s.bigRaffleQualified ? 
+                            '<span class="qualified-badge pulse-animation">✓ Qualified</span>' : 
+                            `<div style="display: inline-flex; align-items: center; gap: 6px; justify-content: center;">
+                                <div style="width: 16px; height: 16px; border-radius: 50%; background: ${pbisColor}; transition: all 0.3s; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="PBIS"></div>
+                                <div style="width: 16px; height: 16px; border-radius: 50%; background: ${attendanceColor}; transition: all 0.3s; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="Attendance"></div>
+                                <div style="width: 16px; height: 16px; border-radius: 50%; background: ${academicColor}; transition: all 0.3s; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="Academic"></div>
+                            </div>`
+                        }
                     </td>
                 </tr>
             `;
