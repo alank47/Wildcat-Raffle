@@ -4992,11 +4992,46 @@
 
     <script>
         // ========================================
-        // CLOUD SYNC CONFIGURATION
+        // CLOUD SYNC CONFIGURATION - FIREBASE
         // ========================================
-        // STEP 1: Replace 'YOUR_API_KEY_HERE' with your JSONBin API key
-        // Get your free API key at: https://jsonbin.io (see instructions below)
-        const JSONBIN_API_KEY = '$2a$10$H78qFxl2B2FHc075znLKQ.OCx8Psr6zl1LNdZOEjZAheTZtTTMX0i';
+        // Firebase configuration for cloud storage
+        const firebaseConfig = {
+            apiKey: "AIzaSyDMbh3V117xbAHCYMVCwPUTNv9h1uEnFig",
+            authDomain: "wildcat-hub-94025.firebaseapp.com",
+            projectId: "wildcat-hub-94025",
+            storageBucket: "wildcat-hub-94025.firebasestorage.app",
+            messagingSenderId: "1085604958944",
+            appId: "1:1085604958944:web:2f49395c2d4b0370187685"
+        };
+        
+        // Firebase initialization - will be set up when page loads
+        let firebaseApp = null;
+        let firebaseDb = null;
+        let firebaseInitialized = false;
+        
+        // Initialize Firebase
+        async function initFirebase() {
+            try {
+                // Dynamically import Firebase modules
+                const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js');
+                const { getFirestore, doc, getDoc, setDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
+                
+                // Store imports globally
+                window.firebaseModules = { doc, getDoc, setDoc, serverTimestamp };
+                
+                // Initialize Firebase app
+                firebaseApp = initializeApp(firebaseConfig);
+                firebaseDb = getFirestore(firebaseApp);
+                firebaseInitialized = true;
+                
+                console.log('✅ Firebase initialized successfully');
+                return true;
+            } catch (error) {
+                console.error('❌ Firebase initialization failed:', error);
+                firebaseInitialized = false;
+                return false;
+            }
+        }
         
         // DO NOT CHANGE ANYTHING BELOW THIS LINE
         // ========================================
@@ -5623,81 +5658,69 @@
 
         // Cloud Sync Functions
         async function loadData() {
-            // Check if API key is set
-            if (JSONBIN_API_KEY === 'YOUR_API_KEY_HERE') {
-                alert('⚠️ Cloud sync not configured yet!\n\nPlease follow the setup instructions to enable multi-device sync.\n\nFor now, data will only be saved on this device.');
-                loadDataLocal();
-                return;
-            }
-
-            // If binId is hardcoded, save it to localStorage for consistency
-            if (binId) {
-                localStorage.setItem('schoolBinId', binId);
-            } else {
-                // Check if we have a bin ID stored in localStorage
-                binId = localStorage.getItem('schoolBinId');
-            }
+            // Initialize Firebase first
+            await initFirebase();
             
-            if (!binId) {
-                // No bin ID yet - will create one when admin account is created
-                loadDataLocal();
-                return;
-            }
-
-            // Load from cloud
-            try {
-                const response = await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`, {
-                    headers: {
-                        'X-Master-Key': JSONBIN_API_KEY
+            // Try to load from Firebase
+            if (firebaseInitialized && firebaseDb) {
+                try {
+                    const { doc, getDoc } = window.firebaseModules;
+                    const docRef = doc(firebaseDb, 'raffle_data', 'main');
+                    const docSnap = await getDoc(docRef);
+                    
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        
+                        students = data.students || [];
+                        currentWeek = data.currentWeek || 1;
+                        cycleDuration = data.cycleDuration || 5;
+                        weeklyWinners = data.weeklyWinners || [];
+                        bigRaffleWinners = data.bigRaffleWinners || [];
+                        teachers = data.teachers || [];
+                        auditLog = data.auditLog || [];
+                        weeklyHistory = data.weeklyHistory || [];
+                        pbisSubcategories = data.pbisSubcategories || ['Being Present', 'Being Responsible', 'Being Respectful', 'Being Safe'];
+                        academicSubcategories = data.academicSubcategories || ['No Missing Assignments', 'Improvement on quiz/assessment or successful retakes', 'Participation in tutoring'];
+                        lastPowerSchoolSync = data.lastPowerSchoolSync || null;
+                        kickboardSettings = data.kickboardSettings || kickboardSettings;
+                        emailJSConfig = data.emailJSConfig || emailJSConfig;
+                        hallPasses = data.hallPasses || [];
+                        passSettings = data.passSettings || passSettings;
+                        preventionGroups = data.preventionGroups || [];
+                        schoolBranding = data.schoolBranding || schoolBranding;
+                        behaviorReferrals = data.behaviorReferrals || [];
+                        referralIdCounter = data.referralIdCounter || 1;
+                        lastSaveTimestamp = data.lastSaveTimestamp || 0;
+                        
+                        console.log('✅ Loaded data from Firebase');
+                        
+                        // Apply school branding
+                        if (schoolBranding && (schoolBranding.schoolName || schoolBranding.logoBase64)) {
+                            applyBranding(schoolBranding);
+                        }
+                        
+                        // Ensure bell schedules exist
+                        ensureBellSchedulesExist();
+                        
+                        // Update active hall passes
+                        activeHallPasses = hallPasses.filter(p => p.status === 'active');
+                        
+                        // Initialize EmailJS if configured
+                        if (emailJSConfig.publicKey && typeof emailjs !== 'undefined') {
+                            emailjs.init(emailJSConfig.publicKey);
+                        }
+                        
+                        return; // Successfully loaded from Firebase
+                    } else {
+                        console.log('ℹ️ No Firebase data found, loading from localStorage');
+                        loadDataLocal();
                     }
-                });
-
-                if (response.ok) {
-                    const result = await response.json();
-                    const data = result.record;
-                    
-                    students = data.students || [];
-                    currentWeek = data.currentWeek || 1;
-                    cycleDuration = data.cycleDuration || 5;
-                    weeklyWinners = data.weeklyWinners || [];
-                    bigRaffleWinners = data.bigRaffleWinners || [];
-                    teachers = data.teachers || [];
-                    auditLog = data.auditLog || [];
-                    weeklyHistory = data.weeklyHistory || [];
-                    pbisSubcategories = data.pbisSubcategories || ['Being Present', 'Being Responsible', 'Being Respectful', 'Being Safe'];
-                    academicSubcategories = data.academicSubcategories || ['No Missing Assignments', 'Improvement on quiz/assessment or successful retakes', 'Participation in tutoring'];
-                    lastPowerSchoolSync = data.lastPowerSchoolSync || null;
-                    kickboardSettings = data.kickboardSettings || kickboardSettings;
-                    emailJSConfig = data.emailJSConfig || emailJSConfig;
-                    hallPasses = data.hallPasses || [];
-                    passSettings = data.passSettings || passSettings;
-                    preventionGroups = data.preventionGroups || [];
-                    schoolBranding = data.schoolBranding || schoolBranding;
-                    behaviorReferrals = data.behaviorReferrals || [];
-                    referralIdCounter = data.referralIdCounter || 1;
-                    lastSaveTimestamp = data.lastSaveTimestamp || 0; // Track cloud timestamp
-                    
-                    // Apply school branding if it exists
-                    if (schoolBranding && (schoolBranding.schoolName || schoolBranding.logoBase64)) {
-                        applyBranding(schoolBranding);
-                    }
-                    
-                    // Ensure bell schedules exist (initialize if needed)
-                    ensureBellSchedulesExist();
-                    
-                    // Update active hall passes
-                    activeHallPasses = hallPasses.filter(p => p.status === 'active');
-                    
-                    // Initialize EmailJS if configured
-                    if (emailJSConfig.publicKey && typeof emailjs !== 'undefined') {
-                        emailjs.init(emailJSConfig.publicKey);
-                    }
-                } else {
-                    console.error('Failed to load from cloud');
+                } catch (error) {
+                    console.error('❌ Firebase load error:', error);
                     loadDataLocal();
                 }
-            } catch (error) {
-                console.error('Cloud sync error:', error);
+            } else {
+                console.log('ℹ️ Firebase not initialized, loading from localStorage');
                 loadDataLocal();
             }
         }
@@ -6090,7 +6113,6 @@
 
         async function saveData() {
             if (isSyncing) {
-                // If already syncing, wait and try again
                 await new Promise(resolve => setTimeout(resolve, 100));
                 if (isSyncing) return;
             }
@@ -6098,8 +6120,7 @@
             isSyncing = true;
 
             try {
-                // Always save locally as backup
-                localStorage.setItem('raffleData', JSON.stringify({
+                const dataToSave = {
                     students,
                     currentWeek,
                     cycleDuration,
@@ -6119,203 +6140,34 @@
                     schoolBranding,
                     behaviorReferrals,
                     referralIdCounter,
-                    lastSaveTimestamp: Date.now() // Track when we saved
-                }));
+                    lastSaveTimestamp: Date.now()
+                };
+                
+                // Always save to localStorage as backup
+                localStorage.setItem('raffleData', JSON.stringify(dataToSave));
+                console.log('✅ Saved to localStorage');
 
-                // Save to cloud if configured
-                if (JSONBIN_API_KEY !== 'YOUR_API_KEY_HERE' && binId) {
+                // Save to Firebase if initialized
+                if (firebaseInitialized && firebaseDb) {
                     try {
-                        // First, fetch current cloud data to check for conflicts
-                        const checkResponse = await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`, {
-                            headers: {
-                                'X-Master-Key': JSONBIN_API_KEY
-                            }
-                        });
+                        const { doc, setDoc } = window.firebaseModules;
+                        const docRef = doc(firebaseDb, 'raffle_data', 'main');
                         
-                        let shouldMerge = false;
-                        if (checkResponse.ok) {
-                            const cloudData = await checkResponse.json();
-                            const cloudRecord = cloudData.record;
-                            
-                            // Check if cloud data is newer than our last save
-                            const cloudTimestamp = cloudRecord.lastSaveTimestamp || 0;
-                            const localTimestamp = lastSaveTimestamp || 0;
-                            
-                            // If cloud has newer data, we need to merge
-                            if (cloudTimestamp > localTimestamp) {
-                                console.log('⚠️ Cloud has newer data - merging changes');
-                                shouldMerge = true;
-                                
-                                // MERGE AUDIT LOG
-                                if (cloudRecord.auditLog && cloudRecord.auditLog.length > auditLog.length) {
-                                    const localTimestamps = new Set(auditLog.map(e => e.timestamp));
-                                    const newEntries = cloudRecord.auditLog.filter(e => !localTimestamps.has(e.timestamp));
-                                    
-                                    if (newEntries.length > 0) {
-                                        auditLog.push(...newEntries);
-                                        auditLog.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-                                        console.log(`✅ Merged ${newEntries.length} audit log entries from cloud`);
-                                    }
-                                }
-                                
-                                // MERGE STUDENT TICKET DATA (CRITICAL FIX!)
-                                if (cloudRecord.students && Array.isArray(cloudRecord.students)) {
-                                    cloudRecord.students.forEach(cloudStudent => {
-                                        const localStudent = students.find(s => s.id === cloudStudent.id);
-                                        if (localStudent) {
-                                            // Compare ticket counts - take the HIGHER value (assumes only additions)
-                                            const cloudTotal = (cloudStudent.pbisTickets || 0) + 
-                                                             (cloudStudent.attendanceTickets || 0) + 
-                                                             (cloudStudent.academicTickets || 0);
-                                            const localTotal = (localStudent.pbisTickets || 0) + 
-                                                             (localStudent.attendanceTickets || 0) + 
-                                                             (localStudent.academicTickets || 0);
-                                            
-                                            // If cloud has more tickets, take those values
-                                            if (cloudTotal > localTotal) {
-                                                localStudent.pbisTickets = cloudStudent.pbisTickets || 0;
-                                                localStudent.attendanceTickets = cloudStudent.attendanceTickets || 0;
-                                                localStudent.academicTickets = cloudStudent.academicTickets || 0;
-                                                console.log(`✅ Updated tickets for ${localStudent.firstName} ${localStudent.lastName} from cloud`);
-                                            }
-                                            
-                                            // Merge ticket history
-                                            if (cloudStudent.ticketHistory && Array.isArray(cloudStudent.ticketHistory)) {
-                                                if (!localStudent.ticketHistory) localStudent.ticketHistory = [];
-                                                const localHistoryTimestamps = new Set(localStudent.ticketHistory.map(h => h.timestamp));
-                                                const newHistory = cloudStudent.ticketHistory.filter(h => !localHistoryTimestamps.has(h.timestamp));
-                                                if (newHistory.length > 0) {
-                                                    localStudent.ticketHistory.push(...newHistory);
-                                                    localStudent.ticketHistory.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-                                                }
-                                            }
-                                            
-                                            // Merge qualification status
-                                            if (cloudStudent.bigRaffleQualified && !localStudent.bigRaffleQualified) {
-                                                localStudent.bigRaffleQualified = true;
-                                                localStudent.weeksQualified = Math.max(localStudent.weeksQualified || 0, cloudStudent.weeksQualified || 0);
-                                            }
-                                        }
-                                    });
-                                }
-                                
-                                // MERGE TEACHER DATA
-                                if (cloudRecord.teachers && Array.isArray(cloudRecord.teachers)) {
-                                    cloudRecord.teachers.forEach(cloudTeacher => {
-                                        const localTeacher = teachers.find(t => t.id === cloudTeacher.id);
-                                        if (localTeacher && cloudTeacher.ticketsAwarded > (localTeacher.ticketsAwarded || 0)) {
-                                            localTeacher.ticketsAwarded = cloudTeacher.ticketsAwarded;
-                                        }
-                                    });
-                                }
-                                
-                                // MERGE PREVENTION GROUPS
-                                // Important: Only overwrite if cloud has prevention groups
-                                // If cloud doesn't have them, keep local ones
-                                if (cloudRecord.preventionGroups && Array.isArray(cloudRecord.preventionGroups) && cloudRecord.preventionGroups.length > 0) {
-                                    // Cloud has prevention groups - merge them
-                                    cloudRecord.preventionGroups.forEach(cloudGroup => {
-                                        const localGroup = preventionGroups.find(g => g.id === cloudGroup.id);
-                                        if (!localGroup) {
-                                            // Cloud has a group we don't have locally - add it
-                                            preventionGroups.push(cloudGroup);
-                                        } else {
-                                            // Merge block logs from cloud
-                                            if (cloudGroup.blockLog && Array.isArray(cloudGroup.blockLog)) {
-                                                if (!localGroup.blockLog) localGroup.blockLog = [];
-                                                const localLogTimestamps = new Set(localGroup.blockLog.map(l => l.timestamp));
-                                                const newLogs = cloudGroup.blockLog.filter(l => !localLogTimestamps.has(l.timestamp));
-                                                if (newLogs.length > 0) {
-                                                    localGroup.blockLog.push(...newLogs);
-                                                    localGroup.blockLog.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-                                                }
-                                            }
-                                        }
-                                    });
-                                } else if (preventionGroups.length > 0) {
-                                    // Cloud doesn't have prevention groups but we do locally
-                                    // Keep our local groups - don't let cloud overwrite with empty array
-                                    console.log('📝 Keeping local prevention groups (cloud has none)');
-                                }
-                                
-                                // MERGE HALL PASSES
-                                // Critical: Merge passes by ID to avoid losing newly created passes
-                                if (cloudRecord.hallPasses && Array.isArray(cloudRecord.hallPasses)) {
-                                    // Create a map of local passes by ID for quick lookup
-                                    const localPassIds = new Set(hallPasses.map(p => p.id));
-                                    
-                                    // Add any cloud passes we don't have locally
-                                    cloudRecord.hallPasses.forEach(cloudPass => {
-                                        if (!localPassIds.has(cloudPass.id)) {
-                                            hallPasses.push(cloudPass);
-                                        }
-                                    });
-                                    
-                                    console.log('📝 Merged hall passes (kept local + added cloud)');
-                                } else if (hallPasses.length > 0) {
-                                    // Cloud doesn't have passes but we do locally - keep ours
-                                    console.log('📝 Keeping local hall passes (cloud has none)');
-                                }
-                            }
-                        }
-                        
-                        // Now save our (potentially merged) data
-                        const response = await fetch(`https://api.jsonbin.io/v3/b/${binId}`, {
-                            method: 'PUT',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'X-Master-Key': JSONBIN_API_KEY
-                            },
-                            body: JSON.stringify({
-                                students,
-                                currentWeek,
-                                cycleDuration,
-                                weeklyWinners,
-                                bigRaffleWinners,
-                                teachers,
-                                auditLog,
-                                weeklyHistory,
-                                pbisSubcategories,
-                                academicSubcategories,
-                                lastPowerSchoolSync,
-                                kickboardSettings,
-                                emailJSConfig,
-                                hallPasses,
-                                passSettings,
-                                preventionGroups,
-                                schoolBranding,
-                                behaviorReferrals,
-                                referralIdCounter,
-                                lastSaveTimestamp: Date.now()
-                            })
-                        });
-
-                        if (!response.ok) {
-                            console.error('Cloud sync failed with status:', response.status);
-                            
-                            // If 403 (permission denied), try creating a new bin
-                            if (response.status === 403) {
-                                console.log('Creating new bin with your API key...');
-                                alert('⚠️ Creating new cloud storage...\n\nThe old storage bin is inaccessible. Creating a fresh one with your API key.');
-                                await createCloudBin();
-                            }
-                        } else {
-                            console.log('✅ Cloud sync successful!' + (shouldMerge ? ' (merged data)' : ''));
-                            // Update our local timestamp to match what we just saved
-                            lastSaveTimestamp = Date.now();
-                        }
+                        await setDoc(docRef, dataToSave);
+                        console.log('✅ Saved to Firebase');
+                        lastSaveTimestamp = Date.now();
                     } catch (error) {
-                        console.error('Cloud sync error:', error);
+                        console.error('❌ Firebase save error:', error);
+                        // localStorage backup already saved, so data is safe
                     }
-                    
-                    // Wait to ensure cloud save completes
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                } else {
+                    console.log('ℹ️ Firebase not initialized, using localStorage only');
                 }
             } catch (error) {
-                console.error('Cloud sync error:', error);
+                console.error('Save error:', error);
             } finally {
                 isSyncing = false;
-                lastUserActivity = Date.now(); // Reset activity timer
+                lastUserActivity = Date.now();
             }
         }
 
@@ -14028,7 +13880,7 @@
             console.log('User role:', currentUser?.role);
             console.log('User sections:', currentUser?.sections);
             
-            // Campus Aides see all students - show grade filter instead of period filter
+            // Campus Aides see all students - show grade filter
             if (currentUser && currentUser.role === 'campusaide') {
                 console.log('Campus Aide - showing grade filter');
                 if (periodFilterSection) {
