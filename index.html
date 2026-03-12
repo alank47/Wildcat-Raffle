@@ -1519,6 +1519,7 @@
             <button class="tab admin-only" id="bigRaffleTab" onclick="switchTab('bigRaffle')">🎊 Wildcat Jackpot</button>
             <button class="tab admin-only" id="auditTab" onclick="switchTab('audit')">📋 Audit Log</button>
             <button class="tab admin-only" id="teachersTab" onclick="switchTab('teachers')">👨‍🏫 Teachers</button>
+            <button class="tab super-admin-only" id="loginActivityTab" onclick="switchTab('loginActivity')">🔐 Login Activity</button>
             <button class="tab admin-only" id="settingsTab" onclick="switchTab('settings')">⚙️ Settings</button>
             <button class="tab super-admin-only" id="systemTab" onclick="switchTab('system')" style="background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); color: white; border-color: #dc3545;">🔒 System Admin</button>
         </div>
@@ -2571,6 +2572,89 @@
                             <tr>
                                 <td colspan="8" style="text-align: center; padding: 40px; color: #999;">
                                     No activity logged yet
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Login Activity Tab (Super Admin Only) -->
+            <div id="loginActivity" class="tab-content super-admin-only">
+                <h2>🔐 Login Activity</h2>
+                <p style="margin: 15px 0; color: #666;">Track user logins and system access</p>
+                
+                <!-- Filters -->
+                <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: center;">
+                        <div>
+                            <label style="display: block; margin-bottom: 5px; font-weight: 600; color: #333;">Search User:</label>
+                            <input type="text" id="loginSearchUser" placeholder="Name or username..." 
+                                   onkeyup="updateLoginActivityTable()" 
+                                   style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; width: 200px;">
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 5px; font-weight: 600; color: #333;">Filter by Role:</label>
+                            <select id="loginFilterRole" onchange="updateLoginActivityTable()" 
+                                    style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; cursor: pointer;">
+                                <option value="">All Roles</option>
+                                <option value="superadmin">Super Admin</option>
+                                <option value="admin">Admin</option>
+                                <option value="teacher">Teacher</option>
+                                <option value="campusaide">Campus Aide</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 5px; font-weight: 600; color: #333;">Date Range:</label>
+                            <select id="loginDateRange" onchange="updateLoginActivityTable()" 
+                                    style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; cursor: pointer;">
+                                <option value="all">All Time</option>
+                                <option value="today">Today</option>
+                                <option value="week">Last 7 Days</option>
+                                <option value="month">Last 30 Days</option>
+                            </select>
+                        </div>
+                        <div style="margin-left: auto;">
+                            <button onclick="exportLoginActivity()" class="btn btn-primary" 
+                                    style="padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
+                                📥 Export CSV
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Stats Cards -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
+                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 12px; color: white; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);">
+                        <div style="font-size: 32px; font-weight: bold;" id="totalLoginsCount">0</div>
+                        <div style="font-size: 14px; opacity: 0.9;">Total Logins</div>
+                    </div>
+                    <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 20px; border-radius: 12px; color: white; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);">
+                        <div style="font-size: 32px; font-weight: bold;" id="uniqueUsersCount">0</div>
+                        <div style="font-size: 14px; opacity: 0.9;">Unique Users</div>
+                    </div>
+                    <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); padding: 20px; border-radius: 12px; color: white; box-shadow: 0 4px 15px rgba(245, 158, 11, 0.3);">
+                        <div style="font-size: 32px; font-weight: bold;" id="todayLoginsCount">0</div>
+                        <div style="font-size: 14px; opacity: 0.9;">Logins Today</div>
+                    </div>
+                </div>
+                
+                <!-- Login Activity Table -->
+                <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); overflow-x: auto;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="background: #f8f9fa; border-bottom: 2px solid #dee2e6;">
+                                <th style="padding: 12px; text-align: left; font-weight: 600; color: #495057;">Date & Time</th>
+                                <th style="padding: 12px; text-align: left; font-weight: 600; color: #495057;">User</th>
+                                <th style="padding: 12px; text-align: left; font-weight: 600; color: #495057;">Username</th>
+                                <th style="padding: 12px; text-align: left; font-weight: 600; color: #495057;">Role</th>
+                                <th style="padding: 12px; text-align: left; font-weight: 600; color: #495057;">Platform</th>
+                            </tr>
+                        </thead>
+                        <tbody id="loginActivityTableBody">
+                            <tr>
+                                <td colspan="5" style="padding: 40px; text-align: center; color: #999;">
+                                    No login activity yet
                                 </td>
                             </tr>
                         </tbody>
@@ -5080,6 +5164,10 @@
         // Behavior Referral System
         let behaviorReferrals = []; // Array of referral objects
         let referralIdCounter = 1;
+        
+        // Login Activity Tracking
+        let loginHistory = []; // Array of login records
+        
         let wildcatCashBehaviors = [
             // Core Positive Behaviors (cannot be deleted)
             { id: 'wc1', name: 'Be Present', points: 100, type: 'positive' },
@@ -5690,6 +5778,7 @@
                         schoolBranding = data.schoolBranding || schoolBranding;
                         behaviorReferrals = data.behaviorReferrals || [];
                         referralIdCounter = data.referralIdCounter || 1;
+                        loginHistory = data.loginHistory || [];
                         lastSaveTimestamp = data.lastSaveTimestamp || 0;
                         
                         console.log('✅ Loaded data from Firebase');
@@ -5748,6 +5837,7 @@
                 schoolBranding = data.schoolBranding || schoolBranding;
                 behaviorReferrals = data.behaviorReferrals || [];
                 referralIdCounter = data.referralIdCounter || 1;
+                loginHistory = data.loginHistory || [];
                 lastSaveTimestamp = data.lastSaveTimestamp || 0; // Track local timestamp
                 
                 // Apply school branding if it exists
@@ -6140,6 +6230,7 @@
                     schoolBranding,
                     behaviorReferrals,
                     referralIdCounter,
+                    loginHistory,
                     lastSaveTimestamp: Date.now()
                 };
                 
@@ -7581,7 +7672,28 @@
             }
 
             currentUser = teacher;
+            
+            // Track login activity
+            const loginRecord = {
+                id: 'login_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+                userId: teacher.id,
+                username: teacher.username,
+                name: teacher.name,
+                role: teacher.role,
+                timestamp: new Date().toISOString(),
+                userAgent: navigator.userAgent,
+                platform: navigator.platform
+            };
+            
+            loginHistory.push(loginRecord);
+            
+            // Keep only last 500 login records to prevent unbounded growth
+            if (loginHistory.length > 500) {
+                loginHistory = loginHistory.slice(-500);
+            }
+            
             saveSession(); // Save session for auto-login
+            saveData(); // Save login history to cloud
             
             document.getElementById('loginScreen').classList.add('hidden');
             document.getElementById('createAdminScreen').classList.add('hidden');
@@ -7825,6 +7937,163 @@
                     </tr>
                 `;
             }).join('');
+        }
+        
+        // Login Activity Functions
+        function updateLoginActivityTable() {
+            const tbody = document.getElementById('loginActivityTableBody');
+            const searchUser = document.getElementById('loginSearchUser')?.value.toLowerCase() || '';
+            const filterRole = document.getElementById('loginFilterRole')?.value || '';
+            const dateRange = document.getElementById('loginDateRange')?.value || 'all';
+            
+            if (!tbody) return;
+            
+            // Filter logins
+            let filteredLogins = loginHistory.filter(login => {
+                // Search filter
+                if (searchUser && !login.name.toLowerCase().includes(searchUser) && !login.username.toLowerCase().includes(searchUser)) {
+                    return false;
+                }
+                
+                // Role filter
+                if (filterRole && login.role !== filterRole) {
+                    return false;
+                }
+                
+                // Date range filter
+                if (dateRange !== 'all') {
+                    const loginDate = new Date(login.timestamp);
+                    const now = new Date();
+                    const diffTime = now - loginDate;
+                    const diffDays = diffTime / (1000 * 60 * 60 * 24);
+                    
+                    if (dateRange === 'today' && diffDays > 1) return false;
+                    if (dateRange === 'week' && diffDays > 7) return false;
+                    if (dateRange === 'month' && diffDays > 30) return false;
+                }
+                
+                return true;
+            });
+            
+            // Sort by most recent first
+            filteredLogins.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            
+            // Update stats
+            updateLoginStats(filteredLogins);
+            
+            // Render table
+            if (filteredLogins.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="padding: 40px; text-align: center; color: #999;">No login activity found</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = filteredLogins.map(login => {
+                const date = new Date(login.timestamp);
+                const formattedDate = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                const formattedTime = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                
+                // Role badge styling
+                let roleColor = '#6c757d';
+                let roleIcon = '👤';
+                if (login.role === 'superadmin') {
+                    roleColor = '#dc3545';
+                    roleIcon = '👑';
+                } else if (login.role === 'admin') {
+                    roleColor = '#667eea';
+                    roleIcon = '⭐';
+                } else if (login.role === 'campusaide') {
+                    roleColor = '#10b981';
+                    roleIcon = '👁️';
+                } else if (login.role === 'teacher') {
+                    roleColor = '#28a745';
+                    roleIcon = '👤';
+                }
+                
+                // Simplify platform display
+                let platform = 'Unknown';
+                if (login.platform) {
+                    if (login.platform.includes('Win')) platform = '💻 Windows';
+                    else if (login.platform.includes('Mac')) platform = '🍎 Mac';
+                    else if (login.platform.includes('Linux')) platform = '🐧 Linux';
+                    else if (login.platform.includes('iPhone') || login.platform.includes('iPad')) platform = '📱 iOS';
+                    else if (login.platform.includes('Android')) platform = '📱 Android';
+                    else platform = login.platform;
+                }
+                
+                return `
+                    <tr style="border-bottom: 1px solid #e9ecef;">
+                        <td style="padding: 12px; color: #495057;">
+                            <div style="font-weight: 600;">${formattedDate}</div>
+                            <div style="font-size: 12px; color: #6c757d;">${formattedTime}</div>
+                        </td>
+                        <td style="padding: 12px; color: #495057; font-weight: 600;">${login.name}</td>
+                        <td style="padding: 12px; color: #6c757d;">${login.username}</td>
+                        <td style="padding: 12px;">
+                            <span style="background: ${roleColor}; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">
+                                ${roleIcon} ${getFriendlyRoleName(login.role)}
+                            </span>
+                        </td>
+                        <td style="padding: 12px; color: #6c757d;">${platform}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+        
+        function updateLoginStats(filteredLogins = loginHistory) {
+            // Total logins
+            document.getElementById('totalLoginsCount').textContent = filteredLogins.length;
+            
+            // Unique users
+            const uniqueUsers = new Set(filteredLogins.map(l => l.userId));
+            document.getElementById('uniqueUsersCount').textContent = uniqueUsers.size;
+            
+            // Logins today
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const todayLogins = filteredLogins.filter(l => new Date(l.timestamp) >= today);
+            document.getElementById('todayLoginsCount').textContent = todayLogins.length;
+        }
+        
+        function exportLoginActivity() {
+            if (loginHistory.length === 0) {
+                alert('No login activity to export');
+                return;
+            }
+            
+            // Create CSV content
+            const headers = ['Date', 'Time', 'User Name', 'Username', 'Role', 'Platform'];
+            const rows = loginHistory.map(login => {
+                const date = new Date(login.timestamp);
+                const formattedDate = date.toLocaleDateString('en-US');
+                const formattedTime = date.toLocaleTimeString('en-US');
+                
+                return [
+                    formattedDate,
+                    formattedTime,
+                    login.name,
+                    login.username,
+                    getFriendlyRoleName(login.role),
+                    login.platform || 'Unknown'
+                ];
+            });
+            
+            const csvContent = [
+                headers.join(','),
+                ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+            ].join('\n');
+            
+            // Download CSV
+            const blob = new Blob([csvContent], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `login-activity-${new Date().toISOString().split('T')[0]}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+            
+            alert('✅ Login activity exported successfully!');
         }
         
         function deleteTicketEntry(logIndex) {
@@ -14672,6 +14941,11 @@
             if (tabName === 'data') {
                 updateAnalyticsCharts();
                 updateAnalyticsTables();
+            }
+            
+            // Handle Login Activity tab
+            if (tabName === 'loginActivity' && currentUser && currentUser.role === 'superadmin') {
+                updateLoginActivityTable();
             }
             
             // Handle Wildcat Cash tab-specific updates (data population)
