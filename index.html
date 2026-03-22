@@ -1322,7 +1322,8 @@
             
             <button class="btn" style="width: 100%; margin-bottom: 15px;" onclick="studentLogin()">View My Tickets</button>
             
-            <!-- Student Kiosk Button -->
+            <!-- HIDDEN FOR LAUNCH - BETA FEATURE -->
+            <!--
             <div style="text-align: center; margin: 20px 0; padding: 20px 0; border-top: 2px solid #e0e0e0; border-bottom: 2px solid #e0e0e0;">
                 <p style="color: #666; margin-bottom: 15px; font-size: 14px;">Need a hall pass?</p>
                 <button class="btn" style="width: 100%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); font-size: 18px; padding: 18px;" onclick="openStudentKiosk()">
@@ -1330,6 +1331,7 @@
                 </button>
                 <p style="color: #999; font-size: 12px; margin-top: 10px;">No login required</p>
             </div>
+            -->
             
             <div id="studentLoginError" class="error-message" style="text-align: center;"></div>
         </div>
@@ -4849,7 +4851,7 @@
     <div id="studentApp" class="container hidden">
         <div class="header">
             <h1>🎟️ Wildcat Rewards</h1>
-            <p>Track your raffle tickets, Wildcat Cash, and hall passes</p>
+            <p>Track your raffle tickets and see where you rank!</p>
         </div>
 
         <div class="user-info">
@@ -4862,29 +4864,33 @@
             <button class="student-tab-button active" onclick="switchStudentTab('raffleTickets')" id="studentRaffleTabBtn" style="padding: 12px 24px; background: #667eea; color: white; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
                 🎟️ Raffle Tickets
             </button>
+            <!-- HIDDEN FOR LAUNCH - BETA FEATURES -->
+            <!--
             <button class="student-tab-button" onclick="switchStudentTab('wildcatCash')" id="studentCashTabBtn" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
                 💰 Wildcat Cash
             </button>
             <button class="student-tab-button" onclick="switchStudentTab('clawPass')" id="studentPassTabBtn" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
                 🎫 My Passes
             </button>
+            -->
         </div>
 
         <div class="content">
             <!-- Raffle Tickets Tab -->
             <div id="raffleTicketsTab" class="student-tab-content">
-                <div class="stats">
-                    <div class="stat-card">
-                        <h3 id="studentPbisTickets">0</h3>
-                        <p>PBIS Tickets</p>
+                <!-- Sleek Side-by-Side Ticket Counters -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 30px;">
+                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3); text-align: center;">
+                        <div style="font-size: 48px; font-weight: 700; color: white;" id="studentPbisTickets">0</div>
+                        <div style="color: rgba(255,255,255,0.95); font-size: 14px; font-weight: 600; margin-top: 8px;">PBIS Tickets</div>
                     </div>
-                    <div class="stat-card">
-                        <h3 id="studentAttendanceTickets">0</h3>
-                        <p>Attendance Tickets</p>
+                    <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(240, 147, 251, 0.3); text-align: center;">
+                        <div style="font-size: 48px; font-weight: 700; color: white;" id="studentAttendanceTickets">0</div>
+                        <div style="color: rgba(255,255,255,0.95); font-size: 14px; font-weight: 600; margin-top: 8px;">Attendance Tickets</div>
                     </div>
-                    <div class="stat-card">
-                        <h3 id="studentAcademicTickets">0</h3>
-                        <p>Academic Tickets</p>
+                    <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(79, 172, 254, 0.3); text-align: center;">
+                        <div style="font-size: 48px; font-weight: 700; color: white;" id="studentAcademicTickets">0</div>
+                        <div style="color: rgba(255,255,255,0.95); font-size: 14px; font-weight: 600; margin-top: 8px;">Academic Tickets</div>
                     </div>
                 </div>
 
