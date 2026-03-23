@@ -392,6 +392,12 @@
         .slider.round:before {
             border-radius: 50%;
         }
+        
+        /* Time Filter Buttons */
+        .time-filter-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
 
         .stats {
             display: grid;
@@ -2186,7 +2192,44 @@
             <!-- Data & Analytics Tab -->
             <div id="data" class="tab-content">
                 <h2 style="margin-bottom: 10px;">📊 Data & Analytics</h2>
-                <p style="margin: 0 0 30px 0; color: #666; font-size: 15px;">Track program effectiveness and student engagement across all schools</p>
+                <p style="margin: 0 0 20px 0; color: #666; font-size: 15px;">Track program effectiveness and student engagement across all schools</p>
+
+                <!-- TIME FILTER -->
+                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);">
+                    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 15px;">
+                        <div style="color: white;">
+                            <h3 style="margin: 0 0 5px 0; font-size: 16px;">📅 Time Period</h3>
+                            <p style="margin: 0; font-size: 13px; opacity: 0.9;">Filter data by date range</p>
+                        </div>
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                            <button onclick="setDataTimeFilter('thisWeek')" id="filterThisWeek" class="time-filter-btn active" style="padding: 10px 20px; background: white; color: #667eea; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: all 0.2s;">This Week</button>
+                            <button onclick="setDataTimeFilter('last7Days')" id="filterLast7Days" class="time-filter-btn" style="padding: 10px 20px; background: rgba(255,255,255,0.2); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: all 0.2s;">Last 7 Days</button>
+                            <button onclick="setDataTimeFilter('last30Days')" id="filterLast30Days" class="time-filter-btn" style="padding: 10px 20px; background: rgba(255,255,255,0.2); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: all 0.2s;">Last 30 Days</button>
+                            <button onclick="setDataTimeFilter('thisCycle')" id="filterThisCycle" class="time-filter-btn" style="padding: 10px 20px; background: rgba(255,255,255,0.2); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: all 0.2s;">This Cycle</button>
+                            <button onclick="setDataTimeFilter('allTime')" id="filterAllTime" class="time-filter-btn" style="padding: 10px 20px; background: rgba(255,255,255,0.2); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: all 0.2s;">All Time</button>
+                            <button onclick="toggleCustomDateRange()" id="filterCustom" class="time-filter-btn" style="padding: 10px 20px; background: rgba(255,255,255,0.2); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: all 0.2s;">📆 Custom</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Custom Date Range Picker (Hidden by default) -->
+                    <div id="customDateRangePicker" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.3);">
+                        <div style="display: flex; gap: 15px; align-items: end; flex-wrap: wrap;">
+                            <div>
+                                <label style="display: block; margin-bottom: 5px; color: white; font-size: 13px;">Start Date</label>
+                                <input type="date" id="customStartDate" style="padding: 8px 12px; border-radius: 6px; border: none;">
+                            </div>
+                            <div>
+                                <label style="display: block; margin-bottom: 5px; color: white; font-size: 13px;">End Date</label>
+                                <input type="date" id="customEndDate" style="padding: 8px 12px; border-radius: 6px; border: none;">
+                            </div>
+                            <button onclick="applyCustomDateRange()" style="padding: 8px 20px; background: white; color: #667eea; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">Apply</button>
+                        </div>
+                    </div>
+                    
+                    <div id="currentFilterDisplay" style="margin-top: 15px; padding: 10px; background: rgba(255,255,255,0.2); border-radius: 6px;">
+                        <small style="color: white; font-weight: 500;">📊 Showing: <span id="currentFilterText">This Week</span></small>
+                    </div>
+                </div>
 
                 <!-- Beautiful Subtabs -->
                 <div style="display: flex; gap: 10px; margin-bottom: 30px; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px; overflow-x: auto;">
@@ -6850,6 +6893,175 @@
             }
         }
 
+        // ========================================
+        // DATA & ANALYTICS TIME FILTERS
+        // ========================================
+        
+        let currentDataTimeFilter = 'allTime'; // Default to show all data
+        let customDataStartDate = null;
+        let customDataEndDate = null;
+        
+        function setDataTimeFilter(filter) {
+            currentDataTimeFilter = filter;
+            
+            // Update button states
+            document.querySelectorAll('.time-filter-btn').forEach(btn => {
+                btn.style.background = 'rgba(255,255,255,0.2)';
+                btn.style.color = 'white';
+            });
+            
+            const activeBtn = document.getElementById('filter' + filter.charAt(0).toUpperCase() + filter.slice(1));
+            if (activeBtn) {
+                activeBtn.style.background = 'white';
+                activeBtn.style.color = '#667eea';
+            }
+            
+            // Hide custom date picker
+            document.getElementById('customDateRangePicker').style.display = 'none';
+            
+            // Update display text
+            const filterText = {
+                'thisWeek': 'This Week (Current)',
+                'last7Days': 'Last 7 Days',
+                'last30Days': 'Last 30 Days',
+                'thisCycle': `This Cycle (${currentCycle.name || 'Not configured'})`,
+                'allTime': 'All Time'
+            };
+            
+            document.getElementById('currentFilterText').textContent = filterText[filter];
+            
+            // Refresh analytics with new filter
+            updateAnalyticsCharts();
+            updateAnalyticsTables();
+        }
+        
+        function toggleCustomDateRange() {
+            const picker = document.getElementById('customDateRangePicker');
+            picker.style.display = picker.style.display === 'none' ? 'block' : 'none';
+        }
+        
+        function applyCustomDateRange() {
+            const startDate = document.getElementById('customStartDate').value;
+            const endDate = document.getElementById('customEndDate').value;
+            
+            if (!startDate || !endDate) {
+                alert('⚠️ Please select both start and end dates');
+                return;
+            }
+            
+            if (new Date(startDate) > new Date(endDate)) {
+                alert('⚠️ Start date must be before end date');
+                return;
+            }
+            
+            customDataStartDate = startDate;
+            customDataEndDate = endDate;
+            currentDataTimeFilter = 'custom';
+            
+            // Update button states
+            document.querySelectorAll('.time-filter-btn').forEach(btn => {
+                btn.style.background = 'rgba(255,255,255,0.2)';
+                btn.style.color = 'white';
+            });
+            
+            document.getElementById('filterCustom').style.background = 'white';
+            document.getElementById('filterCustom').style.color = '#667eea';
+            
+            // Update display text
+            document.getElementById('currentFilterText').textContent = 
+                `${new Date(startDate).toLocaleDateString()} - ${new Date(endDate).toLocaleDateString()}`;
+            
+            // Refresh analytics
+            updateAnalyticsCharts();
+            updateAnalyticsTables();
+        }
+        
+        function getFilteredStudentData() {
+            // Return filtered student data based on current time filter
+            // This function filters ticket history based on date range
+            
+            const now = new Date();
+            let startDate, endDate;
+            
+            switch (currentDataTimeFilter) {
+                case 'thisWeek':
+                    // This week means current week's data (may be 0 if just reset)
+                    return students.map(s => ({
+                        ...s,
+                        pbisTickets: s.pbisTickets || 0,
+                        attendanceTickets: s.attendanceTickets || 0,
+                        academicTickets: s.academicTickets || 0
+                    }));
+                    
+                case 'last7Days':
+                    startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+                    endDate = now;
+                    break;
+                    
+                case 'last30Days':
+                    startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+                    endDate = now;
+                    break;
+                    
+                case 'thisCycle':
+                    if (currentCycle.startDate && currentCycle.endDate) {
+                        startDate = new Date(currentCycle.startDate);
+                        endDate = new Date(currentCycle.endDate);
+                    } else {
+                        // No cycle configured, show all time
+                        return students;
+                    }
+                    break;
+                    
+                case 'custom':
+                    if (customDataStartDate && customDataEndDate) {
+                        startDate = new Date(customDataStartDate);
+                        endDate = new Date(customDataEndDate);
+                    } else {
+                        return students;
+                    }
+                    break;
+                    
+                case 'allTime':
+                default:
+                    // Return all historical data
+                    return students.map(s => {
+                        // Calculate totals from ticket history
+                        const history = s.ticketHistory || [];
+                        const pbisTotal = history.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + h.amount, 0);
+                        const attendanceTotal = history.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + h.amount, 0);
+                        const academicTotal = history.filter(h => h.category === 'Academic').reduce((sum, h) => sum + h.amount, 0);
+                        
+                        return {
+                            ...s,
+                            pbisTickets: pbisTotal,
+                            attendanceTickets: attendanceTotal,
+                            academicTickets: academicTotal
+                        };
+                    });
+            }
+            
+            // For date range filters, calculate from ticket history
+            return students.map(s => {
+                const history = s.ticketHistory || [];
+                const filteredHistory = history.filter(h => {
+                    const ticketDate = new Date(h.date);
+                    return ticketDate >= startDate && ticketDate <= endDate;
+                });
+                
+                const pbisTotal = filteredHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + h.amount, 0);
+                const attendanceTotal = filteredHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + h.amount, 0);
+                const academicTotal = filteredHistory.filter(h => h.category === 'Academic').reduce((sum, h) => sum + h.amount, 0);
+                
+                return {
+                    ...s,
+                    pbisTickets: pbisTotal,
+                    attendanceTickets: attendanceTotal,
+                    academicTickets: academicTotal
+                };
+            });
+        }
+        
         function updateAnalyticsCharts() {
             const suffix = currentDataSubtab === 'academy' ? 'Academy' : 
                           currentDataSubtab === 'middleschool' ? 'MS' : 'HS';
