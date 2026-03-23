@@ -3428,7 +3428,12 @@
 
                     <!-- Assign Detention Section -->
                     <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 30px;">
-                        <h3 style="color: #dc3545; margin-bottom: 20px;">⏰ Assign Detention</h3>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                            <h3 style="color: #dc3545; margin: 0;">⏰ Assign Detention</h3>
+                            <button onclick="openDetentionSettings()" style="padding: 8px 16px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
+                                ⚙️ Settings
+                            </button>
+                        </div>
                         
                         <!-- Student Search -->
                         <div class="form-group">
@@ -3453,13 +3458,6 @@
                                 <label style="font-weight: 600; color: #333; margin-bottom: 8px; display: block;">Location</label>
                                 <select id="detentionLocation" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
                                     <option value="">Select location...</option>
-                                    <option value="Main Office">Main Office</option>
-                                    <option value="Library">Library</option>
-                                    <option value="Room 101">Room 101</option>
-                                    <option value="Room 102">Room 102</option>
-                                    <option value="Cafeteria">Cafeteria</option>
-                                    <option value="Gym">Gym</option>
-                                    <option value="Other">Other</option>
                                 </select>
                             </div>
 
@@ -3483,7 +3481,9 @@
                         <!-- Reason -->
                         <div class="form-group" style="margin-bottom: 20px;">
                             <label style="font-weight: 600; color: #333; margin-bottom: 8px; display: block;">Reason for Detention</label>
-                            <textarea id="detentionReason" rows="3" placeholder="Describe the reason..." style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px; resize: vertical;"></textarea>
+                            <select id="detentionReason" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;">
+                                <option value="">Select reason...</option>
+                            </select>
                         </div>
 
                         <!-- Submit Button -->
@@ -3515,6 +3515,43 @@
                         </div>
                         <div id="completedDetentionsList" style="max-height: 500px; overflow-y: auto;">
                             <p style="text-align: center; color: #999; padding: 40px;">No completed detentions</p>
+                        </div>
+                    </div>
+                    <!-- Detention Settings Modal -->
+                    <div id="detentionSettingsModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center;">
+                        <div style="background: white; border-radius: 12px; padding: 30px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto;">
+                            <h3 style="margin-bottom: 20px; color: #667eea;">⚙️ Detention Settings</h3>
+                            
+                            <!-- Locations -->
+                            <div style="margin-bottom: 30px;">
+                                <h4 style="color: #333; margin-bottom: 10px;">📍 Detention Locations</h4>
+                                <p style="color: #666; font-size: 13px; margin-bottom: 15px;">Manage available detention locations</p>
+                                
+                                <div id="detentionLocationsList" style="margin-bottom: 15px;"></div>
+                                
+                                <div style="display: flex; gap: 10px;">
+                                    <input type="text" id="newDetentionLocation" placeholder="Add new location..." style="flex: 1; padding: 10px; border: 2px solid #e0e0e0; border-radius: 6px;">
+                                    <button onclick="addDetentionLocation()" style="padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">+ Add</button>
+                                </div>
+                            </div>
+                            
+                            <!-- Reasons -->
+                            <div style="margin-bottom: 30px;">
+                                <h4 style="color: #333; margin-bottom: 10px;">📝 Detention Reasons</h4>
+                                <p style="color: #666; font-size: 13px; margin-bottom: 15px;">Manage preset detention reasons</p>
+                                
+                                <div id="detentionReasonsList" style="margin-bottom: 15px;"></div>
+                                
+                                <div style="display: flex; gap: 10px;">
+                                    <input type="text" id="newDetentionReason" placeholder="Add new reason..." style="flex: 1; padding: 10px; border: 2px solid #e0e0e0; border-radius: 6px;">
+                                    <button onclick="addDetentionReason()" style="padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">+ Add</button>
+                                </div>
+                            </div>
+                            
+                            <!-- Close Button -->
+                            <button onclick="closeDetentionSettings()" style="width: 100%; padding: 12px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
+                                Close
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -5488,6 +5525,17 @@
         // Detention Tracker System
         let detentions = []; // Array of detention records
         let detentionIdCounter = 1;
+        let detentionLocations = ['Main Office', 'Library', 'Room 101', 'Room 102', 'Cafeteria', 'Gym'];
+        let detentionReasons = [
+            'Disrupting Class',
+            'Tardiness',
+            'Dress Code Violation',
+            'Inappropriate Behavior',
+            'Defiance/Disrespect',
+            'Cell Phone Violation',
+            'Missing Assignment',
+            'Other'
+        ];
         
         // Login Activity Tracking
         let loginHistory = []; // Array of login records
@@ -6126,6 +6174,8 @@
                         preventionGroups = secondaryData.preventionGroups || [];
                         behaviorReferrals = secondaryData.behaviorReferrals || [];
                         detentions = secondaryData.detentions || [];
+                        detentionLocations = secondaryData.detentionLocations || ['Main Office', 'Library', 'Room 101', 'Room 102', 'Cafeteria', 'Gym'];
+                        detentionReasons = secondaryData.detentionReasons || ['Disrupting Class', 'Tardiness', 'Dress Code Violation', 'Inappropriate Behavior', 'Defiance/Disrespect', 'Cell Phone Violation', 'Missing Assignment', 'Other'];
                         
                         console.log('✅ Loaded data from Firebase (2 documents)');
                         
@@ -6185,6 +6235,8 @@
                 referralIdCounter = data.referralIdCounter || 1;
                 detentions = data.detentions || [];
                 detentionIdCounter = data.detentionIdCounter || 1;
+                detentionLocations = data.detentionLocations || ['Main Office', 'Library', 'Room 101', 'Room 102', 'Cafeteria', 'Gym'];
+                detentionReasons = data.detentionReasons || ['Disrupting Class', 'Tardiness', 'Dress Code Violation', 'Inappropriate Behavior', 'Defiance/Disrespect', 'Cell Phone Violation', 'Missing Assignment', 'Other'];
                 loginHistory = data.loginHistory || [];
                 lastSaveTimestamp = data.lastSaveTimestamp || 0;
                 // Auto-week system
@@ -6672,6 +6724,8 @@
                     referralIdCounter,
                     detentions,
                     detentionIdCounter,
+                    detentionLocations,
+                    detentionReasons,
                     loginHistory,
                     // Auto-week system variables
                     autoWeekEnabled,
@@ -6735,6 +6789,8 @@
                             preventionGroups,
                             behaviorReferrals,
                             detentions,
+                            detentionLocations,
+                            detentionReasons,
                             lastSaveTimestamp: timestamp
                         });
                         
@@ -18446,6 +18502,16 @@
             const today = new Date().toISOString().split('T')[0];
             document.getElementById('detentionDateAssigned').value = today;
             document.getElementById('detentionStartDate').value = today;
+            
+            // Populate location dropdown
+            const locationSelect = document.getElementById('detentionLocation');
+            locationSelect.innerHTML = '<option value="">Select location...</option>' +
+                detentionLocations.map(loc => `<option value="${loc}">${loc}</option>`).join('');
+            
+            // Populate reason dropdown
+            const reasonSelect = document.getElementById('detentionReason');
+            reasonSelect.innerHTML = '<option value="">Select reason...</option>' +
+                detentionReasons.map(reason => `<option value="${reason}">${reason}</option>`).join('');
         }
         
         function switchDetentionLevel(level) {
@@ -18705,24 +18771,55 @@
             
             const today = new Date().toISOString().split('T')[0];
             
+            // Initialize attendance records if not exists
+            if (!detention.attendanceRecords) {
+                detention.attendanceRecords = [];
+            }
+            
             // Check if already marked today
-            if (detention.servedDates.includes(today)) {
-                alert('⚠️ This detention day has already been marked as served today.');
+            const existingRecord = detention.attendanceRecords.find(r => r.date === today);
+            if (existingRecord) {
+                alert(`⚠️ Attendance already marked for today as: ${existingRecord.status}\n\nDate: ${new Date(today).toLocaleDateString()}`);
                 return;
             }
             
-            // Mark day served
-            detention.daysServed++;
-            detention.daysRemaining = detention.totalDays - detention.daysServed;
-            detention.servedDates.push(today);
+            // Ask for attendance status
+            const attendance = confirm(
+                `📋 DETENTION ATTENDANCE\n\n` +
+                `Student: ${detention.studentName}\n` +
+                `Date: ${new Date(today).toLocaleDateString()}\n\n` +
+                `Was the student PRESENT for detention today?\n\n` +
+                `Click OK for PRESENT\n` +
+                `Click Cancel for ABSENT`
+            );
             
-            // Check if completed
-            if (detention.daysServed >= detention.totalDays) {
-                detention.status = 'completed';
-                detention.completedAt = new Date().toISOString();
-                showSuccessToast(`🎉 ${detention.studentName} has completed their detention!`);
+            const status = attendance ? 'present' : 'absent';
+            
+            // Record attendance
+            detention.attendanceRecords.push({
+                date: today,
+                status: status,
+                markedBy: currentUser.name,
+                markedAt: new Date().toISOString()
+            });
+            
+            // Only increment days served if PRESENT
+            if (status === 'present') {
+                detention.daysServed++;
+                detention.daysRemaining = detention.totalDays - detention.daysServed;
+                detention.servedDates.push(today);
+                
+                // Check if completed
+                if (detention.daysServed >= detention.totalDays) {
+                    detention.status = 'completed';
+                    detention.completedAt = new Date().toISOString();
+                    showSuccessToast(`🎉 ${detention.studentName} has completed their detention!`);
+                } else {
+                    showSuccessToast(`✅ PRESENT - Day marked for ${detention.studentName} (${detention.daysServed}/${detention.totalDays})`);
+                }
             } else {
-                showSuccessToast(`✅ Detention day marked for ${detention.studentName} (${detention.daysServed}/${detention.totalDays})`);
+                // Absent - no credit for the day
+                showSuccessToast(`⚠️ ABSENT - ${detention.studentName} was marked absent. No credit given.`);
             }
             
             saveData();
@@ -18765,6 +18862,14 @@
                 ? detention.servedDates.map(d => new Date(d).toLocaleDateString()).join(', ')
                 : 'None yet';
             
+            // Build attendance record text
+            let attendanceText = '';
+            if (detention.attendanceRecords && detention.attendanceRecords.length > 0) {
+                attendanceText = '\n\nAttendance Records:\n' + detention.attendanceRecords.map(r => 
+                    `${new Date(r.date).toLocaleDateString()}: ${r.status.toUpperCase()}`
+                ).join('\n');
+            }
+            
             alert(
                 `📋 DETENTION DETAILS\n\n` +
                 `Student: ${detention.studentName}\n` +
@@ -18778,10 +18883,108 @@
                 `Status: ${detention.status.toUpperCase()}\n` +
                 (detention.completedAt ? `Completed: ${new Date(detention.completedAt).toLocaleDateString()}\n\n` : '\n') +
                 `Reason: ${detention.reason}\n\n` +
-                `Dates Served:\n${servedDatesText}\n\n` +
+                `Dates Served:\n${servedDatesText}` +
+                attendanceText + `\n\n` +
                 `Assigned By: ${detention.assignedBy}\n` +
                 `Assigned At: ${new Date(detention.assignedAt).toLocaleString()}`
             );
+        }
+        
+        // ========================================
+        // DETENTION SETTINGS FUNCTIONS
+        // ========================================
+        
+        function openDetentionSettings() {
+            updateDetentionSettingsLists();
+            document.getElementById('detentionSettingsModal').style.display = 'flex';
+        }
+        
+        function closeDetentionSettings() {
+            document.getElementById('detentionSettingsModal').style.display = 'none';
+            // Refresh dropdowns in main form
+            initializeDetentionForm();
+        }
+        
+        function updateDetentionSettingsLists() {
+            // Update locations list
+            const locationsList = document.getElementById('detentionLocationsList');
+            locationsList.innerHTML = detentionLocations.map((loc, index) => `
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px; background: #f5f5f5; border-radius: 6px; margin-bottom: 8px;">
+                    <span>${loc}</span>
+                    <button onclick="removeDetentionLocation(${index})" style="padding: 4px 12px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Remove</button>
+                </div>
+            `).join('');
+            
+            // Update reasons list
+            const reasonsList = document.getElementById('detentionReasonsList');
+            reasonsList.innerHTML = detentionReasons.map((reason, index) => `
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px; background: #f5f5f5; border-radius: 6px; margin-bottom: 8px;">
+                    <span>${reason}</span>
+                    <button onclick="removeDetentionReason(${index})" style="padding: 4px 12px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Remove</button>
+                </div>
+            `).join('');
+        }
+        
+        function addDetentionLocation() {
+            const input = document.getElementById('newDetentionLocation');
+            const newLocation = input.value.trim();
+            
+            if (!newLocation) {
+                alert('⚠️ Please enter a location name');
+                return;
+            }
+            
+            if (detentionLocations.includes(newLocation)) {
+                alert('⚠️ This location already exists');
+                return;
+            }
+            
+            detentionLocations.push(newLocation);
+            input.value = '';
+            updateDetentionSettingsLists();
+            saveData();
+            showSuccessToast(`✅ Location "${newLocation}" added`);
+        }
+        
+        function removeDetentionLocation(index) {
+            const location = detentionLocations[index];
+            if (confirm(`Remove location "${location}"?`)) {
+                detentionLocations.splice(index, 1);
+                updateDetentionSettingsLists();
+                saveData();
+                showSuccessToast(`✅ Location "${location}" removed`);
+            }
+        }
+        
+        function addDetentionReason() {
+            const input = document.getElementById('newDetentionReason');
+            const newReason = input.value.trim();
+            
+            if (!newReason) {
+                alert('⚠️ Please enter a reason');
+                return;
+            }
+            
+            if (detentionReasons.includes(newReason)) {
+                alert('⚠️ This reason already exists');
+                return;
+            }
+            
+            detentionReasons.push(newReason);
+            input.value = '';
+            updateDetentionSettingsLists();
+            saveData();
+            showSuccessToast(`✅ Reason "${newReason}" added`);
+        }
+        
+        function removeDetentionReason(index) {
+            const reason = detentionReasons[index];
+            if (confirm(`Remove reason "${reason}"?`)) {
+                detentionReasons.splice(index, 1);
+                updateDetentionSettingsLists();
+                saveData();
+                showSuccessToast(`✅ Reason "${reason}" removed`);
+            }
         }
 
         function exportReferralReport() {
