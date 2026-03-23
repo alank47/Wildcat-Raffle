@@ -336,6 +336,62 @@
         .btn-danger {
             background: #dc3545;
         }
+        
+        /* Toggle Switch Styles */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 60px;
+            height: 34px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+        }
+
+        input:checked + .slider {
+            background-color: #10b981;
+        }
+
+        input:focus + .slider {
+            box-shadow: 0 0 1px #10b981;
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+
+        .slider.round {
+            border-radius: 34px;
+        }
+
+        .slider.round:before {
+            border-radius: 50%;
+        }
 
         .stats {
             display: grid;
@@ -2807,38 +2863,106 @@
 
                 <!-- RAFFLE MODE SETTINGS (hidden in Cash Mode) -->
                 <div id="raffleSettingsSection">
-                <!-- Wildcat Jackpot Cycle Settings -->
-                <div style="margin: 30px 0; padding: 20px; background: #f3e5f5; border: 2px solid #9c27b0; border-radius: 8px;">
-                    <h3 style="color: #7b1fa2; margin-bottom: 15px;">🎊 Wildcat Jackpot Cycle</h3>
-                    <p style="color: #6a1b9a; font-size: 14px; margin-bottom: 15px;">
-                        Configure how many weeks each Wildcat Jackpot cycle should last
+                <!-- AUTO-WEEK SYSTEM & JACKPOT CYCLE CONFIGURATION -->
+                <div style="margin: 30px 0; padding: 20px; background: linear-gradient(135deg, #f3e5f5 0%, #e3f2fd 100%); border: 2px solid #9c27b0; border-radius: 12px; box-shadow: 0 4px 12px rgba(156, 39, 176, 0.15);">
+                    <h3 style="color: #7b1fa2; margin-bottom: 10px;">🔄 Automatic Week Reset System</h3>
+                    <p style="color: #6a1b9a; font-size: 14px; margin-bottom: 20px;">
+                        System automatically resets tickets and qualifies students every week
                     </p>
                     
-                    <div style="background: white; padding: 20px; border-radius: 8px;">
-                        <h4 style="margin-bottom: 15px;">Cycle Duration</h4>
-                        <p style="color: #666; font-size: 13px; margin-bottom: 15px;">How many weeks should each Wildcat Jackpot cycle last?</p>
-                        
-                        <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
-                            <div style="flex: 1; min-width: 200px;">
-                                <label style="display: block; margin-bottom: 5px; font-weight: 500;">Weeks per Cycle</label>
-                                <input type="number" id="cycleDurationInput" min="1" max="10" value="5" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 16px;">
-                                <small style="color: #666;">Typically 4-6 weeks</small>
+                    <!-- Auto-Week Toggle -->
+                    <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px;">
+                            <div>
+                                <h4 style="margin: 0 0 5px 0;">Automatic Week Detection</h4>
+                                <p style="color: #666; font-size: 13px; margin: 0;">Auto-reset tickets and qualify students every Monday at 6:00 AM</p>
                             </div>
-                            <div style="flex: 1; min-width: 200px;">
-                                <p style="margin: 0; color: #666; font-size: 13px;">
-                                    <strong>Current Cycle:</strong> Week <span id="currentWeekDisplay">1</span> of <span id="cycleDurationDisplay">5</span><br>
-                                    <strong>Examples:</strong> 4 weeks, 5 weeks, 6 weeks
-                                </p>
+                            <label class="switch" style="margin-left: 20px;">
+                                <input type="checkbox" id="autoWeekToggle" onchange="toggleAutoWeek()" checked>
+                                <span class="slider round"></span>
+                            </label>
+                        </div>
+                        
+                        <div id="autoWeekSettings" style="border-top: 1px solid #eee; padding-top: 15px; margin-top: 15px;">
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                                <div>
+                                    <label style="display: block; margin-bottom: 5px; font-weight: 500;">Reset Day</label>
+                                    <select id="weekResetDaySelect" onchange="saveAutoWeekSettings()" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                        <option value="0">Sunday</option>
+                                        <option value="1" selected>Monday</option>
+                                        <option value="2">Tuesday</option>
+                                        <option value="3">Wednesday</option>
+                                        <option value="4">Thursday</option>
+                                        <option value="5">Friday</option>
+                                        <option value="6">Saturday</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label style="display: block; margin-bottom: 5px; font-weight: 500;">Reset Time</label>
+                                    <select id="weekResetHourSelect" onchange="saveAutoWeekSettings()" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                        <option value="0">12:00 AM</option>
+                                        <option value="1">1:00 AM</option>
+                                        <option value="2">2:00 AM</option>
+                                        <option value="3">3:00 AM</option>
+                                        <option value="4">4:00 AM</option>
+                                        <option value="5">5:00 AM</option>
+                                        <option value="6" selected>6:00 AM</option>
+                                        <option value="7">7:00 AM</option>
+                                        <option value="8">8:00 AM</option>
+                                        <option value="9">9:00 AM</option>
+                                        <option value="10">10:00 AM</option>
+                                        <option value="11">11:00 AM</option>
+                                        <option value="12">12:00 PM</option>
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <div style="background: #e8f5e9; padding: 12px; border-radius: 6px; margin-top: 15px; border-left: 4px solid #4CAF50;">
+                                <small style="color: #2e7d32;">
+                                    ✅ <strong>How it works:</strong> Every <span id="autoResetDayDisplay">Monday</span> at <span id="autoResetTimeDisplay">6:00 AM</span>, the system will:<br>
+                                    • Qualify students with tickets in all 3 categories<br>
+                                    • Reset all ticket counts to 0<br>
+                                    • Log the week completion<br>
+                                    • Move to the next week
+                                </small>
+                            </div>
+                            
+                            <div id="lastResetInfo" style="background: #f5f5f5; padding: 12px; border-radius: 6px; margin-top: 10px;">
+                                <small style="color: #666;">
+                                    <strong>Last Auto-Reset:</strong> <span id="lastResetDisplay">Never</span>
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Jackpot Cycle Configuration -->
+                    <div style="background: white; padding: 20px; border-radius: 8px;">
+                        <h4 style="margin-bottom: 10px;">🎊 Wildcat Jackpot Cycle Dates</h4>
+                        <p style="color: #666; font-size: 13px; margin-bottom: 15px;">Set the start and end dates for the current Jackpot cycle</p>
+                        
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 15px;">
+                            <div>
+                                <label style="display: block; margin-bottom: 5px; font-weight: 500;">Cycle Name</label>
+                                <input type="text" id="cycleNameInput" placeholder="Cycle 1" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                            </div>
+                            <div>
+                                <label style="display: block; margin-bottom: 5px; font-weight: 500;">Start Date</label>
+                                <input type="date" id="cycleStartDate" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                            </div>
+                            <div>
+                                <label style="display: block; margin-bottom: 5px; font-weight: 500;">End Date</label>
+                                <input type="date" id="cycleEndDate" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
                             </div>
                         </div>
                         
-                        <button class="btn" onclick="saveCycleDuration()" style="margin-top: 15px; background: #9c27b0; color: white;">
-                            💾 Update Cycle Duration
+                        <button class="btn" onclick="saveCycleConfiguration()" style="background: #9c27b0; color: white; margin-bottom: 15px;">
+                            💾 Save Cycle Configuration
                         </button>
                         
-                        <div style="background: #e3f2fd; padding: 12px; border-radius: 4px; margin-top: 15px; border-left: 4px solid #2196F3;">
+                        <div id="currentCycleInfo" style="background: #e3f2fd; padding: 12px; border-radius: 6px; border-left: 4px solid #2196F3;">
                             <small style="color: #1565c0;">
-                                ℹ️ <strong>Note:</strong> Changing this will update the <strong>current</strong> cycle immediately. Make sure this is what you want before saving!
+                                <strong>Current Cycle:</strong> <span id="currentCycleName">Not configured</span><br>
+                                <strong>Dates:</strong> <span id="currentCycleDates">No dates set</span>
                             </small>
                         </div>
                     </div>
@@ -5129,6 +5253,26 @@
         let students = [];
         let currentWeek = 1;
         let cycleDuration = 5; // Configurable: How many weeks in each Wildcat Jackpot cycle
+        
+        // ========================================
+        // AUTOMATIC WEEK SYSTEM
+        // ========================================
+        let autoWeekEnabled = true; // Enable automatic week detection and reset
+        let lastAutoResetDate = null; // Last date/time we ran auto reset (prevents double-processing)
+        let weekResetDay = 1; // 0 = Sunday, 1 = Monday, 2 = Tuesday, etc.
+        let weekResetHour = 6; // 6 AM
+        
+        // ========================================
+        // JACKPOT CYCLE CONFIGURATION
+        // ========================================
+        let currentCycle = {
+            name: 'Cycle 1',
+            startDate: null, // Will be set in settings (YYYY-MM-DD format)
+            endDate: null,   // Will be set in settings (YYYY-MM-DD format)
+            cycleNumber: 1
+        };
+        let cycleHistory = []; // Archive of past cycles with their winners
+        
         let lastAwardAction = null; // Track last ticket award for UNDO functionality
         let weeklyWinners = [];
         let bigRaffleWinners = [];
@@ -5789,6 +5933,14 @@
                         schoolBranding = mainData.schoolBranding || schoolBranding;
                         referralIdCounter = mainData.referralIdCounter || 1;
                         lastSaveTimestamp = mainData.lastSaveTimestamp || 0;
+                        // Auto-week system
+                        autoWeekEnabled = mainData.autoWeekEnabled !== undefined ? mainData.autoWeekEnabled : true;
+                        lastAutoResetDate = mainData.lastAutoResetDate || null;
+                        weekResetDay = mainData.weekResetDay !== undefined ? mainData.weekResetDay : 1;
+                        weekResetHour = mainData.weekResetHour !== undefined ? mainData.weekResetHour : 6;
+                        // Jackpot cycles
+                        currentCycle = mainData.currentCycle || { name: 'Cycle 1', startDate: null, endDate: null, cycleNumber: 1 };
+                        cycleHistory = mainData.cycleHistory || [];
                         
                         // Load from secondary document
                         weeklyWinners = secondaryData.weeklyWinners || [];
@@ -5857,7 +6009,15 @@
                 behaviorReferrals = data.behaviorReferrals || [];
                 referralIdCounter = data.referralIdCounter || 1;
                 loginHistory = data.loginHistory || [];
-                lastSaveTimestamp = data.lastSaveTimestamp || 0; // Track local timestamp
+                lastSaveTimestamp = data.lastSaveTimestamp || 0;
+                // Auto-week system
+                autoWeekEnabled = data.autoWeekEnabled !== undefined ? data.autoWeekEnabled : true;
+                lastAutoResetDate = data.lastAutoResetDate || null;
+                weekResetDay = data.weekResetDay !== undefined ? data.weekResetDay : 1;
+                weekResetHour = data.weekResetHour !== undefined ? data.weekResetHour : 6;
+                // Jackpot cycles
+                currentCycle = data.currentCycle || { name: 'Cycle 1', startDate: null, endDate: null, cycleNumber: 1 };
+                cycleHistory = data.cycleHistory || [];
                 
                 // Apply school branding if it exists
                 if (schoolBranding && (schoolBranding.schoolName || schoolBranding.logoBase64)) {
@@ -5903,6 +6063,90 @@
             updateAllDisplays();
             
             alert(`✅ Cycle duration updated to ${cycleDuration} weeks!\n\nThis change is now active for the current cycle.\n\nCurrent status: Week ${currentWeek} of ${cycleDuration}`);
+        }
+        
+        // ========================================
+        // AUTO-WEEK SYSTEM SETTINGS
+        // ========================================
+        
+        function toggleAutoWeek() {
+            autoWeekEnabled = document.getElementById('autoWeekToggle').checked;
+            const settingsDiv = document.getElementById('autoWeekSettings');
+            
+            if (autoWeekEnabled) {
+                settingsDiv.style.display = 'block';
+                console.log('✅ Auto-week system enabled');
+            } else {
+                settingsDiv.style.display = 'none';
+                console.log('⚠️ Auto-week system disabled - you must manually complete weeks');
+            }
+            
+            saveData();
+        }
+        
+        function saveAutoWeekSettings() {
+            weekResetDay = parseInt(document.getElementById('weekResetDaySelect').value);
+            weekResetHour = parseInt(document.getElementById('weekResetHourSelect').value);
+            
+            updateAutoResetDisplay();
+            saveData();
+            
+            console.log(`✅ Auto-week reset configured for ${getDayName(weekResetDay)} at ${weekResetHour}:00`);
+        }
+        
+        function updateAutoResetDisplay() {
+            const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            const hours = ['12:00 AM', '1:00 AM', '2:00 AM', '3:00 AM', '4:00 AM', '5:00 AM', '6:00 AM', 
+                          '7:00 AM', '8:00 AM', '9:00 AM', '10:00 AM', '11:00 AM', '12:00 PM'];
+            
+            document.getElementById('autoResetDayDisplay').textContent = days[weekResetDay];
+            document.getElementById('autoResetTimeDisplay').textContent = hours[weekResetHour];
+            
+            if (lastAutoResetDate) {
+                const date = new Date(lastAutoResetDate);
+                document.getElementById('lastResetDisplay').textContent = date.toLocaleString();
+            } else {
+                document.getElementById('lastResetDisplay').textContent = 'Never';
+            }
+        }
+        
+        function saveCycleConfiguration() {
+            const cycleName = document.getElementById('cycleNameInput').value || 'Cycle 1';
+            const startDate = document.getElementById('cycleStartDate').value;
+            const endDate = document.getElementById('cycleEndDate').value;
+            
+            if (!startDate || !endDate) {
+                alert('⚠️ Please set both start and end dates for the cycle');
+                return;
+            }
+            
+            if (new Date(startDate) >= new Date(endDate)) {
+                alert('⚠️ End date must be after start date');
+                return;
+            }
+            
+            currentCycle = {
+                name: cycleName,
+                startDate: startDate,
+                endDate: endDate,
+                cycleNumber: (currentCycle.cycleNumber || 0) + 1
+            };
+            
+            updateCycleDisplay();
+            saveData();
+            
+            alert(`✅ Jackpot Cycle configured!\n\n${cycleName}\nStart: ${new Date(startDate).toLocaleDateString()}\nEnd: ${new Date(endDate).toLocaleDateString()}`);
+        }
+        
+        function updateCycleDisplay() {
+            if (currentCycle.startDate && currentCycle.endDate) {
+                document.getElementById('currentCycleName').textContent = currentCycle.name;
+                document.getElementById('currentCycleDates').textContent = 
+                    `${new Date(currentCycle.startDate).toLocaleDateString()} - ${new Date(currentCycle.endDate).toLocaleDateString()}`;
+            } else {
+                document.getElementById('currentCycleName').textContent = 'Not configured';
+                document.getElementById('currentCycleDates').textContent = 'No dates set';
+            }
         }
         
         function saveKickboardSettings() {
@@ -6250,6 +6494,14 @@
                     behaviorReferrals,
                     referralIdCounter,
                     loginHistory,
+                    // Auto-week system variables
+                    autoWeekEnabled,
+                    lastAutoResetDate,
+                    weekResetDay,
+                    weekResetHour,
+                    // Jackpot cycle variables
+                    currentCycle,
+                    cycleHistory,
                     lastSaveTimestamp: Date.now()
                 };
                 
@@ -6278,6 +6530,14 @@
                             passSettings,
                             schoolBranding,
                             referralIdCounter,
+                            // Auto-week system
+                            autoWeekEnabled,
+                            lastAutoResetDate,
+                            weekResetDay,
+                            weekResetHour,
+                            // Jackpot cycles
+                            currentCycle,
+                            cycleHistory,
                             lastSaveTimestamp: timestamp
                         });
                         
@@ -6482,6 +6742,9 @@
 
         // Auto-refresh data from cloud only when inactive
         autoRefreshInterval = setInterval(async () => {
+            // Check for auto-week reset first
+            checkAndRunAutoWeekReset();
+            
             // Only refresh if user has been inactive for 60+ seconds
             const timeSinceActivity = Date.now() - lastUserActivity;
             
@@ -7856,6 +8119,9 @@
             if (teacher.role === 'superadmin' || teacher.role === 'admin') {
                 updateSuperAdminList();
             }
+            
+            // Check if we need to auto-reset the week
+            checkAndRunAutoWeekReset();
         }
 
         function logout() {
@@ -15057,9 +15323,47 @@
             }
         }
 
-        function completeWeek() {
-            if (!confirm('⚠️ END OF WEEK PROCESS\n\nThis will:\n• Save this week\'s ticket data\n• Qualify eligible students for Wildcat Jackpot\n• Reset all ticket counts to 0\n• Move to next week\n\nOnly do this when the school week is over!\n\nContinue?')) return;
-
+        // ========================================
+        // AUTOMATIC WEEK DETECTION & RESET SYSTEM
+        // ========================================
+        
+        function checkAndRunAutoWeekReset() {
+            if (!autoWeekEnabled) {
+                console.log('ℹ️ Auto-week system is disabled');
+                return;
+            }
+            
+            const now = new Date();
+            const dayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
+            const currentHour = now.getHours();
+            
+            // Check if it's the right day and time for reset
+            const isResetDay = dayOfWeek === weekResetDay;
+            const isPastResetTime = currentHour >= weekResetHour;
+            
+            if (!isResetDay || !isPastResetTime) {
+                console.log(`ℹ️ Not time for auto-reset yet. Current: ${now.toLocaleString()}, Reset time: ${getDayName(weekResetDay)} ${weekResetHour}:00`);
+                return;
+            }
+            
+            // Check if we already reset this week
+            if (lastAutoResetDate) {
+                const lastReset = new Date(lastAutoResetDate);
+                const daysSinceReset = Math.floor((now - lastReset) / (1000 * 60 * 60 * 24));
+                
+                // If last reset was less than 7 days ago, skip
+                if (daysSinceReset < 7) {
+                    console.log(`ℹ️ Already auto-reset this week on ${lastReset.toLocaleString()}`);
+                    return;
+                }
+            }
+            
+            // Run automatic week reset
+            console.log('🔄 Running automatic week reset...');
+            performWeekReset(true); // true = automatic reset
+        }
+        
+        function performWeekReset(isAutomatic = false) {
             // Calculate totals for this week before resetting
             const weekData = {
                 week: currentWeek,
@@ -15067,18 +15371,19 @@
                 attendanceTickets: students.reduce((sum, s) => sum + (s.attendanceTickets || 0), 0),
                 academicTickets: students.reduce((sum, s) => sum + (s.academicTickets || 0), 0),
                 studentsQualified: 0,
-                date: new Date().toISOString()
+                date: new Date().toISOString(),
+                resetType: isAutomatic ? 'automatic' : 'manual'
             };
 
-            // Check which students should qualify for big raffle
+            // Check which students should qualify for jackpot
             students.forEach(s => {
                 // Student qualifies if they have tickets in ALL 3 categories
                 if (s.pbisTickets > 0 && s.attendanceTickets > 0 && s.academicTickets > 0) {
                     if (!s.bigRaffleQualified) {
                         s.bigRaffleQualified = true;
-                        addToAuditLog('Qualified for Wildcat Jackpot', s.id, null, null, 'Received tickets in all 3 categories');
+                        addToAuditLog('Qualified for Wildcat Jackpot', s.id, null, null, `${isAutomatic ? 'Auto-qualified' : 'Qualified'} - tickets in all 3 categories`);
                     }
-                    s.weeksQualified++;
+                    s.weeksQualified = (s.weeksQualified || 0) + 1;
                     weekData.studentsQualified++;
                 }
                 
@@ -15091,17 +15396,35 @@
             // Add to history
             weeklyHistory.push(weekData);
 
-            if (currentWeek >= cycleDuration) {
-                if (confirm(`${cycleDuration}-week cycle complete! Would you like to reset for a new cycle?`)) {
-                    resetBigRaffle();
-                    return;
-                }
+            // Update last auto-reset date
+            if (isAutomatic) {
+                lastAutoResetDate = new Date().toISOString();
             }
 
             currentWeek++;
             saveData();
             updateAllDisplays();
-            alert(`Week ${weekData.week} completed! ${weekData.studentsQualified} student(s) qualified for Wildcat Jackpot. Ticket counts reset.`);
+            
+            const message = `Week ${weekData.week} completed! ${weekData.studentsQualified} student(s) qualified for Wildcat Jackpot. Tickets reset.`;
+            console.log(`✅ ${message}`);
+            
+            if (!isAutomatic) {
+                alert(message);
+            } else {
+                // Show toast notification for automatic reset
+                showSuccessToast(`🔄 Week auto-reset: ${weekData.studentsQualified} student(s) qualified for jackpot`);
+            }
+        }
+        
+        function getDayName(dayNumber) {
+            const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            return days[dayNumber];
+        }
+
+        function completeWeek() {
+            if (!confirm('⚠️ END OF WEEK PROCESS\n\nThis will:\n• Save this week\'s ticket data\n• Qualify eligible students for Wildcat Jackpot\n• Reset all ticket counts to 0\n• Move to next week\n\nOnly do this when the school week is over!\n\nContinue?')) return;
+
+            performWeekReset(false); // false = manual reset
         }
 
         function resetBigRaffle() {
@@ -15235,6 +15558,29 @@
             if (serviceIdInput) serviceIdInput.value = emailJSConfig.serviceId || '';
             if (templateIdInput) templateIdInput.value = emailJSConfig.templateId || '';
             if (publicKeyInput) publicKeyInput.value = emailJSConfig.publicKey || '';
+            
+            // Populate Auto-Week settings
+            const autoWeekToggle = document.getElementById('autoWeekToggle');
+            const weekResetDaySelect = document.getElementById('weekResetDaySelect');
+            const weekResetHourSelect = document.getElementById('weekResetHourSelect');
+            
+            if (autoWeekToggle) autoWeekToggle.checked = autoWeekEnabled;
+            if (weekResetDaySelect) weekResetDaySelect.value = weekResetDay;
+            if (weekResetHourSelect) weekResetHourSelect.value = weekResetHour;
+            
+            // Update displays
+            updateAutoResetDisplay();
+            
+            // Populate Cycle configuration
+            const cycleNameInput = document.getElementById('cycleNameInput');
+            const cycleStartDate = document.getElementById('cycleStartDate');
+            const cycleEndDate = document.getElementById('cycleEndDate');
+            
+            if (cycleNameInput) cycleNameInput.value = currentCycle.name || 'Cycle 1';
+            if (cycleStartDate) cycleStartDate.value = currentCycle.startDate || '';
+            if (cycleEndDate) cycleEndDate.value = currentCycle.endDate || '';
+            
+            updateCycleDisplay();
         }
 
         // Initialize
