@@ -5431,8 +5431,12 @@
             document.getElementById('studentAttendanceTickets').textContent = currentStudent.attendanceTickets;
             document.getElementById('studentAcademicTickets').textContent = currentStudent.academicTickets;
 
-            // Show qualified banner
-            if (currentStudent.bigRaffleQualified) {
+            // Show qualified banner - check BOTH if already qualified OR if currently has all 3 ticket types
+            const hasAllThreeTickets = currentStudent.pbisTickets > 0 && 
+                                       currentStudent.attendanceTickets > 0 && 
+                                       currentStudent.academicTickets > 0;
+            
+            if (currentStudent.bigRaffleQualified || hasAllThreeTickets) {
                 document.getElementById('qualifiedBanner').classList.remove('hidden');
             } else {
                 document.getElementById('qualifiedBanner').classList.add('hidden');
@@ -13188,10 +13192,33 @@
             }
             
             tbody.innerHTML = studentsToRender.map(s => {
+                // Check if student currently has all 3 ticket types (real-time qualification)
+                const hasAllThreeTickets = s.pbisTickets > 0 && s.attendanceTickets > 0 && s.academicTickets > 0;
+                
                 // Generate category status indicators
                 const pbisColor = s.pbisTickets > 0 ? '#ef4444' : '#e5e7eb';  // Red if has tickets, gray if not
                 const attendanceColor = s.attendanceTickets > 0 ? '#10b981' : '#e5e7eb';  // Green if has tickets, gray if not
                 const academicColor = s.academicTickets > 0 ? '#3b82f6' : '#e5e7eb';  // Blue if has tickets, gray if not
+                
+                // Determine status display
+                let statusHTML = '';
+                if (s.bigRaffleQualified && hasAllThreeTickets) {
+                    // Officially qualified AND currently has all tickets
+                    statusHTML = '<span class="qualified-badge pulse-animation" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">🏆 Locked In</span>';
+                } else if (s.bigRaffleQualified) {
+                    // Officially qualified but doesn't have current tickets (from previous week)
+                    statusHTML = '<span class="qualified-badge" style="background: #3b82f6;">🔵 Qualified</span>';
+                } else if (hasAllThreeTickets) {
+                    // Currently has all tickets but not officially qualified yet
+                    statusHTML = '<span class="qualified-badge pulse-animation" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">🟢 On Track</span>';
+                } else {
+                    // Not qualified - show colored dots for progress
+                    statusHTML = `<div style="display: inline-flex; align-items: center; gap: 6px; justify-content: center;">
+                        <div style="width: 16px; height: 16px; border-radius: 50%; background: ${pbisColor}; transition: all 0.3s; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="PBIS"></div>
+                        <div style="width: 16px; height: 16px; border-radius: 50%; background: ${attendanceColor}; transition: all 0.3s; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="Attendance"></div>
+                        <div style="width: 16px; height: 16px; border-radius: 50%; background: ${academicColor}; transition: all 0.3s; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="Academic"></div>
+                    </div>`;
+                }
                 
                 return `
                 <tr>
@@ -13208,16 +13235,7 @@
                     <td><span class="ticket-badge pbis">${s.pbisTickets}</span></td>
                     <td><span class="ticket-badge attendance">${s.attendanceTickets}</span></td>
                     <td><span class="ticket-badge academic">${s.academicTickets}</span></td>
-                    <td>
-                        ${s.bigRaffleQualified ? 
-                            '<span class="qualified-badge pulse-animation">✓ Qualified</span>' : 
-                            `<div style="display: inline-flex; align-items: center; gap: 6px; justify-content: center;">
-                                <div style="width: 16px; height: 16px; border-radius: 50%; background: ${pbisColor}; transition: all 0.3s; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="PBIS"></div>
-                                <div style="width: 16px; height: 16px; border-radius: 50%; background: ${attendanceColor}; transition: all 0.3s; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="Attendance"></div>
-                                <div style="width: 16px; height: 16px; border-radius: 50%; background: ${academicColor}; transition: all 0.3s; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="Academic"></div>
-                            </div>`
-                        }
-                    </td>
+                    <td>${statusHTML}</td>
                 </tr>
             `;
             }).join('');
