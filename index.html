@@ -3257,6 +3257,9 @@
                     <button class="subtab-button" onclick="switchDisciplineTab('review')" id="reviewTabBtn" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
                         👁️ Review Referrals
                     </button>
+                    <button class="subtab-button" onclick="switchDisciplineTab('detention')" id="detentionTabBtn" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
+                        ⏰ Detention Tracker
+                    </button>
                     <button class="subtab-button" onclick="switchDisciplineTab('history')" id="historyDisciplineTabBtn" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
                         📚 Student History
                     </button>
@@ -3407,6 +3410,111 @@
                                 <tbody id="referralReviewTableBody">
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Detention Tracker Subtab -->
+                <div id="behaviorDetention" class="discipline-subtab hidden">
+                    <!-- School Level Tabs (MS/HS) -->
+                    <div style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px;">
+                        <button class="detention-level-btn active" onclick="switchDetentionLevel('ms')" id="detentionMSBtn" style="padding: 10px 20px; background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
+                            🎓 Middle School (6-8)
+                        </button>
+                        <button class="detention-level-btn" onclick="switchDetentionLevel('hs')" id="detentionHSBtn" style="padding: 10px 20px; background: #f5f5f5; color: #333; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
+                            🎓 High School (9-12)
+                        </button>
+                    </div>
+
+                    <!-- Assign Detention Section -->
+                    <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 30px;">
+                        <h3 style="color: #dc3545; margin-bottom: 20px;">⏰ Assign Detention</h3>
+                        
+                        <!-- Student Search -->
+                        <div class="form-group">
+                            <label style="font-weight: 600; color: #333; margin-bottom: 8px; display: block;">Search Student</label>
+                            <div style="position: relative;">
+                                <input type="text" id="detentionStudentSearch" placeholder="Type student name or ID..." 
+                                       oninput="searchStudentsForDetention()" 
+                                       style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;">
+                                <div id="detentionStudentResults" style="position: absolute; top: 100%; left: 0; right: 0; background: white; border: 2px solid #e0e0e0; border-top: none; border-radius: 0 0 8px 8px; max-height: 200px; overflow-y: auto; display: none; z-index: 100;">
+                                </div>
+                            </div>
+                            <input type="hidden" id="selectedDetentionStudentId">
+                            <div id="selectedDetentionStudent" style="margin-top: 10px; display: none; padding: 10px; background: #e3f2fd; border-radius: 6px;">
+                                <strong>Selected:</strong> <span id="selectedDetentionStudentName"></span>
+                                <button onclick="clearDetentionStudentSelection()" style="float: right; padding: 4px 12px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Clear</button>
+                            </div>
+                        </div>
+
+                        <!-- Detention Details Grid -->
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-bottom: 20px;">
+                            <div class="form-group">
+                                <label style="font-weight: 600; color: #333; margin-bottom: 8px; display: block;">Location</label>
+                                <select id="detentionLocation" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
+                                    <option value="">Select location...</option>
+                                    <option value="Main Office">Main Office</option>
+                                    <option value="Library">Library</option>
+                                    <option value="Room 101">Room 101</option>
+                                    <option value="Room 102">Room 102</option>
+                                    <option value="Cafeteria">Cafeteria</option>
+                                    <option value="Gym">Gym</option>
+                                    <option value="Other">Other</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label style="font-weight: 600; color: #333; margin-bottom: 8px; display: block;">Date Assigned</label>
+                                <input type="date" id="detentionDateAssigned" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
+                            </div>
+
+                            <div class="form-group">
+                                <label style="font-weight: 600; color: #333; margin-bottom: 8px; display: block;">Total Days</label>
+                                <input type="number" id="detentionTotalDays" min="1" max="30" value="1" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
+                            </div>
+                        </div>
+
+                        <!-- Start Date -->
+                        <div class="form-group" style="margin-bottom: 20px;">
+                            <label style="font-weight: 600; color: #333; margin-bottom: 8px; display: block;">Start Date (First Day to Serve)</label>
+                            <input type="date" id="detentionStartDate" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
+                        </div>
+
+                        <!-- Reason -->
+                        <div class="form-group" style="margin-bottom: 20px;">
+                            <label style="font-weight: 600; color: #333; margin-bottom: 8px; display: block;">Reason for Detention</label>
+                            <textarea id="detentionReason" rows="3" placeholder="Describe the reason..." style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px; resize: vertical;"></textarea>
+                        </div>
+
+                        <!-- Submit Button -->
+                        <button onclick="assignDetention()" style="width: 100%; padding: 15px; background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer;">
+                            ⏰ Assign Detention
+                        </button>
+                    </div>
+
+                    <!-- Active Detentions -->
+                    <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 30px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                            <h3 style="color: #333; margin: 0;">📋 Active Detentions</h3>
+                            <div id="activeDetentionCount" style="padding: 8px 16px; background: #dc3545; color: white; border-radius: 20px; font-weight: 600;">
+                                0 Active
+                            </div>
+                        </div>
+                        <div id="activeDetentionsList" style="max-height: 500px; overflow-y: auto;">
+                            <p style="text-align: center; color: #999; padding: 40px;">No active detentions</p>
+                        </div>
+                    </div>
+
+                    <!-- Completed Detentions -->
+                    <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                            <h3 style="color: #333; margin: 0;">✅ Completed Detentions</h3>
+                            <div id="completedDetentionCount" style="padding: 8px 16px; background: #28a745; color: white; border-radius: 20px; font-weight: 600;">
+                                0 Completed
+                            </div>
+                        </div>
+                        <div id="completedDetentionsList" style="max-height: 500px; overflow-y: auto;">
+                            <p style="text-align: center; color: #999; padding: 40px;">No completed detentions</p>
                         </div>
                     </div>
                 </div>
@@ -5377,6 +5485,10 @@
         let behaviorReferrals = []; // Array of referral objects
         let referralIdCounter = 1;
         
+        // Detention Tracker System
+        let detentions = []; // Array of detention records
+        let detentionIdCounter = 1;
+        
         // Login Activity Tracking
         let loginHistory = []; // Array of login records
         
@@ -6013,6 +6125,7 @@
                         hallPasses = secondaryData.hallPasses || [];
                         preventionGroups = secondaryData.preventionGroups || [];
                         behaviorReferrals = secondaryData.behaviorReferrals || [];
+                        detentions = secondaryData.detentions || [];
                         
                         console.log('✅ Loaded data from Firebase (2 documents)');
                         
@@ -6070,6 +6183,8 @@
                 schoolBranding = data.schoolBranding || schoolBranding;
                 behaviorReferrals = data.behaviorReferrals || [];
                 referralIdCounter = data.referralIdCounter || 1;
+                detentions = data.detentions || [];
+                detentionIdCounter = data.detentionIdCounter || 1;
                 loginHistory = data.loginHistory || [];
                 lastSaveTimestamp = data.lastSaveTimestamp || 0;
                 // Auto-week system
@@ -6555,6 +6670,8 @@
                     schoolBranding,
                     behaviorReferrals,
                     referralIdCounter,
+                    detentions,
+                    detentionIdCounter,
                     loginHistory,
                     // Auto-week system variables
                     autoWeekEnabled,
@@ -6617,6 +6734,7 @@
                             hallPasses,
                             preventionGroups,
                             behaviorReferrals,
+                            detentions,
                             lastSaveTimestamp: timestamp
                         });
                         
@@ -17644,6 +17762,13 @@
                 btn.style.background = '#f59e0b';
                 btn.style.color = 'white';
                 updateReferralReviewTable();
+            } else if (subtab === 'detention') {
+                document.getElementById('behaviorDetention').classList.remove('hidden');
+                const btn = document.getElementById('detentionTabBtn');
+                btn.style.background = '#f59e0b';
+                btn.style.color = 'white';
+                initializeDetentionForm();
+                updateDetentionLists();
             } else if (subtab === 'history') {
                 document.getElementById('behaviorHistory').classList.remove('hidden');
                 const btn = document.getElementById('historyDisciplineTabBtn');
@@ -18308,6 +18433,355 @@
                     }
                 });
             }
+        }
+        
+        // ========================================
+        // DETENTION TRACKER FUNCTIONS
+        // ========================================
+        
+        let currentDetentionLevel = 'ms'; // 'ms' or 'hs'
+        
+        function initializeDetentionForm() {
+            // Set today's date as default
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('detentionDateAssigned').value = today;
+            document.getElementById('detentionStartDate').value = today;
+        }
+        
+        function switchDetentionLevel(level) {
+            currentDetentionLevel = level;
+            
+            // Update button styles
+            document.querySelectorAll('.detention-level-btn').forEach(btn => {
+                btn.style.background = '#f5f5f5';
+                btn.style.color = '#333';
+            });
+            
+            const activeBtn = document.getElementById(level === 'ms' ? 'detentionMSBtn' : 'detentionHSBtn');
+            if (level === 'ms') {
+                activeBtn.style.background = 'linear-gradient(135deg, #ff9800 0%, #f57c00 100%)';
+            } else {
+                activeBtn.style.background = 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)';
+            }
+            activeBtn.style.color = 'white';
+            
+            // Refresh detention lists
+            updateDetentionLists();
+        }
+        
+        function searchStudentsForDetention() {
+            const searchTerm = document.getElementById('detentionStudentSearch').value.trim().toLowerCase();
+            const resultsDiv = document.getElementById('detentionStudentResults');
+            
+            if (searchTerm.length < 2) {
+                resultsDiv.style.display = 'none';
+                return;
+            }
+            
+            // Filter by current detention level (MS or HS)
+            const filteredStudents = students.filter(s => {
+                const grade = parseInt(s.grade);
+                const levelMatch = currentDetentionLevel === 'ms' ? (grade >= 6 && grade <= 8) : (grade >= 9 && grade <= 12);
+                
+                if (!levelMatch) return false;
+                
+                const fullName = `${s.firstName} ${s.lastName}`.toLowerCase();
+                const reverseName = `${s.lastName} ${s.firstName}`.toLowerCase();
+                const studentId = (s.studentId || '').toLowerCase();
+                
+                return fullName.includes(searchTerm) || reverseName.includes(searchTerm) || studentId.includes(searchTerm);
+            });
+            
+            if (filteredStudents.length === 0) {
+                resultsDiv.innerHTML = '<div style="padding: 10px; color: #999;">No students found</div>';
+                resultsDiv.style.display = 'block';
+                return;
+            }
+            
+            resultsDiv.innerHTML = filteredStudents.slice(0, 10).map(s => `
+                <div onclick="selectDetentionStudent('${s.id}')" style="padding: 10px; cursor: pointer; border-bottom: 1px solid #eee; transition: background 0.2s;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
+                    <strong>${s.firstName} ${s.lastName}</strong>
+                    <small style="color: #666; margin-left: 10px;">Grade ${s.grade} ${s.studentId ? '• ID: ' + s.studentId : ''}</small>
+                </div>
+            `).join('');
+            
+            resultsDiv.style.display = 'block';
+        }
+        
+        function selectDetentionStudent(studentId) {
+            const student = students.find(s => s.id === studentId);
+            if (!student) return;
+            
+            document.getElementById('selectedDetentionStudentId').value = studentId;
+            document.getElementById('selectedDetentionStudentName').textContent = `${student.firstName} ${student.lastName} (Grade ${student.grade})`;
+            document.getElementById('selectedDetentionStudent').style.display = 'block';
+            document.getElementById('detentionStudentResults').style.display = 'none';
+            document.getElementById('detentionStudentSearch').value = '';
+        }
+        
+        function clearDetentionStudentSelection() {
+            document.getElementById('selectedDetentionStudentId').value = '';
+            document.getElementById('selectedDetentionStudent').style.display = 'none';
+            document.getElementById('detentionStudentSearch').value = '';
+        }
+        
+        function assignDetention() {
+            const studentId = document.getElementById('selectedDetentionStudentId').value;
+            const location = document.getElementById('detentionLocation').value;
+            const dateAssigned = document.getElementById('detentionDateAssigned').value;
+            const totalDays = parseInt(document.getElementById('detentionTotalDays').value);
+            const startDate = document.getElementById('detentionStartDate').value;
+            const reason = document.getElementById('detentionReason').value.trim();
+            
+            // Validation
+            if (!studentId) {
+                alert('⚠️ Please select a student');
+                return;
+            }
+            if (!location) {
+                alert('⚠️ Please select a location');
+                return;
+            }
+            if (!dateAssigned) {
+                alert('⚠️ Please enter the date detention was assigned');
+                return;
+            }
+            if (!totalDays || totalDays < 1) {
+                alert('⚠️ Please enter a valid number of days (1-30)');
+                return;
+            }
+            if (!startDate) {
+                alert('⚠️ Please enter the start date');
+                return;
+            }
+            if (!reason) {
+                alert('⚠️ Please enter a reason for detention');
+                return;
+            }
+            
+            const student = students.find(s => s.id === studentId);
+            if (!student) return;
+            
+            // Create detention record
+            const detention = {
+                id: 'detention_' + detentionIdCounter++,
+                studentId: studentId,
+                studentName: `${student.firstName} ${student.lastName}`,
+                grade: student.grade,
+                location: location,
+                dateAssigned: dateAssigned,
+                totalDays: totalDays,
+                daysServed: 0,
+                daysRemaining: totalDays,
+                startDate: startDate,
+                reason: reason,
+                status: 'active', // 'active' or 'completed'
+                assignedBy: currentUser.name,
+                assignedAt: new Date().toISOString(),
+                servedDates: [], // Array of dates when detention was served
+                completedAt: null
+            };
+            
+            detentions.push(detention);
+            saveData();
+            
+            // Clear form
+            clearDetentionStudentSelection();
+            document.getElementById('detentionLocation').value = '';
+            document.getElementById('detentionDateAssigned').value = '';
+            document.getElementById('detentionTotalDays').value = '1';
+            document.getElementById('detentionStartDate').value = '';
+            document.getElementById('detentionReason').value = '';
+            
+            updateDetentionLists();
+            
+            showSuccessToast(`✅ Detention assigned to ${student.firstName} ${student.lastName}`);
+        }
+        
+        function updateDetentionLists() {
+            // Filter detentions by current level (MS or HS)
+            const levelDetentions = detentions.filter(d => {
+                const grade = parseInt(d.grade);
+                return currentDetentionLevel === 'ms' ? (grade >= 6 && grade <= 8) : (grade >= 9 && grade <= 12);
+            });
+            
+            const active = levelDetentions.filter(d => d.status === 'active');
+            const completed = levelDetentions.filter(d => d.status === 'completed');
+            
+            // Update counts
+            document.getElementById('activeDetentionCount').textContent = `${active.length} Active`;
+            document.getElementById('completedDetentionCount').textContent = `${completed.length} Completed`;
+            
+            // Render active detentions
+            const activeList = document.getElementById('activeDetentionsList');
+            if (active.length === 0) {
+                activeList.innerHTML = '<p style="text-align: center; color: #999; padding: 40px;">No active detentions</p>';
+            } else {
+                activeList.innerHTML = active.map(d => renderDetentionCard(d, true)).join('');
+            }
+            
+            // Render completed detentions
+            const completedList = document.getElementById('completedDetentionsList');
+            if (completed.length === 0) {
+                completedList.innerHTML = '<p style="text-align: center; color: #999; padding: 40px;">No completed detentions</p>';
+            } else {
+                completedList.innerHTML = completed.map(d => renderDetentionCard(d, false)).join('');
+            }
+        }
+        
+        function renderDetentionCard(detention, isActive) {
+            const progressPercent = detention.totalDays > 0 ? (detention.daysServed / detention.totalDays * 100) : 0;
+            
+            return `
+                <div style="border: 2px solid ${isActive ? '#dc3545' : '#28a745'}; border-radius: 8px; padding: 20px; margin-bottom: 15px; background: ${isActive ? '#fff5f5' : '#f0fdf4'};">
+                    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px;">
+                        <div>
+                            <h4 style="margin: 0 0 5px 0; color: #333;">${detention.studentName}</h4>
+                            <small style="color: #666;">Grade ${detention.grade} • Assigned ${new Date(detention.dateAssigned).toLocaleDateString()}</small>
+                        </div>
+                        <div style="text-align: right;">
+                            <div style="padding: 6px 12px; background: ${isActive ? '#dc3545' : '#28a745'}; color: white; border-radius: 20px; font-size: 12px; font-weight: 600; margin-bottom: 5px;">
+                                ${isActive ? 'ACTIVE' : 'COMPLETED'}
+                            </div>
+                            <small style="color: #666;">ID: ${detention.id.split('_')[1]}</small>
+                        </div>
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 15px;">
+                        <div>
+                            <small style="color: #666;">Location</small>
+                            <div style="font-weight: 600;">${detention.location}</div>
+                        </div>
+                        <div>
+                            <small style="color: #666;">Start Date</small>
+                            <div style="font-weight: 600;">${new Date(detention.startDate).toLocaleDateString()}</div>
+                        </div>
+                        <div>
+                            <small style="color: #666;">Days Served</small>
+                            <div style="font-weight: 600; color: ${isActive ? '#dc3545' : '#28a745'};">${detention.daysServed} / ${detention.totalDays}</div>
+                        </div>
+                        <div>
+                            <small style="color: #666;">Remaining</small>
+                            <div style="font-weight: 600;">${detention.daysRemaining} days</div>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <small style="color: #666;">Reason</small>
+                        <div style="margin-top: 5px;">${detention.reason}</div>
+                    </div>
+                    
+                    <!-- Progress Bar -->
+                    <div style="background: #e0e0e0; border-radius: 10px; height: 20px; overflow: hidden; margin-bottom: 15px;">
+                        <div style="background: ${isActive ? 'linear-gradient(90deg, #dc3545, #c82333)' : 'linear-gradient(90deg, #28a745, #218838)'}; height: 100%; width: ${progressPercent}%; transition: width 0.3s; display: flex; align-items: center; justify-content: center; color: white; font-size: 11px; font-weight: 600;">
+                            ${progressPercent.toFixed(0)}%
+                        </div>
+                    </div>
+                    
+                    <div style="display: flex; gap: 10px;">
+                        ${isActive ? `
+                            <button onclick="markDetentionDay('${detention.id}')" style="flex: 1; padding: 10px; background: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
+                                ✅ Mark Day Served
+                            </button>
+                            <button onclick="editDetention('${detention.id}')" style="padding: 10px 20px; background: #ffc107; color: #333; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
+                                ✏️ Edit
+                            </button>
+                        ` : `
+                            <div style="flex: 1; padding: 10px; background: #28a745; color: white; border-radius: 6px; text-align: center; font-weight: 600;">
+                                ✅ Completed ${detention.completedAt ? new Date(detention.completedAt).toLocaleDateString() : ''}
+                            </div>
+                        `}
+                        <button onclick="viewDetentionDetails('${detention.id}')" style="padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
+                            👁️ Details
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function markDetentionDay(detentionId) {
+            const detention = detentions.find(d => d.id === detentionId);
+            if (!detention || detention.status !== 'active') return;
+            
+            const today = new Date().toISOString().split('T')[0];
+            
+            // Check if already marked today
+            if (detention.servedDates.includes(today)) {
+                alert('⚠️ This detention day has already been marked as served today.');
+                return;
+            }
+            
+            // Mark day served
+            detention.daysServed++;
+            detention.daysRemaining = detention.totalDays - detention.daysServed;
+            detention.servedDates.push(today);
+            
+            // Check if completed
+            if (detention.daysServed >= detention.totalDays) {
+                detention.status = 'completed';
+                detention.completedAt = new Date().toISOString();
+                showSuccessToast(`🎉 ${detention.studentName} has completed their detention!`);
+            } else {
+                showSuccessToast(`✅ Detention day marked for ${detention.studentName} (${detention.daysServed}/${detention.totalDays})`);
+            }
+            
+            saveData();
+            updateDetentionLists();
+        }
+        
+        function editDetention(detentionId) {
+            const detention = detentions.find(d => d.id === detentionId);
+            if (!detention) return;
+            
+            const newDays = prompt(`Edit total detention days for ${detention.studentName}\n\nCurrent: ${detention.totalDays} days\nServed: ${detention.daysServed} days\n\nEnter new total days (must be >= days served):`, detention.totalDays);
+            
+            if (newDays === null) return; // Cancelled
+            
+            const parsedDays = parseInt(newDays);
+            if (isNaN(parsedDays) || parsedDays < detention.daysServed) {
+                alert('⚠️ Invalid number. Total days must be at least ' + detention.daysServed);
+                return;
+            }
+            
+            detention.totalDays = parsedDays;
+            detention.daysRemaining = parsedDays - detention.daysServed;
+            
+            // Reactivate if was completed but days increased
+            if (detention.status === 'completed' && detention.daysRemaining > 0) {
+                detention.status = 'active';
+                detention.completedAt = null;
+            }
+            
+            saveData();
+            updateDetentionLists();
+            showSuccessToast(`✅ Detention updated for ${detention.studentName}`);
+        }
+        
+        function viewDetentionDetails(detentionId) {
+            const detention = detentions.find(d => d.id === detentionId);
+            if (!detention) return;
+            
+            const servedDatesText = detention.servedDates.length > 0 
+                ? detention.servedDates.map(d => new Date(d).toLocaleDateString()).join(', ')
+                : 'None yet';
+            
+            alert(
+                `📋 DETENTION DETAILS\n\n` +
+                `Student: ${detention.studentName}\n` +
+                `Grade: ${detention.grade}\n\n` +
+                `Location: ${detention.location}\n` +
+                `Date Assigned: ${new Date(detention.dateAssigned).toLocaleDateString()}\n` +
+                `Start Date: ${new Date(detention.startDate).toLocaleDateString()}\n\n` +
+                `Total Days: ${detention.totalDays}\n` +
+                `Days Served: ${detention.daysServed}\n` +
+                `Days Remaining: ${detention.daysRemaining}\n\n` +
+                `Status: ${detention.status.toUpperCase()}\n` +
+                (detention.completedAt ? `Completed: ${new Date(detention.completedAt).toLocaleDateString()}\n\n` : '\n') +
+                `Reason: ${detention.reason}\n\n` +
+                `Dates Served:\n${servedDatesText}\n\n` +
+                `Assigned By: ${detention.assignedBy}\n` +
+                `Assigned At: ${new Date(detention.assignedAt).toLocaleString()}`
+            );
         }
 
         function exportReferralReport() {
