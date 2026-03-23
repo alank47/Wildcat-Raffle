@@ -2766,9 +2766,417 @@
             <!-- Settings Tab -->
             <div id="settings" class="tab-content">
                 <h2>⚙️ Settings</h2>
-                <p style="margin: 15px 0; color: #666;">Manage ticket subcategories and Kickboard integration for your school</p>
+                <p style="margin: 15px 0 20px 0; color: #666;">Configure system settings and customize your school's experience</p>
 
-                <!-- SCHOOL BRANDING (SUPERADMIN ONLY) -->
+                <!-- Settings Sub-Tabs -->
+                <div style="display: flex; gap: 10px; margin-bottom: 30px; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px; overflow-x: auto;">
+                    <button class="settings-subtab-button active" onclick="switchSettingsSubtab('autoweek')" id="autoweekSettingsSubtab" style="padding: 12px 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s; box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);">
+                        🔄 Auto-Week & Cycles
+                    </button>
+                    <button class="settings-subtab-button" onclick="switchSettingsSubtab('raffle')" id="raffleSettingsSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
+                        🎫 Raffle Categories
+                    </button>
+                    <button class="settings-subtab-button" onclick="switchSettingsSubtab('integrations')" id="integrationsSettingsSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
+                        📧 Integrations
+                    </button>
+                    <button class="settings-subtab-button superadmin-only" onclick="switchSettingsSubtab('branding')" id="brandingSettingsSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
+                        🎨 Branding
+                    </button>
+                    <button class="settings-subtab-button" onclick="switchSettingsSubtab('cash')" id="cashSettingsSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s; display: none;">
+                        💰 Cash Mode
+                    </button>
+                </div>
+
+                <!-- AUTO-WEEK & CYCLES SUBTAB -->
+                <div id="autoweekSettingsContent" class="settings-subtab-content active">
+                    <!-- AUTO-WEEK SYSTEM & JACKPOT CYCLE CONFIGURATION -->
+                    <div style="margin: 0 0 30px 0; padding: 20px; background: linear-gradient(135deg, #f3e5f5 0%, #e3f2fd 100%); border: 2px solid #9c27b0; border-radius: 12px; box-shadow: 0 4px 12px rgba(156, 39, 176, 0.15);">
+                        <h3 style="color: #7b1fa2; margin-bottom: 10px;">🔄 Automatic Week Reset System</h3>
+                        <p style="color: #6a1b9a; font-size: 14px; margin-bottom: 20px;">
+                            System automatically resets tickets and qualifies students every week
+                        </p>
+                        
+                        <!-- Auto-Week Toggle -->
+                        <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px;">
+                                <div>
+                                    <h4 style="margin: 0 0 5px 0;">Automatic Week Detection</h4>
+                                    <p style="color: #666; font-size: 13px; margin: 0;">Auto-reset tickets and qualify students every Monday at 6:00 AM</p>
+                                </div>
+                                <label class="switch" style="margin-left: 20px;">
+                                    <input type="checkbox" id="autoWeekToggle" onchange="toggleAutoWeek()" checked>
+                                    <span class="slider round"></span>
+                                </label>
+                            </div>
+                            
+                            <div id="autoWeekSettings" style="border-top: 1px solid #eee; padding-top: 15px; margin-top: 15px;">
+                                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                                    <div>
+                                        <label style="display: block; margin-bottom: 5px; font-weight: 500;">Reset Day</label>
+                                        <select id="weekResetDaySelect" onchange="saveAutoWeekSettings()" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                            <option value="0">Sunday</option>
+                                            <option value="1" selected>Monday</option>
+                                            <option value="2">Tuesday</option>
+                                            <option value="3">Wednesday</option>
+                                            <option value="4">Thursday</option>
+                                            <option value="5">Friday</option>
+                                            <option value="6">Saturday</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label style="display: block; margin-bottom: 5px; font-weight: 500;">Reset Time</label>
+                                        <select id="weekResetHourSelect" onchange="saveAutoWeekSettings()" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                            <option value="0">12:00 AM</option>
+                                            <option value="1">1:00 AM</option>
+                                            <option value="2">2:00 AM</option>
+                                            <option value="3">3:00 AM</option>
+                                            <option value="4">4:00 AM</option>
+                                            <option value="5">5:00 AM</option>
+                                            <option value="6" selected>6:00 AM</option>
+                                            <option value="7">7:00 AM</option>
+                                            <option value="8">8:00 AM</option>
+                                            <option value="9">9:00 AM</option>
+                                            <option value="10">10:00 AM</option>
+                                            <option value="11">11:00 AM</option>
+                                            <option value="12">12:00 PM</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                
+                                <div style="background: #e8f5e9; padding: 12px; border-radius: 6px; margin-top: 15px; border-left: 4px solid #4CAF50;">
+                                    <small style="color: #2e7d32;">
+                                        ✅ <strong>How it works:</strong> Every <span id="autoResetDayDisplay">Monday</span> at <span id="autoResetTimeDisplay">6:00 AM</span>, the system will:<br>
+                                        • Qualify students with tickets in all 3 categories<br>
+                                        • Reset all ticket counts to 0<br>
+                                        • Log the week completion<br>
+                                        • Move to the next week
+                                    </small>
+                                </div>
+                                
+                                <div id="lastResetInfo" style="background: #f5f5f5; padding: 12px; border-radius: 6px; margin-top: 10px;">
+                                    <small style="color: #666;">
+                                        <strong>Last Auto-Reset:</strong> <span id="lastResetDisplay">Never</span>
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Jackpot Cycle Configuration -->
+                        <div style="background: white; padding: 20px; border-radius: 8px;">
+                            <h4 style="margin-bottom: 10px;">🎊 Wildcat Jackpot Cycle Dates</h4>
+                            <p style="color: #666; font-size: 13px; margin-bottom: 15px;">Set the start and end dates for the current Jackpot cycle</p>
+                            
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 15px;">
+                                <div>
+                                    <label style="display: block; margin-bottom: 5px; font-weight: 500;">Cycle Name</label>
+                                    <input type="text" id="cycleNameInput" placeholder="Cycle 1" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                </div>
+                                <div>
+                                    <label style="display: block; margin-bottom: 5px; font-weight: 500;">Start Date</label>
+                                    <input type="date" id="cycleStartDate" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                </div>
+                                <div>
+                                    <label style="display: block; margin-bottom: 5px; font-weight: 500;">End Date</label>
+                                    <input type="date" id="cycleEndDate" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                </div>
+                            </div>
+                            
+                            <button class="btn" onclick="saveCycleConfiguration()" style="background: #9c27b0; color: white; margin-bottom: 15px;">
+                                💾 Save Cycle Configuration
+                            </button>
+                            
+                            <div id="currentCycleInfo" style="background: #e3f2fd; padding: 12px; border-radius: 6px; border-left: 4px solid #2196F3;">
+                                <small style="color: #1565c0;">
+                                    <strong>Current Cycle:</strong> <span id="currentCycleName">Not configured</span><br>
+                                    <strong>Dates:</strong> <span id="currentCycleDates">No dates set</span>
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- RAFFLE CATEGORIES SUBTAB -->
+                <div id="raffleSettingsContent" class="settings-subtab-content" style="display: none;">
+                    <!-- PBIS Subcategories -->
+                    <div style="margin: 0 0 30px 0; padding: 20px; background: #f7f7f7; border-radius: 8px;">
+                        <h3 style="color: #9c27b0;">🎯 PBIS Subcategories</h3>
+                        <p style="color: #666; font-size: 14px; margin-bottom: 15px;">Teachers select from these when awarding PBIS tickets</p>
+                        
+                        <div id="pbisSubcategoriesList" style="margin-bottom: 15px;">
+                        </div>
+                        
+                        <div style="display: flex; gap: 10px; margin-top: 15px;">
+                            <input type="text" id="newPbisSubcategory" placeholder="Enter new subcategory..." style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                            <button class="btn" onclick="addPbisSubcategory()">+ Add</button>
+                        </div>
+                    </div>
+
+                    <!-- Academic Subcategories -->
+                    <div style="margin: 0; padding: 20px; background: #f7f7f7; border-radius: 8px;">
+                        <h3 style="color: #ffc107;">📚 Academic Subcategories</h3>
+                        <p style="color: #666; font-size: 14px; margin-bottom: 15px;">Teachers select from these when awarding Academic tickets</p>
+                        
+                        <div id="academicSubcategoriesList" style="margin-bottom: 15px;">
+                        </div>
+                        
+                        <div style="display: flex; gap: 10px; margin-top: 15px;">
+                            <input type="text" id="newAcademicSubcategory" placeholder="Enter new subcategory..." style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                            <button class="btn" onclick="addAcademicSubcategory()">+ Add</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- INTEGRATIONS SUBTAB -->
+                <div id="integrationsSettingsContent" class="settings-subtab-content" style="display: none;">
+                    <!-- Kickboard Integration Settings -->
+                    <div style="margin: 0 0 30px 0; padding: 20px; background: #e8f5e9; border: 2px solid #4CAF50; border-radius: 8px;">
+                        <h3 style="color: #2e7d32; margin-bottom: 15px;">📧 Kickboard Email Reports</h3>
+                        <p style="color: #1b5e20; font-size: 14px; margin-bottom: 15px;">
+                            Configure weekly email reports to remind teachers to award Kickboard points
+                        </p>
+                        
+                        <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 15px;">
+                            <h4 style="margin-bottom: 15px;">Kickboard Point Conversion</h4>
+                            <p style="color: #666; font-size: 13px; margin-bottom: 15px;">How many Kickboard points equals 1 raffle ticket?</p>
+                            
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                                <div>
+                                    <label style="display: block; margin-bottom: 5px; font-weight: 500;">PBIS Tickets</label>
+                                    <input type="number" id="pbisKickboardPoints" min="1" value="500" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                    <small style="color: #666;">Points needed for 1 PBIS ticket</small>
+                                </div>
+                                <div>
+                                    <label style="display: block; margin-bottom: 5px; font-weight: 500;">Attendance Tickets</label>
+                                    <input type="number" id="attendanceKickboardPoints" min="1" value="500" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                    <small style="color: #666;">Points needed for 1 Attendance ticket</small>
+                                </div>
+                                <div>
+                                    <label style="display: block; margin-bottom: 5px; font-weight: 500;">Academic Tickets</label>
+                                    <input type="number" id="academicKickboardPoints" min="1" value="500" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                    <small style="color: #666;">Points needed for 1 Academic ticket</small>
+                                </div>
+                            </div>
+                            
+                            <button class="btn" onclick="saveKickboardSettings()" style="margin-top: 15px; background: #4CAF50; color: white;">
+                                💾 Save Kickboard Settings
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- EmailJS Configuration -->
+                    <div style="margin: 0; padding: 20px; background: #e3f2fd; border: 2px solid #2196F3; border-radius: 8px;">
+                        <h3 style="color: #1565c0; margin-bottom: 15px;">📨 EmailJS Configuration</h3>
+                        <p style="color: #0d47a1; font-size: 14px; margin-bottom: 15px;">
+                            Configure EmailJS to send automated email reports
+                        </p>
+                        
+                        <div style="background: white; padding: 20px; border-radius: 8px;">
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-bottom: 15px;">
+                                <div>
+                                    <label style="display: block; margin-bottom: 5px; font-weight: 500;">Service ID</label>
+                                    <input type="text" id="emailJSServiceId" placeholder="service_xxxxxxx" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                </div>
+                                <div>
+                                    <label style="display: block; margin-bottom: 5px; font-weight: 500;">Template ID</label>
+                                    <input type="text" id="emailJSTemplateId" placeholder="template_xxxxxxx" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                </div>
+                                <div>
+                                    <label style="display: block; margin-bottom: 5px; font-weight: 500;">Public Key</label>
+                                    <input type="text" id="emailJSPublicKey" placeholder="Your public key" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                </div>
+                            </div>
+                            
+                            <button class="btn" onclick="saveEmailJSConfig()" style="background: #2196F3; color: white;">
+                                💾 Save EmailJS Configuration
+                            </button>
+                            
+                            <div style="background: #fff3cd; padding: 12px; border-radius: 6px; margin-top: 15px; border-left: 4px solid #ffc107;">
+                                <small style="color: #856404;">
+                                    ℹ️ Get your EmailJS credentials at <a href="https://www.emailjs.com/" target="_blank" style="color: #0d47a1;">emailjs.com</a>
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- BRANDING SUBTAB -->
+                <div id="brandingSettingsContent" class="settings-subtab-content superadmin-only" style="display: none;">
+                    <div style="margin: 0; padding: 25px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; color: white;">
+                        <h3 style="color: white; margin-bottom: 15px; font-size: 24px;">🎨 School Branding</h3>
+                        <p style="color: rgba(255,255,255,0.9); font-size: 14px; margin-bottom: 20px;">
+                            Customize the system with your school's branding. Changes apply to all users immediately.
+                        </p>
+                        
+                        <div style="background: white; padding: 25px; border-radius: 8px; color: #333;">
+                            
+                            <!-- School Identity -->
+                            <div style="margin-bottom: 30px;">
+                                <h4 style="color: #667eea; margin-bottom: 15px; font-size: 18px;">🏫 School Identity</h4>
+                                
+                                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 20px;">
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">School Name</label>
+                                        <input type="text" id="brandingSchoolName" placeholder="Lincoln Middle School" 
+                                               style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: 15px;">
+                                        <small style="color: #666;">Appears in header and throughout the system</small>
+                                    </div>
+                                    
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">Mascot Name</label>
+                                        <input type="text" id="brandingMascot" placeholder="Wildcat" 
+                                               style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: 15px;">
+                                        <small style="color: #666;">Used for "Wildcat Cash", "Wildcat Jackpot", etc.</small>
+                                    </div>
+                                </div>
+                                
+                                <!-- Logo Upload -->
+                                <div style="margin-top: 20px;">
+                                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">School Logo</label>
+                                    <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                                        <div>
+                                            <input type="file" id="brandingLogoUpload" accept="image/*" 
+                                                   onchange="handleLogoUpload(this)" 
+                                                   style="padding: 10px; border: 2px solid #e5e7eb; border-radius: 8px; background: white;">
+                                            <small style="display: block; color: #666; margin-top: 5px;">PNG, JPG, or SVG (max 500KB)</small>
+                                        </div>
+                                        <div id="logoPreview" style="display: none; padding: 10px; background: #f9fafb; border-radius: 8px; border: 2px dashed #e5e7eb;">
+                                            <img id="logoPreviewImg" src="" alt="Logo Preview" style="max-height: 80px; max-width: 200px;">
+                                            <button onclick="removeLogo()" style="margin-left: 10px; padding: 5px 10px; background: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer;">Remove</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Color Scheme -->
+                            <div style="margin-bottom: 30px; padding-top: 20px; border-top: 2px solid #e5e7eb;">
+                                <h4 style="color: #667eea; margin-bottom: 15px; font-size: 18px;">🎨 Color Scheme</h4>
+                                
+                                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px;">
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">Primary Color</label>
+                                        <div style="display: flex; gap: 10px; align-items: center;">
+                                            <input type="color" id="brandingPrimaryColor" value="#667eea" 
+                                                   style="width: 60px; height: 45px; border: 2px solid #e5e7eb; border-radius: 8px; cursor: pointer;">
+                                            <input type="text" id="brandingPrimaryColorHex" value="#667eea" 
+                                                   style="flex: 1; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-family: monospace;">
+                                        </div>
+                                        <small style="color: #666;">Main buttons, headers, accents</small>
+                                    </div>
+                                    
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">Secondary Color</label>
+                                        <div style="display: flex; gap: 10px; align-items: center;">
+                                            <input type="color" id="brandingSecondaryColor" value="#764ba2" 
+                                                   style="width: 60px; height: 45px; border: 2px solid #e5e7eb; border-radius: 8px; cursor: pointer;">
+                                            <input type="text" id="brandingSecondaryColorHex" value="#764ba2" 
+                                                   style="flex: 1; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-family: monospace;">
+                                        </div>
+                                        <small style="color: #666;">Gradient endings, secondary accents</small>
+                                    </div>
+                                    
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">Accent Color</label>
+                                        <div style="display: flex; gap: 10px; align-items: center;">
+                                            <input type="color" id="brandingAccentColor" value="#10b981" 
+                                                   style="width: 60px; height: 45px; border: 2px solid #e5e7eb; border-radius: 8px; cursor: pointer;">
+                                            <input type="text" id="brandingAccentColorHex" value="#10b981" 
+                                                   style="flex: 1; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-family: monospace;">
+                                        </div>
+                                        <small style="color: #666;">Success messages, highlights</small>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Custom Terminology -->
+                            <div style="margin-bottom: 30px; padding-top: 20px; border-top: 2px solid #e5e7eb;">
+                                <h4 style="color: #667eea; margin-bottom: 15px; font-size: 18px;">📝 Custom Terminology</h4>
+                                <p style="color: #666; font-size: 13px; margin-bottom: 15px;">Customize system names to match your school. Leave blank to use defaults.</p>
+                                
+                                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px;">
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">Points System Name</label>
+                                        <input type="text" id="brandingCashName" placeholder="Wildcat Cash" 
+                                               style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: 15px;">
+                                        <small style="color: #666;">e.g., "Eagle Bucks", "Lion Dollars"</small>
+                                    </div>
+                                    
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">Big Raffle Name</label>
+                                        <input type="text" id="brandingJackpotName" placeholder="Wildcat Jackpot" 
+                                               style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: 15px;">
+                                        <small style="color: #666;">e.g., "Eagle Prize", "Lion Lottery"</small>
+                                    </div>
+                                    
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">Hall Pass System Name</label>
+                                        <input type="text" id="brandingPassName" placeholder="ClawPass" 
+                                               style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: 15px;">
+                                        <small style="color: #666;">e.g., "EaglePass", "Lion Tracker"</small>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Action Buttons -->
+                            <div style="display: flex; gap: 15px; justify-content: space-between; padding-top: 20px; border-top: 2px solid #e5e7eb;">
+                                <button onclick="resetBrandingToDefault()" class="btn" 
+                                        style="padding: 12px 24px; background: #ef4444; color: white; border: none;">
+                                    🔄 Reset to Default
+                                </button>
+                                <div style="display: flex; gap: 15px;">
+                                    <button onclick="previewBranding()" class="btn" 
+                                            style="padding: 12px 24px; background: white; color: #667eea; border: 2px solid #667eea;">
+                                        👁️ Preview Changes
+                                    </button>
+                                    <button onclick="saveBranding()" class="btn-gradient" 
+                                            style="padding: 12px 30px;">
+                                        💾 Save Branding
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- CASH MODE SUBTAB -->
+                <div id="cashSettingsContent" class="settings-subtab-content" style="display: none;">
+                    <h3 style="margin-bottom: 20px;">💰 Wildcat Cash Settings</h3>
+                    
+                    <!-- Behavior Management -->
+                    <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px;">
+                        <h4 style="margin-bottom: 15px;">Behavior Management</h4>
+                        <button class="btn" onclick="showAddBehaviorModal()" style="margin-bottom: 15px;">➕ Add New Behavior</button>
+                        <div id="behaviorsList"></div>
+                    </div>
+                    
+                    <!-- System Settings -->
+                    <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                        <h4 style="margin-bottom: 15px;">System Settings</h4>
+                        <div class="form-group">
+                            <label>Starting Balance for New Students</label>
+                            <input type="number" id="startingBalance" value="2500" min="0" step="100" style="width: 200px;">
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="allowNegativeBalances" checked>
+                                Allow negative balances
+                            </label>
+                        </div>
+                        <button class="btn" onclick="saveCashSettings()">💾 Save Settings</button>
+                        
+                        <!-- Danger Zone -->
+                        <div style="margin-top: 30px; padding: 20px; background: #fee; border: 2px solid #dc3545; border-radius: 8px;">
+                            <h4 style="color: #dc3545; margin-bottom: 10px;">⚠️ Danger Zone</h4>
+                            <p style="color: #721c24; font-size: 14px; margin-bottom: 15px;">
+                                This will reset ALL student Wildcat Cash balances to $0. This action cannot be undone!
+                            </p>
+                            <button class="btn" onclick="resetAllStudentCash()" style="background: #dc3545; color: white; border: 2px solid #dc3545;">
+                                🔄 Reset All Student Cash Accounts to $0
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
                 <div id="schoolBrandingSection" class="superadmin-only" style="margin: 30px 0; padding: 25px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; color: white;">
                     <h3 style="color: white; margin-bottom: 15px; font-size: 24px;">🎨 School Branding</h3>
                     <p style="color: rgba(255,255,255,0.9); font-size: 14px; margin-bottom: 20px;">
@@ -2903,259 +3311,6 @@
                         </div>
                     </div>
                 </div>
-
-                <!-- RAFFLE MODE SETTINGS (hidden in Cash Mode) -->
-                <div id="raffleSettingsSection">
-                <!-- AUTO-WEEK SYSTEM & JACKPOT CYCLE CONFIGURATION -->
-                <div style="margin: 30px 0; padding: 20px; background: linear-gradient(135deg, #f3e5f5 0%, #e3f2fd 100%); border: 2px solid #9c27b0; border-radius: 12px; box-shadow: 0 4px 12px rgba(156, 39, 176, 0.15);">
-                    <h3 style="color: #7b1fa2; margin-bottom: 10px;">🔄 Automatic Week Reset System</h3>
-                    <p style="color: #6a1b9a; font-size: 14px; margin-bottom: 20px;">
-                        System automatically resets tickets and qualifies students every week
-                    </p>
-                    
-                    <!-- Auto-Week Toggle -->
-                    <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px;">
-                            <div>
-                                <h4 style="margin: 0 0 5px 0;">Automatic Week Detection</h4>
-                                <p style="color: #666; font-size: 13px; margin: 0;">Auto-reset tickets and qualify students every Monday at 6:00 AM</p>
-                            </div>
-                            <label class="switch" style="margin-left: 20px;">
-                                <input type="checkbox" id="autoWeekToggle" onchange="toggleAutoWeek()" checked>
-                                <span class="slider round"></span>
-                            </label>
-                        </div>
-                        
-                        <div id="autoWeekSettings" style="border-top: 1px solid #eee; padding-top: 15px; margin-top: 15px;">
-                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
-                                <div>
-                                    <label style="display: block; margin-bottom: 5px; font-weight: 500;">Reset Day</label>
-                                    <select id="weekResetDaySelect" onchange="saveAutoWeekSettings()" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
-                                        <option value="0">Sunday</option>
-                                        <option value="1" selected>Monday</option>
-                                        <option value="2">Tuesday</option>
-                                        <option value="3">Wednesday</option>
-                                        <option value="4">Thursday</option>
-                                        <option value="5">Friday</option>
-                                        <option value="6">Saturday</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label style="display: block; margin-bottom: 5px; font-weight: 500;">Reset Time</label>
-                                    <select id="weekResetHourSelect" onchange="saveAutoWeekSettings()" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
-                                        <option value="0">12:00 AM</option>
-                                        <option value="1">1:00 AM</option>
-                                        <option value="2">2:00 AM</option>
-                                        <option value="3">3:00 AM</option>
-                                        <option value="4">4:00 AM</option>
-                                        <option value="5">5:00 AM</option>
-                                        <option value="6" selected>6:00 AM</option>
-                                        <option value="7">7:00 AM</option>
-                                        <option value="8">8:00 AM</option>
-                                        <option value="9">9:00 AM</option>
-                                        <option value="10">10:00 AM</option>
-                                        <option value="11">11:00 AM</option>
-                                        <option value="12">12:00 PM</option>
-                                    </select>
-                                </div>
-                            </div>
-                            
-                            <div style="background: #e8f5e9; padding: 12px; border-radius: 6px; margin-top: 15px; border-left: 4px solid #4CAF50;">
-                                <small style="color: #2e7d32;">
-                                    ✅ <strong>How it works:</strong> Every <span id="autoResetDayDisplay">Monday</span> at <span id="autoResetTimeDisplay">6:00 AM</span>, the system will:<br>
-                                    • Qualify students with tickets in all 3 categories<br>
-                                    • Reset all ticket counts to 0<br>
-                                    • Log the week completion<br>
-                                    • Move to the next week
-                                </small>
-                            </div>
-                            
-                            <div id="lastResetInfo" style="background: #f5f5f5; padding: 12px; border-radius: 6px; margin-top: 10px;">
-                                <small style="color: #666;">
-                                    <strong>Last Auto-Reset:</strong> <span id="lastResetDisplay">Never</span>
-                                </small>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Jackpot Cycle Configuration -->
-                    <div style="background: white; padding: 20px; border-radius: 8px;">
-                        <h4 style="margin-bottom: 10px;">🎊 Wildcat Jackpot Cycle Dates</h4>
-                        <p style="color: #666; font-size: 13px; margin-bottom: 15px;">Set the start and end dates for the current Jackpot cycle</p>
-                        
-                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 15px;">
-                            <div>
-                                <label style="display: block; margin-bottom: 5px; font-weight: 500;">Cycle Name</label>
-                                <input type="text" id="cycleNameInput" placeholder="Cycle 1" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
-                            </div>
-                            <div>
-                                <label style="display: block; margin-bottom: 5px; font-weight: 500;">Start Date</label>
-                                <input type="date" id="cycleStartDate" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
-                            </div>
-                            <div>
-                                <label style="display: block; margin-bottom: 5px; font-weight: 500;">End Date</label>
-                                <input type="date" id="cycleEndDate" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
-                            </div>
-                        </div>
-                        
-                        <button class="btn" onclick="saveCycleConfiguration()" style="background: #9c27b0; color: white; margin-bottom: 15px;">
-                            💾 Save Cycle Configuration
-                        </button>
-                        
-                        <div id="currentCycleInfo" style="background: #e3f2fd; padding: 12px; border-radius: 6px; border-left: 4px solid #2196F3;">
-                            <small style="color: #1565c0;">
-                                <strong>Current Cycle:</strong> <span id="currentCycleName">Not configured</span><br>
-                                <strong>Dates:</strong> <span id="currentCycleDates">No dates set</span>
-                            </small>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Kickboard Integration Settings -->
-                <div style="margin: 30px 0; padding: 20px; background: #e8f5e9; border: 2px solid #4CAF50; border-radius: 8px;">
-                    <h3 style="color: #2e7d32; margin-bottom: 15px;">📧 Kickboard Email Reports</h3>
-                    <p style="color: #1b5e20; font-size: 14px; margin-bottom: 15px;">
-                        Configure weekly email reports to remind teachers to award Kickboard points
-                    </p>
-                    
-                    <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 15px;">
-                        <h4 style="margin-bottom: 15px;">Kickboard Point Conversion</h4>
-                        <p style="color: #666; font-size: 13px; margin-bottom: 15px;">How many Kickboard points equals 1 raffle ticket?</p>
-                        
-                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
-                            <div>
-                                <label style="display: block; margin-bottom: 5px; font-weight: 500;">PBIS Tickets</label>
-                                <input type="number" id="pbisKickboardPoints" value="500" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
-                                <small style="color: #666;">Kickboard points per ticket</small>
-                            </div>
-                            <div>
-                                <label style="display: block; margin-bottom: 5px; font-weight: 500;">Attendance Tickets</label>
-                                <input type="number" id="attendanceKickboardPoints" value="500" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
-                                <small style="color: #666;">Kickboard points per ticket</small>
-                            </div>
-                            <div>
-                                <label style="display: block; margin-bottom: 5px; font-weight: 500;">Academic Tickets</label>
-                                <input type="number" id="academicKickboardPoints" value="500" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
-                                <small style="color: #666;">Kickboard points per ticket</small>
-                            </div>
-                        </div>
-                        
-                        <button class="btn" onclick="saveKickboardSettings()" style="margin-top: 15px; background: #4CAF50;">
-                            💾 Save Kickboard Settings
-                        </button>
-                    </div>
-                    
-                    <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 15px;">
-                        <h4 style="margin-bottom: 15px;">EmailJS Configuration</h4>
-                        <p style="color: #666; font-size: 13px; margin-bottom: 15px;">
-                            Get these values from <a href="https://emailjs.com" target="_blank" style="color: #2196F3;">emailjs.com</a> after setting up your account
-                        </p>
-                        
-                        <div style="margin-bottom: 15px;">
-                            <label style="display: block; margin-bottom: 5px; font-weight: 500;">Service ID</label>
-                            <input type="text" id="emailJSServiceId" placeholder="e.g., service_abc123" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
-                        </div>
-                        
-                        <div style="margin-bottom: 15px;">
-                            <label style="display: block; margin-bottom: 5px; font-weight: 500;">Template ID</label>
-                            <input type="text" id="emailJSTemplateId" placeholder="e.g., template_xyz789" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
-                        </div>
-                        
-                        <div style="margin-bottom: 15px;">
-                            <label style="display: block; margin-bottom: 5px; font-weight: 500;">Public Key</label>
-                            <input type="text" id="emailJSPublicKey" placeholder="e.g., user_12345abcde" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
-                        </div>
-                        
-                        <button class="btn" onclick="saveEmailJSConfig()" style="background: #2196F3;">
-                            💾 Save EmailJS Config
-                        </button>
-                        
-                        <button class="btn btn-secondary" onclick="testEmailJS()" style="margin-left: 10px;">
-                            📧 Send Test Email
-                        </button>
-                    </div>
-                    
-                    <div style="background: #fff3cd; padding: 15px; border-radius: 8px; border-left: 4px solid #ffc107;">
-                        <p style="margin: 0; color: #856404;">
-                            <strong>📅 Automatic Schedule:</strong> Emails will be sent every Friday at 4:00 PM<br>
-                            <strong>✉️ Subject:</strong> "Your Weekly Raffle Ticket Summary"
-                        </p>
-                    </div>
-                    
-                    <button class="btn" onclick="sendWeeklyReportsNow()" style="margin-top: 15px; width: 100%; background: #ff9800; color: white; padding: 12px; font-size: 16px;">
-                        📤 Send Weekly Reports Now (Manual)
-                    </button>
-                </div>
-
-                <!-- PBIS Subcategories -->
-                <div style="margin: 30px 0; padding: 20px; background: #f7f7f7; border-radius: 8px;">
-                    <h3 style="color: #667eea;">PBIS Behaviors Subcategories</h3>
-                    <p style="color: #666; font-size: 14px; margin-bottom: 15px;">Teachers select from these when awarding PBIS tickets</p>
-                    
-                    <div id="pbisSubcategoriesList" style="margin-bottom: 15px;">
-                    </div>
-                    
-                    <div style="display: flex; gap: 10px; margin-top: 15px;">
-                        <input type="text" id="newPbisSubcategory" placeholder="Enter new subcategory..." style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
-                        <button class="btn" onclick="addPbisSubcategory()">+ Add</button>
-                    </div>
-                </div>
-
-                <!-- Academic Subcategories -->
-                <div style="margin: 30px 0; padding: 20px; background: #f7f7f7; border-radius: 8px;">
-                    <h3 style="color: #ffc107;">Academic Subcategories</h3>
-                    <p style="color: #666; font-size: 14px; margin-bottom: 15px;">Teachers select from these when awarding Academic tickets</p>
-                    
-                    <div id="academicSubcategoriesList" style="margin-bottom: 15px;">
-                    </div>
-                    
-                    <div style="display: flex; gap: 10px; margin-top: 15px;">
-                        <input type="text" id="newAcademicSubcategory" placeholder="Enter new subcategory..." style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
-                        <button class="btn" onclick="addAcademicSubcategory()">+ Add</button>
-                    </div>
-                </div>
-                </div>
-                <!-- END RAFFLE MODE SETTINGS -->
-
-                <!-- Cash Settings Section (within Settings tab) -->
-                <div id="cashSettingsSection" class="settings-section" style="display: none;">
-                <h3 style="margin-bottom: 20px;">💰 Wildcat Cash Settings</h3>
-                
-                <!-- Behavior Management -->
-                <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px;">
-                    <h4 style="margin-bottom: 15px;">Behavior Management</h4>
-                    <button class="btn" onclick="showAddBehaviorModal()" style="margin-bottom: 15px;">➕ Add New Behavior</button>
-                    <div id="behaviorsList"></div>
-                </div>
-                
-                <!-- System Settings -->
-                <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-                    <h4 style="margin-bottom: 15px;">System Settings</h4>
-                    <div class="form-group">
-                        <label>Starting Balance for New Students</label>
-                        <input type="number" id="startingBalance" value="2500" min="0" step="100" style="width: 200px;">
-                    </div>
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="allowNegativeBalances" checked>
-                            Allow negative balances
-                        </label>
-                    </div>
-                    <button class="btn" onclick="saveCashSettings()">💾 Save Settings</button>
-                    
-                    <!-- Danger Zone -->
-                    <div style="margin-top: 30px; padding: 20px; background: #fee; border: 2px solid #dc3545; border-radius: 8px;">
-                        <h4 style="color: #dc3545; margin-bottom: 10px;">⚠️ Danger Zone</h4>
-                        <p style="color: #721c24; font-size: 14px; margin-bottom: 15px;">
-                            This will reset ALL student Wildcat Cash balances to $0. This action cannot be undone!
-                        </p>
-                        <button class="btn" onclick="resetAllStudentCash()" style="background: #dc3545; color: white; border: 2px solid #dc3545;">
-                            🔄 Reset All Student Cash Accounts to $0
-                        </button>
-                    </div>
-                </div>
-                </div>
-                <!-- END CASH SETTINGS -->
             </div>
 
             <!-- System Admin Tab -->
@@ -6852,6 +7007,41 @@
             
             // Refresh the current view (charts or tables)
             toggleDataView(currentDataView);
+        }
+        
+        // ========================================
+        // SETTINGS SUBTAB NAVIGATION
+        // ========================================
+        
+        function switchSettingsSubtab(subtab) {
+            // Update button states
+            document.querySelectorAll('.settings-subtab-button').forEach(btn => {
+                btn.classList.remove('active');
+                btn.style.background = '#f5f5f5';
+                btn.style.color = '#333';
+                btn.style.boxShadow = 'none';
+            });
+            
+            const activeBtn = document.getElementById(`${subtab}SettingsSubtab`);
+            if (activeBtn) {
+                activeBtn.classList.add('active');
+                activeBtn.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+                activeBtn.style.color = 'white';
+                activeBtn.style.boxShadow = '0 2px 8px rgba(102, 126, 234, 0.3)';
+            }
+            
+            // Hide all settings content sections
+            document.querySelectorAll('.settings-subtab-content').forEach(content => {
+                content.style.display = 'none';
+            });
+            
+            // Show selected content
+            const selectedContent = document.getElementById(`${subtab}SettingsContent`);
+            if (selectedContent) {
+                selectedContent.style.display = 'block';
+            }
+            
+            console.log('Switched to settings subtab:', subtab);
         }
 
         function toggleDataView(view) {
@@ -15706,20 +15896,20 @@
                 populateSettingsFields();
                 loadBrandingSettings(); // Load branding form fields
                 
-                // Show/hide sections based on mode
-                const raffleSettingsSection = document.getElementById('raffleSettingsSection');
-                const cashSettingsSection = document.getElementById('cashSettingsSection');
+                // Show/hide Cash Mode subtab based on current mode
+                const cashSubtab = document.getElementById('cashSettingsSubtab');
                 
                 if (wildcatCashEnabled && currentUser && currentUser.role === 'superadmin') {
-                    // Cash Mode: hide raffle settings, show cash settings
-                    if (raffleSettingsSection) raffleSettingsSection.style.display = 'none';
-                    if (cashSettingsSection) cashSettingsSection.style.display = 'block';
+                    // Cash Mode: show cash settings subtab
+                    if (cashSubtab) cashSubtab.style.display = '';
                     updateBehaviorsList();
                 } else {
-                    // Raffle Mode: show raffle settings, hide cash settings
-                    if (raffleSettingsSection) raffleSettingsSection.style.display = 'block';
-                    if (cashSettingsSection) cashSettingsSection.style.display = 'none';
+                    // Raffle Mode: hide cash settings subtab
+                    if (cashSubtab) cashSubtab.style.display = 'none';
                 }
+                
+                // Default to auto-week subtab
+                switchSettingsSubtab('autoweek');
             }
             
             // Handle Raffle Mode data tab
@@ -15922,6 +16112,9 @@
                     }
                 }
             }
+            
+            // Initialize Data & Analytics time filter to "All Time" by default
+            setDataTimeFilter('allTime');
         })();
 
         // ========================================
