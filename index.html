@@ -7028,9 +7028,9 @@
                     return students.map(s => {
                         // Calculate totals from ticket history
                         const history = s.ticketHistory || [];
-                        const pbisTotal = history.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + h.amount, 0);
-                        const attendanceTotal = history.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + h.amount, 0);
-                        const academicTotal = history.filter(h => h.category === 'Academic').reduce((sum, h) => sum + h.amount, 0);
+                        const pbisTotal = history.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || 0), 0);
+                        const attendanceTotal = history.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || 0), 0);
+                        const academicTotal = history.filter(h => h.category === 'Academic').reduce((sum, h) => sum + (h.tickets || 0), 0);
                         
                         return {
                             ...s,
@@ -7045,13 +7045,13 @@
             return students.map(s => {
                 const history = s.ticketHistory || [];
                 const filteredHistory = history.filter(h => {
-                    const ticketDate = new Date(h.date);
+                    const ticketDate = new Date(h.timestamp);
                     return ticketDate >= startDate && ticketDate <= endDate;
                 });
                 
-                const pbisTotal = filteredHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + h.amount, 0);
-                const attendanceTotal = filteredHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + h.amount, 0);
-                const academicTotal = filteredHistory.filter(h => h.category === 'Academic').reduce((sum, h) => sum + h.amount, 0);
+                const pbisTotal = filteredHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || 0), 0);
+                const attendanceTotal = filteredHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || 0), 0);
+                const academicTotal = filteredHistory.filter(h => h.category === 'Academic').reduce((sum, h) => sum + (h.tickets || 0), 0);
                 
                 return {
                     ...s,
@@ -7074,15 +7074,17 @@
         
         // NEW FUNCTION: Update metric cards for Data & Analytics
         function updateMetricCards(suffix) {
-            // Filter students based on suffix
-            let filteredStudents = students;
+            // Get filtered student data based on current time filter
+            let filteredStudents = getFilteredStudentData();
+            
+            // Further filter by school level (MS/HS) if needed
             if (suffix === 'MS') {
-                filteredStudents = students.filter(s => {
+                filteredStudents = filteredStudents.filter(s => {
                     const grade = parseInt(s.grade);
                     return grade >= 6 && grade <= 8;
                 });
             } else if (suffix === 'HS') {
-                filteredStudents = students.filter(s => {
+                filteredStudents = filteredStudents.filter(s => {
                     const grade = parseInt(s.grade);
                     return grade >= 9 && grade <= 12;
                 });
