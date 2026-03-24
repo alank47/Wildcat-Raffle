@@ -1550,7 +1550,7 @@
         </div>
 
         <!-- MODE TOGGLE (Admin & Superadmin - Beta Testing) -->
-        <div class="admin-only" id="modeToggleContainer" style="display: none; margin: 15px 0; padding: 15px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);">
+        <div class="admin-only" id="modeToggleContainer" style="margin: 15px 0; padding: 15px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);">
             <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 15px;">
                 <div>
                     <h3 style="color: white; margin: 0 0 5px 0; font-size: 16px;">🔄 System Mode (Beta Testing)</h3>
@@ -16161,8 +16161,8 @@
 
         // Mode Switching
         function switchSystemMode(mode) {
-            if (currentUser.role !== 'superadmin') {
-                alert('Only superadmins can switch modes during beta testing.');
+            if (currentUser.role !== 'superadmin' && currentUser.role !== 'admin') {
+                alert('Only admins and superadmins can switch modes during beta testing.');
                 return;
             }
             
