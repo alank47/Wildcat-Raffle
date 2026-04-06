@@ -3219,7 +3219,11 @@
             }
             
             saveSession(); // Save session for auto-login
-            saveData(); // Save login history to cloud
+            
+            // CRITICAL: Load fresh data from Firebase BEFORE saving to prevent overwriting with stale data
+            loadData().then(() => {
+                saveData(); // Now save login history with fresh data
+            });
             
             document.getElementById('loginScreen').classList.add('hidden');
             document.getElementById('createAdminScreen').classList.add('hidden');
