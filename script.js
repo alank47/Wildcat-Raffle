@@ -1,4 +1,4 @@
-        // ========================================
+// ========================================
         // CLOUD SYNC CONFIGURATION - FIREBASE
         // ========================================
         // Firebase configuration for cloud storage
@@ -50,7 +50,7 @@
         // ========================================
         // AUTOMATIC WEEK SYSTEM
         // ========================================
-        let autoWeekEnabled = true; // Enable automatic week detection and reset
+        let autoWeekEnabled = false; // DISABLED - Automatic week detection removed to prevent accidental ticket deletion
         let lastAutoResetDate = null; // Last date/time we ran auto reset (prevents double-processing)
         let weekResetDay = 1; // 0 = Sunday, 1 = Monday, 2 = Tuesday, etc.
         let weekResetHour = 6; // 6 AM
@@ -738,8 +738,8 @@
                         schoolBranding = mainData.schoolBranding || schoolBranding;
                         referralIdCounter = mainData.referralIdCounter || 1;
                         lastSaveTimestamp = mainData.lastSaveTimestamp || 0;
-                        // Auto-week system
-                        autoWeekEnabled = mainData.autoWeekEnabled !== undefined ? mainData.autoWeekEnabled : true;
+                        // Auto-week system - FORCED DISABLED
+                        autoWeekEnabled = false; // Disabled to prevent accidental ticket deletion
                         lastAutoResetDate = mainData.lastAutoResetDate || null;
                         weekResetDay = mainData.weekResetDay !== undefined ? mainData.weekResetDay : 1;
                         weekResetHour = mainData.weekResetHour !== undefined ? mainData.weekResetHour : 6;
@@ -822,8 +822,8 @@
                 detentionReasons = data.detentionReasons || ['Disrupting Class', 'Tardiness', 'Dress Code Violation', 'Inappropriate Behavior', 'Defiance/Disrespect', 'Cell Phone Violation', 'Missing Assignment', 'Other'];
                 loginHistory = data.loginHistory || [];
                 lastSaveTimestamp = data.lastSaveTimestamp || 0;
-                // Auto-week system
-                autoWeekEnabled = data.autoWeekEnabled !== undefined ? data.autoWeekEnabled : true;
+                // Auto-week system - FORCED DISABLED
+                autoWeekEnabled = false; // Disabled to prevent accidental ticket deletion
                 lastAutoResetDate = data.lastAutoResetDate || null;
                 weekResetDay = data.weekResetDay !== undefined ? data.weekResetDay : 1;
                 weekResetHour = data.weekResetHour !== undefined ? data.weekResetHour : 6;
@@ -1746,8 +1746,8 @@
 
         // Auto-refresh data from cloud only when inactive
         autoRefreshInterval = setInterval(async () => {
-            // Check for auto-week reset first
-            checkAndRunAutoWeekReset();
+            // AUTO-WEEK RESET DISABLED - removed to prevent accidental ticket deletion
+            // checkAndRunAutoWeekReset();
             
             // Only refresh if user has been inactive for 60+ seconds
             const timeSinceActivity = Date.now() - lastUserActivity;
@@ -3330,8 +3330,8 @@
                 updateSuperAdminList();
             }
             
-            // Check if we need to auto-reset the week
-            checkAndRunAutoWeekReset();
+            // AUTO-WEEK RESET DISABLED - Check removed to prevent accidental ticket deletion
+            // checkAndRunAutoWeekReset();
         }
 
         function logout() {
@@ -13899,4 +13899,3 @@
             
             alert('✅ Referral report exported successfully!');
         }
-
