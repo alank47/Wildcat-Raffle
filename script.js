@@ -1285,70 +1285,96 @@
             isSyncing = true;
 
             try {
-                const dataToSave = {
-                    students,
-                    currentWeek,
-                    cycleDuration,
-                    weeklyWinners,
-                    bigRaffleWinners,
-                    teachers,
-                    auditLog,
-                    weeklyHistory,
-                    pbisSubcategories,
-                    academicSubcategories,
-                    lastPowerSchoolSync,
-                    kickboardSettings,
-                    emailJSConfig,
-                    hallPasses,
-                    passSettings,
-                    preventionGroups,
-                    schoolBranding,
-                    behaviorReferrals,
-                    referralIdCounter,
-                    detentions,
-                    detentionIdCounter,
-                    detentionLocations,
-                    detentionReasons,
-                    loginHistory,
-                    // Auto-week system variables
-                    autoWeekEnabled,
-                    lastAutoResetDate,
-                    weekResetDay,
-                    weekResetHour,
-                    // Jackpot cycle variables
-                    currentCycle,
-                    cycleHistory,
-                    lastSaveTimestamp: Date.now()
-                };
-                
-                // Always save to localStorage as backup
-                localStorage.setItem('raffleData', JSON.stringify(dataToSave));
-                console.log('✅ Saved to localStorage');
-
-                // Save to Firebase if initialized - SPLIT INTO MULTIPLE DOCUMENTS
+                // CRITICAL MULTI-USER FIX: Load fresh data from Firebase FIRST
+                // Then intelligently merge our local changes with the fresh data
                 if (firebaseInitialized && firebaseDb) {
                     try {
-                        const { doc, setDoc } = window.firebaseModules;
-                        const timestamp = Date.now();
+                        const { doc, setDoc, getDoc } = window.firebaseModules;
                         
-                        console.log(`🔵 Starting Firebase save - ${students.length} students, ${teachers.length} teachers`);
+                        // Load BOTH documents from Firebase to get the absolute latest data
+                        const [mainSnap, secondarySnap] = await Promise.all([
+                            getDoc(doc(firebaseDb, 'raffle_data', 'main')),
+                            getDoc(doc(firebaseDb, 'raffle_data', 'secondary'))
+                        ]);
                         
-                        // DEBUG: Log how many students have tickets BEFORE saving
-                        const studentsWithTickets = students.filter(s => s.pbisTickets > 0 || s.attendanceTickets > 0 || s.academicTickets > 0);
-                        console.log(`📊 Students with tickets being saved: ${studentsWithTickets.length}`);
-                        if (studentsWithTickets.length > 0) {
-                            console.log('First 3 with tickets:', studentsWithTickets.slice(0, 3).map(s => ({
-                                name: `${s.firstName} ${s.lastName}`,
-                                pbis: s.pbisTickets,
-                                att: s.attendanceTickets,
-                                acad: s.academicTickets
-                            })));
+                        let studentsToSave = students;
+                        let auditLogToSave = auditLog;
+                        let loginHistoryToSave = loginHistory;
+                        
+                        // If Firebase has data, intelligently merge
+                        if (mainSnap.exists()) {
+                            const firebaseMain = mainSnap.data();
+                            const firebaseStudents = firebaseMain.students || [];
+                            
+                            // MERGE STRATEGY: For each student, use the version with the most recent ticket change
+                            // This prevents overwriting tickets that another teacher just awarded
+                            studentsToSave = students.map(localStudent => {
+                                const firebaseStudent = firebaseStudents.find(s => s.id === localStudent.id);
+                                
+                                if (!firebaseStudent) {
+                                    // New student only in local, keep it
+                                    return localStudent;
+                                }
+                                
+                                // Compare ticket counts - if Firebase has MORE tickets, someone else awarded them
+                                const localTotal = (localStudent.pbisTickets || 0) + (localStudent.attendanceTickets || 0) + (localStudent.academicTickets || 0);
+                                const firebaseTotal = (firebaseStudent.pbisTickets || 0) + (firebaseStudent.attendanceTickets || 0) + (firebaseStudent.academicTickets || 0);
+                                
+                                if (firebaseTotal > localTotal) {
+                                    // Firebase has more tickets - another teacher awarded them
+                                    console.log(`⚠️ Merging tickets for ${localStudent.firstName} ${localStudent.lastName}: Local=${localTotal}, Firebase=${firebaseTotal}, using Firebase version`);
+                                    return firebaseStudent;
+                                } else {
+                                    // Local has same or more - we're the ones who awarded
+                                    return localStudent;
+                                }
+                            });
                         }
                         
-                        // Document 1: Core data (students, teachers, settings)
+                        if (secondarySnap.exists()) {
+                            const firebaseSecondary = secondarySnap.data();
+                            
+                            // MERGE AUDIT LOG: Combine both, remove duplicates by ID
+                            const firebaseAuditLog = firebaseSecondary.auditLog || [];
+                            const combinedAuditLog = [...firebaseAuditLog];
+                            
+                            auditLog.forEach(localEntry => {
+                                // Only add if not already in Firebase version
+                                if (!firebaseAuditLog.find(e => e.timestamp === localEntry.timestamp && e.studentId === localEntry.studentId)) {
+                                    combinedAuditLog.push(localEntry);
+                                }
+                            });
+                            
+                            // Sort by timestamp
+                            auditLogToSave = combinedAuditLog.sort((a, b) => 
+                                new Date(a.timestamp) - new Date(b.timestamp)
+                            );
+                            
+                            // MERGE LOGIN HISTORY: Same strategy
+                            const firebaseLoginHistory = firebaseSecondary.loginHistory || [];
+                            const combinedLoginHistory = [...firebaseLoginHistory];
+                            
+                            loginHistory.forEach(localEntry => {
+                                if (!firebaseLoginHistory.find(e => e.id === localEntry.id)) {
+                                    combinedLoginHistory.push(localEntry);
+                                }
+                            });
+                            
+                            loginHistoryToSave = combinedLoginHistory.sort((a, b) => 
+                                new Date(a.timestamp) - new Date(b.timestamp)
+                            ).slice(-500); // Keep last 500
+                        }
+                        
+                        // Now save the merged data
+                        const timestamp = Date.now();
+                        
+                        console.log(`🔵 Saving merged data - ${studentsToSave.length} students`);
+                        const studentsWithTickets = studentsToSave.filter(s => s.pbisTickets > 0 || s.attendanceTickets > 0 || s.academicTickets > 0);
+                        console.log(`📊 Students with tickets: ${studentsWithTickets.length}`);
+                        
                         const mainDoc = doc(firebaseDb, 'raffle_data', 'main');
                         await setDoc(mainDoc, {
-                            students,
+                            students: studentsToSave,
                             currentWeek,
                             cycleDuration,
                             teachers,
@@ -1360,30 +1386,26 @@
                             passSettings,
                             schoolBranding,
                             referralIdCounter,
-                            // Auto-week system
                             autoWeekEnabled,
                             lastAutoResetDate,
                             weekResetDay,
                             weekResetHour,
-                            // Jackpot cycles
                             currentCycle,
                             cycleHistory,
                             lastSaveTimestamp: timestamp
                         });
                         
-                        console.log(`✅ Main document saved`);
+                        console.log(`✅ Main document saved with merged students`);
                         
-                        // Small delay between writes
                         await new Promise(resolve => setTimeout(resolve, 200));
                         
-                        // Document 2: Everything else (history, logs, passes, referrals)
                         const secondaryDoc = doc(firebaseDb, 'raffle_data', 'secondary');
                         await setDoc(secondaryDoc, {
                             weeklyWinners,
                             bigRaffleWinners,
                             weeklyHistory,
-                            auditLog,
-                            loginHistory,
+                            auditLog: auditLogToSave,
+                            loginHistory: loginHistoryToSave,
                             hallPasses,
                             preventionGroups,
                             behaviorReferrals,
@@ -1393,16 +1415,124 @@
                             lastSaveTimestamp: timestamp
                         });
                         
-                        console.log(`✅ Secondary document saved`);
-                        console.log('✅ Saved to Firebase (2 documents)');
+                        console.log(`✅ Secondary document saved with merged audit log`);
+                        
+                        // Update local arrays with merged versions
+                        students = studentsToSave;
+                        auditLog = auditLogToSave;
+                        loginHistory = loginHistoryToSave;
+                        
                         lastSaveTimestamp = timestamp;
+                        
+                        // Also save to localStorage
+                        localStorage.setItem('raffleData', JSON.stringify({
+                            students: studentsToSave,
+                            currentWeek,
+                            cycleDuration,
+                            weeklyWinners,
+                            bigRaffleWinners,
+                            teachers,
+                            auditLog: auditLogToSave,
+                            weeklyHistory,
+                            pbisSubcategories,
+                            academicSubcategories,
+                            lastPowerSchoolSync,
+                            kickboardSettings,
+                            emailJSConfig,
+                            hallPasses,
+                            passSettings,
+                            preventionGroups,
+                            schoolBranding,
+                            behaviorReferrals,
+                            referralIdCounter,
+                            detentions,
+                            detentionIdCounter,
+                            detentionLocations,
+                            detentionReasons,
+                            loginHistory: loginHistoryToSave,
+                            autoWeekEnabled,
+                            lastAutoResetDate,
+                            weekResetDay,
+                            weekResetHour,
+                            currentCycle,
+                            cycleHistory,
+                            lastSaveTimestamp: timestamp
+                        }));
+                        console.log('✅ Saved to localStorage');
+                        
                     } catch (error) {
                         console.error('❌ Firebase save error:', error);
                         console.error('Error details:', error.message, error.code);
-                        // localStorage backup already saved, so data is safe
+                        // Fall back to localStorage only
+                        localStorage.setItem('raffleData', JSON.stringify({
+                            students,
+                            currentWeek,
+                            cycleDuration,
+                            weeklyWinners,
+                            bigRaffleWinners,
+                            teachers,
+                            auditLog,
+                            weeklyHistory,
+                            pbisSubcategories,
+                            academicSubcategories,
+                            lastPowerSchoolSync,
+                            kickboardSettings,
+                            emailJSConfig,
+                            hallPasses,
+                            passSettings,
+                            preventionGroups,
+                            schoolBranding,
+                            behaviorReferrals,
+                            referralIdCounter,
+                            detentions,
+                            detentionIdCounter,
+                            detentionLocations,
+                            detentionReasons,
+                            loginHistory,
+                            autoWeekEnabled,
+                            lastAutoResetDate,
+                            weekResetDay,
+                            weekResetHour,
+                            currentCycle,
+                            cycleHistory
+                        }));
+                        console.log('✅ Saved to localStorage (fallback)');
                     }
                 } else {
-                    console.log('ℹ️ Firebase not initialized, using localStorage only');
+                    // No Firebase, just localStorage
+                    localStorage.setItem('raffleData', JSON.stringify({
+                        students,
+                        currentWeek,
+                        cycleDuration,
+                        weeklyWinners,
+                        bigRaffleWinners,
+                        teachers,
+                        auditLog,
+                        weeklyHistory,
+                        pbisSubcategories,
+                        academicSubcategories,
+                        lastPowerSchoolSync,
+                        kickboardSettings,
+                        emailJSConfig,
+                        hallPasses,
+                        passSettings,
+                        preventionGroups,
+                        schoolBranding,
+                        behaviorReferrals,
+                        referralIdCounter,
+                        detentions,
+                        detentionIdCounter,
+                        detentionLocations,
+                        detentionReasons,
+                        loginHistory,
+                        autoWeekEnabled,
+                        lastAutoResetDate,
+                        weekResetDay,
+                        weekResetHour,
+                        currentCycle,
+                        cycleHistory
+                    }));
+                    console.log('✅ Saved to localStorage');
                 }
             } catch (error) {
                 console.error('Save error:', error);
@@ -1752,7 +1882,12 @@
             // Only refresh if user has been inactive for 60+ seconds
             const timeSinceActivity = Date.now() - lastUserActivity;
             
-            if (binId && !isSyncing && (currentUser || currentStudent) && timeSinceActivity > AUTO_REFRESH_DELAY) {
+            // SAFETY: Don't refresh if user is on the tickets tab (actively awarding)
+            const ticketsTab = document.getElementById('ticketsContent');
+            const isOnTicketsTab = ticketsTab && !ticketsTab.classList.contains('hidden');
+            
+            if (binId && !isSyncing && (currentUser || currentStudent) && timeSinceActivity > AUTO_REFRESH_DELAY && !isOnTicketsTab) {
+                console.log('🔄 Auto-refreshing data (user inactive for 60+ seconds)');
                 await loadData();
                 if (currentUser) {
                     updateAllDisplays();
@@ -3180,7 +3315,7 @@
             return roleNames[role] || role;
         }
 
-        function login() {
+        async function login() {
             const username = document.getElementById('loginUsername').value.trim();
             const password = document.getElementById('loginPassword').value;
             const errorDiv = document.getElementById('loginError');
@@ -3211,19 +3346,43 @@
                 platform: navigator.platform
             };
             
+            // Add login record to history
             loginHistory.push(loginRecord);
             
-            // Keep only last 500 login records to prevent unbounded growth
+            // Keep only last 500 login records
             if (loginHistory.length > 500) {
                 loginHistory = loginHistory.slice(-500);
             }
             
             saveSession(); // Save session for auto-login
             
-            // CRITICAL: Load fresh data from Firebase BEFORE saving to prevent overwriting with stale data
-            loadData().then(() => {
-                saveData(); // Now save login history with fresh data
-            });
+            // Save login - saveData() now intelligently merges with Firebase to prevent data loss
+            await saveData();
+            
+                    pbisSubcategories,
+                    academicSubcategories,
+                    lastPowerSchoolSync,
+                    kickboardSettings,
+                    emailJSConfig,
+                    hallPasses,
+                    passSettings,
+                    preventionGroups,
+                    schoolBranding,
+                    behaviorReferrals,
+                    referralIdCounter,
+                    detentions,
+                    detentionIdCounter,
+                    detentionLocations,
+                    detentionReasons,
+                    loginHistory,
+                    autoWeekEnabled,
+                    lastAutoResetDate,
+                    weekResetDay,
+                    weekResetHour,
+                    currentCycle,
+                    cycleHistory
+                }));
+            }
             
             document.getElementById('loginScreen').classList.add('hidden');
             document.getElementById('createAdminScreen').classList.add('hidden');
