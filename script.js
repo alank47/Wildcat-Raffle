@@ -1,4 +1,4 @@
-        // ========================================
+// ========================================
         // CLOUD SYNC CONFIGURATION - FIREBASE
         // ========================================
         // Firebase configuration for cloud storage
@@ -1326,33 +1326,102 @@
             isSyncing = true;
 
             try {
-                // MULTI-USER FIX: Only merge audit log and login history
-                // Students array uses "last write wins" to respect intentional resets
+                // MULTI-USER FIX: Merge ALL data to prevent overwrites
                 if (firebaseInitialized && firebaseDb) {
                     try {
                         const { doc, setDoc, getDoc } = window.firebaseModules;
                         
+                        let studentsToSave = students;
+                        let teachersToSave = teachers;
                         let auditLogToSave = auditLog;
                         let loginHistoryToSave = loginHistory;
                         
-                        // Load secondary doc to merge audit log and login history
-                        const secondarySnap = await getDoc(doc(firebaseDb, 'raffle_data', 'secondary'));
+                        // Load BOTH docs to merge everything
+                        const [mainSnap, secondarySnap] = await Promise.all([
+                            getDoc(doc(firebaseDb, 'raffle_data', 'main')),
+                            getDoc(doc(firebaseDb, 'raffle_data', 'secondary'))
+                        ]);
                         
+                        // MERGE STUDENTS: Take MAX ticket values to never lose awards
+                        if (mainSnap.exists()) {
+                            const firebaseMain = mainSnap.data();
+                            const firebaseStudents = firebaseMain.students || [];
+                            
+                            // Start with Firebase students as base (preserves students added by others)
+                            const mergedStudents = firebaseStudents.map(firebaseStudent => {
+                                const localStudent = students.find(s => s.id === firebaseStudent.id);
+                                
+                                if (!localStudent) {
+                                    return firebaseStudent; // Student only in Firebase
+                                }
+                                
+                                // Take MAX of each ticket type to preserve all awards
+                                return {
+                                    ...firebaseStudent, // Start with Firebase version
+                                    ...localStudent, // Overlay local changes
+                                    pbisTickets: Math.max(localStudent.pbisTickets || 0, firebaseStudent.pbisTickets || 0),
+                                    attendanceTickets: Math.max(localStudent.attendanceTickets || 0, firebaseStudent.attendanceTickets || 0),
+                                    academicTickets: Math.max(localStudent.academicTickets || 0, firebaseStudent.academicTickets || 0),
+                                    // Merge ticket history
+                                    ticketHistory: [
+                                        ...(firebaseStudent.ticketHistory || []),
+                                        ...(localStudent.ticketHistory || [])
+                                    ].filter((item, index, self) => 
+                                        // Remove duplicates by timestamp
+                                        index === self.findIndex(t => t.timestamp === item.timestamp)
+                                    ).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+                                };
+                            });
+                            
+                            // Add any NEW students that are only in local (just added by this user)
+                            students.forEach(localStudent => {
+                                if (!firebaseStudents.find(s => s.id === localStudent.id)) {
+                                    mergedStudents.push(localStudent);
+                                }
+                            });
+                            
+                            studentsToSave = mergedStudents;
+                            
+                            // MERGE TEACHERS: Take MAX ticketsAwarded
+                            const firebaseTeachers = firebaseMain.teachers || [];
+                            
+                            // Start with Firebase teachers as base
+                            const mergedTeachers = firebaseTeachers.map(firebaseTeacher => {
+                                const localTeacher = teachers.find(t => t.id === firebaseTeacher.id);
+                                
+                                if (!localTeacher) {
+                                    return firebaseTeacher; // Teacher only in Firebase
+                                }
+                                
+                                return {
+                                    ...firebaseTeacher,
+                                    ...localTeacher,
+                                    ticketsAwarded: Math.max(localTeacher.ticketsAwarded || 0, firebaseTeacher.ticketsAwarded || 0)
+                                };
+                            });
+                            
+                            // Add any NEW teachers that are only in local
+                            teachers.forEach(localTeacher => {
+                                if (!firebaseTeachers.find(t => t.id === localTeacher.id)) {
+                                    mergedTeachers.push(localTeacher);
+                                }
+                            });
+                            
+                            teachersToSave = mergedTeachers;
+                        }
+                        
+                        // MERGE AUDIT LOG
                         if (secondarySnap.exists()) {
                             const firebaseSecondary = secondarySnap.data();
-                            
-                            // MERGE AUDIT LOG: Combine both, remove duplicates
                             const firebaseAuditLog = firebaseSecondary.auditLog || [];
                             const combinedAuditLog = [...firebaseAuditLog];
                             
                             auditLog.forEach(localEntry => {
-                                // Only add if not already in Firebase version (check by timestamp + studentId)
                                 if (!firebaseAuditLog.find(e => e.timestamp === localEntry.timestamp && e.studentId === localEntry.studentId)) {
                                     combinedAuditLog.push(localEntry);
                                 }
                             });
                             
-                            // Sort by timestamp
                             auditLogToSave = combinedAuditLog.sort((a, b) => 
                                 new Date(a.timestamp) - new Date(b.timestamp)
                             );
@@ -1369,21 +1438,21 @@
                             
                             loginHistoryToSave = combinedLoginHistory.sort((a, b) => 
                                 new Date(a.timestamp) - new Date(b.timestamp)
-                            ).slice(-500); // Keep last 500
+                            ).slice(-500);
                         }
                         
                         const timestamp = Date.now();
                         
-                        console.log(`🔵 Saving data - ${students.length} students`);
-                        const studentsWithTickets = students.filter(s => s.pbisTickets > 0 || s.attendanceTickets > 0 || s.academicTickets > 0);
+                        console.log(`🔵 Saving merged data - ${studentsToSave.length} students, ${teachersToSave.length} teachers`);
+                        const studentsWithTickets = studentsToSave.filter(s => s.pbisTickets > 0 || s.attendanceTickets > 0 || s.academicTickets > 0);
                         console.log(`📊 Students with tickets: ${studentsWithTickets.length}`);
                         
                         const mainDoc = doc(firebaseDb, 'raffle_data', 'main');
                         await setDoc(mainDoc, {
-                            students,  // Last write wins - respects intentional resets
+                            students: studentsToSave,
                             currentWeek,
                             cycleDuration,
-                            teachers,
+                            teachers: teachersToSave,
                             pbisSubcategories,
                             academicSubcategories,
                             lastPowerSchoolSync,
@@ -1424,6 +1493,8 @@
                         console.log(`✅ Secondary document saved`);
                         
                         // Update local arrays with merged versions
+                        students = studentsToSave;
+                        teachers = teachersToSave;
                         auditLog = auditLogToSave;
                         loginHistory = loginHistoryToSave;
                         
@@ -1431,12 +1502,12 @@
                         
                         // Also save to localStorage
                         localStorage.setItem('raffleData', JSON.stringify({
-                            students,
+                            students: studentsToSave,
                             currentWeek,
                             cycleDuration,
                             weeklyWinners,
                             bigRaffleWinners,
-                            teachers,
+                            teachers: teachersToSave,
                             auditLog: auditLogToSave,
                             weeklyHistory,
                             pbisSubcategories,
@@ -10086,6 +10157,9 @@
                 const studentId = cb.dataset.id;
                 const student = students.find(s => s.id === studentId);
                 if (student) {
+                    console.log(`🎫 Awarding ${amount} ${categoryName} ticket(s) to ${student.firstName} ${student.lastName} (ID: ${student.id})`);
+                    console.log(`   Before: PBIS=${student.pbisTickets || 0}, Att=${student.attendanceTickets || 0}, Acad=${student.academicTickets || 0}`);
+                    
                     // Store current state before awarding
                     const previousState = {
                         studentId: student.id,
@@ -10098,6 +10172,8 @@
                     if (category === 'pbis') student.pbisTickets += amount;
                     else if (category === 'attendance') student.attendanceTickets += amount;
                     else if (category === 'academics') student.academicTickets += amount;
+                    
+                    console.log(`   After:  PBIS=${student.pbisTickets || 0}, Att=${student.attendanceTickets || 0}, Acad=${student.academicTickets || 0}`);
                     
                     // Add to student's history
                     if (!student.ticketHistory) student.ticketHistory = [];
@@ -10167,7 +10243,20 @@
                 auditLogCount: auditLog.length // Track how many audit entries to remove
             };
 
+            console.log(`💾 About to save ${checkboxes.length} ticket award(s)`);
+            const studentsWithTicketsBeforeSave = students.filter(s => s.pbisTickets > 0 || s.attendanceTickets > 0 || s.academicTickets > 0).length;
+            console.log(`   Students with tickets before save: ${studentsWithTicketsBeforeSave}`);
+            
             saveData();
+            
+            // Verify after save completes
+            setTimeout(() => {
+                const studentsWithTicketsAfterSave = students.filter(s => s.pbisTickets > 0 || s.attendanceTickets > 0 || s.academicTickets > 0).length;
+                console.log(`✅ Save completed. Students with tickets after save: ${studentsWithTicketsAfterSave}`);
+                if (studentsWithTicketsAfterSave < studentsWithTicketsBeforeSave) {
+                    console.error(`❌ WARNING: Lost ${studentsWithTicketsBeforeSave - studentsWithTicketsAfterSave} students with tickets during save!`);
+                }
+            }, 2000);
             
             // CRITICAL: Wait for Firebase save to complete before updating UI
             // This prevents a second save from overwriting with stale data
@@ -14042,4 +14131,3 @@
             
             alert('✅ Referral report exported successfully!');
         }
-
