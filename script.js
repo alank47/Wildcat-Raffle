@@ -948,18 +948,27 @@
         }
         
         function updateAutoResetDisplay() {
+            // Safety check: These elements were removed when auto-week tab was disabled
+            const dayDisplay = document.getElementById('autoResetDayDisplay');
+            const timeDisplay = document.getElementById('autoResetTimeDisplay');
+            const lastResetDisplay = document.getElementById('lastResetDisplay');
+            
+            if (!dayDisplay || !timeDisplay || !lastResetDisplay) {
+                return; // Elements don't exist, skip update
+            }
+            
             const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
             const hours = ['12:00 AM', '1:00 AM', '2:00 AM', '3:00 AM', '4:00 AM', '5:00 AM', '6:00 AM', 
                           '7:00 AM', '8:00 AM', '9:00 AM', '10:00 AM', '11:00 AM', '12:00 PM'];
             
-            document.getElementById('autoResetDayDisplay').textContent = days[weekResetDay];
-            document.getElementById('autoResetTimeDisplay').textContent = hours[weekResetHour];
+            dayDisplay.textContent = days[weekResetDay];
+            timeDisplay.textContent = hours[weekResetHour];
             
             if (lastAutoResetDate) {
                 const date = new Date(lastAutoResetDate);
-                document.getElementById('lastResetDisplay').textContent = date.toLocaleString();
+                lastResetDisplay.textContent = date.toLocaleString();
             } else {
-                document.getElementById('lastResetDisplay').textContent = 'Never';
+                lastResetDisplay.textContent = 'Never';
             }
         }
         
@@ -10420,6 +10429,80 @@
         function drawWinner() {
             const category = document.getElementById('raffleCategory').value;
             
+            const categoryName = category === 'pbis' ? 'PBIS Behaviors' : 
+                                category === 'attendance' ? 'Perfect Attendance' : 'Academics';
+            
+            // PBIS draws one winner per grade
+            if (category === 'pbis') {
+                drawPBISByGrade(categoryName);
+            } else {
+                // Attendance and Academics draw by school (MS/HS)
+                drawBySchool(category, categoryName);
+            }
+        }
+        
+        function drawPBISByGrade(categoryName) {
+            // Get all unique grades in the system
+            const grades = [...new Set(students.map(s => parseInt(s.grade)))].sort((a, b) => a - b);
+            
+            // Filter students by PBIS tickets for each grade
+            const gradeWinners = {};
+            grades.forEach(grade => {
+                const gradeStudents = students.filter(s => parseInt(s.grade) === grade);
+                const eligible = gradeStudents.filter(s => s.pbisTickets > 0);
+                
+                if (eligible.length > 0) {
+                    gradeWinners[grade] = eligible;
+                }
+            });
+            
+            const eligibleGrades = Object.keys(gradeWinners);
+            
+            if (eligibleGrades.length === 0) {
+                alert('No eligible students for PBIS in any grade!');
+                return;
+            }
+            
+            // Draw winners sequentially for each grade
+            let gradeIndex = 0;
+            const allWinners = [];
+            
+            function drawNextGrade() {
+                if (gradeIndex >= eligibleGrades.length) {
+                    // All grades done, show all winners
+                    saveData();
+                    displayAllGradeWinners(allWinners, categoryName);
+                    updateWinnersList();
+                    updateAllDisplays();
+                    triggerConfetti();
+                    return;
+                }
+                
+                const grade = eligibleGrades[gradeIndex];
+                const eligible = gradeWinners[grade];
+                
+                showRaffleSpinner(eligible, `Grade ${grade}`, (winner) => {
+                    weeklyWinners.push({
+                        week: currentWeek,
+                        category: categoryName,
+                        grade: grade,
+                        student: winner,
+                        date: new Date().toLocaleDateString()
+                    });
+                    
+                    allWinners.push({ grade, winner });
+                    
+                    addToAuditLog('Raffle Winner', winner.id, `${categoryName} - Grade ${grade}`, null, null);
+                    
+                    gradeIndex++;
+                    setTimeout(() => drawNextGrade(), 2000); // 2 second delay between grades
+                });
+            }
+            
+            drawNextGrade();
+        }
+        
+        function drawBySchool(category, categoryName) {
             // Separate students by school
             const middleSchool = students.filter(s => s.grade >= 6 && s.grade <= 8);
             const highSchool = students.filter(s => s.grade >= 9 && s.grade <= 12);
@@ -10428,10 +10511,7 @@
             let hsEligible = [];
 
             // Filter by category for each school
-            if (category === 'pbis') {
-                msEligible = middleSchool.filter(s => s.pbisTickets > 0);
-                hsEligible = highSchool.filter(s => s.pbisTickets > 0);
-            } else if (category === 'attendance') {
+            if (category === 'attendance') {
                 msEligible = middleSchool.filter(s => s.attendanceTickets > 0);
                 hsEligible = highSchool.filter(s => s.attendanceTickets > 0);
             } else if (category === 'academics') {
@@ -10443,9 +10523,6 @@
                 alert('No eligible students for this category in either school!');
                 return;
             }
-
-            const categoryName = category === 'pbis' ? 'PBIS Behaviors' : 
-                                category === 'attendance' ? 'Perfect Attendance' : 'Academics';
 
             // Draw Middle School winner if eligible students exist
             if (msEligible.length > 0) {
@@ -10510,6 +10587,37 @@
                     triggerConfetti();
                 });
             }
+        }
+        
+        function displayAllGradeWinners(winners, categoryName) {
+            const display = document.getElementById('winnerDisplay');
+            
+            let html = '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-top: 20px;">';
+            
+            winners.forEach(({ grade, winner }) => {
+                const schoolLabel = grade >= 6 && grade <= 8 ? 'Middle School' : 'High School';
+                const bgColor = grade >= 6 && grade <= 8 ? 
+                    'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' : 
+                    'linear-gradient(135deg, #10b981 0%, #059669 100%)';
+                
+                html += `
+                    <div style="background: ${bgColor}; color: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center;">
+                        <div style="background: rgba(255,255,255,0.2); padding: 6px 12px; border-radius: 15px; display: inline-block; margin-bottom: 10px; font-size: 12px;">
+                            🏫 ${schoolLabel}
+                        </div>
+                        <h3 style="color: white; margin: 10px 0; font-size: 20px;">Grade ${grade} Winner</h3>
+                        <div style="background: white; color: #333; padding: 15px; border-radius: 8px; margin: 10px 0;">
+                            <div style="font-size: 22px; font-weight: 700;">${winner.firstName} ${winner.lastName}</div>
+                            <div style="font-size: 12px; color: #666; margin-top: 5px;">ID: ${winner.id}</div>
+                        </div>
+                        <div style="font-size: 14px; opacity: 0.9;">Category: ${categoryName}</div>
+                        <div style="font-size: 12px; opacity: 0.8; margin-top: 5px;">${new Date().toLocaleDateString()}</div>
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            display.innerHTML = html;
         }
         
         // Animated raffle spinner with school label
@@ -10641,10 +10749,21 @@
             }
 
             list.innerHTML = thisWeekWinners.map(w => {
-                const schoolBadge = w.school ? `<span style="background: ${w.school === 'Middle School' ? '#f59e0b' : '#10b981'}; color: white; padding: 3px 8px; border-radius: 10px; font-size: 11px; margin-left: 5px;">${w.school}</span>` : '';
+                let badge = '';
+                
+                // PBIS shows grade badge
+                if (w.grade) {
+                    const isMS = w.grade >= 6 && w.grade <= 8;
+                    badge = `<span style="background: ${isMS ? '#f59e0b' : '#10b981'}; color: white; padding: 3px 8px; border-radius: 10px; font-size: 11px; margin-left: 5px;">Grade ${w.grade}</span>`;
+                }
+                // Attendance/Academics show school badge
+                else if (w.school) {
+                    badge = `<span style="background: ${w.school === 'Middle School' ? '#f59e0b' : '#10b981'}; color: white; padding: 3px 8px; border-radius: 10px; font-size: 11px; margin-left: 5px;">${w.school}</span>`;
+                }
+                
                 return `
                     <div style="padding: 10px; background: #f7f7f7; border-radius: 6px; margin-bottom: 10px;">
-                        <strong>${w.category}:</strong> ${w.student.firstName} ${w.student.lastName} (${w.student.id}) ${schoolBadge}
+                        <strong>${w.category}:</strong> ${w.student.firstName} ${w.student.lastName} (${w.student.id}) ${badge}
                         <span style="float: right; color: #666;">${w.date}</span>
                     </div>
                 `;
