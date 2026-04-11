@@ -10024,18 +10024,37 @@
             const qualified = students.filter(s => s.bigRaffleQualified);
             
             if (qualified.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 20px; color: #999;">No students qualified yet</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 20px; color: #999;">No students qualified yet</td></tr>';
                 return;
             }
+            
+            // Sort by entries (most to least)
+            qualified.sort((a, b) => (b.weeksQualified || 0) - (a.weeksQualified || 0));
 
-            tbody.innerHTML = qualified.map(s => `
-                <tr>
-                    <td>${s.id}</td>
-                    <td>${s.firstName} ${s.lastName}</td>
-                    <td>${s.weeksQualified}</td>
-                    <td>${s.weeksQualified} ${s.weeksQualified === 1 ? 'entry' : 'entries'}</td>
-                </tr>
-            `).join('');
+            tbody.innerHTML = qualified.map(s => {
+                const grade = parseInt(s.grade);
+                const isMSTop = grade >= 6 && grade <= 8 && s.weeksQualified > currentWeek - 1; // Has bonus
+                const isHSTop = grade >= 9 && grade <= 12 && s.weeksQualified > currentWeek - 1; // Has bonus
+                const hasBonus = isMSTop || isHSTop;
+                
+                const baseEntries = currentWeek - 1; // Number of weeks completed
+                const bonusEntries = (s.weeksQualified || 0) - baseEntries;
+                
+                let entriesDisplay = `${s.weeksQualified} ${s.weeksQualified === 1 ? 'entry' : 'entries'}`;
+                if (hasBonus && bonusEntries > 0) {
+                    entriesDisplay += ` <span style="background: #fbbf24; color: #78350f; padding: 2px 6px; border-radius: 8px; font-size: 11px; font-weight: 600;">🏆 +${bonusEntries} BONUS</span>`;
+                }
+                
+                return `
+                    <tr style="${hasBonus ? 'background: #fffbeb;' : ''}">
+                        <td>${s.id}</td>
+                        <td>${s.firstName} ${s.lastName}</td>
+                        <td style="text-align: center;">${grade}</td>
+                        <td style="text-align: center;">${s.weeksQualified || 0}</td>
+                        <td>${entriesDisplay}</td>
+                    </tr>
+                `;
+            }).join('');
         }
 
 
