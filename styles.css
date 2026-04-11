@@ -1,4 +1,4 @@
-        * {
+* {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
@@ -1339,3 +1339,20 @@
             z-index: 10000;
             font-weight: 600;
         }
+
+/* Sortable table headers */
+th.sort-asc::after {
+    content: ' ▲';
+    color: #667eea;
+    font-size: 12px;
+}
+
+th.sort-desc::after {
+    content: ' ▼';
+    color: #667eea;
+    font-size: 12px;
+}
+
+th[onclick]:hover {
+    background: #f3f4f6;
+}
