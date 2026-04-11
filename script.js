@@ -10028,20 +10028,44 @@
                 return;
             }
             
-            // Sort by entries (most to least)
-            qualified.sort((a, b) => (b.weeksQualified || 0) - (a.weeksQualified || 0));
+            // Get current sort (if exists)
+            const currentSort = window.bigRaffleSortBy || 'entries';
+            const currentDirection = window.bigRaffleSortDirection || 'desc';
+            
+            // Sort based on current criteria
+            qualified.sort((a, b) => {
+                let comparison = 0;
+                
+                if (currentSort === 'id') {
+                    comparison = a.id.localeCompare(b.id);
+                } else if (currentSort === 'name') {
+                    const nameA = `${a.lastName} ${a.firstName}`.toLowerCase();
+                    const nameB = `${b.lastName} ${b.firstName}`.toLowerCase();
+                    comparison = nameA.localeCompare(nameB);
+                } else if (currentSort === 'grade') {
+                    comparison = parseInt(a.grade) - parseInt(b.grade);
+                } else if (currentSort === 'weeks') {
+                    comparison = (a.weeksQualified || 0) - (b.weeksQualified || 0);
+                } else if (currentSort === 'entries') {
+                    comparison = (a.weeksQualified || 0) - (b.weeksQualified || 0);
+                }
+                
+                return currentDirection === 'asc' ? comparison : -comparison;
+            });
 
             tbody.innerHTML = qualified.map(s => {
                 const grade = parseInt(s.grade);
-                const isMSTop = grade >= 6 && grade <= 8 && s.weeksQualified > currentWeek - 1; // Has bonus
-                const isHSTop = grade >= 9 && grade <= 12 && s.weeksQualified > currentWeek - 1; // Has bonus
-                const hasBonus = isMSTop || isHSTop;
                 
-                const baseEntries = currentWeek - 1; // Number of weeks completed
-                const bonusEntries = (s.weeksQualified || 0) - baseEntries;
+                // Check audit log for bonus entries for THIS student
+                const bonusEntries = auditLog.filter(entry => 
+                    entry.studentId === s.id && 
+                    entry.action === 'Weekly Leaderboard Bonus'
+                ).length;
+                
+                const hasBonus = bonusEntries > 0;
                 
                 let entriesDisplay = `${s.weeksQualified} ${s.weeksQualified === 1 ? 'entry' : 'entries'}`;
-                if (hasBonus && bonusEntries > 0) {
+                if (hasBonus) {
                     entriesDisplay += ` <span style="background: #fbbf24; color: #78350f; padding: 2px 6px; border-radius: 8px; font-size: 11px; font-weight: 600;">🏆 +${bonusEntries} BONUS</span>`;
                 }
                 
@@ -10055,6 +10079,39 @@
                     </tr>
                 `;
             }).join('');
+        }
+        
+        function sortBigRaffleTable(column) {
+            // Toggle direction if clicking same column
+            if (window.bigRaffleSortBy === column) {
+                window.bigRaffleSortDirection = window.bigRaffleSortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                window.bigRaffleSortBy = column;
+                window.bigRaffleSortDirection = column === 'name' || column === 'id' ? 'asc' : 'desc';
+            }
+            
+            // Update header arrows
+            document.querySelectorAll('#bigRaffleTable').forEach(table => {
+                const headers = table.parentElement.parentElement.querySelectorAll('th');
+                headers.forEach(h => {
+                    h.classList.remove('sort-asc', 'sort-desc');
+                });
+            });
+            
+            const headerMap = {
+                'id': 0,
+                'name': 1,
+                'grade': 2,
+                'weeks': 3,
+                'entries': 4
+            };
+            
+            const headerIndex = headerMap[column];
+            const table = document.getElementById('bigRaffleTable').parentElement.parentElement;
+            const header = table.querySelectorAll('th')[headerIndex];
+            header.classList.add(window.bigRaffleSortDirection === 'asc' ? 'sort-asc' : 'sort-desc');
+            
+            updateBigRaffleTable();
         }
 
 
@@ -11011,8 +11068,14 @@
             });
             
             // WEEKLY LEADERBOARD BONUS: Award extra jackpot ticket to top student(s) in each school
-            const msQualifiedStudents = students.filter(s => s.school === 'Middle School' && s.pbisTickets > 0 && s.attendanceTickets > 0 && s.academicTickets > 0);
-            const hsQualifiedStudents = students.filter(s => s.school === 'High School' && s.pbisTickets > 0 && s.attendanceTickets > 0 && s.academicTickets > 0);
+            const msQualifiedStudents = students.filter(s => {
+                const grade = parseInt(s.grade);
+                return grade >= 6 && grade <= 8 && s.pbisTickets > 0 && s.attendanceTickets > 0 && s.academicTickets > 0;
+            });
+            const hsQualifiedStudents = students.filter(s => {
+                const grade = parseInt(s.grade);
+                return grade >= 9 && grade <= 12 && s.pbisTickets > 0 && s.attendanceTickets > 0 && s.academicTickets > 0;
+            });
             
             const bonusWinners = [];
             
