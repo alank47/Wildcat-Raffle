@@ -469,6 +469,62 @@
             const lifetimeTickets = (s.ticketHistory || []).reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
             document.getElementById('studentLifetimeTickets').textContent = lifetimeTickets;
             document.getElementById('studentWeeksQualified').textContent = entries;
+            
+            // Populate ticket history
+            const historyEl = document.getElementById('studentTicketHistory');
+            const history = s.ticketHistory || [];
+            
+            if (history.length === 0) {
+                historyEl.innerHTML = '<div style="text-align: center; padding: 30px; color: #999;">No tickets awarded yet</div>';
+            } else {
+                // Sort by date (newest first)
+                const sortedHistory = [...history].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                
+                let historyHtml = '<div style="display: flex; flex-direction: column; gap: 12px;">';
+                
+                sortedHistory.forEach(entry => {
+                    const date = new Date(entry.timestamp);
+                    const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                    const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                    
+                    let categoryColor = '#667eea';
+                    let categoryIcon = '🎯';
+                    if (entry.category === 'Attendance') {
+                        categoryColor = '#10b981';
+                        categoryIcon = '📅';
+                    } else if (entry.category === 'Academic' || entry.category === 'Academics') {
+                        categoryColor = '#3b82f6';
+                        categoryIcon = '📚';
+                    }
+                    
+                    const ticketCount = entry.tickets || entry.amount || 0;
+                    
+                    historyHtml += `
+                        <div style="background: #f9fafb; padding: 15px; border-radius: 8px; border-left: 4px solid ${categoryColor};">
+                            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
+                                <div>
+                                    <div style="font-weight: 600; color: #333; font-size: 14px; margin-bottom: 4px;">
+                                        ${categoryIcon} ${entry.category}
+                                    </div>
+                                    <div style="font-size: 13px; color: #666;">
+                                        Awarded by ${entry.teacher || 'Unknown'}
+                                    </div>
+                                </div>
+                                <div style="background: ${categoryColor}; color: white; padding: 6px 12px; border-radius: 6px; font-weight: 700; font-size: 14px;">
+                                    +${ticketCount} 🎫
+                                </div>
+                            </div>
+                            ${entry.reason ? `<div style="font-size: 13px; color: #666; font-style: italic; margin-bottom: 6px;">"${entry.reason}"</div>` : ''}
+                            <div style="font-size: 12px; color: #999;">
+                                ${dateStr} at ${timeStr}
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                historyHtml += '</div>';
+                historyEl.innerHTML = historyHtml;
+            }
         }
         
         function studentLogout() {
