@@ -72,6 +72,87 @@
         </div>
     </div>
 
+    <!-- Student Dashboard Screen -->
+    <div id="studentDashboard" class="login-container hidden" style="max-width: 600px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h1 style="margin: 0;">My Wildcat Rewards</h1>
+            <button class="btn-logout" onclick="studentLogout()" style="padding: 8px 16px; font-size: 13px;">Logout</button>
+        </div>
+        
+        <!-- Student Info -->
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; text-align: center;">
+            <div style="font-size: 24px; font-weight: 700; margin-bottom: 5px;" id="studentDashName">Student Name</div>
+            <div style="font-size: 14px; opacity: 0.9;" id="studentDashInfo">Grade • ID</div>
+        </div>
+        
+        <!-- Current Week Tickets -->
+        <div style="margin-bottom: 25px;">
+            <h3 style="margin-bottom: 15px; color: #333;">📊 This Week's Tickets</h3>
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;">
+                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; border-radius: 10px; text-align: center;">
+                    <div style="font-size: 28px; font-weight: 700;" id="studentDashPBIS">0</div>
+                    <div style="font-size: 12px; opacity: 0.9;">PBIS</div>
+                </div>
+                <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 15px; border-radius: 10px; text-align: center;">
+                    <div style="font-size: 28px; font-weight: 700;" id="studentDashAttendance">0</div>
+                    <div style="font-size: 12px; opacity: 0.9;">Attendance</div>
+                </div>
+                <div style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; padding: 15px; border-radius: 10px; text-align: center;">
+                    <div style="font-size: 28px; font-weight: 700;" id="studentDashAcademic">0</div>
+                    <div style="font-size: 12px; opacity: 0.9;">Academic</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Jackpot Status -->
+        <div style="margin-bottom: 25px;">
+            <h3 style="margin-bottom: 15px; color: #333;">🏆 Wildcat Jackpot Status</h3>
+            
+            <!-- Qualified Status -->
+            <div id="studentQualifiedBox" class="hidden" style="background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%); color: white; padding: 20px; border-radius: 12px; text-align: center;">
+                <div style="font-size: 48px; margin-bottom: 10px;">🎉</div>
+                <div style="font-size: 20px; font-weight: 700; margin-bottom: 8px;">YOU'RE QUALIFIED!</div>
+                <div style="font-size: 16px; opacity: 0.95; margin-bottom: 15px;">You've earned tickets in all 3 categories</div>
+                <div style="background: rgba(255,255,255,0.2); padding: 15px; border-radius: 8px;">
+                    <div style="font-size: 14px; opacity: 0.9; margin-bottom: 5px;">Jackpot Entries</div>
+                    <div style="font-size: 36px; font-weight: 700;" id="studentJackpotEntries">0</div>
+                </div>
+            </div>
+            
+            <!-- Not Qualified Status -->
+            <div id="studentNotQualifiedBox" class="hidden" style="background: #f3f4f6; padding: 20px; border-radius: 12px; border: 2px dashed #d1d5db;">
+                <div style="text-align: center; margin-bottom: 15px;">
+                    <div style="font-size: 36px; margin-bottom: 10px;">🎯</div>
+                    <div style="font-size: 18px; font-weight: 600; color: #666; margin-bottom: 8px;">Not Qualified Yet</div>
+                    <div style="font-size: 14px; color: #999;">Earn tickets in ALL 3 categories to qualify for the Wildcat Jackpot!</div>
+                </div>
+                <div style="background: white; padding: 15px; border-radius: 8px;">
+                    <div style="font-size: 13px; font-weight: 600; color: #333; margin-bottom: 10px;">What you need:</div>
+                    <div id="studentNeedsChecklist" style="font-size: 14px; color: #666;"></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Lifetime Stats -->
+        <div style="background: #f9fafb; padding: 20px; border-radius: 12px; margin-bottom: 20px;">
+            <h3 style="margin-bottom: 15px; color: #333;">📈 All-Time Stats</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <div>
+                    <div style="font-size: 12px; color: #666; margin-bottom: 5px;">Total Tickets Earned</div>
+                    <div style="font-size: 24px; font-weight: 700; color: #667eea;" id="studentLifetimeTickets">0</div>
+                </div>
+                <div>
+                    <div style="font-size: 12px; color: #666; margin-bottom: 5px;">Weeks Qualified</div>
+                    <div style="font-size: 24px; font-weight: 700; color: #f59e0b;" id="studentWeeksQualified">0</div>
+                </div>
+            </div>
+        </div>
+        
+        <div style="text-align: center; padding-top: 15px; border-top: 1px solid #e5e7eb;">
+            <p style="font-size: 13px; color: #999;">Keep earning tickets to qualify for the Wildcat Jackpot!</p>
+        </div>
+    </div>
+
     <!-- Create Admin Screen -->
     <div id="createAdminScreen" class="login-container hidden">
         <h1>Create Admin Account</h1>
