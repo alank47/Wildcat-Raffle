@@ -86,7 +86,8 @@
         
         let students = [];
         let currentWeek = 1;
-        let cycleDuration = 5; // Configurable: How many weeks in each Wildcat Jackpot cycle
+        let cycleDuration = 5;
+        let lastWeekResetTime = null; // Timestamp of last week reset - used to prevent merge from restoring tickets // Configurable: How many weeks in each Wildcat Jackpot cycle
         
         // ========================================
         // AUTOMATIC WEEK SYSTEM
@@ -405,13 +406,77 @@
             }
 
             currentStudent = student;
-            saveSession(); // Save session for auto-login
             
+            // Hide login, show dashboard
             document.getElementById('loginScreen').classList.add('hidden');
-            document.getElementById('createAdminScreen').classList.add('hidden');
-            document.getElementById('studentApp').classList.remove('hidden');
+            document.getElementById('studentDashboard').classList.remove('hidden');
             
-            updateStudentView();
+            // Populate dashboard
+            updateStudentDashboard();
+        }
+        
+        function updateStudentDashboard() {
+            const s = currentStudent;
+            
+            // Header info
+            document.getElementById('studentDashName').textContent = `${s.firstName} ${s.lastName}`;
+            document.getElementById('studentDashInfo').textContent = `Grade ${s.grade} • ID: ${s.id}`;
+            
+            // Current week tickets
+            document.getElementById('studentDashPBIS').textContent = s.pbisTickets || 0;
+            document.getElementById('studentDashAttendance').textContent = s.attendanceTickets || 0;
+            document.getElementById('studentDashAcademic').textContent = s.academicTickets || 0;
+            
+            // Jackpot status
+            const hasAllThree = (s.pbisTickets > 0) && (s.attendanceTickets > 0) && (s.academicTickets > 0);
+            const isQualified = s.bigRaffleQualified || false;
+            const entries = s.weeksQualified || 0;
+            
+            if (isQualified || hasAllThree) {
+                // Show qualified box
+                document.getElementById('studentQualifiedBox').classList.remove('hidden');
+                document.getElementById('studentNotQualifiedBox').classList.add('hidden');
+                document.getElementById('studentJackpotEntries').textContent = entries;
+            } else {
+                // Show not qualified box
+                document.getElementById('studentQualifiedBox').classList.add('hidden');
+                document.getElementById('studentNotQualifiedBox').classList.remove('hidden');
+                
+                // Build checklist
+                let checklist = '';
+                if ((s.pbisTickets || 0) === 0) {
+                    checklist += '<div style="margin-bottom: 8px;">❌ Need PBIS tickets</div>';
+                } else {
+                    checklist += '<div style="margin-bottom: 8px;">✅ PBIS tickets earned</div>';
+                }
+                
+                if ((s.attendanceTickets || 0) === 0) {
+                    checklist += '<div style="margin-bottom: 8px;">❌ Need Attendance tickets</div>';
+                } else {
+                    checklist += '<div style="margin-bottom: 8px;">✅ Attendance tickets earned</div>';
+                }
+                
+                if ((s.academicTickets || 0) === 0) {
+                    checklist += '<div>❌ Need Academic tickets</div>';
+                } else {
+                    checklist += '<div>✅ Academic tickets earned</div>';
+                }
+                
+                document.getElementById('studentNeedsChecklist').innerHTML = checklist;
+            }
+            
+            // Lifetime stats
+            const lifetimeTickets = (s.ticketHistory || []).reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+            document.getElementById('studentLifetimeTickets').textContent = lifetimeTickets;
+            document.getElementById('studentWeeksQualified').textContent = entries;
+        }
+        
+        function studentLogout() {
+            currentStudent = null;
+            document.getElementById('studentDashboard').classList.add('hidden');
+            document.getElementById('loginScreen').classList.remove('hidden');
+            document.getElementById('studentLoginId').value = '';
+            document.getElementById('studentLoginError').textContent = '';
         }
 
         function updateStudentView() {
@@ -782,6 +847,7 @@
                         // Auto-week system - FORCED DISABLED
                         autoWeekEnabled = false; // Disabled to prevent accidental ticket deletion
                         lastAutoResetDate = mainData.lastAutoResetDate || null;
+                        lastWeekResetTime = mainData.lastWeekResetTime || null;
                         weekResetDay = mainData.weekResetDay !== undefined ? mainData.weekResetDay : 1;
                         weekResetHour = mainData.weekResetHour !== undefined ? mainData.weekResetHour : 6;
                         // Jackpot cycles
@@ -866,6 +932,7 @@
                 // Auto-week system - FORCED DISABLED
                 autoWeekEnabled = false; // Disabled to prevent accidental ticket deletion
                 lastAutoResetDate = data.lastAutoResetDate || null;
+                lastWeekResetTime = data.lastWeekResetTime || null;
                 weekResetDay = data.weekResetDay !== undefined ? data.weekResetDay : 1;
                 weekResetHour = data.weekResetHour !== undefined ? data.weekResetHour : 6;
                 // Jackpot cycles
@@ -1373,12 +1440,15 @@
                                 }
                                 
                                 // Take MAX of each ticket type to preserve all awards
+                                // UNLESS we just reset (within last 10 seconds) - then trust local 0 values
+                                const recentlyReset = lastWeekResetTime && (Date.now() - lastWeekResetTime) < 10000;
+                                
                                 return {
                                     ...firebaseStudent, // Start with Firebase version
                                     ...localStudent, // Overlay local changes
-                                    pbisTickets: Math.max(localStudent.pbisTickets || 0, firebaseStudent.pbisTickets || 0),
-                                    attendanceTickets: Math.max(localStudent.attendanceTickets || 0, firebaseStudent.attendanceTickets || 0),
-                                    academicTickets: Math.max(localStudent.academicTickets || 0, firebaseStudent.academicTickets || 0),
+                                    pbisTickets: recentlyReset ? (localStudent.pbisTickets || 0) : Math.max(localStudent.pbisTickets || 0, firebaseStudent.pbisTickets || 0),
+                                    attendanceTickets: recentlyReset ? (localStudent.attendanceTickets || 0) : Math.max(localStudent.attendanceTickets || 0, firebaseStudent.attendanceTickets || 0),
+                                    academicTickets: recentlyReset ? (localStudent.academicTickets || 0) : Math.max(localStudent.academicTickets || 0, firebaseStudent.academicTickets || 0),
                                     // Merge ticket history
                                     ticketHistory: [
                                         ...(firebaseStudent.ticketHistory || []),
@@ -1480,6 +1550,7 @@
                             referralIdCounter,
                             autoWeekEnabled,
                             lastAutoResetDate,
+                            lastWeekResetTime,
                             weekResetDay,
                             weekResetHour,
                             currentCycle,
@@ -1545,6 +1616,7 @@
                             loginHistory: loginHistoryToSave,
                             autoWeekEnabled,
                             lastAutoResetDate,
+                            lastWeekResetTime,
                             weekResetDay,
                             weekResetHour,
                             currentCycle,
@@ -1584,6 +1656,7 @@
                             loginHistory,
                             autoWeekEnabled,
                             lastAutoResetDate,
+                            lastWeekResetTime,
                             weekResetDay,
                             weekResetHour,
                             currentCycle,
@@ -1620,6 +1693,7 @@
                         loginHistory,
                         autoWeekEnabled,
                         lastAutoResetDate,
+                        lastWeekResetTime,
                         weekResetDay,
                         weekResetHour,
                         currentCycle,
@@ -1668,6 +1742,7 @@
                 loginHistory,
                 autoWeekEnabled,
                 lastAutoResetDate,
+                lastWeekResetTime,
                 weekResetDay,
                 weekResetHour,
                 currentCycle,
@@ -11225,6 +11300,9 @@
                 s.attendanceTickets = 0;
                 s.academicTickets = 0;
             });
+            
+            // Set reset timestamp to prevent merge from restoring tickets
+            lastWeekResetTime = Date.now();
 
             // Add to history
             weeklyHistory.push(weekData);
