@@ -525,6 +525,69 @@
                 historyHtml += '</div>';
                 historyEl.innerHTML = historyHtml;
             }
+            
+            // Populate jackpot entry history from audit log
+            const jackpotHistoryEl = document.getElementById('studentJackpotHistory');
+            const jackpotEntries = auditLog.filter(entry => 
+                entry.studentId === s.id && 
+                (entry.action === 'Qualified for Wildcat Jackpot' || entry.action === 'Weekly Leaderboard Bonus')
+            );
+            
+            if (jackpotEntries.length === 0) {
+                jackpotHistoryEl.innerHTML = '<div style="text-align: center; padding: 20px; color: #999;">No jackpot entries yet. Qualify by earning all 3 ticket types in a week!</div>';
+            } else {
+                // Sort by date (newest first)
+                const sortedJackpot = [...jackpotEntries].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                
+                let jackpotHtml = '<div style="display: flex; flex-direction: column; gap: 10px;">';
+                
+                sortedJackpot.forEach(entry => {
+                    const date = new Date(entry.timestamp);
+                    const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                    const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                    
+                    let icon = '🎰';
+                    let title = '';
+                    let description = '';
+                    let bgColor = '#fef3c7';
+                    
+                    if (entry.action === 'Qualified for Wildcat Jackpot') {
+                        icon = '✅';
+                        title = 'Qualified for Jackpot';
+                        description = 'Earned tickets in all 3 categories';
+                        bgColor = '#d1fae5';
+                    } else if (entry.action === 'Weekly Leaderboard Bonus') {
+                        icon = '🏆';
+                        title = 'Bonus Jackpot Entry!';
+                        description = entry.notes || 'Top performer bonus';
+                        bgColor = '#fef3c7';
+                    }
+                    
+                    jackpotHtml += `
+                        <div style="background: ${bgColor}; padding: 12px 15px; border-radius: 8px; border-left: 4px solid #f59e0b;">
+                            <div style="display: flex; justify-content: between; align-items: start; margin-bottom: 6px;">
+                                <div style="flex: 1;">
+                                    <div style="font-weight: 700; color: #92400e; font-size: 14px; margin-bottom: 3px;">
+                                        ${icon} ${title}
+                                    </div>
+                                    <div style="font-size: 13px; color: #78350f;">
+                                        ${description}
+                                    </div>
+                                </div>
+                                <div style="background: #f59e0b; color: white; padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 13px; white-space: nowrap; margin-left: 10px;">
+                                    +1 🎰
+                                </div>
+                            </div>
+                            <div style="font-size: 11px; color: #92400e;">
+                                Week ${entry.week || '?'} • ${dateStr} at ${timeStr}
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                jackpotHtml += '</div>';
+                jackpotHistoryEl.innerHTML = jackpotHtml;
+            }
         }
         
         function studentLogout() {
