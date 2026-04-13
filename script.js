@@ -11241,9 +11241,9 @@
                     if (!s.bigRaffleQualified) {
                         s.bigRaffleQualified = true;
                         addToAuditLog('Qualified for Wildcat Jackpot', s.id, null, null, `${isAutomatic ? 'Auto-qualified' : 'Qualified'} - tickets in all 3 categories`);
+                        weekData.studentsQualified++; // Only count NEW qualifiers
                     }
                     s.weeksQualified = (s.weeksQualified || 0) + 1;
-                    weekData.studentsQualified++;
                 }
             });
             
