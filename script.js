@@ -1001,13 +1001,21 @@
         }
         
         function updateCycleDisplay() {
+            const cycleNameEl = document.getElementById('currentCycleName');
+            const cycleDatesEl = document.getElementById('currentCycleDates');
+            
+            // Safety check: elements might not exist
+            if (!cycleNameEl || !cycleDatesEl) {
+                return; // Skip if elements don't exist
+            }
+            
             if (currentCycle.startDate && currentCycle.endDate) {
-                document.getElementById('currentCycleName').textContent = currentCycle.name;
-                document.getElementById('currentCycleDates').textContent = 
+                cycleNameEl.textContent = currentCycle.name;
+                cycleDatesEl.textContent = 
                     `${new Date(currentCycle.startDate).toLocaleDateString()} - ${new Date(currentCycle.endDate).toLocaleDateString()}`;
             } else {
-                document.getElementById('currentCycleName').textContent = 'Not configured';
-                document.getElementById('currentCycleDates').textContent = 'No dates set';
+                cycleNameEl.textContent = 'Not configured';
+                cycleDatesEl.textContent = 'No dates set';
             }
         }
         
@@ -2244,9 +2252,9 @@
                     return students.map(s => {
                         // Calculate totals from ticket history
                         const history = s.ticketHistory || [];
-                        const pbisTotal = history.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || 0), 0);
-                        const attendanceTotal = history.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || 0), 0);
-                        const academicTotal = history.filter(h => h.category === 'Academic').reduce((sum, h) => sum + (h.tickets || 0), 0);
+                        const pbisTotal = history.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                        const attendanceTotal = history.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                        const academicTotal = history.filter(h => h.category === 'Academics' || h.category === 'Academic').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
                         
                         return {
                             ...s,
@@ -2265,9 +2273,9 @@
                     return ticketDate >= startDate && ticketDate <= endDate;
                 });
                 
-                const pbisTotal = filteredHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || 0), 0);
-                const attendanceTotal = filteredHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || 0), 0);
-                const academicTotal = filteredHistory.filter(h => h.category === 'Academic').reduce((sum, h) => sum + (h.tickets || 0), 0);
+                const pbisTotal = filteredHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                const attendanceTotal = filteredHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                const academicTotal = filteredHistory.filter(h => h.category === 'Academics' || h.category === 'Academic').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
                 
                 return {
                     ...s,
