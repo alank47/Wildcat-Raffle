@@ -2096,26 +2096,40 @@
                 activeBtn.style.background = 'linear-gradient(135deg, #ff9800 0%, #f57c00 100%)';
             } else if (subtab === 'highschool') {
                 activeBtn.style.background = 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)';
+            } else if (subtab === 'teachers') {
+                activeBtn.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
             }
             activeBtn.style.color = 'white';
             activeBtn.style.boxShadow = '0 2px 8px rgba(102, 126, 234, 0.3)';
             
-            // Update content visibility - remove both 'active' and 'hidden' from all, then add 'active' to selected
+            // Update content visibility
             document.querySelectorAll('.data-subtab').forEach(tab => {
                 tab.classList.remove('active');
-                tab.classList.add('hidden'); // Add hidden to non-active tabs
+                tab.style.display = 'none';
             });
             
-            const selectedTab = document.getElementById(`${subtab}Data`);
-            selectedTab.classList.remove('hidden'); // Remove hidden from active tab
-            selectedTab.classList.add('active');
+            // Show the selected tab
+            let selectedTab;
+            if (subtab === 'teachers') {
+                selectedTab = document.getElementById('teachersContent');
+            } else {
+                selectedTab = document.getElementById(`${subtab}Data`);
+            }
+            
+            if (selectedTab) {
+                selectedTab.style.display = 'block';
+                selectedTab.classList.add('active');
+            }
             
             currentDataSubtab = subtab;
             
-            console.log('Switched to subtab:', subtab, 'Element visible:', !selectedTab.classList.contains('hidden')); // Debug
-            
-            // Refresh the current view (charts or tables)
-            toggleDataView(currentDataView);
+            // If teachers tab, update teacher analytics
+            if (subtab === 'teachers') {
+                updateTeacherAnalytics();
+            } else {
+                // Refresh the current view (charts or tables) for student data tabs
+                toggleDataView(currentDataView);
+            }
         }
         
         // ========================================
@@ -2466,6 +2480,191 @@
             
             html += '</div>';
             leaderboardEl.innerHTML = html;
+        }
+        
+        // TEACHER ANALYTICS FUNCTION
+        function updateTeacherAnalytics() {
+            // Calculate teacher ticket data from audit log based on time filter
+            const teacherTickets = {};
+            
+            // Initialize all teachers
+            teachers.forEach(t => {
+                teacherTickets[t.name] = {
+                    name: t.name,
+                    pbis: 0,
+                    attendance: 0,
+                    academic: 0,
+                    total: 0
+                };
+            });
+            
+            // Filter audit log by current time filter
+            let filteredAudit = auditLog;
+            const now = new Date();
+            
+            switch (currentDataTimeFilter) {
+                case 'thisWeek':
+                    filteredAudit = auditLog.filter(e => e.week === currentWeek);
+                    break;
+                case 'last7Days':
+                    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+                    filteredAudit = auditLog.filter(e => new Date(e.timestamp) >= sevenDaysAgo);
+                    break;
+                case 'last30Days':
+                    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+                    filteredAudit = auditLog.filter(e => new Date(e.timestamp) >= thirtyDaysAgo);
+                    break;
+                case 'thisCycle':
+                    if (currentCycle.startDate && currentCycle.endDate) {
+                        const cycleStart = new Date(currentCycle.startDate);
+                        const cycleEnd = new Date(currentCycle.endDate);
+                        filteredAudit = auditLog.filter(e => {
+                            const entryDate = new Date(e.timestamp);
+                            return entryDate >= cycleStart && entryDate <= cycleEnd;
+                        });
+                    }
+                    break;
+                // 'allTime' and 'custom' use full audit log or custom range
+            }
+            
+            // Count tickets by teacher from filtered audit log
+            filteredAudit.forEach(entry => {
+                if (entry.action === 'Awarded Tickets' && entry.teacher) {
+                    const teacherName = entry.teacher;
+                    if (!teacherTickets[teacherName]) {
+                        teacherTickets[teacherName] = {
+                            name: teacherName,
+                            pbis: 0,
+                            attendance: 0,
+                            academic: 0,
+                            total: 0
+                        };
+                    }
+                    
+                    const count = entry.ticketCount || 1;
+                    teacherTickets[teacherName].total += count;
+                    
+                    if (entry.category === 'PBIS') {
+                        teacherTickets[teacherName].pbis += count;
+                    } else if (entry.category === 'Attendance') {
+                        teacherTickets[teacherName].attendance += count;
+                    } else if (entry.category === 'Academics' || entry.category === 'Academic') {
+                        teacherTickets[teacherName].academic += count;
+                    }
+                }
+            });
+            
+            // Convert to array and sort
+            const teacherArray = Object.values(teacherTickets);
+            const activeTeachers = teacherArray.filter(t => t.total > 0);
+            const inactiveTeachers = teacherArray.filter(t => t.total === 0);
+            
+            // Update overview stats
+            document.getElementById('totalTeachers').textContent = teacherArray.length;
+            document.getElementById('activeTeachers').textContent = activeTeachers.length;
+            const engagementRate = teacherArray.length > 0 ? Math.round((activeTeachers.length / teacherArray.length) * 100) : 0;
+            document.getElementById('engagementRate').textContent = engagementRate + '%';
+            const avgTickets = activeTeachers.length > 0 ? Math.round(activeTeachers.reduce((sum, t) => sum + t.total, 0) / activeTeachers.length) : 0;
+            document.getElementById('avgTicketsPerTeacher').textContent = avgTickets;
+            
+            // Update Top 10 Teacher Leaderboard
+            const top10Teachers = activeTeachers.sort((a, b) => b.total - a.total).slice(0, 10);
+            let leaderboardHtml = '';
+            
+            if (top10Teachers.length === 0) {
+                leaderboardHtml = '<div style="text-align: center; padding: 30px; color: #999;">No teacher activity in this time period</div>';
+            } else {
+                leaderboardHtml = '<div style="display: flex; flex-direction: column; gap: 12px;">';
+                top10Teachers.forEach((teacher, index) => {
+                    const rank = index + 1;
+                    let medalIcon = '';
+                    let bgColor = '#f9fafb';
+                    
+                    if (rank === 1) {
+                        medalIcon = '🥇';
+                        bgColor = 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)';
+                    } else if (rank === 2) {
+                        medalIcon = '🥈';
+                        bgColor = 'linear-gradient(135deg, #e5e7eb 0%, #d1d5db 100%)';
+                    } else if (rank === 3) {
+                        medalIcon = '🥉';
+                        bgColor = 'linear-gradient(135deg, #fed7aa 0%, #fdba74 100%)';
+                    }
+                    
+                    leaderboardHtml += `
+                        <div style="background: ${bgColor}; padding: 15px 20px; border-radius: 10px; display: flex; align-items: center; justify-content: space-between; ${rank <= 3 ? 'box-shadow: 0 2px 8px rgba(0,0,0,0.1);' : ''}">
+                            <div style="display: flex; align-items: center; gap: 15px; flex: 1;">
+                                <div style="font-size: 24px; font-weight: 700; color: ${rank <= 3 ? '#92400e' : '#666'}; min-width: 35px; text-align: center;">
+                                    ${medalIcon || rank}
+                                </div>
+                                <div style="font-weight: 600; color: #333; font-size: 15px;">${teacher.name}</div>
+                            </div>
+                            <div style="text-align: right;">
+                                <div style="font-size: 11px; color: #666; margin-bottom: 3px;">
+                                    <span style="color: #667eea;">🎯 ${teacher.pbis}</span> • 
+                                    <span style="color: #10b981;">📅 ${teacher.attendance}</span> • 
+                                    <span style="color: #3b82f6;">📚 ${teacher.academic}</span>
+                                </div>
+                                <div style="font-size: 20px; font-weight: 700; color: #f59e0b;">
+                                    ${teacher.total} 🎫
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                leaderboardHtml += '</div>';
+            }
+            
+            document.getElementById('teacherLeaderboard').innerHTML = leaderboardHtml;
+            
+            // Update inactive teachers section
+            if (inactiveTeachers.length > 0) {
+                document.getElementById('inactiveTeachersSection').style.display = 'block';
+                let inactiveHtml = '';
+                inactiveTeachers.forEach(teacher => {
+                    inactiveHtml += `<div style="background: white; padding: 10px 15px; border-radius: 6px; border: 1px solid #f59e0b;">${teacher.name}</div>`;
+                });
+                document.getElementById('inactiveTeachersList').innerHTML = inactiveHtml;
+            } else {
+                document.getElementById('inactiveTeachersSection').style.display = 'none';
+            }
+            
+            // Update full teacher table
+            const sortedTeachers = [...teacherArray].sort((a, b) => b.total - a.total);
+            let tableHtml = '';
+            
+            sortedTeachers.forEach(teacher => {
+                const status = teacher.total > 0 ? 
+                    '<span style="background: #d1fae5; color: #065f46; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;">Active</span>' :
+                    '<span style="background: #fee2e2; color: #991b1b; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;">Inactive</span>';
+                
+                tableHtml += `
+                    <tr style="border-bottom: 1px solid #e5e7eb;">
+                        <td style="padding: 14px 20px;">${teacher.name}</td>
+                        <td style="padding: 14px 20px; text-align: center;">${teacher.pbis}</td>
+                        <td style="padding: 14px 20px; text-align: center;">${teacher.attendance}</td>
+                        <td style="padding: 14px 20px; text-align: center;">${teacher.academic}</td>
+                        <td style="padding: 14px 20px; text-align: center; font-weight: 700;">${teacher.total}</td>
+                        <td style="padding: 14px 20px; text-align: center;">${status}</td>
+                    </tr>
+                `;
+            });
+            
+            document.getElementById('teacherAnalyticsTable').innerHTML = tableHtml;
+        }
+        
+        // Sortable teacher table
+        let teacherSortColumn = 'total';
+        let teacherSortAsc = false;
+        
+        function sortTeacherTable(column) {
+            if (teacherSortColumn === column) {
+                teacherSortAsc = !teacherSortAsc;
+            } else {
+                teacherSortColumn = column;
+                teacherSortAsc = false;
+            }
+            updateTeacherAnalytics(); // Re-render with new sort
         }
         
         // NEW FUNCTION: Update metric cards for Data & Analytics
