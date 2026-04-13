@@ -2291,9 +2291,106 @@
                           currentDataSubtab === 'middleschool' ? 'MS' : 'HS';
             
             updateMetricCards(suffix); // NEW: Update metric cards
+            updateTop10Leaderboard(suffix); // NEW: Update Top 10
             updateGradeChart(suffix);
             updateWeekChart(suffix);
             updateQualificationChart(suffix);
+        }
+        
+        // NEW FUNCTION: Update Top 10 Leaderboard
+        function updateTop10Leaderboard(suffix) {
+            const prefix = suffix === 'Academy' ? 'academy' : 
+                          suffix === 'MS' ? 'ms' : 'hs';
+            
+            const leaderboardEl = document.getElementById(`${prefix}Top10Leaderboard`);
+            if (!leaderboardEl) return;
+            
+            // Get filtered students
+            let filteredStudents = getFilteredStudentData();
+            
+            // Filter by school level if needed
+            if (suffix === 'MS') {
+                filteredStudents = filteredStudents.filter(s => {
+                    const grade = parseInt(s.grade);
+                    return grade >= 6 && grade <= 8;
+                });
+            } else if (suffix === 'HS') {
+                filteredStudents = filteredStudents.filter(s => {
+                    const grade = parseInt(s.grade);
+                    return grade >= 9 && grade <= 12;
+                });
+            }
+            
+            // Calculate total tickets for each student
+            const studentsWithTotals = filteredStudents.map(s => ({
+                student: s,
+                totalTickets: (s.pbisTickets || 0) + (s.attendanceTickets || 0) + (s.academicTickets || 0),
+                pbis: s.pbisTickets || 0,
+                attendance: s.attendanceTickets || 0,
+                academic: s.academicTickets || 0
+            }));
+            
+            // Sort by total tickets (descending) and take top 10
+            const top10 = studentsWithTotals
+                .filter(s => s.totalTickets > 0)
+                .sort((a, b) => b.totalTickets - a.totalTickets)
+                .slice(0, 10);
+            
+            if (top10.length === 0) {
+                leaderboardEl.innerHTML = '<div style="text-align: center; padding: 30px; color: #999;">No ticket data for this time period</div>';
+                return;
+            }
+            
+            // Build leaderboard HTML
+            let html = '<div style="display: flex; flex-direction: column; gap: 12px;">';
+            
+            top10.forEach((item, index) => {
+                const s = item.student;
+                const rank = index + 1;
+                
+                // Medal colors for top 3
+                let medalIcon = '';
+                let bgColor = '#f9fafb';
+                if (rank === 1) {
+                    medalIcon = '🥇';
+                    bgColor = 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)';
+                } else if (rank === 2) {
+                    medalIcon = '🥈';
+                    bgColor = 'linear-gradient(135deg, #e5e7eb 0%, #d1d5db 100%)';
+                } else if (rank === 3) {
+                    medalIcon = '🥉';
+                    bgColor = 'linear-gradient(135deg, #fed7aa 0%, #fdba74 100%)';
+                }
+                
+                html += `
+                    <div style="background: ${bgColor}; padding: 15px 20px; border-radius: 10px; display: flex; align-items: center; justify-content: space-between; ${rank <= 3 ? 'box-shadow: 0 2px 8px rgba(0,0,0,0.1);' : ''}">
+                        <div style="display: flex; align-items: center; gap: 15px; flex: 1;">
+                            <div style="font-size: 24px; font-weight: 700; color: ${rank <= 3 ? '#92400e' : '#666'}; min-width: 35px; text-align: center;">
+                                ${medalIcon || rank}
+                            </div>
+                            <div style="flex: 1;">
+                                <div style="font-weight: 600; color: #333; font-size: 15px;">${s.firstName} ${s.lastName}</div>
+                                <div style="font-size: 12px; color: #666; margin-top: 2px;">Grade ${s.grade} • ID: ${s.id}</div>
+                            </div>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 15px;">
+                            <div style="text-align: right;">
+                                <div style="font-size: 11px; color: #666; margin-bottom: 3px;">
+                                    <span style="color: #667eea;">🎯 ${item.pbis}</span> • 
+                                    <span style="color: #10b981;">📅 ${item.attendance}</span> • 
+                                    <span style="color: #3b82f6;">📚 ${item.academic}</span>
+                                </div>
+                                <div style="font-size: 20px; font-weight: 700; color: #f59e0b;">
+                                    ${item.totalTickets} 🎫
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            leaderboardEl.innerHTML = html;
         }
         
         // NEW FUNCTION: Update metric cards for Data & Analytics
