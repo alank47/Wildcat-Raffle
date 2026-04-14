@@ -1358,110 +1358,113 @@ th[onclick]:hover {
 }
 
 /* ============================================
-   💰 WILDCAT CASH MODE - APPLE DESIGN SYSTEM
+   💰 WILDCAT CASH MODE - PREMIUM BANKING
    ============================================ */
 
-/* Cash Mode - Pure Apple Aesthetic */
+/* Premium Dark Navy Background */
 body.cash-mode {
-    background: #f5f5f7;
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', sans-serif;
+    background: linear-gradient(135deg, #0a2540 0%, #0d3a5f 50%, #134e6f 100%);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+    position: relative;
 }
 
-/* Apple-style gradient accent */
+/* Subtle grid pattern overlay */
 body.cash-mode::before {
     content: "";
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
-    height: 600px;
-    background: linear-gradient(180deg, #00c853 0%, #00e676 50%, transparent 100%);
-    opacity: 0.03;
+    bottom: 0;
+    background-image: 
+        linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+    background-size: 50px 50px;
     pointer-events: none;
     z-index: 0;
 }
 
-/* Cash Mode Container - Apple Card Style */
-body.cash-mode .container {
-    background: #ffffff;
-    box-shadow: 0 2px 16px rgba(0, 0, 0, 0.08);
-    border: 0.5px solid rgba(0, 0, 0, 0.04);
-    position: relative;
-    z-index: 1;
-    border-radius: 20px;
+/* Gold accent glow */
+body.cash-mode::after {
+    content: "";
+    position: fixed;
+    top: -200px;
+    right: -200px;
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, rgba(212, 175, 55, 0.15) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
 }
 
-/* Apple Tabs - iOS/macOS Style */
+/* Premium Container - Elevated Card */
+body.cash-mode .container {
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 20px 80px rgba(0, 0, 0, 0.4), 0 0 1px rgba(212, 175, 55, 0.3);
+    border: 1px solid rgba(212, 175, 55, 0.2);
+    position: relative;
+    z-index: 1;
+    border-radius: 24px;
+}
+
+/* Premium Tabs - Banking Style */
 body.cash-mode .tabs {
-    background: #ffffff;
-    border-radius: 14px;
-    padding: 4px;
-    margin-bottom: 24px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-    border: 0.5px solid rgba(0, 0, 0, 0.06);
-    display: inline-flex;
+    background: linear-gradient(135deg, rgba(10, 37, 64, 0.95) 0%, rgba(13, 58, 95, 0.95) 100%);
+    backdrop-filter: blur(20px);
+    border-radius: 16px;
+    padding: 6px;
+    margin-bottom: 32px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(212, 175, 55, 0.2);
 }
 
 body.cash-mode .tab {
     background: transparent;
     border: none;
-    color: #1d1d1f;
-    font-weight: 400;
-    font-size: 13px;
-    padding: 8px 16px;
-    border-radius: 10px;
-    transition: all 0.2s cubic-bezier(0.28, 0.11, 0.32, 1);
-    letter-spacing: -0.01em;
+    color: rgba(255, 255, 255, 0.6);
+    font-weight: 500;
+    font-size: 14px;
+    padding: 12px 24px;
+    border-radius: 12px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    font-size: 12px;
 }
 
 body.cash-mode .tab:hover {
-    background: rgba(0, 0, 0, 0.04);
-    color: #000000;
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.9);
     transform: none;
 }
 
 body.cash-mode .tab.active {
-    background: #34c759;
-    color: #ffffff;
-    font-weight: 500;
-    box-shadow: 0 2px 8px rgba(52, 199, 89, 0.25), 0 1px 2px rgba(0, 0, 0, 0.1);
+    background: linear-gradient(135deg, #d4af37 0%, #f4d03f 100%);
+    color: #0a2540;
+    font-weight: 700;
+    box-shadow: 0 4px 20px rgba(212, 175, 55, 0.5), 0 0 30px rgba(212, 175, 55, 0.3);
 }
 
-/* Apple Typography */
+/* Premium Typography */
 body.cash-mode h1 {
-    font-size: 48px;
+    color: #0a2540;
     font-weight: 700;
-    letter-spacing: -0.03em;
-    color: #1d1d1f;
-    line-height: 1.08;
+    letter-spacing: -0.5px;
 }
 
 body.cash-mode h2 {
-    font-size: 32px;
+    background: linear-gradient(135deg, #0a2540 0%, #134e6f 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
     font-weight: 700;
-    letter-spacing: -0.02em;
-    color: #1d1d1f;
-    line-height: 1.125;
-    background: none;
-    -webkit-background-clip: initial;
-    -webkit-text-fill-color: initial;
-    background-clip: initial;
+    letter-spacing: -0.5px;
 }
 
 body.cash-mode h3 {
-    font-size: 21px;
+    color: #0a2540;
     font-weight: 600;
-    letter-spacing: -0.01em;
-    color: #1d1d1f;
-    line-height: 1.19;
-}
-
-body.cash-mode p {
-    font-size: 17px;
-    font-weight: 400;
-    letter-spacing: -0.01em;
-    color: #6e6e73;
-    line-height: 1.47;
+    letter-spacing: -0.3px;
 }
 
 /* Remove auto emojis */
@@ -1470,86 +1473,102 @@ body.cash-mode .tab-content h3::before {
     content: none;
 }
 
-/* Apple Buttons - iOS Style */
+/* Premium Buttons - Gold Accent */
 body.cash-mode .btn {
-    background: #34c759;
+    background: linear-gradient(135deg, #d4af37 0%, #f4d03f 100%);
+    color: #0a2540;
     border: none;
-    box-shadow: none;
-    font-weight: 500;
-    font-size: 15px;
-    letter-spacing: -0.01em;
-    padding: 12px 24px;
+    box-shadow: 0 4px 16px rgba(212, 175, 55, 0.4);
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    padding: 14px 28px;
     border-radius: 12px;
-    transition: all 0.2s cubic-bezier(0.28, 0.11, 0.32, 1);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 body.cash-mode .btn:hover {
-    background: #30b350;
-    transform: scale(0.98);
-    box-shadow: 0 4px 12px rgba(52, 199, 89, 0.2);
+    background: linear-gradient(135deg, #f4d03f 0%, #ffd700 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(212, 175, 55, 0.6);
 }
 
 body.cash-mode .btn:active {
-    transform: scale(0.96);
-    box-shadow: none;
+    transform: translateY(0);
 }
 
 body.cash-mode .btn-secondary {
-    background: #f5f5f7;
-    color: #1d1d1f;
-    border: 0.5px solid rgba(0, 0, 0, 0.06);
-    box-shadow: none;
+    background: linear-gradient(135deg, #0a2540 0%, #134e6f 100%);
+    color: #ffffff;
+    border: 1px solid rgba(212, 175, 55, 0.3);
+    box-shadow: 0 4px 12px rgba(10, 37, 64, 0.3);
 }
 
 body.cash-mode .btn-secondary:hover {
-    background: #e8e8ed;
-    border-color: rgba(0, 0, 0, 0.1);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    background: linear-gradient(135deg, #134e6f 0%, #1a5d8a 100%);
+    border-color: rgba(212, 175, 55, 0.5);
+    box-shadow: 0 8px 20px rgba(10, 37, 64, 0.4);
 }
 
-/* Apple Cards - Elevated & Minimal */
-body.cash-mode .tab-content > div[style*="background: white"],
-body.cash-mode .tab-content > div[style*="background: linear-gradient"] {
+/* Premium Cards - Banking Style */
+body.cash-mode .tab-content > div[style*="background: white"] {
     background: #ffffff !important;
-    border-radius: 18px;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
-    border: 0.5px solid rgba(0, 0, 0, 0.04);
-    transition: all 0.3s cubic-bezier(0.28, 0.11, 0.32, 1);
+    border-radius: 20px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+    border: 1px solid rgba(212, 175, 55, 0.15);
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+}
+
+body.cash-mode .tab-content > div[style*="background: white"]::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #d4af37 0%, #f4d03f 50%, #d4af37 100%);
+    border-radius: 20px 20px 0 0;
+    opacity: 0;
+    transition: opacity 0.3s;
 }
 
 body.cash-mode .tab-content > div[style*="background: white"]:hover {
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-    transform: translateY(-2px);
-    border-color: rgba(0, 0, 0, 0.08);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(212, 175, 55, 0.3);
+    transform: translateY(-4px);
 }
 
-/* Apple Tables - Clean & Simple */
+body.cash-mode .tab-content > div[style*="background: white"]:hover::before {
+    opacity: 1;
+}
+
+/* Premium Tables - Executive Style */
 body.cash-mode table {
     border: none;
-    box-shadow: none;
-    border-radius: 14px;
+    box-shadow: 0 2px 16px rgba(0, 0, 0, 0.08);
+    border-radius: 16px;
     overflow: hidden;
-    border: 0.5px solid rgba(0, 0, 0, 0.06);
 }
 
 body.cash-mode th {
-    background: #f5f5f7;
-    color: #6e6e73;
-    font-weight: 500;
-    text-transform: none;
-    letter-spacing: -0.01em;
-    padding: 12px 16px;
-    font-size: 13px;
-    border-bottom: 0.5px solid rgba(0, 0, 0, 0.06);
+    background: linear-gradient(135deg, #0a2540 0%, #134e6f 100%);
+    color: #ffffff;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 18px 24px;
+    font-size: 12px;
+    border-bottom: 2px solid #d4af37;
 }
 
 body.cash-mode tbody tr {
-    border-bottom: 0.5px solid rgba(0, 0, 0, 0.04);
-    transition: background 0.15s ease;
+    border-bottom: 1px solid rgba(10, 37, 64, 0.08);
+    transition: all 0.2s ease;
 }
 
 body.cash-mode tbody tr:hover {
-    background: #f5f5f7;
+    background: linear-gradient(90deg, rgba(212, 175, 55, 0.05) 0%, rgba(244, 208, 63, 0.05) 100%);
     transform: none;
 }
 
@@ -1558,178 +1577,159 @@ body.cash-mode tbody tr:last-child {
 }
 
 body.cash-mode td {
-    padding: 14px 16px;
-    font-size: 15px;
-    letter-spacing: -0.01em;
-    color: #1d1d1f;
+    padding: 18px 24px;
+    color: #0a2540;
+    font-weight: 500;
 }
 
-/* Apple Input Fields - iOS Native Style */
+/* Premium Input Fields - Banking Forms */
 body.cash-mode input[type="text"],
 body.cash-mode input[type="number"],
 body.cash-mode select,
 body.cash-mode textarea {
-    border: 0.5px solid rgba(0, 0, 0, 0.1);
-    border-radius: 10px;
+    border: 2px solid rgba(10, 37, 64, 0.15);
+    border-radius: 12px;
     background: #ffffff;
     font-size: 15px;
-    letter-spacing: -0.01em;
-    padding: 12px 16px;
-    transition: all 0.2s cubic-bezier(0.28, 0.11, 0.32, 1);
-    -webkit-appearance: none;
+    padding: 14px 18px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    font-weight: 500;
+    color: #0a2540;
 }
 
 body.cash-mode input[type="text"]:focus,
 body.cash-mode input[type="number"]:focus,
 body.cash-mode select:focus,
 body.cash-mode textarea:focus {
-    border-color: #34c759;
-    box-shadow: 0 0 0 4px rgba(52, 199, 89, 0.1);
+    border-color: #d4af37;
+    box-shadow: 0 0 0 4px rgba(212, 175, 55, 0.15), 0 4px 12px rgba(212, 175, 55, 0.2);
     outline: none;
+    background: #fffef8;
 }
 
-body.cash-mode select {
-    background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%236e6e73' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 12px center;
-    padding-right: 36px;
-}
-
-/* Apple Stat Boxes - SF Symbols Style */
+/* Premium Stat Boxes - Banking Metrics */
 body.cash-mode [style*="grid-template-columns"] > div[style*="border-left"] {
-    background: #ffffff;
-    border-radius: 16px;
-    border: 0.5px solid rgba(0, 0, 0, 0.06);
-    border-left: 3px solid #34c759 !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-    transition: all 0.3s cubic-bezier(0.28, 0.11, 0.32, 1);
+    background: linear-gradient(135deg, #ffffff 0%, #fafafa 100%);
+    border-radius: 18px;
+    border: 1px solid rgba(212, 175, 55, 0.2);
+    border-left: 4px solid #d4af37 !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+body.cash-mode [style*="grid-template-columns"] > div[style*="border-left"]::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 100px;
+    height: 100%;
+    background: linear-gradient(90deg, transparent 0%, rgba(212, 175, 55, 0.05) 100%);
+    pointer-events: none;
 }
 
 body.cash-mode [style*="grid-template-columns"] > div[style*="border-left"]:hover {
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
-    transform: translateY(-2px);
+    box-shadow: 0 12px 32px rgba(212, 175, 55, 0.2);
+    transform: translateY(-4px);
+    border-color: rgba(212, 175, 55, 0.4);
 }
 
-/* Apple Leaderboard - Minimal & Elegant */
+/* Premium Leaderboard - Executive Rankings */
 body.cash-mode #topEarnersBoard > div,
 body.cash-mode #topSpendersBoard > div,
 body.cash-mode #richestStudentsBoard > div {
-    background: #f5f5f7;
-    border: none;
-    border-radius: 12px;
-    padding: 14px 16px;
-    transition: all 0.2s cubic-bezier(0.28, 0.11, 0.32, 1);
-    margin-bottom: 8px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(10, 37, 64, 0.1);
+    border-left: 4px solid #0a2540;
+    border-radius: 14px;
+    padding: 16px 20px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    margin-bottom: 10px;
+    backdrop-filter: blur(10px);
 }
 
 body.cash-mode #topEarnersBoard > div:hover,
 body.cash-mode #topSpendersBoard > div:hover,
 body.cash-mode #richestStudentsBoard > div:hover {
-    background: #e8e8ed;
-    transform: translateX(2px);
-    box-shadow: none;
+    background: rgba(255, 255, 255, 1);
+    border-left-color: #d4af37;
+    transform: translateX(6px);
+    box-shadow: 0 4px 20px rgba(212, 175, 55, 0.2);
 }
 
-/* Top 3 - Apple-style Badges */
+/* Top 3 - Premium Medals */
 body.cash-mode #topEarnersBoard > div:nth-child(1),
 body.cash-mode #topSpendersBoard > div:nth-child(1),
 body.cash-mode #richestStudentsBoard > div:nth-child(1) {
-    background: linear-gradient(135deg, #ffcc00 0%, #ff9500 100%);
-    color: #ffffff;
+    background: linear-gradient(135deg, #d4af37 0%, #f4d03f 100%);
+    border: 2px solid #ffd700;
+    border-left: 4px solid #b8941e;
+    box-shadow: 0 8px 24px rgba(212, 175, 55, 0.4);
 }
 
 body.cash-mode #topEarnersBoard > div:nth-child(1) *,
 body.cash-mode #topSpendersBoard > div:nth-child(1) *,
 body.cash-mode #richestStudentsBoard > div:nth-child(1) * {
-    color: #ffffff !important;
+    color: #0a2540 !important;
+    font-weight: 700 !important;
 }
 
 body.cash-mode #topEarnersBoard > div:nth-child(2),
 body.cash-mode #topSpendersBoard > div:nth-child(2),
 body.cash-mode #richestStudentsBoard > div:nth-child(2) {
-    background: linear-gradient(135deg, #c7c7cc 0%, #8e8e93 100%);
-    color: #ffffff;
+    background: linear-gradient(135deg, #c0c0c0 0%, #d9d9d9 100%);
+    border: 2px solid #e5e5e5;
+    border-left: 4px solid #9a9a9a;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
 }
 
 body.cash-mode #topEarnersBoard > div:nth-child(2) *,
 body.cash-mode #topSpendersBoard > div:nth-child(2) *,
 body.cash-mode #richestStudentsBoard > div:nth-child(2) * {
-    color: #ffffff !important;
+    color: #0a2540 !important;
+    font-weight: 700 !important;
 }
 
 body.cash-mode #topEarnersBoard > div:nth-child(3),
 body.cash-mode #topSpendersBoard > div:nth-child(3),
 body.cash-mode #richestStudentsBoard > div:nth-child(3) {
-    background: linear-gradient(135deg, #ff9500 0%, #ff6b00 100%);
-    color: #ffffff;
+    background: linear-gradient(135deg, #cd7f32 0%, #e89d6c 100%);
+    border: 2px solid #e89d6c;
+    border-left: 4px solid #a0522d;
+    box-shadow: 0 6px 20px rgba(205, 127, 50, 0.3);
 }
 
 body.cash-mode #topEarnersBoard > div:nth-child(3) *,
 body.cash-mode #topSpendersBoard > div:nth-child(3) *,
 body.cash-mode #richestStudentsBoard > div:nth-child(3) * {
     color: #ffffff !important;
+    font-weight: 700 !important;
 }
 
-/* Apple Alert Boxes */
+/* Premium Alert Boxes */
 body.cash-mode [style*="background: #fef3c7"],
 body.cash-mode [style*="background: #d1fae5"] {
-    background: #f5f5f7 !important;
-    border-radius: 14px;
-    border: 0.5px solid rgba(0, 0, 0, 0.06);
-    border-left: 3px solid #34c759;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    background: linear-gradient(135deg, #fffef8 0%, #fffcf0 100%) !important;
+    border-radius: 16px;
+    border: 1px solid rgba(212, 175, 55, 0.3);
+    border-left: 4px solid #d4af37;
+    box-shadow: 0 4px 16px rgba(212, 175, 55, 0.15);
 }
 
-/* Apple Success Elements */
+/* Premium Success Elements */
 body.cash-mode [style*="background: linear-gradient(135deg, #10b981"] {
-    background: #34c759 !important;
-    box-shadow: 0 2px 8px rgba(52, 199, 89, 0.2);
+    background: linear-gradient(135deg, #d4af37 0%, #f4d03f 100%) !important;
+    box-shadow: 0 4px 16px rgba(212, 175, 55, 0.4);
 }
 
-/* Smooth mode transitions */
+/* Smooth transitions */
 body {
-    transition: background 0.6s cubic-bezier(0.28, 0.11, 0.32, 1);
+    transition: background 0.6s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.tab, .btn, .container {
-    transition: all 0.3s cubic-bezier(0.28, 0.11, 0.32, 1);
-}
-
-/* Checkbox styling - iOS native */
-body.cash-mode input[type="checkbox"] {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 20px;
-    height: 20px;
-    border: 2px solid #c7c7cc;
-    border-radius: 6px;
-    cursor: pointer;
-    position: relative;
-    transition: all 0.15s ease;
-}
-
-body.cash-mode input[type="checkbox"]:checked {
-    background: #34c759;
-    border-color: #34c759;
-}
-
-body.cash-mode input[type="checkbox"]:checked::after {
-    content: "";
-    position: absolute;
-    left: 6px;
-    top: 2px;
-    width: 4px;
-    height: 8px;
-    border: solid white;
-    border-width: 0 2px 2px 0;
-    transform: rotate(45deg);
-}
-
-/* Raffle Mode stays purple */
+/* Raffle Mode unchanged - uses default purple gradient from line 243 */
 body.raffle-mode {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-}
-
-body.raffle-mode .tab.active {
-    background: #FF6B35;
 }
