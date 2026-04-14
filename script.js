@@ -12289,18 +12289,21 @@
                 filteredStudents = filteredStudents.filter(student => student.grade === gradeFilter);
             }
             
-            // Apply period filter
-            if (periodFilter) {
-                // Filter by selected period for anyone with sections
+            // Apply period filter (match Raffle Mode logic)
+            if (periodFilter && currentUser.sections) {
+                // Find the selected section by sectionId
+                const section = currentUser.sections.find(s => s.sectionId === periodFilter);
+                if (section && section.students) {
+                    // Filter students using the section's student list
+                    filteredStudents = filteredStudents.filter(student => 
+                        section.students.includes(student.id)
+                    );
+                }
+            } else if (currentUser.role === 'teacher' && currentUser.sections && !periodFilter) {
+                // If no period selected, teachers only see students from ALL their sections
+                const allTeacherStudentIds = currentUser.sections.flatMap(s => s.students || []);
                 filteredStudents = filteredStudents.filter(student => 
-                    student.sections && student.sections.some(s => s.period === periodFilter)
-                );
-            } else if (currentUser.role === 'teacher' && currentUser.sections) {
-                // If no period selected, teachers only see their own students
-                filteredStudents = filteredStudents.filter(student => 
-                    student.sections && student.sections.some(s => 
-                        currentUser.sections && currentUser.sections.some(ts => ts.period === s.period)
-                    )
+                    allTeacherStudentIds.includes(student.id)
                 );
             }
             // Admins with no period selected see all students
@@ -12450,7 +12453,7 @@
                 
                 sortedSections.forEach(section => {
                     const option = document.createElement('option');
-                    option.value = section.period;
+                    option.value = section.sectionId;
                     option.textContent = `Period ${section.period} - ${section.className || section.courseName}`;
                     select.appendChild(option);
                 });
