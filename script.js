@@ -2265,7 +2265,10 @@
                 updateTeacherAnalytics();
             } else {
                 // Refresh the current view (charts or tables) for student data tabs
-                toggleDataView(currentDataView);
+                // Use setTimeout to allow DOM to render before creating charts
+                setTimeout(() => {
+                    toggleDataView(currentDataView);
+                }, 50);
             }
         }
         
@@ -2974,6 +2977,13 @@
                     }
                 }
             });
+            
+            // Force resize after creation to fix hidden canvas issue
+            setTimeout(() => {
+                if (window[chartInstanceName]) {
+                    window[chartInstanceName].resize();
+                }
+            }, 100);
         }
 
         function updateWeekChart(suffix) {
@@ -3078,6 +3088,13 @@
                     }
                 }
             });
+            
+            // Force resize after creation
+            setTimeout(() => {
+                if (window[chartInstanceName]) {
+                    window[chartInstanceName].resize();
+                }
+            }, 100);
         }
 
         function updateQualificationChart(suffix) {
@@ -3136,6 +3153,13 @@
                     }
                 }
             });
+            
+            // Force resize after creation
+            setTimeout(() => {
+                if (window[chartInstanceName]) {
+                    window[chartInstanceName].resize();
+                }
+            }, 100);
         }
 
         function updateAnalyticsTables() {
