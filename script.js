@@ -12433,7 +12433,8 @@
             const select = document.getElementById('cashPeriodFilter');
             select.innerHTML = '<option value="">All Students</option>';
             
-            if (currentUser.role === 'teacher' && currentUser.sections) {
+            // Allow teachers, admins, and superadmins with sections to see their periods
+            if (currentUser.sections && currentUser.sections.length > 0) {
                 const periodOrder = ['A1', 'P1', 'P2', 'P3', 'P4', 'HPU', 'P5', 'P6', 'A2'];
                 const sortedSections = [...currentUser.sections].sort((a, b) => {
                     const indexA = periodOrder.indexOf(a.period);
@@ -12446,7 +12447,7 @@
                 sortedSections.forEach(section => {
                     const option = document.createElement('option');
                     option.value = section.period;
-                    option.textContent = `Period ${section.period} - ${section.className}`;
+                    option.textContent = `Period ${section.period} - ${section.className || section.courseName}`;
                     select.appendChild(option);
                 });
             }
