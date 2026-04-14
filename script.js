@@ -985,6 +985,7 @@
                         detentions = secondaryData.detentions || [];
                         detentionLocations = secondaryData.detentionLocations || ['Main Office', 'Library', 'Room 101', 'Room 102', 'Cafeteria', 'Gym'];
                         detentionReasons = secondaryData.detentionReasons || ['Disrupting Class', 'Tardiness', 'Dress Code Violation', 'Inappropriate Behavior', 'Defiance/Disrespect', 'Cell Phone Violation', 'Missing Assignment', 'Other'];
+                        wildcatCashTransactions = secondaryData.wildcatCashTransactions || [];
                         
                         console.log('✅ Loaded data from Firebase (2 documents)');
                         
@@ -1047,6 +1048,7 @@
                 detentionLocations = data.detentionLocations || ['Main Office', 'Library', 'Room 101', 'Room 102', 'Cafeteria', 'Gym'];
                 detentionReasons = data.detentionReasons || ['Disrupting Class', 'Tardiness', 'Dress Code Violation', 'Inappropriate Behavior', 'Defiance/Disrespect', 'Cell Phone Violation', 'Missing Assignment', 'Other'];
                 loginHistory = data.loginHistory || [];
+                wildcatCashTransactions = data.wildcatCashTransactions || [];
                 lastSaveTimestamp = data.lastSaveTimestamp || 0;
                 // Auto-week system - FORCED DISABLED
                 autoWeekEnabled = false; // Disabled to prevent accidental ticket deletion
@@ -1694,6 +1696,7 @@
                             detentions,
                             detentionLocations,
                             detentionReasons,
+                            wildcatCashTransactions,
                             lastSaveTimestamp: timestamp
                         });
                         
@@ -1732,6 +1735,7 @@
                             detentionIdCounter,
                             detentionLocations,
                             detentionReasons,
+                            wildcatCashTransactions,
                             loginHistory: loginHistoryToSave,
                             autoWeekEnabled,
                             lastAutoResetDate,
