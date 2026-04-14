@@ -2243,6 +2243,7 @@
             document.querySelectorAll('.data-subtab').forEach(tab => {
                 tab.classList.remove('active');
                 tab.classList.add('hidden');
+                tab.style.display = 'none';
             });
             
             // Show the selected tab
@@ -2256,6 +2257,7 @@
             if (selectedTab) {
                 selectedTab.classList.remove('hidden');
                 selectedTab.classList.add('active');
+                selectedTab.style.display = 'block';
             }
             
             currentDataSubtab = subtab;
