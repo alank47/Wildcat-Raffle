@@ -12290,21 +12290,20 @@
             }
             
             // Apply period filter
-            if (currentUser.role === 'teacher' && periodFilter) {
+            if (periodFilter) {
+                // Filter by selected period for anyone with sections
                 filteredStudents = filteredStudents.filter(student => 
                     student.sections && student.sections.some(s => s.period === periodFilter)
                 );
-            } else if (currentUser.role === 'teacher') {
+            } else if (currentUser.role === 'teacher' && currentUser.sections) {
+                // If no period selected, teachers only see their own students
                 filteredStudents = filteredStudents.filter(student => 
                     student.sections && student.sections.some(s => 
                         currentUser.sections && currentUser.sections.some(ts => ts.period === s.period)
                     )
                 );
-            } else if (periodFilter && currentUser.role !== 'teacher') {
-                filteredStudents = filteredStudents.filter(student =>
-                    student.sections && student.sections.some(s => s.period === periodFilter)
-                );
             }
+            // Admins with no period selected see all students
             
             // Sort by name
             filteredStudents.sort((a, b) => {
