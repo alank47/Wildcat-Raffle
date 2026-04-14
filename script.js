@@ -1647,6 +1647,20 @@
                             loginHistoryToSave = combinedLoginHistory.sort((a, b) => 
                                 new Date(a.timestamp) - new Date(b.timestamp)
                             ).slice(-500);
+                            
+                            // MERGE WILDCAT CASH TRANSACTIONS
+                            const firebaseCashTransactions = firebaseSecondary.wildcatCashTransactions || [];
+                            const combinedCashTransactions = [...firebaseCashTransactions];
+                            
+                            wildcatCashTransactions.forEach(localTxn => {
+                                if (!firebaseCashTransactions.find(t => t.id === localTxn.id)) {
+                                    combinedCashTransactions.push(localTxn);
+                                }
+                            });
+                            
+                            wildcatCashTransactions = combinedCashTransactions.sort((a, b) => 
+                                new Date(a.timestamp) - new Date(b.timestamp)
+                            );
                         }
                         
                         const timestamp = Date.now();
