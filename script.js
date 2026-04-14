@@ -2242,7 +2242,7 @@
             // Update content visibility
             document.querySelectorAll('.data-subtab').forEach(tab => {
                 tab.classList.remove('active');
-                tab.style.display = 'none';
+                tab.classList.add('hidden');
             });
             
             // Show the selected tab
@@ -2254,7 +2254,7 @@
             }
             
             if (selectedTab) {
-                selectedTab.style.display = 'block';
+                selectedTab.classList.remove('hidden');
                 selectedTab.classList.add('active');
             }
             
@@ -2265,10 +2265,10 @@
                 updateTeacherAnalytics();
             } else {
                 // Refresh the current view (charts or tables) for student data tabs
-                // Use setTimeout to allow DOM to render before creating charts
+                // Use setTimeout to allow DOM to fully render before creating charts
                 setTimeout(() => {
                     toggleDataView(currentDataView);
-                }, 50);
+                }, 150);
             }
         }
         
