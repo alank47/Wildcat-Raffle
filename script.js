@@ -12194,6 +12194,7 @@
                 const amount = behavior.points;
                 const oldBalance = student.wildcatCashBalance;
                 student.wildcatCashBalance += amount;
+                student.cashBalance = student.wildcatCashBalance; // Keep both in sync
                 
                 console.log(`  ${student.firstName}: $${oldBalance} → $${student.wildcatCashBalance} (${amount > 0 ? '+' : ''}$${amount})`);
                 
@@ -12493,7 +12494,7 @@
                         </div>
                         <div style="text-align: right;">
                             <div style="font-size: 24px; font-weight: 700; color: ${amountColor};">${txn.amount > 0 ? '+' : ''}$${txn.amount}</div>
-                            <div style="color: #666; font-size: 13px; margin-top: 5px;">New balance: $${txn.newBalance}</div>
+                            <div style="color: #666; font-size: 13px; margin-top: 5px;">New balance: $${txn.newBalance !== undefined ? txn.newBalance : (student ? student.wildcatCashBalance || student.cashBalance || 0 : 'N/A')}</div>
                         </div>
                     </div>
                 `;
