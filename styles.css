@@ -1358,169 +1358,198 @@ th[onclick]:hover {
 }
 
 /* ============================================
-   💰 WILDCAT CASH MODE - PROFESSIONAL DESIGN
+   💰 WILDCAT CASH MODE - APPLE DESIGN SYSTEM
    ============================================ */
 
-/* Cash Mode - Sophisticated Green Gradient */
+/* Cash Mode - Pure Apple Aesthetic */
 body.cash-mode {
-    background: linear-gradient(135deg, #0f766e 0%, #134e4a 100%);
-    position: relative;
+    background: #f5f5f7;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', sans-serif;
 }
 
-/* Subtle pattern overlay for depth */
+/* Apple-style gradient accent */
 body.cash-mode::before {
     content: "";
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
-    bottom: 0;
-    background-image: 
-        radial-gradient(circle at 20% 50%, rgba(16, 185, 129, 0.1) 0%, transparent 50%),
-        radial-gradient(circle at 80% 50%, rgba(251, 191, 36, 0.08) 0%, transparent 50%);
+    height: 600px;
+    background: linear-gradient(180deg, #00c853 0%, #00e676 50%, transparent 100%);
+    opacity: 0.03;
     pointer-events: none;
     z-index: 0;
 }
 
-/* Cash Mode Container - Clean & Modern */
+/* Cash Mode Container - Apple Card Style */
 body.cash-mode .container {
     background: #ffffff;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
-    border: none;
+    box-shadow: 0 2px 16px rgba(0, 0, 0, 0.08);
+    border: 0.5px solid rgba(0, 0, 0, 0.04);
     position: relative;
     z-index: 1;
+    border-radius: 20px;
 }
 
-/* Cash Mode Tabs - Minimalist Premium */
+/* Apple Tabs - iOS/macOS Style */
 body.cash-mode .tabs {
-    background: rgba(255, 255, 255, 0.1);
-    backdrop-filter: blur(10px);
-    border-radius: 16px;
-    padding: 8px;
-    margin-bottom: 30px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+    background: #ffffff;
+    border-radius: 14px;
+    padding: 4px;
+    margin-bottom: 24px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+    border: 0.5px solid rgba(0, 0, 0, 0.06);
+    display: inline-flex;
 }
 
 body.cash-mode .tab {
     background: transparent;
     border: none;
-    color: rgba(255, 255, 255, 0.7);
-    font-weight: 500;
-    padding: 12px 24px;
-    border-radius: 12px;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    color: #1d1d1f;
+    font-weight: 400;
+    font-size: 13px;
+    padding: 8px 16px;
+    border-radius: 10px;
+    transition: all 0.2s cubic-bezier(0.28, 0.11, 0.32, 1);
+    letter-spacing: -0.01em;
 }
 
 body.cash-mode .tab:hover {
-    background: rgba(255, 255, 255, 0.15);
-    color: rgba(255, 255, 255, 0.95);
-    transform: translateY(0);
+    background: rgba(0, 0, 0, 0.04);
+    color: #000000;
+    transform: none;
 }
 
 body.cash-mode .tab.active {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    background: #34c759;
     color: #ffffff;
-    font-weight: 600;
-    box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4);
+    font-weight: 500;
+    box-shadow: 0 2px 8px rgba(52, 199, 89, 0.25), 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
-/* Cash Mode Headers - Clean Typography */
-body.cash-mode h2 {
-    color: #134e4a;
+/* Apple Typography */
+body.cash-mode h1 {
+    font-size: 48px;
     font-weight: 700;
+    letter-spacing: -0.03em;
+    color: #1d1d1f;
+    line-height: 1.08;
+}
+
+body.cash-mode h2 {
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: #1d1d1f;
+    line-height: 1.125;
     background: none;
     -webkit-background-clip: initial;
     -webkit-text-fill-color: initial;
     background-clip: initial;
-    text-shadow: none;
-    letter-spacing: -0.5px;
 }
 
 body.cash-mode h3 {
-    color: #0f766e;
+    font-size: 21px;
     font-weight: 600;
+    letter-spacing: -0.01em;
+    color: #1d1d1f;
+    line-height: 1.19;
 }
 
-/* Remove emoji auto-insertion */
+body.cash-mode p {
+    font-size: 17px;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    color: #6e6e73;
+    line-height: 1.47;
+}
+
+/* Remove auto emojis */
 body.cash-mode .tab-content h2::before,
 body.cash-mode .tab-content h3::before {
     content: none;
 }
 
-/* Cash Mode Buttons - Premium Feel */
+/* Apple Buttons - iOS Style */
 body.cash-mode .btn {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    background: #34c759;
     border: none;
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
-    font-weight: 600;
-    letter-spacing: 0.3px;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: none;
+    font-weight: 500;
+    font-size: 15px;
+    letter-spacing: -0.01em;
+    padding: 12px 24px;
+    border-radius: 12px;
+    transition: all 0.2s cubic-bezier(0.28, 0.11, 0.32, 1);
 }
 
 body.cash-mode .btn:hover {
-    background: linear-gradient(135deg, #059669 0%, #047857 100%);
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(16, 185, 129, 0.35);
+    background: #30b350;
+    transform: scale(0.98);
+    box-shadow: 0 4px 12px rgba(52, 199, 89, 0.2);
 }
 
 body.cash-mode .btn:active {
-    transform: translateY(0);
-    box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
+    transform: scale(0.96);
+    box-shadow: none;
 }
 
 body.cash-mode .btn-secondary {
-    background: #ffffff;
-    color: #0f766e;
-    border: 2px solid #d1fae5;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    background: #f5f5f7;
+    color: #1d1d1f;
+    border: 0.5px solid rgba(0, 0, 0, 0.06);
+    box-shadow: none;
 }
 
 body.cash-mode .btn-secondary:hover {
-    background: #f0fdf4;
-    border-color: #10b981;
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.15);
+    background: #e8e8ed;
+    border-color: rgba(0, 0, 0, 0.1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
-/* Cash Mode Cards - Elevated Design */
-body.cash-mode .tab-content > div[style*="background: white"] {
+/* Apple Cards - Elevated & Minimal */
+body.cash-mode .tab-content > div[style*="background: white"],
+body.cash-mode .tab-content > div[style*="background: linear-gradient"] {
     background: #ffffff !important;
-    border-radius: 16px;
-    box-shadow: 0 2px 16px rgba(0, 0, 0, 0.06);
-    border: 1px solid rgba(16, 185, 129, 0.08);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 18px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+    border: 0.5px solid rgba(0, 0, 0, 0.04);
+    transition: all 0.3s cubic-bezier(0.28, 0.11, 0.32, 1);
 }
 
 body.cash-mode .tab-content > div[style*="background: white"]:hover {
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
     transform: translateY(-2px);
-    border-color: rgba(16, 185, 129, 0.15);
+    border-color: rgba(0, 0, 0, 0.08);
 }
 
-/* Cash Mode Tables - Professional Styling */
+/* Apple Tables - Clean & Simple */
 body.cash-mode table {
     border: none;
     box-shadow: none;
-    border-radius: 12px;
+    border-radius: 14px;
     overflow: hidden;
+    border: 0.5px solid rgba(0, 0, 0, 0.06);
 }
 
 body.cash-mode th {
-    background: linear-gradient(135deg, #0f766e 0%, #134e4a 100%);
-    color: #ffffff;
-    font-weight: 600;
+    background: #f5f5f7;
+    color: #6e6e73;
+    font-weight: 500;
     text-transform: none;
-    letter-spacing: 0.3px;
-    padding: 16px 20px;
-    font-size: 14px;
+    letter-spacing: -0.01em;
+    padding: 12px 16px;
+    font-size: 13px;
+    border-bottom: 0.5px solid rgba(0, 0, 0, 0.06);
 }
 
 body.cash-mode tbody tr {
-    border-bottom: 1px solid #f0fdf4;
-    transition: all 0.2s ease;
+    border-bottom: 0.5px solid rgba(0, 0, 0, 0.04);
+    transition: background 0.15s ease;
 }
 
 body.cash-mode tbody tr:hover {
-    background: #f0fdf4;
+    background: #f5f5f7;
     transform: none;
 }
 
@@ -1528,122 +1557,172 @@ body.cash-mode tbody tr:last-child {
     border-bottom: none;
 }
 
-/* Cash Mode Input Fields - Modern & Clean */
+body.cash-mode td {
+    padding: 14px 16px;
+    font-size: 15px;
+    letter-spacing: -0.01em;
+    color: #1d1d1f;
+}
+
+/* Apple Input Fields - iOS Native Style */
 body.cash-mode input[type="text"],
 body.cash-mode input[type="number"],
 body.cash-mode select,
 body.cash-mode textarea {
-    border: 2px solid #e5e7eb;
+    border: 0.5px solid rgba(0, 0, 0, 0.1);
     border-radius: 10px;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    font-size: 14px;
+    background: #ffffff;
+    font-size: 15px;
+    letter-spacing: -0.01em;
+    padding: 12px 16px;
+    transition: all 0.2s cubic-bezier(0.28, 0.11, 0.32, 1);
+    -webkit-appearance: none;
 }
 
 body.cash-mode input[type="text"]:focus,
 body.cash-mode input[type="number"]:focus,
 body.cash-mode select:focus,
 body.cash-mode textarea:focus {
-    border-color: #10b981;
-    box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1);
+    border-color: #34c759;
+    box-shadow: 0 0 0 4px rgba(52, 199, 89, 0.1);
     outline: none;
 }
 
-/* Cash Mode Stat Boxes - Premium Cards */
+body.cash-mode select {
+    background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%236e6e73' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 36px;
+}
+
+/* Apple Stat Boxes - SF Symbols Style */
 body.cash-mode [style*="grid-template-columns"] > div[style*="border-left"] {
+    background: #ffffff;
     border-radius: 16px;
-    border-left: 4px solid #10b981 !important;
-    box-shadow: 0 2px 16px rgba(0, 0, 0, 0.06);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    border: 0.5px solid rgba(0, 0, 0, 0.06);
+    border-left: 3px solid #34c759 !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    transition: all 0.3s cubic-bezier(0.28, 0.11, 0.32, 1);
 }
 
 body.cash-mode [style*="grid-template-columns"] > div[style*="border-left"]:hover {
-    box-shadow: 0 8px 32px rgba(16, 185, 129, 0.15);
-    transform: translateY(-4px);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+    transform: translateY(-2px);
 }
 
-/* Cash Mode Leaderboard - Sophisticated */
+/* Apple Leaderboard - Minimal & Elegant */
 body.cash-mode #topEarnersBoard > div,
 body.cash-mode #topSpendersBoard > div,
 body.cash-mode #richestStudentsBoard > div {
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-left: 4px solid #10b981;
+    background: #f5f5f7;
+    border: none;
     border-radius: 12px;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    padding: 14px 16px;
+    transition: all 0.2s cubic-bezier(0.28, 0.11, 0.32, 1);
+    margin-bottom: 8px;
 }
 
 body.cash-mode #topEarnersBoard > div:hover,
 body.cash-mode #topSpendersBoard > div:hover,
 body.cash-mode #richestStudentsBoard > div:hover {
-    background: #f0fdf4;
-    border-color: #10b981;
-    transform: translateX(4px);
-    box-shadow: 0 4px 16px rgba(16, 185, 129, 0.12);
+    background: #e8e8ed;
+    transform: translateX(2px);
+    box-shadow: none;
 }
 
-/* Top 3 Special Styling */
+/* Top 3 - Apple-style Badges */
 body.cash-mode #topEarnersBoard > div:nth-child(1),
 body.cash-mode #topSpendersBoard > div:nth-child(1),
 body.cash-mode #richestStudentsBoard > div:nth-child(1) {
-    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
-    border-left-color: #f59e0b;
+    background: linear-gradient(135deg, #ffcc00 0%, #ff9500 100%);
+    color: #ffffff;
+}
+
+body.cash-mode #topEarnersBoard > div:nth-child(1) *,
+body.cash-mode #topSpendersBoard > div:nth-child(1) *,
+body.cash-mode #richestStudentsBoard > div:nth-child(1) * {
+    color: #ffffff !important;
 }
 
 body.cash-mode #topEarnersBoard > div:nth-child(2),
 body.cash-mode #topSpendersBoard > div:nth-child(2),
 body.cash-mode #richestStudentsBoard > div:nth-child(2) {
-    background: linear-gradient(135deg, #e5e7eb 0%, #d1d5db 100%);
-    border-left-color: #9ca3af;
+    background: linear-gradient(135deg, #c7c7cc 0%, #8e8e93 100%);
+    color: #ffffff;
+}
+
+body.cash-mode #topEarnersBoard > div:nth-child(2) *,
+body.cash-mode #topSpendersBoard > div:nth-child(2) *,
+body.cash-mode #richestStudentsBoard > div:nth-child(2) * {
+    color: #ffffff !important;
 }
 
 body.cash-mode #topEarnersBoard > div:nth-child(3),
 body.cash-mode #topSpendersBoard > div:nth-child(3),
 body.cash-mode #richestStudentsBoard > div:nth-child(3) {
-    background: linear-gradient(135deg, #fed7aa 0%, #fdba74 100%);
-    border-left-color: #f97316;
+    background: linear-gradient(135deg, #ff9500 0%, #ff6b00 100%);
+    color: #ffffff;
 }
 
-/* Cash Mode Alert Boxes - Refined */
+body.cash-mode #topEarnersBoard > div:nth-child(3) *,
+body.cash-mode #topSpendersBoard > div:nth-child(3) *,
+body.cash-mode #richestStudentsBoard > div:nth-child(3) * {
+    color: #ffffff !important;
+}
+
+/* Apple Alert Boxes */
 body.cash-mode [style*="background: #fef3c7"],
 body.cash-mode [style*="background: #d1fae5"] {
-    border-radius: 12px;
-    border: 1px solid rgba(16, 185, 129, 0.2);
-    border-left: 4px solid #10b981;
-    box-shadow: 0 2px 12px rgba(16, 185, 129, 0.08);
+    background: #f5f5f7 !important;
+    border-radius: 14px;
+    border: 0.5px solid rgba(0, 0, 0, 0.06);
+    border-left: 3px solid #34c759;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 }
 
-/* Remove watermark */
-body.cash-mode .container::before {
-    content: none;
-}
-
-/* Cash Mode Active Tab Animation - Subtle */
-body.cash-mode #awardCashTabBtn.active,
-body.cash-mode #cashActivityTabBtn.active,
-body.cash-mode #cashLeaderboardTabBtn.active,
-body.cash-mode #rewardsStoreTabBtn.active,
-body.cash-mode #studentAccountsTabBtn.active,
-body.cash-mode #cashAnalyticsTabBtn.active {
-    animation: none;
-}
-
-/* Cash Mode Success Elements - Polished */
+/* Apple Success Elements */
 body.cash-mode [style*="background: linear-gradient(135deg, #10b981"] {
-    box-shadow: 0 4px 16px rgba(16, 185, 129, 0.25);
+    background: #34c759 !important;
+    box-shadow: 0 2px 8px rgba(52, 199, 89, 0.2);
 }
 
-/* Cash Mode Gold Elements - Professional */
-body.cash-mode [style*="background: linear-gradient(135deg, #fbbf24"] {
-    box-shadow: 0 4px 16px rgba(251, 191, 36, 0.25);
-}
-
-/* Smooth transitions for mode switching */
+/* Smooth mode transitions */
 body {
-    transition: background 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: background 0.6s cubic-bezier(0.28, 0.11, 0.32, 1);
 }
 
 .tab, .btn, .container {
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all 0.3s cubic-bezier(0.28, 0.11, 0.32, 1);
+}
+
+/* Checkbox styling - iOS native */
+body.cash-mode input[type="checkbox"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border: 2px solid #c7c7cc;
+    border-radius: 6px;
+    cursor: pointer;
+    position: relative;
+    transition: all 0.15s ease;
+}
+
+body.cash-mode input[type="checkbox"]:checked {
+    background: #34c759;
+    border-color: #34c759;
+}
+
+body.cash-mode input[type="checkbox"]:checked::after {
+    content: "";
+    position: absolute;
+    left: 6px;
+    top: 2px;
+    width: 4px;
+    height: 8px;
+    border: solid white;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
 }
 
 /* Raffle Mode stays purple */
