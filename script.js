@@ -1110,11 +1110,77 @@
                         const mainData = mainSnap.data();
                         const secondaryData = secondarySnap.exists() ? secondarySnap.data() : {};
                         
-                        // Load from main document
-                        students = mainData.students || [];
+                        // CRITICAL: MERGE students instead of overwriting to preserve local changes
+                        const firebaseStudents = mainData.students || [];
+                        
+                        if (students && students.length > 0) {
+                            // We have local students - MERGE with Firebase
+                            const mergedStudents = firebaseStudents.map(firebaseStudent => {
+                                const localStudent = students.find(s => s.id === firebaseStudent.id);
+                                
+                                if (!localStudent) {
+                                    return firebaseStudent; // Student only in Firebase
+                                }
+                                
+                                // Take MAX of each ticket type to preserve awards made locally
+                                return {
+                                    ...firebaseStudent, // Start with Firebase (newer data from others)
+                                    ...localStudent, // Overlay local changes (preserve local awards)
+                                    pbisTickets: Math.max(localStudent.pbisTickets || 0, firebaseStudent.pbisTickets || 0),
+                                    attendanceTickets: Math.max(localStudent.attendanceTickets || 0, firebaseStudent.attendanceTickets || 0),
+                                    academicTickets: Math.max(localStudent.academicTickets || 0, firebaseStudent.academicTickets || 0),
+                                    // Merge ticket history
+                                    ticketHistory: [
+                                        ...(firebaseStudent.ticketHistory || []),
+                                        ...(localStudent.ticketHistory || [])
+                                    ].filter((item, index, self) => 
+                                        index === self.findIndex(t => t.timestamp === item.timestamp)
+                                    ).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+                                };
+                            });
+                            
+                            // Add any NEW students that are only in local
+                            students.forEach(localStudent => {
+                                if (!firebaseStudents.find(s => s.id === localStudent.id)) {
+                                    mergedStudents.push(localStudent);
+                                }
+                            });
+                            
+                            students = mergedStudents;
+                        } else {
+                            // No local students yet (first load) - use Firebase directly
+                            students = firebaseStudents;
+                        }
+                        
+                        // Load from main document (non-student data can be overwritten safely)
                         currentWeek = mainData.currentWeek || 1;
                         cycleDuration = mainData.cycleDuration || 5;
-                        teachers = mainData.teachers || [];
+                        
+                        // MERGE teachers to preserve local changes
+                        const firebaseTeachers = mainData.teachers || [];
+                        if (teachers && teachers.length > 0) {
+                            const mergedTeachers = firebaseTeachers.map(firebaseTeacher => {
+                                const localTeacher = teachers.find(t => t.id === firebaseTeacher.id);
+                                if (!localTeacher) return firebaseTeacher;
+                                
+                                return {
+                                    ...firebaseTeacher,
+                                    ...localTeacher,
+                                    ticketsAwarded: Math.max(localTeacher.ticketsAwarded || 0, firebaseTeacher.ticketsAwarded || 0)
+                                };
+                            });
+                            
+                            teachers.forEach(localTeacher => {
+                                if (!firebaseTeachers.find(t => t.id === localTeacher.id)) {
+                                    mergedTeachers.push(localTeacher);
+                                }
+                            });
+                            
+                            teachers = mergedTeachers;
+                        } else {
+                            teachers = firebaseTeachers;
+                        }
+                        
                         pbisSubcategories = mainData.pbisSubcategories || ['Being Present', 'Being Responsible', 'Being Respectful', 'Being Safe'];
                         academicSubcategories = mainData.academicSubcategories || ['No Missing Assignments', 'Improvement on quiz/assessment or successful retakes', 'Participation in tutoring'];
                         lastPowerSchoolSync = mainData.lastPowerSchoolSync || null;
@@ -1138,7 +1204,21 @@
                         weeklyWinners = secondaryData.weeklyWinners || [];
                         bigRaffleWinners = secondaryData.bigRaffleWinners || [];
                         weeklyHistory = secondaryData.weeklyHistory || [];
-                        auditLog = secondaryData.auditLog || [];
+                        
+                        // MERGE auditLog to preserve local entries
+                        const firebaseAuditLog = secondaryData.auditLog || [];
+                        if (auditLog && auditLog.length > 0) {
+                            const combinedAuditLog = [...firebaseAuditLog];
+                            auditLog.forEach(localEntry => {
+                                if (!firebaseAuditLog.find(e => e.timestamp === localEntry.timestamp && e.studentId === localEntry.studentId)) {
+                                    combinedAuditLog.push(localEntry);
+                                }
+                            });
+                            auditLog = combinedAuditLog.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                        } else {
+                            auditLog = firebaseAuditLog;
+                        }
+                        
                         loginHistory = secondaryData.loginHistory || [];
                         hallPasses = secondaryData.hallPasses || [];
                         preventionGroups = secondaryData.preventionGroups || [];
@@ -1146,7 +1226,20 @@
                         detentions = secondaryData.detentions || [];
                         detentionLocations = secondaryData.detentionLocations || ['Main Office', 'Library', 'Room 101', 'Room 102', 'Cafeteria', 'Gym'];
                         detentionReasons = secondaryData.detentionReasons || ['Disrupting Class', 'Tardiness', 'Dress Code Violation', 'Inappropriate Behavior', 'Defiance/Disrespect', 'Cell Phone Violation', 'Missing Assignment', 'Other'];
-                        wildcatCashTransactions = secondaryData.wildcatCashTransactions || [];
+                        
+                        // MERGE wildcatCashTransactions to preserve local transactions
+                        const firebaseCashTransactions = secondaryData.wildcatCashTransactions || [];
+                        if (wildcatCashTransactions && wildcatCashTransactions.length > 0) {
+                            const combinedCashTransactions = [...firebaseCashTransactions];
+                            wildcatCashTransactions.forEach(localTxn => {
+                                if (!firebaseCashTransactions.find(t => t.id === localTxn.id)) {
+                                    combinedCashTransactions.push(localTxn);
+                                }
+                            });
+                            wildcatCashTransactions = combinedCashTransactions.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                        } else {
+                            wildcatCashTransactions = firebaseCashTransactions;
+                        }
                         
                         console.log('✅ Loaded data from Firebase (2 documents)');
                         
