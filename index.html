@@ -148,6 +148,23 @@
             </div>
         </div>
         
+        <!-- Student Leaderboard -->
+        <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 20px;">
+            <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px;">🏆 Leaderboard</h3>
+            
+            <!-- My Rank -->
+            <div id="studentMyRank" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; border-radius: 10px; margin-bottom: 20px; text-align: center;">
+                <div style="font-size: 14px; opacity: 0.9; margin-bottom: 5px;">Your Rank</div>
+                <div style="font-size: 36px; font-weight: 700;">-</div>
+                <div style="font-size: 13px; opacity: 0.8;">out of <span id="studentTotalCount">0</span> students</div>
+            </div>
+            
+            <!-- Top 10 -->
+            <div id="studentLeaderboardList" style="max-height: 400px; overflow-y: auto;">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+        
         <!-- Ticket History -->
         <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 20px;">
             <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px;">🎫 My Ticket History</h3>
@@ -4296,6 +4313,6 @@
     <!-- Chart.js for Data Visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-    <script src="script.js"></script>
+    <script src="script.js?v=20260414"></script>
 </body>
 </html>
