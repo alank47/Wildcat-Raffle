@@ -891,6 +891,19 @@
                 <h2>📋 Audit Log</h2>
                 <p style="margin: 15px 0; color: #666;">Track all ticket awards and raffle activities</p>
 
+                <!-- Subtab Navigation -->
+                <div style="display: flex; gap: 10px; margin-bottom: 25px; border-bottom: 2px solid #e5e7eb;">
+                    <button class="subtab-button" onclick="switchAuditSubtab('all')" id="allAuditSubtab" style="padding: 12px 24px; background: #667eea; color: white; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
+                        🏫 All Students
+                    </button>
+                    <button class="subtab-button" onclick="switchAuditSubtab('middleschool')" id="middleschoolAuditSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
+                        🎓 Middle School (6-8)
+                    </button>
+                    <button class="subtab-button" onclick="switchAuditSubtab('highschool')" id="highschoolAuditSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
+                        🏫 High School (9-12)
+                    </button>
+                </div>
+
                 <!-- Legend -->
                 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
                     <h3 style="color: white; margin: 0 0 15px 0; font-size: 16px;">📖 Action Legend</h3>
