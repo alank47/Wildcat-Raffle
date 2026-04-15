@@ -588,6 +588,167 @@
                 jackpotHtml += '</div>';
                 jackpotHistoryEl.innerHTML = jackpotHtml;
             }
+            
+            // Populate student leaderboard
+            updateStudentLeaderboard();
+        }
+        
+        function updateStudentLeaderboard() {
+            const s = currentStudent;
+            
+            // Calculate total tickets for all students
+            const studentsWithTotals = students.map(student => ({
+                id: student.id,
+                name: `${student.firstName} ${student.lastName}`,
+                grade: student.grade,
+                totalTickets: (student.pbisTickets || 0) + (student.attendanceTickets || 0) + (student.academicTickets || 0),
+                pbis: student.pbisTickets || 0,
+                attendance: student.attendanceTickets || 0,
+                academic: student.academicTickets || 0
+            }));
+            
+            // Sort by total tickets (descending)
+            const sorted = studentsWithTotals
+                .filter(st => st.totalTickets > 0)
+                .sort((a, b) => b.totalTickets - a.totalTickets);
+            
+            // Find current student's rank
+            const myRank = sorted.findIndex(st => st.id === s.id) + 1;
+            const totalWithTickets = sorted.length;
+            
+            // Update my rank display
+            const myRankEl = document.getElementById('studentMyRank');
+            if (myRank > 0) {
+                let rankEmoji = '';
+                let rankColor = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+                
+                if (myRank === 1) {
+                    rankEmoji = '🥇';
+                    rankColor = 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)';
+                } else if (myRank === 2) {
+                    rankEmoji = '🥈';
+                    rankColor = 'linear-gradient(135deg, #9ca3af 0%, #6b7280 100%)';
+                } else if (myRank === 3) {
+                    rankEmoji = '🥉';
+                    rankColor = 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)';
+                }
+                
+                myRankEl.style.background = rankColor;
+                myRankEl.innerHTML = `
+                    <div style="font-size: 14px; opacity: 0.9; margin-bottom: 5px;">Your Rank</div>
+                    <div style="font-size: 36px; font-weight: 700;">${rankEmoji} #${myRank}</div>
+                    <div style="font-size: 13px; opacity: 0.8;">out of <span id="studentTotalCount">${totalWithTickets}</span> students</div>
+                `;
+            } else {
+                myRankEl.innerHTML = `
+                    <div style="font-size: 14px; opacity: 0.9; margin-bottom: 5px;">Your Rank</div>
+                    <div style="font-size: 36px; font-weight: 700;">-</div>
+                    <div style="font-size: 13px; opacity: 0.8;">Earn tickets to get ranked!</div>
+                `;
+            }
+            
+            // Build top 10 + students near current student
+            const leaderboardList = document.getElementById('studentLeaderboardList');
+            let html = '';
+            
+            if (sorted.length === 0) {
+                html = '<div style="text-align: center; padding: 30px; color: #999;">No students have earned tickets yet</div>';
+            } else {
+                // Show top 10
+                const top10 = sorted.slice(0, 10);
+                
+                top10.forEach((student, index) => {
+                    const rank = index + 1;
+                    const isMe = student.id === s.id;
+                    
+                    let bgColor = '#f9fafb';
+                    let borderColor = '#e5e7eb';
+                    let medal = '';
+                    
+                    if (rank === 1) {
+                        bgColor = 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)';
+                        borderColor = '#fbbf24';
+                        medal = '🥇';
+                    } else if (rank === 2) {
+                        bgColor = 'linear-gradient(135deg, #e5e7eb 0%, #d1d5db 100%)';
+                        borderColor = '#9ca3af';
+                        medal = '🥈';
+                    } else if (rank === 3) {
+                        bgColor = 'linear-gradient(135deg, #fed7aa 0%, #fdba74 100%)';
+                        borderColor = '#f97316';
+                        medal = '🥉';
+                    }
+                    
+                    if (isMe) {
+                        bgColor = 'linear-gradient(135deg, #ddd6fe 0%, #c4b5fd 100%)';
+                        borderColor = '#8b5cf6';
+                    }
+                    
+                    html += `
+                        <div style="background: ${bgColor}; padding: 12px 15px; border-radius: 8px; border-left: 4px solid ${borderColor}; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+                            <div style="display: flex; align-items: center; gap: 12px;">
+                                <div style="font-size: 20px; font-weight: 700; color: #666; min-width: 30px; text-align: center;">
+                                    ${medal || rank}
+                                </div>
+                                <div>
+                                    <div style="font-weight: 600; color: #333; font-size: 14px;">
+                                        ${student.name}${isMe ? ' (You!)' : ''}
+                                    </div>
+                                    <div style="font-size: 12px; color: #666;">Grade ${student.grade}</div>
+                                </div>
+                            </div>
+                            <div style="text-align: right;">
+                                <div style="font-weight: 700; font-size: 18px; color: #667eea;">${student.totalTickets} 🎫</div>
+                                <div style="font-size: 11px; color: #666;">
+                                    ${student.pbis}P • ${student.attendance}A • ${student.academic}C
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                // If current student is not in top 10, show students near them
+                if (myRank > 10) {
+                    html += '<div style="text-align: center; padding: 15px; color: #999; font-size: 13px;">...</div>';
+                    
+                    // Show 2 above and 2 below current student
+                    const startIndex = Math.max(0, myRank - 3);
+                    const endIndex = Math.min(sorted.length, myRank + 2);
+                    const nearMe = sorted.slice(startIndex, endIndex);
+                    
+                    nearMe.forEach((student, index) => {
+                        const rank = startIndex + index + 1;
+                        const isMe = student.id === s.id;
+                        
+                        let bgColor = isMe ? 'linear-gradient(135deg, #ddd6fe 0%, #c4b5fd 100%)' : '#f9fafb';
+                        let borderColor = isMe ? '#8b5cf6' : '#e5e7eb';
+                        
+                        html += `
+                            <div style="background: ${bgColor}; padding: 12px 15px; border-radius: 8px; border-left: 4px solid ${borderColor}; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <div style="font-size: 20px; font-weight: 700; color: #666; min-width: 30px; text-align: center;">
+                                        ${rank}
+                                    </div>
+                                    <div>
+                                        <div style="font-weight: 600; color: #333; font-size: 14px;">
+                                            ${student.name}${isMe ? ' (You!)' : ''}
+                                        </div>
+                                        <div style="font-size: 12px; color: #666;">Grade ${student.grade}</div>
+                                    </div>
+                                </div>
+                                <div style="text-align: right;">
+                                    <div style="font-weight: 700; font-size: 18px; color: #667eea;">${student.totalTickets} 🎫</div>
+                                    <div style="font-size: 11px; color: #666;">
+                                        ${student.pbis}P • ${student.attendance}A • ${student.academic}C
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                }
+            }
+            
+            leaderboardList.innerHTML = html;
         }
         
         function studentLogout() {
