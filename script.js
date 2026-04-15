@@ -11107,7 +11107,8 @@
                         subcategory: subcategory || null,
                         tickets: amount,
                         reason: reason || 'Perfect Attendance',
-                        teacher: currentUser.name
+                        teacher: currentUser.name,
+                        week: currentWeek  // CRITICAL: Add week field for tracking
                     });
                     
                     awardedStudents.push(previousState);
