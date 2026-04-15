@@ -4397,11 +4397,33 @@
             // This prevents race conditions when awarding to multiple students
         }
 
+        // Track current audit log filter
+        let currentAuditSubtab = 'all';
+        
+        function switchAuditSubtab(subtab) {
+            // Update button states
+            document.querySelectorAll('.subtab-button').forEach(btn => {
+                if (btn.id && btn.id.includes('Audit')) {
+                    btn.style.background = '#f5f5f5';
+                    btn.style.color = '#333';
+                }
+            });
+            
+            const activeBtn = document.getElementById(`${subtab}AuditSubtab`);
+            if (activeBtn) {
+                activeBtn.style.background = '#667eea';
+                activeBtn.style.color = 'white';
+            }
+            
+            currentAuditSubtab = subtab;
+            updateAuditLogTable();
+        }
+
         function updateAuditLogTable() {
             const tbody = document.getElementById('auditLogTable');
             
             // Filter to only show RAFFLE MODE transactions
-            const raffleAuditLog = auditLog.filter(log => {
+            let raffleAuditLog = auditLog.filter(log => {
                 // Only include raffle-related actions
                 const raffleActions = ['Awarded Tickets', 'Removed Tickets', 'Raffle Winner', 
                                       'Weekly Raffle Winner', 'Wildcat Jackpot Winner', 
@@ -4409,8 +4431,29 @@
                 return raffleActions.includes(log.action);
             });
             
+            // Filter by school level if not showing all
+            if (currentAuditSubtab !== 'all') {
+                raffleAuditLog = raffleAuditLog.filter(log => {
+                    // Find the student to check their grade
+                    const student = students.find(s => s.id === log.studentId);
+                    if (!student) return false; // Skip if student not found
+                    
+                    const grade = parseInt(student.grade);
+                    
+                    if (currentAuditSubtab === 'middleschool') {
+                        return grade >= 6 && grade <= 8;
+                    } else if (currentAuditSubtab === 'highschool') {
+                        return grade >= 9 && grade <= 12;
+                    }
+                    
+                    return true;
+                });
+            }
+            
             if (raffleAuditLog.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 40px; color: #999;">No activity logged yet</td></tr>';
+                const schoolText = currentAuditSubtab === 'middleschool' ? 'Middle School' : 
+                                  currentAuditSubtab === 'highschool' ? 'High School' : '';
+                tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; padding: 40px; color: #999;">No ${schoolText} activity logged yet</td></tr>`;
                 return;
             }
 
