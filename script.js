@@ -2696,13 +2696,22 @@
             
             switch (currentDataTimeFilter) {
                 case 'thisWeek':
-                    // This week means current week's data (may be 0 if just reset)
-                    return students.map(s => ({
-                        ...s,
-                        pbisTickets: s.pbisTickets || 0,
-                        attendanceTickets: s.attendanceTickets || 0,
-                        academicTickets: s.academicTickets || 0
-                    }));
+                    // Filter ticket history by current week number
+                    return students.map(s => {
+                        const history = s.ticketHistory || [];
+                        const thisWeekHistory = history.filter(h => h.week === currentWeek);
+                        
+                        const pbisTotal = thisWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                        const attendanceTotal = thisWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                        const academicTotal = thisWeekHistory.filter(h => h.category === 'Academics' || h.category === 'Academic').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                        
+                        return {
+                            ...s,
+                            pbisTickets: pbisTotal,
+                            attendanceTickets: attendanceTotal,
+                            academicTickets: academicTotal
+                        };
+                    });
                     
                 case 'last7Days':
                     startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
