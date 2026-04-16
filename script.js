@@ -4713,7 +4713,7 @@
             alert('✅ Login activity exported successfully!');
         }
         
-        function deleteTicketEntry(logIndex) {
+        async function deleteTicketEntry(logIndex) {
             if (currentUser.role !== 'admin' && currentUser.role !== 'superadmin') {
                 alert('Only admins can delete ticket entries');
                 return;
@@ -4782,7 +4782,7 @@
                 reason: `Deleted entry by ${entry.teacher} - Original reason: ${entry.reason}`
             });
             
-            saveData();
+            await saveData();
             updateAllDisplays();
             
             alert(`✅ Ticket entry deleted!\n\n` +
@@ -11059,7 +11059,7 @@
             updateCharts();
         }
 
-        function awardTicketsToSelected() {
+        async function awardTicketsToSelected() {
             const category = document.getElementById('categorySelect').value;
             const amount = parseInt(document.getElementById('ticketAmount').value);
             const reason = document.getElementById('ticketReason').value.trim();
@@ -11191,7 +11191,7 @@
             const studentsWithTicketsBeforeSave = students.filter(s => s.pbisTickets > 0 || s.attendanceTickets > 0 || s.academicTickets > 0).length;
             console.log(`   Students with tickets before save: ${studentsWithTicketsBeforeSave}`);
             
-            saveData();
+            await saveData(); // CRITICAL: Wait for save to complete before continuing
             
             // Verify after save completes
             setTimeout(() => {
@@ -11812,21 +11812,21 @@
             triggerConfetti();
         }
 
-        function nextWeek() {
+        async function nextWeek() {
             if (currentWeek >= cycleDuration) {
                 if (confirm(`You've completed ${cycleDuration} weeks! Run the Wildcat Jackpot before starting a new cycle?`)) {
                     return;
                 }
             }
             currentWeek++;
-            saveData();
+            await saveData();
             updateAllDisplays();
         }
 
-        function previousWeek() {
+        async function previousWeek() {
             if (currentWeek > 1) {
                 currentWeek--;
-                saveData();
+                await saveData();
                 updateAllDisplays();
             }
         }
@@ -11835,7 +11835,7 @@
         // AUTOMATIC WEEK DETECTION & RESET SYSTEM
         // ========================================
         
-        function checkAndRunAutoWeekReset() {
+        async function checkAndRunAutoWeekReset() {
             if (!autoWeekEnabled) {
                 console.log('ℹ️ Auto-week system is disabled');
                 return;
@@ -11898,10 +11898,10 @@
             
             // Run automatic week reset
             console.log('🔄 Running automatic week reset...');
-            performWeekReset(true); // true = automatic reset
+            await performWeekReset(true); // true = automatic reset
         }
         
-        function performWeekReset(isAutomatic = false) {
+        async function performWeekReset(isAutomatic = false) {
             // Calculate totals for this week before resetting
             const weekData = {
                 week: currentWeek,
@@ -11992,7 +11992,7 @@
             }
 
             currentWeek++;
-            saveData();
+            await saveData();
             updateAllDisplays();
             
             // Build message with bonus winner info
@@ -12024,13 +12024,13 @@
             return days[dayNumber];
         }
 
-        function completeWeek() {
+        async function completeWeek() {
             if (!confirm('⚠️ END OF WEEK PROCESS\n\nThis will:\n• Save this week\'s ticket data\n• Qualify eligible students for Wildcat Jackpot\n• Reset all ticket counts to 0\n• Move to next week\n\nOnly do this when the school week is over!\n\nContinue?')) return;
 
-            performWeekReset(false); // false = manual reset
+            await performWeekReset(false); // false = manual reset
         }
 
-        function resetBigRaffle() {
+        async function resetBigRaffle() {
             if (currentUser.role !== 'admin' && currentUser.role !== 'superadmin') {
                 alert('Only admins can reset the Wildcat Jackpot cycle');
                 return;
@@ -12052,7 +12052,7 @@
             
             addToAuditLog('Reset Wildcat Jackpot Cycle', null, null, null, null);
             
-            saveData();
+            await saveData();
             updateAllDisplays();
             alert('Wildcat Jackpot cycle reset! Starting fresh from Week 1.');
         }
@@ -12490,7 +12490,7 @@
         }
 
         // Award Cash
-        function awardCashToSelected() {
+        async function awardCashToSelected() {
             console.log('🎯 awardCashToSelected() called');
             
             const behaviorType = document.getElementById('cashBehaviorType').value;
@@ -12607,7 +12607,7 @@
             console.log(`✅ Processed ${processed} students`);
             
             // Save and update
-            saveData();
+            await saveData(); // CRITICAL: Wait for save to complete
             
             alert(`✅ Successfully awarded cash to ${selectedStudents.length} student(s)!`);
             
