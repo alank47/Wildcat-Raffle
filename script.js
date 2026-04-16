@@ -596,16 +596,25 @@
         function updateStudentLeaderboard() {
             const s = currentStudent;
             
-            // Calculate total tickets for all students
-            const studentsWithTotals = students.map(student => ({
-                id: student.id,
-                name: `${student.firstName} ${student.lastName}`,
-                grade: student.grade,
-                totalTickets: (student.pbisTickets || 0) + (student.attendanceTickets || 0) + (student.academicTickets || 0),
-                pbis: student.pbisTickets || 0,
-                attendance: student.attendanceTickets || 0,
-                academic: student.academicTickets || 0
-            }));
+            // Calculate tickets for CURRENT WEEK ONLY (not cumulative)
+            const studentsWithTotals = students.map(student => {
+                const history = student.ticketHistory || [];
+                const currentWeekHistory = history.filter(h => h.week === currentWeek);
+                
+                const pbis = currentWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                const attendance = currentWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                const academic = currentWeekHistory.filter(h => h.category === 'Academic' || h.category === 'Academics').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                
+                return {
+                    id: student.id,
+                    name: `${student.firstName} ${student.lastName}`,
+                    grade: student.grade,
+                    totalTickets: pbis + attendance + academic,
+                    pbis: pbis,
+                    attendance: attendance,
+                    academic: academic
+                };
+            });
             
             // Sort by total tickets (descending)
             const sorted = studentsWithTotals
@@ -762,14 +771,21 @@
         function updateStudentView() {
             document.getElementById('studentViewName').textContent = `${currentStudent.firstName} ${currentStudent.lastName}`;
             document.getElementById('studentViewId').textContent = currentStudent.id;
-            document.getElementById('studentPbisTickets').textContent = currentStudent.pbisTickets;
-            document.getElementById('studentAttendanceTickets').textContent = currentStudent.attendanceTickets;
-            document.getElementById('studentAcademicTickets').textContent = currentStudent.academicTickets;
+            
+            // Calculate tickets for CURRENT WEEK ONLY
+            const history = currentStudent.ticketHistory || [];
+            const currentWeekHistory = history.filter(h => h.week === currentWeek);
+            
+            const pbisTickets = currentWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+            const attendanceTickets = currentWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+            const academicTickets = currentWeekHistory.filter(h => h.category === 'Academic' || h.category === 'Academics').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+            
+            document.getElementById('studentPbisTickets').textContent = pbisTickets;
+            document.getElementById('studentAttendanceTickets').textContent = attendanceTickets;
+            document.getElementById('studentAcademicTickets').textContent = academicTickets;
 
             // Show qualified banner - check BOTH if already qualified OR if currently has all 3 ticket types
-            const hasAllThreeTickets = currentStudent.pbisTickets > 0 && 
-                                       currentStudent.attendanceTickets > 0 && 
-                                       currentStudent.academicTickets > 0;
+            const hasAllThreeTickets = pbisTickets > 0 && attendanceTickets > 0 && academicTickets > 0;
             
             if (currentStudent.bigRaffleQualified || hasAllThreeTickets) {
                 document.getElementById('qualifiedBanner').classList.remove('hidden');
@@ -2762,9 +2778,13 @@
             }
             
             // For date range filters, calculate from ticket history
+            // CRITICAL: Only count tickets that have a week field to avoid counting corrupted data
             return students.map(s => {
                 const history = s.ticketHistory || [];
                 const filteredHistory = history.filter(h => {
+                    // Skip tickets without week field (corrupted data)
+                    if (h.week === undefined || h.week === null) return false;
+                    
                     const ticketDate = new Date(h.timestamp);
                     return ticketDate >= startDate && ticketDate <= endDate;
                 });
