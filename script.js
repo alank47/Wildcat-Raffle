@@ -1846,22 +1846,47 @@
                                     return firebaseStudent; // Student only in Firebase
                                 }
                                 
-                                // Take MAX of each ticket type to preserve all awards
-                                // UNLESS we just reset (within last 10 seconds) - then trust local 0 values
+                                // Check if we recently reset (within last 10 seconds)
                                 const recentlyReset = lastWeekResetTime && (Date.now() - lastWeekResetTime) < 10000;
+                                
+                                // Merge ticket histories first
+                                const mergedHistory = [
+                                    ...(firebaseStudent.ticketHistory || []),
+                                    ...(localStudent.ticketHistory || [])
+                                ];
+                                
+                                // Deduplicate by timestamp+category+tickets
+                                const uniqueHistory = [];
+                                const seen = new Set();
+                                mergedHistory.forEach(h => {
+                                    const key = `${h.timestamp}-${h.category}-${h.tickets || h.amount}`;
+                                    if (!seen.has(key)) {
+                                        seen.add(key);
+                                        uniqueHistory.push(h);
+                                    }
+                                });
+                                
+                                // If recently reset, trust local values; otherwise calculate from current week history
+                                let pbisValue, attendanceValue, academicValue;
+                                if (recentlyReset) {
+                                    pbisValue = localStudent.pbisTickets || 0;
+                                    attendanceValue = localStudent.attendanceTickets || 0;
+                                    academicValue = localStudent.academicTickets || 0;
+                                } else {
+                                    const currentWeekHistory = uniqueHistory.filter(h => h.week === currentWeek);
+                                    pbisValue = currentWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                                    attendanceValue = currentWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                                    academicValue = currentWeekHistory.filter(h => h.category === 'Academic' || h.category === 'Academics').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                                }
                                 
                                 return {
                                     ...firebaseStudent, // Start with Firebase version
                                     ...localStudent, // Overlay local changes
-                                    pbisTickets: recentlyReset ? (localStudent.pbisTickets || 0) : Math.max(localStudent.pbisTickets || 0, firebaseStudent.pbisTickets || 0),
-                                    attendanceTickets: recentlyReset ? (localStudent.attendanceTickets || 0) : Math.max(localStudent.attendanceTickets || 0, firebaseStudent.attendanceTickets || 0),
-                                    academicTickets: recentlyReset ? (localStudent.academicTickets || 0) : Math.max(localStudent.academicTickets || 0, firebaseStudent.academicTickets || 0),
+                                    pbisTickets: pbisValue,
+                                    attendanceTickets: attendanceValue,
+                                    academicTickets: academicValue,
                                     // Use merged and deduplicated ticket history
-                                    ticketHistory: uniqueHistory,
-                                    ].filter((item, index, self) => 
-                                        // Remove duplicates by timestamp
-                                        index === self.findIndex(t => t.timestamp === item.timestamp)
-                                    ).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+                                    ticketHistory: uniqueHistory.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
                                 };
                             });
                             
