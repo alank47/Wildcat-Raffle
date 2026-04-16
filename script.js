@@ -1137,20 +1137,37 @@
                                     return firebaseStudent; // Student only in Firebase
                                 }
                                 
-                                // Take MAX of each ticket type to preserve awards made locally
+                                // Merge ticket histories first
+                                const mergedHistory = [
+                                    ...(firebaseStudent.ticketHistory || []),
+                                    ...(localStudent.ticketHistory || [])
+                                ];
+                                
+                                // Deduplicate by timestamp+category+tickets
+                                const uniqueHistory = [];
+                                const seen = new Set();
+                                mergedHistory.forEach(h => {
+                                    const key = `${h.timestamp}-${h.category}-${h.tickets || h.amount}`;
+                                    if (!seen.has(key)) {
+                                        seen.add(key);
+                                        uniqueHistory.push(h);
+                                    }
+                                });
+                                
+                                // Calculate cumulative counters from CURRENT WEEK ticket history (source of truth)
+                                const currentWeekHistory = uniqueHistory.filter(h => h.week === currentWeek);
+                                const pbisTotal = currentWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                                const attendanceTotal = currentWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                                const academicTotal = currentWeekHistory.filter(h => h.category === 'Academic' || h.category === 'Academics').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                                
                                 return {
                                     ...firebaseStudent, // Start with Firebase (newer data from others)
                                     ...localStudent, // Overlay local changes (preserve local awards)
-                                    pbisTickets: Math.max(localStudent.pbisTickets || 0, firebaseStudent.pbisTickets || 0),
-                                    attendanceTickets: Math.max(localStudent.attendanceTickets || 0, firebaseStudent.attendanceTickets || 0),
-                                    academicTickets: Math.max(localStudent.academicTickets || 0, firebaseStudent.academicTickets || 0),
-                                    // Merge ticket history
-                                    ticketHistory: [
-                                        ...(firebaseStudent.ticketHistory || []),
-                                        ...(localStudent.ticketHistory || [])
-                                    ].filter((item, index, self) => 
-                                        index === self.findIndex(t => t.timestamp === item.timestamp)
-                                    ).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+                                    pbisTickets: pbisTotal,
+                                    attendanceTickets: attendanceTotal,
+                                    academicTickets: academicTotal,
+                                    // Use merged and deduplicated ticket history
+                                    ticketHistory: uniqueHistory.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
                                 };
                             });
                             
@@ -1839,10 +1856,8 @@
                                     pbisTickets: recentlyReset ? (localStudent.pbisTickets || 0) : Math.max(localStudent.pbisTickets || 0, firebaseStudent.pbisTickets || 0),
                                     attendanceTickets: recentlyReset ? (localStudent.attendanceTickets || 0) : Math.max(localStudent.attendanceTickets || 0, firebaseStudent.attendanceTickets || 0),
                                     academicTickets: recentlyReset ? (localStudent.academicTickets || 0) : Math.max(localStudent.academicTickets || 0, firebaseStudent.academicTickets || 0),
-                                    // Merge ticket history
-                                    ticketHistory: [
-                                        ...(firebaseStudent.ticketHistory || []),
-                                        ...(localStudent.ticketHistory || [])
+                                    // Use merged and deduplicated ticket history
+                                    ticketHistory: uniqueHistory,
                                     ].filter((item, index, self) => 
                                         // Remove duplicates by timestamp
                                         index === self.findIndex(t => t.timestamp === item.timestamp)
