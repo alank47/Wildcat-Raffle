@@ -796,9 +796,8 @@
             // Update student leaderboards (this will set the level text and color)
             updateStudentLeaderboards();
 
-            // Update ticket history
+            // Update ticket history (use existing history variable)
             const tbody = document.getElementById('studentHistoryTable');
-            const history = currentStudent.ticketHistory || [];
 
             if (history.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 40px; color: #999;">No tickets received yet. Keep up the good work!</td></tr>';
