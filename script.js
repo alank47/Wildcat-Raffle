@@ -1137,22 +1137,25 @@
                                     return firebaseStudent; // Student only in Firebase
                                 }
                                 
-                                // Merge ticket histories first
+                                // Merge ticket histories - LOCAL FIRST to preserve week assignments
                                 const mergedHistory = [
-                                    ...(firebaseStudent.ticketHistory || []),
-                                    ...(localStudent.ticketHistory || [])
+                                    ...(localStudent.ticketHistory || []),
+                                    ...(firebaseStudent.ticketHistory || [])
                                 ];
                                 
-                                // Deduplicate by timestamp+category+tickets
-                                const uniqueHistory = [];
-                                const seen = new Set();
+                                // Deduplicate - PREFER tickets WITH week field over those without
+                                const seen = new Map();
                                 mergedHistory.forEach(h => {
                                     const key = `${h.timestamp}-${h.category}-${h.tickets || h.amount}`;
-                                    if (!seen.has(key)) {
-                                        seen.add(key);
-                                        uniqueHistory.push(h);
+                                    const existing = seen.get(key);
+                                    
+                                    // Keep this ticket if we haven't seen it, OR if this one has week and existing doesn't
+                                    if (!existing || (h.week !== undefined && h.week !== null && (existing.week === undefined || existing.week === null))) {
+                                        seen.set(key, h);
                                     }
                                 });
+                                
+                                const uniqueHistory = Array.from(seen.values());
                                 
                                 // Calculate cumulative counters from CURRENT WEEK ticket history (source of truth)
                                 const currentWeekHistory = uniqueHistory.filter(h => h.week === currentWeek);
@@ -1849,22 +1852,25 @@
                                 // Check if we recently reset (within last 10 seconds)
                                 const recentlyReset = lastWeekResetTime && (Date.now() - lastWeekResetTime) < 10000;
                                 
-                                // Merge ticket histories first
+                                // Merge ticket histories - LOCAL FIRST to preserve week assignments
                                 const mergedHistory = [
-                                    ...(firebaseStudent.ticketHistory || []),
-                                    ...(localStudent.ticketHistory || [])
+                                    ...(localStudent.ticketHistory || []),
+                                    ...(firebaseStudent.ticketHistory || [])
                                 ];
                                 
-                                // Deduplicate by timestamp+category+tickets
-                                const uniqueHistory = [];
-                                const seen = new Set();
+                                // Deduplicate - PREFER tickets WITH week field over those without
+                                const seen = new Map();
                                 mergedHistory.forEach(h => {
                                     const key = `${h.timestamp}-${h.category}-${h.tickets || h.amount}`;
-                                    if (!seen.has(key)) {
-                                        seen.add(key);
-                                        uniqueHistory.push(h);
+                                    const existing = seen.get(key);
+                                    
+                                    // Keep this ticket if we haven't seen it, OR if this one has week and existing doesn't
+                                    if (!existing || (h.week !== undefined && h.week !== null && (existing.week === undefined || existing.week === null))) {
+                                        seen.set(key, h);
                                     }
                                 });
+                                
+                                const uniqueHistory = Array.from(seen.values());
                                 
                                 // If recently reset, trust local values; otherwise calculate from current week history
                                 let pbisValue, attendanceValue, academicValue;
