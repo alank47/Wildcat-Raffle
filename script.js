@@ -2642,6 +2642,7 @@
             // Refresh analytics with new filter
             updateAnalyticsCharts();
             updateAnalyticsTables();
+            updateTeacherAnalytics(); // Update teacher analytics when filter changes
         }
         
         function toggleCustomDateRange() {
@@ -2683,6 +2684,7 @@
             // Refresh analytics
             updateAnalyticsCharts();
             updateAnalyticsTables();
+            updateTeacherAnalytics(); // Update teacher analytics when custom range is applied
         }
         
         function getFilteredStudentData() {
@@ -2880,6 +2882,9 @@
         
         // TEACHER ANALYTICS FUNCTION
         function updateTeacherAnalytics() {
+            // Use the main data filter (same as MS/HS tabs)
+            const teacherTimeFrame = currentDataTimeFilter;
+            
             // Calculate teacher ticket data from audit log based on time filter
             const teacherTickets = {};
             
@@ -2894,11 +2899,11 @@
                 };
             });
             
-            // Filter audit log by current time filter
+            // Filter audit log by selected time frame (using main filter)
             let filteredAudit = auditLog;
             const now = new Date();
             
-            switch (currentDataTimeFilter) {
+            switch (teacherTimeFrame) {
                 case 'thisWeek':
                     filteredAudit = auditLog.filter(e => e.week === currentWeek);
                     break;
@@ -2920,7 +2925,21 @@
                         });
                     }
                     break;
-                // 'allTime' and 'custom' use full audit log or custom range
+                case 'allTime':
+                    // Use full audit log
+                    filteredAudit = auditLog;
+                    break;
+                case 'custom':
+                    // Custom range filtering
+                    if (customStartDate && customEndDate) {
+                        const startDate = new Date(customStartDate);
+                        const endDate = new Date(customEndDate);
+                        filteredAudit = auditLog.filter(e => {
+                            const entryDate = new Date(e.timestamp);
+                            return entryDate >= startDate && entryDate <= endDate;
+                        });
+                    }
+                    break;
             }
             
             // Count tickets by teacher from filtered audit log
