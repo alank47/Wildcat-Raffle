@@ -1245,7 +1245,14 @@
                         if (auditLog && auditLog.length > 0) {
                             const combinedAuditLog = [...firebaseAuditLog];
                             auditLog.forEach(localEntry => {
-                                if (!firebaseAuditLog.find(e => e.timestamp === localEntry.timestamp && e.studentId === localEntry.studentId)) {
+                                // Use timestamp + studentId + category + ticketCount as unique key
+                                // This handles multiple students getting tickets at the same time
+                                const localKey = `${localEntry.timestamp}-${localEntry.studentId}-${localEntry.category}-${localEntry.ticketCount}`;
+                                const exists = firebaseAuditLog.find(e => {
+                                    const fbKey = `${e.timestamp}-${e.studentId}-${e.category}-${e.ticketCount}`;
+                                    return fbKey === localKey;
+                                });
+                                if (!exists) {
                                     combinedAuditLog.push(localEntry);
                                 }
                             });
@@ -1940,7 +1947,13 @@
                             const combinedAuditLog = [...firebaseAuditLog];
                             
                             auditLog.forEach(localEntry => {
-                                if (!firebaseAuditLog.find(e => e.timestamp === localEntry.timestamp && e.studentId === localEntry.studentId)) {
+                                // Use timestamp + studentId + category + ticketCount as unique key
+                                const localKey = `${localEntry.timestamp}-${localEntry.studentId}-${localEntry.category}-${localEntry.ticketCount}`;
+                                const exists = firebaseAuditLog.find(e => {
+                                    const fbKey = `${e.timestamp}-${e.studentId}-${e.category}-${e.ticketCount}`;
+                                    return fbKey === localKey;
+                                });
+                                if (!exists) {
                                     combinedAuditLog.push(localEntry);
                                 }
                             });
