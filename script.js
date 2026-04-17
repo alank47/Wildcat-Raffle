@@ -89,6 +89,16 @@
         let cycleDuration = 5;
         let lastWeekResetTime = null; // Timestamp of last week reset - used to prevent merge from restoring tickets // Configurable: How many weeks in each Wildcat Jackpot cycle
         
+        // Helper function: Check if student is qualified for Wildcat Jackpot
+        function isQualifiedForJackpot(student) {
+            if (!student) return false;
+            // Handle both old boolean format and new array format
+            if (Array.isArray(student.bigRaffleQualified)) {
+                return student.bigRaffleQualified.length > 0;
+            }
+            return student.bigRaffleQualified === true;
+        }
+        
         // ========================================
         // AUTOMATIC WEEK SYSTEM
         // ========================================
@@ -429,7 +439,7 @@
             
             // Jackpot status
             const hasAllThree = (s.pbisTickets > 0) && (s.attendanceTickets > 0) && (s.academicTickets > 0);
-            const isQualified = s.bigRaffleQualified || false;
+            const isQualified = isQualifiedForJackpot(s);
             const entries = s.weeksQualified || 0;
             
             if (isQualified || hasAllThree) {
@@ -787,7 +797,7 @@
             // Show qualified banner - check BOTH if already qualified OR if currently has all 3 ticket types
             const hasAllThreeTickets = pbisTickets > 0 && attendanceTickets > 0 && academicTickets > 0;
             
-            if (currentStudent.bigRaffleQualified || hasAllThreeTickets) {
+            if (isQualifiedForJackpot(currentStudent) || hasAllThreeTickets) {
                 document.getElementById('qualifiedBanner').classList.remove('hidden');
             } else {
                 document.getElementById('qualifiedBanner').classList.add('hidden');
@@ -2397,7 +2407,7 @@
                             pbisTickets: 0,
                             attendanceTickets: 0,
                             academicTickets: 0,
-                            bigRaffleQualified: false,
+                            bigRaffleQualified: [],
                             ticketHistory: []
                         });
                     } else {
@@ -3478,7 +3488,13 @@
             }
 
             const totalStudents = filteredStudents.length;
-            const qualifiedStudents = filteredStudents.filter(s => s.bigRaffleQualified).length;
+            const qualifiedStudents = filteredStudents.filter(s => {
+                // Handle both old boolean format and new array format
+                if (Array.isArray(s.bigRaffleQualified)) {
+                    return s.bigRaffleQualified.length > 0;
+                }
+                return s.bigRaffleQualified === true;
+            }).length;
             const notQualified = totalStudents - qualifiedStudents;
 
             // Destroy existing chart
@@ -3667,7 +3683,7 @@
             const tbody = document.getElementById('programDataTable');
             if (!tbody) return;
 
-            const currentQualified = students.filter(s => s.bigRaffleQualified).length;
+            const currentQualified = students.filter(s => isQualifiedForJackpot(s)).length;
             const currentTotal = students.length;
             const currentRate = currentTotal > 0 ? Math.round(currentQualified/currentTotal*100) : 0;
 
@@ -3742,7 +3758,7 @@
             const qualifiedData = [];
             qualifiedData.push(['Student ID', 'Name', 'Grade', 'Weeks Qualified', 'Raffle Entries']);
             
-            students.filter(s => s.bigRaffleQualified).forEach(s => {
+            students.filter(s => isQualifiedForJackpot(s)).forEach(s => {
                 qualifiedData.push([
                     s.id,
                     `${s.firstName} ${s.lastName}`,
@@ -3759,7 +3775,7 @@
             const summaryData = [];
             summaryData.push(['Metric', 'Value']);
             summaryData.push(['Total Students', students.length]);
-            summaryData.push(['Qualified for Wildcat Jackpot', students.filter(s => s.bigRaffleQualified).length]);
+            summaryData.push(['Qualified for Wildcat Jackpot', students.filter(s => isQualifiedForJackpot(s)).length]);
             summaryData.push(['Current Week', currentWeek]);
             summaryData.push(['Total PBIS Tickets', students.reduce((sum, s) => sum + (s.pbisTickets || 0), 0)]);
             summaryData.push(['Total Attendance Tickets', students.reduce((sum, s) => sum + (s.attendanceTickets || 0), 0)]);
@@ -8042,7 +8058,7 @@
                     pbisTickets: 0,
                     attendanceTickets: 0,
                     academicTickets: 0,
-                    bigRaffleQualified: false,
+                    bigRaffleQualified: [],
                     weeksQualified: 0,
                     ticketHistory: [],
                     wildcatCashBalance: 0,
@@ -8180,7 +8196,7 @@
                     pbisTickets: 0,
                     attendanceTickets: 0,
                     academicTickets: 0,
-                    bigRaffleQualified: false,
+                    bigRaffleQualified: [],
                     weeksQualified: 0,
                     ticketHistory: [],
                     wildcatCashBalance: 0,
@@ -8200,7 +8216,7 @@
                     pbisTickets: 0,
                     attendanceTickets: 0,
                     academicTickets: 0,
-                    bigRaffleQualified: false,
+                    bigRaffleQualified: [],
                     weeksQualified: 0,
                     ticketHistory: [],
                     wildcatCashBalance: 0,
@@ -9108,7 +9124,7 @@
                         pbisTickets: 0,
                         attendanceTickets: 0,
                         academicTickets: 0,
-                        bigRaffleQualified: false,
+                        bigRaffleQualified: [],
                         weeksQualified: 0,
                         ticketHistory: [],
                         sections: []  // Initialize sections array for student schedules
@@ -9293,7 +9309,7 @@
                         pbisTickets: 0,
                         attendanceTickets: 0,
                         academicTickets: 0,
-                        bigRaffleQualified: false,
+                        bigRaffleQualified: [],
                         weeksQualified: 0,
                         ticketHistory: [],
                         sections: []  // Initialize sections array for student schedules
@@ -9532,7 +9548,7 @@
                     pbisTickets: 0,
                     attendanceTickets: 0,
                     academicTickets: 0,
-                    bigRaffleQualified: false,
+                    bigRaffleQualified: [],
                     weeksQualified: 0,
                     ticketHistory: []
                 };
@@ -9853,10 +9869,10 @@
                 
                 // Determine status display
                 let statusHTML = '';
-                if (s.bigRaffleQualified && hasAllThreeTickets) {
+                if (isQualifiedForJackpot(s) && hasAllThreeTickets) {
                     // Officially qualified AND currently has all tickets
                     statusHTML = '<span class="qualified-badge pulse-animation" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">🏆 Locked In</span>';
-                } else if (s.bigRaffleQualified) {
+                } else if (isQualifiedForJackpot(s)) {
                     // Officially qualified but doesn't have current tickets (from previous week)
                     statusHTML = '<span class="qualified-badge" style="background: #3b82f6;">🔵 Qualified</span>';
                 } else if (hasAllThreeTickets) {
@@ -9923,7 +9939,7 @@
                         s.attendanceTickets || 0,
                         s.academicTickets || 0,
                         total,
-                        s.bigRaffleQualified ? 'Yes' : 'No'
+                        isQualifiedForJackpot(s) ? 'Yes' : 'No'
                     ].join(',');
                 })
             ].join('\n');
@@ -10133,7 +10149,7 @@
                 </div>
                 <h2 style="margin: 0 0 10px 0; font-size: 32px;">${student.firstName} ${student.lastName}</h2>
                 <div style="opacity: 0.9; font-size: 16px;">Student ID: ${student.id} • Grade ${student.grade}</div>
-                ${student.bigRaffleQualified ? 
+                ${isQualifiedForJackpot(student) ? 
                     '<div style="margin-top: 15px; background: rgba(255,255,255,0.2); padding: 10px 20px; border-radius: 20px; display: inline-block; font-weight: 600;">🏆 Qualified for Wildcat Jackpot</div>' 
                     : ''}
             `;
@@ -10739,7 +10755,7 @@
                                 <td style="padding: 8px; text-align: center; font-weight: bold; color: #667eea;">${student.pbisTickets}</td>
                                 <td style="padding: 8px; text-align: center; font-weight: bold; color: #28a745;">${student.attendanceTickets}</td>
                                 <td style="padding: 8px; text-align: center; font-weight: bold; color: #ffc107;">${student.academicTickets}</td>
-                                <td style="padding: 8px; text-align: center;">${student.bigRaffleQualified ? '<span style="color: #28a745; font-weight: bold;">✓ Qualified</span>' : '<span style="color: #999;">-</span>'}</td>
+                                <td style="padding: 8px; text-align: center;">${isQualifiedForJackpot(student) ? '<span style="color: #28a745; font-weight: bold;">✓ Qualified</span>' : '<span style="color: #999;">-</span>'}</td>
                             </tr>
                         `;
                     });
@@ -10959,14 +10975,14 @@
 
         function updateStats() {
             document.getElementById('totalStudents').textContent = students.length;
-            const qualified = students.filter(s => s.bigRaffleQualified).length;
+            const qualified = students.filter(s => isQualifiedForJackpot(s)).length;
             document.getElementById('qualifiedStudents').textContent = qualified;
             document.getElementById('bigRaffleQualified').textContent = qualified;
         }
 
         function updateBigRaffleTable() {
             const tbody = document.getElementById('bigRaffleTable');
-            const qualified = students.filter(s => s.bigRaffleQualified);
+            const qualified = students.filter(s => isQualifiedForJackpot(s));
             
             if (qualified.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 20px; color: #999;">No students qualified yet</td></tr>';
@@ -11087,7 +11103,7 @@
             });
             
             // Count qualified students
-            const qualifiedCount = students.filter(s => s.bigRaffleQualified).length;
+            const qualifiedCount = students.filter(s => isQualifiedForJackpot(s)).length;
             
             // Find top earner
             let topEarner = { name: '-', total: 0 };
@@ -11799,8 +11815,8 @@
             }
 
             // Separate qualified students by school
-            const msQualified = students.filter(s => s.bigRaffleQualified && s.grade >= 6 && s.grade <= 8);
-            const hsQualified = students.filter(s => s.bigRaffleQualified && s.grade >= 9 && s.grade <= 12);
+            const msQualified = students.filter(s => isQualifiedForJackpot(s) && s.grade >= 6 && s.grade <= 8);
+            const hsQualified = students.filter(s => isQualifiedForJackpot(s) && s.grade >= 9 && s.grade <= 12);
             
             if (msQualified.length === 0 && hsQualified.length === 0) {
                 alert('No students qualified for the Wildcat Jackpot yet!');
@@ -12004,9 +12020,15 @@
             students.forEach(s => {
                 // Student qualifies if they have tickets in ALL 3 categories
                 if (s.pbisTickets > 0 && s.attendanceTickets > 0 && s.academicTickets > 0) {
-                    if (!s.bigRaffleQualified) {
-                        s.bigRaffleQualified = true;
-                        addToAuditLog('Qualified for Wildcat Jackpot', s.id, null, null, `${isAutomatic ? 'Auto-qualified' : 'Qualified'} - tickets in all 3 categories`);
+                    // Initialize array if needed
+                    if (!Array.isArray(s.bigRaffleQualified)) {
+                        s.bigRaffleQualified = [];
+                    }
+                    
+                    // Only count as NEW qualifier if they haven't qualified this week yet
+                    if (!s.bigRaffleQualified.includes(currentWeek - 1)) {
+                        s.bigRaffleQualified.push(currentWeek - 1); // Add the week that just ended
+                        addToAuditLog('Qualified for Wildcat Jackpot', s.id, null, null, `${isAutomatic ? 'Auto-qualified' : 'Qualified'} - Week ${currentWeek - 1}`);
                         weekData.studentsQualified++; // Only count NEW qualifiers
                     }
                     s.weeksQualified = (s.weeksQualified || 0) + 1;
@@ -12126,7 +12148,7 @@
             if (!confirm(`This will reset the ${cycleDuration}-week cycle and clear all Wildcat Jackpot qualifications. Continue?`)) return;
 
             students.forEach(s => {
-                s.bigRaffleQualified = false;
+                s.bigRaffleQualified = []; // Clear qualification array
                 s.weeksQualified = 0;
                 s.pbisTickets = 0;
                 s.attendanceTickets = 0;
