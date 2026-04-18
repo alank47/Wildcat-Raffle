@@ -1119,21 +1119,28 @@
             // Initialize Firebase first
             await initFirebase();
             
-            // Try to load from Firebase - LOAD FROM MULTIPLE DOCUMENTS
+            // Try to load from Firebase - LOAD FROM 4 DOCUMENTS
             if (firebaseInitialized && firebaseDb) {
                 try {
                     const { doc, getDoc } = window.firebaseModules;
                     
-                    // Load both documents in parallel
-                    const [mainSnap, secondarySnap] = await Promise.all([
+                    // Load all 4 documents in parallel
+                    const [mainSnap, secondarySnap, ticketHistorySnap, auditLogSnap] = await Promise.all([
                         getDoc(doc(firebaseDb, 'raffle_data', 'main')),
-                        getDoc(doc(firebaseDb, 'raffle_data', 'secondary'))
+                        getDoc(doc(firebaseDb, 'raffle_data', 'secondary')),
+                        getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history')),
+                        getDoc(doc(firebaseDb, 'raffle_data', 'audit_log'))
                     ]);
                     
                     // Check if we have data (at least main document should exist)
                     if (mainSnap.exists()) {
                         const mainData = mainSnap.data();
                         const secondaryData = secondarySnap.exists() ? secondarySnap.data() : {};
+                        const ticketHistoryData = ticketHistorySnap.exists() ? ticketHistorySnap.data() : {};
+                        const auditLogData = auditLogSnap.exists() ? auditLogSnap.data() : {};
+                        
+                        // Load ticket histories from separate document
+                        const firebaseTicketHistories = ticketHistoryData.histories || {};
                         
                         // CRITICAL: MERGE students instead of overwriting to preserve local changes
                         const firebaseStudents = mainData.students || [];
@@ -1144,13 +1151,20 @@
                                 const localStudent = students.find(s => s.id === firebaseStudent.id);
                                 
                                 if (!localStudent) {
-                                    return firebaseStudent; // Student only in Firebase
+                                    // Student only in Firebase - restore ticket history from separate doc
+                                    return {
+                                        ...firebaseStudent,
+                                        ticketHistory: firebaseTicketHistories[firebaseStudent.id] || []
+                                    };
                                 }
                                 
-                                // Merge ticket histories - LOCAL FIRST to preserve week assignments
+                                // Merge ticket histories from BOTH sources
+                                const localHistory = localStudent.ticketHistory || [];
+                                const firebaseHistory = firebaseTicketHistories[firebaseStudent.id] || [];
+                                
                                 const mergedHistory = [
-                                    ...(localStudent.ticketHistory || []),
-                                    ...(firebaseStudent.ticketHistory || [])
+                                    ...localHistory,
+                                    ...firebaseHistory
                                 ];
                                 
                                 // Deduplicate - PREFER tickets WITH week field over those without
@@ -1193,8 +1207,11 @@
                             
                             students = mergedStudents;
                         } else {
-                            // No local students yet (first load) - use Firebase directly
-                            students = firebaseStudents;
+                            // No local students yet (first load) - restore ticket histories from separate doc
+                            students = firebaseStudents.map(s => ({
+                                ...s,
+                                ticketHistory: firebaseTicketHistories[s.id] || []
+                            }));
                         }
                         
                         // Load from main document (non-student data can be overwritten safely)
@@ -1250,8 +1267,8 @@
                         bigRaffleWinners = secondaryData.bigRaffleWinners || [];
                         weeklyHistory = secondaryData.weeklyHistory || [];
                         
-                        // MERGE auditLog to preserve local entries
-                        const firebaseAuditLog = secondaryData.auditLog || [];
+                        // MERGE auditLog from separate document to preserve local entries
+                        const firebaseAuditLog = auditLogData.auditLog || [];
                         if (auditLog && auditLog.length > 0) {
                             const combinedAuditLog = [...firebaseAuditLog];
                             auditLog.forEach(localEntry => {
@@ -1293,7 +1310,7 @@
                             wildcatCashTransactions = firebaseCashTransactions;
                         }
                         
-                        console.log('✅ Loaded data from Firebase (2 documents)');
+                        console.log('✅ Loaded data from Firebase (4 documents)');
                         
                         // Apply school branding
                         if (schoolBranding && (schoolBranding.schoolName || schoolBranding.logoBase64)) {
@@ -1846,12 +1863,21 @@
                         let teachersToSave = teachers;
                         let auditLogToSave = auditLog;
                         let loginHistoryToSave = loginHistory;
+                        let ticketHistoriesToSave = {};
                         
-                        // Load BOTH docs to merge everything
-                        const [mainSnap, secondarySnap] = await Promise.all([
+                        // Load ALL 4 docs to merge everything
+                        const [mainSnap, secondarySnap, ticketHistorySnap, auditLogSnap] = await Promise.all([
                             getDoc(doc(firebaseDb, 'raffle_data', 'main')),
-                            getDoc(doc(firebaseDb, 'raffle_data', 'secondary'))
+                            getDoc(doc(firebaseDb, 'raffle_data', 'secondary')),
+                            getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history')),
+                            getDoc(doc(firebaseDb, 'raffle_data', 'audit_log'))
                         ]);
+                        
+                        // LOAD TICKET HISTORIES from separate document
+                        let firebaseTicketHistories = {};
+                        if (ticketHistorySnap.exists()) {
+                            firebaseTicketHistories = ticketHistorySnap.data().histories || {};
+                        }
                         
                         // MERGE STUDENTS: Take MAX ticket values to never lose awards
                         if (mainSnap.exists()) {
@@ -1869,10 +1895,13 @@
                                 // Check if we recently reset (within last 10 seconds)
                                 const recentlyReset = lastWeekResetTime && (Date.now() - lastWeekResetTime) < 10000;
                                 
-                                // Merge ticket histories - LOCAL FIRST to preserve week assignments
+                                // Merge ticket histories from BOTH local student AND separate ticket_history doc
+                                const localHistory = localStudent.ticketHistory || [];
+                                const firebaseHistory = firebaseTicketHistories[firebaseStudent.id] || [];
+                                
                                 const mergedHistory = [
-                                    ...(localStudent.ticketHistory || []),
-                                    ...(firebaseStudent.ticketHistory || [])
+                                    ...localHistory,
+                                    ...firebaseHistory
                                 ];
                                 
                                 // Deduplicate - PREFER tickets WITH week field over those without
@@ -1889,6 +1918,9 @@
                                 
                                 const uniqueHistory = Array.from(seen.values());
                                 
+                                // Store ticket history separately for saving
+                                ticketHistoriesToSave[firebaseStudent.id] = uniqueHistory.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                                
                                 // If recently reset, trust local values; otherwise calculate from current week history
                                 let pbisValue, attendanceValue, academicValue;
                                 if (recentlyReset) {
@@ -1902,21 +1934,31 @@
                                     academicValue = currentWeekHistory.filter(h => h.category === 'Academic' || h.category === 'Academics').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
                                 }
                                 
-                                return {
+                                // Return student WITHOUT ticketHistory (it's stored separately)
+                                const studentData = {
                                     ...firebaseStudent, // Start with Firebase version
                                     ...localStudent, // Overlay local changes
                                     pbisTickets: pbisValue,
                                     attendanceTickets: attendanceValue,
-                                    academicTickets: academicValue,
-                                    // Use merged and deduplicated ticket history
-                                    ticketHistory: uniqueHistory.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+                                    academicTickets: academicValue
                                 };
+                                
+                                // Remove ticketHistory from student object
+                                delete studentData.ticketHistory;
+                                
+                                return studentData;
                             });
                             
                             // Add any NEW students that are only in local (just added by this user)
                             students.forEach(localStudent => {
                                 if (!firebaseStudents.find(s => s.id === localStudent.id)) {
-                                    mergedStudents.push(localStudent);
+                                    // Store ticket history separately
+                                    ticketHistoriesToSave[localStudent.id] = localStudent.ticketHistory || [];
+                                    
+                                    // Add student without ticket history
+                                    const studentData = {...localStudent};
+                                    delete studentData.ticketHistory;
+                                    mergedStudents.push(studentData);
                                 }
                             });
                             
@@ -1950,10 +1992,10 @@
                             teachersToSave = mergedTeachers;
                         }
                         
-                        // MERGE AUDIT LOG
-                        if (secondarySnap.exists()) {
-                            const firebaseSecondary = secondarySnap.data();
-                            const firebaseAuditLog = firebaseSecondary.auditLog || [];
+                        // MERGE AUDIT LOG from separate document
+                        if (auditLogSnap.exists()) {
+                            const firebaseAuditData = auditLogSnap.data();
+                            const firebaseAuditLog = firebaseAuditData.auditLog || [];
                             const combinedAuditLog = [...firebaseAuditLog];
                             
                             auditLog.forEach(localEntry => {
@@ -1971,6 +2013,11 @@
                             auditLogToSave = combinedAuditLog.sort((a, b) => 
                                 new Date(a.timestamp) - new Date(b.timestamp)
                             );
+                        }
+                        
+                        // MERGE LOGIN HISTORY from secondary document
+                        if (secondarySnap.exists()) {
+                            const firebaseSecondary = secondarySnap.data();
                             
                             // MERGE LOGIN HISTORY
                             const firebaseLoginHistory = firebaseSecondary.loginHistory || [];
@@ -2007,9 +2054,10 @@
                         const studentsWithTickets = studentsToSave.filter(s => s.pbisTickets > 0 || s.attendanceTickets > 0 || s.academicTickets > 0);
                         console.log(`📊 Students with tickets: ${studentsWithTickets.length}`);
                         
+                        // DOCUMENT 1: Main (students without ticket history + teachers + metadata)
                         const mainDoc = doc(firebaseDb, 'raffle_data', 'main');
                         await setDoc(mainDoc, {
-                            students: studentsToSave,
+                            students: studentsToSave, // Students WITHOUT ticket history
                             currentWeek,
                             cycleDuration,
                             teachers: teachersToSave,
@@ -2033,14 +2081,36 @@
                         
                         console.log(`✅ Main document saved`);
                         
-                        await new Promise(resolve => setTimeout(resolve, 200));
+                        await new Promise(resolve => setTimeout(resolve, 50));
                         
+                        // DOCUMENT 2: Ticket History (all student ticket histories)
+                        const ticketHistoryDoc = doc(firebaseDb, 'raffle_data', 'ticket_history');
+                        await setDoc(ticketHistoryDoc, {
+                            histories: ticketHistoriesToSave,
+                            lastSaveTimestamp: timestamp
+                        });
+                        
+                        console.log(`✅ Ticket history document saved`);
+                        
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                        
+                        // DOCUMENT 3: Audit Log (all audit entries)
+                        const auditLogDoc = doc(firebaseDb, 'raffle_data', 'audit_log');
+                        await setDoc(auditLogDoc, {
+                            auditLog: auditLogToSave,
+                            lastSaveTimestamp: timestamp
+                        });
+                        
+                        console.log(`✅ Audit log document saved`);
+                        
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                        
+                        // DOCUMENT 4: Secondary (weekly data + other features)
                         const secondaryDoc = doc(firebaseDb, 'raffle_data', 'secondary');
                         await setDoc(secondaryDoc, {
                             weeklyWinners,
                             bigRaffleWinners,
                             weeklyHistory,
-                            auditLog: auditLogToSave,
                             loginHistory: loginHistoryToSave,
                             hallPasses,
                             preventionGroups,
@@ -2054,17 +2124,20 @@
                         
                         console.log(`✅ Secondary document saved`);
                         
-                        // Update local arrays with merged versions
-                        students = studentsToSave;
+                        // Restore ticket histories to local students array
+                        students = studentsToSave.map(s => ({
+                            ...s,
+                            ticketHistory: ticketHistoriesToSave[s.id] || []
+                        }));
                         teachers = teachersToSave;
                         auditLog = auditLogToSave;
                         loginHistory = loginHistoryToSave;
                         
                         lastSaveTimestamp = timestamp;
                         
-                        // Also save to localStorage
+                        // Also save to localStorage (with ticket histories restored)
                         localStorage.setItem('raffleData', JSON.stringify({
-                            students: studentsToSave,
+                            students: students, // Use restored students with ticket histories
                             currentWeek,
                             cycleDuration,
                             weeklyWinners,
@@ -2240,8 +2313,16 @@
             saveData();
         }
         
-        // Automatic daily backup to Firebase
+        // Automatic daily backup to Firebase - DISABLED DUE TO DATA SIZE
         async function createAutomaticBackup() {
+            // DISABLED: Automatic backups now exceed Firebase's 1MB document limit
+            // The 4-document split keeps operational data under limit
+            // Use manual backup export instead (downloads JSON file)
+            console.log('ℹ️ Automatic Firebase backups disabled (data size exceeds 1MB limit)');
+            console.log('💡 Use "Export Backup" button for manual backups instead');
+            return;
+            
+            /* DISABLED CODE - kept for reference
             if (!firebaseInitialized || !firebaseDb) {
                 console.log('⚠️ Cannot create automatic backup: Firebase not initialized');
                 return;
@@ -2276,6 +2357,7 @@
             } catch (error) {
                 console.error('❌ Automatic backup failed:', error);
             }
+            */
         }
         
         // Restore from backup file
