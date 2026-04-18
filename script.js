@@ -1267,26 +1267,10 @@
                         bigRaffleWinners = secondaryData.bigRaffleWinners || [];
                         weeklyHistory = secondaryData.weeklyHistory || [];
                         
-                        // MERGE auditLog from separate document to preserve local entries
-                        const firebaseAuditLog = auditLogData.auditLog || [];
-                        if (auditLog && auditLog.length > 0) {
-                            const combinedAuditLog = [...firebaseAuditLog];
-                            auditLog.forEach(localEntry => {
-                                // Use timestamp + studentId + category + ticketCount as unique key
-                                // This handles multiple students getting tickets at the same time
-                                const localKey = `${localEntry.timestamp}-${localEntry.studentId}-${localEntry.category}-${localEntry.ticketCount}`;
-                                const exists = firebaseAuditLog.find(e => {
-                                    const fbKey = `${e.timestamp}-${e.studentId}-${e.category}-${e.ticketCount}`;
-                                    return fbKey === localKey;
-                                });
-                                if (!exists) {
-                                    combinedAuditLog.push(localEntry);
-                                }
-                            });
-                            auditLog = combinedAuditLog.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-                        } else {
-                            auditLog = firebaseAuditLog;
-                        }
+                        // LOAD audit log from Firebase
+                        // Note: Merge logic is in saveData(), not loadData()
+                        // On page load, we always want the latest from Firebase
+                        auditLog = auditLogData.auditLog || [];
                         
                         loginHistory = secondaryData.loginHistory || [];
                         hallPasses = secondaryData.hallPasses || [];
