@@ -11107,7 +11107,10 @@
                 
                 const hasBonus = bonusEntries > 0;
                 
-                let entriesDisplay = `${s.weeksQualified} ${s.weeksQualified === 1 ? 'entry' : 'entries'}`;
+                // Use bigRaffleQualified array length (number of weeks qualified)
+                const weeksQualified = Array.isArray(s.bigRaffleQualified) ? s.bigRaffleQualified.length : 0;
+                
+                let entriesDisplay = `${weeksQualified} ${weeksQualified === 1 ? 'entry' : 'entries'}`;
                 if (hasBonus) {
                     entriesDisplay += ` <span style="background: #fbbf24; color: #78350f; padding: 2px 6px; border-radius: 8px; font-size: 11px; font-weight: 600;">🏆 +${bonusEntries} BONUS</span>`;
                 }
@@ -11117,7 +11120,7 @@
                         <td>${s.id}</td>
                         <td>${s.firstName} ${s.lastName}</td>
                         <td style="text-align: center;">${grade}</td>
-                        <td style="text-align: center;">${s.weeksQualified || 0}</td>
+                        <td style="text-align: center;">${weeksQualified}</td>
                         <td>${entriesDisplay}</td>
                     </tr>
                 `;
