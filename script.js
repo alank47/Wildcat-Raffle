@@ -1871,7 +1871,38 @@
                 if (firebaseInitialized && firebaseDb) {
                     try {
                         const { doc, setDoc, getDoc, runTransaction } = window.firebaseModules;
-                        
+
+                        // ============================================================
+                        // STALENESS CHECK: Refuse to save if our local state is too
+                        // old compared to Firebase. This prevents a tab that's been
+                        // open for hours from overwriting newer data with its stale
+                        // in-memory copy.
+                        // ============================================================
+                        const STALENESS_THRESHOLD_MS = 60000; // 1 minute
+                        try {
+                            const mainPeek = await getDoc(doc(firebaseDb, 'raffle_data', 'main'));
+                            if (mainPeek.exists()) {
+                                const firebaseTs = mainPeek.data().lastSaveTimestamp || 0;
+                                const localTs = lastSaveTimestamp || 0;
+                                // If Firebase is significantly newer, our local data is stale
+                                if (firebaseTs > localTs + STALENESS_THRESHOLD_MS) {
+                                    console.warn(`🛑 SAVE BLOCKED: local data is stale.`);
+                                    console.warn(`   Firebase: ${new Date(firebaseTs).toISOString()}`);
+                                    console.warn(`   Local:    ${new Date(localTs).toISOString()}`);
+                                    console.warn(`   Reloading from Firebase before save...`);
+                                    isSyncing = false;
+                                    // Reload fresh state from Firebase so we can try again safely
+                                    await loadData();
+                                    // Don't retry the save automatically — the caller's intent
+                                    // might no longer apply to the refreshed state. Tell the user.
+                                    alert('⚠️ Your data was out of date and has been refreshed from the cloud. Please re-do your last action if needed.');
+                                    return;
+                                }
+                            }
+                        } catch (staleCheckErr) {
+                            console.warn('Staleness check failed (non-fatal, proceeding with save):', staleCheckErr);
+                        }
+
                         const timestamp = Date.now();
                         
                         console.log(`🔵 Saving with transactions - ${students.length} students, ${teachers.length} teachers`);
@@ -1942,9 +1973,30 @@
                                         }
                                         
                                         // Return student WITHOUT ticketHistory (stored separately)
+                                        // FIELD-LEVEL MERGE RULES:
+                                        // - Local wins on: profile fields (name, grade, sections) - teacher edits
+                                        // - Qualification arrays (bigRaffleQualified): UNION of both sides
+                                        //   so that neither stale tab nor week-end reset can erase entries.
+                                        //   We also respect tombstones on qualification weeks if present.
+                                        // - weeksQualified: MAX of both sides - monotonically increasing counter.
+                                        // - Counters (pbisTickets etc.): recomputed from history (authoritative).
+                                        const fbQualified = Array.isArray(firebaseStudent.bigRaffleQualified) 
+                                            ? firebaseStudent.bigRaffleQualified 
+                                            : (firebaseStudent.bigRaffleQualified === true ? [1] : []);
+                                        const localQualified = Array.isArray(localStudent.bigRaffleQualified) 
+                                            ? localStudent.bigRaffleQualified 
+                                            : (localStudent.bigRaffleQualified === true ? [1] : []);
+                                        const unionQualified = Array.from(new Set([...fbQualified, ...localQualified]))
+                                            .sort((a, b) => a - b);
+                                        
                                         const studentData = {
                                             ...firebaseStudent,
                                             ...localStudent,
+                                            bigRaffleQualified: unionQualified,
+                                            weeksQualified: Math.max(
+                                                firebaseStudent.weeksQualified || 0,
+                                                localStudent.weeksQualified || 0
+                                            ),
                                             pbisTickets: pbisValue,
                                             attendanceTickets: attendanceValue,
                                             academicTickets: academicValue
@@ -9817,6 +9869,10 @@
                 k.toLowerCase().includes('grade')
             );
             
+            // Build a map of existing students by ID so we preserve their ticket data
+            const existingById = new Map();
+            students.forEach(s => existingById.set(String(s.id), s));
+
             students = jsonData.map((row, index) => {
                 let firstName = '';
                 let lastName = '';
@@ -9832,8 +9888,23 @@
                     lastName = fullName.slice(1).join(' ') || '';
                 }
                 
+                const id = String(row[idCol] || `STU${String(index + 1).padStart(3, '0')}`);
+                const existing = existingById.get(id);
+                
+                if (existing) {
+                    // Existing student — preserve ALL their ticket data, only update name/grade/homeroom
+                    return {
+                        ...existing,
+                        firstName: firstName || existing.firstName,
+                        lastName: lastName || existing.lastName,
+                        grade: gradeCol ? (row[gradeCol] || existing.grade) : existing.grade,
+                        homeroom: row['Homeroom'] || row['homeroom'] || existing.homeroom || ''
+                    };
+                }
+                
+                // Brand new student
                 return {
-                    id: row[idCol] || `STU${String(index + 1).padStart(3, '0')}`,
+                    id: id,
                     firstName: firstName,
                     lastName: lastName,
                     grade: gradeCol ? row[gradeCol] : '',
@@ -9845,6 +9916,14 @@
                     weeksQualified: 0,
                     ticketHistory: []
                 };
+            });
+            
+            // Add back any existing students who were NOT in the CSV (don't silently drop them)
+            const importedIds = new Set(students.map(s => String(s.id)));
+            existingById.forEach((existing, id) => {
+                if (!importedIds.has(id)) {
+                    students.push(existing);
+                }
             });
 
             saveData();
