@@ -2594,19 +2594,16 @@
                         
                         // Only load if Firebase is newer
                         if (firebaseTimestamp > localTimestamp) {
-                            console.log('🔄 Auto-refreshing data (Firebase has newer data)');
+                            console.log('🔄 Auto-refreshing data in background (Firebase has newer data)');
                             await loadData();
-                            if (currentUser) {
-                                updateAllDisplays();
-                            } else if (currentStudent) {
-                                const student = students.find(s => s.id === currentStudent.id);
-                                if (student) {
-                                    currentStudent = student;
-                                    updateStudentView();
-                                }
-                            }
+                            
+                            // DON'T call updateAllDisplays() - it redraws everything and is disruptive
+                            // The data is updated in memory, and will show when teacher naturally navigates
+                            // This prevents interrupting teachers mid-workflow
+                            console.log('✅ Background data sync complete (displays unchanged)');
                         } else {
-                            console.log('⏭️ Skipping auto-refresh (local data is current)');
+                            // Silently skip - don't log unless debugging
+                            // console.log('⏭️ Skipping auto-refresh (local data is current)');
                         }
                     }
                 } catch (error) {
