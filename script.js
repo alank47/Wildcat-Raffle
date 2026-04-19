@@ -1857,7 +1857,7 @@
                         
                         // TRANSACTION 1: Main Document (students + teachers + metadata)
                         const mainDocRef = doc(firebaseDb, 'raffle_data', 'main');
-                        await runTransaction(firebaseDb, async (transaction) => {
+                        const mainTransactionResult = await runTransaction(firebaseDb, async (transaction) => {
                             const mainDoc = await transaction.get(mainDocRef);
                             
                             let studentsToSave = students;
@@ -1967,13 +1967,16 @@
                                 lastSaveTimestamp: timestamp
                             });
                             
-                            // Update local references
-                            students = studentsToSave.map(s => ({
-                                ...s,
-                                ticketHistory: ticketHistoriesToSave[s.id] || []
-                            }));
-                            teachers = teachersToSave;
+                            // Return merged data to update after transaction completes
+                            return { studentsToSave, teachersToSave };
                         });
+                        
+                        // Update local references AFTER transaction completes
+                        students = mainTransactionResult.studentsToSave.map(s => ({
+                            ...s,
+                            ticketHistory: ticketHistoriesToSave[s.id] || []
+                        }));
+                        teachers = mainTransactionResult.teachersToSave;
                         
                         console.log(`✅ Main document saved (transaction)`);
                         
@@ -1981,7 +1984,7 @@
                         
                         // TRANSACTION 2: Ticket History Document
                         const ticketHistoryDocRef = doc(firebaseDb, 'raffle_data', 'ticket_history');
-                        await runTransaction(firebaseDb, async (transaction) => {
+                        const ticketHistoryResult = await runTransaction(firebaseDb, async (transaction) => {
                             const ticketHistoryDoc = await transaction.get(ticketHistoryDocRef);
                             
                             let mergedHistories = {...ticketHistoriesToSave};
@@ -2024,12 +2027,15 @@
                                 lastSaveTimestamp: timestamp
                             });
                             
-                            // Update local students with merged histories
-                            students = students.map(s => ({
-                                ...s,
-                                ticketHistory: mergedHistories[s.id] || []
-                            }));
+                            // Return merged histories to update after transaction completes
+                            return mergedHistories;
                         });
+                        
+                        // Update local students with merged histories AFTER transaction completes
+                        students = students.map(s => ({
+                            ...s,
+                            ticketHistory: ticketHistoryResult[s.id] || []
+                        }));
                         
                         console.log(`✅ Ticket history document saved (transaction)`);
                         
@@ -2037,7 +2043,7 @@
                         
                         // TRANSACTION 3: Audit Log Document
                         const auditLogDocRef = doc(firebaseDb, 'raffle_data', 'audit_log');
-                        await runTransaction(firebaseDb, async (transaction) => {
+                        const auditLogResult = await runTransaction(firebaseDb, async (transaction) => {
                             const auditLogDoc = await transaction.get(auditLogDocRef);
                             
                             let auditLogToSave = [...auditLog];
@@ -2068,9 +2074,12 @@
                                 lastSaveTimestamp: timestamp
                             });
                             
-                            // Update local reference
-                            auditLog = auditLogToSave;
+                            // Return merged audit log to update after transaction completes
+                            return auditLogToSave;
                         });
+                        
+                        // Update local audit log AFTER transaction completes
+                        auditLog = auditLogResult;
                         
                         console.log(`✅ Audit log document saved (transaction)`);
                         
