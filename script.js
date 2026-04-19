@@ -2031,11 +2031,30 @@
                             return mergedHistories;
                         });
                         
-                        // Update local students with merged histories AFTER transaction completes
-                        students = students.map(s => ({
-                            ...s,
-                            ticketHistory: ticketHistoryResult[s.id] || []
-                        }));
+                        // SMART UPDATE: Only add NEW entries from Firebase, don't replace entire local histories
+                        // This preserves local additions AND deletions (like cleaning up Week 3 test tickets)
+                        students.forEach(s => {
+                            const mergedHistory = ticketHistoryResult[s.id] || [];
+                            const localHistory = s.ticketHistory || [];
+                            
+                            // Create set of local ticket keys
+                            const localKeys = new Set(localHistory.map(h => 
+                                `${h.timestamp}-${h.category}-${h.tickets || h.amount}`
+                            ));
+                            
+                            // Find entries in merged result that we don't have locally
+                            const newFromFirebase = mergedHistory.filter(fbEntry => {
+                                const key = `${fbEntry.timestamp}-${fbEntry.category}-${fbEntry.tickets || fbEntry.amount}`;
+                                return !localKeys.has(key);
+                            });
+                            
+                            // Only add new entries, don't replace
+                            if (newFromFirebase.length > 0) {
+                                s.ticketHistory = [...localHistory, ...newFromFirebase].sort((a, b) => 
+                                    new Date(a.timestamp) - new Date(b.timestamp)
+                                );
+                            }
+                        });
                         
                         console.log(`✅ Ticket history document saved (transaction)`);
                         
