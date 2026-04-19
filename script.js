@@ -123,12 +123,13 @@
         let bigRaffleWinners = [];
         let teachers = [];
         let auditLog = [];
-        let localTombstones = []; // NEW: tracks intentionally deleted entries
-        
-        // Helper: give every entry a stable ID so merges work correctly
+        let localTombstones = []; // NEW: tracks intentionally deleted ticket/audit entries
+
+        // NEW: Helper — gives every entry a stable ID so merges work correctly.
+        // Existing entries without an entryId get a deterministic ID from their content,
+        // so the same entry produces the same ID on every device.
         function ensureEntryId(entry) {
             if (entry && entry.entryId) return entry.entryId;
-            // Build a deterministic ID from the entry's content
             const parts = [
                 entry.timestamp || '',
                 entry.studentId || '',
@@ -145,6 +146,7 @@
             }
             return 'e_' + Math.abs(h).toString(36);
         }
+
         let currentUser = null;
         let currentStudent = null;
         let binId = '6987ac03ae596e708f191041'; // School database ID - hardcoded for auto-connect
@@ -1163,6 +1165,7 @@
                         
                         // Load ticket histories from separate document
                         const firebaseTicketHistories = ticketHistoryData.histories || {};
+                        localTombstones = ticketHistoryData.tombstones || []; // NEW: load tombstones
                         
                         // CRITICAL: MERGE students instead of overwriting to preserve local changes
                         const firebaseStudents = mainData.students || [];
@@ -2004,137 +2007,112 @@
                         
                         await new Promise(resolve => setTimeout(resolve, 50));
                         
-                        // TRANSACTION 2: Ticket History Document
+                        // TRANSACTION 2: Ticket History Document (tombstone-aware merge)
+                        // FIXED: Uses stable entryIds + tombstone list so that intentional
+                        // deletions survive merges with Firebase. Concurrent additions from
+                        // other teachers still merge correctly because they'll have different IDs.
                         const ticketHistoryDocRef = doc(firebaseDb, 'raffle_data', 'ticket_history');
                         const ticketHistoryResult = await runTransaction(firebaseDb, async (transaction) => {
                             const ticketHistoryDoc = await transaction.get(ticketHistoryDocRef);
-                            
-                            let mergedHistories = {...ticketHistoriesToSave};
-                            
-                            if (ticketHistoryDoc.exists()) {
-                                const firebaseHistories = ticketHistoryDoc.data().histories || {};
-                                
-                                // Merge ticket histories for each student
-                                Object.keys(firebaseHistories).forEach(studentId => {
-                                    const firebaseHistory = firebaseHistories[studentId] || [];
-                                    const localHistory = ticketHistoriesToSave[studentId] || [];
-                                    
-                                    if (localHistory.length === 0) {
-                                        // No local changes, keep Firebase
-                                        mergedHistories[studentId] = firebaseHistory;
-                                    } else {
-                                        // Merge and deduplicate
-                                        const combined = [...localHistory, ...firebaseHistory];
-                                        const seen = new Map();
-                                        
-                                        combined.forEach(h => {
-                                            const key = `${h.timestamp}-${h.category}-${h.tickets || h.amount}`;
-                                            const existing = seen.get(key);
-                                            
-                                            // Prefer tickets WITH week field
-                                            if (!existing || (h.week !== undefined && h.week !== null && (existing.week === undefined || existing.week === null))) {
-                                                seen.set(key, h);
-                                            }
-                                        });
-                                        
-                                        mergedHistories[studentId] = Array.from(seen.values()).sort((a, b) => 
-                                            new Date(a.timestamp) - new Date(b.timestamp)
-                                        );
+                            const firebaseHistories = ticketHistoryDoc.exists() ? (ticketHistoryDoc.data().histories || {}) : {};
+                            const firebaseTombstones = ticketHistoryDoc.exists() ? (ticketHistoryDoc.data().tombstones || []) : [];
+
+                            // Union of tombstones (append-only; dedupe by entryId)
+                            const tombstoneMap = new Map();
+                            firebaseTombstones.forEach(t => tombstoneMap.set(t.entryId, t));
+                            localTombstones.forEach(t => {
+                                if (!tombstoneMap.has(t.entryId)) tombstoneMap.set(t.entryId, t);
+                            });
+                            const mergedTombstones = Array.from(tombstoneMap.values());
+                            const tombstonedIds = new Set(mergedTombstones.map(t => t.entryId));
+
+                            // Merge each student's history by entryId (not by content hash)
+                            const mergedHistories = {};
+                            const allStudentIds = new Set([
+                                ...Object.keys(firebaseHistories),
+                                ...Object.keys(ticketHistoriesToSave)
+                            ]);
+
+                            allStudentIds.forEach(sid => {
+                                const fbEntries = firebaseHistories[sid] || [];
+                                const localEntries = ticketHistoriesToSave[sid] || [];
+                                const byId = new Map();
+
+                                // Firebase entries first — skip anything tombstoned
+                                fbEntries.forEach(e => {
+                                    const id = ensureEntryId(e);
+                                    if (!tombstonedIds.has(id)) {
+                                        byId.set(id, { ...e, entryId: id });
                                     }
                                 });
-                            }
-                            
+
+                                // Local entries — skip tombstoned; add any new IDs
+                                localEntries.forEach(e => {
+                                    const id = ensureEntryId(e);
+                                    if (tombstonedIds.has(id)) return;
+                                    if (!byId.has(id)) {
+                                        byId.set(id, { ...e, entryId: id });
+                                    }
+                                });
+
+                                const merged = Array.from(byId.values())
+                                    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                                if (merged.length > 0) mergedHistories[sid] = merged;
+                            });
+
                             transaction.set(ticketHistoryDocRef, {
                                 histories: mergedHistories,
+                                tombstones: mergedTombstones,
                                 lastSaveTimestamp: timestamp
                             });
-                            
-                            // Return merged histories to update after transaction completes
-                            return mergedHistories;
+
+                            return { mergedHistories, mergedTombstones };
                         });
-                        
-                        // SMART UPDATE: Only add NEW entries from Firebase, don't replace entire local histories
-                        // This preserves local additions AND deletions (like cleaning up Week 3 test tickets)
+
+                        // Sync local state with what was actually saved
+                        localTombstones = ticketHistoryResult.mergedTombstones;
                         students.forEach(s => {
-                            const mergedHistory = ticketHistoryResult[s.id] || [];
-                            const localHistory = s.ticketHistory || [];
-                            
-                            // Create set of local ticket keys
-                            const localKeys = new Set(localHistory.map(h => 
-                                `${h.timestamp}-${h.category}-${h.tickets || h.amount}`
-                            ));
-                            
-                            // Find entries in merged result that we don't have locally
-                            const newFromFirebase = mergedHistory.filter(fbEntry => {
-                                const key = `${fbEntry.timestamp}-${fbEntry.category}-${fbEntry.tickets || fbEntry.amount}`;
-                                return !localKeys.has(key);
-                            });
-                            
-                            // Only add new entries, don't replace
-                            if (newFromFirebase.length > 0) {
-                                s.ticketHistory = [...localHistory, ...newFromFirebase].sort((a, b) => 
-                                    new Date(a.timestamp) - new Date(b.timestamp)
-                                );
-                            }
+                            s.ticketHistory = ticketHistoryResult.mergedHistories[s.id] || [];
                         });
-                        
+
                         console.log(`✅ Ticket history document saved (transaction)`);
                         
                         await new Promise(resolve => setTimeout(resolve, 50));
                         
-                        // TRANSACTION 3: Audit Log Document
+                        // TRANSACTION 3: Audit Log Document (append-only union by entryId)
+                        // FIXED: Simple set union — Firebase entries stay, local additions are
+                        // preserved even when Firebase hasn't seen them yet. No deletion path;
+                        // audit log is append-only by compliance design.
                         const auditLogDocRef = doc(firebaseDb, 'raffle_data', 'audit_log');
-                        const auditLogResult = await runTransaction(firebaseDb, async (transaction) => {
+                        await runTransaction(firebaseDb, async (transaction) => {
                             const auditLogDoc = await transaction.get(auditLogDocRef);
-                            
-                            let auditLogToSave = [...auditLog];
-                            
-                            if (auditLogDoc.exists()) {
-                                const firebaseAuditLog = auditLogDoc.data().auditLog || [];
-                                
-                                // PROPER MERGE: Combine both, deduplicate by unique key
-                                const allEntries = [...auditLog, ...firebaseAuditLog];
-                                const uniqueMap = new Map();
-                                
-                                allEntries.forEach(entry => {
-                                    // Create unique key for each entry
-                                    const key = `${entry.timestamp}-${entry.studentId}-${entry.action}-${entry.category}-${entry.ticketCount}-${entry.teacher}`;
-                                    
-                                    // Keep the entry (last one wins if duplicate)
-                                    uniqueMap.set(key, entry);
-                                });
-                                
-                                auditLogToSave = Array.from(uniqueMap.values()).sort((a, b) => 
-                                    new Date(a.timestamp) - new Date(b.timestamp)
-                                );
-                            }
-                            
+                            const firebaseAuditLog = auditLogDoc.exists() ? (auditLogDoc.data().auditLog || []) : [];
+
+                            const byId = new Map();
+                            // Firebase is baseline — nothing in Firebase ever gets dropped
+                            firebaseAuditLog.forEach(e => {
+                                const id = ensureEntryId(e);
+                                byId.set(id, { ...e, entryId: id });
+                            });
+                            // Add local entries Firebase doesn't have (this is what preserves the Sofia/Leo bonuses)
+                            auditLog.forEach(e => {
+                                const id = ensureEntryId(e);
+                                if (!byId.has(id)) {
+                                    byId.set(id, { ...e, entryId: id });
+                                }
+                            });
+
+                            const merged = Array.from(byId.values())
+                                .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
                             transaction.set(auditLogDocRef, {
-                                auditLog: auditLogToSave,
+                                auditLog: merged,
                                 lastSaveTimestamp: timestamp
                             });
-                            
-                            // Return merged audit log to update after transaction completes
-                            return auditLogToSave;
+
+                            auditLog = merged;
                         });
-                        
-                        // SMART UPDATE: Only add NEW entries from Firebase that we don't have locally
-                        // Don't replace entire local audit log (preserves local additions and deletions)
-                        const localKeys = new Set(auditLog.map(e => 
-                            `${e.timestamp}-${e.studentId}-${e.action}-${e.category}-${e.ticketCount}-${e.teacher}`
-                        ));
-                        
-                        const newFromFirebase = auditLogResult.filter(fbEntry => {
-                            const key = `${fbEntry.timestamp}-${fbEntry.studentId}-${fbEntry.action}-${fbEntry.category}-${fbEntry.ticketCount}-${fbEntry.teacher}`;
-                            return !localKeys.has(key);
-                        });
-                        
-                        if (newFromFirebase.length > 0) {
-                            auditLog.push(...newFromFirebase);
-                            auditLog.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-                            console.log(`📥 Added ${newFromFirebase.length} new entries from other users`);
-                        }
-                        
+
                         console.log(`✅ Audit log document saved (transaction)`);
                         
                         await new Promise(resolve => setTimeout(resolve, 50));
