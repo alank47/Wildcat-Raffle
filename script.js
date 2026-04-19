@@ -123,6 +123,28 @@
         let bigRaffleWinners = [];
         let teachers = [];
         let auditLog = [];
+        let localTombstones = []; // NEW: tracks intentionally deleted entries
+        
+        // Helper: give every entry a stable ID so merges work correctly
+        function ensureEntryId(entry) {
+            if (entry && entry.entryId) return entry.entryId;
+            // Build a deterministic ID from the entry's content
+            const parts = [
+                entry.timestamp || '',
+                entry.studentId || '',
+                entry.teacher || '',
+                entry.category || '',
+                entry.action || '',
+                String(entry.tickets || entry.amount || entry.ticketCount || ''),
+                entry.reason || ''
+            ].join('|');
+            let h = 0;
+            for (let i = 0; i < parts.length; i++) {
+                h = ((h << 5) - h) + parts.charCodeAt(i);
+                h |= 0;
+            }
+            return 'e_' + Math.abs(h).toString(36);
+        }
         let currentUser = null;
         let currentStudent = null;
         let binId = '6987ac03ae596e708f191041'; // School database ID - hardcoded for auto-connect
