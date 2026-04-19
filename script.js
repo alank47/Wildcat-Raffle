@@ -124,6 +124,7 @@
         let teachers = [];
         let auditLog = [];
         let localTombstones = []; // NEW: tracks intentionally deleted ticket/audit entries
+        let entityTombstones = []; // NEW: tracks intentionally deleted teachers/students (on main doc)
 
         // NEW: Helper — gives every entry a stable ID so merges work correctly.
         // Existing entries without an entryId get a deterministic ID from their content,
@@ -1277,6 +1278,7 @@
                         schoolBranding = mainData.schoolBranding || schoolBranding;
                         referralIdCounter = mainData.referralIdCounter || 1;
                         lastSaveTimestamp = mainData.lastSaveTimestamp || 0;
+                        entityTombstones = mainData.entityTombstones || []; // NEW: load entity tombstones
                         // Auto-week system - FORCED DISABLED
                         autoWeekEnabled = false; // Disabled to prevent accidental ticket deletion
                         lastAutoResetDate = mainData.lastAutoResetDate || null;
@@ -1381,6 +1383,8 @@
                 detentionReasons = data.detentionReasons || ['Disrupting Class', 'Tardiness', 'Dress Code Violation', 'Inappropriate Behavior', 'Defiance/Disrespect', 'Cell Phone Violation', 'Missing Assignment', 'Other'];
                 loginHistory = data.loginHistory || [];
                 wildcatCashTransactions = data.wildcatCashTransactions || [];
+                localTombstones = data.localTombstones || []; // NEW
+                entityTombstones = data.entityTombstones || []; // NEW
                 lastSaveTimestamp = data.lastSaveTimestamp || 0;
                 // Auto-week system - FORCED DISABLED
                 autoWeekEnabled = false; // Disabled to prevent accidental ticket deletion
@@ -1892,48 +1896,67 @@
                                 const firebaseMain = mainDoc.data();
                                 const firebaseStudents = firebaseMain.students || [];
                                 const firebaseTeachers = firebaseMain.teachers || [];
+                                const firebaseEntityTombstones = firebaseMain.entityTombstones || [];
                                 
-                                // MERGE STUDENTS
-                                const mergedStudents = firebaseStudents.map(firebaseStudent => {
-                                    const localStudent = students.find(s => s.id === firebaseStudent.id);
-                                    
-                                    if (!localStudent) {
-                                        return firebaseStudent;
-                                    }
-                                    
-                                    // Check if we recently reset
-                                    const recentlyReset = lastWeekResetTime && (Date.now() - lastWeekResetTime) < 10000;
-                                    
-                                    // Calculate current week tickets from ticket history
-                                    let pbisValue, attendanceValue, academicValue;
-                                    const localHistory = localStudent.ticketHistory || [];
-                                    
-                                    if (recentlyReset) {
-                                        pbisValue = localStudent.pbisTickets || 0;
-                                        attendanceValue = localStudent.attendanceTickets || 0;
-                                        academicValue = localStudent.academicTickets || 0;
-                                    } else {
-                                        const currentWeekHistory = localHistory.filter(h => h.week === currentWeek);
-                                        pbisValue = currentWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
-                                        attendanceValue = currentWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
-                                        academicValue = currentWeekHistory.filter(h => h.category === 'Academic' || h.category === 'Academics').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
-                                    }
-                                    
-                                    // Return student WITHOUT ticketHistory (stored separately)
-                                    const studentData = {
-                                        ...firebaseStudent,
-                                        ...localStudent,
-                                        pbisTickets: pbisValue,
-                                        attendanceTickets: attendanceValue,
-                                        academicTickets: academicValue
-                                    };
-                                    
-                                    delete studentData.ticketHistory;
-                                    return studentData;
+                                // Union of entity tombstones (append-only, dedup by entity key)
+                                const entityTombMap = new Map();
+                                firebaseEntityTombstones.forEach(t => entityTombMap.set(t.key, t));
+                                entityTombstones.forEach(t => {
+                                    if (!entityTombMap.has(t.key)) entityTombMap.set(t.key, t);
                                 });
+                                const mergedEntityTombstones = Array.from(entityTombMap.values());
+                                const tombstonedTeacherIds = new Set(
+                                    mergedEntityTombstones.filter(t => t.type === 'teacher').map(t => t.id)
+                                );
+                                const tombstonedStudentIds = new Set(
+                                    mergedEntityTombstones.filter(t => t.type === 'student').map(t => t.id)
+                                );
+                                entityTombstones = mergedEntityTombstones;
                                 
-                                // Add new students only in local
+                                // MERGE STUDENTS (skip tombstoned)
+                                const mergedStudents = firebaseStudents
+                                    .filter(fs => !tombstonedStudentIds.has(fs.id))
+                                    .map(firebaseStudent => {
+                                        const localStudent = students.find(s => s.id === firebaseStudent.id);
+                                        
+                                        if (!localStudent) {
+                                            return firebaseStudent;
+                                        }
+                                        
+                                        // Check if we recently reset
+                                        const recentlyReset = lastWeekResetTime && (Date.now() - lastWeekResetTime) < 10000;
+                                        
+                                        // Calculate current week tickets from ticket history
+                                        let pbisValue, attendanceValue, academicValue;
+                                        const localHistory = localStudent.ticketHistory || [];
+                                        
+                                        if (recentlyReset) {
+                                            pbisValue = localStudent.pbisTickets || 0;
+                                            attendanceValue = localStudent.attendanceTickets || 0;
+                                            academicValue = localStudent.academicTickets || 0;
+                                        } else {
+                                            const currentWeekHistory = localHistory.filter(h => h.week === currentWeek);
+                                            pbisValue = currentWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                                            attendanceValue = currentWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                                            academicValue = currentWeekHistory.filter(h => h.category === 'Academic' || h.category === 'Academics').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                                        }
+                                        
+                                        // Return student WITHOUT ticketHistory (stored separately)
+                                        const studentData = {
+                                            ...firebaseStudent,
+                                            ...localStudent,
+                                            pbisTickets: pbisValue,
+                                            attendanceTickets: attendanceValue,
+                                            academicTickets: academicValue
+                                        };
+                                        
+                                        delete studentData.ticketHistory;
+                                        return studentData;
+                                    });
+                                
+                                // Add new students only in local (skip tombstoned)
                                 students.forEach(localStudent => {
+                                    if (tombstonedStudentIds.has(localStudent.id)) return;
                                     if (!firebaseStudents.find(s => s.id === localStudent.id)) {
                                         const studentData = {...localStudent};
                                         delete studentData.ticketHistory;
@@ -1943,23 +1966,26 @@
                                 
                                 studentsToSave = mergedStudents;
                                 
-                                // MERGE TEACHERS
-                                const mergedTeachers = firebaseTeachers.map(firebaseTeacher => {
-                                    const localTeacher = teachers.find(t => t.id === firebaseTeacher.id);
-                                    
-                                    if (!localTeacher) {
-                                        return firebaseTeacher;
-                                    }
-                                    
-                                    return {
-                                        ...firebaseTeacher,
-                                        ...localTeacher,
-                                        ticketsAwarded: Math.max(localTeacher.ticketsAwarded || 0, firebaseTeacher.ticketsAwarded || 0)
-                                    };
-                                });
+                                // MERGE TEACHERS (skip tombstoned)
+                                const mergedTeachers = firebaseTeachers
+                                    .filter(ft => !tombstonedTeacherIds.has(ft.id))
+                                    .map(firebaseTeacher => {
+                                        const localTeacher = teachers.find(t => t.id === firebaseTeacher.id);
+                                        
+                                        if (!localTeacher) {
+                                            return firebaseTeacher;
+                                        }
+                                        
+                                        return {
+                                            ...firebaseTeacher,
+                                            ...localTeacher,
+                                            ticketsAwarded: Math.max(localTeacher.ticketsAwarded || 0, firebaseTeacher.ticketsAwarded || 0)
+                                        };
+                                    });
                                 
-                                // Add new teachers only in local
+                                // Add new teachers only in local (skip tombstoned)
                                 teachers.forEach(localTeacher => {
+                                    if (tombstonedTeacherIds.has(localTeacher.id)) return;
                                     if (!firebaseTeachers.find(t => t.id === localTeacher.id)) {
                                         mergedTeachers.push(localTeacher);
                                     }
@@ -1989,6 +2015,7 @@
                                 weekResetHour,
                                 currentCycle,
                                 cycleHistory,
+                                entityTombstones: entityTombstones, // NEW: persist entity tombstones
                                 lastSaveTimestamp: timestamp
                             });
                             
@@ -2178,6 +2205,8 @@
                             weekResetHour,
                             currentCycle,
                             cycleHistory,
+                            localTombstones,
+                            entityTombstones,
                             lastSaveTimestamp: timestamp
                         }));
                         console.log('✅ Saved to localStorage');
@@ -2217,7 +2246,9 @@
                             weekResetDay,
                             weekResetHour,
                             currentCycle,
-                            cycleHistory
+                            cycleHistory,
+                            localTombstones,
+                            entityTombstones
                         }));
                         console.log('✅ Saved to localStorage (fallback)');
                     }
@@ -2254,7 +2285,9 @@
                         weekResetDay,
                         weekResetHour,
                         currentCycle,
-                        cycleHistory
+                        cycleHistory,
+                        localTombstones,
+                        entityTombstones
                     }));
                     console.log('✅ Saved to localStorage');
                 }
@@ -5041,8 +5074,26 @@
                 // Remove from student's ticket history by matching timestamp, category, and amount
                 if (student.ticketHistory) {
                     const beforeLength = student.ticketHistory.length;
+                    // Tombstone matching history entries so deletion survives the merge
+                    const toRemove = student.ticketHistory.filter(h => {
+                        const historyAmount = h.tickets || h.amount || 0;
+                        const historyCategory = h.category || '';
+                        return h.timestamp === entry.timestamp &&
+                               historyAmount === ticketCount &&
+                               historyCategory === entry.category;
+                    });
+                    toRemove.forEach(h => {
+                        const tid = ensureEntryId(h);
+                        if (!localTombstones.some(t => t.entryId === tid)) {
+                            localTombstones.push({
+                                entryId: tid,
+                                deletedAt: new Date().toISOString(),
+                                deletedBy: currentUser.name || 'admin',
+                                reason: `Deleted via audit log: ${h.reason || ''}`
+                            });
+                        }
+                    });
                     student.ticketHistory = student.ticketHistory.filter(h => {
-                        // Match by timestamp and ticket count and category
                         const historyAmount = h.tickets || h.amount || 0;
                         const historyCategory = h.category || '';
                         return !(
@@ -5063,10 +5114,21 @@
                 }
             }
             
-            // Remove from audit log
+            // Tombstone the audit log entry so deletion survives the merge
+            const auditEntryId = ensureEntryId(entry);
+            if (!localTombstones.some(t => t.entryId === auditEntryId)) {
+                localTombstones.push({
+                    entryId: auditEntryId,
+                    deletedAt: new Date().toISOString(),
+                    deletedBy: currentUser.name || 'admin',
+                    reason: `Deleted audit entry: ${entry.action} - ${entry.reason || ''}`
+                });
+            }
+            
+            // Remove from local audit log
             auditLog.splice(logIndex, 1);
             
-            // Add deletion record to audit log
+            // Add deletion record to audit log (this is a NEW entry, not tombstoned)
             auditLog.push({
                 timestamp: new Date().toISOString(),
                 teacher: currentUser.name,
@@ -5372,6 +5434,17 @@
             }
 
             if (confirm('Are you sure you want to delete this teacher?')) {
+                // Tombstone the teacher so deletion survives the main-document merge
+                const key = `teacher:${teacherId}`;
+                if (!entityTombstones.some(t => t.key === key)) {
+                    entityTombstones.push({
+                        key: key,
+                        type: 'teacher',
+                        id: teacherId,
+                        deletedAt: new Date().toISOString(),
+                        deletedBy: currentUser.name || 'admin'
+                    });
+                }
                 teachers = teachers.filter(t => t.id !== teacherId);
                 saveData();
                 updateTeachersTable();
@@ -11604,8 +11677,20 @@
                     student.attendanceTickets = prevState.attendanceTickets;
                     student.academicTickets = prevState.academicTickets;
                     
-                    // Remove the last history entry (the one we just added)
+                    // Tombstone the ticket history entries added by the award, then remove
                     if (student.ticketHistory && student.ticketHistory.length > prevState.ticketHistoryLength) {
+                        const addedEntries = student.ticketHistory.slice(prevState.ticketHistoryLength);
+                        addedEntries.forEach(h => {
+                            const tid = ensureEntryId(h);
+                            if (!localTombstones.some(t => t.entryId === tid)) {
+                                localTombstones.push({
+                                    entryId: tid,
+                                    deletedAt: new Date().toISOString(),
+                                    deletedBy: currentUser.name || 'admin',
+                                    reason: `Undo last award: ${h.reason || ''}`
+                                });
+                            }
+                        });
                         student.ticketHistory = student.ticketHistory.slice(0, prevState.ticketHistoryLength);
                     }
                 }
@@ -11617,9 +11702,21 @@
                 teacher.ticketsAwarded = lastAwardAction.teacherPreviousTickets;
             }
             
-            // Remove audit log entries that were added
+            // Tombstone audit log entries added by the award, then remove
             const entriesToRemove = auditLog.length - lastAwardAction.auditLogCount;
             if (entriesToRemove > 0) {
+                const removedEntries = auditLog.slice(lastAwardAction.auditLogCount, lastAwardAction.auditLogCount + entriesToRemove);
+                removedEntries.forEach(e => {
+                    const aid = ensureEntryId(e);
+                    if (!localTombstones.some(t => t.entryId === aid)) {
+                        localTombstones.push({
+                            entryId: aid,
+                            deletedAt: new Date().toISOString(),
+                            deletedBy: currentUser.name || 'admin',
+                            reason: `Undo last award: ${e.action} - ${e.reason || ''}`
+                        });
+                    }
+                });
                 auditLog.splice(lastAwardAction.auditLogCount, entriesToRemove);
             }
             
