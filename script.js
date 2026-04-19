@@ -21,10 +21,10 @@
             try {
                 // Dynamically import Firebase modules
                 const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js');
-                const { getFirestore, doc, getDoc, setDoc, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
+                const { getFirestore, doc, getDoc, setDoc, serverTimestamp, runTransaction } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
                 
                 // Store imports globally
-                window.firebaseModules = { doc, getDoc, setDoc, serverTimestamp };
+                window.firebaseModules = { doc, getDoc, setDoc, serverTimestamp, runTransaction };
                 
                 // Initialize Firebase app
                 firebaseApp = initializeApp(firebaseConfig);
@@ -1838,264 +1838,252 @@
             isSyncing = true;
 
             try {
-                // MULTI-USER FIX: Merge ALL data to prevent overwrites
+                // TRANSACTION-BASED SAVE: Prevents concurrent save conflicts
                 if (firebaseInitialized && firebaseDb) {
                     try {
-                        const { doc, setDoc, getDoc } = window.firebaseModules;
-                        
-                        let studentsToSave = students;
-                        let teachersToSave = teachers;
-                        let auditLogToSave = auditLog;
-                        let loginHistoryToSave = loginHistory;
-                        let ticketHistoriesToSave = {};
-                        
-                        // Load ALL 4 docs to merge everything
-                        const [mainSnap, secondarySnap, ticketHistorySnap, auditLogSnap] = await Promise.all([
-                            getDoc(doc(firebaseDb, 'raffle_data', 'main')),
-                            getDoc(doc(firebaseDb, 'raffle_data', 'secondary')),
-                            getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history')),
-                            getDoc(doc(firebaseDb, 'raffle_data', 'audit_log'))
-                        ]);
-                        
-                        // LOAD TICKET HISTORIES from separate document
-                        let firebaseTicketHistories = {};
-                        if (ticketHistorySnap.exists()) {
-                            firebaseTicketHistories = ticketHistorySnap.data().histories || {};
-                        }
-                        
-                        // MERGE STUDENTS: Take MAX ticket values to never lose awards
-                        if (mainSnap.exists()) {
-                            const firebaseMain = mainSnap.data();
-                            const firebaseStudents = firebaseMain.students || [];
-                            
-                            // Start with Firebase students as base (preserves students added by others)
-                            const mergedStudents = firebaseStudents.map(firebaseStudent => {
-                                const localStudent = students.find(s => s.id === firebaseStudent.id);
-                                
-                                if (!localStudent) {
-                                    return firebaseStudent; // Student only in Firebase
-                                }
-                                
-                                // Check if we recently reset (within last 10 seconds)
-                                const recentlyReset = lastWeekResetTime && (Date.now() - lastWeekResetTime) < 10000;
-                                
-                                // Merge ticket histories from BOTH local student AND separate ticket_history doc
-                                const localHistory = localStudent.ticketHistory || [];
-                                const firebaseHistory = firebaseTicketHistories[firebaseStudent.id] || [];
-                                
-                                const mergedHistory = [
-                                    ...localHistory,
-                                    ...firebaseHistory
-                                ];
-                                
-                                // Deduplicate - PREFER tickets WITH week field over those without
-                                const seen = new Map();
-                                mergedHistory.forEach(h => {
-                                    const key = `${h.timestamp}-${h.category}-${h.tickets || h.amount}`;
-                                    const existing = seen.get(key);
-                                    
-                                    // Keep this ticket if we haven't seen it, OR if this one has week and existing doesn't
-                                    if (!existing || (h.week !== undefined && h.week !== null && (existing.week === undefined || existing.week === null))) {
-                                        seen.set(key, h);
-                                    }
-                                });
-                                
-                                const uniqueHistory = Array.from(seen.values());
-                                
-                                // Store ticket history separately for saving
-                                ticketHistoriesToSave[firebaseStudent.id] = uniqueHistory.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-                                
-                                // If recently reset, trust local values; otherwise calculate from current week history
-                                let pbisValue, attendanceValue, academicValue;
-                                if (recentlyReset) {
-                                    pbisValue = localStudent.pbisTickets || 0;
-                                    attendanceValue = localStudent.attendanceTickets || 0;
-                                    academicValue = localStudent.academicTickets || 0;
-                                } else {
-                                    const currentWeekHistory = uniqueHistory.filter(h => h.week === currentWeek);
-                                    pbisValue = currentWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
-                                    attendanceValue = currentWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
-                                    academicValue = currentWeekHistory.filter(h => h.category === 'Academic' || h.category === 'Academics').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
-                                }
-                                
-                                // Return student WITHOUT ticketHistory (it's stored separately)
-                                const studentData = {
-                                    ...firebaseStudent, // Start with Firebase version
-                                    ...localStudent, // Overlay local changes
-                                    pbisTickets: pbisValue,
-                                    attendanceTickets: attendanceValue,
-                                    academicTickets: academicValue
-                                };
-                                
-                                // Remove ticketHistory from student object
-                                delete studentData.ticketHistory;
-                                
-                                return studentData;
-                            });
-                            
-                            // Add any NEW students that are only in local (just added by this user)
-                            students.forEach(localStudent => {
-                                if (!firebaseStudents.find(s => s.id === localStudent.id)) {
-                                    // Store ticket history separately
-                                    ticketHistoriesToSave[localStudent.id] = localStudent.ticketHistory || [];
-                                    
-                                    // Add student without ticket history
-                                    const studentData = {...localStudent};
-                                    delete studentData.ticketHistory;
-                                    mergedStudents.push(studentData);
-                                }
-                            });
-                            
-                            studentsToSave = mergedStudents;
-                            
-                            // MERGE TEACHERS: Take MAX ticketsAwarded
-                            const firebaseTeachers = firebaseMain.teachers || [];
-                            
-                            // Start with Firebase teachers as base
-                            const mergedTeachers = firebaseTeachers.map(firebaseTeacher => {
-                                const localTeacher = teachers.find(t => t.id === firebaseTeacher.id);
-                                
-                                if (!localTeacher) {
-                                    return firebaseTeacher; // Teacher only in Firebase
-                                }
-                                
-                                return {
-                                    ...firebaseTeacher,
-                                    ...localTeacher,
-                                    ticketsAwarded: Math.max(localTeacher.ticketsAwarded || 0, firebaseTeacher.ticketsAwarded || 0)
-                                };
-                            });
-                            
-                            // Add any NEW teachers that are only in local
-                            teachers.forEach(localTeacher => {
-                                if (!firebaseTeachers.find(t => t.id === localTeacher.id)) {
-                                    mergedTeachers.push(localTeacher);
-                                }
-                            });
-                            
-                            teachersToSave = mergedTeachers;
-                        }
-                        
-                        // MERGE AUDIT LOG from separate document
-                        if (auditLogSnap.exists()) {
-                            const firebaseAuditData = auditLogSnap.data();
-                            const firebaseAuditLog = firebaseAuditData.auditLog || [];
-                            const combinedAuditLog = [...firebaseAuditLog];
-                            
-                            auditLog.forEach(localEntry => {
-                                // Use timestamp + studentId + category + ticketCount as unique key
-                                const localKey = `${localEntry.timestamp}-${localEntry.studentId}-${localEntry.category}-${localEntry.ticketCount}`;
-                                const exists = firebaseAuditLog.find(e => {
-                                    const fbKey = `${e.timestamp}-${e.studentId}-${e.category}-${e.ticketCount}`;
-                                    return fbKey === localKey;
-                                });
-                                if (!exists) {
-                                    combinedAuditLog.push(localEntry);
-                                }
-                            });
-                            
-                            auditLogToSave = combinedAuditLog.sort((a, b) => 
-                                new Date(a.timestamp) - new Date(b.timestamp)
-                            );
-                        }
-                        
-                        // MERGE LOGIN HISTORY from secondary document
-                        if (secondarySnap.exists()) {
-                            const firebaseSecondary = secondarySnap.data();
-                            
-                            // MERGE LOGIN HISTORY
-                            const firebaseLoginHistory = firebaseSecondary.loginHistory || [];
-                            const combinedLoginHistory = [...firebaseLoginHistory];
-                            
-                            loginHistory.forEach(localEntry => {
-                                if (!firebaseLoginHistory.find(e => e.id === localEntry.id)) {
-                                    combinedLoginHistory.push(localEntry);
-                                }
-                            });
-                            
-                            loginHistoryToSave = combinedLoginHistory.sort((a, b) => 
-                                new Date(a.timestamp) - new Date(b.timestamp)
-                            ).slice(-500);
-                            
-                            // MERGE WILDCAT CASH TRANSACTIONS
-                            const firebaseCashTransactions = firebaseSecondary.wildcatCashTransactions || [];
-                            const combinedCashTransactions = [...firebaseCashTransactions];
-                            
-                            wildcatCashTransactions.forEach(localTxn => {
-                                if (!firebaseCashTransactions.find(t => t.id === localTxn.id)) {
-                                    combinedCashTransactions.push(localTxn);
-                                }
-                            });
-                            
-                            wildcatCashTransactions = combinedCashTransactions.sort((a, b) => 
-                                new Date(a.timestamp) - new Date(b.timestamp)
-                            );
-                        }
+                        const { doc, setDoc, getDoc, runTransaction } = window.firebaseModules;
                         
                         const timestamp = Date.now();
                         
-                        console.log(`🔵 Saving merged data - ${studentsToSave.length} students, ${teachersToSave.length} teachers`);
-                        const studentsWithTickets = studentsToSave.filter(s => s.pbisTickets > 0 || s.attendanceTickets > 0 || s.academicTickets > 0);
-                        console.log(`📊 Students with tickets: ${studentsWithTickets.length}`);
+                        console.log(`🔵 Saving with transactions - ${students.length} students, ${teachers.length} teachers`);
                         
-                        // DOCUMENT 1: Main (students without ticket history + teachers + metadata)
-                        const mainDoc = doc(firebaseDb, 'raffle_data', 'main');
-                        await setDoc(mainDoc, {
-                            students: studentsToSave, // Students WITHOUT ticket history
-                            currentWeek,
-                            cycleDuration,
-                            teachers: teachersToSave,
-                            pbisSubcategories,
-                            academicSubcategories,
-                            lastPowerSchoolSync,
-                            kickboardSettings,
-                            emailJSConfig,
-                            passSettings,
-                            schoolBranding,
-                            referralIdCounter,
-                            autoWeekEnabled,
-                            lastAutoResetDate,
-                            lastWeekResetTime,
-                            weekResetDay,
-                            weekResetHour,
-                            currentCycle,
-                            cycleHistory,
-                            lastSaveTimestamp: timestamp
+                        // Prepare ticket histories (extracted from students)
+                        const ticketHistoriesToSave = {};
+                        students.forEach(s => {
+                            if (s.ticketHistory && s.ticketHistory.length > 0) {
+                                ticketHistoriesToSave[s.id] = s.ticketHistory;
+                            }
                         });
                         
-                        console.log(`✅ Main document saved`);
+                        // TRANSACTION 1: Main Document (students + teachers + metadata)
+                        const mainDocRef = doc(firebaseDb, 'raffle_data', 'main');
+                        await runTransaction(firebaseDb, async (transaction) => {
+                            const mainDoc = await transaction.get(mainDocRef);
+                            
+                            let studentsToSave = students;
+                            let teachersToSave = teachers;
+                            
+                            if (mainDoc.exists()) {
+                                const firebaseMain = mainDoc.data();
+                                const firebaseStudents = firebaseMain.students || [];
+                                const firebaseTeachers = firebaseMain.teachers || [];
+                                
+                                // MERGE STUDENTS
+                                const mergedStudents = firebaseStudents.map(firebaseStudent => {
+                                    const localStudent = students.find(s => s.id === firebaseStudent.id);
+                                    
+                                    if (!localStudent) {
+                                        return firebaseStudent;
+                                    }
+                                    
+                                    // Check if we recently reset
+                                    const recentlyReset = lastWeekResetTime && (Date.now() - lastWeekResetTime) < 10000;
+                                    
+                                    // Calculate current week tickets from ticket history
+                                    let pbisValue, attendanceValue, academicValue;
+                                    const localHistory = localStudent.ticketHistory || [];
+                                    
+                                    if (recentlyReset) {
+                                        pbisValue = localStudent.pbisTickets || 0;
+                                        attendanceValue = localStudent.attendanceTickets || 0;
+                                        academicValue = localStudent.academicTickets || 0;
+                                    } else {
+                                        const currentWeekHistory = localHistory.filter(h => h.week === currentWeek);
+                                        pbisValue = currentWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                                        attendanceValue = currentWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                                        academicValue = currentWeekHistory.filter(h => h.category === 'Academic' || h.category === 'Academics').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                                    }
+                                    
+                                    // Return student WITHOUT ticketHistory (stored separately)
+                                    const studentData = {
+                                        ...firebaseStudent,
+                                        ...localStudent,
+                                        pbisTickets: pbisValue,
+                                        attendanceTickets: attendanceValue,
+                                        academicTickets: academicValue
+                                    };
+                                    
+                                    delete studentData.ticketHistory;
+                                    return studentData;
+                                });
+                                
+                                // Add new students only in local
+                                students.forEach(localStudent => {
+                                    if (!firebaseStudents.find(s => s.id === localStudent.id)) {
+                                        const studentData = {...localStudent};
+                                        delete studentData.ticketHistory;
+                                        mergedStudents.push(studentData);
+                                    }
+                                });
+                                
+                                studentsToSave = mergedStudents;
+                                
+                                // MERGE TEACHERS
+                                const mergedTeachers = firebaseTeachers.map(firebaseTeacher => {
+                                    const localTeacher = teachers.find(t => t.id === firebaseTeacher.id);
+                                    
+                                    if (!localTeacher) {
+                                        return firebaseTeacher;
+                                    }
+                                    
+                                    return {
+                                        ...firebaseTeacher,
+                                        ...localTeacher,
+                                        ticketsAwarded: Math.max(localTeacher.ticketsAwarded || 0, firebaseTeacher.ticketsAwarded || 0)
+                                    };
+                                });
+                                
+                                // Add new teachers only in local
+                                teachers.forEach(localTeacher => {
+                                    if (!firebaseTeachers.find(t => t.id === localTeacher.id)) {
+                                        mergedTeachers.push(localTeacher);
+                                    }
+                                });
+                                
+                                teachersToSave = mergedTeachers;
+                            }
+                            
+                            // Write merged data atomically
+                            transaction.set(mainDocRef, {
+                                students: studentsToSave,
+                                currentWeek,
+                                cycleDuration,
+                                teachers: teachersToSave,
+                                pbisSubcategories,
+                                academicSubcategories,
+                                lastPowerSchoolSync,
+                                kickboardSettings,
+                                emailJSConfig,
+                                passSettings,
+                                schoolBranding,
+                                referralIdCounter,
+                                autoWeekEnabled,
+                                lastAutoResetDate,
+                                lastWeekResetTime,
+                                weekResetDay,
+                                weekResetHour,
+                                currentCycle,
+                                cycleHistory,
+                                lastSaveTimestamp: timestamp
+                            });
+                            
+                            // Update local references
+                            students = studentsToSave.map(s => ({
+                                ...s,
+                                ticketHistory: ticketHistoriesToSave[s.id] || []
+                            }));
+                            teachers = teachersToSave;
+                        });
+                        
+                        console.log(`✅ Main document saved (transaction)`);
                         
                         await new Promise(resolve => setTimeout(resolve, 50));
                         
-                        // DOCUMENT 2: Ticket History (all student ticket histories)
-                        const ticketHistoryDoc = doc(firebaseDb, 'raffle_data', 'ticket_history');
-                        await setDoc(ticketHistoryDoc, {
-                            histories: ticketHistoriesToSave,
-                            lastSaveTimestamp: timestamp
+                        // TRANSACTION 2: Ticket History Document
+                        const ticketHistoryDocRef = doc(firebaseDb, 'raffle_data', 'ticket_history');
+                        await runTransaction(firebaseDb, async (transaction) => {
+                            const ticketHistoryDoc = await transaction.get(ticketHistoryDocRef);
+                            
+                            let mergedHistories = {...ticketHistoriesToSave};
+                            
+                            if (ticketHistoryDoc.exists()) {
+                                const firebaseHistories = ticketHistoryDoc.data().histories || {};
+                                
+                                // Merge ticket histories for each student
+                                Object.keys(firebaseHistories).forEach(studentId => {
+                                    const firebaseHistory = firebaseHistories[studentId] || [];
+                                    const localHistory = ticketHistoriesToSave[studentId] || [];
+                                    
+                                    if (localHistory.length === 0) {
+                                        // No local changes, keep Firebase
+                                        mergedHistories[studentId] = firebaseHistory;
+                                    } else {
+                                        // Merge and deduplicate
+                                        const combined = [...localHistory, ...firebaseHistory];
+                                        const seen = new Map();
+                                        
+                                        combined.forEach(h => {
+                                            const key = `${h.timestamp}-${h.category}-${h.tickets || h.amount}`;
+                                            const existing = seen.get(key);
+                                            
+                                            // Prefer tickets WITH week field
+                                            if (!existing || (h.week !== undefined && h.week !== null && (existing.week === undefined || existing.week === null))) {
+                                                seen.set(key, h);
+                                            }
+                                        });
+                                        
+                                        mergedHistories[studentId] = Array.from(seen.values()).sort((a, b) => 
+                                            new Date(a.timestamp) - new Date(b.timestamp)
+                                        );
+                                    }
+                                });
+                            }
+                            
+                            transaction.set(ticketHistoryDocRef, {
+                                histories: mergedHistories,
+                                lastSaveTimestamp: timestamp
+                            });
+                            
+                            // Update local students with merged histories
+                            students = students.map(s => ({
+                                ...s,
+                                ticketHistory: mergedHistories[s.id] || []
+                            }));
                         });
                         
-                        console.log(`✅ Ticket history document saved`);
+                        console.log(`✅ Ticket history document saved (transaction)`);
                         
                         await new Promise(resolve => setTimeout(resolve, 50));
                         
-                        // DOCUMENT 3: Audit Log (all audit entries)
-                        const auditLogDoc = doc(firebaseDb, 'raffle_data', 'audit_log');
-                        await setDoc(auditLogDoc, {
-                            auditLog: auditLogToSave,
-                            lastSaveTimestamp: timestamp
+                        // TRANSACTION 3: Audit Log Document
+                        const auditLogDocRef = doc(firebaseDb, 'raffle_data', 'audit_log');
+                        await runTransaction(firebaseDb, async (transaction) => {
+                            const auditLogDoc = await transaction.get(auditLogDocRef);
+                            
+                            let auditLogToSave = [...auditLog];
+                            
+                            if (auditLogDoc.exists()) {
+                                const firebaseAuditLog = auditLogDoc.data().auditLog || [];
+                                const combinedAuditLog = [...firebaseAuditLog];
+                                
+                                // Add local entries that don't exist in Firebase
+                                auditLog.forEach(localEntry => {
+                                    const localKey = `${localEntry.timestamp}-${localEntry.studentId}-${localEntry.category}-${localEntry.ticketCount}`;
+                                    const exists = firebaseAuditLog.find(e => {
+                                        const fbKey = `${e.timestamp}-${e.studentId}-${e.category}-${e.ticketCount}`;
+                                        return fbKey === localKey;
+                                    });
+                                    if (!exists) {
+                                        combinedAuditLog.push(localEntry);
+                                    }
+                                });
+                                
+                                auditLogToSave = combinedAuditLog.sort((a, b) => 
+                                    new Date(a.timestamp) - new Date(b.timestamp)
+                                );
+                            }
+                            
+                            transaction.set(auditLogDocRef, {
+                                auditLog: auditLogToSave,
+                                lastSaveTimestamp: timestamp
+                            });
+                            
+                            // Update local reference
+                            auditLog = auditLogToSave;
                         });
                         
-                        console.log(`✅ Audit log document saved`);
+                        console.log(`✅ Audit log document saved (transaction)`);
                         
                         await new Promise(resolve => setTimeout(resolve, 50));
                         
                         // DOCUMENT 4: Secondary (weekly data + other features)
+                        // Uses regular setDoc since these have fewer conflicts
                         const secondaryDoc = doc(firebaseDb, 'raffle_data', 'secondary');
                         await setDoc(secondaryDoc, {
                             weeklyWinners,
                             bigRaffleWinners,
                             weeklyHistory,
-                            loginHistory: loginHistoryToSave,
+                            loginHistory,
                             hallPasses,
                             preventionGroups,
                             behaviorReferrals,
@@ -2108,26 +2096,17 @@
                         
                         console.log(`✅ Secondary document saved`);
                         
-                        // Restore ticket histories to local students array
-                        students = studentsToSave.map(s => ({
-                            ...s,
-                            ticketHistory: ticketHistoriesToSave[s.id] || []
-                        }));
-                        teachers = teachersToSave;
-                        auditLog = auditLogToSave;
-                        loginHistory = loginHistoryToSave;
-                        
                         lastSaveTimestamp = timestamp;
                         
                         // Also save to localStorage (with ticket histories restored)
                         localStorage.setItem('raffleData', JSON.stringify({
-                            students: students, // Use restored students with ticket histories
+                            students: students, // Already has merged ticket histories
                             currentWeek,
                             cycleDuration,
                             weeklyWinners,
                             bigRaffleWinners,
-                            teachers: teachersToSave,
-                            auditLog: auditLogToSave,
+                            teachers: teachers,
+                            auditLog: auditLog,
                             weeklyHistory,
                             pbisSubcategories,
                             academicSubcategories,
@@ -2145,7 +2124,7 @@
                             detentionLocations,
                             detentionReasons,
                             wildcatCashTransactions,
-                            loginHistory: loginHistoryToSave,
+                            loginHistory,
                             autoWeekEnabled,
                             lastAutoResetDate,
                             lastWeekResetTime,
