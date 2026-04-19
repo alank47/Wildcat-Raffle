@@ -2050,23 +2050,32 @@
                             
                             if (auditLogDoc.exists()) {
                                 const firebaseAuditLog = auditLogDoc.data().auditLog || [];
-                                const combinedAuditLog = [...firebaseAuditLog];
                                 
-                                // Add local entries that don't exist in Firebase
-                                auditLog.forEach(localEntry => {
-                                    const localKey = `${localEntry.timestamp}-${localEntry.studentId}-${localEntry.category}-${localEntry.ticketCount}`;
-                                    const exists = firebaseAuditLog.find(e => {
-                                        const fbKey = `${e.timestamp}-${e.studentId}-${e.category}-${e.ticketCount}`;
-                                        return fbKey === localKey;
+                                // If local has fewer entries than Firebase, user deleted some
+                                // In that case, trust local (it's the source of truth after deletion)
+                                if (auditLog.length < firebaseAuditLog.length) {
+                                    // User deleted entries - use local as-is
+                                    auditLogToSave = [...auditLog];
+                                } else {
+                                    // Normal merge: add new local entries to Firebase
+                                    const combinedAuditLog = [...firebaseAuditLog];
+                                    
+                                    // Add local entries that don't exist in Firebase
+                                    auditLog.forEach(localEntry => {
+                                        const localKey = `${localEntry.timestamp}-${localEntry.studentId}-${localEntry.category}-${localEntry.ticketCount}`;
+                                        const exists = firebaseAuditLog.find(e => {
+                                            const fbKey = `${e.timestamp}-${e.studentId}-${e.category}-${e.ticketCount}`;
+                                            return fbKey === localKey;
+                                        });
+                                        if (!exists) {
+                                            combinedAuditLog.push(localEntry);
+                                        }
                                     });
-                                    if (!exists) {
-                                        combinedAuditLog.push(localEntry);
-                                    }
-                                });
-                                
-                                auditLogToSave = combinedAuditLog.sort((a, b) => 
-                                    new Date(a.timestamp) - new Date(b.timestamp)
-                                );
+                                    
+                                    auditLogToSave = combinedAuditLog.sort((a, b) => 
+                                        new Date(a.timestamp) - new Date(b.timestamp)
+                                    );
+                                }
                             }
                             
                             transaction.set(auditLogDocRef, {
