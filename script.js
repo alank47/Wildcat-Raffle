@@ -4640,11 +4640,14 @@
             tbody.innerHTML = sorted.map((log, index) => {
                 const date = new Date(log.timestamp);
                 const formattedDate = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
-                // Find the actual index in the full auditLog array by matching timestamp and student
+                // Find the actual index in the full auditLog array by matching multiple fields for uniqueness
                 const originalIndex = auditLog.findIndex(e => 
                     e.timestamp === log.timestamp && 
                     e.studentId === log.studentId && 
-                    e.ticketCount === log.ticketCount
+                    e.ticketCount === log.ticketCount &&
+                    e.teacher === log.teacher &&
+                    e.action === log.action &&
+                    e.category === log.category
                 );
                 
                 // Determine action styling
@@ -4707,8 +4710,14 @@
                         </td>
                         <td style="padding: 12px 8px; text-align: center;">
                             ${isAdmin && log.action === 'Awarded Tickets' ? 
-                                `<button class="btn btn-danger" style="padding: 6px 12px; font-size: 12px; background: linear-gradient(135deg, #f5576c 0%, #f093fb 100%); border: none; border-radius: 8px; box-shadow: 0 2px 4px rgba(245, 87, 108, 0.3);" 
-                                         onclick="deleteTicketEntry(${originalIndex})">
+                                `<button class="btn btn-danger audit-delete-btn" 
+                                         data-timestamp="${log.timestamp}"
+                                         data-student-id="${log.studentId}"
+                                         data-ticket-count="${log.ticketCount}"
+                                         data-teacher="${log.teacher}"
+                                         data-action="${log.action}"
+                                         data-category="${log.category}"
+                                         style="padding: 6px 12px; font-size: 12px; background: linear-gradient(135deg, #f5576c 0%, #f093fb 100%); border: none; border-radius: 8px; box-shadow: 0 2px 4px rgba(245, 87, 108, 0.3);">
                                     🗑️ Delete
                                 </button>` 
                                 : '<span style="color: #999;">-</span>'}
@@ -4716,6 +4725,36 @@
                     </tr>
                 `;
             }).join('');
+            
+            // Add event listeners to delete buttons
+            setTimeout(() => {
+                document.querySelectorAll('.audit-delete-btn').forEach(btn => {
+                    btn.onclick = async function() {
+                        const timestamp = this.getAttribute('data-timestamp');
+                        const studentId = this.getAttribute('data-student-id');
+                        const ticketCount = this.getAttribute('data-ticket-count');
+                        const teacher = this.getAttribute('data-teacher');
+                        const action = this.getAttribute('data-action');
+                        const category = this.getAttribute('data-category');
+                        
+                        // Find the exact entry
+                        const entryIndex = auditLog.findIndex(e => 
+                            e.timestamp === timestamp &&
+                            e.studentId === studentId &&
+                            e.ticketCount === parseInt(ticketCount) &&
+                            e.teacher === teacher &&
+                            e.action === action &&
+                            e.category === category
+                        );
+                        
+                        if (entryIndex !== -1) {
+                            await deleteTicketEntry(entryIndex);
+                        } else {
+                            alert('Error: Could not find audit entry to delete');
+                        }
+                    };
+                });
+            }, 0);
         }
         
         // Login Activity Functions
