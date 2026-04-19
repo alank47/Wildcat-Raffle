@@ -2077,8 +2077,22 @@
                             return auditLogToSave;
                         });
                         
-                        // Update local audit log AFTER transaction completes
-                        auditLog = auditLogResult;
+                        // SMART UPDATE: Only add NEW entries from Firebase that we don't have locally
+                        // Don't replace entire local audit log (preserves local additions and deletions)
+                        const localKeys = new Set(auditLog.map(e => 
+                            `${e.timestamp}-${e.studentId}-${e.action}-${e.category}-${e.ticketCount}-${e.teacher}`
+                        ));
+                        
+                        const newFromFirebase = auditLogResult.filter(fbEntry => {
+                            const key = `${fbEntry.timestamp}-${fbEntry.studentId}-${fbEntry.action}-${fbEntry.category}-${fbEntry.ticketCount}-${fbEntry.teacher}`;
+                            return !localKeys.has(key);
+                        });
+                        
+                        if (newFromFirebase.length > 0) {
+                            auditLog.push(...newFromFirebase);
+                            auditLog.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                            console.log(`📥 Added ${newFromFirebase.length} new entries from other users`);
+                        }
                         
                         console.log(`✅ Audit log document saved (transaction)`);
                         
@@ -2876,14 +2890,23 @@
                     break;
                     
                 case 'thisCycle':
-                    if (currentCycle.startDate && currentCycle.endDate) {
-                        startDate = new Date(currentCycle.startDate);
-                        endDate = new Date(currentCycle.endDate);
-                    } else {
-                        // No cycle configured, show all time
-                        return students;
-                    }
-                    break;
+                    // "This Cycle" should show data for the CURRENT WEEK of the 5-week cycle
+                    // This matches the current week behavior since we're in Week 3 of a 5-week cycle
+                    return students.map(s => {
+                        const history = s.ticketHistory || [];
+                        const thisWeekHistory = history.filter(h => h.week === currentWeek);
+                        
+                        const pbisTotal = thisWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                        const attendanceTotal = thisWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                        const academicTotal = thisWeekHistory.filter(h => h.category === 'Academics' || h.category === 'Academic').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                        
+                        return {
+                            ...s,
+                            pbisTickets: pbisTotal,
+                            attendanceTickets: attendanceTotal,
+                            academicTickets: academicTotal
+                        };
+                    });
                     
                 case 'custom':
                     if (customDataStartDate && customDataEndDate) {
@@ -3281,12 +3304,39 @@
                 attendanceTickets += attendance;
                 academicTickets += academic;
                 totalTickets += pbis + attendance + academic;
-                
-                // Count qualified students (has tickets in all 3 categories)
-                if (pbis > 0 && attendance > 0 && academic > 0) {
-                    qualifiedCount++;
-                }
             });
+            
+            // CORRECTED: Count students who are ACTUALLY qualified for Wildcat Jackpot
+            // (have bigRaffleQualified array with entries)
+            // This counts UNIQUE students, not duplicate audit entries
+            if (currentDataTimeFilter === 'allTime' || currentDataTimeFilter === 'thisCycle' || currentDataTimeFilter === 'last30Days') {
+                // For time periods that might span multiple weeks, count unique qualified students
+                qualifiedCount = filteredStudents.filter(s => 
+                    Array.isArray(s.bigRaffleQualified) && s.bigRaffleQualified.length > 0
+                ).length;
+            } else if (currentDataTimeFilter === 'thisWeek') {
+                // For current week only, count students with tickets in all 3 categories THIS WEEK
+                filteredStudents.forEach(s => {
+                    const pbis = s.pbisTickets || 0;
+                    const attendance = s.attendanceTickets || 0;
+                    const academic = s.academicTickets || 0;
+                    
+                    if (pbis > 0 && attendance > 0 && academic > 0) {
+                        qualifiedCount++;
+                    }
+                });
+            } else {
+                // For other time filters, use ticket-based qualification
+                filteredStudents.forEach(s => {
+                    const pbis = s.pbisTickets || 0;
+                    const attendance = s.attendanceTickets || 0;
+                    const academic = s.academicTickets || 0;
+                    
+                    if (pbis > 0 && attendance > 0 && academic > 0) {
+                        qualifiedCount++;
+                    }
+                });
+            }
             
             // Calculate metrics
             const totalStudents = filteredStudents.length;
