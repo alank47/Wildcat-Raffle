@@ -5071,17 +5071,45 @@
             } else {
                 const ticketCount = parseInt(entry.ticketCount) || 0;
                 
-                // Remove from student's ticket history by matching timestamp, category, and amount
+                // Remove from student's ticket history
+                // NOTE: Audit log and ticket history entries are created at slightly different
+                // moments, so timestamps usually don't match exactly. Match on category + amount
+                // + teacher + reason, then use the closest timestamp within a 30-second window.
                 if (student.ticketHistory) {
                     const beforeLength = student.ticketHistory.length;
-                    // Tombstone matching history entries so deletion survives the merge
-                    const toRemove = student.ticketHistory.filter(h => {
-                        const historyAmount = h.tickets || h.amount || 0;
-                        const historyCategory = h.category || '';
-                        return h.timestamp === entry.timestamp &&
-                               historyAmount === ticketCount &&
-                               historyCategory === entry.category;
-                    });
+                    const entryTs = new Date(entry.timestamp).getTime();
+                    const WINDOW_MS = 30000; // 30 seconds
+
+                    // Strip subcategory prefix from audit reason if present (e.g. "Being Present: test" -> "test")
+                    const auditReasonParts = String(entry.reason || '').split(':');
+                    const auditReasonCore = auditReasonParts.length > 1
+                        ? auditReasonParts.slice(1).join(':').trim()
+                        : String(entry.reason || '').trim();
+
+                    // Candidate matches: same category, same amount, timestamp within window
+                    const candidates = student.ticketHistory
+                        .map((h, idx) => ({ h, idx, dt: Math.abs(new Date(h.timestamp).getTime() - entryTs) }))
+                        .filter(({ h, dt }) => {
+                            const historyAmount = h.tickets || h.amount || 0;
+                            const historyCategory = h.category || '';
+                            const historyCategoryNorm = historyCategory === 'Academics' ? 'Academic' : historyCategory;
+                            const entryCategoryNorm = entry.category === 'Academics' ? 'Academic' : entry.category;
+                            if (historyAmount !== ticketCount) return false;
+                            if (historyCategoryNorm !== entryCategoryNorm) return false;
+                            if (dt > WINDOW_MS) return false;
+                            // Teacher must match if both have one
+                            if (h.teacher && entry.teacher && h.teacher !== entry.teacher) return false;
+                            // Reason should match (compare core reason without subcategory prefix)
+                            const hReason = String(h.reason || '').trim();
+                            if (hReason && auditReasonCore && hReason !== auditReasonCore && hReason !== entry.reason) return false;
+                            return true;
+                        })
+                        .sort((a, b) => a.dt - b.dt); // Closest timestamp first
+
+                    // Take the single closest match (the audit entry describes ONE award, not many)
+                    const toRemoveIdx = candidates.length > 0 ? candidates[0].idx : -1;
+                    const toRemove = toRemoveIdx >= 0 ? [student.ticketHistory[toRemoveIdx]] : [];
+
                     toRemove.forEach(h => {
                         const tid = ensureEntryId(h);
                         if (!localTombstones.some(t => t.entryId === tid)) {
@@ -5093,18 +5121,16 @@
                             });
                         }
                     });
-                    student.ticketHistory = student.ticketHistory.filter(h => {
-                        const historyAmount = h.tickets || h.amount || 0;
-                        const historyCategory = h.category || '';
-                        return !(
-                            h.timestamp === entry.timestamp && 
-                            historyAmount === ticketCount &&
-                            historyCategory === entry.category
-                        );
-                    });
-                    
+
+                    if (toRemoveIdx >= 0) {
+                        student.ticketHistory.splice(toRemoveIdx, 1);
+                    }
+
                     const removed = beforeLength - student.ticketHistory.length;
                     console.log(`Removed ${removed} ticket(s) from ${student.firstName}'s history`);
+                    if (removed === 0) {
+                        console.warn(`⚠️ Could not find matching ticket history entry for audit entry`, entry);
+                    }
                     
                     // Recalculate current week tickets from ticket history
                     const currentWeekHistory = student.ticketHistory.filter(h => h.week === currentWeek);
