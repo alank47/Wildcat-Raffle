@@ -4948,23 +4948,31 @@
             if (!student) {
                 alert('Student not found. The audit entry will be deleted, but tickets cannot be reversed.');
             } else {
-                // Reverse the ticket award
-                const category = entry.category.toLowerCase();
                 const ticketCount = parseInt(entry.ticketCount) || 0;
                 
-                if (category === 'pbis') {
-                    student.pbisTickets = Math.max(0, student.pbisTickets - ticketCount);
-                } else if (category === 'attendance') {
-                    student.attendanceTickets = Math.max(0, student.attendanceTickets - ticketCount);
-                } else if (category === 'academics') {
-                    student.academicTickets = Math.max(0, student.academicTickets - ticketCount);
+                // Remove from student's ticket history by matching timestamp, category, and amount
+                if (student.ticketHistory) {
+                    const beforeLength = student.ticketHistory.length;
+                    student.ticketHistory = student.ticketHistory.filter(h => {
+                        // Match by timestamp and ticket count and category
+                        const historyAmount = h.tickets || h.amount || 0;
+                        const historyCategory = h.category || '';
+                        return !(
+                            h.timestamp === entry.timestamp && 
+                            historyAmount === ticketCount &&
+                            historyCategory === entry.category
+                        );
+                    });
+                    
+                    const removed = beforeLength - student.ticketHistory.length;
+                    console.log(`Removed ${removed} ticket(s) from ${student.firstName}'s history`);
+                    
+                    // Recalculate current week tickets from ticket history
+                    const currentWeekHistory = student.ticketHistory.filter(h => h.week === currentWeek);
+                    student.pbisTickets = currentWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                    student.attendanceTickets = currentWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                    student.academicTickets = currentWeekHistory.filter(h => h.category === 'Academic' || h.category === 'Academics').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
                 }
-                
-                // Remove from student's ticket history
-                student.ticketHistory = student.ticketHistory.filter((h, i) => {
-                    // Try to match by timestamp and ticket count
-                    return !(h.timestamp === entry.timestamp && h.count === ticketCount);
-                });
             }
             
             // Remove from audit log
