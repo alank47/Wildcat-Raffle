@@ -2051,37 +2051,21 @@
                             if (auditLogDoc.exists()) {
                                 const firebaseAuditLog = auditLogDoc.data().auditLog || [];
                                 
-                                // Smart merge strategy:
-                                // 1. Keep all local entries (including deletions respected)
-                                // 2. Add Firebase entries that are NEWER than our last save
-                                //    (these are from other users saving concurrently)
+                                // PROPER MERGE: Combine both, deduplicate by unique key
+                                const allEntries = [...auditLog, ...firebaseAuditLog];
+                                const uniqueMap = new Map();
                                 
-                                const lastSave = localStorage.getItem('lastAuditLogSaveTime');
-                                const lastSaveTime = lastSave ? new Date(lastSave) : new Date(0);
-                                
-                                // Find entries in Firebase that are newer than our last save
-                                // (these were added by other teachers while we were working)
-                                const newFromFirebase = firebaseAuditLog.filter(fbEntry => {
-                                    const fbTime = new Date(fbEntry.timestamp);
-                                    if (fbTime <= lastSaveTime) return false; // Old entry
+                                allEntries.forEach(entry => {
+                                    // Create unique key for each entry
+                                    const key = `${entry.timestamp}-${entry.studentId}-${entry.action}-${entry.category}-${entry.ticketCount}-${entry.teacher}`;
                                     
-                                    // Check if we already have this entry locally
-                                    const localKey = `${fbEntry.timestamp}-${fbEntry.studentId}-${fbEntry.category}-${fbEntry.ticketCount}`;
-                                    const existsLocal = auditLog.find(e => {
-                                        const localEntryKey = `${e.timestamp}-${e.studentId}-${e.category}-${e.ticketCount}`;
-                                        return localEntryKey === localKey;
-                                    });
-                                    
-                                    return !existsLocal; // Add if not in local
+                                    // Keep the entry (last one wins if duplicate)
+                                    uniqueMap.set(key, entry);
                                 });
                                 
-                                // Combine: local entries + new entries from other users
-                                auditLogToSave = [...auditLog, ...newFromFirebase].sort((a, b) => 
+                                auditLogToSave = Array.from(uniqueMap.values()).sort((a, b) => 
                                     new Date(a.timestamp) - new Date(b.timestamp)
                                 );
-                                
-                                // Save the current time as last save
-                                localStorage.setItem('lastAuditLogSaveTime', new Date().toISOString());
                             }
                             
                             transaction.set(auditLogDocRef, {
@@ -2599,16 +2583,34 @@
             const isOnTicketsTab = ticketsTab && !ticketsTab.classList.contains('hidden');
             
             if (binId && !isSyncing && (currentUser || currentStudent) && timeSinceActivity > AUTO_REFRESH_DELAY && !isOnTicketsTab) {
-                console.log('🔄 Auto-refreshing data (user inactive for 60+ seconds)');
-                await loadData();
-                if (currentUser) {
-                    updateAllDisplays();
-                } else if (currentStudent) {
-                    const student = students.find(s => s.id === currentStudent.id);
-                    if (student) {
-                        currentStudent = student;
-                        updateStudentView();
+                // SAFETY CHECK: Only refresh if Firebase has NEWER data than local
+                try {
+                    const { doc, getDoc } = window.firebaseModules;
+                    const mainSnap = await getDoc(doc(firebaseDb, 'raffle_data', 'main'));
+                    
+                    if (mainSnap.exists()) {
+                        const firebaseTimestamp = mainSnap.data().lastSaveTimestamp;
+                        const localTimestamp = lastSaveTimestamp;
+                        
+                        // Only load if Firebase is newer
+                        if (firebaseTimestamp > localTimestamp) {
+                            console.log('🔄 Auto-refreshing data (Firebase has newer data)');
+                            await loadData();
+                            if (currentUser) {
+                                updateAllDisplays();
+                            } else if (currentStudent) {
+                                const student = students.find(s => s.id === currentStudent.id);
+                                if (student) {
+                                    currentStudent = student;
+                                    updateStudentView();
+                                }
+                            }
+                        } else {
+                            console.log('⏭️ Skipping auto-refresh (local data is current)');
+                        }
                     }
+                } catch (error) {
+                    console.error('Auto-refresh check failed:', error);
                 }
             }
         }, 30000); // Check every 30 seconds, but only refresh if inactive
