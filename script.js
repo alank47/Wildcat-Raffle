@@ -4640,7 +4640,12 @@
             tbody.innerHTML = sorted.map((log, index) => {
                 const date = new Date(log.timestamp);
                 const formattedDate = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
-                const originalIndex = auditLog.length - 1 - index; // Get original index
+                // Find the actual index in the full auditLog array by matching timestamp and student
+                const originalIndex = auditLog.findIndex(e => 
+                    e.timestamp === log.timestamp && 
+                    e.studentId === log.studentId && 
+                    e.ticketCount === log.ticketCount
+                );
                 
                 // Determine action styling
                 let actionBadge = '';
