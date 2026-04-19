@@ -2079,24 +2079,29 @@
                         
                         await new Promise(resolve => setTimeout(resolve, 50));
                         
-                        // TRANSACTION 3: Audit Log Document (append-only union by entryId)
-                        // FIXED: Simple set union — Firebase entries stay, local additions are
-                        // preserved even when Firebase hasn't seen them yet. No deletion path;
-                        // audit log is append-only by compliance design.
+                        // TRANSACTION 3: Audit Log Document (union by entryId, tombstone-aware)
+                        // Firebase entries are preserved by default (append-only behavior), EXCEPT
+                        // when an admin explicitly tombstones an entry (e.g. duplicate cleanup).
+                        // Tombstones are rare and always explicit — normal ticket awards never delete.
                         const auditLogDocRef = doc(firebaseDb, 'raffle_data', 'audit_log');
                         await runTransaction(firebaseDb, async (transaction) => {
                             const auditLogDoc = await transaction.get(auditLogDocRef);
                             const firebaseAuditLog = auditLogDoc.exists() ? (auditLogDoc.data().auditLog || []) : [];
 
+                            // Respect the same tombstone list used for ticket history
+                            const tombstonedIds = new Set((localTombstones || []).map(t => t.entryId));
+
                             const byId = new Map();
-                            // Firebase is baseline — nothing in Firebase ever gets dropped
+                            // Firebase is baseline — nothing dropped EXCEPT admin-tombstoned entries
                             firebaseAuditLog.forEach(e => {
                                 const id = ensureEntryId(e);
+                                if (tombstonedIds.has(id)) return;
                                 byId.set(id, { ...e, entryId: id });
                             });
-                            // Add local entries Firebase doesn't have (this is what preserves the Sofia/Leo bonuses)
+                            // Add local entries Firebase doesn't have (preserves new audit entries)
                             auditLog.forEach(e => {
                                 const id = ensureEntryId(e);
+                                if (tombstonedIds.has(id)) return;
                                 if (!byId.has(id)) {
                                     byId.set(id, { ...e, entryId: id });
                                 }
