@@ -21,10 +21,10 @@
             try {
                 // Dynamically import Firebase modules
                 const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js');
-                const { getFirestore, doc, getDoc, setDoc, serverTimestamp, runTransaction } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
+                const { getFirestore, doc, getDoc, setDoc, serverTimestamp, runTransaction, updateDoc, arrayUnion } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
                 
                 // Store imports globally
-                window.firebaseModules = { doc, getDoc, setDoc, serverTimestamp, runTransaction };
+                window.firebaseModules = { doc, getDoc, setDoc, serverTimestamp, runTransaction, updateDoc, arrayUnion };
                 
                 // Initialize Firebase app
                 firebaseApp = initializeApp(firebaseConfig);
@@ -146,6 +146,105 @@
                 h |= 0;
             }
             return 'e_' + Math.abs(h).toString(36);
+        }
+
+        // ============================================================
+        // PERSISTENT TOMBSTONES (isolated document — old code can't wipe)
+        // ============================================================
+        // Tombstones live in raffle_data/tombstones, a document that only
+        // this new code knows about. Old code (stale tabs) cannot wipe it
+        // because it doesn't read or write this document. Once written,
+        // a tombstone survives any save from any tab running any version.
+        //
+        // Loaded tombstones are applied as a DISPLAY FILTER: the ticket
+        // history and audit log in memory will have tombstoned entries
+        // filtered out after load, so the UI never shows them even if
+        // old code saves them back into ticket_history or audit_log.
+        // ============================================================
+        async function persistTombstone(entryId, deletedBy, reason, type = 'event') {
+            if (!firebaseInitialized || !firebaseDb) {
+                console.warn('persistTombstone: Firebase not available, storing locally only');
+                localTombstones.push({ entryId, deletedAt: new Date().toISOString(), deletedBy, reason, type });
+                return;
+            }
+            const { doc, setDoc, getDoc, updateDoc, arrayUnion } = window.firebaseModules;
+            const tombstoneRef = doc(firebaseDb, 'raffle_data', 'tombstones');
+            const tombstone = {
+                entryId,
+                deletedAt: new Date().toISOString(),
+                deletedBy: deletedBy || 'unknown',
+                reason: reason || '',
+                type
+            };
+            try {
+                // Try arrayUnion first (atomic append — safe against concurrent writers)
+                await updateDoc(tombstoneRef, { entries: arrayUnion(tombstone) });
+            } catch (e) {
+                // Doc might not exist yet; create it
+                try {
+                    const snap = await getDoc(tombstoneRef);
+                    if (snap.exists()) {
+                        const existing = snap.data().entries || [];
+                        if (!existing.some(t => t.entryId === entryId)) {
+                            existing.push(tombstone);
+                        }
+                        await setDoc(tombstoneRef, { entries: existing, lastUpdated: Date.now() });
+                    } else {
+                        await setDoc(tombstoneRef, { entries: [tombstone], lastUpdated: Date.now() });
+                    }
+                } catch (e2) {
+                    console.error('persistTombstone: failed to write tombstone', e2);
+                }
+            }
+            // Also keep in local memory for immediate use
+            if (!localTombstones.some(t => t.entryId === entryId)) {
+                localTombstones.push(tombstone);
+            }
+        }
+
+        async function loadPersistentTombstones() {
+            if (!firebaseInitialized || !firebaseDb) return [];
+            const { doc, getDoc } = window.firebaseModules;
+            try {
+                const snap = await getDoc(doc(firebaseDb, 'raffle_data', 'tombstones'));
+                if (snap.exists()) {
+                    return snap.data().entries || [];
+                }
+            } catch (e) {
+                console.error('loadPersistentTombstones failed:', e);
+            }
+            return [];
+        }
+
+        // Applies tombstones as a filter to current in-memory state.
+        // Called after load. Never writes — pure display filter.
+        function applyTombstonesToLocalState() {
+            if (!localTombstones || localTombstones.length === 0) return;
+            const tombstonedIds = new Set(localTombstones.map(t => t.entryId));
+            
+            // Filter ticket history
+            let ticketsRemoved = 0;
+            students.forEach(s => {
+                if (!s.ticketHistory) return;
+                const before = s.ticketHistory.length;
+                s.ticketHistory = s.ticketHistory.filter(e => !tombstonedIds.has(ensureEntryId(e)));
+                ticketsRemoved += (before - s.ticketHistory.length);
+                
+                // Recalculate counters from filtered history
+                const cw = s.ticketHistory.filter(h => h.week === currentWeek);
+                s.pbisTickets = cw.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                s.attendanceTickets = cw.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                s.academicTickets = cw.filter(h => h.category === 'Academic' || h.category === 'Academics').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+            });
+            
+            // Filter audit log
+            const auditBefore = auditLog.length;
+            auditLog = auditLog.filter(e => !tombstonedIds.has(ensureEntryId(e)));
+            const auditRemoved = auditBefore - auditLog.length;
+            
+            if (ticketsRemoved > 0 || auditRemoved > 0) {
+                console.log(`🧹 Applied ${localTombstones.length} tombstones: filtered ${ticketsRemoved} ticket entries, ${auditRemoved} audit entries`);
+            }
         }
 
         let currentUser = null;
@@ -1166,7 +1265,17 @@
                         
                         // Load ticket histories from separate document
                         const firebaseTicketHistories = ticketHistoryData.histories || {};
-                        localTombstones = ticketHistoryData.tombstones || []; // NEW: load tombstones
+                        // NEW: Load tombstones from the DEDICATED tombstones document.
+                        // Also union with any legacy tombstones that might still be in ticket_history
+                        // (from older saves) — harmless to keep both in memory.
+                        const dedicatedTombstones = await loadPersistentTombstones();
+                        const legacyTombstones = ticketHistoryData.tombstones || [];
+                        const tombstoneMap = new Map();
+                        dedicatedTombstones.forEach(t => tombstoneMap.set(t.entryId, t));
+                        legacyTombstones.forEach(t => {
+                            if (!tombstoneMap.has(t.entryId)) tombstoneMap.set(t.entryId, t);
+                        });
+                        localTombstones = Array.from(tombstoneMap.values());
                         
                         // CRITICAL: MERGE students instead of overwriting to preserve local changes
                         const firebaseStudents = mainData.students || [];
@@ -1339,6 +1448,11 @@
                             emailjs.init(emailJSConfig.publicKey);
                         }
                         
+                        // NEW: Apply tombstone filter as a display layer.
+                        // Even if old code saved deleted entries back into ticket_history/audit_log,
+                        // tombstones filter them out before they reach the UI.
+                        applyTombstonesToLocalState();
+                        
                         return; // Successfully loaded from Firebase
                     } else {
                         console.log('ℹ️ No Firebase data found, loading from localStorage');
@@ -1411,6 +1525,9 @@
                 if (emailJSConfig.publicKey && typeof emailjs !== 'undefined') {
                     emailjs.init(emailJSConfig.publicKey);
                 }
+                
+                // NEW: Apply tombstone filter (localStorage-fallback path)
+                applyTombstonesToLocalState();
             }
         }
 
@@ -1966,7 +2083,12 @@
                                             attendanceValue = localStudent.attendanceTickets || 0;
                                             academicValue = localStudent.academicTickets || 0;
                                         } else {
-                                            const currentWeekHistory = localHistory.filter(h => h.week === currentWeek);
+                                            // Tombstone-aware recalc: exclude any entry whose entryId is tombstoned.
+                                            // This prevents a stale tab from resurrecting deleted tickets via counters.
+                                            const tombstonedIds = new Set((localTombstones || []).map(t => t.entryId));
+                                            const currentWeekHistory = localHistory.filter(h => 
+                                                h.week === currentWeek && !tombstonedIds.has(ensureEntryId(h))
+                                            );
                                             pbisValue = currentWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
                                             attendanceValue = currentWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
                                             academicValue = currentWeekHistory.filter(h => h.category === 'Academic' || h.category === 'Academics').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
@@ -5162,17 +5284,10 @@
                     const toRemoveIdx = candidates.length > 0 ? candidates[0].idx : -1;
                     const toRemove = toRemoveIdx >= 0 ? [student.ticketHistory[toRemoveIdx]] : [];
 
-                    toRemove.forEach(h => {
+                    for (const h of toRemove) {
                         const tid = ensureEntryId(h);
-                        if (!localTombstones.some(t => t.entryId === tid)) {
-                            localTombstones.push({
-                                entryId: tid,
-                                deletedAt: new Date().toISOString(),
-                                deletedBy: currentUser.name || 'admin',
-                                reason: `Deleted via audit log: ${h.reason || ''}`
-                            });
-                        }
-                    });
+                        await persistTombstone(tid, currentUser.name || 'admin', `Deleted via audit log: ${h.reason || ''}`, 'ticket');
+                    }
 
                     if (toRemoveIdx >= 0) {
                         student.ticketHistory.splice(toRemoveIdx, 1);
@@ -5194,14 +5309,7 @@
             
             // Tombstone the audit log entry so deletion survives the merge
             const auditEntryId = ensureEntryId(entry);
-            if (!localTombstones.some(t => t.entryId === auditEntryId)) {
-                localTombstones.push({
-                    entryId: auditEntryId,
-                    deletedAt: new Date().toISOString(),
-                    deletedBy: currentUser.name || 'admin',
-                    reason: `Deleted audit entry: ${entry.action} - ${entry.reason || ''}`
-                });
-            }
+            await persistTombstone(auditEntryId, currentUser.name || 'admin', `Deleted audit entry: ${entry.action} - ${entry.reason || ''}`, 'audit');
             
             // Remove from local audit log
             auditLog.splice(logIndex, 1);
@@ -11774,7 +11882,7 @@
             if (!confirm) return;
             
             // Restore each student's previous state
-            lastAwardAction.students.forEach(prevState => {
+            for (const prevState of lastAwardAction.students) {
                 const student = students.find(s => s.id === prevState.studentId);
                 if (student) {
                     // Restore ticket counts
@@ -11785,21 +11893,14 @@
                     // Tombstone the ticket history entries added by the award, then remove
                     if (student.ticketHistory && student.ticketHistory.length > prevState.ticketHistoryLength) {
                         const addedEntries = student.ticketHistory.slice(prevState.ticketHistoryLength);
-                        addedEntries.forEach(h => {
+                        for (const h of addedEntries) {
                             const tid = ensureEntryId(h);
-                            if (!localTombstones.some(t => t.entryId === tid)) {
-                                localTombstones.push({
-                                    entryId: tid,
-                                    deletedAt: new Date().toISOString(),
-                                    deletedBy: currentUser.name || 'admin',
-                                    reason: `Undo last award: ${h.reason || ''}`
-                                });
-                            }
-                        });
+                            await persistTombstone(tid, currentUser.name || 'admin', `Undo last award: ${h.reason || ''}`, 'ticket');
+                        }
                         student.ticketHistory = student.ticketHistory.slice(0, prevState.ticketHistoryLength);
                     }
                 }
-            });
+            }
             
             // Restore teacher's ticket count
             const teacher = teachers.find(t => t.id === lastAwardAction.teacherId);
@@ -11811,17 +11912,10 @@
             const entriesToRemove = auditLog.length - lastAwardAction.auditLogCount;
             if (entriesToRemove > 0) {
                 const removedEntries = auditLog.slice(lastAwardAction.auditLogCount, lastAwardAction.auditLogCount + entriesToRemove);
-                removedEntries.forEach(e => {
+                for (const e of removedEntries) {
                     const aid = ensureEntryId(e);
-                    if (!localTombstones.some(t => t.entryId === aid)) {
-                        localTombstones.push({
-                            entryId: aid,
-                            deletedAt: new Date().toISOString(),
-                            deletedBy: currentUser.name || 'admin',
-                            reason: `Undo last award: ${e.action} - ${e.reason || ''}`
-                        });
-                    }
-                });
+                    await persistTombstone(aid, currentUser.name || 'admin', `Undo last award: ${e.action} - ${e.reason || ''}`, 'audit');
+                }
                 auditLog.splice(lastAwardAction.auditLogCount, entriesToRemove);
             }
             
