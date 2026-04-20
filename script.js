@@ -247,6 +247,74 @@
             }
         }
 
+        // ============================================================
+        // QUALIFICATION SELF-HEAL — runs after every load.
+        // 
+        // Why: `bigRaffleQualified` and `weeksQualified` on student objects
+        // can be corrupted by stale tabs saving old in-memory state. The
+        // audit log is append-only (stale tabs can add entries but not
+        // remove them), so it is a reliable source of truth. We recompute
+        // these two fields from the audit log after every load. If Firebase
+        // gets corrupted, the next load auto-repairs it.
+        //
+        // This is a narrow defense against the specific regression that hit
+        // on Monday. Other fields are not covered. Ticket counters are
+        // already recalculated from ticketHistory by applyTombstonesToLocalState.
+        // ============================================================
+        function healQualificationsFromAuditLog() {
+            if (!auditLog || !students || students.length === 0) return;
+            
+            // Build per-student set of qualified weeks from the audit log
+            const auditQualifications = {};
+            auditLog.forEach(e => {
+                if (!e.studentId) return;
+                if (e.action !== 'Qualified for Wildcat Jackpot' && e.action !== 'Weekly Leaderboard Bonus') return;
+                if (!e.week) return;
+                if (!auditQualifications[e.studentId]) auditQualifications[e.studentId] = new Set();
+                auditQualifications[e.studentId].add(parseInt(e.week));
+            });
+            
+            // Also count qualification-related audit entries per student (for weeksQualified)
+            const auditEntryCounts = {};
+            auditLog.forEach(e => {
+                if (!e.studentId) return;
+                if (e.action !== 'Qualified for Wildcat Jackpot' && e.action !== 'Weekly Leaderboard Bonus') return;
+                auditEntryCounts[e.studentId] = (auditEntryCounts[e.studentId] || 0) + 1;
+            });
+            
+            let studentsHealed = 0;
+            let weeksAdded = 0;
+            
+            students.forEach(s => {
+                const auditWeeks = auditQualifications[s.id] ? Array.from(auditQualifications[s.id]) : [];
+                const currentWeeks = Array.isArray(s.bigRaffleQualified) ? [...s.bigRaffleQualified] : [];
+                
+                // Union: never decrease, only add missing
+                const unionWeeks = Array.from(new Set([...currentWeeks, ...auditWeeks])).sort((a, b) => a - b);
+                const addedCount = unionWeeks.length - currentWeeks.length;
+                
+                if (addedCount > 0) {
+                    s.bigRaffleQualified = unionWeeks;
+                    studentsHealed++;
+                    weeksAdded += addedCount;
+                }
+                
+                // weeksQualified: never decrease; take max of current, union length, and audit entry count
+                const targetWeeksQualified = Math.max(
+                    s.weeksQualified || 0,
+                    unionWeeks.length,
+                    auditEntryCounts[s.id] || 0
+                );
+                if (targetWeeksQualified > (s.weeksQualified || 0)) {
+                    s.weeksQualified = targetWeeksQualified;
+                }
+            });
+            
+            if (studentsHealed > 0) {
+                console.log(`🩹 Qualification self-heal: restored ${weeksAdded} week-entries across ${studentsHealed} students from audit log`);
+            }
+        }
+
         let currentUser = null;
         let currentStudent = null;
         let binId = '6987ac03ae596e708f191041'; // School database ID - hardcoded for auto-connect
@@ -1453,6 +1521,10 @@
                         // tombstones filter them out before they reach the UI.
                         applyTombstonesToLocalState();
                         
+                        // NEW: Rebuild bigRaffleQualified/weeksQualified from audit log.
+                        // Audit log is append-only, so this self-heals any stale-tab corruption.
+                        healQualificationsFromAuditLog();
+                        
                         return; // Successfully loaded from Firebase
                     } else {
                         console.log('ℹ️ No Firebase data found, loading from localStorage');
@@ -1528,6 +1600,9 @@
                 
                 // NEW: Apply tombstone filter (localStorage-fallback path)
                 applyTombstonesToLocalState();
+                
+                // NEW: Heal qualifications from audit log (localStorage-fallback path)
+                healQualificationsFromAuditLog();
             }
         }
 
