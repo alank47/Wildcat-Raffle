@@ -12048,64 +12048,122 @@
         }
         
         function drawPBISByGrade(categoryName) {
-            // Get all unique grades in the system
-            const grades = [...new Set(students.map(s => parseInt(s.grade)))].sort((a, b) => a - b);
-            
-            // Filter students by PBIS tickets for each grade
-            const gradeWinners = {};
-            grades.forEach(grade => {
-                const gradeStudents = students.filter(s => parseInt(s.grade) === grade);
-                const eligible = gradeStudents.filter(s => s.pbisTickets > 0);
-                
-                if (eligible.length > 0) {
-                    gradeWinners[grade] = eligible;
-                }
+            // PBIS draws 2 winners from Middle School (grades 6-8) and 2 from High School (grades 9-12).
+            // Same student cannot win twice in one drawing (draws are without replacement).
+            const middleSchool = students.filter(s => {
+                const g = parseInt(s.grade);
+                return g >= 6 && g <= 8 && (s.pbisTickets || 0) > 0;
             });
-            
-            const eligibleGrades = Object.keys(gradeWinners);
-            
-            if (eligibleGrades.length === 0) {
-                alert('No eligible students for PBIS in any grade!');
+            const highSchool = students.filter(s => {
+                const g = parseInt(s.grade);
+                return g >= 9 && g <= 12 && (s.pbisTickets || 0) > 0;
+            });
+
+            if (middleSchool.length === 0 && highSchool.length === 0) {
+                alert('No eligible students for PBIS in either school!');
                 return;
             }
-            
-            // Draw winners sequentially for each grade
-            let gradeIndex = 0;
+
+            // Build the sequence of draws: up to 2 MS, then up to 2 HS
+            // If a pool doesn't have enough eligible students, we skip the extra draws in that pool
+            const drawPlan = [];
+            if (middleSchool.length >= 1) drawPlan.push({ pool: 'MS', label: 'Middle School Winner 1 of 2' });
+            if (middleSchool.length >= 2) drawPlan.push({ pool: 'MS', label: 'Middle School Winner 2 of 2' });
+            if (highSchool.length >= 1)   drawPlan.push({ pool: 'HS', label: 'High School Winner 1 of 2' });
+            if (highSchool.length >= 2)   drawPlan.push({ pool: 'HS', label: 'High School Winner 2 of 2' });
+
+            // Track winners to prevent duplicates in the same drawing
+            const msRemaining = [...middleSchool];
+            const hsRemaining = [...highSchool];
             const allWinners = [];
-            
-            function drawNextGrade() {
-                if (gradeIndex >= eligibleGrades.length) {
-                    // All grades done, show all winners
+
+            let drawIndex = 0;
+            function drawNext() {
+                if (drawIndex >= drawPlan.length) {
+                    // All draws done
                     saveData();
-                    displayAllGradeWinners(allWinners, categoryName);
+                    displayPBISWinners(allWinners, categoryName);
                     updateWinnersList();
                     updateAllDisplays();
                     triggerConfetti();
                     return;
                 }
-                
-                const grade = eligibleGrades[gradeIndex];
-                const eligible = gradeWinners[grade];
-                
-                showRaffleSpinner(eligible, `Grade ${grade}`, (winner) => {
+
+                const step = drawPlan[drawIndex];
+                const pool = step.pool === 'MS' ? msRemaining : hsRemaining;
+
+                if (pool.length === 0) {
+                    // Pool exhausted mid-drawing (shouldn't happen given our plan, but safe fallback)
+                    drawIndex++;
+                    drawNext();
+                    return;
+                }
+
+                showRaffleSpinner(pool, step.label, (winner) => {
+                    // Determine the grade-aware sub-label for audit entries
+                    const schoolLabel = step.pool === 'MS' ? 'Middle School' : 'High School';
+                    const gradeLabel = `Grade ${winner.grade}`;
+
                     weeklyWinners.push({
                         week: currentWeek,
                         category: categoryName,
-                        grade: grade,
+                        school: schoolLabel,
+                        grade: winner.grade,
+                        winnerLabel: step.label,
                         student: winner,
                         date: new Date().toLocaleDateString()
                     });
-                    
-                    allWinners.push({ grade, winner });
-                    
-                    addToAuditLog('Raffle Winner', winner.id, `${categoryName} - Grade ${grade}`, null, null);
-                    
-                    gradeIndex++;
-                    setTimeout(() => drawNextGrade(), 2000); // 2 second delay between grades
+
+                    allWinners.push({ winner, school: schoolLabel, label: step.label });
+
+                    addToAuditLog(
+                        'Raffle Winner',
+                        winner.id,
+                        `${categoryName} - ${gradeLabel} (${step.label})`,
+                        null,
+                        null
+                    );
+
+                    // Remove winner from the remaining pool so they can't win twice
+                    const idx = pool.findIndex(s => s.id === winner.id);
+                    if (idx >= 0) pool.splice(idx, 1);
+
+                    drawIndex++;
+                    setTimeout(() => drawNext(), 2000);
                 });
             }
-            
-            drawNextGrade();
+
+            drawNext();
+        }
+
+        function displayPBISWinners(winners, categoryName) {
+            const display = document.getElementById('winnerDisplay');
+
+            let html = '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-top: 20px;">';
+
+            winners.forEach(({ winner, school, label }) => {
+                const bgColor = school === 'Middle School'
+                    ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
+                    : 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
+
+                html += `
+                    <div style="background: ${bgColor}; color: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center;">
+                        <div style="background: rgba(255,255,255,0.2); padding: 6px 12px; border-radius: 15px; display: inline-block; margin-bottom: 10px; font-size: 12px;">
+                            🏫 ${school}
+                        </div>
+                        <h3 style="color: white; margin: 10px 0; font-size: 20px;">${label}</h3>
+                        <div style="background: white; color: #333; padding: 15px; border-radius: 8px; margin: 10px 0;">
+                            <div style="font-size: 22px; font-weight: 700;">${winner.firstName} ${winner.lastName}</div>
+                            <div style="font-size: 12px; color: #666; margin-top: 5px;">Grade ${winner.grade} • ID: ${winner.id}</div>
+                        </div>
+                        <div style="font-size: 14px; opacity: 0.9;">Category: ${categoryName}</div>
+                        <div style="font-size: 12px; opacity: 0.8; margin-top: 5px;">${new Date().toLocaleDateString()}</div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            display.innerHTML = html;
         }
         
         function drawBySchool(category, categoryName) {
