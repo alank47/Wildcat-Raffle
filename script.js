@@ -2961,6 +2961,8 @@
                 activeBtn.style.background = 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)';
             } else if (subtab === 'teachers') {
                 activeBtn.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
+            } else if (subtab === 'insights') {
+                activeBtn.style.background = 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)';
             }
             activeBtn.style.color = 'white';
             activeBtn.style.boxShadow = '0 2px 8px rgba(102, 126, 234, 0.3)';
@@ -2976,6 +2978,8 @@
             let selectedTab;
             if (subtab === 'teachers') {
                 selectedTab = document.getElementById('teachersContent');
+            } else if (subtab === 'insights') {
+                selectedTab = document.getElementById('insightsContent');
             } else {
                 selectedTab = document.getElementById(`${subtab}Data`);
             }
@@ -2991,6 +2995,8 @@
             // If teachers tab, update teacher analytics
             if (subtab === 'teachers') {
                 updateTeacherAnalytics();
+            } else if (subtab === 'insights') {
+                updateInsights();
             } else {
                 // Refresh the current view (charts or tables) for student data tabs
                 // Use setTimeout to allow DOM to fully render before creating charts
@@ -3672,6 +3678,217 @@
             if (pbisEl) pbisEl.textContent = pbisTickets;
             if (attendanceEl) attendanceEl.textContent = attendanceTickets;
             if (academicEl) academicEl.textContent = academicTickets;
+        }
+
+        // ============================================================
+        // INSIGHTS (Data & Analytics → Insights subtab)
+        // Near-miss students, teacher generosity variance, winner distribution
+        // ============================================================
+        function updateInsights() {
+            updateNearMissStudents();
+            updateTeacherGenerosity();
+            updateWinnerDistribution();
+        }
+
+        function updateNearMissStudents() {
+            const listEl = document.getElementById('nearMissList');
+            const countEl = document.getElementById('nearMissCount');
+            if (!listEl || !countEl) return;
+
+            // Students who earned 2 of 3 category types this week but not all 3
+            const nearMiss = students.map(s => {
+                const pbis = s.pbisTickets || 0;
+                const att = s.attendanceTickets || 0;
+                const acad = s.academicTickets || 0;
+                const earnedCategories = [pbis > 0, att > 0, acad > 0].filter(Boolean).length;
+                return { student: s, pbis, att, acad, earnedCategories };
+            }).filter(x => x.earnedCategories === 2);
+
+            countEl.textContent = nearMiss.length;
+
+            if (nearMiss.length === 0) {
+                listEl.innerHTML = '<div style="text-align: center; padding: 30px; color: #999;">No near-miss students this week. Either everyone qualified or no one has earned 2-of-3 yet.</div>';
+                return;
+            }
+
+            // Sort by "how close" — total tickets descending (most engaged near-miss first)
+            nearMiss.sort((a, b) => (b.pbis + b.att + b.acad) - (a.pbis + a.att + a.acad));
+
+            let html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px;">';
+            nearMiss.forEach(({ student, pbis, att, acad }) => {
+                // Which category are they missing?
+                const missing = [];
+                if (pbis === 0) missing.push('PBIS');
+                if (att === 0) missing.push('Attendance');
+                if (acad === 0) missing.push('Academic');
+                const missingLabel = missing.join(', ');
+
+                const gradeLabel = student.grade >= 6 && student.grade <= 8 ? 'MS' : 'HS';
+
+                html += `
+                    <div style="background: #fef3c7; padding: 12px 15px; border-radius: 8px; border-left: 3px solid #f59e0b;">
+                        <div style="font-weight: 600; color: #333; font-size: 14px;">${student.firstName} ${student.lastName}</div>
+                        <div style="font-size: 11px; color: #666; margin: 3px 0;">Grade ${student.grade} (${gradeLabel}) • ID: ${student.id}</div>
+                        <div style="font-size: 12px; color: #92400e; margin-top: 6px;">
+                            PBIS: <b>${pbis}</b> • Att: <b>${att}</b> • Acad: <b>${acad}</b>
+                        </div>
+                        <div style="font-size: 11px; color: #b45309; margin-top: 4px; font-style: italic;">
+                            Needs: ${missingLabel}
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            listEl.innerHTML = html;
+        }
+
+        function updateTeacherGenerosity() {
+            // Pull from audit log so the numbers are authoritative
+            const teacherCounts = {};
+            auditLog.forEach(e => {
+                if (e.action !== 'Awarded Tickets' || !e.teacher) return;
+                if (!teacherCounts[e.teacher]) teacherCounts[e.teacher] = 0;
+                teacherCounts[e.teacher] += (e.ticketCount || 1);
+            });
+
+            const counts = Object.values(teacherCounts).filter(c => c > 0);
+            const activeCount = counts.length;
+
+            const mean = activeCount > 0 ? counts.reduce((a, b) => a + b, 0) / activeCount : 0;
+            const sortedCounts = [...counts].sort((a, b) => a - b);
+            const median = activeCount === 0 ? 0
+                : activeCount % 2 === 1
+                    ? sortedCounts[Math.floor(activeCount / 2)]
+                    : (sortedCounts[activeCount / 2 - 1] + sortedCounts[activeCount / 2]) / 2;
+            const variance = activeCount > 0
+                ? counts.reduce((sum, c) => sum + Math.pow(c - mean, 2), 0) / activeCount
+                : 0;
+            const stdDev = Math.sqrt(variance);
+
+            const setText = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = val;
+            };
+            setText('genActiveTeachers', activeCount);
+            setText('genMean', Math.round(mean));
+            setText('genMedian', Math.round(median));
+            setText('genStdDev', Math.round(stdDev));
+
+            // Outliers: >= mean + stdDev (high) and <= mean - stdDev (low, still active)
+            const highThreshold = mean + stdDev;
+            const lowThreshold = Math.max(1, mean - stdDev); // must still be active (>= 1)
+            const highOutliers = Object.entries(teacherCounts)
+                .filter(([, c]) => c >= highThreshold && stdDev > 0)
+                .sort((a, b) => b[1] - a[1]);
+            const lowOutliers = Object.entries(teacherCounts)
+                .filter(([, c]) => c <= lowThreshold && c > 0 && stdDev > 0)
+                .sort((a, b) => a[1] - b[1]);
+
+            const highEl = document.getElementById('genOutliersHigh');
+            const lowEl = document.getElementById('genOutliersLow');
+
+            if (highEl) {
+                if (highOutliers.length === 0) {
+                    highEl.innerHTML = '';
+                } else {
+                    highEl.innerHTML = `
+                        <div style="background: #d1fae5; padding: 12px 15px; border-radius: 8px;">
+                            <div style="font-weight: 600; color: #065f46; margin-bottom: 6px; font-size: 13px;">
+                                🔝 High Outliers (${highOutliers.length}) — awarding significantly more than average
+                            </div>
+                            <div style="font-size: 13px; color: #047857;">
+                                ${highOutliers.map(([name, c]) => `${name}: <b>${c}</b>`).join(' • ')}
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+
+            if (lowEl) {
+                if (lowOutliers.length === 0) {
+                    lowEl.innerHTML = '';
+                } else {
+                    lowEl.innerHTML = `
+                        <div style="background: #fee2e2; padding: 12px 15px; border-radius: 8px;">
+                            <div style="font-weight: 600; color: #991b1b; margin-bottom: 6px; font-size: 13px;">
+                                ⚠️ Low Outliers (${lowOutliers.length}) — awarding significantly less than average
+                            </div>
+                            <div style="font-size: 13px; color: #b91c1c;">
+                                ${lowOutliers.map(([name, c]) => `${name}: <b>${c}</b>`).join(' • ')}
+                            </div>
+                            <div style="font-size: 11px; color: #7f1d1d; margin-top: 8px; font-style: italic;">
+                                Students in these teachers' classes have fewer opportunities to earn tickets. Consider coaching.
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+        }
+
+        function updateWinnerDistribution() {
+            const allWins = weeklyWinners || [];
+            // Count wins per student ID
+            const winsByStudent = {};
+            allWins.forEach(w => {
+                const sid = w.student?.id;
+                if (!sid) return;
+                winsByStudent[sid] = (winsByStudent[sid] || 0) + 1;
+            });
+
+            const uniqueWinners = Object.keys(winsByStudent).length;
+            const totalWins = allWins.length;
+            const repeatWinners = Object.values(winsByStudent).filter(c => c > 1).length;
+
+            // "Never-won eligible" = students who have qualified at least once but never won a raffle
+            const winnerIds = new Set(Object.keys(winsByStudent));
+            const neverWonEligible = students.filter(s => {
+                const hasQualified = (Array.isArray(s.bigRaffleQualified) ? s.bigRaffleQualified.length > 0 : s.bigRaffleQualified === true);
+                return hasQualified && !winnerIds.has(s.id);
+            }).length;
+
+            const setText = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = val;
+            };
+            setText('winnerUniqueCount', uniqueWinners);
+            setText('winnerTotalWins', totalWins);
+            setText('winnerRepeatCount', repeatWinners);
+            setText('winnerNeverWon', neverWonEligible);
+
+            // Recent first-time winners list
+            const recentListEl = document.getElementById('winnerRecentList');
+            if (recentListEl) {
+                const seenIds = new Set();
+                const firstTimes = [];
+                // Process wins in chronological order; first appearance of each student = first-time winner
+                [...allWins].sort((a, b) => new Date(a.date) - new Date(b.date)).forEach(w => {
+                    const sid = w.student?.id;
+                    if (!sid || seenIds.has(sid)) return;
+                    seenIds.add(sid);
+                    firstTimes.push(w);
+                });
+                // Reverse for most-recent first
+                firstTimes.reverse();
+                const recent = firstTimes.slice(0, 10);
+
+                if (recent.length === 0) {
+                    recentListEl.innerHTML = '<div style="color: #999; font-style: italic; font-size: 13px;">No first-time winners yet.</div>';
+                } else {
+                    recentListEl.innerHTML = `
+                        <div style="margin-bottom: 10px;">
+                            <div style="font-weight: 600; color: #333; font-size: 14px; margin-bottom: 8px;">🎉 Recent First-Time Winners (last 10)</div>
+                        </div>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px;">
+                            ${recent.map(w => `
+                                <div style="background: #f9fafb; padding: 10px 12px; border-radius: 6px; border-left: 3px solid #10b981;">
+                                    <div style="font-weight: 600; color: #333; font-size: 13px;">${w.student?.firstName || '?'} ${w.student?.lastName || ''}</div>
+                                    <div style="font-size: 11px; color: #666; margin-top: 3px;">Week ${w.week} • ${w.category} • ${w.date}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                }
+            }
         }
 
         function updateGradeChart(suffix) {
