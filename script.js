@@ -315,6 +315,181 @@
             }
         }
 
+        // ============================================================
+        // AUDIT OUTBOX — persistent backup for audit entries
+        //
+        // Problem: saveData() has three separate Firestore transactions
+        // (main doc, ticket_history, audit_log). If transaction 3 fails
+        // after 1 and 2 succeed, audit entries are lost — ticket history
+        // persists to Firebase but the corresponding audit entries never
+        // make it. This is exactly how Jessica Cervantes lost her 13
+        // audit entries on 2026-04-21.
+        //
+        // Fix: every audit entry written locally also goes into a
+        // localStorage outbox. On every successful audit-log save, the
+        // outbox is cleared. On page load, anything still in the outbox
+        // is re-added to the local audit log and included in the next
+        // save attempt. This means audit entries persist across crashes,
+        // closed tabs, failed transactions — anything that doesn't
+        // literally destroy the localStorage.
+        // ============================================================
+        const AUDIT_OUTBOX_KEY = 'auditOutbox_v1';
+
+        function readAuditOutbox() {
+            try {
+                const raw = localStorage.getItem(AUDIT_OUTBOX_KEY);
+                if (!raw) return [];
+                const parsed = JSON.parse(raw);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (e) {
+                console.warn('Audit outbox read failed, returning empty:', e);
+                return [];
+            }
+        }
+
+        function writeAuditOutbox(entries) {
+            try {
+                localStorage.setItem(AUDIT_OUTBOX_KEY, JSON.stringify(entries));
+            } catch (e) {
+                console.warn('Audit outbox write failed:', e);
+            }
+        }
+
+        function enqueueAuditOutbox(entry) {
+            if (!entry) return;
+            const outbox = readAuditOutbox();
+            const id = ensureEntryId(entry);
+            // Prevent duplicate outbox entries
+            if (!outbox.some(e => ensureEntryId(e) === id)) {
+                outbox.push({ ...entry, entryId: id });
+                writeAuditOutbox(outbox);
+            }
+        }
+
+        function clearAuditOutbox() {
+            try {
+                localStorage.removeItem(AUDIT_OUTBOX_KEY);
+            } catch (e) {
+                console.warn('Audit outbox clear failed:', e);
+            }
+        }
+
+        // Drain outbox into auditLog on load. Entries already present
+        // are deduplicated by entryId.
+        function drainAuditOutboxIntoLocalLog() {
+            const outbox = readAuditOutbox();
+            if (outbox.length === 0) return;
+
+            const existingIds = new Set(auditLog.map(e => ensureEntryId(e)));
+            let restored = 0;
+            outbox.forEach(entry => {
+                const id = ensureEntryId(entry);
+                if (!existingIds.has(id)) {
+                    auditLog.push(entry);
+                    restored++;
+                }
+            });
+
+            if (restored > 0) {
+                console.log(`📮 Drained ${restored} audit entr${restored === 1 ? 'y' : 'ies'} from outbox into local audit log`);
+            }
+        }
+
+        // ============================================================
+        // AUDIT ENTRY HEALER — reconstructs missing audit entries from
+        // ticket history. Catches historical damage and any case where
+        // the outbox also failed. Runs on every load after the
+        // qualification healer.
+        //
+        // Reconstructed entries are flagged `reconstructed: true`.
+        // teacherId is looked up by name from the teachers array when
+        // possible; left blank otherwise.
+        // ============================================================
+        function healAuditEntriesFromHistory() {
+            if (!auditLog || !students) return;
+
+            // Build an index: studentId -> Set of audit timestamps (ms)
+            // for Awarded Tickets entries. Used to find history entries
+            // with no matching audit entry.
+            const auditIndex = {};
+            auditLog.forEach(e => {
+                if (e.action !== 'Awarded Tickets') return;
+                if (!e.studentId || !e.timestamp) return;
+                if (!auditIndex[e.studentId]) auditIndex[e.studentId] = [];
+                auditIndex[e.studentId].push({
+                    ms: new Date(e.timestamp).getTime(),
+                    category: e.category,
+                    amount: e.ticketCount || 1
+                });
+            });
+
+            // Teacher name -> id lookup for reconstruction
+            const teacherByName = {};
+            (teachers || []).forEach(t => {
+                if (t.name) teacherByName[t.name] = t.id;
+            });
+
+            const reconstructed = [];
+            const MATCH_WINDOW_MS = 2000; // 2 seconds, matches batch-award behavior
+
+            students.forEach(s => {
+                const hist = s.ticketHistory || [];
+                hist.forEach(h => {
+                    // Only handle positive award entries (skip deductions etc.)
+                    const amt = h.tickets || h.amount || 0;
+                    if (amt <= 0) return;
+                    if (!h.timestamp) return;
+
+                    const hMs = new Date(h.timestamp).getTime();
+                    const category = h.category;
+
+                    // Look for a matching audit entry
+                    const candidates = auditIndex[s.id] || [];
+                    const match = candidates.find(c =>
+                        c.category === category &&
+                        c.amount === amt &&
+                        Math.abs(c.ms - hMs) < MATCH_WINDOW_MS
+                    );
+                    if (match) return; // already has audit entry
+
+                    // Reconstruct
+                    const reconstructedEntry = {
+                        timestamp: h.timestamp,
+                        teacher: h.teacher || 'Unknown',
+                        teacherId: teacherByName[h.teacher] || '',
+                        action: 'Awarded Tickets',
+                        studentId: s.id,
+                        studentName: `${s.firstName} ${s.lastName}`,
+                        category: category,
+                        ticketCount: amt,
+                        reason: h.subcategory
+                            ? `${h.subcategory}: ${h.reason || ''}`
+                            : (h.reason || ''),
+                        week: h.week || currentWeek,
+                        reconstructed: true
+                    };
+                    reconstructedEntry.entryId = ensureEntryId(reconstructedEntry);
+
+                    // Add to index so we don't re-match this one
+                    if (!auditIndex[s.id]) auditIndex[s.id] = [];
+                    auditIndex[s.id].push({
+                        ms: hMs,
+                        category: category,
+                        amount: amt
+                    });
+
+                    reconstructed.push(reconstructedEntry);
+                });
+            });
+
+            if (reconstructed.length > 0) {
+                reconstructed.forEach(e => auditLog.push(e));
+                // Keep chronological ordering
+                auditLog.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                console.log(`🔧 Audit healer: reconstructed ${reconstructed.length} missing audit entr${reconstructed.length === 1 ? 'y' : 'ies'} from ticket history`);
+            }
+        }
+
         let currentUser = null;
         let currentStudent = null;
         let binId = '6987ac03ae596e708f191041'; // School database ID - hardcoded for auto-connect
@@ -1521,9 +1696,18 @@
                         // tombstones filter them out before they reach the UI.
                         applyTombstonesToLocalState();
                         
+                        // NEW: Drain any audit entries that were queued in the outbox
+                        // (from a previous save where transaction 3 failed).
+                        drainAuditOutboxIntoLocalLog();
+                        
                         // NEW: Rebuild bigRaffleQualified/weeksQualified from audit log.
                         // Audit log is append-only, so this self-heals any stale-tab corruption.
                         healQualificationsFromAuditLog();
+                        
+                        // NEW: Reconstruct missing audit entries from ticket history.
+                        // Catches historical orphans (e.g. when transaction 3 failed
+                        // before the outbox existed) and any edge cases the outbox misses.
+                        healAuditEntriesFromHistory();
                         
                         return; // Successfully loaded from Firebase
                     } else {
@@ -1601,8 +1785,14 @@
                 // NEW: Apply tombstone filter (localStorage-fallback path)
                 applyTombstonesToLocalState();
                 
+                // NEW: Drain outbox (localStorage-fallback path)
+                drainAuditOutboxIntoLocalLog();
+                
                 // NEW: Heal qualifications from audit log (localStorage-fallback path)
                 healQualificationsFromAuditLog();
+                
+                // NEW: Reconstruct missing audit entries from ticket history
+                healAuditEntriesFromHistory();
             }
         }
 
@@ -2359,42 +2549,66 @@
                         // Firebase entries are preserved by default (append-only behavior), EXCEPT
                         // when an admin explicitly tombstones an entry (e.g. duplicate cleanup).
                         // Tombstones are rare and always explicit — normal ticket awards never delete.
+                        //
+                        // CRITICAL: wrapped in its own try/catch so a failure here doesn't
+                        // silently swallow after transactions 1 and 2 already committed.
+                        // The outbox keeps unsaved audit entries safe across failures.
                         const auditLogDocRef = doc(firebaseDb, 'raffle_data', 'audit_log');
-                        await runTransaction(firebaseDb, async (transaction) => {
-                            const auditLogDoc = await transaction.get(auditLogDocRef);
-                            const firebaseAuditLog = auditLogDoc.exists() ? (auditLogDoc.data().auditLog || []) : [];
+                        let auditSaveSucceeded = false;
+                        try {
+                            await runTransaction(firebaseDb, async (transaction) => {
+                                const auditLogDoc = await transaction.get(auditLogDocRef);
+                                const firebaseAuditLog = auditLogDoc.exists() ? (auditLogDoc.data().auditLog || []) : [];
 
-                            // Respect the same tombstone list used for ticket history
-                            const tombstonedIds = new Set((localTombstones || []).map(t => t.entryId));
+                                // Respect the same tombstone list used for ticket history
+                                const tombstonedIds = new Set((localTombstones || []).map(t => t.entryId));
 
-                            const byId = new Map();
-                            // Firebase is baseline — nothing dropped EXCEPT admin-tombstoned entries
-                            firebaseAuditLog.forEach(e => {
-                                const id = ensureEntryId(e);
-                                if (tombstonedIds.has(id)) return;
-                                byId.set(id, { ...e, entryId: id });
-                            });
-                            // Add local entries Firebase doesn't have (preserves new audit entries)
-                            auditLog.forEach(e => {
-                                const id = ensureEntryId(e);
-                                if (tombstonedIds.has(id)) return;
-                                if (!byId.has(id)) {
+                                const byId = new Map();
+                                // Firebase is baseline — nothing dropped EXCEPT admin-tombstoned entries
+                                firebaseAuditLog.forEach(e => {
+                                    const id = ensureEntryId(e);
+                                    if (tombstonedIds.has(id)) return;
                                     byId.set(id, { ...e, entryId: id });
-                                }
+                                });
+                                // Add local entries Firebase doesn't have (preserves new audit entries)
+                                auditLog.forEach(e => {
+                                    const id = ensureEntryId(e);
+                                    if (tombstonedIds.has(id)) return;
+                                    if (!byId.has(id)) {
+                                        byId.set(id, { ...e, entryId: id });
+                                    }
+                                });
+
+                                const merged = Array.from(byId.values())
+                                    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+                                transaction.set(auditLogDocRef, {
+                                    auditLog: merged,
+                                    lastSaveTimestamp: timestamp
+                                });
+
+                                auditLog = merged;
                             });
+                            auditSaveSucceeded = true;
+                            console.log(`✅ Audit log document saved (transaction)`);
+                        } catch (auditErr) {
+                            // Do NOT rethrow. The outbox has our entries, so they'll be
+                            // recovered on next load. But we MUST log this loudly so we
+                            // can spot patterns and so it doesn't hide in the outer catch.
+                            console.error('⚠️ AUDIT LOG SAVE FAILED (partial save detected):', auditErr);
+                            console.error('  Error code:', auditErr?.code, '| message:', auditErr?.message);
+                            console.error('  Outbox retained — audit entries will be recovered on next successful save.');
+                        }
 
-                            const merged = Array.from(byId.values())
-                                .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-
-                            transaction.set(auditLogDocRef, {
-                                auditLog: merged,
-                                lastSaveTimestamp: timestamp
-                            });
-
-                            auditLog = merged;
-                        });
-
-                        console.log(`✅ Audit log document saved (transaction)`);
+                        // Clear the outbox only when the audit save actually succeeded.
+                        // If it failed, entries remain in the outbox and get replayed next load.
+                        if (auditSaveSucceeded) {
+                            try {
+                                clearAuditOutbox();
+                            } catch (e) {
+                                console.warn('Outbox clear failed (non-fatal):', e);
+                            }
+                        }
                         
                         await new Promise(resolve => setTimeout(resolve, 50));
                         
@@ -5176,6 +5390,15 @@
             }
             
             auditLog.push(logEntry);
+            
+            // OUTBOX: persist to localStorage immediately so a failed save
+            // doesn't lose this entry. Cleared after successful audit-log save.
+            try {
+                enqueueAuditOutbox(logEntry);
+            } catch (e) {
+                console.warn('Outbox enqueue failed (non-fatal):', e);
+            }
+            
             // NOTE: saveData() is called by the parent function, not here
             // This prevents race conditions when awarding to multiple students
         }
