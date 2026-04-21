@@ -1044,6 +1044,9 @@
                     <button class="subtab-button admin-only" onclick="switchDataSubtab('teachers')" id="teachersSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
                         👥 Teacher Analytics
                     </button>
+                    <button class="subtab-button admin-only" onclick="switchDataSubtab('insights')" id="insightsSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
+                        🔍 Insights
+                    </button>
                 </div>
 
                 <!-- Export Controls -->
@@ -1545,6 +1548,90 @@
                             </table>
                         </div>
                     </div>
+                </div>
+
+                <!-- Insights Content -->
+                <div id="insightsContent" class="data-subtab admin-only" style="display: none;">
+                    
+                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 25px; border-radius: 12px; margin-bottom: 30px;">
+                        <h3 style="color: white; margin: 0 0 8px 0; font-size: 22px;">🔍 Program Health Insights</h3>
+                        <p style="color: rgba(255,255,255,0.9); margin: 0; font-size: 14px;">
+                            Beyond counts and totals — these metrics reveal how the PBIS program is actually performing across equity, engagement, and motivation dimensions.
+                        </p>
+                    </div>
+
+                    <!-- Near-Miss Students -->
+                    <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 25px; border-left: 4px solid #f59e0b;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                            <div>
+                                <h3 style="margin: 0 0 5px 0; color: #333; font-size: 18px;">🎯 Near-Miss Students (This Week)</h3>
+                                <p style="margin: 0; color: #666; font-size: 13px;">Students who have earned tickets in 2 of 3 categories this week — one more to qualify for the jackpot.</p>
+                            </div>
+                            <div style="text-align: right;">
+                                <div id="nearMissCount" style="font-size: 28px; font-weight: 700; color: #f59e0b;">0</div>
+                                <div style="font-size: 11px; color: #999;">Students</div>
+                            </div>
+                        </div>
+                        <div id="nearMissList" style="max-height: 400px; overflow-y: auto;">
+                            <div style="text-align: center; padding: 30px; color: #999;">Loading...</div>
+                        </div>
+                    </div>
+
+                    <!-- Teacher Generosity Variance -->
+                    <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 25px; border-left: 4px solid #667eea;">
+                        <div style="margin-bottom: 15px;">
+                            <h3 style="margin: 0 0 5px 0; color: #333; font-size: 18px;">📊 Teacher Generosity Variance</h3>
+                            <p style="margin: 0; color: #666; font-size: 13px;">Distribution of ticket awards across active teachers. Large gaps mean students in different classes have very different opportunities to earn tickets.</p>
+                        </div>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 20px;">
+                            <div style="background: #f9fafb; padding: 15px; border-radius: 8px; text-align: center;">
+                                <div style="font-size: 11px; color: #666; margin-bottom: 5px;">Active Teachers</div>
+                                <div id="genActiveTeachers" style="font-size: 24px; font-weight: 700; color: #667eea;">0</div>
+                            </div>
+                            <div style="background: #f9fafb; padding: 15px; border-radius: 8px; text-align: center;">
+                                <div style="font-size: 11px; color: #666; margin-bottom: 5px;">Mean Per Teacher</div>
+                                <div id="genMean" style="font-size: 24px; font-weight: 700; color: #10b981;">0</div>
+                            </div>
+                            <div style="background: #f9fafb; padding: 15px; border-radius: 8px; text-align: center;">
+                                <div style="font-size: 11px; color: #666; margin-bottom: 5px;">Median</div>
+                                <div id="genMedian" style="font-size: 24px; font-weight: 700; color: #3b82f6;">0</div>
+                            </div>
+                            <div style="background: #f9fafb; padding: 15px; border-radius: 8px; text-align: center;">
+                                <div style="font-size: 11px; color: #666; margin-bottom: 5px;">Std. Deviation</div>
+                                <div id="genStdDev" style="font-size: 24px; font-weight: 700; color: #f59e0b;">0</div>
+                            </div>
+                        </div>
+                        <div id="genOutliersHigh" style="margin-bottom: 15px;"></div>
+                        <div id="genOutliersLow"></div>
+                    </div>
+
+                    <!-- First-Time Winners / Distribution -->
+                    <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 25px; border-left: 4px solid #10b981;">
+                        <div style="margin-bottom: 15px;">
+                            <h3 style="margin: 0 0 5px 0; color: #333; font-size: 18px;">🏆 Winner Distribution</h3>
+                            <p style="margin: 0; color: #666; font-size: 13px;">How many unique students have won a raffle vs. how many have won repeatedly. More unique winners = healthier motivation across the program.</p>
+                        </div>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
+                            <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 20px; border-radius: 8px; text-align: center;">
+                                <div style="font-size: 12px; opacity: 0.9; margin-bottom: 5px;">Unique Winners</div>
+                                <div id="winnerUniqueCount" style="font-size: 32px; font-weight: 700;">0</div>
+                            </div>
+                            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; text-align: center;">
+                                <div style="font-size: 12px; opacity: 0.9; margin-bottom: 5px;">Total Raffle Entries</div>
+                                <div id="winnerTotalWins" style="font-size: 32px; font-weight: 700;">0</div>
+                            </div>
+                            <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; padding: 20px; border-radius: 8px; text-align: center;">
+                                <div style="font-size: 12px; opacity: 0.9; margin-bottom: 5px;">Repeat Winners</div>
+                                <div id="winnerRepeatCount" style="font-size: 32px; font-weight: 700;">0</div>
+                            </div>
+                            <div style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; padding: 20px; border-radius: 8px; text-align: center;">
+                                <div style="font-size: 12px; opacity: 0.9; margin-bottom: 5px;">Never-Won Eligible</div>
+                                <div id="winnerNeverWon" style="font-size: 32px; font-weight: 700;">0</div>
+                            </div>
+                        </div>
+                        <div id="winnerRecentList"></div>
+                    </div>
+
                 </div>
             </div>
 
@@ -4327,6 +4414,6 @@
     <!-- Chart.js for Data Visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-    <script src="script.js?v=20260423c"></script>
+    <script src="script.js?v=20260424c"></script>
 </body>
 </html>
