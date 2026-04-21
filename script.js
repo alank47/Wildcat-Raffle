@@ -3786,7 +3786,7 @@
             const ctx = document.getElementById(`weekChart${suffix}`);
             if (!ctx) return;
 
-            // Filter students based on suffix
+            // Filter students based on suffix (Academy/MS/HS)
             let filteredStudents = students;
             if (suffix === 'MS') {
                 filteredStudents = students.filter(s => {
@@ -3800,29 +3800,29 @@
                 });
             }
 
-            // Use actual historical data (Note: weeklyHistory doesn't split by MS/HS, so Academy view is most accurate)
+            // Compute per-week totals directly from each student's ticketHistory.
+            // This is authoritative: every ticket has a week field, so we don't need
+            // weeklyHistory (which can be missing entries if a rollover didn't complete).
+            // Works correctly for Academy/MS/HS because we iterate the already-filtered students.
             const weekData = {};
             for (let week = 1; week <= 5; week++) {
                 weekData[week] = { pbis: 0, attendance: 0, academic: 0 };
             }
 
-            // For current week, calculate from filtered students
-            if (currentWeek >= 1 && currentWeek <= 5) {
-                weekData[currentWeek].pbis = filteredStudents.reduce((sum, s) => sum + (s.pbisTickets || 0), 0);
-                weekData[currentWeek].attendance = filteredStudents.reduce((sum, s) => sum + (s.attendanceTickets || 0), 0);
-                weekData[currentWeek].academic = filteredStudents.reduce((sum, s) => sum + (s.academicTickets || 0), 0);
-            }
-
-            // For Academy-wide, include historical data
-            if (suffix === 'Academy') {
-                weeklyHistory.forEach(h => {
-                    if (h.week >= 1 && h.week <= 5 && h.week !== currentWeek) {
-                        weekData[h.week].pbis = h.pbisTickets || 0;
-                        weekData[h.week].attendance = h.attendanceTickets || 0;
-                        weekData[h.week].academic = h.academicTickets || 0;
+            filteredStudents.forEach(s => {
+                (s.ticketHistory || []).forEach(h => {
+                    const w = h.week;
+                    if (!w || w < 1 || w > 5) return; // skip entries without valid week
+                    const amt = h.tickets || h.amount || 0;
+                    if (h.category === 'PBIS') {
+                        weekData[w].pbis += amt;
+                    } else if (h.category === 'Attendance') {
+                        weekData[w].attendance += amt;
+                    } else if (h.category === 'Academic' || h.category === 'Academics') {
+                        weekData[w].academic += amt;
                     }
                 });
-            }
+            });
 
             const weeks = Object.keys(weekData).map(w => `Week ${w}`);
             const pbisData = Object.values(weekData).map(d => d.pbis);
