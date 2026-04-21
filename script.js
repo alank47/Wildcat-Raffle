@@ -4035,7 +4035,7 @@
             const tbody = document.getElementById(`weeklyDataTable${suffix}`);
             if (!tbody) return;
 
-            // Filter students based on suffix
+            // Filter students based on suffix (Academy/MS/HS)
             let filteredStudents = students;
             if (suffix === 'MS') {
                 filteredStudents = students.filter(s => {
@@ -4049,42 +4049,62 @@
                 });
             }
 
-            const weekData = [];
-            
-            // For Academy view, add historical weeks
-            if (suffix === 'Academy') {
-                weeklyHistory.forEach(h => {
-                    weekData.push({
-                        week: h.week,
-                        pbis: h.pbisTickets || 0,
-                        attendance: h.attendanceTickets || 0,
-                        academic: h.academicTickets || 0,
-                        qualified: h.studentsQualified || 0,
-                        rate: students.length > 0 ? Math.round((h.studentsQualified || 0) / students.length * 100) : 0
-                    });
+            // Compute per-week totals directly from ticket history.
+            // Doesn't rely on weeklyHistory (which may be missing entries from past rollovers).
+            const byWeek = {};
+            filteredStudents.forEach(s => {
+                (s.ticketHistory || []).forEach(h => {
+                    const w = h.week;
+                    if (!w || w < 1) return;
+                    if (!byWeek[w]) {
+                        byWeek[w] = {
+                            week: w,
+                            pbis: 0,
+                            attendance: 0,
+                            academic: 0,
+                            qualifiedIds: new Set()
+                        };
+                    }
+                    const amt = h.tickets || h.amount || 0;
+                    if (h.category === 'PBIS') byWeek[w].pbis += amt;
+                    else if (h.category === 'Attendance') byWeek[w].attendance += amt;
+                    else if (h.category === 'Academic' || h.category === 'Academics') byWeek[w].academic += amt;
                 });
-            }
+            });
 
-            // Add current week data
-            if (!weeklyHistory.find(h => h.week === currentWeek) || suffix !== 'Academy') {
-                const currentPbis = filteredStudents.reduce((sum, s) => sum + (s.pbisTickets || 0), 0);
-                const currentAttendance = filteredStudents.reduce((sum, s) => sum + (s.attendanceTickets || 0), 0);
-                const currentAcademic = filteredStudents.reduce((sum, s) => sum + (s.academicTickets || 0), 0);
-                const currentQualified = filteredStudents.filter(s => 
-                    s.pbisTickets > 0 && s.attendanceTickets > 0 && s.academicTickets > 0
-                ).length;
-
-                weekData.push({
-                    week: currentWeek,
-                    pbis: currentPbis,
-                    attendance: currentAttendance,
-                    academic: currentAcademic,
-                    qualified: currentQualified,
-                    rate: filteredStudents.length > 0 ? Math.round(currentQualified / filteredStudents.length * 100) : 0
+            // A student "qualified" for a week if they earned tickets in all 3 categories during that week.
+            // Compute by walking each student's history and checking category coverage per week.
+            filteredStudents.forEach(s => {
+                const perWeekCats = {};
+                (s.ticketHistory || []).forEach(h => {
+                    const w = h.week;
+                    if (!w || w < 1) return;
+                    if (!perWeekCats[w]) perWeekCats[w] = new Set();
+                    if (h.category === 'PBIS') perWeekCats[w].add('PBIS');
+                    else if (h.category === 'Attendance') perWeekCats[w].add('Attendance');
+                    else if (h.category === 'Academic' || h.category === 'Academics') perWeekCats[w].add('Academic');
                 });
-            }
+                Object.keys(perWeekCats).forEach(wStr => {
+                    const w = parseInt(wStr);
+                    const cats = perWeekCats[w];
+                    if (cats.has('PBIS') && cats.has('Attendance') && cats.has('Academic')) {
+                        if (!byWeek[w]) return;
+                        byWeek[w].qualifiedIds.add(s.id);
+                    }
+                });
+            });
 
-            // Sort by week
+            const weekData = Object.values(byWeek).map(w => ({
+                week: w.week,
+                pbis: w.pbis,
+                attendance: w.attendance,
+                academic: w.academic,
+                qualified: w.qualifiedIds.size,
+                rate: filteredStudents.length > 0
+                    ? Math.round(w.qualifiedIds.size / filteredStudents.length * 100)
+                    : 0
+            }));
+
             weekData.sort((a, b) => a.week - b.week);
 
             if (weekData.length === 0) {
