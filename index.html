@@ -391,6 +391,49 @@
                     <button class="btn" onclick="uploadFile()">Import Students</button>
                 </div>
 
+                <!-- Perfect Attendance Upload (admin-only) -->
+                <div class="upload-section admin-only" style="margin-top: 20px; border-left: 4px solid #10b981;">
+                    <h3>📅 Perfect Attendance Upload</h3>
+                    <p>Upload a CSV from PowerSchool with students who had perfect attendance. Each listed student receives 1 Attendance ticket for the selected week.</p>
+                    <p style="font-size: 13px; color: #666; margin-top: 6px;">
+                        Required column: <b>Student ID</b>. Also accepts Name and Grade Level columns (for verification).
+                    </p>
+                    <div style="display: flex; flex-wrap: wrap; gap: 15px; align-items: flex-end; margin-top: 15px;">
+                        <div>
+                            <label style="display: block; font-size: 12px; color: #666; margin-bottom: 4px;">CSV File</label>
+                            <input type="file" id="perfectAttendanceFile" accept=".csv">
+                        </div>
+                        <div>
+                            <label style="display: block; font-size: 12px; color: #666; margin-bottom: 4px;">Award Week</label>
+                            <select id="perfectAttendanceWeek" style="padding: 8px 12px; border-radius: 6px; border: 1px solid #ddd; font-size: 14px;">
+                                <!-- Populated by JS based on currentWeek -->
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display: block; font-size: 12px; color: #666; margin-bottom: 4px;">Week-of Date (for ticket reason)</label>
+                            <input type="date" id="perfectAttendanceDate" style="padding: 8px 12px; border-radius: 6px; border: 1px solid #ddd; font-size: 14px;">
+                        </div>
+                        <button class="btn" onclick="previewPerfectAttendance()" style="background: #10b981;">Preview Upload</button>
+                    </div>
+                </div>
+
+                <!-- Perfect Attendance Preview Modal -->
+                <div id="perfectAttendanceModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000; align-items: center; justify-content: center;">
+                    <div style="background: white; border-radius: 12px; max-width: 800px; width: 90%; max-height: 85vh; overflow: hidden; display: flex; flex-direction: column;">
+                        <div style="padding: 20px 25px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; display: flex; justify-content: space-between; align-items: center;">
+                            <h3 style="margin: 0; color: white;">📅 Perfect Attendance — Preview</h3>
+                            <button onclick="closePerfectAttendanceModal()" style="background: rgba(255,255,255,0.2); border: none; color: white; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 14px;">✕ Close</button>
+                        </div>
+                        <div id="perfectAttendanceModalBody" style="padding: 25px; overflow-y: auto; flex: 1;">
+                            <!-- Populated by JS -->
+                        </div>
+                        <div style="padding: 15px 25px; background: #f9fafb; border-top: 1px solid #e5e7eb; display: flex; justify-content: flex-end; gap: 10px;">
+                            <button onclick="closePerfectAttendanceModal()" style="padding: 10px 20px; background: #e5e7eb; color: #333; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">Cancel</button>
+                            <button id="perfectAttendanceConfirmBtn" onclick="confirmPerfectAttendance()" style="padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">Confirm &amp; Award Tickets</button>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="stats">
                     <div class="stat-card">
                         <h3 id="totalStudents">0</h3>
@@ -4414,6 +4457,6 @@
     <!-- Chart.js for Data Visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-    <script src="script.js?v=20260424d"></script>
+    <script src="script.js?v=20260415f"></script>
 </body>
 </html>
