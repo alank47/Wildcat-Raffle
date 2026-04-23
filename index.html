@@ -861,12 +861,14 @@
                 </div>
 
                 <div class="raffle-controls">
-                    <select id="raffleCategory">
+                    <select id="raffleCategory" onchange="updateRaffleControls()">
                         <option value="pbis">PBIS Behaviors</option>
                         <option value="attendance">Perfect Attendance</option>
                         <option value="academics">Academics</option>
                     </select>
-                    <button class="btn" onclick="drawWinner()">🎉 Draw Winner</button>
+                    <button class="btn" id="raffleDrawBtn" onclick="drawWinner()">🎉 Draw Winner</button>
+                    <button class="btn" id="raffleDrawMSBtn" onclick="drawWinner('MS')" style="display: none; background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);">🎉 Draw Middle School Winner</button>
+                    <button class="btn" id="raffleDrawHSBtn" onclick="drawWinner('HS')" style="display: none; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);">🎉 Draw High School Winner</button>
                 </div>
 
                 <div id="winnerDisplay"></div>
@@ -4457,6 +4459,6 @@
     <!-- Chart.js for Data Visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-    <script src="script.js?v=20260415f"></script>
+    <script src="script.js?v=20260416c"></script>
 </body>
 </html>
