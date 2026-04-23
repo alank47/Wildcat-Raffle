@@ -10574,6 +10574,359 @@
             alert(`Successfully imported ${students.length} students!`);
         }
 
+        // ============================================================
+        // PERFECT ATTENDANCE UPLOAD
+        // Admin uploads a CSV of students with perfect attendance for
+        // a week. Each listed student receives 1 Attendance ticket.
+        // Duplicate-safe: students who already have a Perfect Attendance
+        // ticket for the selected week are skipped.
+        // ============================================================
+        let perfectAttendancePreview = null; // Holds parsed+validated data between preview and confirm
+
+        function initPerfectAttendanceUploadUI() {
+            // Populate the week dropdown based on currentWeek + cycleDuration
+            const weekSelect = document.getElementById('perfectAttendanceWeek');
+            if (!weekSelect) return;
+            weekSelect.innerHTML = '';
+            const maxWeek = cycleDuration || 5;
+            for (let w = 1; w <= maxWeek; w++) {
+                const opt = document.createElement('option');
+                opt.value = String(w);
+                opt.textContent = `Week ${w}${w === currentWeek ? ' (Current)' : ''}`;
+                if (w === currentWeek) opt.selected = true;
+                weekSelect.appendChild(opt);
+            }
+            // Default the date to today (admin can change)
+            const dateInput = document.getElementById('perfectAttendanceDate');
+            if (dateInput && !dateInput.value) {
+                dateInput.value = new Date().toISOString().split('T')[0];
+            }
+        }
+
+        function parsePerfectAttendanceCSV(text) {
+            // Normalize line endings
+            const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+            if (lines.length === 0) return { headers: [], rows: [] };
+
+            // Simple CSV parser that handles quoted fields (names contain commas)
+            function splitCsvLine(line) {
+                const out = [];
+                let cur = '';
+                let inQuotes = false;
+                for (let i = 0; i < line.length; i++) {
+                    const ch = line[i];
+                    if (ch === '"') {
+                        if (inQuotes && line[i + 1] === '"') {
+                            // Escaped quote
+                            cur += '"';
+                            i++;
+                        } else {
+                            inQuotes = !inQuotes;
+                        }
+                    } else if (ch === ',' && !inQuotes) {
+                        out.push(cur);
+                        cur = '';
+                    } else {
+                        cur += ch;
+                    }
+                }
+                out.push(cur);
+                return out.map(s => s.trim());
+            }
+
+            const headers = splitCsvLine(lines[0]).map(h => h.trim());
+            const rows = [];
+            for (let i = 1; i < lines.length; i++) {
+                if (!lines[i].trim()) continue;
+                const cols = splitCsvLine(lines[i]);
+                const obj = {};
+                headers.forEach((h, idx) => { obj[h] = cols[idx] !== undefined ? cols[idx] : ''; });
+                rows.push(obj);
+            }
+            return { headers, rows };
+        }
+
+        function findPerfectAttendanceColumn(headers, candidates) {
+            // Case-insensitive header match
+            const lowerHeaders = headers.map(h => h.toLowerCase().trim());
+            for (const cand of candidates) {
+                const idx = lowerHeaders.indexOf(cand.toLowerCase());
+                if (idx >= 0) return headers[idx];
+            }
+            return null;
+        }
+
+        function previewPerfectAttendance() {
+            const fileInput = document.getElementById('perfectAttendanceFile');
+            const weekSelect = document.getElementById('perfectAttendanceWeek');
+            const dateInput = document.getElementById('perfectAttendanceDate');
+
+            if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+                alert('Please select a CSV file first.');
+                return;
+            }
+            if (!weekSelect || !weekSelect.value) {
+                alert('Please select a week.');
+                return;
+            }
+            if (!dateInput || !dateInput.value) {
+                alert('Please select the week-of date.');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const text = e.target.result;
+                const { headers, rows } = parsePerfectAttendanceCSV(text);
+
+                if (rows.length === 0) {
+                    alert('The CSV appears to be empty or could not be parsed.');
+                    return;
+                }
+
+                // Locate the Student ID column
+                const idCol = findPerfectAttendanceColumn(headers, [
+                    'Student ID', 'StudentID', 'Student_ID', 'Student Number',
+                    'StudentNumber', 'Student_Number', 'ID'
+                ]);
+
+                if (!idCol) {
+                    alert(`Could not find a Student ID column. Found headers: ${headers.join(', ')}\n\nExpected one of: Student ID, Student Number, or ID.`);
+                    return;
+                }
+
+                // Optional columns for verification
+                const nameCol = findPerfectAttendanceColumn(headers, ['Name', 'Student Name', 'Full Name']);
+                const gradeCol = findPerfectAttendanceColumn(headers, ['Grade Level', 'Grade']);
+
+                const selectedWeek = parseInt(weekSelect.value);
+                const weekOfDate = dateInput.value;
+
+                // Categorize each row
+                const matched = [];     // Will receive a ticket
+                const alreadyAwarded = []; // Already has Perfect Attendance for this week, skip
+                const unmatched = [];   // Student ID not in the system
+                const invalid = [];     // Row missing an ID
+
+                rows.forEach(row => {
+                    const rawId = (row[idCol] || '').toString().trim();
+                    if (!rawId) {
+                        invalid.push({ row, reason: 'Missing Student ID' });
+                        return;
+                    }
+                    const student = students.find(s => s.id === rawId);
+                    if (!student) {
+                        unmatched.push({
+                            id: rawId,
+                            name: nameCol ? (row[nameCol] || '') : '',
+                            grade: gradeCol ? (row[gradeCol] || '') : ''
+                        });
+                        return;
+                    }
+
+                    // Check if already awarded Perfect Attendance for this week
+                    // Look at ticket history, not counters — counters can include
+                    // other Attendance awards (being on time, etc.)
+                    const hist = student.ticketHistory || [];
+                    const alreadyHasIt = hist.some(h => {
+                        if (h.category !== 'Attendance') return false;
+                        if (h.week !== selectedWeek) return false;
+                        const reason = (h.reason || '').toString();
+                        return reason.toLowerCase().includes('perfect attendance');
+                    });
+
+                    if (alreadyHasIt) {
+                        alreadyAwarded.push({ student });
+                    } else {
+                        matched.push({ student });
+                    }
+                });
+
+                // Store for the confirm step
+                perfectAttendancePreview = {
+                    matched, alreadyAwarded, unmatched, invalid,
+                    selectedWeek, weekOfDate,
+                    csvFileName: file.name
+                };
+
+                // Build the modal body
+                const modalBody = document.getElementById('perfectAttendanceModalBody');
+                const formatDate = (iso) => {
+                    try {
+                        const d = new Date(iso + 'T00:00:00');
+                        return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+                    } catch (e) { return iso; }
+                };
+
+                let html = `
+                    <div style="background: #f0fdf4; border-left: 4px solid #10b981; padding: 15px 18px; border-radius: 8px; margin-bottom: 20px;">
+                        <div style="font-size: 13px; color: #065f46; margin-bottom: 4px;">File: <b>${file.name}</b></div>
+                        <div style="font-size: 13px; color: #065f46;">Awarding for: <b>Week ${selectedWeek}</b> (Week of ${formatDate(weekOfDate)})</div>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px;">
+                        <div style="background: #d1fae5; padding: 15px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 28px; font-weight: 700; color: #065f46;">${matched.length}</div>
+                            <div style="font-size: 12px; color: #065f46; text-transform: uppercase; letter-spacing: 1px;">To award</div>
+                        </div>
+                        <div style="background: #fef3c7; padding: 15px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 28px; font-weight: 700; color: #92400e;">${alreadyAwarded.length}</div>
+                            <div style="font-size: 12px; color: #92400e; text-transform: uppercase; letter-spacing: 1px;">Already have it</div>
+                        </div>
+                        <div style="background: #fee2e2; padding: 15px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 28px; font-weight: 700; color: #991b1b;">${unmatched.length}</div>
+                            <div style="font-size: 12px; color: #991b1b; text-transform: uppercase; letter-spacing: 1px;">Unmatched</div>
+                        </div>
+                        <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 28px; font-weight: 700; color: #374151;">${invalid.length}</div>
+                            <div style="font-size: 12px; color: #374151; text-transform: uppercase; letter-spacing: 1px;">Invalid rows</div>
+                        </div>
+                    </div>
+                `;
+
+                if (unmatched.length > 0) {
+                    html += `
+                        <div style="margin-bottom: 18px;">
+                            <div style="font-weight: 600; color: #991b1b; margin-bottom: 8px; font-size: 14px;">⚠️ Unmatched students (${unmatched.length}) — these IDs are not in the system and will be skipped:</div>
+                            <div style="background: #fef2f2; padding: 10px 14px; border-radius: 6px; max-height: 120px; overflow-y: auto; font-size: 12px; color: #7f1d1d;">
+                                ${unmatched.map(u => `ID ${u.id}${u.name ? ' — ' + u.name : ''}${u.grade ? ' (Grade ' + u.grade + ')' : ''}`).join('<br>')}
+                            </div>
+                        </div>
+                    `;
+                }
+
+                if (alreadyAwarded.length > 0) {
+                    html += `
+                        <div style="margin-bottom: 18px;">
+                            <div style="font-weight: 600; color: #92400e; margin-bottom: 8px; font-size: 14px;">Already have Perfect Attendance for Week ${selectedWeek} (${alreadyAwarded.length}) — will be skipped:</div>
+                            <div style="background: #fffbeb; padding: 10px 14px; border-radius: 6px; max-height: 120px; overflow-y: auto; font-size: 12px; color: #78350f;">
+                                ${alreadyAwarded.map(a => `${a.student.firstName} ${a.student.lastName} (Grade ${a.student.grade})`).join('<br>')}
+                            </div>
+                        </div>
+                    `;
+                }
+
+                if (matched.length > 0) {
+                    html += `
+                        <div style="margin-bottom: 10px;">
+                            <div style="font-weight: 600; color: #065f46; margin-bottom: 8px; font-size: 14px;">✓ Will receive 1 Attendance ticket (${matched.length}):</div>
+                            <div style="background: #f0fdf4; padding: 10px 14px; border-radius: 6px; max-height: 200px; overflow-y: auto; font-size: 12px; color: #065f46;">
+                                ${matched.map(m => `${m.student.firstName} ${m.student.lastName} (Grade ${m.student.grade})`).join('<br>')}
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    html += `
+                        <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; text-align: center; color: #6b7280; font-size: 14px;">
+                            No tickets to award. All students in the CSV either already have Perfect Attendance for this week, or are unmatched.
+                        </div>
+                    `;
+                }
+
+                modalBody.innerHTML = html;
+
+                // Disable confirm if nothing to award
+                const confirmBtn = document.getElementById('perfectAttendanceConfirmBtn');
+                if (confirmBtn) {
+                    if (matched.length === 0) {
+                        confirmBtn.disabled = true;
+                        confirmBtn.style.opacity = '0.5';
+                        confirmBtn.style.cursor = 'not-allowed';
+                    } else {
+                        confirmBtn.disabled = false;
+                        confirmBtn.style.opacity = '1';
+                        confirmBtn.style.cursor = 'pointer';
+                        confirmBtn.textContent = `Confirm & Award ${matched.length} Ticket${matched.length === 1 ? '' : 's'}`;
+                    }
+                }
+
+                // Show the modal
+                document.getElementById('perfectAttendanceModal').style.display = 'flex';
+            };
+            reader.onerror = function() {
+                alert('Error reading file.');
+            };
+            reader.readAsText(file);
+        }
+
+        function closePerfectAttendanceModal() {
+            document.getElementById('perfectAttendanceModal').style.display = 'none';
+        }
+
+        async function confirmPerfectAttendance() {
+            if (!perfectAttendancePreview || perfectAttendancePreview.matched.length === 0) {
+                alert('Nothing to award.');
+                return;
+            }
+            const { matched, selectedWeek, weekOfDate, csvFileName } = perfectAttendancePreview;
+
+            // Format the date for the ticket reason
+            const dateLabel = (() => {
+                try {
+                    const d = new Date(weekOfDate + 'T00:00:00');
+                    return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+                } catch (e) {
+                    return weekOfDate;
+                }
+            })();
+            const ticketReason = `Perfect Attendance - Week of ${dateLabel}`;
+
+            // Disable the button to prevent double-submit
+            const confirmBtn = document.getElementById('perfectAttendanceConfirmBtn');
+            if (confirmBtn) {
+                confirmBtn.disabled = true;
+                confirmBtn.textContent = 'Awarding...';
+                confirmBtn.style.opacity = '0.6';
+            }
+
+            // Award 1 Attendance ticket to each matched student
+            const awardTimestamp = new Date().toISOString();
+            matched.forEach(({ student }, idx) => {
+                if (!student.ticketHistory) student.ticketHistory = [];
+
+                // Stagger timestamps by 1ms to keep entryIds unique within the batch
+                const ts = new Date(Date.now() + idx).toISOString();
+
+                student.attendanceTickets = (student.attendanceTickets || 0) + 1;
+                student.ticketHistory.push({
+                    timestamp: ts,
+                    teacher: currentUser.name,
+                    teacherId: currentUser.id,
+                    category: 'Attendance',
+                    tickets: 1,
+                    reason: ticketReason,
+                    week: selectedWeek
+                });
+
+                // Audit log entry — uses the outbox internally for safety
+                // Temporarily override addToAuditLog's timestamp usage? No —
+                // addToAuditLog builds its own timestamp. For consistency with
+                // the history entry, we call it immediately after so the
+                // timestamps are within milliseconds (matches healer's 2-sec window).
+                addToAuditLog('Awarded Tickets', student.id, 'Attendance', 1, ticketReason);
+            });
+
+            // Single save at the end — one Firebase save for the whole batch
+            try {
+                await saveData();
+                closePerfectAttendanceModal();
+                updateAllDisplays();
+                alert(`✅ Awarded Perfect Attendance to ${matched.length} student${matched.length === 1 ? '' : 's'} for Week ${selectedWeek}.`);
+            } catch (err) {
+                console.error('Perfect Attendance save failed:', err);
+                alert(`⚠️ Save encountered an error. Tickets are in local memory and will sync on next save.\n\nError: ${err?.message || err}`);
+                if (confirmBtn) {
+                    confirmBtn.disabled = false;
+                    confirmBtn.textContent = 'Retry Save';
+                    confirmBtn.style.opacity = '1';
+                }
+            }
+
+            // Clear preview state
+            perfectAttendancePreview = null;
+        }
+
         function updateAllDisplays() {
             // Show mode toggle for superadmin
             if (currentUser && currentUser.role === 'superadmin') {
@@ -13310,6 +13663,11 @@
             if (tabName === 'data') {
                 updateAnalyticsCharts();
                 updateAnalyticsTables();
+            }
+            
+            // Init Perfect Attendance upload UI when Students tab is opened
+            if (tabName === 'students') {
+                try { initPerfectAttendanceUploadUI(); } catch (e) { /* silent — UI may not be admin-visible */ }
             }
             
             // Handle Login Activity tab
