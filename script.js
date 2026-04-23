@@ -12845,19 +12845,107 @@
             alert('✅ Award successfully undone!');
         }
 
-        function drawWinner() {
+        // Toggle raffle buttons based on category selection.
+        // Attendance uses separate MS and HS buttons (MS often finishes their tickets later,
+        // so admin may need to draw HS first and come back for MS). PBIS and Academics use
+        // the single Draw Winner button as before.
+        function updateRaffleControls() {
+            const category = document.getElementById('raffleCategory')?.value;
+            const singleBtn = document.getElementById('raffleDrawBtn');
+            const msBtn = document.getElementById('raffleDrawMSBtn');
+            const hsBtn = document.getElementById('raffleDrawHSBtn');
+            if (!singleBtn || !msBtn || !hsBtn) return;
+
+            if (category === 'attendance') {
+                singleBtn.style.display = 'none';
+                msBtn.style.display = '';
+                hsBtn.style.display = '';
+            } else {
+                singleBtn.style.display = '';
+                msBtn.style.display = 'none';
+                hsBtn.style.display = 'none';
+            }
+        }
+
+        function drawWinner(school) {
             const category = document.getElementById('raffleCategory').value;
             
             const categoryName = category === 'pbis' ? 'PBIS Behaviors' : 
                                 category === 'attendance' ? 'Perfect Attendance' : 'Academics';
             
-            // PBIS draws one winner per grade
+            // PBIS draws 2 MS + 2 HS combined — unaffected by the school arg
             if (category === 'pbis') {
                 drawPBISByGrade(categoryName);
-            } else {
-                // Attendance and Academics draw by school (MS/HS)
-                drawBySchool(category, categoryName);
+                return;
             }
+
+            // Attendance: drawn per school. Button provides 'MS' or 'HS'.
+            if (category === 'attendance') {
+                if (school !== 'MS' && school !== 'HS') {
+                    alert('Please use the Middle School or High School button.');
+                    return;
+                }
+                drawBySchoolSingle(category, categoryName, school);
+                return;
+            }
+
+            // Academics: unchanged — draw MS then HS
+            drawBySchool(category, categoryName);
+        }
+
+        // Draw a single winner for ONE school (Attendance only, per admin request).
+        // Independent of the MS+HS combined flow — can be run separately at different times.
+        function drawBySchoolSingle(category, categoryName, school) {
+            const pool = school === 'MS'
+                ? students.filter(s => s.grade >= 6 && s.grade <= 8)
+                : students.filter(s => s.grade >= 9 && s.grade <= 12);
+
+            let eligible = [];
+            if (category === 'attendance') {
+                eligible = pool.filter(s => (s.attendanceTickets || 0) > 0);
+            }
+            // (extensible for future single-school categories)
+
+            const schoolLabel = school === 'MS' ? 'Middle School' : 'High School';
+
+            if (eligible.length === 0) {
+                alert(`No eligible students for ${categoryName} in ${schoolLabel}!`);
+                return;
+            }
+
+            // Prevent re-drawing the same school for the same week+category.
+            // Weekly raffles already draw one winner per school, so a duplicate
+            // here is almost certainly a mistake. Admin can override if needed.
+            const alreadyDrawn = weeklyWinners.some(w =>
+                w.week === currentWeek &&
+                w.category === categoryName &&
+                w.school === schoolLabel
+            );
+            if (alreadyDrawn) {
+                const proceed = confirm(
+                    `A ${schoolLabel} winner for ${categoryName} has already been drawn this week.\n\n` +
+                    `Drawing again will add a second winner. Are you sure you want to continue?`
+                );
+                if (!proceed) return;
+            }
+
+            showRaffleSpinner(eligible, schoolLabel, (winner) => {
+                weeklyWinners.push({
+                    week: currentWeek,
+                    category: categoryName,
+                    school: schoolLabel,
+                    student: winner,
+                    date: new Date().toLocaleDateString()
+                });
+
+                addToAuditLog('Raffle Winner', winner.id, `${categoryName} - ${schoolLabel}`, null, null);
+
+                saveData();
+                displaySingleWinner(winner, categoryName, schoolLabel);
+                updateWinnersList();
+                updateAllDisplays();
+                triggerConfetti();
+            });
         }
         
         function drawPBISByGrade(categoryName) {
@@ -13668,6 +13756,11 @@
             // Init Perfect Attendance upload UI when Students tab is opened
             if (tabName === 'students') {
                 try { initPerfectAttendanceUploadUI(); } catch (e) { /* silent — UI may not be admin-visible */ }
+            }
+
+            // Sync raffle buttons to the currently-selected category
+            if (tabName === 'raffle') {
+                try { updateRaffleControls(); } catch (e) { /* silent */ }
             }
             
             // Handle Login Activity tab
