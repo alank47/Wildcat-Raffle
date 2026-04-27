@@ -490,6 +490,42 @@
             }
         }
 
+        // ============================================================
+        // WEEK-STALENESS WATCHDOG
+        //
+        // Stale tabs that hold an outdated currentWeek can corrupt
+        // Firebase by writing the old value back. The save-side guard
+        // catches it at save time, but we also want PASSIVE detection:
+        // a tab that's never going to save again should still self-heal
+        // if it notices Firebase has moved on.
+        //
+        // Every 60 seconds, peek at Firebase's currentWeek. If it's
+        // higher than ours, our tab is stale — reload silently to pick
+        // up the correct value. If equal or lower, do nothing.
+        // ============================================================
+        let _weekWatchdogInterval = null;
+        function startWeekStalenessWatchdog() {
+            if (_weekWatchdogInterval) return; // already running
+            if (!firebaseInitialized || !firebaseDb) return;
+
+            const CHECK_INTERVAL_MS = 60000; // 1 minute
+            _weekWatchdogInterval = setInterval(async () => {
+                try {
+                    const { doc, getDoc } = window.firebaseModules || {};
+                    if (!doc || !getDoc) return;
+                    const snap = await getDoc(doc(firebaseDb, 'raffle_data', 'main'));
+                    if (!snap.exists()) return;
+                    const fbWeek = snap.data().currentWeek;
+                    if (typeof fbWeek === 'number' && typeof currentWeek === 'number' && fbWeek > currentWeek) {
+                        console.warn(`🐶 Week watchdog: Firebase currentWeek (${fbWeek}) is ahead of local (${currentWeek}). This tab is stale — reloading data.`);
+                        await loadData();
+                    }
+                } catch (e) {
+                    // Silent — just try again in a minute
+                }
+            }, CHECK_INTERVAL_MS);
+        }
+
         let currentUser = null;
         let currentStudent = null;
         let binId = '6987ac03ae596e708f191041'; // School database ID - hardcoded for auto-connect
@@ -1709,6 +1745,10 @@
                         // before the outbox existed) and any edge cases the outbox misses.
                         healAuditEntriesFromHistory();
                         
+                        // NEW: Start periodic week-staleness self-check. If this tab is
+                        // ever older than Firebase's currentWeek, it auto-refreshes itself.
+                        startWeekStalenessWatchdog();
+                        
                         return; // Successfully loaded from Firebase
                     } else {
                         console.log('ℹ️ No Firebase data found, loading from localStorage');
@@ -2283,6 +2323,39 @@
                             }
                         } catch (staleCheckErr) {
                             console.warn('Staleness check failed (non-fatal, proceeding with save):', staleCheckErr);
+                        }
+
+                        // ============================================================
+                        // CURRENT-WEEK GUARD: Prevent a tab with stale in-memory currentWeek
+                        // from rolling Firebase backwards. The staleness check above catches
+                        // tabs that have been idle, but a tab that's actively saving (and
+                        // therefore has a recent lastSaveTimestamp) can still hold a stale
+                        // currentWeek if it was loaded before the week was advanced.
+                        //
+                        // Rule: if Firebase's currentWeek is HIGHER than ours, we refuse the
+                        // save and reload. Equal or lower (in cases where admin legitimately
+                        // backs up a week) is allowed.
+                        //
+                        // This caught a real incident on 2026-04-27 where a stale tab
+                        // overwrote currentWeek from 4 back to 2.
+                        // ============================================================
+                        try {
+                            const weekPeek = await getDoc(doc(firebaseDb, 'raffle_data', 'main'));
+                            if (weekPeek.exists()) {
+                                const firebaseWeek = weekPeek.data().currentWeek;
+                                if (typeof firebaseWeek === 'number' && typeof currentWeek === 'number' && firebaseWeek > currentWeek) {
+                                    console.warn(`🛑 SAVE BLOCKED: would roll currentWeek backwards.`);
+                                    console.warn(`   Firebase currentWeek: ${firebaseWeek}`);
+                                    console.warn(`   Local currentWeek:    ${currentWeek}`);
+                                    console.warn(`   Reloading fresh state from Firebase...`);
+                                    isSyncing = false;
+                                    await loadData();
+                                    alert(`⚠️ Your tab was holding an outdated week number (Week ${currentWeek}). The system has refreshed to the current week (${firebaseWeek}). Please re-do your last action if needed.`);
+                                    return;
+                                }
+                            }
+                        } catch (weekGuardErr) {
+                            console.warn('Week guard check failed (non-fatal, proceeding with save):', weekGuardErr);
                         }
 
                         const timestamp = Date.now();
@@ -13335,6 +13408,28 @@
             }).join('');
         }
 
+        // Compute the correct number of jackpot entries for a single student,
+        // derived from the audit log (the source of truth). Dedupes duplicates.
+        //
+        // A student gets 1 entry per UNIQUE week they qualified, plus 1 entry per
+        // UNIQUE week they earned a leaderboard bonus. Duplicate audit entries
+        // (same studentId + same week + same action) collapse to a single entry —
+        // this is necessary because some past bugs created duplicate qualification
+        // records that were never cleaned up.
+        function computeJackpotEntries(studentId) {
+            const qualWeeks = new Set();
+            const bonusWeeks = new Set();
+            for (const e of auditLog) {
+                if (e.studentId !== studentId) continue;
+                if (e.action === 'Qualified for Wildcat Jackpot' && e.week) {
+                    qualWeeks.add(e.week);
+                } else if (e.action === 'Weekly Leaderboard Bonus' && e.week) {
+                    bonusWeeks.add(e.week);
+                }
+            }
+            return qualWeeks.size + bonusWeeks.size;
+        }
+
         function drawBigRaffleWinner() {
             if (currentUser.role !== 'admin' && currentUser.role !== 'superadmin') {
                 alert('Only admins can run the Wildcat Jackpot');
@@ -13357,23 +13452,31 @@
             if (msQualified.length > 0) {
                 const msEntries = [];
                 msQualified.forEach(student => {
-                    const numEntries = student.weeksQualified || 1;
+                    // Compute entries from the dedup'd audit log (source of truth).
+                    // Falls back to bigRaffleQualified.length, then 1, only if audit data is missing.
+                    let numEntries = computeJackpotEntries(student.id);
+                    if (numEntries === 0) {
+                        numEntries = Array.isArray(student.bigRaffleQualified) && student.bigRaffleQualified.length > 0
+                            ? student.bigRaffleQualified.length
+                            : 1;
+                    }
                     for (let i = 0; i < numEntries; i++) {
                         msEntries.push(student);
                     }
                 });
 
                 const msWinner = msEntries[Math.floor(Math.random() * msEntries.length)];
+                const msWinnerEntries = msEntries.filter(s => s.id === msWinner.id).length;
                 
                 bigRaffleWinners.push({
                     student: msWinner,
                     school: 'Middle School',
                     date: new Date().toLocaleDateString(),
                     cycle: Math.ceil(currentWeek / cycleDuration),
-                    weeksQualified: msWinner.weeksQualified
+                    weeksQualified: msWinnerEntries
                 });
 
-                addToAuditLog('Wildcat Jackpot Winner', msWinner.id, 'Grand Prize - Middle School', null, `Qualified for ${msWinner.weeksQualified} week(s)`);
+                addToAuditLog('Wildcat Jackpot Winner', msWinner.id, 'Grand Prize - Middle School', null, `Drawn from ${msWinnerEntries} entr${msWinnerEntries === 1 ? 'y' : 'ies'}`);
 
                 winnersHtml += `
                     <div class="winner-box" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; padding: 30px; border-radius: 16px; box-shadow: 0 8px 30px rgba(245, 158, 11, 0.4); text-align: center;">
@@ -13387,8 +13490,7 @@
                         </div>
                         <p style="color: white; font-size: 14px; margin: 5px 0;">ID: ${msWinner.id}</p>
                         <p style="color: white; font-size: 14px; margin: 5px 0;">Grade: ${msWinner.grade}</p>
-                        <p style="color: white; font-size: 14px; margin: 10px 0;">Qualified for ${msWinner.weeksQualified} week(s)</p>
-                        <p style="color: white; font-size: 12px; margin: 5px 0;">${msWinner.weeksQualified} ${msWinner.weeksQualified === 1 ? 'entry' : 'entries'} in drawing</p>
+                        <p style="color: white; font-size: 14px; margin: 10px 0;">${msWinnerEntries} entr${msWinnerEntries === 1 ? 'y' : 'ies'} in drawing</p>
                         <p style="color: rgba(255,255,255,0.9); margin-top: 15px; font-size: 12px;">${new Date().toLocaleDateString()}</p>
                     </div>
                 `;
@@ -13398,23 +13500,29 @@
             if (hsQualified.length > 0) {
                 const hsEntries = [];
                 hsQualified.forEach(student => {
-                    const numEntries = student.weeksQualified || 1;
+                    let numEntries = computeJackpotEntries(student.id);
+                    if (numEntries === 0) {
+                        numEntries = Array.isArray(student.bigRaffleQualified) && student.bigRaffleQualified.length > 0
+                            ? student.bigRaffleQualified.length
+                            : 1;
+                    }
                     for (let i = 0; i < numEntries; i++) {
                         hsEntries.push(student);
                     }
                 });
 
                 const hsWinner = hsEntries[Math.floor(Math.random() * hsEntries.length)];
+                const hsWinnerEntries = hsEntries.filter(s => s.id === hsWinner.id).length;
                 
                 bigRaffleWinners.push({
                     student: hsWinner,
                     school: 'High School',
                     date: new Date().toLocaleDateString(),
                     cycle: Math.ceil(currentWeek / cycleDuration),
-                    weeksQualified: hsWinner.weeksQualified
+                    weeksQualified: hsWinnerEntries
                 });
 
-                addToAuditLog('Wildcat Jackpot Winner', hsWinner.id, 'Grand Prize - High School', null, `Qualified for ${hsWinner.weeksQualified} week(s)`);
+                addToAuditLog('Wildcat Jackpot Winner', hsWinner.id, 'Grand Prize - High School', null, `Drawn from ${hsWinnerEntries} entr${hsWinnerEntries === 1 ? 'y' : 'ies'}`);
 
                 winnersHtml += `
                     <div class="winner-box" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 30px; border-radius: 16px; box-shadow: 0 8px 30px rgba(16, 185, 129, 0.4); text-align: center;">
@@ -13428,8 +13536,7 @@
                         </div>
                         <p style="color: white; font-size: 14px; margin: 5px 0;">ID: ${hsWinner.id}</p>
                         <p style="color: white; font-size: 14px; margin: 5px 0;">Grade: ${hsWinner.grade}</p>
-                        <p style="color: white; font-size: 14px; margin: 10px 0;">Qualified for ${hsWinner.weeksQualified} week(s)</p>
-                        <p style="color: white; font-size: 12px; margin: 5px 0;">${hsWinner.weeksQualified} ${hsWinner.weeksQualified === 1 ? 'entry' : 'entries'} in drawing</p>
+                        <p style="color: white; font-size: 14px; margin: 10px 0;">${hsWinnerEntries} entr${hsWinnerEntries === 1 ? 'y' : 'ies'} in drawing</p>
                         <p style="color: rgba(255,255,255,0.9); margin-top: 15px; font-size: 12px;">${new Date().toLocaleDateString()}</p>
                     </div>
                 `;
