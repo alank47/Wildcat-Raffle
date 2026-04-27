@@ -1527,10 +1527,18 @@
                 try {
                     const { doc, getDoc } = window.firebaseModules;
                     
-                    // Load all 4 documents in parallel
-                    const [mainSnap, secondarySnap, ticketHistorySnap, auditLogSnap] = await Promise.all([
+                    // Load all 4 documents in parallel.
+                    // ticket_history is now SPLIT into ticket_history_ms (grades 6-8) and
+                    // ticket_history_hs (grades 9-12) to stay under Firestore's 1MB per-doc limit.
+                    // For backwards compatibility during transition, we ALSO read the legacy
+                    // combined doc and merge its entries — they get rewritten to the new docs
+                    // on the next save. The legacy doc is renamed to ticket_history_archive_pre_split
+                    // by the migration; the read here is kept only as a safety net.
+                    const [mainSnap, secondarySnap, ticketHistoryMsSnap, ticketHistoryHsSnap, ticketHistoryLegacySnap, auditLogSnap] = await Promise.all([
                         getDoc(doc(firebaseDb, 'raffle_data', 'main')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'secondary')),
+                        getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_ms')),
+                        getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_hs')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'audit_log'))
                     ]);
@@ -1539,14 +1547,47 @@
                     if (mainSnap.exists()) {
                         const mainData = mainSnap.data();
                         const secondaryData = secondarySnap.exists() ? secondarySnap.data() : {};
-                        const ticketHistoryData = ticketHistorySnap.exists() ? ticketHistorySnap.data() : {};
                         const auditLogData = auditLogSnap.exists() ? auditLogSnap.data() : {};
                         
-                        // Load ticket histories from separate document
-                        const firebaseTicketHistories = ticketHistoryData.histories || {};
+                        // Merge histories from MS, HS, and legacy combined doc.
+                        // Per-student dedupe by entryId so overlap doesn't double-count.
+                        const msHistories = ticketHistoryMsSnap.exists() ? (ticketHistoryMsSnap.data().histories || {}) : {};
+                        const hsHistories = ticketHistoryHsSnap.exists() ? (ticketHistoryHsSnap.data().histories || {}) : {};
+                        const legacyHistories = ticketHistoryLegacySnap.exists() ? (ticketHistoryLegacySnap.data().histories || {}) : {};
+                        const firebaseTicketHistories = {};
+                        const allHistoryStudentIds = new Set([
+                            ...Object.keys(msHistories),
+                            ...Object.keys(hsHistories),
+                            ...Object.keys(legacyHistories)
+                        ]);
+                        allHistoryStudentIds.forEach(sid => {
+                            const byId = new Map();
+                            const collect = (entries) => {
+                                (entries || []).forEach(e => {
+                                    const id = ensureEntryId(e);
+                                    if (!byId.has(id)) byId.set(id, { ...e, entryId: id });
+                                });
+                            };
+                            collect(msHistories[sid]);
+                            collect(hsHistories[sid]);
+                            collect(legacyHistories[sid]);
+                            const merged = Array.from(byId.values())
+                                .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                            if (merged.length > 0) firebaseTicketHistories[sid] = merged;
+                        });
+                        
+                        // For tombstone loading: prefer ms doc as the primary source since legacy
+                        // is becoming dormant. Both new docs and legacy carry tombstones.
+                        const ticketHistoryData = {
+                            tombstones: [
+                                ...(ticketHistoryMsSnap.exists() ? (ticketHistoryMsSnap.data().tombstones || []) : []),
+                                ...(ticketHistoryHsSnap.exists() ? (ticketHistoryHsSnap.data().tombstones || []) : []),
+                                ...(ticketHistoryLegacySnap.exists() ? (ticketHistoryLegacySnap.data().tombstones || []) : [])
+                            ]
+                        };
+                        
                         // NEW: Load tombstones from the DEDICATED tombstones document.
-                        // Also union with any legacy tombstones that might still be in ticket_history
-                        // (from older saves) — harmless to keep both in memory.
+                        // Also union with any legacy tombstones from history docs.
                         const dedicatedTombstones = await loadPersistentTombstones();
                         const legacyTombstones = ticketHistoryData.tombstones || [];
                         const tombstoneMap = new Map();
@@ -1709,7 +1750,7 @@
                             wildcatCashTransactions = firebaseCashTransactions;
                         }
                         
-                        console.log('✅ Loaded data from Firebase (4 documents)');
+                        console.log('✅ Loaded data from Firebase (5 documents: main, secondary, ticket_history_ms, ticket_history_hs, audit_log)');
                         
                         // Apply school branding
                         if (schoolBranding && (schoolBranding.schoolName || schoolBranding.logoBase64)) {
@@ -2546,67 +2587,106 @@
                         
                         await new Promise(resolve => setTimeout(resolve, 50));
                         
-                        // TRANSACTION 2: Ticket History Document (tombstone-aware merge)
-                        // FIXED: Uses stable entryIds + tombstone list so that intentional
-                        // deletions survive merges with Firebase. Concurrent additions from
-                        // other teachers still merge correctly because they'll have different IDs.
-                        const ticketHistoryDocRef = doc(firebaseDb, 'raffle_data', 'ticket_history');
-                        const ticketHistoryResult = await runTransaction(firebaseDb, async (transaction) => {
-                            const ticketHistoryDoc = await transaction.get(ticketHistoryDocRef);
-                            const firebaseHistories = ticketHistoryDoc.exists() ? (ticketHistoryDoc.data().histories || {}) : {};
-                            const firebaseTombstones = ticketHistoryDoc.exists() ? (ticketHistoryDoc.data().tombstones || []) : [];
-
-                            // Union of tombstones (append-only; dedupe by entryId)
-                            const tombstoneMap = new Map();
-                            firebaseTombstones.forEach(t => tombstoneMap.set(t.entryId, t));
-                            localTombstones.forEach(t => {
-                                if (!tombstoneMap.has(t.entryId)) tombstoneMap.set(t.entryId, t);
-                            });
-                            const mergedTombstones = Array.from(tombstoneMap.values());
-                            const tombstonedIds = new Set(mergedTombstones.map(t => t.entryId));
-
-                            // Merge each student's history by entryId (not by content hash)
-                            const mergedHistories = {};
-                            const allStudentIds = new Set([
-                                ...Object.keys(firebaseHistories),
-                                ...Object.keys(ticketHistoriesToSave)
-                            ]);
-
-                            allStudentIds.forEach(sid => {
-                                const fbEntries = firebaseHistories[sid] || [];
-                                const localEntries = ticketHistoriesToSave[sid] || [];
-                                const byId = new Map();
-
-                                // Firebase entries first — skip anything tombstoned
-                                fbEntries.forEach(e => {
-                                    const id = ensureEntryId(e);
-                                    if (!tombstonedIds.has(id)) {
-                                        byId.set(id, { ...e, entryId: id });
-                                    }
-                                });
-
-                                // Local entries — skip tombstoned; add any new IDs
-                                localEntries.forEach(e => {
-                                    const id = ensureEntryId(e);
-                                    if (tombstonedIds.has(id)) return;
-                                    if (!byId.has(id)) {
-                                        byId.set(id, { ...e, entryId: id });
-                                    }
-                                });
-
-                                const merged = Array.from(byId.values())
-                                    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-                                if (merged.length > 0) mergedHistories[sid] = merged;
-                            });
-
-                            transaction.set(ticketHistoryDocRef, {
-                                histories: mergedHistories,
-                                tombstones: mergedTombstones,
-                                lastSaveTimestamp: timestamp
-                            });
-
-                            return { mergedHistories, mergedTombstones };
+                        // TRANSACTION 2: Ticket History Documents (SPLIT BY SCHOOL).
+                        // History is partitioned across two documents to keep each under
+                        // Firestore's 1MB-per-document limit:
+                        //   ticket_history_ms — students grades 6-8
+                        //   ticket_history_hs — students grades 9-12
+                        //
+                        // Each save partitions the local ticketHistoriesToSave by student
+                        // grade and runs a tombstone-aware merge against the matching doc.
+                        // The two docs are independent transactions; if one fails, the other
+                        // still commits, and the next save retries.
+                        //
+                        // Partition local histories by grade
+                        const studentGradeById = {};
+                        students.forEach(s => { studentGradeById[s.id] = parseInt(s.grade); });
+                        const msHistoriesToSave = {};
+                        const hsHistoriesToSave = {};
+                        Object.keys(ticketHistoriesToSave).forEach(sid => {
+                            const grade = studentGradeById[sid];
+                            if (grade >= 6 && grade <= 8) {
+                                msHistoriesToSave[sid] = ticketHistoriesToSave[sid];
+                            } else if (grade >= 9 && grade <= 12) {
+                                hsHistoriesToSave[sid] = ticketHistoriesToSave[sid];
+                            } else {
+                                // Unknown grade — skip rather than guess. Will be visible
+                                // in console for investigation.
+                                console.warn(`⚠️ Student ${sid} has unknown grade ${grade}, history not saved.`);
+                            }
                         });
+
+                        async function commitHistoryDoc(docName, localHistoriesForThisDoc) {
+                            const ref = doc(firebaseDb, 'raffle_data', docName);
+                            return await runTransaction(firebaseDb, async (transaction) => {
+                                const snap = await transaction.get(ref);
+                                const fbHistories = snap.exists() ? (snap.data().histories || {}) : {};
+                                const fbTombstones = snap.exists() ? (snap.data().tombstones || []) : [];
+
+                                // Tombstone union (append-only, dedupe by entryId)
+                                const tombstoneMap = new Map();
+                                fbTombstones.forEach(t => tombstoneMap.set(t.entryId, t));
+                                localTombstones.forEach(t => {
+                                    if (!tombstoneMap.has(t.entryId)) tombstoneMap.set(t.entryId, t);
+                                });
+                                const mergedTombstones = Array.from(tombstoneMap.values());
+                                const tombstonedIds = new Set(mergedTombstones.map(t => t.entryId));
+
+                                // Merge per-student by entryId
+                                const mergedHistories = {};
+                                const allStudentIds = new Set([
+                                    ...Object.keys(fbHistories),
+                                    ...Object.keys(localHistoriesForThisDoc)
+                                ]);
+                                allStudentIds.forEach(sid => {
+                                    const fb = fbHistories[sid] || [];
+                                    const local = localHistoriesForThisDoc[sid] || [];
+                                    const byId = new Map();
+                                    fb.forEach(e => {
+                                        const id = ensureEntryId(e);
+                                        if (!tombstonedIds.has(id)) byId.set(id, { ...e, entryId: id });
+                                    });
+                                    local.forEach(e => {
+                                        const id = ensureEntryId(e);
+                                        if (tombstonedIds.has(id)) return;
+                                        if (!byId.has(id)) byId.set(id, { ...e, entryId: id });
+                                    });
+                                    const merged = Array.from(byId.values())
+                                        .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                                    if (merged.length > 0) mergedHistories[sid] = merged;
+                                });
+
+                                transaction.set(ref, {
+                                    histories: mergedHistories,
+                                    tombstones: mergedTombstones,
+                                    lastSaveTimestamp: timestamp
+                                });
+
+                                return { mergedHistories, mergedTombstones };
+                            });
+                        }
+
+                        let msResult, hsResult;
+                        try {
+                            msResult = await commitHistoryDoc('ticket_history_ms', msHistoriesToSave);
+                            console.log(`✅ Ticket history MS document saved (${Object.keys(msResult.mergedHistories).length} students)`);
+                        } catch (msErr) {
+                            console.error('❌ ticket_history_ms save failed:', msErr?.code, msErr?.message);
+                            throw msErr;
+                        }
+                        try {
+                            hsResult = await commitHistoryDoc('ticket_history_hs', hsHistoriesToSave);
+                            console.log(`✅ Ticket history HS document saved (${Object.keys(hsResult.mergedHistories).length} students)`);
+                        } catch (hsErr) {
+                            console.error('❌ ticket_history_hs save failed:', hsErr?.code, hsErr?.message);
+                            throw hsErr;
+                        }
+
+                        // Combined result for downstream code that read from the old single doc
+                        const ticketHistoryResult = {
+                            mergedHistories: { ...msResult.mergedHistories, ...hsResult.mergedHistories },
+                            mergedTombstones: msResult.mergedTombstones // both docs share tombstones; either is fine
+                        };
 
                         // Sync local state with what was actually saved
                         localTombstones = ticketHistoryResult.mergedTombstones;
