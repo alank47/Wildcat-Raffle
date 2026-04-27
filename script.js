@@ -2623,14 +2623,15 @@
                                 const fbHistories = snap.exists() ? (snap.data().histories || {}) : {};
                                 const fbTombstones = snap.exists() ? (snap.data().tombstones || []) : [];
 
-                                // Tombstone union (append-only, dedupe by entryId)
-                                const tombstoneMap = new Map();
-                                fbTombstones.forEach(t => tombstoneMap.set(t.entryId, t));
-                                localTombstones.forEach(t => {
-                                    if (!tombstoneMap.has(t.entryId)) tombstoneMap.set(t.entryId, t);
-                                });
-                                const mergedTombstones = Array.from(tombstoneMap.values());
-                                const tombstonedIds = new Set(mergedTombstones.map(t => t.entryId));
+                                // NOTE: We do NOT carry tombstones in the history docs anymore.
+                                // Tombstones live in the dedicated `raffle_data/tombstones` document
+                                // (managed by persistTombstone / loadPersistentTombstones).
+                                // We still need a tombstone Set for filtering history entries during
+                                // the merge — built from local memory only, not the doc's old field.
+                                const tombstonedIds = new Set(localTombstones.map(t => {
+                                    // Defensive: handle malformed nested entryIds from past bugs
+                                    return typeof t.entryId === 'string' ? t.entryId : (t.entryId && t.entryId.entryId) || '';
+                                }).filter(Boolean));
 
                                 // Merge per-student by entryId
                                 const mergedHistories = {};
@@ -2656,13 +2657,13 @@
                                     if (merged.length > 0) mergedHistories[sid] = merged;
                                 });
 
+                                // History doc payload — histories only, no tombstones field
                                 transaction.set(ref, {
                                     histories: mergedHistories,
-                                    tombstones: mergedTombstones,
                                     lastSaveTimestamp: timestamp
                                 });
 
-                                return { mergedHistories, mergedTombstones };
+                                return { mergedHistories };
                             });
                         }
 
@@ -2684,12 +2685,12 @@
 
                         // Combined result for downstream code that read from the old single doc
                         const ticketHistoryResult = {
-                            mergedHistories: { ...msResult.mergedHistories, ...hsResult.mergedHistories },
-                            mergedTombstones: msResult.mergedTombstones // both docs share tombstones; either is fine
+                            mergedHistories: { ...msResult.mergedHistories, ...hsResult.mergedHistories }
                         };
 
-                        // Sync local state with what was actually saved
-                        localTombstones = ticketHistoryResult.mergedTombstones;
+                        // Sync local state with what was actually saved.
+                        // Tombstones are NOT updated here — they're managed by their own dedicated doc
+                        // and updated via persistTombstone / loadPersistentTombstones.
                         students.forEach(s => {
                             s.ticketHistory = ticketHistoryResult.mergedHistories[s.id] || [];
                         });
