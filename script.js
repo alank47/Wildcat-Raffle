@@ -117,6 +117,34 @@
             cycleNumber: 1
         };
         let cycleHistory = []; // Archive of past cycles with their winners
+        let cycleStartTimestamp = null; // ISO timestamp of when the current cycle began. Used to scope leaderboards.
+
+        // Helper: returns the integer cycle number of the current cycle.
+        // Defaults to 1 if currentCycle is missing/malformed.
+        function getCurrentCycleNumber() {
+            if (currentCycle && typeof currentCycle.cycleNumber === 'number') {
+                return currentCycle.cycleNumber;
+            }
+            return 1;
+        }
+
+        // Helper: returns true if an audit/history entry belongs to the current cycle.
+        // - If the entry has a `cycle` field, match against the current cycle number
+        // - If the entry has no `cycle` field (legacy), match by timestamp against cycleStartTimestamp
+        //   (entries from before the cycle started don't belong to it)
+        function entryBelongsToCurrentCycle(entry) {
+            if (!entry) return false;
+            const currentNum = getCurrentCycleNumber();
+            if (typeof entry.cycle === 'number') {
+                return entry.cycle === currentNum;
+            }
+            // Legacy entry without cycle field — judge by timestamp
+            if (cycleStartTimestamp && entry.timestamp) {
+                return entry.timestamp >= cycleStartTimestamp;
+            }
+            // No way to tell — assume legacy belongs to cycle 1 (first cycle)
+            return currentNum === 1;
+        }
         
         let lastAwardAction = null; // Track last ticket award for UNDO functionality
         let weeklyWinners = [];
@@ -272,8 +300,8 @@
                 s.ticketHistory = s.ticketHistory.filter(e => !tombstonedIds.has(ensureEntryId(e)));
                 ticketsRemoved += (before - s.ticketHistory.length);
                 
-                // Recalculate counters from filtered history
-                const cw = s.ticketHistory.filter(h => h.week === currentWeek);
+                // Recalculate counters from filtered history (current cycle only)
+                const cw = s.ticketHistory.filter(h => h.week === currentWeek && entryBelongsToCurrentCycle(h));
                 s.pbisTickets = cw.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
                 s.attendanceTickets = cw.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
                 s.academicTickets = cw.filter(h => h.category === 'Academic' || h.category === 'Academics').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
@@ -306,9 +334,14 @@
         function healQualificationsFromAuditLog() {
             if (!auditLog || !students || students.length === 0) return;
             
-            // Build per-student set of qualified weeks from the audit log
+            // CYCLE-SCOPED: only consider audit entries from the current cycle.
+            // Otherwise after a cycle reset, this would restore old qualifications
+            // and put us back where we started.
+            const currentCycleEntries = auditLog.filter(e => entryBelongsToCurrentCycle(e));
+            
+            // Build per-student set of qualified weeks from the (current-cycle) audit log
             const auditQualifications = {};
-            auditLog.forEach(e => {
+            currentCycleEntries.forEach(e => {
                 if (!e.studentId) return;
                 if (e.action !== 'Qualified for Wildcat Jackpot' && e.action !== 'Weekly Leaderboard Bonus') return;
                 if (!e.week) return;
@@ -318,7 +351,7 @@
             
             // Also count qualification-related audit entries per student (for weeksQualified)
             const auditEntryCounts = {};
-            auditLog.forEach(e => {
+            currentCycleEntries.forEach(e => {
                 if (!e.studentId) return;
                 if (e.action !== 'Qualified for Wildcat Jackpot' && e.action !== 'Weekly Leaderboard Bonus') return;
                 auditEntryCounts[e.studentId] = (auditEntryCounts[e.studentId] || 0) + 1;
@@ -353,7 +386,7 @@
             });
             
             if (studentsHealed > 0) {
-                console.log(`🩹 Qualification self-heal: restored ${weeksAdded} week-entries across ${studentsHealed} students from audit log`);
+                console.log(`🩹 Qualification self-heal: restored ${weeksAdded} week-entries across ${studentsHealed} students from current-cycle audit log`);
             }
         }
 
@@ -508,6 +541,8 @@
                             ? `${h.subcategory}: ${h.reason || ''}`
                             : (h.reason || ''),
                         week: h.week || currentWeek,
+                        // Preserve cycle from history entry; if missing (legacy), don't assume
+                        ...(typeof h.cycle === 'number' ? { cycle: h.cycle } : {}),
                         reconstructed: true
                     };
                     reconstructedEntry.entryId = ensureEntryId(reconstructedEntry);
@@ -1052,9 +1087,13 @@
             const s = currentStudent;
             
             // Calculate tickets for CURRENT WEEK ONLY (not cumulative)
+            // CYCLE-SCOPED: only count history entries from the current cycle.
+            // Otherwise old entries with the same week number would pollute the leaderboard.
             const studentsWithTotals = students.map(student => {
                 const history = student.ticketHistory || [];
-                const currentWeekHistory = history.filter(h => h.week === currentWeek);
+                const currentWeekHistory = history.filter(h => 
+                    h.week === currentWeek && entryBelongsToCurrentCycle(h)
+                );
                 
                 const pbis = currentWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
                 const attendance = currentWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
@@ -1227,9 +1266,9 @@
             document.getElementById('studentViewName').textContent = `${currentStudent.firstName} ${currentStudent.lastName}`;
             document.getElementById('studentViewId').textContent = currentStudent.id;
             
-            // Calculate tickets for CURRENT WEEK ONLY
+            // Calculate tickets for CURRENT WEEK ONLY (current cycle only)
             const history = currentStudent.ticketHistory || [];
-            const currentWeekHistory = history.filter(h => h.week === currentWeek);
+            const currentWeekHistory = history.filter(h => h.week === currentWeek && entryBelongsToCurrentCycle(h));
             
             const pbisTickets = currentWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
             const attendanceTickets = currentWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
@@ -1705,8 +1744,8 @@
                                 
                                 const uniqueHistory = Array.from(seen.values());
                                 
-                                // Calculate cumulative counters from CURRENT WEEK ticket history (source of truth)
-                                const currentWeekHistory = uniqueHistory.filter(h => h.week === currentWeek);
+                                // Calculate cumulative counters from CURRENT WEEK ticket history (current cycle only)
+                                const currentWeekHistory = uniqueHistory.filter(h => h.week === currentWeek && entryBelongsToCurrentCycle(h));
                                 const pbisTotal = currentWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
                                 const attendanceTotal = currentWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
                                 const academicTotal = currentWeekHistory.filter(h => h.category === 'Academic' || h.category === 'Academics').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
@@ -1786,6 +1825,7 @@
                         // Jackpot cycles
                         currentCycle = mainData.currentCycle || { name: 'Cycle 1', startDate: null, endDate: null, cycleNumber: 1 };
                         cycleHistory = mainData.cycleHistory || [];
+                        cycleStartTimestamp = mainData.cycleStartTimestamp || null;
                         
                         // Load from secondary document
                         weeklyWinners = secondaryData.weeklyWinners || [];
@@ -1915,6 +1955,7 @@
                 // Jackpot cycles
                 currentCycle = data.currentCycle || { name: 'Cycle 1', startDate: null, endDate: null, cycleNumber: 1 };
                 cycleHistory = data.cycleHistory || [];
+                cycleStartTimestamp = data.cycleStartTimestamp || null;
                 
                 // Apply school branding if it exists
                 if (schoolBranding && (schoolBranding.schoolName || schoolBranding.logoBase64)) {
@@ -2149,11 +2190,12 @@
         }
         
         function generateWeeklyReport(teacher) {
-            // Get tickets awarded in the CURRENT RAFFLE WEEK only
+            // Get tickets awarded in the CURRENT RAFFLE WEEK only (current cycle only)
             const weekTickets = auditLog.filter(entry => 
                 entry.teacherId === teacher.id &&
                 entry.action === 'Awarded Tickets' &&
-                entry.week === currentWeek  // Only tickets from current week
+                entry.week === currentWeek &&
+                entryBelongsToCurrentCycle(entry)
             );
             
             console.log('=== WEEKLY REPORT DEBUG ===');
@@ -2533,9 +2575,12 @@
                                         } else {
                                             // Tombstone-aware recalc: exclude any entry whose entryId is tombstoned.
                                             // This prevents a stale tab from resurrecting deleted tickets via counters.
+                                            // CYCLE-SCOPED: only count current-cycle entries.
                                             const tombstonedIds = new Set((localTombstones || []).map(t => t.entryId));
                                             const currentWeekHistory = localHistory.filter(h => 
-                                                h.week === currentWeek && !tombstonedIds.has(ensureEntryId(h))
+                                                h.week === currentWeek && 
+                                                !tombstonedIds.has(ensureEntryId(h)) &&
+                                                entryBelongsToCurrentCycle(h)
                                             );
                                             pbisValue = currentWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
                                             attendanceValue = currentWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
@@ -2637,6 +2682,7 @@
                                 weekResetHour,
                                 currentCycle,
                                 cycleHistory,
+                                cycleStartTimestamp,
                                 entityTombstones: entityTombstones, // NEW: persist entity tombstones
                                 lastSaveTimestamp: timestamp
                             });
@@ -2925,6 +2971,7 @@
                             weekResetHour,
                             currentCycle,
                             cycleHistory,
+                            cycleStartTimestamp,
                             localTombstones,
                             entityTombstones,
                             lastSaveTimestamp: timestamp
@@ -2967,6 +3014,7 @@
                             weekResetHour,
                             currentCycle,
                             cycleHistory,
+                            cycleStartTimestamp,
                             localTombstones,
                             entityTombstones
                         }));
@@ -3006,6 +3054,7 @@
                         weekResetHour,
                         currentCycle,
                         cycleHistory,
+                        cycleStartTimestamp,
                         localTombstones,
                         entityTombstones
                     }));
@@ -3057,6 +3106,7 @@
                 weekResetHour,
                 currentCycle,
                 cycleHistory,
+                cycleStartTimestamp,
                 backupDate: new Date().toISOString(),
                 backupType: 'manual'
             };
@@ -3106,6 +3156,7 @@
                     schoolBranding,
                     currentCycle,
                     cycleHistory,
+                    cycleStartTimestamp,
                     backupDate: serverTimestamp(),
                     backupType: 'automatic'
                 };
@@ -3434,6 +3485,8 @@
                 activeBtn.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
             } else if (subtab === 'insights') {
                 activeBtn.style.background = 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)';
+            } else if (subtab === 'halloffame') {
+                activeBtn.style.background = 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)';
             }
             activeBtn.style.color = 'white';
             activeBtn.style.boxShadow = '0 2px 8px rgba(102, 126, 234, 0.3)';
@@ -3451,6 +3504,8 @@
                 selectedTab = document.getElementById('teachersContent');
             } else if (subtab === 'insights') {
                 selectedTab = document.getElementById('insightsContent');
+            } else if (subtab === 'halloffame') {
+                selectedTab = document.getElementById('halloffameContent');
             } else {
                 selectedTab = document.getElementById(`${subtab}Data`);
             }
@@ -3468,6 +3523,8 @@
                 updateTeacherAnalytics();
             } else if (subtab === 'insights') {
                 updateInsights();
+            } else if (subtab === 'halloffame') {
+                renderHallOfFame();
             } else {
                 // Refresh the current view (charts or tables) for student data tabs
                 // Use setTimeout to allow DOM to fully render before creating charts
@@ -3645,10 +3702,12 @@
             
             switch (currentDataTimeFilter) {
                 case 'thisWeek':
-                    // Filter ticket history by current week number
+                    // Filter ticket history by current week + current cycle
                     return students.map(s => {
                         const history = s.ticketHistory || [];
-                        const thisWeekHistory = history.filter(h => h.week === currentWeek);
+                        const thisWeekHistory = history.filter(h => 
+                            h.week === currentWeek && entryBelongsToCurrentCycle(h)
+                        );
                         
                         const pbisTotal = thisWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
                         const attendanceTotal = thisWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
@@ -3673,15 +3732,15 @@
                     break;
                     
                 case 'thisCycle':
-                    // "This Cycle" should show data for the CURRENT WEEK of the 5-week cycle
-                    // This matches the current week behavior since we're in Week 3 of a 5-week cycle
+                    // "This Cycle" means ALL weeks of the current cycle (1 through currentWeek).
+                    // Includes the full 5-week sweep so admins can see cycle-wide totals.
                     return students.map(s => {
                         const history = s.ticketHistory || [];
-                        const thisWeekHistory = history.filter(h => h.week === currentWeek);
+                        const thisCycleHistory = history.filter(h => entryBelongsToCurrentCycle(h));
                         
-                        const pbisTotal = thisWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
-                        const attendanceTotal = thisWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
-                        const academicTotal = thisWeekHistory.filter(h => h.category === 'Academics' || h.category === 'Academic').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                        const pbisTotal = thisCycleHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                        const attendanceTotal = thisCycleHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
+                        const academicTotal = thisCycleHistory.filter(h => h.category === 'Academics' || h.category === 'Academic').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
                         
                         return {
                             ...s,
@@ -3876,7 +3935,7 @@
             
             switch (teacherTimeFrame) {
                 case 'thisWeek':
-                    filteredAudit = auditLog.filter(e => e.week === currentWeek);
+                    filteredAudit = auditLog.filter(e => e.week === currentWeek && entryBelongsToCurrentCycle(e));
                     break;
                 case 'last7Days':
                     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -4358,6 +4417,204 @@
                             `).join('')}
                         </div>
                     `;
+                }
+            }
+        }
+
+        // ============================================================
+        // HALL OF FAME — historical winners view
+        //
+        // Derives winners from the audit log (the source of truth) rather than
+        // from in-memory arrays like weeklyWinners (which can be cleared by
+        // stale-tab saves). Renders two sections:
+        //   - Wildcat Jackpot Champions (card grid, all entries)
+        //   - Weekly Raffle Winners (table, filterable by cycle)
+        // ============================================================
+        function cycleFromTimestamp(ts) {
+            // Best-effort cycle inference: cycleDuration is typically 5 weeks.
+            // We don't have a stored cycle-start-date, so we approximate from
+            // the difference between the timestamp and the earliest audit entry.
+            // For winners that carry an explicit `cycle` field (jackpot entries
+            // in bigRaffleWinners), prefer that.
+            if (!ts || !auditLog || auditLog.length === 0) return null;
+            try {
+                const winnerDate = new Date(ts);
+                // Find earliest "Awarded Tickets" timestamp as program start
+                const earliestAward = auditLog
+                    .filter(e => e.action === 'Awarded Tickets')
+                    .map(e => new Date(e.timestamp))
+                    .filter(d => !isNaN(d.getTime()))
+                    .sort((a, b) => a - b)[0];
+                if (!earliestAward) return null;
+                const daysElapsed = Math.floor((winnerDate - earliestAward) / (1000 * 60 * 60 * 24));
+                const cycleDays = (cycleDuration || 5) * 7;
+                return Math.floor(daysElapsed / cycleDays) + 1;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function formatHallOfFameDate(ts) {
+            if (!ts) return '—';
+            try {
+                const d = new Date(ts);
+                return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            } catch (e) {
+                return ts.substring(0, 10);
+            }
+        }
+
+        function escapeHtml(s) {
+            if (s == null) return '';
+            return String(s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function renderHallOfFame() {
+            const log = auditLog || [];
+
+            // Jackpot winners — sorted newest first
+            const jackpot = log
+                .filter(e => e.action === 'Wildcat Jackpot Winner')
+                .slice()
+                .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+            // Weekly raffle winners — sorted newest first
+            const allWeekly = log
+                .filter(e => e.action === 'Raffle Winner')
+                .slice()
+                .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+            // Populate cycle dropdown
+            const cycleFilterEl = document.getElementById('halloffameCycleFilter');
+            const selectedCycle = cycleFilterEl ? cycleFilterEl.value : 'all';
+            const cyclesSeen = new Set();
+            allWeekly.forEach(e => {
+                const c = cycleFromTimestamp(e.timestamp);
+                if (c) cyclesSeen.add(c);
+            });
+            jackpot.forEach(e => {
+                const c = cycleFromTimestamp(e.timestamp);
+                if (c) cyclesSeen.add(c);
+            });
+            if (cycleFilterEl) {
+                const cyclesList = Array.from(cyclesSeen).sort((a, b) => b - a);
+                // Only rebuild options if the set changed (avoid resetting user's selection)
+                const existingValues = Array.from(cycleFilterEl.options).map(o => o.value).filter(v => v !== 'all');
+                const newValues = cyclesList.map(String);
+                if (JSON.stringify(existingValues.sort()) !== JSON.stringify(newValues.slice().sort())) {
+                    cycleFilterEl.innerHTML = '<option value="all">All Cycles</option>';
+                    cyclesList.forEach(c => {
+                        const opt = document.createElement('option');
+                        opt.value = String(c);
+                        opt.textContent = `Cycle ${c}`;
+                        cycleFilterEl.appendChild(opt);
+                    });
+                    cycleFilterEl.value = selectedCycle && document.querySelector(`#halloffameCycleFilter option[value="${selectedCycle}"]`)
+                        ? selectedCycle
+                        : 'all';
+                }
+            }
+
+            // Filter weekly by selected cycle
+            const filterCycle = cycleFilterEl ? cycleFilterEl.value : 'all';
+            const weekly = filterCycle === 'all'
+                ? allWeekly
+                : allWeekly.filter(e => String(cycleFromTimestamp(e.timestamp)) === filterCycle);
+
+            // === Render jackpot card grid ===
+            const jackpotGrid = document.getElementById('jackpotWinnersGrid');
+            const jackpotEmpty = document.getElementById('jackpotWinnersEmpty');
+            const jackpotCount = document.getElementById('jackpotWinnerCount');
+
+            if (jackpotCount) {
+                jackpotCount.textContent = `${jackpot.length} winner${jackpot.length === 1 ? '' : 's'}`;
+            }
+
+            if (jackpot.length === 0) {
+                if (jackpotGrid) jackpotGrid.innerHTML = '';
+                if (jackpotEmpty) jackpotEmpty.style.display = 'block';
+            } else {
+                if (jackpotEmpty) jackpotEmpty.style.display = 'none';
+                if (jackpotGrid) {
+                    jackpotGrid.innerHTML = jackpot.map(e => {
+                        const isMS = (e.category || '').toLowerCase().includes('middle');
+                        const gradient = isMS
+                            ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
+                            : 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
+                        const schoolLabel = isMS ? 'Middle School' : 'High School';
+                        const cycle = cycleFromTimestamp(e.timestamp);
+                        const student = students.find(s => s.id === e.studentId);
+                        const grade = student ? student.grade : '?';
+                        const entriesText = e.reason && e.reason.match(/(\d+)/)
+                            ? `Drawn from ${e.reason.match(/(\d+)/)[1]} entries`
+                            : (e.reason || '');
+                        const reconBadge = e.reconstructed
+                            ? `<div style="position: absolute; top: 12px; right: 12px; background: rgba(0,0,0,0.3); color: white; padding: 3px 8px; border-radius: 10px; font-size: 10px; font-weight: 600;" title="Reconstructed from system records — not real-time logged">📋 RECONSTRUCTED</div>`
+                            : '';
+                        return `
+                            <div style="background: ${gradient}; color: white; padding: 25px; border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); position: relative; overflow: hidden;">
+                                ${reconBadge}
+                                <div style="font-size: 36px; margin-bottom: 10px;">🏆</div>
+                                <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 2px; opacity: 0.9; margin-bottom: 4px;">${schoolLabel}</div>
+                                <div style="font-size: 22px; font-weight: 700; line-height: 1.2; margin-bottom: 4px;">${escapeHtml(e.studentName || 'Unknown')}</div>
+                                <div style="font-size: 13px; opacity: 0.85; margin-bottom: 16px;">Grade ${escapeHtml(grade)}</div>
+                                <div style="background: rgba(255,255,255,0.2); padding: 10px 14px; border-radius: 8px; margin-bottom: 12px;">
+                                    <div style="font-size: 11px; opacity: 0.9; text-transform: uppercase; letter-spacing: 1px;">Cycle ${cycle || '?'}</div>
+                                    <div style="font-size: 14px; font-weight: 600;">${formatHallOfFameDate(e.timestamp)}</div>
+                                </div>
+                                ${entriesText ? `<div style="font-size: 12px; opacity: 0.9;">🎟️ ${escapeHtml(entriesText)}</div>` : ''}
+                                <div style="font-size: 11px; opacity: 0.75; margin-top: 8px;">Drawn by ${escapeHtml(e.teacher || 'Unknown')}</div>
+                            </div>
+                        `;
+                    }).join('');
+                }
+            }
+
+            // === Render weekly winners table ===
+            const weeklyBody = document.getElementById('weeklyWinnersTable');
+            const weeklyEmpty = document.getElementById('weeklyWinnersEmpty');
+            const weeklyCount = document.getElementById('weeklyWinnerCount');
+
+            if (weeklyCount) {
+                weeklyCount.textContent = `${weekly.length} winner${weekly.length === 1 ? '' : 's'}`;
+            }
+
+            if (weekly.length === 0) {
+                if (weeklyBody) weeklyBody.innerHTML = '';
+                if (weeklyEmpty) weeklyEmpty.style.display = 'block';
+            } else {
+                if (weeklyEmpty) weeklyEmpty.style.display = 'none';
+                if (weeklyBody) {
+                    weeklyBody.innerHTML = weekly.map(e => {
+                        const student = students.find(s => s.id === e.studentId);
+                        const grade = student ? student.grade : '?';
+                        const cycle = cycleFromTimestamp(e.timestamp);
+                        const wkText = (cycle ? `Cycle ${cycle}` : '') + (e.week ? ` · Wk ${e.week}` : '');
+                        const reconBadge = e.reconstructed
+                            ? ` <span style="background: #fef3c7; color: #92400e; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;" title="Reconstructed from system records">📋</span>`
+                            : '';
+                        // Light category tint
+                        const cat = (e.category || '').toLowerCase();
+                        let catColor = '#667eea';
+                        if (cat.includes('pbis')) catColor = '#8b5cf6';
+                        else if (cat.includes('attendance')) catColor = '#10b981';
+                        else if (cat.includes('academic')) catColor = '#f59e0b';
+                        return `
+                            <tr style="border-bottom: 1px solid #f0f0f0;">
+                                <td style="padding: 12px 16px; font-size: 13px; color: #666; white-space: nowrap;">${formatHallOfFameDate(e.timestamp)}</td>
+                                <td style="padding: 12px 16px; font-size: 13px; color: #666; white-space: nowrap;">${escapeHtml(wkText) || '—'}</td>
+                                <td style="padding: 12px 16px; font-size: 13px;"><span style="display: inline-block; padding: 4px 10px; background: ${catColor}; color: white; border-radius: 12px; font-size: 11px; font-weight: 600;">${escapeHtml(e.category || '—')}</span></td>
+                                <td style="padding: 12px 16px; font-size: 14px; font-weight: 600; color: #333;">${escapeHtml(e.studentName || 'Unknown')}${reconBadge}</td>
+                                <td style="padding: 12px 16px; font-size: 13px; color: #666;">${escapeHtml(grade)}</td>
+                                <td style="padding: 12px 16px; font-size: 13px; color: #666;">${escapeHtml(e.teacher || '—')}</td>
+                            </tr>
+                        `;
+                    }).join('');
                 }
             }
         }
@@ -5637,7 +5894,8 @@
                 category: category,
                 ticketCount: ticketCount,
                 reason: reason,
-                week: currentWeek  // Track which week this entry is from
+                week: currentWeek,           // Week within the current cycle (1-5)
+                cycle: getCurrentCycleNumber() // Which cycle this entry belongs to
             };
             
             // Add period info if provided
@@ -11153,7 +11411,8 @@
                     category: 'Attendance',
                     tickets: 1,
                     reason: ticketReason,
-                    week: selectedWeek
+                    week: selectedWeek,
+                    cycle: getCurrentCycleNumber()
                 });
 
                 // Audit log entry — uses the outbox internally for safety
@@ -12858,7 +13117,8 @@
                         tickets: amount,
                         reason: reason || 'Perfect Attendance',
                         teacher: currentUser.name,
-                        week: currentWeek  // CRITICAL: Add week field for tracking
+                        week: currentWeek,             // Week within the current cycle (1-5)
+                        cycle: getCurrentCycleNumber()  // Which cycle this entry belongs to
                     });
                     
                     awardedStudents.push(previousState);
@@ -13605,6 +13865,9 @@
             const bonusWeeks = new Set();
             for (const e of auditLog) {
                 if (e.studentId !== studentId) continue;
+                // CYCLE-SCOPED: only count entries from the current cycle.
+                // Legacy entries (no cycle field) are excluded from new-cycle counts.
+                if (!entryBelongsToCurrentCycle(e)) continue;
                 if (e.action === 'Qualified for Wildcat Jackpot' && e.week) {
                     qualWeeks.add(e.week);
                 } else if (e.action === 'Weekly Leaderboard Bonus' && e.week) {
@@ -13963,25 +14226,46 @@
                 return;
             }
 
-            if (!confirm(`This will reset the ${cycleDuration}-week cycle and clear all Wildcat Jackpot qualifications. Continue?`)) return;
+            const currentNum = getCurrentCycleNumber();
+            const nextNum = currentNum + 1;
 
+            if (!confirm(
+                `This will close out Cycle ${currentNum} and start Cycle ${nextNum}.\n\n` +
+                `What this does:\n` +
+                `  • All students start fresh at 0 tickets\n` +
+                `  • All Wildcat Jackpot qualifications cleared\n` +
+                `  • Week resets to Week 1 (of the new cycle)\n` +
+                `  • Historical data is PRESERVED (all-time/last 30 days analytics still work)\n\n` +
+                `Continue?`
+            )) return;
+
+            // Reset all student counters and qualifications
             students.forEach(s => {
-                s.bigRaffleQualified = []; // Clear qualification array
+                s.bigRaffleQualified = [];
                 s.weeksQualified = 0;
                 s.pbisTickets = 0;
                 s.attendanceTickets = 0;
                 s.academicTickets = 0;
             });
 
+            // Advance cycle: increment cycle number, reset week, set new cycle start
+            currentCycle = {
+                name: `Cycle ${nextNum}`,
+                startDate: currentCycle.startDate || null,
+                endDate: currentCycle.endDate || null,
+                cycleNumber: nextNum
+            };
             currentWeek = 1;
+            cycleStartTimestamp = new Date().toISOString();
             weeklyWinners = [];
-            weeklyHistory = []; // Clear history for new cycle
+            // NOTE: weeklyHistory and ticket history are NOT cleared.
+            // Historical entries stay, tagged with their original cycle number.
             
-            addToAuditLog('Reset Wildcat Jackpot Cycle', null, null, null, null);
+            addToAuditLog('Reset Wildcat Jackpot Cycle', null, null, null, `Cycle ${currentNum} → Cycle ${nextNum}`);
             
             await saveData();
             updateAllDisplays();
-            alert('Wildcat Jackpot cycle reset! Starting fresh from Week 1.');
+            alert(`✅ Cycle ${currentNum} closed. Welcome to Cycle ${nextNum}, Week 1!`);
         }
 
         function switchTab(tabName) {
@@ -16301,6 +16585,7 @@
                     teacher: currentUser.name,
                     timestamp: new Date().toISOString(),
                     week: currentWeek,
+                    cycle: getCurrentCycleNumber(),
                     notes: `Deducted due to referral ${referral.id}: ${referral.behaviorType} (${referral.severity})`
                 });
                 
