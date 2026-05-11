@@ -149,6 +149,48 @@
         }
 
         // ============================================================
+        // AUDIT LOG MONTHLY PARTITIONING
+        //
+        // The audit log is split into per-month documents to stay under
+        // Firestore's 1 MB per-document limit. Each entry lives in the
+        // doc matching its timestamp's month: `audit_log_YYYY_MM`.
+        //
+        // - monthKeyFromTimestamp returns "2026_05" from an ISO timestamp
+        // - auditDocName returns "audit_log_2026_05" from a month key
+        // - getKnownAuditMonthKeys returns all month keys we should read
+        //   on load. Covers the academic year window — entries from
+        //   outside the window land in the legacy combined doc as a
+        //   safety net.
+        // ============================================================
+        function monthKeyFromTimestamp(ts) {
+            if (!ts) return '';
+            const s = String(ts);
+            // ISO format: "2026-05-10T..." → "2026_05"
+            const match = s.match(/^(\d{4})-(\d{2})/);
+            if (!match) return '';
+            return `${match[1]}_${match[2]}`;
+        }
+
+        function auditDocName(monthKey) {
+            return `audit_log_${monthKey}`;
+        }
+
+        // Months we read on load. Covers ~14 months back from current month —
+        // generous window that covers any reasonable academic year. Old months
+        // are read once and rarely change, so the cost is negligible.
+        function getKnownAuditMonthKeys() {
+            const keys = [];
+            const now = new Date();
+            for (let i = 0; i < 14; i++) {
+                const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                const yyyy = d.getFullYear();
+                const mm = String(d.getMonth() + 1).padStart(2, '0');
+                keys.push(`${yyyy}_${mm}`);
+            }
+            return keys;
+        }
+
+        // ============================================================
         // PERSISTENT TOMBSTONES (isolated document — old code can't wipe)
         // ============================================================
         // Tombstones live in raffle_data/tombstones, a document that only
@@ -1527,27 +1569,54 @@
                 try {
                     const { doc, getDoc } = window.firebaseModules;
                     
-                    // Load all 4 documents in parallel.
-                    // ticket_history is now SPLIT into ticket_history_ms (grades 6-8) and
+                    // Load all documents in parallel.
+                    // ticket_history is split into ticket_history_ms (grades 6-8) and
                     // ticket_history_hs (grades 9-12) to stay under Firestore's 1MB per-doc limit.
-                    // For backwards compatibility during transition, we ALSO read the legacy
-                    // combined doc and merge its entries — they get rewritten to the new docs
-                    // on the next save. The legacy doc is renamed to ticket_history_archive_pre_split
-                    // by the migration; the read here is kept only as a safety net.
-                    const [mainSnap, secondarySnap, ticketHistoryMsSnap, ticketHistoryHsSnap, ticketHistoryLegacySnap, auditLogSnap] = await Promise.all([
+                    // audit_log is split into per-month docs (audit_log_YYYY_MM) for the same reason.
+                    // Legacy combined docs are also read as a safety net during transition.
+                    const monthKeys = getKnownAuditMonthKeys();
+                    const monthlyAuditPromises = monthKeys.map(mk => 
+                        getDoc(doc(firebaseDb, 'raffle_data', auditDocName(mk)))
+                    );
+                    
+                    const [mainSnap, secondarySnap, ticketHistoryMsSnap, ticketHistoryHsSnap, ticketHistoryLegacySnap, auditLogLegacySnap, ...monthlyAuditSnaps] = await Promise.all([
                         getDoc(doc(firebaseDb, 'raffle_data', 'main')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'secondary')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_ms')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_hs')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history')),
-                        getDoc(doc(firebaseDb, 'raffle_data', 'audit_log'))
+                        getDoc(doc(firebaseDb, 'raffle_data', 'audit_log')),
+                        ...monthlyAuditPromises
                     ]);
                     
                     // Check if we have data (at least main document should exist)
                     if (mainSnap.exists()) {
                         const mainData = mainSnap.data();
                         const secondaryData = secondarySnap.exists() ? secondarySnap.data() : {};
-                        const auditLogData = auditLogSnap.exists() ? auditLogSnap.data() : {};
+                        
+                        // Merge audit log from all monthly docs + legacy combined doc.
+                        // Dedupe by entryId so overlap between monthly docs and legacy
+                        // doesn't double-count. Monthly docs are preferred (read first).
+                        const auditById = new Map();
+                        monthlyAuditSnaps.forEach(snap => {
+                            if (!snap.exists()) return;
+                            const entries = snap.data().auditLog || [];
+                            entries.forEach(e => {
+                                const id = ensureEntryId(e);
+                                if (!auditById.has(id)) auditById.set(id, { ...e, entryId: id });
+                            });
+                        });
+                        if (auditLogLegacySnap.exists()) {
+                            const legacyEntries = auditLogLegacySnap.data().auditLog || [];
+                            legacyEntries.forEach(e => {
+                                const id = ensureEntryId(e);
+                                if (!auditById.has(id)) auditById.set(id, { ...e, entryId: id });
+                            });
+                        }
+                        const auditLogData = {
+                            auditLog: Array.from(auditById.values())
+                                .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+                        };
                         
                         // Merge histories from MS, HS, and legacy combined doc.
                         // Per-student dedupe by entryId so overlap doesn't double-count.
@@ -2699,60 +2768,94 @@
                         
                         await new Promise(resolve => setTimeout(resolve, 50));
                         
-                        // TRANSACTION 3: Audit Log Document (union by entryId, tombstone-aware)
-                        // Firebase entries are preserved by default (append-only behavior), EXCEPT
-                        // when an admin explicitly tombstones an entry (e.g. duplicate cleanup).
-                        // Tombstones are rare and always explicit — normal ticket awards never delete.
+                        // TRANSACTION 3: Audit Log — SPLIT BY MONTH.
+                        // Entries are partitioned by timestamp's month into separate documents
+                        // (audit_log_YYYY_MM). Each month's save is a separate transaction; if
+                        // one fails, others still commit, and the outbox preserves unsaved entries.
                         //
-                        // CRITICAL: wrapped in its own try/catch so a failure here doesn't
-                        // silently swallow after transactions 1 and 2 already committed.
-                        // The outbox keeps unsaved audit entries safe across failures.
-                        const auditLogDocRef = doc(firebaseDb, 'raffle_data', 'audit_log');
-                        let auditSaveSucceeded = false;
-                        try {
-                            await runTransaction(firebaseDb, async (transaction) => {
-                                const auditLogDoc = await transaction.get(auditLogDocRef);
-                                const firebaseAuditLog = auditLogDoc.exists() ? (auditLogDoc.data().auditLog || []) : [];
+                        // Each transaction is tombstone-aware and uses union merge by entryId, so
+                        // concurrent saves from multiple tabs don't lose entries.
+                        const tombstonedIds = new Set((localTombstones || []).map(t => {
+                            return typeof t.entryId === 'string' ? t.entryId 
+                                 : (t.entryId && t.entryId.entryId) || '';
+                        }).filter(Boolean));
 
-                                // Respect the same tombstone list used for ticket history
-                                const tombstonedIds = new Set((localTombstones || []).map(t => t.entryId));
+                        // Partition local auditLog by month. Entries with missing/invalid
+                        // timestamps go into a "_unknown" bucket so they don't get lost.
+                        const entriesByMonth = {};
+                        auditLog.forEach(e => {
+                            const mk = monthKeyFromTimestamp(e.timestamp);
+                            if (!mk) {
+                                if (!entriesByMonth._unknown) entriesByMonth._unknown = [];
+                                entriesByMonth._unknown.push(e);
+                                return;
+                            }
+                            if (!entriesByMonth[mk]) entriesByMonth[mk] = [];
+                            entriesByMonth[mk].push(e);
+                        });
 
-                                const byId = new Map();
-                                // Firebase is baseline — nothing dropped EXCEPT admin-tombstoned entries
-                                firebaseAuditLog.forEach(e => {
-                                    const id = ensureEntryId(e);
-                                    if (tombstonedIds.has(id)) return;
-                                    byId.set(id, { ...e, entryId: id });
-                                });
-                                // Add local entries Firebase doesn't have (preserves new audit entries)
-                                auditLog.forEach(e => {
-                                    const id = ensureEntryId(e);
-                                    if (tombstonedIds.has(id)) return;
-                                    if (!byId.has(id)) {
+                        let auditSaveSucceeded = true; // becomes false if ANY month fails
+                        let totalSavedAcrossMonths = 0;
+                        const monthsTried = [];
+                        const mergedByMonth = {};
+
+                        for (const [monthKey, monthEntries] of Object.entries(entriesByMonth)) {
+                            if (monthKey === '_unknown') {
+                                // Park entries with unknown timestamps in the legacy combined doc
+                                // so they're preserved but don't bloat any monthly doc.
+                                continue;
+                            }
+                            monthsTried.push(monthKey);
+                            const monthRef = doc(firebaseDb, 'raffle_data', auditDocName(monthKey));
+                            try {
+                                const monthResult = await runTransaction(firebaseDb, async (transaction) => {
+                                    const monthDoc = await transaction.get(monthRef);
+                                    const fbMonthEntries = monthDoc.exists() ? (monthDoc.data().auditLog || []) : [];
+
+                                    const byId = new Map();
+                                    fbMonthEntries.forEach(e => {
+                                        const id = ensureEntryId(e);
+                                        if (tombstonedIds.has(id)) return;
                                         byId.set(id, { ...e, entryId: id });
-                                    }
+                                    });
+                                    monthEntries.forEach(e => {
+                                        const id = ensureEntryId(e);
+                                        if (tombstonedIds.has(id)) return;
+                                        if (!byId.has(id)) byId.set(id, { ...e, entryId: id });
+                                    });
+
+                                    const merged = Array.from(byId.values())
+                                        .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+                                    transaction.set(monthRef, {
+                                        auditLog: merged,
+                                        lastSaveTimestamp: timestamp
+                                    });
+
+                                    return merged;
                                 });
-
-                                const merged = Array.from(byId.values())
-                                    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-
-                                transaction.set(auditLogDocRef, {
-                                    auditLog: merged,
-                                    lastSaveTimestamp: timestamp
-                                });
-
-                                auditLog = merged;
-                            });
-                            auditSaveSucceeded = true;
-                            console.log(`✅ Audit log document saved (transaction)`);
-                        } catch (auditErr) {
-                            // Do NOT rethrow. The outbox has our entries, so they'll be
-                            // recovered on next load. But we MUST log this loudly so we
-                            // can spot patterns and so it doesn't hide in the outer catch.
-                            console.error('⚠️ AUDIT LOG SAVE FAILED (partial save detected):', auditErr);
-                            console.error('  Error code:', auditErr?.code, '| message:', auditErr?.message);
-                            console.error('  Outbox retained — audit entries will be recovered on next successful save.');
+                                mergedByMonth[monthKey] = monthResult;
+                                totalSavedAcrossMonths += monthResult.length;
+                                console.log(`✅ Audit log ${monthKey} saved (${monthResult.length} entries)`);
+                            } catch (monthErr) {
+                                // Don't rethrow. Outbox preserves entries. Loud log so we notice.
+                                console.error(`⚠️ AUDIT LOG ${monthKey} SAVE FAILED:`, monthErr?.code, '|', monthErr?.message);
+                                auditSaveSucceeded = false;
+                            }
                         }
+
+                        // Reconstruct auditLog from the successfully-saved months PLUS any months
+                        // we couldn't save (kept from current local state). This way a failed save
+                        // doesn't blank out audit entries — they stay in memory and try again next time.
+                        if (auditSaveSucceeded && monthsTried.length > 0) {
+                            const reconstructed = [];
+                            Object.values(mergedByMonth).forEach(arr => reconstructed.push(...arr));
+                            // Preserve _unknown entries
+                            if (entriesByMonth._unknown) reconstructed.push(...entriesByMonth._unknown);
+                            auditLog = reconstructed.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                        }
+
+                        console.log(`✅ Audit log save complete: ${totalSavedAcrossMonths} entries across ${monthsTried.length} months${auditSaveSucceeded ? '' : ' (some months failed — outbox retained)'}`);
 
                         // Clear the outbox only when the audit save actually succeeded.
                         // If it failed, entries remain in the outbox and get replayed next load.
