@@ -1092,6 +1092,9 @@
                     <button class="subtab-button admin-only" onclick="switchDataSubtab('insights')" id="insightsSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
                         🔍 Insights
                     </button>
+                    <button class="subtab-button" onclick="switchDataSubtab('halloffame')" id="halloffameSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
+                        🏆 Hall of Fame
+                    </button>
                 </div>
 
                 <!-- Export Controls -->
@@ -1675,6 +1678,81 @@
                             </div>
                         </div>
                         <div id="winnerRecentList"></div>
+                    </div>
+
+                </div>
+
+                <!-- HALL OF FAME SUBTAB -->
+                <div id="halloffameContent" class="data-subtab" style="display: none;">
+                    
+                    <!-- Banner -->
+                    <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; padding: 25px; border-radius: 12px; margin-bottom: 30px; box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);">
+                        <h3 style="color: white; margin: 0 0 8px 0; font-size: 22px;">🏆 Hall of Fame</h3>
+                        <p style="color: rgba(255,255,255,0.95); margin: 0; font-size: 14px;">
+                            Every Wildcat Jackpot champion and weekly raffle winner — celebrated and remembered.
+                        </p>
+                    </div>
+
+                    <!-- WILDCAT JACKPOT WINNERS — Card Grid -->
+                    <div style="margin-bottom: 40px;">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px;">
+                            <h3 style="margin: 0; color: #333; font-size: 20px;">💎 Wildcat Jackpot Champions</h3>
+                            <span id="jackpotWinnerCount" style="background: #f59e0b; color: white; padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight: 600;">0 winners</span>
+                        </div>
+                        <p style="margin: 0 0 20px 0; color: #666; font-size: 13px;">Drawn at the end of each 5-week cycle. The highest honor in the Wildcat Raffle.</p>
+                        
+                        <div id="jackpotWinnersGrid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px;">
+                            <!-- Filled by renderHallOfFame() -->
+                        </div>
+                        
+                        <div id="jackpotWinnersEmpty" style="display: none; text-align: center; padding: 40px; background: #f9fafb; border-radius: 12px; color: #999;">
+                            <div style="font-size: 48px; margin-bottom: 10px;">🏆</div>
+                            <div style="font-size: 16px; font-weight: 600; color: #666;">No jackpot winners yet</div>
+                            <div style="font-size: 13px; margin-top: 5px;">The first jackpot will be drawn at the end of this cycle.</div>
+                        </div>
+                    </div>
+
+                    <!-- WEEKLY RAFFLE WINNERS — Table -->
+                    <div>
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; flex-wrap: wrap; gap: 15px;">
+                            <div>
+                                <h3 style="margin: 0; color: #333; font-size: 20px;">🎟️ Weekly Raffle Winners</h3>
+                                <p style="margin: 5px 0 0 0; color: #666; font-size: 13px;">Drawn each week across PBIS, Attendance, and Academics — for both Middle and High School.</p>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <label for="halloffameCycleFilter" style="font-size: 13px; color: #666; font-weight: 600;">Cycle:</label>
+                                <select id="halloffameCycleFilter" onchange="renderHallOfFame()" style="padding: 8px 12px; border-radius: 6px; border: 1px solid #ddd; font-size: 14px; background: white; cursor: pointer;">
+                                    <option value="all">All Cycles</option>
+                                    <!-- Populated dynamically -->
+                                </select>
+                                <span id="weeklyWinnerCount" style="background: #667eea; color: white; padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight: 600;">0 winners</span>
+                            </div>
+                        </div>
+                        
+                        <div style="background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); overflow: hidden;">
+                            <div style="overflow-x: auto;">
+                                <table style="width: 100%; border-collapse: collapse;">
+                                    <thead>
+                                        <tr style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                            <th style="padding: 14px 16px; text-align: left; color: white; font-weight: 600; font-size: 13px; letter-spacing: 0.5px;">DATE</th>
+                                            <th style="padding: 14px 16px; text-align: left; color: white; font-weight: 600; font-size: 13px; letter-spacing: 0.5px;">CYCLE / WK</th>
+                                            <th style="padding: 14px 16px; text-align: left; color: white; font-weight: 600; font-size: 13px; letter-spacing: 0.5px;">CATEGORY</th>
+                                            <th style="padding: 14px 16px; text-align: left; color: white; font-weight: 600; font-size: 13px; letter-spacing: 0.5px;">STUDENT</th>
+                                            <th style="padding: 14px 16px; text-align: left; color: white; font-weight: 600; font-size: 13px; letter-spacing: 0.5px;">GR</th>
+                                            <th style="padding: 14px 16px; text-align: left; color: white; font-weight: 600; font-size: 13px; letter-spacing: 0.5px;">DRAWN BY</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="weeklyWinnersTable">
+                                        <!-- Filled by renderHallOfFame() -->
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div id="weeklyWinnersEmpty" style="display: none; text-align: center; padding: 40px; color: #999;">
+                                <div style="font-size: 48px; margin-bottom: 10px;">🎟️</div>
+                                <div style="font-size: 16px; font-weight: 600; color: #666;">No weekly winners yet for this cycle</div>
+                                <div style="font-size: 13px; margin-top: 5px;">Weekly raffles will appear here as they're drawn.</div>
+                            </div>
+                        </div>
                     </div>
 
                 </div>
@@ -4459,6 +4537,6 @@
     <!-- Chart.js for Data Visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-    <script src="script.js?v=20260428c"></script>
+    <script src="script.js?v=20260429c"></script>
 </body>
 </html>
