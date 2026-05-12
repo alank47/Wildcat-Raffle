@@ -592,8 +592,21 @@
                     if (!doc || !getDoc) return;
                     const snap = await getDoc(doc(firebaseDb, 'raffle_data', 'main'));
                     if (!snap.exists()) return;
-                    const fbWeek = snap.data().currentWeek;
-                    if (typeof fbWeek === 'number' && typeof currentWeek === 'number' && fbWeek > currentWeek) {
+                    const data = snap.data();
+                    const fbWeek = data.currentWeek;
+                    const fbCycleNum = data.currentCycle?.cycleNumber;
+                    const localCycleNum = currentCycle?.cycleNumber;
+                    
+                    // Cycle drift detection — takes priority over week drift
+                    if (typeof fbCycleNum === 'number' && typeof localCycleNum === 'number' && fbCycleNum > localCycleNum) {
+                        console.warn(`🐶 Cycle watchdog: Firebase cycle (${fbCycleNum}) is ahead of local (${localCycleNum}). This tab is stale — reloading data.`);
+                        await loadData();
+                        return;
+                    }
+                    
+                    // Week drift detection (only enforced within same cycle)
+                    const sameCycle = (fbCycleNum === localCycleNum) || (typeof fbCycleNum !== 'number' && typeof localCycleNum !== 'number');
+                    if (sameCycle && typeof fbWeek === 'number' && typeof currentWeek === 'number' && fbWeek > currentWeek) {
                         console.warn(`🐶 Week watchdog: Firebase currentWeek (${fbWeek}) is ahead of local (${currentWeek}). This tab is stale — reloading data.`);
                         await loadData();
                     }
@@ -2494,8 +2507,30 @@
                         try {
                             const weekPeek = await getDoc(doc(firebaseDb, 'raffle_data', 'main'));
                             if (weekPeek.exists()) {
-                                const firebaseWeek = weekPeek.data().currentWeek;
-                                if (typeof firebaseWeek === 'number' && typeof currentWeek === 'number' && firebaseWeek > currentWeek) {
+                                const peekData = weekPeek.data();
+                                const firebaseWeek = peekData.currentWeek;
+                                const firebaseCycleNum = peekData.currentCycle?.cycleNumber;
+                                const localCycleNum = currentCycle?.cycleNumber;
+                                
+                                // CYCLE GUARD: refuse to roll cycleNumber backwards.
+                                // A stale tab with cycleNumber=1 must not overwrite Firebase's cycleNumber=2.
+                                if (typeof firebaseCycleNum === 'number' && typeof localCycleNum === 'number' && firebaseCycleNum > localCycleNum) {
+                                    console.warn(`🛑 SAVE BLOCKED: would roll currentCycle backwards.`);
+                                    console.warn(`   Firebase cycleNumber: ${firebaseCycleNum}`);
+                                    console.warn(`   Local cycleNumber:    ${localCycleNum}`);
+                                    console.warn(`   Reloading fresh state from Firebase...`);
+                                    isSyncing = false;
+                                    await loadData();
+                                    alert(`⚠️ Your tab was holding an outdated cycle number (Cycle ${localCycleNum}). The system has refreshed to the current cycle (Cycle ${firebaseCycleNum}). Please re-do your last action if needed.`);
+                                    return;
+                                }
+                                
+                                // WEEK GUARD: only enforce when cycles match. If our cycle is older,
+                                // the cycle guard above handles it. If our cycle is newer (we just advanced),
+                                // we want our lower week number to take effect.
+                                const sameCycle = (firebaseCycleNum === localCycleNum) || 
+                                                  (typeof firebaseCycleNum !== 'number' && typeof localCycleNum !== 'number');
+                                if (sameCycle && typeof firebaseWeek === 'number' && typeof currentWeek === 'number' && firebaseWeek > currentWeek) {
                                     console.warn(`🛑 SAVE BLOCKED: would roll currentWeek backwards.`);
                                     console.warn(`   Firebase currentWeek: ${firebaseWeek}`);
                                     console.warn(`   Local currentWeek:    ${currentWeek}`);
