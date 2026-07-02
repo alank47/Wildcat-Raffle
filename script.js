@@ -5917,8 +5917,16 @@
             }
         }
 
-        function addToAuditLog(action, studentId, category, ticketCount, reason, periodInfo = null) {
+        function addToAuditLog(action, studentId, category, ticketCount, reason, periodInfo = null, weekOverride = null) {
             const student = students.find(s => s.id === studentId);
+            // weekOverride lets callers (e.g. the Perfect Attendance upload, which awards
+            // tickets for a specific past week) tag the audit entry with the SAME week as
+            // the matching ticket-history entry. Without it, the audit entry would use
+            // currentWeek and silently disagree with the history entry — the exact bug that
+            // caused attendance raffle pools to come up empty. When null, defaults to currentWeek.
+            const effectiveWeek = (typeof weekOverride === 'number' && !isNaN(weekOverride))
+                ? weekOverride
+                : currentWeek;
             const logEntry = {
                 timestamp: new Date().toISOString(),
                 teacher: currentUser.name,
@@ -5929,7 +5937,7 @@
                 category: category,
                 ticketCount: ticketCount,
                 reason: reason,
-                week: currentWeek,           // Week within the current cycle (1-5)
+                week: effectiveWeek,          // Week within the current cycle (1-5)
                 cycle: getCurrentCycleNumber() // Which cycle this entry belongs to
             };
             
@@ -11134,7 +11142,10 @@
         let perfectAttendancePreview = null; // Holds parsed+validated data between preview and confirm
 
         function initPerfectAttendanceUploadUI() {
-            // Populate the week dropdown based on currentWeek + cycleDuration
+            // Populate the week dropdown based on currentWeek + cycleDuration.
+            // Perfect Attendance is usually uploaded for the week that JUST ENDED, so we
+            // label both the current week and the previous week clearly to reduce the
+            // chance of picking the wrong one (a past mismatch caused empty raffle pools).
             const weekSelect = document.getElementById('perfectAttendanceWeek');
             if (!weekSelect) return;
             weekSelect.innerHTML = '';
@@ -11142,7 +11153,10 @@
             for (let w = 1; w <= maxWeek; w++) {
                 const opt = document.createElement('option');
                 opt.value = String(w);
-                opt.textContent = `Week ${w}${w === currentWeek ? ' (Current)' : ''}`;
+                let label = `Week ${w}`;
+                if (w === currentWeek) label += ' (Current week)';
+                else if (w === currentWeek - 1) label += ' (Last week — most common)';
+                opt.textContent = label;
                 if (w === currentWeek) opt.selected = true;
                 weekSelect.appendChild(opt);
             }
@@ -11450,12 +11464,10 @@
                     cycle: getCurrentCycleNumber()
                 });
 
-                // Audit log entry — uses the outbox internally for safety
-                // Temporarily override addToAuditLog's timestamp usage? No —
-                // addToAuditLog builds its own timestamp. For consistency with
-                // the history entry, we call it immediately after so the
-                // timestamps are within milliseconds (matches healer's 2-sec window).
-                addToAuditLog('Awarded Tickets', student.id, 'Attendance', 1, ticketReason);
+                // Audit log entry — pass selectedWeek so the audit entry's week matches
+                // the ticket-history entry's week. Previously this used currentWeek, which
+                // diverged from the history when awarding for a past week and broke raffle pools.
+                addToAuditLog('Awarded Tickets', student.id, 'Attendance', 1, ticketReason, null, selectedWeek);
             });
 
             // Single save at the end — one Firebase save for the whole batch
