@@ -4654,6 +4654,554 @@
             }
         }
 
+        // ============================================================
+        // ADMIN CORRECTIONS PANEL
+        //
+        // Safe, UI-driven versions of the correction operations that
+        // previously required hand-written console scripts:
+        //   1. Re-tag a ticket's week/cycle (fixes history + audit together)
+        //   2. Remove a wrongly-awarded ticket (tombstone + direct removal)
+        //   3. Invalidate & redraw a raffle winner (pool shown before draw)
+        //
+        // Design rules (learned the hard way):
+        //   - All writes are DIRECT setDoc calls to the specific Firebase
+        //     docs, bypassing the merge logic. The merge is append-only /
+        //     union-based and silently undoes edits to existing entries.
+        //   - Tombstones use persistTombstone() with POSITIONAL args.
+        //   - History entries and audit entries have different entryIds;
+        //     they're matched by studentId + timestamp (exact, then ±2s).
+        //   - Every correction also logs an 'Admin Correction' audit entry
+        //     so the corrections themselves are auditable.
+        //   - Week/cycle are NOT part of ensureEntryId's hash, so re-tagging
+        //     does not change an entry's id (tombstones stay valid).
+        // ============================================================
+
+        let _correctionState = { selectedStudentId: null, redraw: null };
+
+        function correctionIsAdmin() {
+            return currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin');
+        }
+
+        function initCorrectionsPanel() {
+            if (!correctionIsAdmin()) return;
+            correctionRenderWinnerList();
+            // Clear any stale search state when re-entering
+            const res = document.getElementById('correctionStudentResults');
+            const list = document.getElementById('correctionTicketList');
+            const search = document.getElementById('correctionStudentSearch');
+            if (res && search && !search.value) res.innerHTML = '';
+            if (list && search && !search.value) list.innerHTML = '';
+        }
+
+        // ---------- Shared direct-write helpers ----------
+
+        function correctionHistDocName(student) {
+            const g = parseInt(student.grade);
+            return (g >= 6 && g <= 8) ? 'ticket_history_ms' : 'ticket_history_hs';
+        }
+
+        // Find the audit entry matching a history entry: same student, same
+        // timestamp (exact), falling back to ±2s window + category match.
+        function correctionFindAuditMatch(student, histEntry) {
+            const exact = auditLog.find(e =>
+                e.studentId === student.id &&
+                e.action === 'Awarded Tickets' &&
+                e.timestamp === histEntry.timestamp
+            );
+            if (exact) return exact;
+            const histTime = new Date(histEntry.timestamp).getTime();
+            return auditLog.find(e => {
+                if (e.studentId !== student.id) return false;
+                if (e.action !== 'Awarded Tickets') return false;
+                if (e.category !== histEntry.category) return false;
+                const t = new Date(e.timestamp).getTime();
+                return Math.abs(t - histTime) <= 2000;
+            }) || null;
+        }
+
+        // Recompute one student's current week+cycle counters from history.
+        function correctionRecomputeCounters(student) {
+            const cw = (student.ticketHistory || []).filter(h =>
+                h.week === currentWeek && entryBelongsToCurrentCycle(h)
+            );
+            student.pbisTickets = cw.filter(h => h.category === 'PBIS').reduce((s, h) => s + (h.tickets || h.amount || 0), 0);
+            student.attendanceTickets = cw.filter(h => h.category === 'Attendance').reduce((s, h) => s + (h.tickets || h.amount || 0), 0);
+            student.academicTickets = cw.filter(h => h.category === 'Academic' || h.category === 'Academics').reduce((s, h) => s + (h.tickets || h.amount || 0), 0);
+        }
+
+        // ---------- Tool 1: Find & Fix Tickets ----------
+
+        function correctionSearchStudents() {
+            const input = document.getElementById('correctionStudentSearch');
+            const resultsEl = document.getElementById('correctionStudentResults');
+            if (!input || !resultsEl) return;
+            const q = input.value.trim().toLowerCase();
+            if (q.length < 2) { resultsEl.innerHTML = ''; return; }
+
+            const matches = students.filter(s =>
+                `${s.firstName} ${s.lastName}`.toLowerCase().includes(q)
+            ).slice(0, 8);
+
+            if (matches.length === 0) {
+                resultsEl.innerHTML = '<div style="color:#999;font-size:13px;">No students match.</div>';
+                return;
+            }
+            resultsEl.innerHTML = matches.map(s => `
+                <button onclick="correctionSelectStudent('${s.id}')"
+                        style="display:inline-block;margin:4px 6px 4px 0;padding:8px 14px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;cursor:pointer;font-size:13px;">
+                    ${escapeHtml(s.firstName)} ${escapeHtml(s.lastName)} <span style="color:#888;">(Gr ${escapeHtml(s.grade)})</span>
+                </button>
+            `).join('');
+        }
+
+        function correctionSelectStudent(sid) {
+            _correctionState.selectedStudentId = sid;
+            correctionRenderTicketList();
+        }
+
+        function correctionRenderTicketList() {
+            const listEl = document.getElementById('correctionTicketList');
+            const student = students.find(s => s.id === _correctionState.selectedStudentId);
+            if (!listEl || !student) return;
+
+            const hist = (student.ticketHistory || []).slice()
+                .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+                .slice(0, 30);
+
+            if (hist.length === 0) {
+                listEl.innerHTML = `<div style="color:#999;">No ticket history for ${escapeHtml(student.firstName)} ${escapeHtml(student.lastName)}.</div>`;
+                return;
+            }
+
+            const rows = hist.map(h => {
+                const id = ensureEntryId(h);
+                const dt = new Date(h.timestamp);
+                const dateStr = isNaN(dt.getTime()) ? (h.timestamp || '?') : dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                return `
+                    <tr style="border-bottom:1px solid #f0f0f0;">
+                        <td style="padding:8px 10px;font-size:12px;color:#666;white-space:nowrap;">${dateStr}</td>
+                        <td style="padding:8px 10px;font-size:12px;">${escapeHtml(h.category || '?')}</td>
+                        <td style="padding:8px 10px;font-size:12px;text-align:center;">${h.tickets || h.amount || 0}</td>
+                        <td style="padding:8px 10px;font-size:12px;text-align:center;">W${h.week ?? '?'} / C${h.cycle ?? '—'}</td>
+                        <td style="padding:8px 10px;font-size:12px;color:#666;">${escapeHtml(h.teacher || '?')}</td>
+                        <td style="padding:8px 10px;font-size:12px;color:#888;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(h.reason || '')}">${escapeHtml(h.reason || '')}</td>
+                        <td style="padding:8px 10px;white-space:nowrap;">
+                            <button onclick="correctionEditTicket('${student.id}','${id}')" style="padding:4px 10px;font-size:12px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;cursor:pointer;margin-right:4px;">✏️ Week/Cycle</button>
+                            <button onclick="correctionRemoveTicket('${student.id}','${id}')" style="padding:4px 10px;font-size:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;cursor:pointer;color:#b91c1c;">🗑️ Remove</button>
+                        </td>
+                    </tr>`;
+            }).join('');
+
+            listEl.innerHTML = `
+                <div style="font-weight:600;margin-bottom:8px;">${escapeHtml(student.firstName)} ${escapeHtml(student.lastName)} — last ${hist.length} tickets</div>
+                <div style="overflow-x:auto;">
+                <table style="width:100%;border-collapse:collapse;background:#fafafa;border-radius:8px;">
+                    <thead><tr style="background:#667eea;color:white;font-size:11px;letter-spacing:0.5px;">
+                        <th style="padding:8px 10px;text-align:left;">DATE</th><th style="padding:8px 10px;text-align:left;">CATEGORY</th>
+                        <th style="padding:8px 10px;">QTY</th><th style="padding:8px 10px;">WK/CYC</th>
+                        <th style="padding:8px 10px;text-align:left;">TEACHER</th><th style="padding:8px 10px;text-align:left;">REASON</th>
+                        <th style="padding:8px 10px;"></th>
+                    </tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+                </div>
+                <div id="correctionTicketAction" style="margin-top:14px;"></div>`;
+        }
+
+        function correctionEditTicket(sid, entryId) {
+            const actionEl = document.getElementById('correctionTicketAction');
+            const student = students.find(s => s.id === sid);
+            const entry = (student?.ticketHistory || []).find(h => ensureEntryId(h) === entryId);
+            if (!actionEl || !entry) return;
+            const maxWeek = cycleDuration || 5;
+            actionEl.innerHTML = `
+                <div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:16px;">
+                    <div style="font-weight:600;margin-bottom:10px;">✏️ Re-tag ticket — ${escapeHtml(entry.category || '?')} on ${new Date(entry.timestamp).toLocaleDateString()}</div>
+                    <label style="font-size:13px;margin-right:8px;">Week:
+                        <input type="number" id="correctionNewWeek" min="1" max="${maxWeek}" value="${entry.week ?? currentWeek}" style="width:60px;padding:6px;border:1px solid #ccc;border-radius:6px;">
+                    </label>
+                    <label style="font-size:13px;margin-right:14px;">Cycle:
+                        <input type="number" id="correctionNewCycle" min="1" max="${getCurrentCycleNumber()}" value="${entry.cycle ?? getCurrentCycleNumber()}" style="width:60px;padding:6px;border:1px solid #ccc;border-radius:6px;">
+                    </label>
+                    <button onclick="correctionApplyEdit('${sid}','${entryId}')" style="padding:8px 16px;background:#667eea;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:600;">Preview &amp; Apply</button>
+                    <button onclick="document.getElementById('correctionTicketAction').innerHTML=''" style="padding:8px 12px;background:#f5f5f5;border:1px solid #ddd;border-radius:8px;cursor:pointer;margin-left:6px;">Cancel</button>
+                </div>`;
+        }
+
+        async function correctionApplyEdit(sid, entryId) {
+            if (!correctionIsAdmin()) { alert('Admins only.'); return; }
+            const student = students.find(s => s.id === sid);
+            const entry = (student?.ticketHistory || []).find(h => ensureEntryId(h) === entryId);
+            if (!student || !entry) { alert('Ticket not found.'); return; }
+
+            const newWeek = parseInt(document.getElementById('correctionNewWeek')?.value);
+            const newCycle = parseInt(document.getElementById('correctionNewCycle')?.value);
+            if (isNaN(newWeek) || isNaN(newCycle)) { alert('Enter valid week and cycle numbers.'); return; }
+            if (newWeek === entry.week && newCycle === entry.cycle) { alert('No change — week and cycle are already those values.'); return; }
+
+            const auditMatch = correctionFindAuditMatch(student, entry);
+            const ok = confirm(
+                `Re-tag this ticket?\n\n` +
+                `Student: ${student.firstName} ${student.lastName}\n` +
+                `Ticket: ${entry.category} (${entry.tickets || entry.amount || 0}) on ${new Date(entry.timestamp).toLocaleString()}\n` +
+                `From: Week ${entry.week ?? '?'} / Cycle ${entry.cycle ?? '—'}\n` +
+                `To:   Week ${newWeek} / Cycle ${newCycle}\n\n` +
+                `Matching audit entry: ${auditMatch ? 'found — will be updated too' : 'NOT FOUND — only history will change'}\n\n` +
+                `This writes directly to the database.`
+            );
+            if (!ok) return;
+
+            try {
+                const { doc, getDoc, setDoc } = window.firebaseModules;
+
+                // 1. Direct-write the history doc
+                const histDocName = correctionHistDocName(student);
+                const histRef = doc(firebaseDb, 'raffle_data', histDocName);
+                const histSnap = await getDoc(histRef);
+                const histories = histSnap.exists() ? (histSnap.data().histories || {}) : {};
+                let histChanged = 0;
+                histories[student.id] = (histories[student.id] || []).map(h => {
+                    if (ensureEntryId(h) === entryId) { histChanged++; return { ...h, week: newWeek, cycle: newCycle }; }
+                    return h;
+                });
+                if (histChanged === 0) { alert('⚠️ Ticket not found in Firebase history doc. Aborting (nothing written).'); return; }
+                await setDoc(histRef, { histories, lastSaveTimestamp: Date.now() });
+
+                // 2. Direct-write the matching audit entry (if found)
+                if (auditMatch) {
+                    const auditId = ensureEntryId(auditMatch);
+                    const mk = monthKeyFromTimestamp(auditMatch.timestamp);
+                    if (mk) {
+                        const aRef = doc(firebaseDb, 'raffle_data', auditDocName(mk));
+                        const aSnap = await getDoc(aRef);
+                        if (aSnap.exists()) {
+                            const aEntries = (aSnap.data().auditLog || []).map(e => {
+                                if (ensureEntryId(e) === auditId) return { ...e, week: newWeek, cycle: newCycle };
+                                return e;
+                            });
+                            await setDoc(aRef, { auditLog: aEntries, lastSaveTimestamp: Date.now() });
+                        }
+                    }
+                    // Local audit memory
+                    auditMatch.week = newWeek;
+                    auditMatch.cycle = newCycle;
+                }
+
+                // 3. Local history memory + counters
+                entry.week = newWeek;
+                entry.cycle = newCycle;
+                correctionRecomputeCounters(student);
+
+                // 4. Leave an audit trail for the correction itself
+                addToAuditLog('Admin Correction', student.id, entry.category, null,
+                    `Re-tagged ticket (${entry.timestamp}) to Week ${newWeek} / Cycle ${newCycle}`);
+
+                alert(`✅ Ticket re-tagged to Week ${newWeek} / Cycle ${newCycle}.`);
+                correctionRenderTicketList();
+                updateAllDisplays();
+            } catch (err) {
+                console.error('correctionApplyEdit failed:', err);
+                alert(`❌ Correction failed: ${err.message}. Nothing may have been partially written — check the console.`);
+            }
+        }
+
+        function correctionRemoveTicket(sid, entryId) {
+            const actionEl = document.getElementById('correctionTicketAction');
+            const student = students.find(s => s.id === sid);
+            const entry = (student?.ticketHistory || []).find(h => ensureEntryId(h) === entryId);
+            if (!actionEl || !entry) return;
+            actionEl.innerHTML = `
+                <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:16px;">
+                    <div style="font-weight:600;margin-bottom:10px;color:#b91c1c;">🗑️ Remove ticket — ${escapeHtml(entry.category || '?')} on ${new Date(entry.timestamp).toLocaleDateString()}</div>
+                    <input type="text" id="correctionRemoveReason" placeholder="Reason (required — goes in the audit trail)" style="width:100%;max-width:480px;padding:8px 12px;border:1px solid #fca5a5;border-radius:8px;font-size:13px;margin-bottom:10px;">
+                    <div>
+                        <button onclick="correctionApplyRemove('${sid}','${entryId}')" style="padding:8px 16px;background:#dc2626;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:600;">Preview &amp; Remove</button>
+                        <button onclick="document.getElementById('correctionTicketAction').innerHTML=''" style="padding:8px 12px;background:#f5f5f5;border:1px solid #ddd;border-radius:8px;cursor:pointer;margin-left:6px;">Cancel</button>
+                    </div>
+                </div>`;
+        }
+
+        async function correctionApplyRemove(sid, entryId) {
+            if (!correctionIsAdmin()) { alert('Admins only.'); return; }
+            const student = students.find(s => s.id === sid);
+            const entry = (student?.ticketHistory || []).find(h => ensureEntryId(h) === entryId);
+            if (!student || !entry) { alert('Ticket not found.'); return; }
+
+            const reason = (document.getElementById('correctionRemoveReason')?.value || '').trim();
+            if (!reason) { alert('A reason is required — it goes in the audit trail.'); return; }
+
+            const auditMatch = correctionFindAuditMatch(student, entry);
+            const ok = confirm(
+                `Permanently remove this ticket?\n\n` +
+                `Student: ${student.firstName} ${student.lastName}\n` +
+                `Ticket: ${entry.category} (${entry.tickets || entry.amount || 0}) on ${new Date(entry.timestamp).toLocaleString()}\n` +
+                `Awarded by: ${entry.teacher || '?'}\n` +
+                `Reason for removal: ${reason}\n\n` +
+                `Matching audit entry: ${auditMatch ? 'found — will be removed too' : 'not found'}\n\n` +
+                `The ticket is tombstoned so it cannot come back from stale tabs.`
+            );
+            if (!ok) return;
+
+            try {
+                const { doc, getDoc, setDoc } = window.firebaseModules;
+                const who = currentUser.name || 'admin';
+
+                // 1. Tombstones FIRST (so even if later steps fail, merges suppress the entry)
+                await persistTombstone(entryId, who, `Admin correction: ${reason}`, 'ticket');
+                const auditId = auditMatch ? ensureEntryId(auditMatch) : null;
+                if (auditId) await persistTombstone(auditId, who, `Admin correction: ${reason}`, 'audit');
+
+                // 2. Direct-remove from Firebase history doc
+                const histRef = doc(firebaseDb, 'raffle_data', correctionHistDocName(student));
+                const histSnap = await getDoc(histRef);
+                const histories = histSnap.exists() ? (histSnap.data().histories || {}) : {};
+                histories[student.id] = (histories[student.id] || []).filter(h => ensureEntryId(h) !== entryId);
+                await setDoc(histRef, { histories, lastSaveTimestamp: Date.now() });
+
+                // 3. Direct-remove the audit entry (if found)
+                if (auditMatch && auditId) {
+                    const mk = monthKeyFromTimestamp(auditMatch.timestamp);
+                    if (mk) {
+                        const aRef = doc(firebaseDb, 'raffle_data', auditDocName(mk));
+                        const aSnap = await getDoc(aRef);
+                        if (aSnap.exists()) {
+                            const aEntries = (aSnap.data().auditLog || []).filter(e => ensureEntryId(e) !== auditId);
+                            await setDoc(aRef, { auditLog: aEntries, lastSaveTimestamp: Date.now() });
+                        }
+                    }
+                }
+
+                // 4. Local memory + counters
+                student.ticketHistory = (student.ticketHistory || []).filter(h => ensureEntryId(h) !== entryId);
+                if (auditId) auditLog = auditLog.filter(e => ensureEntryId(e) !== auditId);
+                correctionRecomputeCounters(student);
+
+                // 5. Audit trail for the correction
+                addToAuditLog('Admin Correction', student.id, entry.category, -(entry.tickets || entry.amount || 0),
+                    `Removed ticket (${entry.timestamp}): ${reason}`);
+
+                alert(`✅ Ticket removed and tombstoned.`);
+                correctionRenderTicketList();
+                updateAllDisplays();
+            } catch (err) {
+                console.error('correctionApplyRemove failed:', err);
+                alert(`❌ Removal failed: ${err.message}. The tombstone may already be in place — check the console.`);
+            }
+        }
+
+        // ---------- Tool 2: Invalidate & Redraw a Winner ----------
+
+        function correctionRenderWinnerList() {
+            const listEl = document.getElementById('correctionWinnerList');
+            if (!listEl) return;
+            const winners = auditLog
+                .filter(e => e.action === 'Raffle Winner' || e.action === 'Wildcat Jackpot Winner')
+                .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+                .slice(0, 20);
+
+            if (winners.length === 0) {
+                listEl.innerHTML = '<div style="color:#999;">No winner records found.</div>';
+                return;
+            }
+            listEl.innerHTML = `
+                <div style="overflow-x:auto;">
+                <table style="width:100%;border-collapse:collapse;background:#fafafa;border-radius:8px;">
+                    <thead><tr style="background:#667eea;color:white;font-size:11px;letter-spacing:0.5px;">
+                        <th style="padding:8px 10px;text-align:left;">DATE</th><th style="padding:8px 10px;text-align:left;">STUDENT</th>
+                        <th style="padding:8px 10px;text-align:left;">CATEGORY</th><th style="padding:8px 10px;">WK/CYC</th>
+                        <th style="padding:8px 10px;text-align:left;">DRAWN BY</th><th style="padding:8px 10px;"></th>
+                    </tr></thead>
+                    <tbody>${winners.map(e => {
+                        const id = ensureEntryId(e);
+                        return `<tr style="border-bottom:1px solid #f0f0f0;">
+                            <td style="padding:8px 10px;font-size:12px;color:#666;white-space:nowrap;">${new Date(e.timestamp).toLocaleDateString()}</td>
+                            <td style="padding:8px 10px;font-size:13px;font-weight:600;">${escapeHtml(e.studentName || '?')}</td>
+                            <td style="padding:8px 10px;font-size:12px;">${escapeHtml(e.category || '?')}</td>
+                            <td style="padding:8px 10px;font-size:12px;text-align:center;">W${e.week ?? '?'} / C${e.cycle ?? '—'}</td>
+                            <td style="padding:8px 10px;font-size:12px;color:#666;">${escapeHtml(e.teacher || '?')}</td>
+                            <td style="padding:8px 10px;"><button onclick="correctionStartRedraw('${id}')" style="padding:4px 10px;font-size:12px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;cursor:pointer;">♻️ Invalidate &amp; Redraw</button></td>
+                        </tr>`;
+                    }).join('')}</tbody>
+                </table>
+                </div>`;
+        }
+
+        function correctionStartRedraw(winnerEntryId) {
+            const panel = document.getElementById('correctionRedrawPanel');
+            const entry = auditLog.find(e => ensureEntryId(e) === winnerEntryId);
+            if (!panel || !entry) return;
+
+            const isJackpot = entry.action === 'Wildcat Jackpot Winner';
+            const cat = (entry.category || '').toLowerCase();
+            const guessCategory = cat.includes('attendance') ? 'Attendance' : cat.includes('academ') ? 'Academics' : 'PBIS';
+            const guessSchool = cat.includes('middle') ? 'MS' : 'HS';
+
+            _correctionState.redraw = { winnerEntryId, isJackpot, pool: null };
+
+            panel.innerHTML = `
+                <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:16px;">
+                    <div style="font-weight:600;margin-bottom:6px;">♻️ Invalidating: ${escapeHtml(entry.studentName || '?')} — ${escapeHtml(entry.category || '?')}</div>
+                    <input type="text" id="correctionRedrawReason" placeholder="Reason for invalidating (required)" style="width:100%;max-width:480px;padding:8px 12px;border:1px solid #fcd34d;border-radius:8px;font-size:13px;margin-bottom:12px;">
+                    ${isJackpot ? `
+                        <div style="font-size:13px;color:#92400e;margin-bottom:10px;">
+                            Jackpot redraw pool: <b>${guessSchool === 'MS' ? 'Middle School' : 'High School'}</b> students with current-cycle jackpot entries, weighted by entry count (same as the real draw).
+                        </div>
+                        <input type="hidden" id="correctionPoolSchool" value="${guessSchool}">
+                    ` : `
+                        <div style="margin-bottom:10px;">
+                            <label style="font-size:13px;margin-right:10px;">Category:
+                                <select id="correctionPoolCategory" style="padding:6px;border:1px solid #ccc;border-radius:6px;">
+                                    <option ${guessCategory === 'PBIS' ? 'selected' : ''}>PBIS</option>
+                                    <option ${guessCategory === 'Attendance' ? 'selected' : ''}>Attendance</option>
+                                    <option ${guessCategory === 'Academics' ? 'selected' : ''}>Academics</option>
+                                </select>
+                            </label>
+                            <label style="font-size:13px;margin-right:10px;">School:
+                                <select id="correctionPoolSchool" style="padding:6px;border:1px solid #ccc;border-radius:6px;">
+                                    <option value="MS" ${guessSchool === 'MS' ? 'selected' : ''}>Middle School</option>
+                                    <option value="HS" ${guessSchool === 'HS' ? 'selected' : ''}>High School</option>
+                                </select>
+                            </label>
+                            <label style="font-size:13px;margin-right:10px;">Week:
+                                <input type="number" id="correctionPoolWeek" min="1" max="${cycleDuration || 5}" value="${entry.week ?? currentWeek}" style="width:60px;padding:6px;border:1px solid #ccc;border-radius:6px;">
+                            </label>
+                            <label style="font-size:13px;">Cycle:
+                                <input type="number" id="correctionPoolCycle" min="1" max="${getCurrentCycleNumber()}" value="${entry.cycle ?? getCurrentCycleNumber()}" style="width:60px;padding:6px;border:1px solid #ccc;border-radius:6px;">
+                            </label>
+                        </div>
+                    `}
+                    <button onclick="correctionBuildPool()" style="padding:8px 16px;background:#667eea;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:600;">Build &amp; Show Pool</button>
+                    <button onclick="document.getElementById('correctionRedrawPanel').innerHTML='';_correctionState.redraw=null;" style="padding:8px 12px;background:#f5f5f5;border:1px solid #ddd;border-radius:8px;cursor:pointer;margin-left:6px;">Cancel</button>
+                    <div id="correctionPoolDisplay" style="margin-top:14px;"></div>
+                </div>`;
+        }
+
+        function correctionBuildPool() {
+            const state = _correctionState.redraw;
+            const displayEl = document.getElementById('correctionPoolDisplay');
+            if (!state || !displayEl) return;
+
+            const school = document.getElementById('correctionPoolSchool')?.value || 'HS';
+            const inSchool = (s) => {
+                const g = parseInt(s.grade);
+                return school === 'MS' ? (g >= 6 && g <= 8) : (g >= 9 && g <= 12);
+            };
+
+            let pool = [];
+            if (state.isJackpot) {
+                // Weighted: one array slot per jackpot entry, same as the real draw
+                students.filter(inSchool).forEach(s => {
+                    const n = computeJackpotEntries(s.id);
+                    for (let i = 0; i < n; i++) pool.push(s);
+                });
+            } else {
+                const category = document.getElementById('correctionPoolCategory')?.value || 'Attendance';
+                const week = parseInt(document.getElementById('correctionPoolWeek')?.value);
+                const cycle = parseInt(document.getElementById('correctionPoolCycle')?.value);
+                if (isNaN(week) || isNaN(cycle)) { alert('Enter valid week and cycle.'); return; }
+                const catMatch = (h) => category === 'Academics'
+                    ? (h.category === 'Academics' || h.category === 'Academic')
+                    : h.category === category;
+                pool = students.filter(s =>
+                    inSchool(s) &&
+                    (s.ticketHistory || []).some(h => catMatch(h) && h.week === week && h.cycle === cycle)
+                );
+                state.poolParams = { category, week, cycle, school };
+            }
+            state.pool = pool;
+
+            const uniqueNames = Array.from(new Set(pool.map(s => `${s.firstName} ${s.lastName} (Gr ${s.grade})`))).sort();
+            displayEl.innerHTML = `
+                <div style="background:white;border-radius:8px;padding:12px;border:1px solid #e5e7eb;">
+                    <div style="font-weight:600;margin-bottom:6px;">Eligible pool: ${uniqueNames.length} student${uniqueNames.length === 1 ? '' : 's'}${state.isJackpot ? ` (${pool.length} weighted entries)` : ''}</div>
+                    ${uniqueNames.length === 0
+                        ? '<div style="color:#b91c1c;font-size:13px;">⚠️ Pool is empty — check the parameters above. Nothing will be drawn.</div>'
+                        : `<details style="font-size:12px;color:#555;"><summary style="cursor:pointer;">Show names</summary><div style="margin-top:6px;line-height:1.7;">${uniqueNames.map(escapeHtml).join('<br>')}</div></details>
+                           <button onclick="correctionExecuteRedraw()" style="margin-top:12px;padding:10px 20px;background:#10b981;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;">🎲 Draw New Winner</button>`
+                    }
+                </div>`;
+        }
+
+        async function correctionExecuteRedraw() {
+            if (!correctionIsAdmin()) { alert('Admins only.'); return; }
+            const state = _correctionState.redraw;
+            if (!state || !state.pool || state.pool.length === 0) { alert('Build the pool first.'); return; }
+
+            const reason = (document.getElementById('correctionRedrawReason')?.value || '').trim();
+            if (!reason) { alert('A reason for invalidating is required.'); return; }
+
+            const oldEntry = auditLog.find(e => ensureEntryId(e) === state.winnerEntryId);
+            if (!oldEntry) { alert('Original winner entry no longer found.'); return; }
+
+            const winner = state.pool[Math.floor(Math.random() * state.pool.length)];
+            const ok = confirm(
+                `Confirm redraw:\n\n` +
+                `INVALIDATE: ${oldEntry.studentName} (${oldEntry.category})\n` +
+                `Reason: ${reason}\n\n` +
+                `NEW WINNER: ${winner.firstName} ${winner.lastName} (Gr ${winner.grade})\n\n` +
+                `OK = record this winner. Cancel = abort (you can rebuild the pool and draw again).`
+            );
+            if (!ok) return;
+
+            try {
+                const { doc, getDoc, setDoc } = window.firebaseModules;
+                const who = currentUser.name || 'admin';
+
+                // 1. Tombstone the old winner entry
+                await persistTombstone(state.winnerEntryId, who, `Winner invalidated: ${reason}`, 'audit');
+
+                // 2. Direct-remove old entry from its month doc
+                const oldMk = monthKeyFromTimestamp(oldEntry.timestamp);
+                if (oldMk) {
+                    const oRef = doc(firebaseDb, 'raffle_data', auditDocName(oldMk));
+                    const oSnap = await getDoc(oRef);
+                    if (oSnap.exists()) {
+                        const oEntries = (oSnap.data().auditLog || []).filter(e => ensureEntryId(e) !== state.winnerEntryId);
+                        await setDoc(oRef, { auditLog: oEntries, lastSaveTimestamp: Date.now() });
+                    }
+                }
+                auditLog = auditLog.filter(e => ensureEntryId(e) !== state.winnerEntryId);
+
+                // 3. Build + direct-write the replacement winner entry
+                const now = new Date();
+                const newEntry = {
+                    timestamp: now.toISOString(),
+                    teacher: who,
+                    teacherId: currentUser.id || '',
+                    action: oldEntry.action, // Raffle Winner or Wildcat Jackpot Winner
+                    studentId: winner.id,
+                    studentName: `${winner.firstName} ${winner.lastName}`,
+                    category: oldEntry.category,
+                    ticketCount: null,
+                    reason: `Replacement draw — ${reason}`,
+                    week: oldEntry.week ?? currentWeek,
+                    cycle: oldEntry.cycle ?? getCurrentCycleNumber()
+                };
+                newEntry.entryId = ensureEntryId(newEntry);
+
+                const newMk = monthKeyFromTimestamp(newEntry.timestamp);
+                const nRef = doc(firebaseDb, 'raffle_data', auditDocName(newMk));
+                const nSnap = await getDoc(nRef);
+                const nEntries = nSnap.exists() ? (nSnap.data().auditLog || []) : [];
+                if (!nEntries.some(e => ensureEntryId(e) === newEntry.entryId)) {
+                    nEntries.push(newEntry);
+                    nEntries.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                }
+                await setDoc(nRef, { auditLog: nEntries, lastSaveTimestamp: Date.now() });
+                auditLog.push(newEntry);
+                auditLog.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+                alert(`🎉 New winner recorded: ${winner.firstName} ${winner.lastName} (Grade ${winner.grade})\n\nOld winner invalidated and tombstoned.`);
+                _correctionState.redraw = null;
+                document.getElementById('correctionRedrawPanel').innerHTML = '';
+                correctionRenderWinnerList();
+                updateAllDisplays();
+            } catch (err) {
+                console.error('correctionExecuteRedraw failed:', err);
+                alert(`❌ Redraw failed: ${err.message}. Check the console — the old entry may already be tombstoned.`);
+            }
+        }
+
         function updateGradeChart(suffix) {
             const elementId = `gradeChart${suffix}`;
             const ctx = document.getElementById(elementId);
