@@ -1897,6 +1897,9 @@
                     <button class="settings-subtab-button" onclick="switchSettingsSubtab('cash')" id="cashSettingsSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s; display: none;">
                         💰 Cash Mode
                     </button>
+                    <button class="settings-subtab-button" onclick="switchSettingsSubtab('corrections'); initCorrectionsPanel();" id="correctionsSettingsSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
+                        🔧 Corrections
+                    </button>
                 </div>
 
                 <!-- RAFFLE CATEGORIES SUBTAB -->
@@ -2245,6 +2248,38 @@
                                 🔄 Reset All Student Cash Accounts to $0
                             </button>
                         </div>
+                    </div>
+                </div>
+
+                <!-- CORRECTIONS SUBTAB -->
+                <div id="correctionsSettingsContent" class="settings-subtab-content" style="display: none;">
+                    <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; padding: 20px 25px; border-radius: 12px; margin-bottom: 25px;">
+                        <h3 style="color: white; margin: 0 0 6px 0; font-size: 20px;">🔧 Admin Corrections</h3>
+                        <p style="color: rgba(255,255,255,0.95); margin: 0; font-size: 13px;">
+                            Fix mistakes safely: re-tag a ticket's week/cycle, remove a wrongly-awarded ticket, or invalidate &amp; redraw a raffle winner.
+                            Every correction is written directly to the database and leaves its own audit trail.
+                        </p>
+                    </div>
+
+                    <!-- TOOL 1: TICKET FINDER -->
+                    <div style="background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); padding: 25px; margin-bottom: 30px;">
+                        <h3 style="margin: 0 0 5px 0; color: #333;">🎟️ Find &amp; Fix Tickets</h3>
+                        <p style="margin: 0 0 15px 0; color: #666; font-size: 13px;">Search a student, then edit a ticket's week/cycle or remove it entirely.</p>
+                        <input type="text" id="correctionStudentSearch" placeholder="🔍 Type a student's name..."
+                               onkeyup="correctionSearchStudents()"
+                               style="width: 100%; max-width: 400px; padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px;">
+                        <div id="correctionStudentResults" style="margin-top: 12px;"></div>
+                        <div id="correctionTicketList" style="margin-top: 18px;"></div>
+                    </div>
+
+                    <!-- TOOL 2: WINNER REDRAW -->
+                    <div style="background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); padding: 25px;">
+                        <h3 style="margin: 0 0 5px 0; color: #333;">🏆 Invalidate &amp; Redraw a Winner</h3>
+                        <p style="margin: 0 0 15px 0; color: #666; font-size: 13px;">
+                            Pick a past raffle winner to invalidate. The system will show you the eligible pool before redrawing, so you can verify it's correct.
+                        </p>
+                        <div id="correctionWinnerList"></div>
+                        <div id="correctionRedrawPanel" style="margin-top: 18px;"></div>
                     </div>
                 </div>
             </div>
@@ -4537,6 +4572,6 @@
     <!-- Chart.js for Data Visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-    <script src="script.js?v=20260432c"></script>
+    <script src="script.js?v=20260414c"></script>
 </body>
 </html>
