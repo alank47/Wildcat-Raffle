@@ -4830,9 +4830,9 @@
 
             listEl.innerHTML = `
                 <div style="font-weight:600;margin-bottom:8px;">${escapeHtml(student.firstName)} ${escapeHtml(student.lastName)} — last ${hist.length} tickets</div>
-                <div style="overflow-x:auto;">
+                <div style="overflow-x:auto;max-height:380px;overflow-y:auto;border:1px solid #eee;border-radius:8px;">
                 <table style="width:100%;border-collapse:collapse;background:#fafafa;border-radius:8px;">
-                    <thead><tr style="background:#667eea;color:white;font-size:11px;letter-spacing:0.5px;">
+                    <thead style="position:sticky;top:0;z-index:1;"><tr style="background:#667eea;color:white;font-size:11px;letter-spacing:0.5px;">
                         <th style="padding:8px 10px;text-align:left;">DATE</th><th style="padding:8px 10px;text-align:left;">CATEGORY</th>
                         <th style="padding:8px 10px;">QTY</th><th style="padding:8px 10px;">WK/CYC</th>
                         <th style="padding:8px 10px;text-align:left;">TEACHER</th><th style="padding:8px 10px;text-align:left;">REASON</th>
@@ -4862,6 +4862,7 @@
                     <button data-act="apply-edit" data-sid="${sid}" data-eid="${entryId}" style="padding:8px 16px;background:#667eea;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:600;">Preview &amp; Apply</button>
                     <button data-act="cancel-action" style="padding:8px 12px;background:#f5f5f5;border:1px solid #ddd;border-radius:8px;cursor:pointer;margin-left:6px;">Cancel</button>
                 </div>`;
+            actionEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
 
         async function correctionApplyEdit(sid, entryId) {
@@ -4955,6 +4956,7 @@
                         <button data-act="cancel-action" style="padding:8px 12px;background:#f5f5f5;border:1px solid #ddd;border-radius:8px;cursor:pointer;margin-left:6px;">Cancel</button>
                     </div>
                 </div>`;
+            actionEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
 
         async function correctionApplyRemove(sid, entryId) {
@@ -5110,6 +5112,7 @@
                     <button data-act="cancel-redraw" style="padding:8px 12px;background:#f5f5f5;border:1px solid #ddd;border-radius:8px;cursor:pointer;margin-left:6px;">Cancel</button>
                     <div id="correctionPoolDisplay" style="margin-top:14px;"></div>
                 </div>`;
+            panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
 
         function correctionBuildPool() {
