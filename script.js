@@ -158,7 +158,10 @@
         // Existing entries without an entryId get a deterministic ID from their content,
         // so the same entry produces the same ID on every device.
         function ensureEntryId(entry) {
-            if (entry && entry.entryId) return entry.entryId;
+            // Only trust a stored entryId if it's a string. Non-string entryIds
+            // (objects from the malformed-tombstone era) would render as
+            // "[object Object]" in the UI and break lookups — recompute instead.
+            if (entry && entry.entryId && typeof entry.entryId === 'string') return entry.entryId;
             const parts = [
                 entry.timestamp || '',
                 entry.studentId || '',
@@ -4676,7 +4679,7 @@
         //     does not change an entry's id (tombstones stay valid).
         // ============================================================
 
-        let _correctionState = { selectedStudentId: null, redraw: null };
+        let _correctionState = { selectedStudentId: null, redraw: null, listenersAttached: false };
 
         function correctionIsAdmin() {
             return currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin');
@@ -4684,6 +4687,19 @@
 
         function initCorrectionsPanel() {
             if (!correctionIsAdmin()) return;
+
+            // Event delegation: one listener per static container, dispatching on
+            // data-act attributes. Inline onclick with interpolated IDs proved
+            // fragile (silent dead buttons); delegation survives re-renders and
+            // doesn't depend on global scope or attribute quoting.
+            if (!_correctionState.listenersAttached) {
+                ['correctionStudentResults', 'correctionTicketList', 'correctionWinnerList', 'correctionRedrawPanel'].forEach(cid => {
+                    const el = document.getElementById(cid);
+                    if (el) el.addEventListener('click', correctionHandleClick);
+                });
+                _correctionState.listenersAttached = true;
+            }
+
             correctionRenderWinnerList();
             // Clear any stale search state when re-entering
             const res = document.getElementById('correctionStudentResults');
@@ -4691,6 +4707,26 @@
             const search = document.getElementById('correctionStudentSearch');
             if (res && search && !search.value) res.innerHTML = '';
             if (list && search && !search.value) list.innerHTML = '';
+        }
+
+        function correctionHandleClick(ev) {
+            const btn = ev.target.closest('[data-act]');
+            if (!btn) return;
+            const act = btn.getAttribute('data-act');
+            const sid = btn.getAttribute('data-sid');
+            const eid = btn.getAttribute('data-eid');
+            switch (act) {
+                case 'select':          correctionSelectStudent(sid); break;
+                case 'edit':            correctionEditTicket(sid, eid); break;
+                case 'remove':          correctionRemoveTicket(sid, eid); break;
+                case 'apply-edit':      correctionApplyEdit(sid, eid); break;
+                case 'apply-remove':    correctionApplyRemove(sid, eid); break;
+                case 'cancel-action':   { const a = document.getElementById('correctionTicketAction'); if (a) a.innerHTML = ''; break; }
+                case 'start-redraw':    correctionStartRedraw(eid); break;
+                case 'build-pool':      correctionBuildPool(); break;
+                case 'execute-redraw':  correctionExecuteRedraw(); break;
+                case 'cancel-redraw':   { const p = document.getElementById('correctionRedrawPanel'); if (p) p.innerHTML = ''; _correctionState.redraw = null; break; }
+            }
         }
 
         // ---------- Shared direct-write helpers ----------
@@ -4747,7 +4783,7 @@
                 return;
             }
             resultsEl.innerHTML = matches.map(s => `
-                <button onclick="correctionSelectStudent('${s.id}')"
+                <button data-act="select" data-sid="${s.id}"
                         style="display:inline-block;margin:4px 6px 4px 0;padding:8px 14px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;cursor:pointer;font-size:13px;">
                     ${escapeHtml(s.firstName)} ${escapeHtml(s.lastName)} <span style="color:#888;">(Gr ${escapeHtml(s.grade)})</span>
                 </button>
@@ -4786,8 +4822,8 @@
                         <td style="padding:8px 10px;font-size:12px;color:#666;">${escapeHtml(h.teacher || '?')}</td>
                         <td style="padding:8px 10px;font-size:12px;color:#888;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(h.reason || '')}">${escapeHtml(h.reason || '')}</td>
                         <td style="padding:8px 10px;white-space:nowrap;">
-                            <button onclick="correctionEditTicket('${student.id}','${id}')" style="padding:4px 10px;font-size:12px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;cursor:pointer;margin-right:4px;">✏️ Week/Cycle</button>
-                            <button onclick="correctionRemoveTicket('${student.id}','${id}')" style="padding:4px 10px;font-size:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;cursor:pointer;color:#b91c1c;">🗑️ Remove</button>
+                            <button data-act="edit" data-sid="${student.id}" data-eid="${id}" style="padding:4px 10px;font-size:12px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;cursor:pointer;margin-right:4px;">✏️ Week/Cycle</button>
+                            <button data-act="remove" data-sid="${student.id}" data-eid="${id}" style="padding:4px 10px;font-size:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;cursor:pointer;color:#b91c1c;">🗑️ Remove</button>
                         </td>
                     </tr>`;
             }).join('');
@@ -4823,8 +4859,8 @@
                     <label style="font-size:13px;margin-right:14px;">Cycle:
                         <input type="number" id="correctionNewCycle" min="1" max="${getCurrentCycleNumber()}" value="${entry.cycle ?? getCurrentCycleNumber()}" style="width:60px;padding:6px;border:1px solid #ccc;border-radius:6px;">
                     </label>
-                    <button onclick="correctionApplyEdit('${sid}','${entryId}')" style="padding:8px 16px;background:#667eea;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:600;">Preview &amp; Apply</button>
-                    <button onclick="document.getElementById('correctionTicketAction').innerHTML=''" style="padding:8px 12px;background:#f5f5f5;border:1px solid #ddd;border-radius:8px;cursor:pointer;margin-left:6px;">Cancel</button>
+                    <button data-act="apply-edit" data-sid="${sid}" data-eid="${entryId}" style="padding:8px 16px;background:#667eea;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:600;">Preview &amp; Apply</button>
+                    <button data-act="cancel-action" style="padding:8px 12px;background:#f5f5f5;border:1px solid #ddd;border-radius:8px;cursor:pointer;margin-left:6px;">Cancel</button>
                 </div>`;
         }
 
@@ -4915,8 +4951,8 @@
                     <div style="font-weight:600;margin-bottom:10px;color:#b91c1c;">🗑️ Remove ticket — ${escapeHtml(entry.category || '?')} on ${new Date(entry.timestamp).toLocaleDateString()}</div>
                     <input type="text" id="correctionRemoveReason" placeholder="Reason (required — goes in the audit trail)" style="width:100%;max-width:480px;padding:8px 12px;border:1px solid #fca5a5;border-radius:8px;font-size:13px;margin-bottom:10px;">
                     <div>
-                        <button onclick="correctionApplyRemove('${sid}','${entryId}')" style="padding:8px 16px;background:#dc2626;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:600;">Preview &amp; Remove</button>
-                        <button onclick="document.getElementById('correctionTicketAction').innerHTML=''" style="padding:8px 12px;background:#f5f5f5;border:1px solid #ddd;border-radius:8px;cursor:pointer;margin-left:6px;">Cancel</button>
+                        <button data-act="apply-remove" data-sid="${sid}" data-eid="${entryId}" style="padding:8px 16px;background:#dc2626;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:600;">Preview &amp; Remove</button>
+                        <button data-act="cancel-action" style="padding:8px 12px;background:#f5f5f5;border:1px solid #ddd;border-radius:8px;cursor:pointer;margin-left:6px;">Cancel</button>
                     </div>
                 </div>`;
         }
@@ -5019,7 +5055,7 @@
                             <td style="padding:8px 10px;font-size:12px;">${escapeHtml(e.category || '?')}</td>
                             <td style="padding:8px 10px;font-size:12px;text-align:center;">W${e.week ?? '?'} / C${e.cycle ?? '—'}</td>
                             <td style="padding:8px 10px;font-size:12px;color:#666;">${escapeHtml(e.teacher || '?')}</td>
-                            <td style="padding:8px 10px;"><button onclick="correctionStartRedraw('${id}')" style="padding:4px 10px;font-size:12px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;cursor:pointer;">♻️ Invalidate &amp; Redraw</button></td>
+                            <td style="padding:8px 10px;"><button data-act="start-redraw" data-eid="${id}" style="padding:4px 10px;font-size:12px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;cursor:pointer;">♻️ Invalidate &amp; Redraw</button></td>
                         </tr>`;
                     }).join('')}</tbody>
                 </table>
@@ -5070,8 +5106,8 @@
                             </label>
                         </div>
                     `}
-                    <button onclick="correctionBuildPool()" style="padding:8px 16px;background:#667eea;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:600;">Build &amp; Show Pool</button>
-                    <button onclick="document.getElementById('correctionRedrawPanel').innerHTML='';_correctionState.redraw=null;" style="padding:8px 12px;background:#f5f5f5;border:1px solid #ddd;border-radius:8px;cursor:pointer;margin-left:6px;">Cancel</button>
+                    <button data-act="build-pool" style="padding:8px 16px;background:#667eea;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:600;">Build &amp; Show Pool</button>
+                    <button data-act="cancel-redraw" style="padding:8px 12px;background:#f5f5f5;border:1px solid #ddd;border-radius:8px;cursor:pointer;margin-left:6px;">Cancel</button>
                     <div id="correctionPoolDisplay" style="margin-top:14px;"></div>
                 </div>`;
         }
@@ -5117,7 +5153,7 @@
                     ${uniqueNames.length === 0
                         ? '<div style="color:#b91c1c;font-size:13px;">⚠️ Pool is empty — check the parameters above. Nothing will be drawn.</div>'
                         : `<details style="font-size:12px;color:#555;"><summary style="cursor:pointer;">Show names</summary><div style="margin-top:6px;line-height:1.7;">${uniqueNames.map(escapeHtml).join('<br>')}</div></details>
-                           <button onclick="correctionExecuteRedraw()" style="margin-top:12px;padding:10px 20px;background:#10b981;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;">🎲 Draw New Winner</button>`
+                           <button data-act="execute-redraw" style="margin-top:12px;padding:10px 20px;background:#10b981;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;">🎲 Draw New Winner</button>`
                     }
                 </div>`;
         }
