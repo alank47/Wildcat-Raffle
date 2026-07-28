@@ -6491,6 +6491,8 @@
                 currentUser = null;
                 currentStudent = null;
                 clearSession(); // Clear saved session
+                _sidebarModeApplied = false; // next login re-runs mode-first logic
+                document.body.classList.remove('sidebar-open', 'sidebar-collapsed');
                 
                 document.getElementById('mainApp').classList.add('hidden');
                 document.getElementById('studentApp').classList.add('hidden');
@@ -12078,6 +12080,10 @@
         }
 
         function updateAllDisplays() {
+            // Sidebar shell: cycle badge, mode UI, first-run mode chooser.
+            // Safe to call repeatedly; runs once-per-session logic internally.
+            if (typeof initSidebarShell === 'function') initSidebarShell();
+            
             // Show mode toggle for superadmin
             if (currentUser && currentUser.role === 'superadmin') {
                 const modeToggle = document.getElementById('modeToggleContainer');
@@ -15181,16 +15187,155 @@
         // ========================================
 
         // Mode Switching
-        function switchSystemMode(mode) {
-            if (currentUser.role !== 'superadmin' && currentUser.role !== 'admin') {
-                alert('Only admins and superadmins can switch modes during beta testing.');
-                return;
+        // ============================================================
+        // SIDEBAR SHELL (Phase 1 redesign)
+        //
+        // Mode-first navigation: each teacher picks a mode (Raffle,
+        // Wildcat Cash, Claw Pass, Discipline) before mode nav appears.
+        // The choice is stored PER USER (localStorage key systemMode_u{id})
+        // so shared Chromebooks don't leak one teacher's mode to another.
+        // switchSystemMode() remains the engine that actually swaps
+        // content; this module drives it and renders the sidebar UI.
+        // ============================================================
+
+        const MODE_META = {
+            raffle:     { label: 'Raffle',       icon: '🎟️' },
+            cash:       { label: 'Wildcat Cash', icon: '💰' },
+            hallpass:   { label: 'Claw Pass',    icon: '🎫' },
+            discipline: { label: 'Discipline',   icon: '📋' }
+        };
+
+        let _sidebarModeApplied = false; // reset on logout
+
+        function getTeacherModeKey() {
+            return currentUser && currentUser.id ? ('systemMode_u' + currentUser.id) : null;
+        }
+
+        function getSavedTeacherMode() {
+            const key = getTeacherModeKey();
+            if (!key) return null;
+            const val = localStorage.getItem(key);
+            return MODE_META[val] ? val : null;
+        }
+
+        function selectMode(mode) {
+            if (!MODE_META[mode]) return;
+            const emptyState = document.getElementById('modeEmptyState');
+            const content = document.querySelector('#mainApp .content');
+            if (emptyState) emptyState.style.display = 'none';
+            if (content) content.style.display = '';
+            _sidebarModeApplied = true;
+            switchSystemMode(mode);
+            if (mode === 'raffle') switchTab('tickets');
+            // cash: updateTabVisibility (called inside switchSystemMode) handles its landing tab
+            // hallpass/discipline: switchSystemMode opens their own views
+        }
+
+        function updateSidebarModeUI() {
+            const cardInner = document.getElementById('modeCardInner');
+            const card = document.getElementById('modeCard');
+            const chips = document.getElementById('modeChips');
+            const navLabel = document.getElementById('modeNavLabel');
+            const modeNav = document.getElementById('modeNav');
+            const homeBtn = document.getElementById('modeHomeBtn');
+            if (!card || !chips) return; // shell not on this page
+
+            const mode = getSavedTeacherMode();
+
+            // Mode card
+            if (mode) {
+                card.classList.add('mode-card-active');
+                card.classList.remove('mode-card-empty');
+                cardInner.innerHTML = `<span class="mode-card-icon">${MODE_META[mode].icon}</span><span class="mode-card-name">${MODE_META[mode].label}</span><span class="mode-card-check">✓</span>`;
+            } else {
+                card.classList.remove('mode-card-active');
+                card.classList.add('mode-card-empty');
+                cardInner.innerHTML = `<span class="mode-card-name">Choose a mode ↓</span>`;
             }
-            
+            card.onclick = null;
+
+            // Chips: every mode, current one highlighted
+            chips.innerHTML = Object.entries(MODE_META).map(([key, meta]) => `
+                <button type="button" class="mode-chip ${key === mode ? 'mode-chip-active' : ''}"
+                        title="${meta.label}" onclick="selectMode('${key}')">
+                    <span class="mode-chip-icon">${meta.icon}</span>
+                    <span class="mode-chip-label">${meta.label}</span>
+                </button>`).join('');
+
+            // Mode nav label + hallpass/discipline home button
+            if (navLabel) {
+                navLabel.textContent = mode ? MODE_META[mode].label : '';
+                navLabel.style.display = mode ? '' : 'none';
+            }
+            if (homeBtn) {
+                if (mode === 'hallpass' || mode === 'discipline') {
+                    homeBtn.style.display = '';
+                    homeBtn.innerHTML = `${MODE_META[mode].icon} ${MODE_META[mode].label} Home`;
+                    homeBtn.onclick = () => selectMode(mode);
+                } else {
+                    homeBtn.style.display = 'none';
+                }
+            }
+            // #modeNav (.tabs) visibility is owned by switchSystemMode for
+            // raffle/cash vs hallpass/discipline; if NO mode yet, force-hide.
+            if (modeNav && !mode) modeNav.style.display = 'none';
+        }
+
+        function updateCycleBadge() {
+            const badge = document.getElementById('cycleWeekBadge');
+            if (!badge) return;
+            const cyc = (typeof currentCycle === 'object' && currentCycle) ? currentCycle.cycleNumber : null;
+            const wk = (typeof currentWeek === 'number') ? currentWeek : null;
+            const dur = (typeof cycleDuration === 'number' && cycleDuration) ? cycleDuration : 5;
+            badge.textContent = `Cycle ${cyc ?? '—'} · Week ${wk ?? '—'} of ${dur}`;
+        }
+
+        function toggleSidebar() {
+            if (window.innerWidth <= 900) {
+                document.body.classList.toggle('sidebar-open');
+            } else {
+                document.body.classList.toggle('sidebar-collapsed');
+            }
+        }
+
+        function initSidebarShell() {
+            // Called from updateAllDisplays — must be safe to run repeatedly.
+            if (!currentUser) return;
+            const mainApp = document.getElementById('mainApp');
+            if (!mainApp || mainApp.classList.contains('hidden')) return;
+
+            updateCycleBadge();
+            updateSidebarModeUI();
+
+            if (_sidebarModeApplied) return; // mode already applied this session
+
+            const saved = getSavedTeacherMode();
+            if (saved) {
+                selectMode(saved);
+            } else {
+                // Mode-first: no saved choice for this user — show the chooser.
+                const emptyState = document.getElementById('modeEmptyState');
+                const content = document.querySelector('#mainApp .content');
+                const modeNav = document.getElementById('modeNav');
+                if (emptyState) emptyState.style.display = 'flex';
+                if (content) content.style.display = 'none';
+                if (modeNav) modeNav.style.display = 'none';
+                _sidebarModeApplied = true; // don't re-show on every refresh tick
+            }
+        }
+
+        function switchSystemMode(mode) {
+            // Mode selection is per-teacher (stored per user account in this browser).
+            // All roles may switch modes — the old admin-only beta gate is removed.
             wildcatCashEnabled = (mode === 'cash');
             disciplineModeEnabled = (mode === 'discipline');
             const hallPassEnabled = (mode === 'hallpass');
-            localStorage.setItem('systemMode', mode);
+            localStorage.setItem('systemMode', mode); // legacy key (some old code reads it)
+            try {
+                if (currentUser && currentUser.id) {
+                    localStorage.setItem('systemMode_u' + currentUser.id, mode);
+                }
+            } catch (e) { /* storage unavailable — non-fatal */ }
             
             // Add/remove body classes for CSS-based content hiding
             document.body.classList.remove('cash-mode', 'raffle-mode', 'hallpass-mode', 'discipline-mode');
@@ -15251,6 +15396,7 @@
             
             // Update UI
             updateModeToggleUI();
+            if (typeof updateSidebarModeUI === 'function') updateSidebarModeUI();
             
             console.log(`📊 Switched to ${mode} mode`);
         }
