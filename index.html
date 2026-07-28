@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Wildcat Rewards</title>
-    <link rel="stylesheet" href="styles.css?v=20260728a">
+    <link rel="stylesheet" href="styles.css?v=20260728b">
 </head>
 <body>
     <!-- Login Screen -->
@@ -348,13 +348,15 @@
             <!-- ============ APP SHELL: SIDEBAR ============ -->
             <aside class="app-sidebar" id="appSidebar">
                 <div class="sidebar-label">Active mode</div>
-                <button class="mode-card" id="modeCard" type="button">
-                    <span class="mode-card-inner" id="modeCardInner">Choose a mode ↓</span>
-                </button>
-                <div class="mode-chips" id="modeChips"></div>
+                <div class="mode-switcher">
+                    <button class="mode-card" id="modeCard" type="button" onclick="toggleModeDropdown()">
+                        <span class="mode-card-inner" id="modeCardInner">Choose a mode</span>
+                        <span class="mode-card-chev" id="modeCardChev">▾</span>
+                    </button>
+                    <div class="mode-dropdown" id="modeDropdown" style="display: none;"></div>
+                </div>
 
                 <div class="sidebar-label mode-nav-label" id="modeNavLabel" style="display: none;"></div>
-                <button class="tab mode-home-btn" id="modeHomeBtn" style="display: none;" type="button"></button>
                 <nav class="tabs sidebar-nav" id="modeNav">
                     <button class="tab active" id="ticketsTab" onclick="switchTab('tickets')">🎟️ Award Tickets</button>
                     <button class="tab" id="myActivityTab" onclick="switchTab('myActivity')">📝 My Activity</button>
@@ -362,6 +364,7 @@
                     <button class="tab admin-only" id="raffleTab" onclick="switchTab('raffle')">🎲 Run Raffle</button>
                     <button class="tab admin-only" id="bigRaffleTab" onclick="switchTab('bigRaffle')">🎊 Wildcat Jackpot</button>
                 </nav>
+                <nav class="sidebar-nav" id="modeSubNav" style="display: none;"></nav>
 
                 <div class="sidebar-label">Insights</div>
                 <nav class="sidebar-nav">
@@ -4588,6 +4591,6 @@
     <!-- Chart.js for Data Visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-    <script src="script.js?v=20260416a"></script>
+    <script src="script.js?v=20260728b"></script>
 </body>
 </html>
