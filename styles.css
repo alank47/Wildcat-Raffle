@@ -1779,32 +1779,33 @@ body.raffle-mode {
 
 
 /* ============================================================
-   APP SHELL — Phase 1 redesign (sidebar + top bar)
-   Brand: #2F67A7 blue · #0E0E0E ink · #D9742F orange (mode) · #E6E280 cycle badge
+   APP SHELL v2 — blue sidebar, dropdown mode switcher, calm palette
+   Brand: #2F67A7 blue · #0E0E0E ink · #D9742F orange (mode only)
+          #E6E280 yellow (cycle badge only)
    ============================================================ */
 
 :root {
     --wc-blue: #2F67A7;
     --wc-blue-dark: #24517F;
+    --wc-blue-deep: #0C447C;
+    --wc-blue-pale: #B5D4F4;
+    --wc-blue-mist: #E6F1FB;
     --wc-ink: #0E0E0E;
     --wc-orange: #D9742F;
     --wc-yellow: #E6E280;
-    --wc-sidebar-bg: #f7f9fc;
-    --wc-sidebar-border: #e3e8ef;
-    --wc-nav-text: #46505e;
-    --wc-nav-muted: #8a94a3;
+    --wc-gray-text: #5F5E5A;
+    --wc-border: #e3e8ef;
     --wc-topbar-h: 58px;
     --wc-sidebar-w: 250px;
     --wc-sidebar-rail: 64px;
 }
 
-/* Neutralize legacy container constraints for the shell */
 #mainApp.container {
     max-width: none;
     width: 100%;
     margin: 0;
     padding: 0;
-    background: #f2f4f8;
+    background: #f7f8fa;
     min-height: 100vh;
     box-shadow: none;
     border-radius: 0;
@@ -1836,19 +1837,8 @@ body.raffle-mode {
 .sidebar-toggle:hover { background: rgba(255,255,255,0.16); }
 .topbar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .topbar-logo { height: 36px; width: auto; border-radius: 6px; }
-.topbar-school {
-    font-weight: 700;
-    font-size: 17px;
-    letter-spacing: 0.2px;
-    white-space: nowrap;
-}
-.topbar-right {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-}
+.topbar-school { font-weight: 700; font-size: 17px; letter-spacing: 0.2px; white-space: nowrap; }
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; min-width: 0; }
 .cycle-badge {
     background: var(--wc-yellow);
     color: #4a4408;
@@ -1859,53 +1849,31 @@ body.raffle-mode {
     white-space: nowrap;
 }
 .user-chip {
-    font-size: 13px;
-    color: #d8d8d8;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 260px;
+    font-size: 13px; color: #d8d8d8; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; max-width: 260px;
 }
 .user-chip strong { color: #fff; font-weight: 500; }
 .user-role { color: #9aa3ad; }
 .btn-topbar {
     background: rgba(255,255,255,0.08);
     border: 1px solid rgba(255,255,255,0.18);
-    color: #eee;
-    font-size: 12.5px;
-    padding: 7px 12px;
-    border-radius: 8px;
-    cursor: pointer;
-    white-space: nowrap;
+    color: #eee; font-size: 12.5px; padding: 7px 12px;
+    border-radius: 8px; cursor: pointer; white-space: nowrap;
 }
 .btn-topbar:hover { background: rgba(255,255,255,0.16); }
 .btn-topbar-logout { background: var(--wc-blue); border-color: var(--wc-blue); color: #fff; }
 .btn-topbar-logout:hover { background: var(--wc-blue-dark); }
 
 /* ---------- Body layout ---------- */
-.app-body {
-    display: flex;
-    align-items: stretch;
-    min-height: calc(100vh - var(--wc-topbar-h));
-}
-.app-content {
-    flex: 1;
-    min-width: 0;
-    padding: 22px 26px;
-}
-/* Legacy .content div lives inside main — soften it into a plain region */
-.app-content > .content {
-    background: transparent;
-    padding: 0;
-    box-shadow: none;
-}
+.app-body { display: flex; align-items: stretch; min-height: calc(100vh - var(--wc-topbar-h)); }
+.app-content { flex: 1; min-width: 0; padding: 22px 26px; }
+.app-content > .content { background: transparent; padding: 0; box-shadow: none; }
 
-/* ---------- Sidebar ---------- */
+/* ---------- Sidebar (Wildcat blue) ---------- */
 .app-sidebar {
     flex: 0 0 var(--wc-sidebar-w);
     width: var(--wc-sidebar-w);
-    background: var(--wc-sidebar-bg);
-    border-right: 1px solid var(--wc-sidebar-border);
+    background: var(--wc-blue);
     padding: 14px 10px 24px;
     overflow-y: auto;
     position: sticky;
@@ -1917,64 +1885,68 @@ body.raffle-mode {
     font-weight: 700;
     letter-spacing: 0.09em;
     text-transform: uppercase;
-    color: var(--wc-nav-muted);
+    color: var(--wc-blue-pale);
     margin: 14px 8px 6px;
 }
 .sidebar-label:first-child { margin-top: 2px; }
 
-/* Mode card */
+/* Mode switcher: card + dropdown */
+.mode-switcher { position: relative; }
 .mode-card {
-    display: block;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     width: 100%;
     border: none;
-    border-radius: 12px;
-    padding: 12px 14px;
-    cursor: default;
+    border-radius: 10px;
+    padding: 11px 13px;
+    cursor: pointer;
     text-align: left;
     font-family: inherit;
 }
 .mode-card-active { background: var(--wc-orange); color: #fff; }
+.mode-card-active:hover { background: #c76525; }
 .mode-card-empty {
-    background: #fff;
-    border: 2px dashed var(--wc-orange);
-    color: var(--wc-orange);
+    background: rgba(255,255,255,0.07);
+    border: 2px dashed #F0B27E;
+    color: #FFD9BC;
     animation: wc-pulse 1.6s ease-in-out infinite;
 }
 @keyframes wc-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(217, 116, 47, 0.35); }
-    50% { box-shadow: 0 0 0 6px rgba(217, 116, 47, 0); }
+    0%, 100% { box-shadow: 0 0 0 0 rgba(240, 178, 126, 0.45); }
+    50% { box-shadow: 0 0 0 7px rgba(240, 178, 126, 0); }
 }
 .mode-card-inner { display: flex; align-items: center; gap: 9px; font-size: 14.5px; font-weight: 700; }
 .mode-card-icon { font-size: 18px; }
-.mode-card-check { margin-left: auto; opacity: 0.85; }
-
-/* Mode chips */
-.mode-chips {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 6px;
-    margin: 8px 0 4px;
+.mode-card-chev { font-size: 12px; opacity: 0.85; }
+.mode-dropdown {
+    background: #fff;
+    border-radius: 10px;
+    margin-top: 5px;
+    padding: 4px;
+    box-shadow: 0 8px 22px rgba(4, 44, 83, 0.28);
 }
-.mode-chip {
+.mode-dd-item {
     display: flex;
     align-items: center;
-    gap: 6px;
-    border: 1px solid #dde3ea;
-    background: #fff;
-    border-radius: 9px;
-    padding: 7px 9px;
-    font-size: 11.5px;
-    font-weight: 500;
-    color: var(--wc-nav-text);
+    gap: 9px;
+    width: 100%;
+    border: none;
+    background: transparent;
+    border-radius: 7px;
+    padding: 9px 10px;
+    font-size: 13px;
+    color: #2C2C2A;
     cursor: pointer;
     font-family: inherit;
-    transition: border-color 0.15s, background 0.15s;
+    text-align: left;
 }
-.mode-chip:hover { border-color: var(--wc-orange); background: #fff7f1; }
-.mode-chip-active { border-color: var(--wc-orange); background: #fdf1e8; color: #8a4517; font-weight: 700; }
-.mode-chip-icon { font-size: 14px; }
+.mode-dd-item:hover { background: #f2f6fb; }
+.mode-dd-active { background: var(--wc-blue-mist); color: var(--wc-blue-deep); font-weight: 700; }
+.mode-dd-icon { font-size: 15px; }
+.mode-dd-check { margin-left: auto; color: #185FA5; font-weight: 700; }
 
-/* Sidebar nav — overrides the legacy horizontal .tabs styling in this scope */
+/* Sidebar nav */
 .app-sidebar .tabs,
 .app-sidebar .sidebar-nav {
     display: flex;
@@ -1997,7 +1969,7 @@ body.raffle-mode {
     padding: 9px 11px;
     font-size: 13.5px;
     font-weight: 500;
-    color: var(--wc-nav-text);
+    color: var(--wc-blue-mist);
     cursor: pointer;
     font-family: inherit;
     white-space: nowrap;
@@ -2005,28 +1977,41 @@ body.raffle-mode {
     text-overflow: ellipsis;
     transition: background 0.15s, color 0.15s;
 }
-.app-sidebar .tab:hover { background: #eceff5; color: var(--wc-ink); }
-.app-sidebar .tab.active {
-    background: var(--wc-blue);
-    color: #fff;
-    font-weight: 700;
-}
-.app-sidebar .tab.disabled { opacity: 0.45; pointer-events: none; }
-.app-sidebar .tab-danger { color: #b3392f; }
-.app-sidebar .tab-danger.active { background: #b3392f; color: #fff; }
-.mode-home-btn { margin-bottom: 2px; }
+.app-sidebar .tab:hover { background: rgba(255,255,255,0.1); color: #fff; }
+.app-sidebar .tab.active { background: #ffffff; color: var(--wc-blue-deep); font-weight: 700; }
+.app-sidebar .tab.disabled { opacity: 0.4; pointer-events: none; }
+.app-sidebar .tab-danger { color: #FFC9C4; }
+.app-sidebar .tab-danger.active { background: #ffffff; color: #b3392f; }
 
 /* ---------- Mode empty state ---------- */
-#modeEmptyState {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 55vh;
-}
+#modeEmptyState { display: flex; align-items: center; justify-content: center; min-height: 55vh; }
 .mode-empty-inner { text-align: center; max-width: 420px; padding: 30px; }
 .mode-empty-icon { font-size: 52px; margin-bottom: 10px; }
 .mode-empty-inner h2 { color: var(--wc-ink); font-weight: 700; margin-bottom: 8px; }
 .mode-empty-inner p { color: #667085; font-size: 14.5px; line-height: 1.5; }
+
+/* ---------- Legacy subtab rows: navigation moved to the sidebar ---------- */
+#clawPassContent .subtab-button,
+#disciplineContent .subtab-button { display: none !important; }
+
+/* ---------- Calm palette layer (Phase 2 base) ----------
+   Blue is the single working accent; ink for headings; orange and
+   yellow are reserved for mode identity and the cycle badge. */
+.app-content .btn {
+    background: var(--wc-blue);
+    background-image: none;
+    color: #fff;
+    border: none;
+}
+.app-content .btn:hover { background: var(--wc-blue-dark); }
+.app-content .btn-secondary {
+    background: #ffffff;
+    color: var(--wc-gray-text);
+    border: 1px solid #d7dde5;
+}
+.app-content .btn-secondary:hover { background: #f2f4f8; color: var(--wc-ink); }
+.app-content h2, .app-content h3 { color: var(--wc-ink); }
+.app-content table th { background: var(--wc-blue); color: #fff; }
 
 /* ---------- Collapsed rail (desktop) ---------- */
 body.sidebar-collapsed .app-sidebar {
@@ -2036,12 +2021,9 @@ body.sidebar-collapsed .app-sidebar {
     padding-right: 6px;
 }
 body.sidebar-collapsed .app-sidebar .sidebar-label,
-body.sidebar-collapsed .app-sidebar .mode-chip-label,
 body.sidebar-collapsed .app-sidebar .mode-card-name,
-body.sidebar-collapsed .app-sidebar .mode-card-check { display: none; }
-body.sidebar-collapsed .app-sidebar .mode-chips { grid-template-columns: 1fr; }
-body.sidebar-collapsed .app-sidebar .mode-card { padding: 10px; text-align: center; }
-body.sidebar-collapsed .app-sidebar .mode-card-inner { justify-content: center; }
+body.sidebar-collapsed .app-sidebar .mode-card-chev { display: none; }
+body.sidebar-collapsed .app-sidebar .mode-card { padding: 10px; justify-content: center; }
 body.sidebar-collapsed .app-sidebar .tab { padding-left: 8px; }
 
 /* ---------- Mobile drawer ---------- */
@@ -2054,14 +2036,14 @@ body.sidebar-collapsed .app-sidebar .tab { padding-left: 8px; }
         transform: translateX(-105%);
         transition: transform 0.22s ease;
         z-index: 300;
-        box-shadow: 4px 0 18px rgba(0,0,0,0.12);
+        box-shadow: 4px 0 18px rgba(0,0,0,0.2);
     }
     body.sidebar-open .app-sidebar { transform: translateX(0); }
     body.sidebar-open .sidebar-backdrop {
         display: block;
         position: fixed;
         inset: var(--wc-topbar-h) 0 0 0;
-        background: rgba(14,14,14,0.35);
+        background: rgba(14,14,14,0.4);
         z-index: 250;
     }
     .app-content { padding: 16px 14px; }
