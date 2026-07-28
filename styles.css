@@ -2070,3 +2070,221 @@ body.sidebar-collapsed .app-sidebar .tab { padding-left: 8px; }
     .btn-topbar { display: none; }
     .btn-topbar-logout { display: inline-block; }
 }
+
+
+/* ============================================================
+   PHASE 3 — SCREEN POLISH: shared components + Award Tickets
+   Recipe: white cards, hairline borders, blue single accent,
+   ink headings, orange only for mode identity.
+   ============================================================ */
+
+/* --- Page header + mode pill (reusable on every screen) --- */
+.page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+}
+.page-title { color: var(--wc-ink); font-size: 23px; font-weight: 700; margin: 0; }
+.page-subtitle { color: var(--wc-gray-text); font-size: 14px; margin: 4px 0 0; }
+.mode-pill {
+    background: var(--wc-orange);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 5px 13px;
+    border-radius: 999px;
+    white-space: nowrap;
+    margin-top: 4px;
+}
+.mode-pill:empty { display: none; }
+
+/* --- Card primitive (reusable) --- */
+.wc-card {
+    background: #ffffff;
+    border: 1px solid var(--wc-border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06);
+}
+
+/* --- Form primitives (reusable) --- */
+.wc-select, .wc-input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #d7dde5;
+    border-radius: 8px;
+    font-size: 14.5px;
+    font-family: inherit;
+    background: #ffffff;
+    color: var(--wc-ink);
+    box-sizing: border-box;
+}
+.wc-select:focus, .wc-input:focus {
+    outline: none;
+    border-color: var(--wc-blue);
+    box-shadow: 0 0 0 3px rgba(47, 103, 167, 0.15);
+}
+.field-label {
+    display: block;
+    color: var(--wc-gray-text);
+    font-size: 12.5px;
+    font-weight: 700;
+    margin: 0 0 6px;
+}
+.panel-hint { color: #8a94a3; font-size: 12px; margin: 8px 0 0; }
+.panel-head {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 13px;
+}
+.panel-head h3 { color: var(--wc-ink); font-size: 15.5px; font-weight: 700; margin: 0; }
+.panel-icon { font-size: 20px; }
+
+/* --- Week tracker --- */
+.week-tracker.wc-card { background: #ffffff; margin-bottom: 16px; }
+.week-tracker-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.week-tracker.wc-card h3 { color: var(--wc-ink); font-size: 16.5px; margin: 0; }
+.week-num { color: var(--wc-blue); font-weight: 700; }
+.week-of { color: var(--wc-gray-text); font-weight: 500; font-size: 14px; }
+.week-date { color: var(--wc-gray-text); font-size: 13.5px; margin: 0; }
+.week-tracker .week-buttons { margin-top: 12px; }
+.week-note { color: #8a94a3; font-size: 12.5px; margin: 10px 0 0; }
+
+/* --- Award interface --- */
+.award-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 14px;
+    margin-bottom: 20px;
+}
+.award-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 22px;
+    flex-wrap: wrap;
+}
+.btn-award {
+    padding: 14px 36px !important;
+    font-size: 15.5px !important;
+    font-weight: 700;
+    background: var(--wc-blue) !important;
+    background-image: none !important;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(47, 103, 167, 0.35);
+}
+.btn-award:hover { background: var(--wc-blue-dark) !important; }
+.btn-undo {
+    padding: 14px 26px !important;
+    font-size: 15px !important;
+    background: #ffffff !important;
+    background-image: none !important;
+    color: #b45309 !important;
+    border: 1px solid #f0c987 !important;
+    border-radius: 10px;
+}
+.btn-undo:hover { background: #fdf6ec !important; }
+
+/* --- Class/period header --- */
+.class-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+}
+.class-header-left { display: flex; align-items: center; gap: 13px; }
+.class-header-icon { font-size: 30px; }
+.class-header h3 { color: var(--wc-ink); font-size: 18px; margin: 0; }
+.class-header p { color: var(--wc-gray-text); font-size: 13px; margin: 3px 0 0; }
+.class-header-count { text-align: right; }
+.count-label { color: var(--wc-gray-text) !important; font-size: 12px !important; margin: 0 !important; }
+.count-num { color: var(--wc-blue) !important; font-size: 26px !important; font-weight: 700; margin: 2px 0 0 !important; }
+
+/* --- Search bar (override legacy) --- */
+.search-bar input {
+    width: 100%;
+    padding: 11px 14px;
+    border: 1px solid #d7dde5;
+    border-radius: 10px;
+    font-size: 14.5px;
+    background: #ffffff;
+    font-family: inherit;
+    box-sizing: border-box;
+}
+.search-bar input:focus {
+    outline: none;
+    border-color: var(--wc-blue);
+    box-shadow: 0 0 0 3px rgba(47, 103, 167, 0.15);
+}
+
+/* --- Table --- */
+.table-card { padding: 0; overflow: hidden; margin-top: 14px; }
+.wc-table { width: 100%; border-collapse: collapse; }
+.wc-table thead tr { background: var(--wc-blue); }
+.wc-table th {
+    padding: 12px 12px;
+    text-align: left;
+    color: #ffffff;
+    font-weight: 700;
+    font-size: 12.5px;
+    letter-spacing: 0.03em;
+    border: none;
+    white-space: nowrap;
+}
+.wc-table th.th-center { text-align: center; }
+.wc-table td { padding: 11px 12px; border: none; font-size: 14px; color: var(--wc-ink); }
+.wc-row { border-bottom: 1px solid #eef1f5; transition: background 0.12s; }
+.wc-row:nth-child(even) { background: #fafbfd; }
+.wc-row:hover { background: #f2f7fc; }
+.cell-muted { color: #8a94a3; font-size: 13.5px; }
+.cell-center { text-align: center; }
+.student-link {
+    color: var(--wc-blue);
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 14px;
+    cursor: pointer;
+}
+.student-link:hover { color: var(--wc-blue-deep); text-decoration: underline; }
+.count-pill {
+    display: inline-block;
+    min-width: 34px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #f2f4f8;
+    color: #8a94a3;
+    font-weight: 700;
+    font-size: 13.5px;
+}
+.count-pill-on { background: var(--wc-blue-mist); color: var(--wc-blue-deep); }
+.qual-dots { display: inline-flex; align-items: center; gap: 6px; }
+.qual-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #e6eaf0;
+    display: inline-block;
+}
+.qual-dot-on { background: var(--wc-blue); }
+.qualified-badge {
+    background: var(--wc-blue-mist);
+    color: var(--wc-blue-deep);
+    padding: 5px 11px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    animation: none;
+}
