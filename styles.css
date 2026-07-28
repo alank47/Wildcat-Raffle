@@ -1904,7 +1904,11 @@ body.raffle-mode {
     text-align: left;
     font-family: inherit;
 }
-.mode-card-active { background: var(--wc-orange); color: #fff; }
+.mode-card-active {
+    background: var(--wc-orange);
+    color: #fff;
+    box-shadow: 0 2px 6px rgba(4, 24, 46, 0.4), inset 0 1px 0 rgba(255,255,255,0.15);
+}
 .mode-card-active:hover { background: #c76525; }
 .mode-card-empty {
     background: rgba(255,255,255,0.07);
@@ -1951,7 +1955,7 @@ body.raffle-mode {
 .app-sidebar .sidebar-nav {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 5px;
     border: none;
     background: transparent;
     padding: 0;
@@ -1963,8 +1967,8 @@ body.raffle-mode {
     align-items: center;
     width: 100%;
     text-align: left;
-    background: transparent;
-    border: none;
+    background: #28598C;
+    border: 1px solid rgba(9, 48, 87, 0.55);
     border-radius: 9px;
     padding: 9px 11px;
     font-size: 13.5px;
@@ -1975,10 +1979,24 @@ body.raffle-mode {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    transition: background 0.15s, color 0.15s;
+    box-shadow: 0 2px 5px rgba(4, 24, 46, 0.38),
+                inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    transition: background 0.15s, color 0.15s, box-shadow 0.15s, transform 0.05s;
 }
-.app-sidebar .tab:hover { background: rgba(255,255,255,0.1); color: #fff; }
-.app-sidebar .tab.active { background: #ffffff; color: var(--wc-blue-deep); font-weight: 700; }
+.app-sidebar .tab:hover {
+    background: #235081;
+    color: #fff;
+    box-shadow: 0 3px 7px rgba(4, 24, 46, 0.45),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+.app-sidebar .tab:active { transform: translateY(1px); box-shadow: 0 1px 3px rgba(4, 24, 46, 0.4); }
+.app-sidebar .tab.active {
+    background: #ffffff;
+    border-color: #ffffff;
+    color: var(--wc-blue-deep);
+    font-weight: 700;
+    box-shadow: 0 3px 8px rgba(4, 24, 46, 0.45);
+}
 .app-sidebar .tab.disabled { opacity: 0.4; pointer-events: none; }
 .app-sidebar .tab-danger { color: #FFC9C4; }
 .app-sidebar .tab-danger.active { background: #ffffff; color: #b3392f; }
