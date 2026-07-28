@@ -14909,6 +14909,18 @@
         }
 
         function switchTab(tabName) {
+            // If we're in Claw Pass / Discipline mode and the user picks a shared
+            // sidebar tab, restore normal tab-content visibility first (those modes
+            // hide all .tab-content divs with inline styles and show their own view).
+            const bodyCls = document.body.classList;
+            if (bodyCls.contains('hallpass-mode') || bodyCls.contains('discipline-mode')) {
+                document.querySelectorAll('#mainApp .content .tab-content').forEach(el => el.style.display = '');
+                const cp = document.getElementById('clawPassContent');
+                const dc = document.getElementById('disciplineContent');
+                if (cp) cp.style.display = 'none';
+                if (dc) dc.style.display = 'none';
+                document.querySelectorAll('#modeSubNav .tab').forEach(b => b.classList.remove('active'));
+            }
             // Remove active class from all tabs and content
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
@@ -15225,60 +15237,113 @@
             if (emptyState) emptyState.style.display = 'none';
             if (content) content.style.display = '';
             _sidebarModeApplied = true;
+            toggleModeDropdown(false);
             switchSystemMode(mode);
             if (mode === 'raffle') switchTab('tickets');
             // cash: updateTabVisibility (called inside switchSystemMode) handles its landing tab
             // hallpass/discipline: switchSystemMode opens their own views
         }
 
+        const MODE_SUBTABS = {
+            hallpass: [
+                { id: 'kiosk',                fn: 'switchHallPassTab',   label: '🖥️ Student Kiosk' },
+                { id: 'hallMonitor',          fn: 'switchHallPassTab',   label: '👁️ Hall Monitor' },
+                { id: 'snapshot',             fn: 'switchHallPassTab',   label: '📊 Student Snapshot' },
+                { id: 'encounterPrevention',  fn: 'switchHallPassTab',   label: '🚨 Encounter Prevention' },
+                { id: 'history',              fn: 'switchHallPassTab',   label: '📋 Pass History' },
+                { id: 'passSettings',         fn: 'switchHallPassTab',   label: '⚙️ Pass Settings' }
+            ],
+            discipline: [
+                { id: 'submit',    fn: 'switchDisciplineTab', label: '✍️ Submit Referral' },
+                { id: 'review',    fn: 'switchDisciplineTab', label: '👁️ Review Referrals' },
+                { id: 'detention', fn: 'switchDisciplineTab', label: '⏰ Detention Tracker' },
+                { id: 'history',   fn: 'switchDisciplineTab', label: '📚 Student History' },
+                { id: 'analytics', fn: 'switchDisciplineTab', label: '📊 Analytics' }
+            ]
+        };
+
+        function toggleModeDropdown(forceOpen) {
+            const dd = document.getElementById('modeDropdown');
+            const chev = document.getElementById('modeCardChev');
+            if (!dd) return;
+            const open = (typeof forceOpen === 'boolean') ? forceOpen : dd.style.display === 'none';
+            dd.style.display = open ? 'block' : 'none';
+            if (chev) chev.textContent = open ? '▴' : '▾';
+        }
+
+        function renderModeSubnav(mode) {
+            const subNav = document.getElementById('modeSubNav');
+            if (!subNav) return;
+            const items = MODE_SUBTABS[mode];
+            if (!items) { subNav.style.display = 'none'; subNav.innerHTML = ''; return; }
+            subNav.innerHTML = items.map((it, idx) => `
+                <button type="button" class="tab ${idx === 0 ? 'active' : ''}" id="sideSub_${mode}_${it.id}"
+                        onclick="sidebarSubTab('${mode}','${it.id}')">${it.label}</button>`).join('');
+            subNav.style.display = 'flex';
+        }
+
+        function sidebarSubTab(mode, subId) {
+            const items = MODE_SUBTABS[mode] || [];
+            const item = items.find(i => i.id === subId);
+            if (!item) return;
+            // If the user visited a shared tab, the mode's container was hidden — restore it.
+            const container = document.getElementById(mode === 'hallpass' ? 'clawPassContent' : 'disciplineContent');
+            const content = document.querySelector('#mainApp .content');
+            if (content) content.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+            if (container) container.style.display = 'block';
+            window[item.fn](subId);
+            // Active state on sidebar subnav
+            document.querySelectorAll('#modeSubNav .tab').forEach(b => b.classList.remove('active'));
+            const btn = document.getElementById(`sideSub_${mode}_${subId}`);
+            if (btn) btn.classList.add('active');
+        }
+
         function updateSidebarModeUI() {
             const cardInner = document.getElementById('modeCardInner');
             const card = document.getElementById('modeCard');
-            const chips = document.getElementById('modeChips');
+            const dd = document.getElementById('modeDropdown');
             const navLabel = document.getElementById('modeNavLabel');
             const modeNav = document.getElementById('modeNav');
-            const homeBtn = document.getElementById('modeHomeBtn');
-            if (!card || !chips) return; // shell not on this page
+            const subNav = document.getElementById('modeSubNav');
+            if (!card || !dd) return; // shell not on this page
 
             const mode = getSavedTeacherMode();
 
-            // Mode card
+            // Mode card (dropdown trigger)
             if (mode) {
                 card.classList.add('mode-card-active');
                 card.classList.remove('mode-card-empty');
-                cardInner.innerHTML = `<span class="mode-card-icon">${MODE_META[mode].icon}</span><span class="mode-card-name">${MODE_META[mode].label}</span><span class="mode-card-check">✓</span>`;
+                cardInner.innerHTML = `<span class="mode-card-icon">${MODE_META[mode].icon}</span><span class="mode-card-name">${MODE_META[mode].label}</span>`;
             } else {
                 card.classList.remove('mode-card-active');
                 card.classList.add('mode-card-empty');
-                cardInner.innerHTML = `<span class="mode-card-name">Choose a mode ↓</span>`;
+                cardInner.innerHTML = `<span class="mode-card-name">Choose a mode</span>`;
             }
-            card.onclick = null;
 
-            // Chips: every mode, current one highlighted
-            chips.innerHTML = Object.entries(MODE_META).map(([key, meta]) => `
-                <button type="button" class="mode-chip ${key === mode ? 'mode-chip-active' : ''}"
-                        title="${meta.label}" onclick="selectMode('${key}')">
-                    <span class="mode-chip-icon">${meta.icon}</span>
-                    <span class="mode-chip-label">${meta.label}</span>
+            // Dropdown rows
+            dd.innerHTML = Object.entries(MODE_META).map(([key, meta]) => `
+                <button type="button" class="mode-dd-item ${key === mode ? 'mode-dd-active' : ''}" onclick="selectMode('${key}')">
+                    <span class="mode-dd-icon">${meta.icon}</span>
+                    <span>${meta.label}</span>
+                    ${key === mode ? '<span class="mode-dd-check">✓</span>' : ''}
                 </button>`).join('');
 
-            // Mode nav label + hallpass/discipline home button
+            // Mode nav label
             if (navLabel) {
                 navLabel.textContent = mode ? MODE_META[mode].label : '';
                 navLabel.style.display = mode ? '' : 'none';
             }
-            if (homeBtn) {
-                if (mode === 'hallpass' || mode === 'discipline') {
-                    homeBtn.style.display = '';
-                    homeBtn.innerHTML = `${MODE_META[mode].icon} ${MODE_META[mode].label} Home`;
-                    homeBtn.onclick = () => selectMode(mode);
-                } else {
-                    homeBtn.style.display = 'none';
-                }
+            // Nav visibility: raffle/cash → #modeNav (switchSystemMode owns show/hide);
+            // hallpass/discipline → #modeSubNav; no mode → hide both.
+            if (!mode) {
+                if (modeNav) modeNav.style.display = 'none';
+                if (subNav) { subNav.style.display = 'none'; subNav.innerHTML = ''; }
+            } else if (mode === 'hallpass' || mode === 'discipline') {
+                if (subNav && subNav.innerHTML === '') renderModeSubnav(mode);
+                if (subNav) subNav.style.display = 'flex';
+            } else {
+                if (subNav) { subNav.style.display = 'none'; subNav.innerHTML = ''; }
             }
-            // #modeNav (.tabs) visibility is owned by switchSystemMode for
-            // raffle/cash vs hallpass/discipline; if NO mode yet, force-hide.
-            if (modeNav && !mode) modeNav.style.display = 'none';
         }
 
         function updateCycleBadge() {
@@ -15320,6 +15385,7 @@
                 if (emptyState) emptyState.style.display = 'flex';
                 if (content) content.style.display = 'none';
                 if (modeNav) modeNav.style.display = 'none';
+                toggleModeDropdown(true); // mode-first: open the chooser
                 _sidebarModeApplied = true; // don't re-show on every refresh tick
             }
         }
@@ -15364,6 +15430,8 @@
                 }
                 if (clawPassContent) clawPassContent.style.display = 'none';
                 if (disciplineContent) disciplineContent.style.display = 'block';
+                if (typeof removeCashTabButtons === 'function') removeCashTabButtons();
+                if (typeof renderModeSubnav === 'function') renderModeSubnav('discipline');
                 switchDisciplineTab('submit'); // Default to submit view
             } else if (hallPassEnabled) {
                 // Hide raffle/cash tabs and normal content, show Claw Pass
@@ -15381,6 +15449,8 @@
                     btn.style.display = '';
                 });
                 
+                if (typeof removeCashTabButtons === 'function') removeCashTabButtons();
+                if (typeof renderModeSubnav === 'function') renderModeSubnav('hallpass');
                 switchHallPassTab('kiosk'); // Default to kiosk view
             } else {
                 // Show raffle/cash tabs and content, hide Claw Pass and Discipline
@@ -15391,6 +15461,8 @@
                 }
                 if (clawPassContent) clawPassContent.style.display = 'none';
                 if (disciplineContent) disciplineContent.style.display = 'none';
+                const subNavEl = document.getElementById('modeSubNav');
+                if (subNavEl) { subNavEl.style.display = 'none'; subNavEl.innerHTML = ''; }
                 updateTabVisibility();
             }
             
@@ -15445,35 +15517,41 @@
             if (wildcatCashEnabled) {
                 // Add cash tabs if not already added
                 if (!document.getElementById('awardCashTabBtn')) {
+                    // Cash tabs live in the MODE NAV (sidebar), not the Admin section.
+                    // The old code inserted before #systemTab, which after the sidebar
+                    // redesign put cash tabs inside Admin — the "tabs from other modes"
+                    // bug. Buttons are no longer super-admin gated: mode use is open
+                    // to all roles and the cash tab contents carry no role classes.
                     const cashTabsHTML = `
-                        <button class="tab active super-admin-only" id="awardCashTabBtn" onclick="switchTab('awardCash')">💰 Award Cash</button>
-                        <button class="tab super-admin-only" id="cashActivityTabBtn" onclick="switchTab('cashActivity')">📝 My Activity</button>
-                        <button class="tab super-admin-only" id="cashLeaderboardTabBtn" onclick="switchTab('cashLeaderboard')">🏆 Leaderboard</button>
-                        <button class="tab super-admin-only" id="rewardsStoreTabBtn" onclick="switchTab('rewardsStore')">🏪 Rewards Store</button>
-                        <button class="tab super-admin-only" id="studentAccountsTabBtn" onclick="switchTab('studentAccounts')">💳 Accounts</button>
-                        <button class="tab super-admin-only" id="cashAnalyticsTabBtn" onclick="switchTab('cashAnalytics')">📊 Analytics</button>
-                        <button class="tab super-admin-only" id="cashAuditTabBtn" onclick="switchTab('cashAudit')">📋 Audit Log</button>
-                        <button class="tab super-admin-only" id="cashSettingsTabBtn" onclick="switchTab('settings')">⚙️ Settings</button>
+                        <button class="tab active" id="awardCashTabBtn" onclick="switchTab('awardCash')">💰 Award Cash</button>
+                        <button class="tab" id="cashActivityTabBtn" onclick="switchTab('cashActivity')">📝 My Activity</button>
+                        <button class="tab" id="cashLeaderboardTabBtn" onclick="switchTab('cashLeaderboard')">🏆 Leaderboard</button>
+                        <button class="tab" id="rewardsStoreTabBtn" onclick="switchTab('rewardsStore')">🏪 Rewards Store</button>
+                        <button class="tab" id="studentAccountsTabBtn" onclick="switchTab('studentAccounts')">💳 Accounts</button>
+                        <button class="tab" id="cashAnalyticsTabBtn" onclick="switchTab('cashAnalytics')">📊 Analytics</button>
+                        <button class="tab" id="cashAuditTabBtn" onclick="switchTab('cashAudit')">📋 Audit Log</button>
                     `;
-                    // Insert before system tab
-                    const systemTab = document.getElementById('systemTab');
-                    if (systemTab) {
-                        systemTab.insertAdjacentHTML('beforebegin', cashTabsHTML);
+                    const modeNavEl = document.getElementById('modeNav');
+                    if (modeNavEl) {
+                        modeNavEl.insertAdjacentHTML('beforeend', cashTabsHTML);
                     }
                 }
                 // Switch to first cash tab
                 switchTab('awardCash');
             } else {
-                // Remove cash tab buttons
-                const cashTabButtons = ['awardCashTabBtn', 'cashActivityTabBtn', 'cashLeaderboardTabBtn',
-                                       'rewardsStoreTabBtn', 'studentAccountsTabBtn', 'cashAnalyticsTabBtn', 'cashAuditTabBtn', 'cashSettingsTabBtn'];
-                cashTabButtons.forEach(btnId => {
-                    const btn = document.getElementById(btnId);
-                    if (btn) btn.remove();
-                });
+                removeCashTabButtons();
                 // Switch to tickets tab
                 switchTab('tickets');
             }
+        }
+
+        function removeCashTabButtons() {
+            ['awardCashTabBtn', 'cashActivityTabBtn', 'cashLeaderboardTabBtn',
+             'rewardsStoreTabBtn', 'studentAccountsTabBtn', 'cashAnalyticsTabBtn',
+             'cashAuditTabBtn', 'cashSettingsTabBtn'].forEach(btnId => {
+                const btn = document.getElementById(btnId);
+                if (btn) btn.remove();
+            });
         }
 
         // Initialize student cash accounts
