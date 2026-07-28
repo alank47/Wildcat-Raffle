@@ -13357,48 +13357,27 @@
                 if (classHeaderCount) classHeaderCount.textContent = displayStudents.length;
             }
             
-            // Render table with better styling
-            tbody.innerHTML = displayStudents.map((s, index) => {
-                const rowBg = index % 2 === 0 ? '#f9f9f9' : 'white';
-                
-                // Generate category status indicators
-                const pbisColor = s.pbisTickets > 0 ? '#ef4444' : '#e5e7eb';  // Red if has tickets, gray if not
-                const attendanceColor = s.attendanceTickets > 0 ? '#10b981' : '#e5e7eb';  // Green if has tickets, gray if not
-                const academicColor = s.academicTickets > 0 ? '#3b82f6' : '#e5e7eb';  // Blue if has tickets, gray if not
-                
+            // Render table — calm palette: blue is the single accent,
+            // count pills are quiet (mist when >0, gray when 0), row styling via CSS.
+            tbody.innerHTML = displayStudents.map((s) => {
+                const pill = (n) => `<span class="count-pill ${n > 0 ? 'count-pill-on' : ''}">${n}</span>`;
+                const dot = (n, label) => `<span class="qual-dot ${n > 0 ? 'qual-dot-on' : ''}" title="${label}"></span>`;
                 return `
-                <tr style="background: ${rowBg}; transition: all 0.2s; border-bottom: 1px solid #eee;" 
-                    onmouseover="this.style.background='#e8f4ff'; this.style.transform='scale(1.01)'" 
-                    onmouseout="this.style.background='${rowBg}'; this.style.transform='scale(1)'">
-                    <td class="checkbox-cell" style="padding: 12px; border: none;">
+                <tr class="wc-row">
+                    <td class="checkbox-cell">
                         <input type="checkbox" class="student-checkbox" data-id="${s.id}" style="cursor: pointer; width: 18px; height: 18px;">
                     </td>
-                    <td style="padding: 12px; border: none; color: #666; font-size: 14px;">${s.id}</td>
-                    <td style="padding: 12px; border: none;">
-                        <a href="javascript:void(0)" onclick="openStudentProfile('${s.id}')" 
-                           style="color: #667eea; text-decoration: none; font-weight: 600; cursor: pointer; transition: color 0.2s; font-size: 14px;"
-                           onmouseover="this.style.color='#764ba2'" 
-                           onmouseout="this.style.color='#667eea'">
-                            ${s.firstName} ${s.lastName}
-                        </a>
+                    <td class="cell-muted">${s.id}</td>
+                    <td>
+                        <a href="javascript:void(0)" onclick="openStudentProfile('${s.id}')" class="student-link">${s.firstName} ${s.lastName}</a>
                     </td>
-                    <td style="padding: 12px; border: none; text-align: center;">
-                        <span style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 6px 12px; border-radius: 20px; font-weight: 700; font-size: 14px; display: inline-block; min-width: 35px;">${s.pbisTickets}</span>
-                    </td>
-                    <td style="padding: 12px; border: none; text-align: center;">
-                        <span style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; padding: 6px 12px; border-radius: 20px; font-weight: 700; font-size: 14px; display: inline-block; min-width: 35px;">${s.attendanceTickets}</span>
-                    </td>
-                    <td style="padding: 12px; border: none; text-align: center;">
-                        <span style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 6px 12px; border-radius: 20px; font-weight: 700; font-size: 14px; display: inline-block; min-width: 35px;">${s.academicTickets}</span>
-                    </td>
-                    <td style="padding: 12px; border: none; text-align: center;">
-                        ${s.bigRaffleQualified ? 
-                            '<span class="qualified-badge pulse-animation">✓ Qualified</span>' : 
-                            `<div style="display: inline-flex; align-items: center; gap: 6px; justify-content: center;">
-                                <div style="width: 16px; height: 16px; border-radius: 50%; background: ${pbisColor}; transition: all 0.3s; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="PBIS"></div>
-                                <div style="width: 16px; height: 16px; border-radius: 50%; background: ${attendanceColor}; transition: all 0.3s; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="Attendance"></div>
-                                <div style="width: 16px; height: 16px; border-radius: 50%; background: ${academicColor}; transition: all 0.3s; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="Academic"></div>
-                            </div>`
+                    <td class="cell-center">${pill(s.pbisTickets)}</td>
+                    <td class="cell-center">${pill(s.attendanceTickets)}</td>
+                    <td class="cell-center">${pill(s.academicTickets)}</td>
+                    <td class="cell-center">
+                        ${s.bigRaffleQualified ?
+                            '<span class="qualified-badge">✓ Qualified</span>' :
+                            `<span class="qual-dots">${dot(s.pbisTickets, 'PBIS')}${dot(s.attendanceTickets, 'Attendance')}${dot(s.academicTickets, 'Academic')}</span>`
                         }
                     </td>
                 </tr>
@@ -13424,22 +13403,13 @@
                     const uniqueGrades = [...new Set(students.map(s => s.grade))].sort((a, b) => a - b);
                     
                     periodFilterSection.innerHTML = `
-                        <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);">
-                            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px;">
-                                <span style="font-size: 28px;">👁️</span>
-                                <h3 style="color: white; margin: 0; font-size: 18px;">Campus Aide Access</h3>
-                            </div>
-                            <p style="color: rgba(255,255,255,0.95); font-size: 14px; margin: 0 0 15px 0; font-weight: 500;">
-                                ✓ You have access to all ${students.length} students
-                            </p>
-                            <div style="display: flex; gap: 10px; align-items: center;">
-                                <label style="color: white; font-weight: 600; font-size: 14px;">Filter by Grade:</label>
-                                <select id="gradeFilter" onchange="updateTicketsTable()" style="padding: 8px 12px; border-radius: 8px; border: 2px solid rgba(255,255,255,0.3); background: white; font-size: 14px; cursor: pointer; min-width: 150px;">
-                                    <option value="">All Grades</option>
-                                    ${uniqueGrades.map(grade => `<option value="${grade}">Grade ${grade}</option>`).join('')}
-                                </select>
-                            </div>
-                        </div>
+                        <div class="panel-head"><span class="panel-icon">👁️</span><h3>Campus Aide Access</h3></div>
+                        <p class="panel-hint" style="margin: 0 0 12px 0;">✓ You have access to all ${students.length} students</p>
+                        <label class="field-label">Filter by Grade</label>
+                        <select id="gradeFilter" onchange="updateTicketsTable()" class="wc-select">
+                            <option value="">All Grades</option>
+                            ${uniqueGrades.map(grade => `<option value="${grade}">Grade ${grade}</option>`).join('')}
+                        </select>
                     `;
                 }
                 return;
@@ -15333,6 +15303,10 @@
                 navLabel.textContent = mode ? MODE_META[mode].label : '';
                 navLabel.style.display = mode ? '' : 'none';
             }
+            // Mode pills on content pages (orange = mode identity)
+            document.querySelectorAll('.mode-pill').forEach(p => {
+                p.textContent = mode ? `${MODE_META[mode].label} Mode` : '';
+            });
             // Nav visibility: raffle/cash → #modeNav (switchSystemMode owns show/hide);
             // hallpass/discipline → #modeSubNav; no mode → hide both.
             if (!mode) {
