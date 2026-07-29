@@ -643,7 +643,7 @@
             colors: {
                 primary: '#667eea',
                 secondary: '#764ba2',
-                accent: '#10b981'
+                accent: '#2E7D52'
             },
             terminology: {
                 cashName: 'Wildcat Cash',
@@ -996,7 +996,7 @@
                     let categoryColor = '#667eea';
                     let categoryIcon = '🎯';
                     if (entry.category === 'Attendance') {
-                        categoryColor = '#10b981';
+                        categoryColor = '#2E7D52';
                         categoryIcon = '📅';
                     } else if (entry.category === 'Academic' || entry.category === 'Academics') {
                         categoryColor = '#3b82f6';
@@ -1388,7 +1388,7 @@
             
             transactionsContainer.innerHTML = transactions.map(txn => {
                 const date = new Date(txn.timestamp);
-                const color = txn.amount > 0 ? '#10b981' : '#ef4444';
+                const color = txn.amount > 0 ? '#2E7D52' : '#B3392F';
                 const sign = txn.amount > 0 ? '+' : '';
                 return `
                     <div style="display: flex; justify-content: space-between; align-items: center; padding: 15px; border-bottom: 1px solid #e0e0e0;">
@@ -1417,7 +1417,7 @@
                 const remaining = new Date(pass.expiresAt) - now;
                 const minutes = Math.floor(remaining / 60000);
                 const seconds = Math.floor((remaining % 60000) / 1000);
-                const timeColor = minutes === 0 ? '#ffc107' : '#10b981';
+                const timeColor = minutes === 0 ? '#B7791F' : '#2E7D52';
                 
                 activePassContainer.innerHTML = `
                     <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3); color: white; text-align: center;">
@@ -1443,8 +1443,8 @@
             }
             
             historyTable.innerHTML = studentPasses.slice().reverse().map(pass => {
-                const statusColor = pass.status === 'returned' ? '#10b981' : 
-                                   pass.status === 'expired' ? '#ef4444' : '#ffc107';
+                const statusColor = pass.status === 'returned' ? '#2E7D52' : 
+                                   pass.status === 'expired' ? '#B3392F' : '#B7791F';
                 const statusText = pass.status === 'returned' ? '✅ Returned' :
                                   pass.status === 'expired' ? '⏰ Expired' : '🟡 Active';
                 
@@ -4618,7 +4618,7 @@
                         const cat = (e.category || '').toLowerCase();
                         let catColor = '#667eea';
                         if (cat.includes('pbis')) catColor = '#8b5cf6';
-                        else if (cat.includes('attendance')) catColor = '#10b981';
+                        else if (cat.includes('attendance')) catColor = '#2E7D52';
                         else if (cat.includes('academic')) catColor = '#f59e0b';
                         return `
                             <tr style="border-bottom: 1px solid #f0f0f0;">
@@ -6755,13 +6755,13 @@
                 let roleColor = '#6c757d';
                 let roleIcon = '👤';
                 if (login.role === 'superadmin') {
-                    roleColor = '#dc3545';
+                    roleColor = '#B3392F';
                     roleIcon = '👑';
                 } else if (login.role === 'admin') {
                     roleColor = '#667eea';
                     roleIcon = '⭐';
                 } else if (login.role === 'campusaide') {
-                    roleColor = '#10b981';
+                    roleColor = '#2E7D52';
                     roleIcon = '👁️';
                 } else if (login.role === 'teacher') {
                     roleColor = '#28a745';
@@ -7088,7 +7088,7 @@
                             <span style="background: #f5f5f5; padding: 4px 8px; border-radius: 8px; font-size: 12px;">${behaviorName}</span>
                         </td>
                         <td style="padding: 12px 8px; text-align: center;">
-                            <span style="font-weight: 700; font-size: 16px; color: ${log.action === 'cash_deduct' ? '#ef4444' : '#10b981'};">${amount}</span>
+                            <span style="font-weight: 700; font-size: 16px; color: ${log.action === 'cash_deduct' ? '#B3392F' : '#2E7D52'};">${amount}</span>
                         </td>
                         <td style="padding: 12px 8px; max-width: 250px;">
                             <span style="font-size: 13px; color: #555;">${log.details || '-'}</span>
@@ -7706,7 +7706,7 @@
                 if (monitorHsCard && monitorMsCard) {
                     if (currentSchool === 'highschool') {
                         monitorHsCard.style.border = '3px solid #667eea';
-                        monitorHsCard.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+                        monitorHsCard.style.background = '#2F67A7';
                         monitorHsCard.style.color = 'white';
                         
                         monitorMsCard.style.border = '3px solid #e0e0e0';
@@ -7714,7 +7714,7 @@
                         monitorMsCard.style.color = '#666';
                     } else {
                         monitorMsCard.style.border = '3px solid #10b981';
-                        monitorMsCard.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
+                        monitorMsCard.style.background = '#0C447C';
                         monitorMsCard.style.color = 'white';
                         
                         monitorHsCard.style.border = '3px solid #e0e0e0';
@@ -8127,7 +8127,7 @@
                 if (remaining <= 0) {
                     clearInterval(currentPassTimer);
                     timerDisplay.textContent = '0:00';
-                    timerDisplay.style.color = '#ef4444';
+                    timerDisplay.style.color = '#B3392F';
                     
                     // Auto-expire the pass
                     expirePass(pass.id);
@@ -8140,7 +8140,7 @@
                 
                 // Change color when under 1 minute
                 if (minutes === 0) {
-                    timerDisplay.style.color = '#ffc107';
+                    timerDisplay.style.color = '#B7791F';
                 }
             }, 1000);
         }
@@ -8265,7 +8265,7 @@
             const remaining = new Date(pass.expiresAt) - now;
             const minutes = Math.floor(remaining / 60000);
             const seconds = Math.floor((remaining % 60000) / 1000);
-            const timeColor = minutes === 0 ? '#ffc107' : '#10b981';
+            const timeColor = minutes === 0 ? '#B7791F' : '#2E7D52';
             
             card.innerHTML = `
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px;">
@@ -8370,9 +8370,9 @@
             
             filtered.forEach(pass => {
                 const row = document.createElement('tr');
-                const statusColor = pass.status === 'returned' ? '#10b981' : 
-                                   pass.status === 'overtime' ? '#ef4444' : 
-                                   pass.status === 'active' ? '#4facfe' : '#ffc107';
+                const statusColor = pass.status === 'returned' ? '#2E7D52' : 
+                                   pass.status === 'overtime' ? '#B3392F' : 
+                                   pass.status === 'active' ? '#4facfe' : '#B7791F';
                 const statusText = pass.status === 'returned' ? '✅ Returned' :
                                   pass.status === 'overtime' ? '⏱️ Overtime' : 
                                   pass.status === 'active' ? '🟢 Active' : '⚠️ Expiring';
@@ -8686,7 +8686,7 @@
                 if (pass.currentStatus === 'overtime') {
                     gradient = 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)';
                     statusBadge = '⏱️ OVERTIME';
-                    timerColor = '#ef4444';
+                    timerColor = '#B3392F';
                 } else if (pass.currentStatus === 'expiring') {
                     gradient = 'linear-gradient(135deg, #ffd89b 0%, #f59e0b 100%)';
                     statusBadge = '⚠️ EXPIRING SOON';
@@ -8694,7 +8694,7 @@
                 } else if (pass.currentStatus === 'returned') {
                     gradient = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
                     statusBadge = '✅ RETURNED';
-                    timerColor = '#10b981';
+                    timerColor = '#2E7D52';
                 } else {
                     gradient = 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)';
                     statusBadge = '🟢 ACTIVE';
@@ -9154,7 +9154,7 @@
             if (monitorHsCard && monitorMsCard) {
                 if (school === 'highschool') {
                     monitorHsCard.style.border = '3px solid #667eea';
-                    monitorHsCard.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+                    monitorHsCard.style.background = '#2F67A7';
                     monitorHsCard.style.color = 'white';
                     
                     monitorMsCard.style.border = '3px solid #e0e0e0';
@@ -9162,7 +9162,7 @@
                     monitorMsCard.style.color = '#666';
                 } else {
                     monitorMsCard.style.border = '3px solid #10b981';
-                    monitorMsCard.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
+                    monitorMsCard.style.background = '#0C447C';
                     monitorMsCard.style.color = 'white';
                     
                     monitorHsCard.style.border = '3px solid #e0e0e0';
@@ -9883,10 +9883,10 @@
                 // Change color if over limit
                 if (passesToday >= passLimit) {
                     document.getElementById('passLimitStatus').style.background = '#fee2e2';
-                    document.getElementById('passLimitStatus').style.borderLeftColor = '#ef4444';
+                    document.getElementById('passLimitStatus').style.borderLeftColor = '#B3392F';
                 } else {
                     document.getElementById('passLimitStatus').style.background = '#fff3cd';
-                    document.getElementById('passLimitStatus').style.borderLeftColor = '#ffc107';
+                    document.getElementById('passLimitStatus').style.borderLeftColor = '#B7791F';
                 }
             } else {
                 document.getElementById('passLimitStatus').style.display = 'none';
@@ -9931,7 +9931,7 @@
                     <td>${section.teacherName || 'N/A'}</td>
                     <td style="text-align: center;">${stats.passes}</td>
                     <td style="text-align: center; font-weight: 600;">${stats.timeMissed}</td>
-                    <td style="text-align: center; color: ${stats.overtime > 0 ? '#ef4444' : '#10b981'};">${stats.overtime}</td>
+                    <td style="text-align: center; color: ${stats.overtime > 0 ? '#B3392F' : '#2E7D52'};">${stats.overtime}</td>
                 `;
                 tbody.appendChild(row);
             });
@@ -10544,7 +10544,7 @@
         
         // Render individual pattern card
         function renderPatternCard(pattern, level) {
-            const borderColor = level === 'high' ? '#ef4444' : level === 'medium' ? '#f59e0b' : '#10b981';
+            const borderColor = level === 'high' ? '#B3392F' : level === 'medium' ? '#f59e0b' : '#2E7D52';
             const bgColor = level === 'high' ? '#fee2e2' : level === 'medium' ? '#fef3c7' : '#d1fae5';
             
             const locations = pattern.overlaps.map(o => o.location);
@@ -10804,7 +10804,7 @@
                 const recentBlocks = group.blockLog?.slice(-3).reverse() || [];
                 
                 return `
-                    <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px; border-left: 4px solid ${group.monitorOnly ? '#3b82f6' : '#ef4444'};">
+                    <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px; border-left: 4px solid ${group.monitorOnly ? '#3b82f6' : '#B3392F'};">
                         <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px;">
                             <div>
                                 <h3 style="margin: 0 0 5px 0;">${group.name}</h3>
@@ -11076,13 +11076,13 @@
                     
                     if (t.role === 'superadmin') {
                         roleDisplay = '👑 Super Admin';
-                        roleColor = '#dc3545';
+                        roleColor = '#B3392F';
                     } else if (t.role === 'admin') {
                         roleDisplay = '⭐ Admin';
                         roleColor = '#667eea';
                     } else if (t.role === 'campusaide') {
                         roleDisplay = '👁️ Campus Aide';
-                        roleColor = '#10b981';
+                        roleColor = '#2E7D52';
                     } else {
                         roleDisplay = '👤 Teacher';
                         roleColor = '#28a745';
@@ -12351,8 +12351,8 @@
                 const hasAllThreeTickets = s.pbisTickets > 0 && s.attendanceTickets > 0 && s.academicTickets > 0;
                 
                 // Generate category status indicators
-                const pbisColor = s.pbisTickets > 0 ? '#ef4444' : '#e5e7eb';  // Red if has tickets, gray if not
-                const attendanceColor = s.attendanceTickets > 0 ? '#10b981' : '#e5e7eb';  // Green if has tickets, gray if not
+                const pbisColor = s.pbisTickets > 0 ? '#B3392F' : '#e5e7eb';  // Red if has tickets, gray if not
+                const attendanceColor = s.attendanceTickets > 0 ? '#2E7D52' : '#e5e7eb';  // Green if has tickets, gray if not
                 const academicColor = s.academicTickets > 0 ? '#3b82f6' : '#e5e7eb';  // Blue if has tickets, gray if not
                 
                 // Determine status display
@@ -12647,11 +12647,11 @@
             const lifetimeTickets = (student.ticketHistory || []).reduce((sum, entry) => sum + (entry.amount || 1), 0);
             if (lifetimeTickets >= 100) badges.push({ emoji: '💯', label: '100+ Lifetime Tickets', color: '#f59e0b' });
             else if (lifetimeTickets >= 50) badges.push({ emoji: '⭐', label: '50+ Lifetime Tickets', color: '#3b82f6' });
-            else if (lifetimeTickets >= 25) badges.push({ emoji: '🌟', label: '25+ Lifetime Tickets', color: '#10b981' });
+            else if (lifetimeTickets >= 25) badges.push({ emoji: '🌟', label: '25+ Lifetime Tickets', color: '#2E7D52' });
             
             const weeksQualified = (student.ticketHistory || []).filter(entry => entry.reason && entry.reason.includes('Qualified')).length;
-            if (weeksQualified >= 5) badges.push({ emoji: '🔥', label: '5-Week Streak', color: '#ef4444' });
-            if ((student.attendanceTickets || 0) >= 5) badges.push({ emoji: '📅', label: 'Perfect Attendance', color: '#10b981' });
+            if (weeksQualified >= 5) badges.push({ emoji: '🔥', label: '5-Week Streak', color: '#B3392F' });
+            if ((student.attendanceTickets || 0) >= 5) badges.push({ emoji: '📅', label: 'Perfect Attendance', color: '#2E7D52' });
             if (totalTickets >= 5) badges.push({ emoji: '🎯', label: 'Weekly Goal Achieved', color: '#667eea' });
             
             if (badges.length > 0) {
@@ -12869,7 +12869,7 @@
                 colors: {
                     primary: '#667eea',
                     secondary: '#764ba2',
-                    accent: '#10b981'
+                    accent: '#2E7D52'
                 },
                 terminology: {
                     cashName: 'Wildcat Cash',
@@ -12885,8 +12885,8 @@
             document.getElementById('brandingPrimaryColorHex').value = '#667eea';
             document.getElementById('brandingSecondaryColor').value = '#764ba2';
             document.getElementById('brandingSecondaryColorHex').value = '#764ba2';
-            document.getElementById('brandingAccentColor').value = '#10b981';
-            document.getElementById('brandingAccentColorHex').value = '#10b981';
+            document.getElementById('brandingAccentColor').value = '#2E7D52';
+            document.getElementById('brandingAccentColorHex').value = '#2E7D52';
             document.getElementById('brandingCashName').value = '';
             document.getElementById('brandingJackpotName').value = '';
             document.getElementById('brandingPassName').value = '';
@@ -13808,7 +13808,7 @@
         
         // Trigger confetti animation
         function triggerConfetti() {
-            const colors = ['#667eea', '#764ba2', '#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#ec4899'];
+            const colors = ['#667eea', '#764ba2', '#2E7D52', '#3b82f6', '#f59e0b', '#B3392F', '#ec4899'];
             const shapes = ['circle', 'square'];
             
             // Create 80 confetti pieces
@@ -14354,7 +14354,7 @@
 
         function displaySingleWinner(winner, category, school) {
             const display = document.getElementById('winnerDisplay');
-            const schoolColor = school === 'Middle School' ? '#f59e0b' : '#10b981';
+            const schoolColor = school === 'Middle School' ? '#f59e0b' : '#2E7D52';
             const schoolColorDark = school === 'Middle School' ? '#d97706' : '#059669';
             
             display.innerHTML = `
@@ -15730,7 +15730,7 @@
                     student.wildcatCashDeducted = 0;
                 }
                 
-                const balanceColor = student.wildcatCashBalance >= 0 ? '#10b981' : '#ef4444';
+                const balanceColor = student.wildcatCashBalance >= 0 ? '#2E7D52' : '#B3392F';
                 const balanceStyle = `background: ${balanceColor}; color: white; padding: 6px 12px; border-radius: 20px; font-weight: 700; display: inline-block; min-width: 60px; text-align: center;`;
                 
                 const row = document.createElement('tr');
@@ -15855,7 +15855,7 @@
                 const studentName = student ? `${student.firstName} ${student.lastName}` : 'Unknown Student';
                 const date = new Date(txn.timestamp).toLocaleString();
                 const amountClass = txn.amount > 0 ? 'positive' : 'negative';
-                const amountColor = txn.amount > 0 ? '#10b981' : '#ef4444';
+                const amountColor = txn.amount > 0 ? '#2E7D52' : '#B3392F';
                 
                 const card = document.createElement('div');
                 card.style.cssText = 'background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 15px;';
@@ -16059,7 +16059,7 @@
                     student.wildcatCashTransactions = [];
                 }
                 
-                const balanceColor = student.wildcatCashBalance >= 0 ? '#10b981' : '#ef4444';
+                const balanceColor = student.wildcatCashBalance >= 0 ? '#2E7D52' : '#B3392F';
                 
                 const card = document.createElement('div');
                 card.style.cssText = 'background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);';
@@ -16073,7 +16073,7 @@
                 if (recentTxns.length > 0) {
                     txnsHTML = '<div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e0e0e0;"><div style="font-weight: 600; color: #666; font-size: 13px; margin-bottom: 10px;">Recent Transactions</div>';
                     recentTxns.forEach(txn => {
-                        const txnColor = txn.amount > 0 ? '#10b981' : '#ef4444';
+                        const txnColor = txn.amount > 0 ? '#2E7D52' : '#B3392F';
                         txnsHTML += `
                             <div style="display: flex; justify-content: space-between; padding: 8px 0; font-size: 13px;">
                                 <span style="color: #666;">${txn.behaviorName}</span>
@@ -16160,7 +16160,7 @@
                 behaviorHTML += '<p style="color: #666; text-align: center; padding: 20px;">No behavior data yet.</p>';
             } else {
                 sortedBehaviors.forEach(([name, data]) => {
-                    const color = data.total > 0 ? '#10b981' : '#ef4444';
+                    const color = data.total > 0 ? '#2E7D52' : '#B3392F';
                     behaviorHTML += `
                         <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e0e0e0;">
                             <span style="color: #333; font-weight: 600;">${name}</span>
@@ -16250,8 +16250,8 @@
                 container.appendChild(section);
             };
             
-            renderBehaviors(positive, '✅ Positive Behaviors', '#10b981');
-            renderBehaviors(negative, '❌ Negative Behaviors', '#ef4444');
+            renderBehaviors(positive, '✅ Positive Behaviors', '#2E7D52');
+            renderBehaviors(negative, '❌ Negative Behaviors', '#B3392F');
         }
 
         function deleteBehavior(behaviorId) {
@@ -16741,8 +16741,8 @@
                     ? (stats.positiveCount / stats.totalInteractions * 100) 
                     : 0;
                 
-                const positivityColor = positivityRatio >= 70 ? '#10b981' : 
-                                       positivityRatio >= 50 ? '#f59e0b' : '#ef4444';
+                const positivityColor = positivityRatio >= 70 ? '#2E7D52' : 
+                                       positivityRatio >= 50 ? '#f59e0b' : '#B3392F';
                 
                 return `
                     <tr>
@@ -16801,7 +16801,7 @@
                 });
                 const primaryTeachers = Array.from(teachersSet).slice(0, 3).join(', ');
                 
-                const balanceColor = balance < 500 ? '#ef4444' : balance < 1500 ? '#f59e0b' : '#10b981';
+                const balanceColor = balance < 500 ? '#B3392F' : balance < 1500 ? '#f59e0b' : '#2E7D52';
                 
                 return `
                     <tr style="background: ${balance < 500 ? 'rgba(239, 68, 68, 0.05)' : 'white'};">
@@ -16900,7 +16900,7 @@
                 const date = new Date(txn.timestamp);
                 const formattedDate = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
                 
-                const typeColor = txn.type === 'positive' ? '#10b981' : '#ef4444';
+                const typeColor = txn.type === 'positive' ? '#2E7D52' : '#B3392F';
                 const typeBadge = txn.type === 'positive' ? 'Positive' : 'Negative';
                 const amountDisplay = txn.type === 'positive' ? `+$${Math.abs(txn.amount)}` : `-$${Math.abs(txn.amount)}`;
                 
@@ -17058,7 +17058,7 @@
             });
             
             // Add selected styling
-            element.style.borderColor = severity === 'Minor' ? '#10b981' : severity === 'Major' ? '#f59e0b' : '#dc3545';
+            element.style.borderColor = severity === 'Minor' ? '#2E7D52' : severity === 'Major' ? '#f59e0b' : '#B3392F';
             element.style.background = severity === 'Minor' ? 'rgba(16, 185, 129, 0.05)' : severity === 'Major' ? 'rgba(245, 158, 11, 0.05)' : 'rgba(220, 53, 69, 0.05)';
         }
 
@@ -17172,7 +17172,7 @@
             }
             
             tbody.innerHTML = filtered.map(ref => {
-                const severityColor = ref.severity === 'Minor' ? '#10b981' : ref.severity === 'Major' ? '#f59e0b' : '#dc3545';
+                const severityColor = ref.severity === 'Minor' ? '#2E7D52' : ref.severity === 'Major' ? '#f59e0b' : '#B3392F';
                 const statusBadge = ref.status === 'pending' 
                     ? '<span style="background: #fef3c7; color: #d97706; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">Pending</span>'
                     : '<span style="background: #d1fae5; color: #059669; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">Reviewed</span>';
@@ -17192,7 +17192,7 @@
                         <td style="padding: 16px; text-align: center;">${statusBadge}</td>
                         <td style="padding: 16px; text-align: center;">
                             ${ref.status === 'pending' ? 
-                                `<button class="btn btn-sm" onclick="reviewReferral('${ref.id}')" style="padding: 6px 12px; font-size: 13px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">Review</button>` :
+                                `<button class="btn btn-sm" onclick="reviewReferral('${ref.id}')" style="padding: 6px 12px; font-size: 13px; background: #2F67A7;">Review</button>` :
                                 `<button class="btn btn-sm" onclick="viewReferralDetails('${ref.id}')" style="padding: 6px 12px; font-size: 13px; background: #6c757d;">View</button>`
                             }
                         </td>
@@ -17215,7 +17215,7 @@
             }
             
             // Show review modal
-            const severityColor = referral.severity === 'Minor' ? '#10b981' : referral.severity === 'Major' ? '#f59e0b' : '#dc3545';
+            const severityColor = referral.severity === 'Minor' ? '#2E7D52' : referral.severity === 'Major' ? '#f59e0b' : '#B3392F';
             
             const html = `
                 <div style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000; display: flex; align-items: center; justify-content: center; padding: 20px;" id="reviewReferralModal" onclick="if(event.target === this) document.getElementById('reviewReferralModal').remove();">
@@ -17308,7 +17308,7 @@
                             
                             <!-- Action Buttons -->
                             <div style="display: flex; gap: 10px;">
-                                <button class="btn" onclick="saveReferralReview('${referral.id}')" style="flex: 1; background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 14px; font-size: 16px; font-weight: 600;">
+                                <button class="btn" onclick="saveReferralReview('${referral.id}')" style="flex: 1; background: #2F67A7; padding: 14px; font-size: 16px; font-weight: 600;">
                                     ✓ Complete Review
                                 </button>
                                 <button class="btn btn-secondary" onclick="document.getElementById('reviewReferralModal').remove()" style="padding: 14px 24px;">
@@ -17444,7 +17444,7 @@
                 return;
             }
             
-            const severityColor = referral.severity === 'Minor' ? '#10b981' : referral.severity === 'Major' ? '#f59e0b' : '#dc3545';
+            const severityColor = referral.severity === 'Minor' ? '#2E7D52' : referral.severity === 'Major' ? '#f59e0b' : '#B3392F';
             
             const html = `
                 <div style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000; display: flex; align-items: center; justify-content: center; padding: 20px;" id="viewReferralModal" onclick="if(event.target === this) document.getElementById('viewReferralModal').remove();">
@@ -17563,7 +17563,7 @@
             const sorted = [...studentReferrals].sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime));
             
             tbody.innerHTML = sorted.map(ref => {
-                const severityColor = ref.severity === 'Minor' ? '#10b981' : ref.severity === 'Major' ? '#f59e0b' : '#dc3545';
+                const severityColor = ref.severity === 'Minor' ? '#2E7D52' : ref.severity === 'Major' ? '#f59e0b' : '#B3392F';
                 
                 return `
                     <tr style="border-bottom: 1px solid #e5e7eb;">
@@ -17656,7 +17656,7 @@
                         labels: ['Minor', 'Major', 'Severe'],
                         datasets: [{
                             data: [severityCounts.Minor, severityCounts.Major, severityCounts.Severe],
-                            backgroundColor: ['#10b981', '#f59e0b', '#dc3545'],
+                            backgroundColor: ['#2E7D52', '#f59e0b', '#B3392F'],
                             borderWidth: 2,
                             borderColor: '#fff'
                         }]
@@ -17882,14 +17882,14 @@
             const progressPercent = detention.totalDays > 0 ? (detention.daysServed / detention.totalDays * 100) : 0;
             
             return `
-                <div style="border: 2px solid ${isActive ? '#dc3545' : '#28a745'}; border-radius: 8px; padding: 20px; margin-bottom: 15px; background: ${isActive ? '#fff5f5' : '#f0fdf4'};">
+                <div style="border: 2px solid ${isActive ? '#B3392F' : '#28a745'}; border-radius: 8px; padding: 20px; margin-bottom: 15px; background: ${isActive ? '#fff5f5' : '#f0fdf4'};">
                     <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px;">
                         <div>
                             <h4 style="margin: 0 0 5px 0; color: #333;">${detention.studentName}</h4>
                             <small style="color: #666;">Grade ${detention.grade} • Assigned ${new Date(detention.dateAssigned).toLocaleDateString()}</small>
                         </div>
                         <div style="text-align: right;">
-                            <div style="padding: 6px 12px; background: ${isActive ? '#dc3545' : '#28a745'}; color: white; border-radius: 20px; font-size: 12px; font-weight: 600; margin-bottom: 5px;">
+                            <div style="padding: 6px 12px; background: ${isActive ? '#B3392F' : '#28a745'}; color: white; border-radius: 20px; font-size: 12px; font-weight: 600; margin-bottom: 5px;">
                                 ${isActive ? 'ACTIVE' : 'COMPLETED'}
                             </div>
                             <small style="color: #666;">ID: ${detention.id.split('_')[1]}</small>
@@ -17907,7 +17907,7 @@
                         </div>
                         <div>
                             <small style="color: #666;">Days Served</small>
-                            <div style="font-weight: 600; color: ${isActive ? '#dc3545' : '#28a745'};">${detention.daysServed} / ${detention.totalDays}</div>
+                            <div style="font-weight: 600; color: ${isActive ? '#B3392F' : '#28a745'};">${detention.daysServed} / ${detention.totalDays}</div>
                         </div>
                         <div>
                             <small style="color: #666;">Remaining</small>
