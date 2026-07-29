@@ -2815,3 +2815,52 @@ body {
 .status-good { color: #2E7D52; font-weight: 700; }
 .status-warn { color: #B7791F; font-weight: 700; }
 .status-late { color: #B3392F; font-weight: 700; }
+
+
+/* ============================================================
+   PHASE 3f — Admin screens (Students, Teachers, Settings,
+   Audit Log, Login Activity, System Administration)
+   ============================================================ */
+
+/* Settings subtabs share the Data & Analytics subtab styling */
+.settings-subtab-button {
+    padding: 9px 18px;
+    background: #ffffff;
+    color: var(--wc-gray-text);
+    border: 1px solid #d7dde5;
+    border-radius: 9px;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 13px;
+    font-family: inherit;
+    white-space: nowrap;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.settings-subtab-button:hover { border-color: var(--wc-blue); color: var(--wc-blue); }
+.settings-subtab-button.active {
+    background: var(--wc-blue);
+    border-color: var(--wc-blue);
+    color: #ffffff;
+}
+
+/* Import / upload dropzones */
+.upload-section {
+    border: 2px dashed var(--wc-blue-pale);
+    border-radius: 12px;
+    padding: 26px;
+    text-align: center;
+    margin-bottom: 16px;
+    background: #f7fafd;
+}
+.upload-section h3 { color: var(--wc-ink); font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+.upload-section p { color: var(--wc-gray-text); font-size: 13.5px; }
+.upload-section:hover { border-color: var(--wc-blue); }
+
+/* System Administration: destructive area stays clearly marked */
+#system .btn-danger,
+#system .btn.btn-danger {
+    background: #B3392F !important;
+    background-image: none !important;
+    color: #fff !important;
+}
+#system .btn-danger:hover { background: #973027 !important; }
