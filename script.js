@@ -3501,33 +3501,10 @@
         let currentDataView = 'charts'; // Track current view (charts or tables)
 
         function switchDataSubtab(subtab) {
-            // Update button states with inline styles
-            document.querySelectorAll('.subtab-button').forEach(btn => {
-                btn.classList.remove('active');
-                btn.style.background = '#f5f5f5';
-                btn.style.color = '#333';
-                btn.style.boxShadow = 'none';
-            });
-            
+            // Active state is CSS-driven (.subtab-button.active) — no inline colours.
+            document.querySelectorAll('.subtab-button').forEach(btn => btn.classList.remove('active'));
             const activeBtn = document.getElementById(`${subtab}Subtab`);
-            activeBtn.classList.add('active');
-            
-            // Set gradient based on which tab
-            if (subtab === 'academy') {
-                activeBtn.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
-            } else if (subtab === 'middleschool') {
-                activeBtn.style.background = 'linear-gradient(135deg, #ff9800 0%, #f57c00 100%)';
-            } else if (subtab === 'highschool') {
-                activeBtn.style.background = 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)';
-            } else if (subtab === 'teachers') {
-                activeBtn.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
-            } else if (subtab === 'insights') {
-                activeBtn.style.background = 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)';
-            } else if (subtab === 'halloffame') {
-                activeBtn.style.background = 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)';
-            }
-            activeBtn.style.color = 'white';
-            activeBtn.style.boxShadow = '0 2px 8px rgba(102, 126, 234, 0.3)';
+            if (activeBtn) activeBtn.classList.add('active');
             
             // Update content visibility
             document.querySelectorAll('.data-subtab').forEach(tab => {
@@ -3609,6 +3586,14 @@
 
         function toggleDataView(view) {
             currentDataView = view; // Store current view
+
+            // Reflect the choice on the toolbar buttons
+            const chartsBtn = document.getElementById('viewChartsBtn');
+            const tablesBtn = document.getElementById('viewTablesBtn');
+            if (chartsBtn && tablesBtn) {
+                chartsBtn.classList.toggle('active', view === 'charts');
+                tablesBtn.classList.toggle('active', view === 'tables');
+            }
             
             const suffix = currentDataSubtab === 'academy' ? 'Academy' : 
                           currentDataSubtab === 'middleschool' ? 'MS' : 'HS';
@@ -3657,17 +3642,10 @@
         function setDataTimeFilter(filter) {
             currentDataTimeFilter = filter;
             
-            // Update button states
-            document.querySelectorAll('.time-filter-btn').forEach(btn => {
-                btn.style.background = 'rgba(255,255,255,0.2)';
-                btn.style.color = 'white';
-            });
-            
+            // Active state is CSS-driven (.time-filter-btn.active).
+            document.querySelectorAll('.time-filter-btn').forEach(btn => btn.classList.remove('active'));
             const activeBtn = document.getElementById('filter' + filter.charAt(0).toUpperCase() + filter.slice(1));
-            if (activeBtn) {
-                activeBtn.style.background = 'white';
-                activeBtn.style.color = '#667eea';
-            }
+            if (activeBtn) activeBtn.classList.add('active');
             
             // Hide custom date picker
             document.getElementById('customDateRangePicker').style.display = 'none';
@@ -5306,17 +5284,17 @@
                         {
                             label: 'PBIS',
                             data: pbisData,
-                            backgroundColor: 'rgba(102, 126, 234, 0.8)'
+                            backgroundColor: 'rgba(47, 103, 167, 0.85)'
                         },
                         {
                             label: 'Attendance',
                             data: attendanceData,
-                            backgroundColor: 'rgba(40, 167, 69, 0.8)'
+                            backgroundColor: 'rgba(12, 68, 124, 0.85)'
                         },
                         {
                             label: 'Academic',
                             data: academicData,
-                            backgroundColor: 'rgba(255, 193, 7, 0.8)'
+                            backgroundColor: 'rgba(201, 196, 78, 0.9)'
                         }
                     ]
                 },
@@ -5411,22 +5389,22 @@
                         {
                             label: 'PBIS',
                             data: pbisData,
-                            borderColor: 'rgba(102, 126, 234, 1)',
-                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            borderColor: 'rgba(47, 103, 167, 1)',
+                            backgroundColor: 'rgba(47, 103, 167, 0.12)',
                             tension: 0.4
                         },
                         {
                             label: 'Attendance',
                             data: attendanceData,
-                            borderColor: 'rgba(40, 167, 69, 1)',
-                            backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                            borderColor: 'rgba(12, 68, 124, 1)',
+                            backgroundColor: 'rgba(12, 68, 124, 0.12)',
                             tension: 0.4
                         },
                         {
                             label: 'Academic',
                             data: academicData,
-                            borderColor: 'rgba(255, 193, 7, 1)',
-                            backgroundColor: 'rgba(255, 193, 7, 0.1)',
+                            borderColor: 'rgba(201, 196, 78, 1)',
+                            backgroundColor: 'rgba(201, 196, 78, 0.15)',
                             tension: 0.4
                         }
                     ]
@@ -5502,8 +5480,8 @@
                     datasets: [{
                         data: [qualifiedStudents, notQualified],
                         backgroundColor: [
-                            'rgba(40, 167, 69, 0.8)',
-                            'rgba(220, 53, 69, 0.8)'
+                            'rgba(12, 68, 124, 0.85)',
+                            'rgba(160, 170, 184, 0.75)'
                         ]
                     }]
                 },
@@ -12508,14 +12486,14 @@
                     datasets: [{
                         data: [totalPBIS, totalAttendance, totalAcademic],
                         backgroundColor: [
-                            'rgba(102, 126, 234, 0.8)',
-                            'rgba(16, 185, 129, 0.8)',
-                            'rgba(59, 130, 246, 0.8)'
+                            'rgba(47, 103, 167, 0.85)',
+                            'rgba(12, 68, 124, 0.85)',
+                            'rgba(201, 196, 78, 0.9)'
                         ],
                         borderColor: [
-                            'rgba(102, 126, 234, 1)',
-                            'rgba(16, 185, 129, 1)',
-                            'rgba(59, 130, 246, 1)'
+                            'rgba(47, 103, 167, 1)',
+                            'rgba(12, 68, 124, 1)',
+                            'rgba(201, 196, 78, 1)'
                         ],
                         borderWidth: 2
                     }]
@@ -12588,22 +12566,22 @@
                         {
                             label: 'PBIS',
                             data: grades.map(g => gradeData[g].pbis),
-                            backgroundColor: 'rgba(102, 126, 234, 0.8)',
-                            borderColor: 'rgba(102, 126, 234, 1)',
+                            backgroundColor: 'rgba(47, 103, 167, 0.85)',
+                            borderColor: 'rgba(47, 103, 167, 1)',
                             borderWidth: 2
                         },
                         {
                             label: 'Attendance',
                             data: grades.map(g => gradeData[g].attendance),
-                            backgroundColor: 'rgba(16, 185, 129, 0.8)',
-                            borderColor: 'rgba(16, 185, 129, 1)',
+                            backgroundColor: 'rgba(12, 68, 124, 0.85)',
+                            borderColor: 'rgba(12, 68, 124, 1)',
                             borderWidth: 2
                         },
                         {
                             label: 'Academic',
                             data: grades.map(g => gradeData[g].academic),
-                            backgroundColor: 'rgba(59, 130, 246, 0.8)',
-                            borderColor: 'rgba(59, 130, 246, 1)',
+                            backgroundColor: 'rgba(201, 196, 78, 0.9)',
+                            borderColor: 'rgba(201, 196, 78, 1)',
                             borderWidth: 2
                         }
                     ]
@@ -12717,7 +12695,7 @@
                     const date = new Date(entry.timestamp).toLocaleDateString();
                     const time = new Date(entry.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
                     let icon = '🎫', bgColor = '#f3f4f6';
-                    if (entry.category === 'pbis') { icon = '🎯'; bgColor = 'rgba(102, 126, 234, 0.1)'; }
+                    if (entry.category === 'pbis') { icon = '🎯'; bgColor = 'rgba(47, 103, 167, 0.12)'; }
                     else if (entry.category === 'attendance') { icon = '📅'; bgColor = 'rgba(16, 185, 129, 0.1)'; }
                     else if (entry.category === 'academics') { icon = '📚'; bgColor = 'rgba(59, 130, 246, 0.1)'; }
                     
@@ -13465,7 +13443,7 @@
             const qualified = students.filter(s => isQualifiedForJackpot(s));
             
             if (qualified.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 20px; color: #999;">No students qualified yet</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="5" class="rank-empty">No students qualified yet</td></tr>';
                 return;
             }
             
@@ -13510,11 +13488,11 @@
                 
                 let entriesDisplay = `${weeksQualified} ${weeksQualified === 1 ? 'entry' : 'entries'}`;
                 if (hasBonus) {
-                    entriesDisplay += ` <span style="background: #fbbf24; color: #78350f; padding: 2px 6px; border-radius: 8px; font-size: 11px; font-weight: 600;">🏆 +${bonusEntries} BONUS</span>`;
+                    entriesDisplay += ` <span class="bonus-chip">🏆 +${bonusEntries} BONUS</span>`;
                 }
                 
                 return `
-                    <tr style="${hasBonus ? 'background: #fffbeb;' : ''}">
+                    <tr class="wc-row${hasBonus ? ' row-bonus' : ''}">
                         <td>${s.id}</td>
                         <td>${s.firstName} ${s.lastName}</td>
                         <td style="text-align: center;">${grade}</td>
@@ -14156,22 +14134,18 @@
             let html = '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-top: 20px;">';
 
             winners.forEach(({ winner, school, label }) => {
-                const bgColor = school === 'Middle School'
-                    ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
-                    : 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
-
+                // Winner reveal is projected to students — it stays celebratory,
+                // but on school colours: deep blue card, gold accents, MS/HS as a badge.
                 html += `
-                    <div style="background: ${bgColor}; color: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center;">
-                        <div style="background: rgba(255,255,255,0.2); padding: 6px 12px; border-radius: 15px; display: inline-block; margin-bottom: 10px; font-size: 12px;">
-                            🏫 ${school}
+                    <div class="winner-card">
+                        <span class="winner-school">🏫 ${school}</span>
+                        <h3 class="winner-label">${label}</h3>
+                        <div class="winner-name-box">
+                            <div class="winner-name">${winner.firstName} ${winner.lastName}</div>
+                            <div class="winner-meta">Grade ${winner.grade} • ID: ${winner.id}</div>
                         </div>
-                        <h3 style="color: white; margin: 10px 0; font-size: 20px;">${label}</h3>
-                        <div style="background: white; color: #333; padding: 15px; border-radius: 8px; margin: 10px 0;">
-                            <div style="font-size: 22px; font-weight: 700;">${winner.firstName} ${winner.lastName}</div>
-                            <div style="font-size: 12px; color: #666; margin-top: 5px;">Grade ${winner.grade} • ID: ${winner.id}</div>
-                        </div>
-                        <div style="font-size: 14px; opacity: 0.9;">Category: ${categoryName}</div>
-                        <div style="font-size: 12px; opacity: 0.8; margin-top: 5px;">${new Date().toLocaleDateString()}</div>
+                        <div class="winner-cat">Category: ${categoryName}</div>
+                        <div class="winner-date">${new Date().toLocaleDateString()}</div>
                     </div>
                 `;
             });
@@ -14422,7 +14396,7 @@
             const thisWeekWinners = weeklyWinners.filter(w => w.week === currentWeek);
             
             if (thisWeekWinners.length === 0) {
-                list.innerHTML = '<p style="color: #999;">No winners drawn yet</p>';
+                list.innerHTML = '<p class="cell-empty">No winners drawn yet</p>';
                 return;
             }
 
@@ -14432,17 +14406,20 @@
                 // PBIS shows grade badge
                 if (w.grade) {
                     const isMS = w.grade >= 6 && w.grade <= 8;
-                    badge = `<span style="background: ${isMS ? '#f59e0b' : '#10b981'}; color: white; padding: 3px 8px; border-radius: 10px; font-size: 11px; margin-left: 5px;">Grade ${w.grade}</span>`;
+                    badge = `<span class="win-badge">Grade ${w.grade}</span>`;
                 }
                 // Attendance/Academics show school badge
                 else if (w.school) {
-                    badge = `<span style="background: ${w.school === 'Middle School' ? '#f59e0b' : '#10b981'}; color: white; padding: 3px 8px; border-radius: 10px; font-size: 11px; margin-left: 5px;">${w.school}</span>`;
+                    badge = `<span class="win-badge">${w.school}</span>`;
                 }
                 
                 return `
-                    <div style="padding: 10px; background: #f7f7f7; border-radius: 6px; margin-bottom: 10px;">
-                        <strong>${w.category}:</strong> ${w.student.firstName} ${w.student.lastName} (${w.student.id}) ${badge}
-                        <span style="float: right; color: #666;">${w.date}</span>
+                    <div class="win-row">
+                        <span class="win-cat">${w.category}</span>
+                        <span class="win-student">${w.student.firstName} ${w.student.lastName}</span>
+                        <span class="win-id">(${w.student.id})</span>
+                        ${badge}
+                        <span class="win-date">${w.date}</span>
                     </div>
                 `;
             }).join('');
@@ -14522,19 +14499,17 @@
                 addToAuditLog('Wildcat Jackpot Winner', msWinner.id, 'Grand Prize - Middle School', null, `Drawn from ${msWinnerEntries} entr${msWinnerEntries === 1 ? 'y' : 'ies'}`);
 
                 winnersHtml += `
-                    <div class="winner-box" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; padding: 30px; border-radius: 16px; box-shadow: 0 8px 30px rgba(245, 158, 11, 0.4); text-align: center;">
-                        <div style="font-size: 48px; margin-bottom: 15px;">🎊</div>
-                        <div style="background: rgba(255,255,255,0.2); padding: 8px 16px; border-radius: 20px; display: inline-block; margin-bottom: 15px;">
-                            <span style="font-weight: 600;">🏫 Middle School</span>
-                        </div>
-                        <h2 style="color: white; font-size: 28px; margin: 0 0 10px 0;">🏆 WILDCAT JACKPOT WINNER!</h2>
-                        <div style="background: white; color: #f59e0b; padding: 15px; border-radius: 12px; margin: 15px 0; font-size: 24px; font-weight: 700;">
+                    <div class="winner-box jackpot-card">
+                        <div class="jackpot-burst">🎊</div>
+                        <span class="winner-school">🏫 Middle School</span>
+                        <h2 class="jackpot-title">🏆 WILDCAT JACKPOT WINNER!</h2>
+                        <div class="winner-name-box jackpot-name-box">
                             ${msWinner.firstName} ${msWinner.lastName}
                         </div>
-                        <p style="color: white; font-size: 14px; margin: 5px 0;">ID: ${msWinner.id}</p>
-                        <p style="color: white; font-size: 14px; margin: 5px 0;">Grade: ${msWinner.grade}</p>
-                        <p style="color: white; font-size: 14px; margin: 10px 0;">${msWinnerEntries} entr${msWinnerEntries === 1 ? 'y' : 'ies'} in drawing</p>
-                        <p style="color: rgba(255,255,255,0.9); margin-top: 15px; font-size: 12px;">${new Date().toLocaleDateString()}</p>
+                        <p class="jackpot-meta">ID: ${msWinner.id}</p>
+                        <p class="jackpot-meta">Grade: ${msWinner.grade}</p>
+                        <p class="jackpot-entries">${msWinnerEntries} entr${msWinnerEntries === 1 ? 'y' : 'ies'} in drawing</p>
+                        <p class="winner-date">${new Date().toLocaleDateString()}</p>
                     </div>
                 `;
             }
@@ -14568,19 +14543,17 @@
                 addToAuditLog('Wildcat Jackpot Winner', hsWinner.id, 'Grand Prize - High School', null, `Drawn from ${hsWinnerEntries} entr${hsWinnerEntries === 1 ? 'y' : 'ies'}`);
 
                 winnersHtml += `
-                    <div class="winner-box" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 30px; border-radius: 16px; box-shadow: 0 8px 30px rgba(16, 185, 129, 0.4); text-align: center;">
-                        <div style="font-size: 48px; margin-bottom: 15px;">🎊</div>
-                        <div style="background: rgba(255,255,255,0.2); padding: 8px 16px; border-radius: 20px; display: inline-block; margin-bottom: 15px;">
-                            <span style="font-weight: 600;">🏫 High School</span>
-                        </div>
-                        <h2 style="color: white; font-size: 28px; margin: 0 0 10px 0;">🏆 WILDCAT JACKPOT WINNER!</h2>
-                        <div style="background: white; color: #10b981; padding: 15px; border-radius: 12px; margin: 15px 0; font-size: 24px; font-weight: 700;">
+                    <div class="winner-box jackpot-card">
+                        <div class="jackpot-burst">🎊</div>
+                        <span class="winner-school">🏫 High School</span>
+                        <h2 class="jackpot-title">🏆 WILDCAT JACKPOT WINNER!</h2>
+                        <div class="winner-name-box jackpot-name-box">
                             ${hsWinner.firstName} ${hsWinner.lastName}
                         </div>
-                        <p style="color: white; font-size: 14px; margin: 5px 0;">ID: ${hsWinner.id}</p>
-                        <p style="color: white; font-size: 14px; margin: 5px 0;">Grade: ${hsWinner.grade}</p>
-                        <p style="color: white; font-size: 14px; margin: 10px 0;">${hsWinnerEntries} entr${hsWinnerEntries === 1 ? 'y' : 'ies'} in drawing</p>
-                        <p style="color: rgba(255,255,255,0.9); margin-top: 15px; font-size: 12px;">${new Date().toLocaleDateString()}</p>
+                        <p class="jackpot-meta">ID: ${hsWinner.id}</p>
+                        <p class="jackpot-meta">Grade: ${hsWinner.grade}</p>
+                        <p class="jackpot-entries">${hsWinnerEntries} entr${hsWinnerEntries === 1 ? 'y' : 'ies'} in drawing</p>
+                        <p class="winner-date">${new Date().toLocaleDateString()}</p>
                     </div>
                 `;
             }
@@ -16990,7 +16963,7 @@
                 const rows = document.querySelectorAll('#studentAccountsTableBody tr');
                 rows.forEach(row => {
                     if (row.dataset.studentId === studentId) {
-                        row.style.background = 'rgba(102, 126, 234, 0.1)';
+                        row.style.background = 'rgba(47, 103, 167, 0.12)';
                         row.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         setTimeout(() => {
                             row.style.background = '';
@@ -17644,8 +17617,8 @@
                         datasets: [{
                             label: 'Number of Referrals',
                             data: Object.values(behaviorCounts),
-                            backgroundColor: 'rgba(102, 126, 234, 0.7)',
-                            borderColor: 'rgba(102, 126, 234, 1)',
+                            backgroundColor: 'rgba(47, 103, 167, 0.85)',
+                            borderColor: 'rgba(47, 103, 167, 1)',
                             borderWidth: 2
                         }]
                     },
