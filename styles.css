@@ -2345,7 +2345,9 @@ body {
     gap: 14px;
     margin-bottom: 18px;
 }
-.stat-card { padding: 16px 18px; }
+/* .wc-stat — NOT .stat-card: that class is a legacy gradient tile used by
+   the .stats grids elsewhere, and reusing it would restyle those screens. */
+.wc-stat { padding: 16px 18px; }
 .stat-label { color: var(--wc-gray-text); font-size: 12.5px; font-weight: 700; }
 .stat-num { color: var(--wc-blue); font-size: 34px; font-weight: 700; line-height: 1.1; margin-top: 4px; }
 .stat-foot { color: #8a94a3; font-size: 12px; margin-top: 5px; }
@@ -2468,4 +2470,314 @@ body {
     font-size: 12.5px;
     padding: 2px 9px;
     border-radius: 999px;
+}
+
+
+/* ============================================================
+   PHASE 3c — Raffle screens
+   Operator UI is calm; the winner reveal is projected to
+   students during assemblies, so it stays celebratory —
+   on school colours (deep blue + gold) rather than random ones.
+   ============================================================ */
+
+/* --- Draw panel (operator controls) --- */
+.draw-panel { margin-bottom: 18px; }
+.draw-date { color: var(--wc-gray-text); font-size: 13.5px; margin-bottom: 12px; }
+.draw-date strong { color: var(--wc-ink); }
+.draw-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.draw-select { width: auto; min-width: 210px; }
+.btn-draw {
+    padding: 12px 26px !important;
+    font-size: 15px !important;
+    font-weight: 700;
+    background: var(--wc-blue) !important;
+    background-image: none !important;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(47, 103, 167, 0.35);
+}
+.btn-draw:hover { background: var(--wc-blue-dark) !important; }
+
+/* --- Info card --- */
+.info-card { margin-bottom: 16px; border-left: 3px solid var(--wc-blue); }
+.info-card p { color: var(--wc-gray-text); font-size: 13.5px; line-height: 1.55; margin: 0 0 8px; }
+.info-card p:last-child { margin-bottom: 0; }
+.info-card strong { color: var(--wc-ink); }
+
+/* --- Section blocks --- */
+.section-block { margin-top: 26px; }
+.section-title { color: var(--wc-ink); font-size: 16px; font-weight: 700; margin: 0 0 12px; }
+
+/* --- Sortable table headers --- */
+.wc-table th.th-sort { cursor: pointer; user-select: none; }
+.wc-table th.th-sort:hover { background: var(--wc-blue-dark); }
+.row-bonus { background: #fffdf5 !important; }
+.bonus-chip {
+    background: var(--wc-yellow);
+    color: #4a4408;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+/* --- Previous winners list --- */
+.winners-list { display: grid; gap: 8px; }
+.win-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    background: #ffffff;
+    border: 1px solid var(--wc-border);
+    border-radius: 10px;
+    padding: 11px 14px;
+    font-size: 14px;
+}
+.win-cat { font-weight: 700; color: var(--wc-blue-deep); }
+.win-student { font-weight: 700; color: var(--wc-ink); }
+.win-id { color: #8a94a3; font-size: 13px; }
+.win-badge {
+    background: var(--wc-blue-mist);
+    color: var(--wc-blue-deep);
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 700;
+}
+.win-date { margin-left: auto; color: #8a94a3; font-size: 12.5px; }
+
+/* --- WINNER REVEAL (celebratory — projected to students) --- */
+.winner-card, .jackpot-card {
+    background: linear-gradient(150deg, #2F67A7 0%, #0C447C 100%);
+    color: #fff;
+    border-radius: 16px;
+    text-align: center;
+    box-shadow: 0 10px 30px rgba(12, 68, 124, 0.35);
+    border: 2px solid rgba(230, 226, 128, 0.5);
+}
+.winner-card { padding: 24px; }
+.jackpot-card { padding: 30px; }
+.winner-school {
+    display: inline-block;
+    background: rgba(255, 255, 255, 0.18);
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 10px;
+}
+.winner-label { color: #fff; font-size: 19px; margin: 8px 0; font-weight: 700; }
+.winner-name-box {
+    background: #fff;
+    border-radius: 10px;
+    padding: 15px;
+    margin: 12px 0;
+}
+.winner-name { font-size: 22px; font-weight: 700; color: var(--wc-blue-deep); }
+.winner-meta { font-size: 12px; color: var(--wc-gray-text); margin-top: 5px; }
+.winner-cat { font-size: 14px; opacity: 0.92; }
+.winner-date { font-size: 12px; opacity: 0.8; margin-top: 6px; color: #fff; }
+
+.jackpot-burst { font-size: 46px; margin-bottom: 12px; }
+.jackpot-title {
+    color: var(--wc-yellow);
+    font-size: 26px;
+    margin: 6px 0 10px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+}
+.jackpot-name-box { font-size: 24px; font-weight: 700; color: var(--wc-blue-deep); }
+.jackpot-meta { color: #fff; font-size: 14px; margin: 4px 0; opacity: 0.92; }
+.jackpot-entries {
+    display: inline-block;
+    background: var(--wc-yellow);
+    color: #4a4408;
+    font-weight: 700;
+    font-size: 13.5px;
+    padding: 5px 14px;
+    border-radius: 999px;
+    margin: 10px 0 4px;
+}
+
+
+/* ============================================================
+   PHASE 3d — Data & Analytics
+   ============================================================ */
+
+/* --- Time filter --- */
+.filter-card { margin-bottom: 14px; }
+.filter-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 14px;
+}
+.filter-title { color: var(--wc-ink); font-size: 15px; font-weight: 700; margin: 0; }
+.filter-sub { color: var(--wc-gray-text); font-size: 12.5px; margin: 3px 0 0; }
+.filter-btns { display: flex; gap: 7px; flex-wrap: wrap; }
+.time-filter-btn {
+    padding: 8px 15px;
+    background: #ffffff;
+    color: var(--wc-gray-text);
+    border: 1px solid #d7dde5;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 12.5px;
+    font-family: inherit;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.time-filter-btn:hover { border-color: var(--wc-blue); color: var(--wc-blue); }
+.time-filter-btn.active {
+    background: var(--wc-blue);
+    border-color: var(--wc-blue);
+    color: #ffffff;
+}
+.custom-range {
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--wc-border);
+}
+.custom-range .wc-input { width: auto; }
+.btn-apply { padding: 10px 20px !important; border-radius: 8px; }
+.filter-showing {
+    margin-top: 12px;
+    padding: 8px 12px;
+    background: var(--wc-blue-mist);
+    color: var(--wc-blue-deep);
+    border-radius: 8px;
+    font-size: 12.5px;
+    font-weight: 700;
+}
+
+/* --- Subtab bar --- */
+.subtab-bar {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 18px;
+    border-bottom: 1px solid var(--wc-border);
+    padding-bottom: 10px;
+    overflow-x: auto;
+}
+.subtab-button {
+    padding: 9px 18px;
+    background: #ffffff;
+    color: var(--wc-gray-text);
+    border: 1px solid #d7dde5;
+    border-radius: 9px;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 13px;
+    font-family: inherit;
+    white-space: nowrap;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.subtab-button:hover { border-color: var(--wc-blue); color: var(--wc-blue); }
+.subtab-button.active {
+    background: var(--wc-blue);
+    border-color: var(--wc-blue);
+    color: #ffffff;
+}
+
+/* --- Toolbar --- */
+.toolbar-card {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    padding: 14px 16px;
+}
+.toolbar-group { display: flex; gap: 8px; flex-wrap: wrap; }
+.view-toggle {
+    padding: 9px 18px !important;
+    font-size: 13px !important;
+    background: #ffffff !important;
+    background-image: none !important;
+    color: var(--wc-gray-text) !important;
+    border: 1px solid #d7dde5 !important;
+    border-radius: 8px;
+    box-shadow: none;
+}
+.view-toggle:hover { color: var(--wc-blue) !important; border-color: var(--wc-blue) !important; }
+.view-toggle.active {
+    background: var(--wc-blue) !important;
+    border-color: var(--wc-blue) !important;
+    color: #ffffff !important;
+}
+.btn-export {
+    padding: 9px 18px !important;
+    font-size: 13px !important;
+    background: var(--wc-blue) !important;
+    background-image: none !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 8px;
+}
+.btn-export:hover { background: var(--wc-blue-dark) !important; }
+
+/* --- Category breakdown cards --- */
+.cat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 14px;
+    margin-bottom: 18px;
+}
+.cat-card { border-left: 3px solid var(--wc-blue); padding: 15px 17px; }
+.cat-label { font-size: 12.5px; color: var(--wc-gray-text); font-weight: 700; margin-bottom: 6px; }
+.cat-num { font-size: 28px; font-weight: 700; color: var(--wc-blue); line-height: 1.1; }
+.cat-foot { font-size: 12px; color: #8a94a3; margin-top: 4px; }
+
+/* --- Chart & panel cards --- */
+.chart-card { margin-bottom: 16px; padding: 20px 22px; }
+.chart-title { color: var(--wc-ink); font-size: 16px; font-weight: 700; margin: 0 0 14px; }
+.top10-card { margin-bottom: 16px; padding: 20px 22px; }
+
+/* --- Banners --- */
+.banner-card {
+    margin-bottom: 20px;
+    border-left: 3px solid var(--wc-blue);
+    padding: 18px 20px;
+}
+.banner-title { color: var(--wc-ink); font-size: 19px; font-weight: 700; margin: 0 0 6px; }
+.banner-sub { color: var(--wc-gray-text); font-size: 13.5px; line-height: 1.5; margin: 0; }
+
+/* --- Insight panels --- */
+.insight-card { margin-bottom: 16px; border-left: 3px solid var(--wc-blue); padding: 20px 22px; }
+.panel-title { color: var(--wc-ink); font-size: 16px; font-weight: 700; margin: 0 0 5px; }
+.panel-note { color: var(--wc-gray-text); font-size: 12.5px; line-height: 1.5; margin: 0; }
+.panel-metric { font-size: 26px; font-weight: 700; color: var(--wc-blue); }
+
+/* --- Mini tiles --- */
+.mini-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+}
+.mini-tile {
+    background: #f7f9fc;
+    border: 1px solid var(--wc-border);
+    border-radius: 9px;
+    padding: 13px;
+    text-align: center;
+}
+.mini-label { font-size: 11.5px; color: var(--wc-gray-text); font-weight: 700; margin-bottom: 4px; }
+.mini-num { font-size: 23px; font-weight: 700; color: var(--wc-blue); }
+
+/* --- Count chip --- */
+.count-chip {
+    background: var(--wc-blue-mist);
+    color: var(--wc-blue-deep);
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    font-weight: 700;
 }
