@@ -877,15 +877,15 @@
         function showTeacherLogin() {
             document.getElementById('teacherLoginForm').classList.remove('hidden');
             document.getElementById('studentLoginForm').classList.add('hidden');
-            document.getElementById('teacherLoginBtn').style.cssText = 'flex:1;padding:10px;border:none;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.2s;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;box-shadow:0 2px 8px rgba(102,126,234,0.3);';
-            document.getElementById('studentLoginBtn').style.cssText = 'flex:1;padding:10px;border:none;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.2s;background:transparent;color:#888;';
+            document.getElementById('teacherLoginBtn').style.cssText = 'flex:1;padding:10px;border:none;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.2s;background:#2F67A7;color:white;box-shadow:0 2px 8px rgba(47,103,167,0.35);';
+            document.getElementById('studentLoginBtn').style.cssText = 'flex:1;padding:10px;border:none;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.2s;background:transparent;color:#7a8494;';
         }
 
         function showStudentLogin() {
             document.getElementById('studentLoginForm').classList.remove('hidden');
             document.getElementById('teacherLoginForm').classList.add('hidden');
-            document.getElementById('studentLoginBtn').style.cssText = 'flex:1;padding:10px;border:none;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.2s;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;box-shadow:0 2px 8px rgba(102,126,234,0.3);';
-            document.getElementById('teacherLoginBtn').style.cssText = 'flex:1;padding:10px;border:none;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.2s;background:transparent;color:#888;';
+            document.getElementById('studentLoginBtn').style.cssText = 'flex:1;padding:10px;border:none;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.2s;background:#2F67A7;color:white;box-shadow:0 2px 8px rgba(47,103,167,0.35);';
+            document.getElementById('teacherLoginBtn').style.cssText = 'flex:1;padding:10px;border:none;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.2s;background:transparent;color:#7a8494;';
         }
 
 
@@ -5825,10 +5825,12 @@
             if (myLogs.length === 0) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="5" style="text-align: center; padding: 60px 20px; color: #999; font-size: 15px; border: none;">
-                            <div style="font-size: 48px; margin-bottom: 10px;">📝</div>
-                            <div style="font-weight: 500; color: #666; margin-bottom: 5px;">No tickets awarded yet</div>
-                            <div style="font-size: 13px; color: #999;">Start awarding tickets to see your activity here!</div>
+                        <td colspan="5">
+                            <div class="empty-state">
+                                <div class="empty-icon">📝</div>
+                                <div class="empty-title">No tickets awarded yet</div>
+                                <div class="empty-sub">Start awarding tickets to see your activity here.</div>
+                            </div>
                         </td>
                     </tr>
                 `;
@@ -5840,42 +5842,26 @@
                 const formattedDate = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                 const formattedTime = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
                 
-                // Alternate row colors
-                const rowBg = index % 2 === 0 ? '#ffffff' : '#f9fafb';
-                
-                // Category colors and icons
-                const categoryStyles = {
-                    'PBIS Behaviors': { color: '#667eea', icon: '🎯', bg: '#e0e7ff' },
-                    'Perfect Attendance': { color: '#10b981', icon: '📅', bg: '#d1fae5' },
-                    'Academics': { color: '#f59e0b', icon: '📚', bg: '#fef3c7' }
+                // Category icon only — colour comes from the shared calm chip style.
+                const categoryIcons = {
+                    'PBIS Behaviors': '🎯',
+                    'Perfect Attendance': '📅',
+                    'Academics': '📚'
                 };
-                
-                const categoryStyle = categoryStyles[log.category] || { color: '#6b7280', icon: '📂', bg: '#f3f4f6' };
-                
+                const catIcon = categoryIcons[log.category] || '📂';
+
                 return `
-                    <tr style="background: ${rowBg}; transition: all 0.2s; border-bottom: 1px solid #f0f0f0;" 
-                        onmouseover="this.style.background='#f0f4ff'; this.style.transform='scale(1.005)'" 
-                        onmouseout="this.style.background='${rowBg}'; this.style.transform='scale(1)'">
-                        <td style="padding: 16px 20px; border: none;">
-                            <div style="font-weight: 600; color: #333; font-size: 14px;">${formattedDate}</div>
-                            <div style="font-size: 12px; color: #999; margin-top: 2px;">${formattedTime}</div>
+                    <tr class="wc-row">
+                        <td>
+                            <div class="cell-strong">${formattedDate}</div>
+                            <div class="cell-sub">${formattedTime}</div>
                         </td>
-                        <td style="padding: 16px 20px; border: none;">
-                            <div style="font-weight: 600; color: #667eea; font-size: 14px;">${log.studentName}</div>
-                        </td>
-                        <td style="padding: 16px 20px; border: none;">
-                            <span style="background: ${categoryStyle.bg}; color: ${categoryStyle.color}; padding: 6px 12px; border-radius: 20px; font-weight: 600; font-size: 13px; display: inline-block;">
-                                ${categoryStyle.icon} ${log.category}
-                            </span>
-                        </td>
-                        <td style="padding: 16px 20px; text-align: center; border: none;">
-                            <span style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 6px 14px; border-radius: 20px; font-weight: 700; font-size: 14px; display: inline-block; min-width: 45px;">
-                                ${log.ticketCount} 🎫
-                            </span>
-                        </td>
-                        <td style="padding: 16px 20px; border: none;">
-                            <div style="color: #666; font-size: 14px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${log.reason || 'No reason provided'}">
-                                ${log.reason || '<span style="color: #ccc; font-style: italic;">No reason</span>'}
+                        <td><span class="student-name">${log.studentName}</span></td>
+                        <td><span class="cat-chip">${catIcon} ${log.category}</span></td>
+                        <td class="cell-center"><span class="count-pill count-pill-on">${log.ticketCount}</span></td>
+                        <td>
+                            <div class="cell-reason" title="${log.reason || 'No reason provided'}">
+                                ${log.reason || '<span class="cell-empty">No reason</span>'}
                             </div>
                         </td>
                     </tr>
@@ -6068,15 +6054,15 @@
             // Update MS Overall leaderboard
             const msOverallTable = document.getElementById('overallLeaderboardMS');
             if (msOverallTop.length === 0) {
-                msOverallTable.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #999;">No tickets awarded yet</td></tr>';
+                msOverallTable.innerHTML = '<tr><td colspan="3" class="rank-empty">No tickets awarded yet</td></tr>';
             } else {
                 msOverallTable.innerHTML = msOverallTop.map((s, i) => {
                     const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
                     return `
                         <tr>
-                            <td style="padding: 8px; font-size: 16px;">${medal}</td>
-                            <td style="padding: 8px; font-weight: 600;">${s.firstName} ${s.lastName}</td>
-                            <td style="padding: 8px; text-align: right; font-weight: bold; color: #ff9800; font-size: 16px;">${s.totalTickets} 🎫</td>
+                            <td class="rank-medal">${medal}</td>
+                            <td class="rank-name">${s.firstName} ${s.lastName}</td>
+                            <td class="rank-right"><span class="rank-total">${s.totalTickets}</span></td>
                         </tr>
                     `;
                 }).join('');
@@ -6098,26 +6084,26 @@
             // Update MS category leaders (simplified cards)
             const msPbisLeader = document.getElementById('pbisLeaderMS');
             if (msPbisTop.length === 0) {
-                msPbisLeader.innerHTML = '<span style="color: #999; font-style: italic;">No tickets yet</span>';
+                msPbisLeader.innerHTML = '<span class="cell-empty">No tickets yet</span>';
             } else {
                 const top = msPbisTop[0];
-                msPbisLeader.innerHTML = `<strong>${top.firstName} ${top.lastName}</strong> - ${top.pbisTickets} 🎫`;
+                msPbisLeader.innerHTML = `<span class="lead-student">${top.firstName} ${top.lastName}</span><span class="lead-count">${top.pbisTickets}</span>`;
             }
             
             const msAttendanceLeader = document.getElementById('attendanceLeaderMS');
             if (msAttendanceTop.length === 0) {
-                msAttendanceLeader.innerHTML = '<span style="color: #999; font-style: italic;">No tickets yet</span>';
+                msAttendanceLeader.innerHTML = '<span class="cell-empty">No tickets yet</span>';
             } else {
                 const top = msAttendanceTop[0];
-                msAttendanceLeader.innerHTML = `<strong>${top.firstName} ${top.lastName}</strong> - ${top.attendanceTickets} 🎫`;
+                msAttendanceLeader.innerHTML = `<span class="lead-student">${top.firstName} ${top.lastName}</span><span class="lead-count">${top.attendanceTickets}</span>`;
             }
             
             const msAcademicLeader = document.getElementById('academicLeaderMS');
             if (msAcademicTop.length === 0) {
-                msAcademicLeader.innerHTML = '<span style="color: #999; font-style: italic;">No tickets yet</span>';
+                msAcademicLeader.innerHTML = '<span class="cell-empty">No tickets yet</span>';
             } else {
                 const top = msAcademicTop[0];
-                msAcademicLeader.innerHTML = `<strong>${top.firstName} ${top.lastName}</strong> - ${top.academicTickets} 🎫`;
+                msAcademicLeader.innerHTML = `<span class="lead-student">${top.firstName} ${top.lastName}</span><span class="lead-count">${top.academicTickets}</span>`;
             }
 
             // HIGH SCHOOL LEADERBOARDS
@@ -6134,15 +6120,15 @@
             // Update HS Overall leaderboard
             const hsOverallTable = document.getElementById('overallLeaderboardHS');
             if (hsOverallTop.length === 0) {
-                hsOverallTable.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #999;">No tickets awarded yet</td></tr>';
+                hsOverallTable.innerHTML = '<tr><td colspan="3" class="rank-empty">No tickets awarded yet</td></tr>';
             } else {
                 hsOverallTable.innerHTML = hsOverallTop.map((s, i) => {
                     const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
                     return `
                         <tr>
-                            <td style="padding: 8px; font-size: 16px;">${medal}</td>
-                            <td style="padding: 8px; font-weight: 600;">${s.firstName} ${s.lastName}</td>
-                            <td style="padding: 8px; text-align: right; font-weight: bold; color: #3b82f6; font-size: 16px;">${s.totalTickets} 🎫</td>
+                            <td class="rank-medal">${medal}</td>
+                            <td class="rank-name">${s.firstName} ${s.lastName}</td>
+                            <td class="rank-right"><span class="rank-total">${s.totalTickets}</span></td>
                         </tr>
                     `;
                 }).join('');
@@ -6164,26 +6150,26 @@
             // Update HS category leaders (simplified cards)
             const hsPbisLeader = document.getElementById('pbisLeaderHS');
             if (hsPbisTop.length === 0) {
-                hsPbisLeader.innerHTML = '<span style="color: #999; font-style: italic;">No tickets yet</span>';
+                hsPbisLeader.innerHTML = '<span class="cell-empty">No tickets yet</span>';
             } else {
                 const top = hsPbisTop[0];
-                hsPbisLeader.innerHTML = `<strong>${top.firstName} ${top.lastName}</strong> - ${top.pbisTickets} 🎫`;
+                hsPbisLeader.innerHTML = `<span class="lead-student">${top.firstName} ${top.lastName}</span><span class="lead-count">${top.pbisTickets}</span>`;
             }
             
             const hsAttendanceLeader = document.getElementById('attendanceLeaderHS');
             if (hsAttendanceTop.length === 0) {
-                hsAttendanceLeader.innerHTML = '<span style="color: #999; font-style: italic;">No tickets yet</span>';
+                hsAttendanceLeader.innerHTML = '<span class="cell-empty">No tickets yet</span>';
             } else {
                 const top = hsAttendanceTop[0];
-                hsAttendanceLeader.innerHTML = `<strong>${top.firstName} ${top.lastName}</strong> - ${top.attendanceTickets} 🎫`;
+                hsAttendanceLeader.innerHTML = `<span class="lead-student">${top.firstName} ${top.lastName}</span><span class="lead-count">${top.attendanceTickets}</span>`;
             }
             
             const hsAcademicLeader = document.getElementById('academicLeaderHS');
             if (hsAcademicTop.length === 0) {
-                hsAcademicLeader.innerHTML = '<span style="color: #999; font-style: italic;">No tickets yet</span>';
+                hsAcademicLeader.innerHTML = '<span class="cell-empty">No tickets yet</span>';
             } else {
                 const top = hsAcademicTop[0];
-                hsAcademicLeader.innerHTML = `<strong>${top.firstName} ${top.lastName}</strong> - ${top.academicTickets} 🎫`;
+                hsAcademicLeader.innerHTML = `<span class="lead-student">${top.firstName} ${top.lastName}</span><span class="lead-count">${top.academicTickets}</span>`;
             }
         }
 
