@@ -3557,17 +3557,13 @@
             // Update button states
             document.querySelectorAll('.settings-subtab-button').forEach(btn => {
                 btn.classList.remove('active');
-                btn.style.background = '#f5f5f5';
-                btn.style.color = '#333';
-                btn.style.boxShadow = 'none';
+
             });
             
             const activeBtn = document.getElementById(`${subtab}SettingsSubtab`);
             if (activeBtn) {
                 activeBtn.classList.add('active');
-                activeBtn.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
-                activeBtn.style.color = 'white';
-                activeBtn.style.boxShadow = '0 2px 8px rgba(102, 126, 234, 0.3)';
+
             }
             
             // Hide all settings content sections
@@ -6521,15 +6517,13 @@
             // Update button states
             document.querySelectorAll('.subtab-button').forEach(btn => {
                 if (btn.id && btn.id.includes('Audit')) {
-                    btn.style.background = '#f5f5f5';
-                    btn.style.color = '#333';
+                    btn.classList.remove('active');
                 }
             });
             
             const activeBtn = document.getElementById(`${subtab}AuditSubtab`);
             if (activeBtn) {
-                activeBtn.style.background = '#667eea';
-                activeBtn.style.color = 'white';
+                activeBtn.classList.add('active');
             }
             
             currentAuditSubtab = subtab;
