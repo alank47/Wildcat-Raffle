@@ -2288,3 +2288,184 @@ body.sidebar-collapsed .app-sidebar .tab { padding-left: 8px; }
     font-weight: 700;
     animation: none;
 }
+
+
+/* ============================================================
+   LOGIN & ENTRY SCREENS — ink backdrop matching the top bar
+   Applies to loginScreen, createAdminScreen, changePasswordModal,
+   and studentDashboard (all share .login-container).
+   ============================================================ */
+
+body {
+    background: var(--wc-ink);
+}
+
+.login-container {
+    margin: 56px auto;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+}
+
+.login-container h1 {
+    color: var(--wc-ink);
+}
+
+/* Primary buttons on entry screens: solid blue (overrides legacy gradient) */
+.login-container .btn {
+    background: var(--wc-blue);
+    background-image: none;
+    color: #fff;
+    border: none;
+}
+.login-container .btn:hover { background: var(--wc-blue-dark); }
+
+/* Inputs: calm border + blue focus ring */
+.login-container .form-group input {
+    border-color: #d7dde5;
+}
+.login-container .form-group input:focus {
+    border-color: var(--wc-blue);
+    box-shadow: 0 0 0 3px rgba(47, 103, 167, 0.15);
+    outline: none;
+}
+
+@media (max-width: 520px) {
+    .login-container { margin: 18px auto; padding: 30px 24px; }
+}
+
+
+/* ============================================================
+   PHASE 3b — My Activity + Leaderboard (shared components)
+   ============================================================ */
+
+/* --- Stat cards (reusable on any screen) --- */
+.stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 14px;
+    margin-bottom: 18px;
+}
+.stat-card { padding: 16px 18px; }
+.stat-label { color: var(--wc-gray-text); font-size: 12.5px; font-weight: 700; }
+.stat-num { color: var(--wc-blue); font-size: 34px; font-weight: 700; line-height: 1.1; margin-top: 4px; }
+.stat-foot { color: #8a94a3; font-size: 12px; margin-top: 5px; }
+
+/* --- Extra table cell styles --- */
+.cell-strong { font-weight: 700; color: var(--wc-ink); font-size: 14px; }
+.cell-sub { font-size: 12px; color: #8a94a3; margin-top: 2px; }
+.student-name { color: var(--wc-blue); font-weight: 700; font-size: 14px; }
+.cell-reason {
+    color: var(--wc-gray-text);
+    font-size: 14px;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.cell-empty { color: #b6bdc7; font-style: italic; }
+.cat-chip {
+    display: inline-block;
+    background: var(--wc-blue-mist);
+    color: var(--wc-blue-deep);
+    padding: 5px 11px;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 12.5px;
+    white-space: nowrap;
+}
+
+/* --- Empty state (reusable) --- */
+.empty-state { text-align: center; padding: 52px 20px; }
+.empty-icon { font-size: 44px; margin-bottom: 8px; }
+.empty-title { font-weight: 700; color: var(--wc-gray-text); font-size: 15px; }
+.empty-sub { font-size: 13px; color: #8a94a3; margin-top: 4px; }
+
+/* --- Leaderboard --- */
+.board-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+@media (max-width: 900px) {
+    .board-grid { grid-template-columns: 1fr; }
+}
+.board-card { padding: 18px 20px; }
+.board-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--wc-border);
+    margin-bottom: 14px;
+}
+.board-title { color: var(--wc-ink); font-size: 17px; font-weight: 700; margin: 0; }
+.board-sub { color: var(--wc-gray-text); font-size: 12.5px; margin: 2px 0 0; }
+.board-badge {
+    background: var(--wc-blue);
+    color: #fff;
+    font-size: 11.5px;
+    font-weight: 700;
+    padding: 4px 11px;
+    border-radius: 999px;
+    letter-spacing: 0.04em;
+}
+.board-section {
+    color: var(--wc-gray-text);
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    margin: 0 0 8px;
+}
+
+/* Rank table */
+.rank-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+.rank-table th {
+    text-align: left;
+    padding: 7px 8px;
+    color: var(--wc-gray-text);
+    font-weight: 700;
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--wc-border);
+    background: transparent;
+}
+.rank-table td { padding: 8px; border-bottom: 1px solid #f2f5f8; font-size: 14px; }
+.rank-table tr:last-child td { border-bottom: none; }
+.rank-medal { font-size: 15px; width: 44px; color: var(--wc-gray-text); }
+.rank-name { font-weight: 700; color: var(--wc-ink); }
+.rank-right, .rank-table th.rank-right { text-align: right; }
+.rank-total {
+    display: inline-block;
+    min-width: 34px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: var(--wc-blue-mist);
+    color: var(--wc-blue-deep);
+    font-weight: 700;
+    font-size: 13.5px;
+}
+.rank-empty { text-align: center; padding: 20px; color: #8a94a3; font-size: 13.5px; }
+
+/* Category leader tiles */
+.lead-list { display: grid; gap: 8px; }
+.lead-item {
+    background: #f7f9fc;
+    border-left: 3px solid var(--wc-blue);
+    border-radius: 8px;
+    padding: 10px 13px;
+}
+.lead-cat { color: var(--wc-gray-text); font-size: 12px; font-weight: 700; margin-bottom: 3px; }
+.lead-name { color: var(--wc-ink); font-size: 14px; display: flex; align-items: baseline; gap: 8px; }
+.lead-student { font-weight: 700; }
+.lead-count {
+    margin-left: auto;
+    background: var(--wc-blue-mist);
+    color: var(--wc-blue-deep);
+    font-weight: 700;
+    font-size: 12.5px;
+    padding: 2px 9px;
+    border-radius: 999px;
+}
