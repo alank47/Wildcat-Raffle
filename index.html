@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Wildcat Rewards</title>
-    <link rel="stylesheet" href="styles.css?v=20260728i">
+    <link rel="stylesheet" href="styles.css?v=20260728j">
 </head>
 <body>
     <!-- Login Screen -->
@@ -396,6 +396,13 @@
         <div class="content">
             <!-- Students Tab -->
             <div id="students" class="tab-content">
+                <div class="page-header">
+                    <div>
+                        <h2 class="page-title">👥 Students</h2>
+                        <p class="page-subtitle">Import rosters and manage student records</p>
+                    </div>
+                    <span class="mode-pill"></span>
+                </div>
                 <div class="upload-section">
                     <h3>📁 Import Students from PowerSchool</h3>
                     <p>Upload a CSV or Excel file with student information</p>
@@ -437,7 +444,7 @@
                 <!-- Perfect Attendance Preview Modal -->
                 <div id="perfectAttendanceModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000; align-items: center; justify-content: center;">
                     <div style="background: white; border-radius: 12px; max-width: 800px; width: 90%; max-height: 85vh; overflow: hidden; display: flex; flex-direction: column;">
-                        <div style="padding: 20px 25px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; display: flex; justify-content: space-between; align-items: center;">
+                        <div style="padding: 20px 25px; background: #2E7D52; color: white; display: flex; justify-content: space-between; align-items: center;">
                             <h3 style="margin: 0; color: white;">📅 Perfect Attendance — Preview</h3>
                             <button onclick="closePerfectAttendanceModal()" style="background: rgba(255,255,255,0.2); border: none; color: white; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 14px;">✕ Close</button>
                         </div>
@@ -451,19 +458,19 @@
                     </div>
                 </div>
 
-                <div class="stats">
-                    <div class="stat-card">
-                        <h3 id="totalStudents">0</h3>
-                        <p>Total Students</p>
+                <div class="stat-grid">
+                    <div class="wc-card wc-stat">
+                        <div class="stat-label">Total Students</div>
+                        <div class="stat-num" id="totalStudents">0</div>
                     </div>
-                    <div class="stat-card">
-                        <h3 id="qualifiedStudents">0</h3>
-                        <p>Qualified for Wildcat Jackpot</p>
+                    <div class="wc-card wc-stat">
+                        <div class="stat-label">Qualified for Wildcat Jackpot</div>
+                        <div class="stat-num" id="qualifiedStudents">0</div>
                     </div>
                 </div>
 
                 <!-- Grade Filter and Search -->
-                <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 25px;">
+                <div class="wc-card panel-card">
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; align-items: end;">
                         <div>
                             <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #333; font-size: 16px;">📊 Filter by Grade:</label>
@@ -902,30 +909,35 @@
 
             <!-- Audit Log Tab -->
             <div id="audit" class="tab-content">
-                <h2>📋 Audit Log</h2>
-                <p style="margin: 15px 0; color: #666;">Track all ticket awards and raffle activities</p>
+                <div class="page-header">
+                    <div>
+                        <h2 class="page-title">📋 Audit Log</h2>
+                        <p class="page-subtitle">A complete record of every ticket awarded and action taken</p>
+                    </div>
+                    <span class="mode-pill"></span>
+                </div>
 
                 <!-- Subtab Navigation -->
                 <div style="display: flex; gap: 10px; margin-bottom: 25px; border-bottom: 2px solid #e5e7eb;">
-                    <button class="subtab-button" onclick="switchAuditSubtab('all')" id="allAuditSubtab" style="padding: 12px 24px; background: #667eea; color: white; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
+                    <button class="subtab-button" onclick="switchAuditSubtab('all')" id="allAuditSubtab">
                         🏫 All Students
                     </button>
-                    <button class="subtab-button" onclick="switchAuditSubtab('middleschool')" id="middleschoolAuditSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
+                    <button class="subtab-button" onclick="switchAuditSubtab('middleschool')" id="middleschoolAuditSubtab">
                         🎓 Middle School (6-8)
                     </button>
-                    <button class="subtab-button" onclick="switchAuditSubtab('highschool')" id="highschoolAuditSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
+                    <button class="subtab-button" onclick="switchAuditSubtab('highschool')" id="highschoolAuditSubtab">
                         🏫 High School (9-12)
                     </button>
                 </div>
 
                 <!-- Legend -->
-                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                <div style="background: #2F67A7; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
                     <h3 style="color: white; margin: 0 0 15px 0; font-size: 16px;">📖 Action Legend</h3>
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
                         <div style="background: rgba(255,255,255,0.95); padding: 10px; border-radius: 8px; display: flex; align-items: center; gap: 8px;">
                             <span style="font-size: 20px;">🎟️</span>
                             <div>
-                                <div style="font-weight: 600; font-size: 13px; color: #667eea;">Awarded Tickets</div>
+                                <div style="font-weight: 600; font-size: 13px; color: #2F67A7;">Awarded Tickets</div>
                                 <div style="font-size: 11px; color: #666;">Tickets given to students</div>
                             </div>
                         </div>
@@ -1719,11 +1731,16 @@
 
             <!-- Login Activity Tab (Super Admin Only) -->
             <div id="loginActivity" class="tab-content super-admin-only">
-                <h2>🔐 Login Activity</h2>
-                <p style="margin: 15px 0; color: #666;">Track user logins and system access</p>
+                <div class="page-header">
+                    <div>
+                        <h2 class="page-title">🔐 Login Activity</h2>
+                        <p class="page-subtitle">Recent sign-ins across all accounts</p>
+                    </div>
+                    <span class="mode-pill"></span>
+                </div>
                 
                 <!-- Filters -->
-                <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <div class="wc-card panel-card">
                     <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: center;">
                         <div>
                             <label style="display: block; margin-bottom: 5px; font-weight: 600; color: #333;">Search User:</label>
@@ -1754,7 +1771,7 @@
                         </div>
                         <div style="margin-left: auto;">
                             <button onclick="exportLoginActivity()" class="btn btn-primary" 
-                                    style="padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
+                                    style="padding: 10px 20px; background: #2F67A7; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
                                 📥 Export CSV
                             </button>
                         </div>
@@ -1763,23 +1780,23 @@
                 
                 <!-- Stats Cards -->
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
-                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 12px; color: white; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);">
+                    <div style="background: #2F67A7; padding: 20px; border-radius: 12px; color: white; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);">
                         <div style="font-size: 32px; font-weight: bold;" id="totalLoginsCount">0</div>
                         <div style="font-size: 14px; opacity: 0.9;">Total Logins</div>
                     </div>
-                    <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 20px; border-radius: 12px; color: white; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);">
+                    <div style="background: #2E7D52; padding: 20px; border-radius: 12px; color: white; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);">
                         <div style="font-size: 32px; font-weight: bold;" id="uniqueUsersCount">0</div>
                         <div style="font-size: 14px; opacity: 0.9;">Unique Users</div>
                     </div>
-                    <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); padding: 20px; border-radius: 12px; color: white; box-shadow: 0 4px 15px rgba(245, 158, 11, 0.3);">
+                    <div style="background: #B7791F; padding: 20px; border-radius: 12px; color: white; box-shadow: 0 4px 15px rgba(245, 158, 11, 0.3);">
                         <div style="font-size: 32px; font-weight: bold;" id="todayLoginsCount">0</div>
                         <div style="font-size: 14px; opacity: 0.9;">Logins Today</div>
                     </div>
                 </div>
                 
                 <!-- Login Activity Table -->
-                <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); overflow-x: auto;">
-                    <table style="width: 100%; border-collapse: collapse;">
+                <div class="wc-card panel-card">
+                    <table class="wc-table">
                         <thead>
                             <tr style="background: #f8f9fa; border-bottom: 2px solid #dee2e6;">
                                 <th style="padding: 12px; text-align: left; font-weight: 600; color: #495057;">Date & Time</th>
@@ -1802,27 +1819,32 @@
 
             <!-- Settings Tab -->
             <div id="settings" class="tab-content">
-                <h2>⚙️ Settings</h2>
-                <p style="margin: 15px 0 20px 0; color: #666;">Configure system settings and customize your school's experience</p>
+                <div class="page-header">
+                    <div>
+                        <h2 class="page-title">⚙️ Settings</h2>
+                        <p class="page-subtitle">Configure cycles, integrations, branding, and corrections</p>
+                    </div>
+                    <span class="mode-pill"></span>
+                </div>
 
                 <!-- Settings Sub-Tabs -->
-                <div style="display: flex; gap: 10px; margin-bottom: 30px; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px; overflow-x: auto;">
-                    <button class="settings-subtab-button active" onclick="switchSettingsSubtab('raffle')" id="raffleSettingsSubtab" style="padding: 12px 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s; box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);">
+                <div class="subtab-bar">
+                    <button class="settings-subtab-button active" onclick="switchSettingsSubtab('raffle')" id="raffleSettingsSubtab">
                         🎫 Raffle Categories
                     </button>
-                    <button class="settings-subtab-button" onclick="switchSettingsSubtab('integrations')" id="integrationsSettingsSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
+                    <button class="settings-subtab-button" onclick="switchSettingsSubtab('integrations')" id="integrationsSettingsSubtab">
                         📧 Integrations
                     </button>
-                    <button class="settings-subtab-button superadmin-only" onclick="switchSettingsSubtab('backup')" id="backupSettingsSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
+                    <button class="settings-subtab-button superadmin-only" onclick="switchSettingsSubtab('backup')" id="backupSettingsSubtab">
                         💾 Backup & Security
                     </button>
-                    <button class="settings-subtab-button superadmin-only" onclick="switchSettingsSubtab('branding')" id="brandingSettingsSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
+                    <button class="settings-subtab-button superadmin-only" onclick="switchSettingsSubtab('branding')" id="brandingSettingsSubtab">
                         🎨 Branding
                     </button>
-                    <button class="settings-subtab-button" onclick="switchSettingsSubtab('cash')" id="cashSettingsSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s; display: none;">
+                    <button class="settings-subtab-button" onclick="switchSettingsSubtab('cash')" id="cashSettingsSubtab">
                         💰 Cash Mode
                     </button>
-                    <button class="settings-subtab-button" onclick="switchSettingsSubtab('corrections'); initCorrectionsPanel();" id="correctionsSettingsSubtab" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap; transition: all 0.3s;">
+                    <button class="settings-subtab-button" onclick="switchSettingsSubtab('corrections'); initCorrectionsPanel();" id="correctionsSettingsSubtab">
                         🔧 Corrections
                     </button>
                 </div>
@@ -1867,7 +1889,7 @@
                             Configure weekly email reports to remind teachers to award Kickboard points
                         </p>
                         
-                        <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 15px;">
+                        <div class="wc-card panel-card">
                             <h4 style="margin-bottom: 15px;">Kickboard Point Conversion</h4>
                             <p style="color: #666; font-size: 13px; margin-bottom: 15px;">How many Kickboard points equals 1 raffle ticket?</p>
                             
@@ -1902,7 +1924,7 @@
                             Configure EmailJS to send automated email reports
                         </p>
                         
-                        <div style="background: white; padding: 20px; border-radius: 8px;">
+                        <div class="wc-card panel-card">
                             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-bottom: 15px;">
                                 <div>
                                     <label style="display: block; margin-bottom: 5px; font-weight: 500;">Service ID</label>
@@ -1933,7 +1955,7 @@
 
                 <!-- BACKUP & SECURITY SUBTAB -->
                 <div id="backupSettingsContent" class="settings-subtab-content superadmin-only" style="display: none;">
-                    <div style="margin: 0; padding: 25px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); border-radius: 12px; color: white;">
+                    <div style="margin: 0; padding: 25px; background: #B3392F; border-radius: 12px; color: white;">
                         <h3 style="color: white; margin-bottom: 15px; font-size: 24px;">💾 Backup & Security</h3>
                         <p style="color: rgba(255,255,255,0.9); font-size: 14px; margin-bottom: 0;">
                             Protect your data with regular backups. Export manual backups or restore from a backup file.
@@ -1949,7 +1971,7 @@
                     </div>
                     
                     <!-- Manual Backup -->
-                    <div style="background: white; border: 2px solid #e5e7eb; border-radius: 12px; padding: 25px; margin-bottom: 20px;">
+                    <div class="wc-card panel-card">
                         <h3 style="margin-top: 0; color: #333; display: flex; align-items: center; gap: 10px;">
                             📤 Export Backup
                         </h3>
@@ -1957,7 +1979,7 @@
                             Download a complete backup of all system data (teachers, students, tickets, settings, history). 
                             This creates a JSON file you can restore from later.
                         </p>
-                        <button onclick="exportBackup()" style="padding: 15px 30px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3); transition: all 0.3s;">
+                        <button onclick="exportBackup()" style="padding: 15px 30px; background: #2E7D52; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3); transition: all 0.3s;">
                             💾 Export Backup Now
                         </button>
                         <p style="margin-top: 15px; font-size: 13px; color: #999;">
@@ -1966,7 +1988,7 @@
                     </div>
                     
                     <!-- Restore Backup -->
-                    <div style="background: white; border: 2px solid #e5e7eb; border-radius: 12px; padding: 25px; margin-bottom: 20px;">
+                    <div class="wc-card panel-card">
                         <h3 style="margin-top: 0; color: #333; display: flex; align-items: center; gap: 10px;">
                             📥 Restore from Backup
                         </h3>
@@ -1974,13 +1996,13 @@
                             Upload a previously exported backup file to restore all data. 
                             <strong style="color: #ef4444;">Warning: This will replace ALL current data!</strong>
                         </p>
-                        <button onclick="restoreFromBackup()" style="padding: 15px 30px; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3); transition: all 0.3s;">
+                        <button onclick="restoreFromBackup()" style="padding: 15px 30px; background: #B7791F; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3); transition: all 0.3s;">
                             📥 Restore from File
                         </button>
                     </div>
                     
                     <!-- Automatic Backups Info -->
-                    <div style="background: white; border: 2px solid #e5e7eb; border-radius: 12px; padding: 25px;">
+                    <div class="wc-card panel-card">
                         <h3 style="margin-top: 0; color: #333; display: flex; align-items: center; gap: 10px;">
                             🤖 Automatic Backups
                         </h3>
@@ -2001,17 +2023,17 @@
 
                 <!-- BRANDING SUBTAB -->
                 <div id="brandingSettingsContent" class="settings-subtab-content superadmin-only" style="display: none;">
-                    <div style="margin: 0; padding: 25px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; color: white;">
+                    <div style="margin: 0; padding: 25px; background: #2F67A7; border-radius: 12px; color: white;">
                         <h3 style="color: white; margin-bottom: 15px; font-size: 24px;">🎨 School Branding</h3>
                         <p style="color: rgba(255,255,255,0.9); font-size: 14px; margin-bottom: 20px;">
                             Customize the system with your school's branding. Changes apply to all users immediately.
                         </p>
                         
-                        <div style="background: white; padding: 25px; border-radius: 8px; color: #333;">
+                        <div class="wc-card panel-card">
                             
                             <!-- School Identity -->
                             <div style="margin-bottom: 30px;">
-                                <h4 style="color: #667eea; margin-bottom: 15px; font-size: 18px;">🏫 School Identity</h4>
+                                <h4 style="color: #2F67A7; margin-bottom: 15px; font-size: 18px;">🏫 School Identity</h4>
                                 
                                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 20px;">
                                     <div>
@@ -2049,7 +2071,7 @@
                             
                             <!-- Color Scheme -->
                             <div style="margin-bottom: 30px; padding-top: 20px; border-top: 2px solid #e5e7eb;">
-                                <h4 style="color: #667eea; margin-bottom: 15px; font-size: 18px;">🎨 Color Scheme</h4>
+                                <h4 style="color: #2F67A7; margin-bottom: 15px; font-size: 18px;">🎨 Color Scheme</h4>
                                 
                                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px;">
                                     <div>
@@ -2089,7 +2111,7 @@
                             
                             <!-- Custom Terminology -->
                             <div style="margin-bottom: 30px; padding-top: 20px; border-top: 2px solid #e5e7eb;">
-                                <h4 style="color: #667eea; margin-bottom: 15px; font-size: 18px;">📝 Custom Terminology</h4>
+                                <h4 style="color: #2F67A7; margin-bottom: 15px; font-size: 18px;">📝 Custom Terminology</h4>
                                 <p style="color: #666; font-size: 13px; margin-bottom: 15px;">Customize system names to match your school. Leave blank to use defaults.</p>
                                 
                                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px;">
@@ -2124,7 +2146,7 @@
                                 </button>
                                 <div style="display: flex; gap: 15px;">
                                     <button onclick="previewBranding()" class="btn" 
-                                            style="padding: 12px 24px; background: white; color: #667eea; border: 2px solid #667eea;">
+                                            style="padding: 12px 24px; background: white; color: #2F67A7; border: 2px solid #667eea;">
                                         👁️ Preview Changes
                                     </button>
                                     <button onclick="saveBranding()" class="btn-gradient" 
@@ -2142,14 +2164,14 @@
                     <h3 style="margin-bottom: 20px;">💰 Wildcat Cash Settings</h3>
                     
                     <!-- Behavior Management -->
-                    <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px;">
+                    <div class="wc-card panel-card">
                         <h4 style="margin-bottom: 15px;">Behavior Management</h4>
                         <button class="btn" onclick="showAddBehaviorModal()" style="margin-bottom: 15px;">➕ Add New Behavior</button>
                         <div id="behaviorsList"></div>
                     </div>
                     
                     <!-- System Settings -->
-                    <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                    <div class="wc-card panel-card">
                         <h4 style="margin-bottom: 15px;">System Settings</h4>
                         <div class="form-group">
                             <label>Starting Balance for New Students</label>
@@ -2178,7 +2200,7 @@
 
                 <!-- CORRECTIONS SUBTAB -->
                 <div id="correctionsSettingsContent" class="settings-subtab-content" style="display: none;">
-                    <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; padding: 20px 25px; border-radius: 12px; margin-bottom: 25px;">
+                    <div style="background: #B7791F; color: white; padding: 20px 25px; border-radius: 12px; margin-bottom: 25px;">
                         <h3 style="color: white; margin: 0 0 6px 0; font-size: 20px;">🔧 Admin Corrections</h3>
                         <p style="color: rgba(255,255,255,0.95); margin: 0; font-size: 13px;">
                             Fix mistakes safely: re-tag a ticket's week/cycle, remove a wrongly-awarded ticket, or invalidate &amp; redraw a raffle winner.
@@ -2211,8 +2233,13 @@
 
             <!-- System Admin Tab -->
             <div id="system" class="tab-content">
-                <h2 style="color: #dc3545;">🔒 System Administration</h2>
-                <p style="margin: 15px 0; color: #666;">Super Admin only - Dangerous operations</p>
+                <div class="page-header">
+                    <div>
+                        <h2 class="page-title">🔒 System Administration</h2>
+                        <p class="page-subtitle">Destructive tools — superadmin only</p>
+                    </div>
+                    <span class="mode-pill"></span>
+                </div>
 
                 <div class="alert" style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin-bottom: 30px;">
                     <strong>⚠️ Warning:</strong> These operations cannot be undone. Use with extreme caution!
@@ -2220,14 +2247,14 @@
 
                 <!-- Role Management -->
                 <div style="margin: 30px 0; padding: 20px; background: #f7f7f7; border-radius: 8px;">
-                    <h3 style="color: #667eea; margin-bottom: 15px;">👑 Promote Admin to Super Admin</h3>
+                    <h3 style="color: #2F67A7; margin-bottom: 15px;">👑 Promote Admin to Super Admin</h3>
                     <p style="color: #666; font-size: 14px; margin-bottom: 15px;">Grant Super Admin privileges to an existing admin</p>
                     
                     <div style="display: flex; gap: 10px; align-items: center;">
                         <select id="promoteAdminSelect" style="flex: 1; padding: 12px; border: 2px solid #e0e0e0; border-radius: 6px;">
                             <option value="">Select an admin...</option>
                         </select>
-                        <button class="btn" style="background: #667eea;" onclick="promoteToSuperAdmin()">Promote to Super Admin</button>
+                        <button class="btn" style="background: #2F67A7;" onclick="promoteToSuperAdmin()">Promote to Super Admin</button>
                     </div>
                 </div>
 
@@ -2238,7 +2265,7 @@
                         <strong>DANGER ZONE:</strong> This will permanently delete all data and cannot be undone!
                     </p>
 
-                    <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                    <div class="wc-card panel-card">
                         <h4 style="margin-bottom: 15px;">What will be deleted?</h4>
                         <ul style="color: #666; line-height: 1.8;">
                             <li>❌ All student records and ticket data</li>
@@ -2251,7 +2278,7 @@
                         </ul>
                     </div>
 
-                    <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                    <div class="wc-card panel-card">
                         <h4 style="margin-bottom: 15px;">Type "DELETE ALL DATA" to confirm:</h4>
                         <input type="text" id="resetConfirmation" placeholder="Type here..." style="width: 100%; padding: 12px; border: 2px solid #dc3545; border-radius: 6px; font-family: monospace;">
                     </div>
@@ -2282,20 +2309,20 @@
                 </p>
 
                 <!-- Discipline Subtabs -->
-                <div style="display: flex; gap: 10px; margin-bottom: 30px; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px; flex-wrap: wrap;">
-                    <button class="subtab-button active" onclick="switchDisciplineTab('submit')" id="submitTabBtn" style="padding: 12px 24px; background: #f59e0b; color: white; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
+                <div class="subtab-bar">
+                    <button class="subtab-button active" onclick="switchDisciplineTab('submit')" id="submitTabBtn">
                         ✍️ Submit Referral
                     </button>
-                    <button class="subtab-button" onclick="switchDisciplineTab('review')" id="reviewTabBtn" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
+                    <button class="subtab-button" onclick="switchDisciplineTab('review')" id="reviewTabBtn">
                         👁️ Review Referrals
                     </button>
-                    <button class="subtab-button" onclick="switchDisciplineTab('detention')" id="detentionTabBtn" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
+                    <button class="subtab-button" onclick="switchDisciplineTab('detention')" id="detentionTabBtn">
                         ⏰ Detention Tracker
                     </button>
-                    <button class="subtab-button" onclick="switchDisciplineTab('history')" id="historyDisciplineTabBtn" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
+                    <button class="subtab-button" onclick="switchDisciplineTab('history')" id="historyDisciplineTabBtn">
                         📚 Student History
                     </button>
-                    <button class="subtab-button" onclick="switchDisciplineTab('analytics')" id="analyticsDisciplineTabBtn" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
+                    <button class="subtab-button" onclick="switchDisciplineTab('analytics')" id="analyticsDisciplineTabBtn">
                         📊 Analytics
                     </button>
                 </div>
@@ -2449,7 +2476,7 @@
                 <!-- Detention Tracker Subtab -->
                 <div id="behaviorDetention" class="discipline-subtab hidden">
                     <!-- School Level Tabs (MS/HS) -->
-                    <div style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px;">
+                    <div class="subtab-bar">
                         <button class="detention-level-btn active" onclick="switchDetentionLevel('ms')" id="detentionMSBtn" style="padding: 10px 20px; background: #C08A2E; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
                             🎓 Middle School (6-8)
                         </button>
@@ -2696,8 +2723,13 @@
 
             <!-- Teachers Management Tab -->
             <div id="teachers" class="tab-content">
-                <h2>👥 Teacher Management</h2>
-                <p style="margin: 15px 0; color: #666;">Add and manage teacher accounts</p>
+                <div class="page-header">
+                    <div>
+                        <h2 class="page-title">👨‍🏫 Teacher Management</h2>
+                        <p class="page-subtitle">Add teachers, assign sections, and manage access</p>
+                    </div>
+                    <span class="mode-pill"></span>
+                </div>
 
                 <div style="background: #f7f7f7; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
                     <h3 style="margin-bottom: 15px;">Add New Teacher</h3>
@@ -2751,7 +2783,7 @@
 
                 <h3>Current Teachers</h3>
                 <div style="overflow-x: auto; margin-top: 15px;">
-                    <table>
+                    <table class="wc-table">
                         <thead>
                             <tr>
                                 <th>Name</th>
@@ -4497,6 +4529,6 @@
     <!-- Chart.js for Data Visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-    <script src="script.js?v=20260728i"></script>
+    <script src="script.js?v=20260728j"></script>
 </body>
 </html>
