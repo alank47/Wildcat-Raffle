@@ -2781,3 +2781,37 @@ body {
     font-size: 12.5px;
     font-weight: 700;
 }
+
+
+/* ============================================================
+   PHASE 3e — Claw Pass, Discipline & Wildcat Cash interiors
+   Staff panes follow the calm recipe. Severity and pass status
+   keep their colour coding — that's information, not decoration.
+   ============================================================ */
+
+.panel-card { margin-bottom: 16px; padding: 20px 22px; }
+.panel-center { text-align: center; }
+
+/* Compact stat tile used by the mode dashboards */
+.stat-compact { padding: 14px 16px; }
+.stat-compact .stat-num { font-size: 26px; }
+
+/* Severity scale — Minor < Major < Severe.
+   Deliberately kept distinct: staff triage on these at a glance. */
+.wc-stat-minor  { border-left: 3px solid #C9A227; }
+.wc-stat-minor  .stat-num { color: #9A7B12; }
+.wc-stat-major  { border-left: 3px solid #C08A2E; }
+.wc-stat-major  .stat-num { color: #96631A; }
+.wc-stat-severe { border-left: 3px solid #B3392F; }
+.wc-stat-severe .stat-num { color: #B3392F; }
+
+/* Kiosk — student-facing, so it stays big and bold (school blue). */
+#kioskTab h1 { letter-spacing: -0.01em; }
+#kioskTab .wc-input,
+#kioskTab input[type="text"] { font-family: inherit; }
+
+/* Status text colours (returned / active / overdue) are set inline by JS
+   so they stay dynamic; these are the shared chips where markup is static. */
+.status-good { color: #2E7D52; font-weight: 700; }
+.status-warn { color: #B7791F; font-weight: 700; }
+.status-late { color: #B3392F; font-weight: 700; }
