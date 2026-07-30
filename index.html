@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Wildcat Rewards</title>
-    <link rel="stylesheet" href="styles.css?v=20260729a">
+    <link rel="stylesheet" href="styles.css?v=20260729b">
 </head>
 <body>
     <!-- Login Screen -->
@@ -2346,149 +2346,218 @@
 
                 <!-- Submit Referral Subtab -->
                 <div id="behaviorSubmit" class="discipline-subtab">
-                    <div class="wc-card panel-card">
-                        <h3 style="color: #10b981; margin-bottom: 20px;">✍️ Submit New Behavior Referral</h3>
-                        
-                        <!-- Student Selection -->
-                        <div class="form-group">
-                            <label style="font-weight: 600; color: #333; margin-bottom: 8px; display: block;">Student</label>
-                            <select id="referralStudentSelect" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;">
-                                <option value="">Select a student...</option>
+                    <div class="wc-card referral-form-card">
+                        <div class="referral-form-head">
+                            <span class="referral-form-icon">⚠️</span>
+                            <h3>Office Referral Form</h3>
+                        </div>
+
+                        <!-- STUDENT INFORMATION -->
+                        <div class="form-section">
+                            <div class="form-section-title">Student Information</div>
+                            <label class="field-label">Select Student <span class="req">*</span></label>
+                            <select id="referralStudentSelect" class="wc-select">
+                                <option value="">Search and select a student...</option>
                             </select>
                         </div>
 
-                        <!-- Date and Time -->
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
-                            <div class="form-group">
-                                <label style="font-weight: 600; color: #333; margin-bottom: 8px; display: block;">Date</label>
-                                <input type="date" id="referralDate" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
-                            </div>
-                            <div class="form-group">
-                                <label style="font-weight: 600; color: #333; margin-bottom: 8px; display: block;">Time</label>
-                                <input type="time" id="referralTime" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
-                            </div>
-                        </div>
-
-                        <!-- Location -->
-                        <div class="form-group">
-                            <label style="font-weight: 600; color: #333; margin-bottom: 8px; display: block;">Location</label>
-                            <select id="referralLocation" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;">
-                                <option value="">Select location...</option>
+                        <!-- INCIDENT DETAILS -->
+                        <div class="form-section">
+                            <div class="form-section-title">Incident Details</div>
+                            <div class="field-grid-3">
+                                <div>
+                                    <label class="field-label">Date of Incident <span class="req">*</span></label>
+                                    <input type="date" id="referralDate" class="wc-input">
+                                </div>
+                                <div>
+                                    <label class="field-label">Time</label>
+                                    <input type="time" id="referralTime" class="wc-input">
+                                </div>
+                                <div>
+                                    <label class="field-label">Location</label>
+                                    <select id="referralLocation" class="wc-select">
+                                        <option value="">Select location...</option>
                                 <option value="Classroom">Classroom</option>
                                 <option value="Hallway">Hallway</option>
-                                <option value="Cafeteria">Cafeteria</option>
-                                <option value="Gymnasium">Gymnasium</option>
-                                <option value="Bathroom">Bathroom</option>
-                                <option value="Library">Library</option>
-                                <option value="Playground">Playground</option>
-                                <option value="Bus">Bus</option>
+                                <option value="Restroom">Restroom</option>
+                                <option value="Student Lounge">Student Lounge</option>
+                                <option value="Outside/Break Area">Outside/Break Area</option>
+                                <option value="Office">Office</option>
                                 <option value="Other">Other</option>
-                            </select>
-                        </div>
+                                    </select>
+                                </div>
+                            </div>
 
-                        <!-- Behavior Type -->
-                        <div class="form-group">
-                            <label style="font-weight: 600; color: #333; margin-bottom: 8px; display: block;">Behavior Type</label>
-                            <select id="referralBehaviorType" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;">
-                                <option value="">Select behavior type...</option>
-                                <option value="Defiance">Defiance / Non-compliance</option>
-                                <option value="Disruption">Disruption</option>
-                                <option value="Disrespect">Disrespect</option>
-                                <option value="Fighting">Physical Aggression / Fighting</option>
-                                <option value="Bullying">Bullying / Harassment</option>
-                                <option value="Inappropriate Language">Inappropriate Language</option>
-                                <option value="Technology Misuse">Technology Misuse</option>
-                                <option value="Tardy">Tardy / Truancy</option>
-                                <option value="Dress Code">Dress Code Violation</option>
+                            <label class="field-label" style="margin-top: 14px;">Behavior / Violation <span class="req">*</span></label>
+                            <select id="referralBehaviorType" class="wc-select">
+                                <option value="">Select the behavior/violation...</option>
                                 <option value="Academic Dishonesty">Academic Dishonesty</option>
-                                <option value="Property Damage">Property Damage</option>
-                                <option value="Other">Other</option>
+                                <option value="Bullying">Bullying</option>
+                                <option value="Peer Conflict/Confrontation">Peer Conflict/Confrontation</option>
+                                <option value="Habitual Defiance/Non-Compliance">Habitual Defiance/Non-Compliance</option>
+                                <option value="Disrespectful to Staff">Disrespectful to Staff</option>
+                                <option value="Habitual Technology Violation/Property">Habitual Technology Violation/Property</option>
+                                <option value="Repeated Physical Contact or Aggression">Repeated Physical Contact or Aggression</option>
+                                <option value="Repeated Use of Inappropriate Language">Repeated Use of Inappropriate Language</option>
+                                <option value="Distribution of Illegal Substance">Distribution of Illegal Substance</option>
+                                <option value="Possession of Illegal Substance">Possession of Illegal Substance</option>
+                                <option value="Under the Influence of Illegal Substance">Under the Influence of Illegal Substance</option>
+                                <option value="Threatening Other(s)">Threatening Other(s)</option>
+                                <option value="Vandalism">Vandalism</option>
                             </select>
+
+                            <label class="field-label" style="margin-top: 14px;">Description of Incident <span class="req">*</span></label>
+                            <textarea id="referralDescription" rows="5" class="wc-input"
+                                placeholder="Provide detailed description of what occurred, including context and any precipitating events..."></textarea>
                         </div>
 
-                        <!-- Severity Level -->
-                        <div class="form-group">
-                            <label style="font-weight: 600; color: #333; margin-bottom: 8px; display: block;">Severity Level</label>
-                            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
-                                <label style="display: flex; align-items: center; padding: 15px; border: 2px solid #e0e0e0; border-radius: 8px; cursor: pointer; transition: all 0.2s;" onclick="selectSeverity('Minor', this)">
-                                    <input type="radio" name="referralSeverity" value="Minor" style="margin-right: 10px;">
-                                    <div>
-                                        <div style="font-weight: 600; color: #10b981;">Minor</div>
-                                        <div style="font-size: 11px; color: #666;">First offense</div>
-                                    </div>
+                        <!-- ADDITIONAL INFORMATION -->
+                        <div class="form-section">
+                            <div class="form-section-title">Additional Information</div>
+                            <label class="field-label">Interventions Implemented</label>
+                            <p class="form-guidance">
+                                Staff should consistently implement classroom preventative and restorative practices and
+                                attempt three interventions prior to referring a student to an administrator.
+                                What interventions did you implement to address the undesired behavior?
+                            </p>
+                            <div class="check-grid">
+                                <label class="check-item">
+                                    <input type="checkbox" class="referral-intervention" value="Verbal Warning: Identified behavior and stated expectation">
+                                    <span>Verbal Warning: Identified behavior and stated expectation</span>
                                 </label>
-                                <label style="display: flex; align-items: center; padding: 15px; border: 2px solid #e0e0e0; border-radius: 8px; cursor: pointer; transition: all 0.2s;" onclick="selectSeverity('Major', this)">
-                                    <input type="radio" name="referralSeverity" value="Major" style="margin-right: 10px;">
-                                    <div>
-                                        <div style="font-weight: 600; color: #f59e0b;">Major</div>
-                                        <div style="font-size: 11px; color: #666;">Significant issue</div>
-                                    </div>
+                                <label class="check-item">
+                                    <input type="checkbox" class="referral-intervention" value="Restated expectation / Retaught and explicitly modeled and/or identified expected behavior">
+                                    <span>Restated expectation / Retaught and explicitly modeled and/or identified expected behavior</span>
                                 </label>
-                                <label style="display: flex; align-items: center; padding: 15px; border: 2px solid #e0e0e0; border-radius: 8px; cursor: pointer; transition: all 0.2s;" onclick="selectSeverity('Severe', this)">
-                                    <input type="radio" name="referralSeverity" value="Severe" style="margin-right: 10px;">
-                                    <div>
-                                        <div style="font-weight: 600; color: #dc3545;">Severe</div>
-                                        <div style="font-size: 11px; color: #666;">Dangerous/repeated</div>
-                                    </div>
+                                <label class="check-item">
+                                    <input type="checkbox" class="referral-intervention" value="Student was given positive feedback for acceptable behavior">
+                                    <span>Student was given positive feedback for acceptable behavior</span>
+                                </label>
+                                <label class="check-item">
+                                    <input type="checkbox" class="referral-intervention" value="Loss of Wildcat Cash or potential privilege due to continued misbehavior">
+                                    <span>Loss of Wildcat Cash or potential privilege due to continued misbehavior</span>
+                                </label>
+                                <label class="check-item">
+                                    <input type="checkbox" class="referral-intervention" value="Parent/Guardian Contact">
+                                    <span>Parent/Guardian Contact</span>
+                                </label>
+                                <label class="check-item">
+                                    <input type="checkbox" class="referral-intervention" value="One-on-One Conference with Student">
+                                    <span>One-on-One Conference with Student</span>
+                                </label>
+                                <label class="check-item">
+                                    <input type="checkbox" class="referral-intervention" value="Behavior Contract or Plan">
+                                    <span>Behavior Contract or Plan</span>
+                                </label>
+                                <label class="check-item">
+                                    <input type="checkbox" class="referral-intervention" value="Peer Mediation">
+                                    <span>Peer Mediation</span>
+                                </label>
+                                <label class="check-item">
+                                    <input type="checkbox" class="referral-intervention" value="Restorative Circle">
+                                    <span>Restorative Circle</span>
+                                </label>
+                                <label class="check-item">
+                                    <input type="checkbox" class="referral-intervention" value="Counselor Referral">
+                                    <span>Counselor Referral</span>
                                 </label>
                             </div>
+                            <p class="panel-hint" id="interventionCount">0 selected</p>
+
+                            <label class="field-label" style="margin-top: 14px;">Additional Actions / Notes</label>
+                            <textarea id="referralAdditionalActions" rows="3" class="wc-input"
+                                placeholder="Describe any additional actions taken or relevant details..."></textarea>
                         </div>
 
-                        <!-- Description -->
-                        <div class="form-group">
-                            <label style="font-weight: 600; color: #333; margin-bottom: 8px; display: block;">Description of Incident</label>
-                            <textarea id="referralDescription" rows="5" placeholder="Describe what happened in detail..." style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-family: inherit; resize: vertical;"></textarea>
+                        <!-- REFERRING STAFF -->
+                        <div class="form-section referring-staff-section">
+                            <div class="form-section-title">Referring Staff <span class="req">*</span></div>
+                            <select id="referralReferringStaff" class="wc-select">
+                                <option value="">Select referring staff...</option>
+                            </select>
+                            <p class="panel-hint" id="referringStaffHint">Defaults to you. Admins may file on another staff member's behalf.</p>
                         </div>
 
-                        <!-- Submit Button -->
-                        <button class="btn" onclick="submitBehaviorReferral()" style="width: 100%; padding: 15px; background: #2F67A7; font-size: 16px; font-weight: 600;">
-                            ✉️ Submit Referral
-                        </button>
+                        <div class="referral-form-actions">
+                            <button class="btn btn-secondary" onclick="clearReferralForm()">Clear Form</button>
+                            <button class="btn btn-referral-submit" onclick="submitBehaviorReferral()">Submit Referral</button>
+                        </div>
                     </div>
                 </div>
+
 
                 <!-- Review Referrals Subtab -->
                 <div id="behaviorReview" class="discipline-subtab hidden">
                     <div class="wc-card panel-card">
-                        <h3 style="color: #2F67A7; margin-bottom: 20px;">👁️ Pending Referrals</h3>
-                        
-                        <!-- Filter -->
-                        <div style="margin-bottom: 20px;">
-                            <label style="font-weight: 600; margin-right: 10px;">Filter:</label>
-                            <select id="reviewFilterStatus" onchange="updateReferralReviewTable()" style="padding: 10px; border: 2px solid #e0e0e0; border-radius: 6px; margin-right: 15px;">
-                                <option value="all">All Referrals</option>
-                                <option value="pending">Pending</option>
-                                <option value="reviewed">Reviewed</option>
-                            </select>
-                            <select id="reviewFilterSeverity" onchange="updateReferralReviewTable()" style="padding: 10px; border: 2px solid #e0e0e0; border-radius: 6px;">
-                                <option value="all">All Severity Levels</option>
-                                <option value="Minor">Minor</option>
-                                <option value="Major">Major</option>
-                                <option value="Severe">Severe</option>
-                            </select>
+                        <div class="panel-head">
+                            <span class="panel-icon">👁️</span>
+                            <h3>Open Referrals <span class="count-chip" id="openReferralCount">0</span></h3>
                         </div>
-
-                        <!-- Referrals Table -->
-                        <div style="overflow-x: auto;">
-                            <table id="referralReviewTable" style="width: 100%; border-collapse: collapse;">
+                        <p class="panel-hint" style="margin: 0 0 14px 0;">
+                            Referrals awaiting an administrator. Closing one records the resolution;
+                            afterwards you can "close the loop" to report back to staff.
+                        </p>
+                        <div class="table-scroll">
+                            <table class="wc-table">
                                 <thead>
                                     <tr>
-                                        <th>Date/Time</th>
                                         <th>Student</th>
                                         <th>Behavior</th>
-                                        <th class="th-center">Severity</th>
                                         <th>Location</th>
-                                        <th>Referred By</th>
-                                        <th class="th-center">Status</th>
-                                        <th class="th-center">Actions</th>
+                                        <th>Incident</th>
+                                        <th class="th-center">Interventions</th>
+                                        <th>Actions</th>
                                     </tr>
                                 </thead>
-                                <tbody id="referralReviewTableBody">
-                                </tbody>
+                                <tbody id="referralReviewTable"></tbody>
                             </table>
                         </div>
                     </div>
+
+                    <!-- Close Referral modal -->
+                    <div id="closeReferralModal" class="wc-card inline-modal hidden">
+                        <div class="inline-modal-head">
+                            <h3>Close Referral</h3>
+                            <button class="inline-modal-x" onclick="closeModalById('closeReferralModal')">✕</button>
+                        </div>
+                        <div id="closeReferralBody"></div>
+                    </div>
+
+                    <!-- Referral detail modal -->
+                    <div id="referralDetailModal" class="wc-card inline-modal hidden">
+                        <div class="inline-modal-head">
+                            <h3>Referral Details</h3>
+                            <button class="inline-modal-x" onclick="closeModalById('referralDetailModal')">✕</button>
+                        </div>
+                        <div id="referralDetailBody"></div>
+                    </div>
                 </div>
+
+                <!-- Closed Referrals Subtab -->
+                <div id="behaviorClosed" class="discipline-subtab hidden">
+                    <div class="wc-card panel-card">
+                        <div class="panel-head">
+                            <span class="panel-icon">📁</span>
+                            <h3>Closed Referrals <span class="count-chip" id="closedReferralCount">0</span></h3>
+                        </div>
+                        <p class="panel-hint" style="margin: 0 0 12px 0;">All referrals that have been closed and resolved.</p>
+                        <div class="search-bar" style="margin-bottom: 0;">
+                            <input type="text" id="searchClosedReferrals" placeholder="🔍 Search by student name or ID..."
+                                   onkeyup="updateClosedReferralsList()">
+                        </div>
+                    </div>
+                    <div id="closedReferralsList"></div>
+
+                    <!-- Close the Loop modal -->
+                    <div id="closeLoopModal" class="wc-card inline-modal hidden">
+                        <div class="inline-modal-head inline-modal-head-green">
+                            <h3>Referral Closed — Loop Summary</h3>
+                            <button class="inline-modal-x" onclick="closeModalById('closeLoopModal')">✕</button>
+                        </div>
+                        <div id="closeLoopBody"></div>
+                    </div>
+                </div>
+
 
                 <!-- Detention Tracker Subtab -->
                 <div id="behaviorDetention" class="discipline-subtab hidden">
@@ -4546,6 +4615,6 @@
     <!-- Chart.js for Data Visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-    <script src="script.js?v=20260729a"></script>
+    <script src="script.js?v=20260729b"></script>
 </body>
 </html>
