@@ -1634,9 +1634,14 @@
                         getDoc(doc(firebaseDb, 'raffle_data', auditDocName(mk)))
                     );
                     
-                    const [mainSnap, secondarySnap, ticketHistoryMsSnap, ticketHistoryHsSnap, ticketHistoryLegacySnap, auditLogLegacySnap, ...monthlyAuditSnaps] = await Promise.all([
+                    const [mainSnap, secondarySnap, referralsSnap, ticketHistoryMsSnap, ticketHistoryHsSnap, ticketHistoryLegacySnap, auditLogLegacySnap, ...monthlyAuditSnaps] = await Promise.all([
                         getDoc(doc(firebaseDb, 'raffle_data', 'main')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'secondary')),
+                        // Referrals live in their own document. The expanded referral
+                        // form (interventions + closing actions) roughly triples the
+                        // size of each record, and `secondary` shares the same 1MB
+                        // ceiling as every other Firestore document.
+                        getDoc(doc(firebaseDb, 'raffle_data', 'referrals')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_ms')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_hs')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history')),
@@ -1856,7 +1861,21 @@
                         loginHistory = secondaryData.loginHistory || [];
                         hallPasses = secondaryData.hallPasses || [];
                         preventionGroups = secondaryData.preventionGroups || [];
-                        behaviorReferrals = secondaryData.behaviorReferrals || [];
+                        // Prefer the dedicated referrals document; fall back to the
+                        // legacy location so nothing is lost on first run after this
+                        // change (and so an old tab's data still loads).
+                        const referralsData = referralsSnap.exists() ? referralsSnap.data() : {};
+                        if (Array.isArray(referralsData.behaviorReferrals)) {
+                            behaviorReferrals = referralsData.behaviorReferrals;
+                            if (typeof referralsData.referralIdCounter === 'number') {
+                                referralIdCounter = Math.max(referralIdCounter || 1, referralsData.referralIdCounter);
+                            }
+                        } else {
+                            behaviorReferrals = secondaryData.behaviorReferrals || [];
+                            if (behaviorReferrals.length) {
+                                console.log(`ℹ️ Migrating ${behaviorReferrals.length} referral(s) from secondary → referrals document on next save.`);
+                            }
+                        }
                         detentions = secondaryData.detentions || [];
                         detentionLocations = secondaryData.detentionLocations || ['Main Office', 'Library', 'Room 101', 'Room 102', 'Cafeteria', 'Gym'];
                         detentionReasons = secondaryData.detentionReasons || ['Disrupting Class', 'Tardiness', 'Dress Code Violation', 'Inappropriate Behavior', 'Defiance/Disrespect', 'Cell Phone Violation', 'Missing Assignment', 'Other'];
@@ -2966,7 +2985,6 @@
                             loginHistory,
                             hallPasses,
                             preventionGroups,
-                            behaviorReferrals,
                             detentions,
                             detentionLocations,
                             detentionReasons,
@@ -2975,6 +2993,17 @@
                         });
                         
                         console.log(`✅ Secondary document saved`);
+                        
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                        
+                        // DOCUMENT 5: Referrals (own document — see loadData comment)
+                        await setDoc(doc(firebaseDb, 'raffle_data', 'referrals'), {
+                            behaviorReferrals,
+                            referralIdCounter,
+                            lastSaveTimestamp: timestamp
+                        });
+                        
+                        console.log(`✅ Referrals document saved (${(behaviorReferrals || []).length} records)`);
                         
                         lastSaveTimestamp = timestamp;
                         
@@ -7769,9 +7798,14 @@
             });
             
             // Show selected tab
+            // NOTE: 'detention' was missing from this map, so the Detention
+            // Tracker sidebar button did nothing. 'closed' is the new
+            // Closed Referrals view.
             const tabMap = {
                 'submit': 'behaviorSubmit',
                 'review': 'behaviorReview',
+                'detention': 'behaviorDetention',
+                'closed': 'behaviorClosed',
                 'history': 'behaviorHistory',
                 'analytics': 'behaviorAnalytics'
             };
@@ -7796,8 +7830,21 @@
             }
             
             // Load data for specific tabs
+            if (tabName === 'detention' && typeof updateDetentionLists === 'function') {
+                updateDetentionLists();
+            }
+            if (tabName === 'closed' && typeof updateClosedReferralsList === 'function') {
+                updateClosedReferralsList();
+            }
             if (tabName === 'submit') {
                 populateReferralStudentDropdown();
+                if (typeof populateReferringStaffDropdown === 'function') populateReferringStaffDropdown();
+                const dEl = document.getElementById('referralDate');
+                if (dEl && !dEl.value) dEl.value = new Date().toISOString().split('T')[0];
+                document.querySelectorAll('.referral-intervention').forEach(cb => {
+                    cb.onchange = updateInterventionCount;
+                });
+                if (typeof updateInterventionCount === 'function') updateInterventionCount();
                 // Set current date and time
                 const now = new Date();
                 const dateInput = document.getElementById('referralDate');
@@ -15197,9 +15244,12 @@
                 loginHistory: typeof loginHistory !== 'undefined' ? loginHistory : [],
                 hallPasses: typeof hallPasses !== 'undefined' ? hallPasses : [],
                 preventionGroups: typeof preventionGroups !== 'undefined' ? preventionGroups : [],
-                behaviorReferrals: typeof behaviorReferrals !== 'undefined' ? behaviorReferrals : [],
                 detentions: typeof detentions !== 'undefined' ? detentions : [],
                 wildcatCashTransactions: typeof wildcatCashTransactions !== 'undefined' ? wildcatCashTransactions : []
+            };
+
+            const referralsPayload = {
+                behaviorReferrals: typeof behaviorReferrals !== 'undefined' ? behaviorReferrals : []
             };
 
             // Ticket history split by school, same rule as saveData()
@@ -15216,7 +15266,8 @@
 
             const rows = [
                 { key: 'main',              label: 'Main (students, teachers, settings)', bytes: _byteSize(mainPayload) },
-                { key: 'secondary',         label: 'Secondary (passes, referrals, cash, detentions)', bytes: _byteSize(secondaryPayload) },
+                { key: 'secondary',         label: 'Secondary (passes, cash, detentions)', bytes: _byteSize(secondaryPayload) },
+                { key: 'referrals',         label: 'Referrals', bytes: _byteSize(referralsPayload) },
                 { key: 'audit_log',         label: 'Audit log (this month)', bytes: _byteSize(auditPayload) },
                 { key: 'ticket_history_hs', label: 'Ticket history — High School', bytes: _byteSize(hsHist) },
                 { key: 'ticket_history_ms', label: 'Ticket history — Middle School', bytes: _byteSize(msHist) }
@@ -15744,7 +15795,8 @@
             ],
             discipline: [
                 { id: 'submit',    fn: 'switchDisciplineTab', label: '✍️ Submit Referral' },
-                { id: 'review',    fn: 'switchDisciplineTab', label: '👁️ Review Referrals' },
+                { id: 'review',    fn: 'switchDisciplineTab', label: '👁️ Open Referrals' },
+                { id: 'closed',    fn: 'switchDisciplineTab', label: '📁 Closed Referrals' },
                 { id: 'detention', fn: 'switchDisciplineTab', label: '⏰ Detention Tracker' },
                 { id: 'history',   fn: 'switchDisciplineTab', label: '📚 Student History' },
                 { id: 'analytics', fn: 'switchDisciplineTab', label: '📊 Analytics' }
@@ -17610,475 +17662,505 @@
                 ).join('');
         }
 
-        function selectSeverity(severity, element) {
-            // Remove selected styling from all severity options
-            document.querySelectorAll('input[name="referralSeverity"]').forEach(radio => {
-                radio.parentElement.style.borderColor = '#e0e0e0';
-                radio.parentElement.style.background = 'white';
+
+        // ============================================================
+        // REFERRALS (rebuilt to mirror the Office Referral Form)
+        //
+        // Severity was removed deliberately: severity is now carried by
+        // the behaviour label itself ("Habitual…", "Repeated…"), and
+        // analytics rank by behaviour frequency (top 10) instead.
+        //
+        // Referring staff defaults to the logged-in user; admins and
+        // superadmins may file on another staff member's behalf.
+        // ============================================================
+
+        function populateReferringStaffDropdown() {
+            const sel = document.getElementById('referralReferringStaff');
+            const hint = document.getElementById('referringStaffHint');
+            if (!sel || !currentUser) return;
+
+            const isAdmin = currentUser.role === 'admin' || currentUser.role === 'superadmin';
+            const me = currentUser.name || currentUser.username || '';
+
+            if (isAdmin) {
+                const list = (teachers || []).slice().sort((a, b) =>
+                    String(a.name || '').localeCompare(String(b.name || '')));
+                sel.innerHTML = '<option value="">Select referring staff...</option>' +
+                    list.map(t => {
+                        const nm = escapeHtml(t.name || t.username || '');
+                        return `<option value="${nm}"${(t.name === me) ? ' selected' : ''}>${nm}</option>`;
+                    }).join('');
+                sel.disabled = false;
+                if (hint) hint.textContent = 'Defaults to you. You may file on another staff member\'s behalf.';
+            } else {
+                sel.innerHTML = `<option value="${escapeHtml(me)}" selected>${escapeHtml(me)}</option>`;
+                sel.disabled = true;
+                if (hint) hint.textContent = 'Referrals are filed under your name.';
+            }
+        }
+
+        function updateInterventionCount() {
+            const boxes = document.querySelectorAll('.referral-intervention:checked');
+            const el = document.getElementById('interventionCount');
+            if (!el) return;
+            const n = boxes.length;
+            el.textContent = n === 0 ? '0 selected'
+                : `${n} selected` + (n < 3 ? ' — three are expected before referring' : ' ✓');
+            el.className = 'panel-hint' + (n > 0 && n < 3 ? ' hint-warn' : '');
+        }
+
+        function clearReferralForm() {
+            ['referralStudentSelect','referralDate','referralTime','referralLocation',
+             'referralBehaviorType','referralDescription','referralAdditionalActions'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.value = '';
             });
-            
-            // Add selected styling
-            element.style.borderColor = severity === 'Minor' ? '#2E7D52' : severity === 'Major' ? '#f59e0b' : '#B3392F';
-            element.style.background = severity === 'Minor' ? 'rgba(16, 185, 129, 0.05)' : severity === 'Major' ? 'rgba(245, 158, 11, 0.05)' : 'rgba(220, 53, 69, 0.05)';
+            document.querySelectorAll('.referral-intervention').forEach(cb => { cb.checked = false; });
+            updateInterventionCount();
+            const d = document.getElementById('referralDate');
+            if (d) d.value = new Date().toISOString().split('T')[0];
+            populateReferringStaffDropdown();
         }
 
         async function submitBehaviorReferral() {
-            const studentId = document.getElementById('referralStudentSelect').value;
-            const date = document.getElementById('referralDate').value;
-            const time = document.getElementById('referralTime').value;
-            const location = document.getElementById('referralLocation').value;
-            const behaviorType = document.getElementById('referralBehaviorType').value;
-            const severity = document.querySelector('input[name="referralSeverity"]:checked')?.value;
-            const description = document.getElementById('referralDescription').value.trim();
-            
-            // Validation
-            if (!studentId) {
-                alert('⚠️ Please select a student');
-                return;
-            }
-            if (!date) {
-                alert('⚠️ Please select a date');
-                return;
-            }
-            if (!time) {
-                alert('⚠️ Please select a time');
-                return;
-            }
-            if (!location) {
-                alert('⚠️ Please select a location');
-                return;
-            }
-            if (!behaviorType) {
-                alert('⚠️ Please select a behavior type');
-                return;
-            }
-            if (!severity) {
-                alert('⚠️ Please select a severity level');
-                return;
-            }
-            if (!description) {
-                alert('⚠️ Please provide a description of the incident');
-                return;
-            }
-            
+            const studentId = (document.getElementById('referralStudentSelect') || {}).value || '';
+            const date = (document.getElementById('referralDate') || {}).value || '';
+            const time = (document.getElementById('referralTime') || {}).value || '';
+            const location = (document.getElementById('referralLocation') || {}).value || '';
+            const behavior = (document.getElementById('referralBehaviorType') || {}).value || '';
+            const description = ((document.getElementById('referralDescription') || {}).value || '').trim();
+            const additionalActions = ((document.getElementById('referralAdditionalActions') || {}).value || '').trim();
+            const referringStaff = (document.getElementById('referralReferringStaff') || {}).value || '';
+            const interventions = Array.from(document.querySelectorAll('.referral-intervention:checked')).map(cb => cb.value);
+
+            // Required: student, date, behaviour, description, referring staff.
+            if (!studentId)       { alert('⚠️ Please select a student'); return; }
+            if (!date)            { alert('⚠️ Please select the date of the incident'); return; }
+            if (!behavior)        { alert('⚠️ Please select the behavior/violation'); return; }
+            if (!description)     { alert('⚠️ Please describe the incident'); return; }
+            if (!referringStaff)  { alert('⚠️ Please select the referring staff member'); return; }
+
             const student = students.find(s => s.id === studentId);
-            if (!student) {
-                alert('⚠️ Student not found');
-                return;
-            }
-            
-            // Create referral object
+            if (!student) { alert('⚠️ Student not found'); return; }
+
+            const grade = parseInt(student.grade, 10);
             const referral = {
                 id: `REF${referralIdCounter++}`,
                 studentId: studentId,
                 studentName: `${student.firstName} ${student.lastName}`,
+                studentGrade: student.grade || '',
+                school: (grade >= 9) ? 'High School' : 'Middle School',
                 date: date,
                 time: time,
-                dateTime: `${date}T${time}`,
+                dateTime: time ? `${date}T${time}` : date,
                 location: location,
-                behaviorType: behaviorType,
-                severity: severity,
+                behavior: behavior,
+                behaviorType: behavior,   // legacy alias so older readers keep working
                 description: description,
-                referredBy: currentUser.name,
+                interventions: interventions,
+                additionalActions: additionalActions,
+                referredBy: referringStaff,
                 referredByUsername: currentUser.username,
-                status: 'pending',
+                filedByUsername: currentUser.username,   // who actually typed it
+                status: 'open',
                 submittedAt: new Date().toISOString(),
-                consequence: '',
+                // closure
+                resolutionType: '',
+                closingActions: [],
                 adminNotes: '',
-                reviewedBy: '',
-                reviewedAt: ''
+                closedBy: '',
+                closedAt: '',
+                loopClosed: false,
+                loopClosedBy: '',
+                loopClosedAt: '',
+                forwardedTo: []
             };
-            
+
             behaviorReferrals.push(referral);
             await saveData();
-            
-            // Show success message
-            alert('✅ Behavior referral submitted successfully!\n\nThe referral has been sent to administration for review.');
-            
-            // Clear form
-            document.getElementById('referralStudentSelect').value = '';
-            document.getElementById('referralDate').value = '';
-            document.getElementById('referralTime').value = '';
-            document.getElementById('referralLocation').value = '';
-            document.getElementById('referralBehaviorType').value = '';
-            document.querySelectorAll('input[name="referralSeverity"]').forEach(radio => {
-                radio.checked = false;
-                radio.parentElement.style.borderColor = '#e0e0e0';
-                radio.parentElement.style.background = 'white';
-            });
-            document.getElementById('referralDescription').value = '';
+
+            alert('✅ Referral submitted.\n\nIt has been sent to administration for review.');
+            clearReferralForm();
+            if (typeof updateReferralReviewTable === 'function') updateReferralReviewTable();
         }
 
+        // Closure action list — mirrors the "Closing the Loop Options" checklist.
+        // DETENTION_CLOSING_ACTION is wired to auto-create a Detention Tracker
+        // record when checked, so admins don't have to enter it twice.
+        const REFERRAL_CLOSING_ACTIONS = [
+            "Notified parents/guardians promptly",
+            "Scheduled a mandatory Parent-Conference",
+            "Student conference was held to review the incident and reinforced behavior expectations",
+            "Assigned the student to mandatory detention",
+            "Facilitated a restorative circle / mediation",
+            "Reviewed behavior history and existing support plans with the student",
+            "Developed and assigned a Consequence Agreement",
+            "Developed or revised a Behavior Intervention Plan (BIP)",
+            "Ensured immediate safety of all students and staff",
+            "Isolated and de-escalated the situation",
+            "Contacted school police or emergency services if needed",
+            "Conducted a thorough investigation and documented the incident"
+        ];
+        const DETENTION_CLOSING_ACTION = 'Assigned the student to mandatory detention';
+
+        function getOpenReferrals()   { return (behaviorReferrals || []).filter(r => r.status !== 'closed'); }
+        function getClosedReferrals() { return (behaviorReferrals || []).filter(r => r.status === 'closed'); }
+
         function updateReferralReviewTable() {
-            const tbody = document.getElementById('referralReviewTableBody');
-            const statusFilter = document.getElementById('reviewFilterStatus').value;
-            const severityFilter = document.getElementById('reviewFilterSeverity').value;
-            
-            // Filter referrals
-            let filtered = behaviorReferrals;
-            if (statusFilter !== 'all') {
-                filtered = filtered.filter(r => r.status === statusFilter);
-            }
-            if (severityFilter !== 'all') {
-                filtered = filtered.filter(r => r.severity === severityFilter);
-            }
-            
-            // Sort by date (newest first)
-            filtered.sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime));
-            
-            if (filtered.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 40px; color: #999;">No referrals match the current filters</td></tr>';
+            const tbody = document.getElementById('referralReviewTable');
+            if (!tbody) return;
+            const open = getOpenReferrals().slice().sort((a, b) =>
+                new Date(b.submittedAt) - new Date(a.submittedAt));
+
+            const countEl = document.getElementById('openReferralCount');
+            if (countEl) countEl.textContent = open.length;
+
+            if (!open.length) {
+                tbody.innerHTML = `<tr><td colspan="6">
+                    <div class="empty-state">
+                        <div class="empty-icon">✅</div>
+                        <div class="empty-title">No open referrals</div>
+                        <div class="empty-sub">Everything submitted has been closed.</div>
+                    </div></td></tr>`;
                 return;
             }
-            
-            tbody.innerHTML = filtered.map(ref => {
-                const severityColor = ref.severity === 'Minor' ? '#2E7D52' : ref.severity === 'Major' ? '#f59e0b' : '#B3392F';
-                const statusBadge = ref.status === 'pending' 
-                    ? '<span style="background: #fef3c7; color: #d97706; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">Pending</span>'
-                    : '<span style="background: #d1fae5; color: #059669; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">Reviewed</span>';
-                
+
+            tbody.innerHTML = open.map(r => {
+                const d = new Date(r.submittedAt);
+                const ivCount = (r.interventions || []).length;
                 return `
-                    <tr style="border-bottom: 1px solid #e5e7eb;">
-                        <td style="padding: 16px;">${new Date(ref.dateTime).toLocaleString('en-US', {month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit'})}</td>
-                        <td style="padding: 16px; font-weight: 600;">${ref.studentName}</td>
-                        <td style="padding: 16px;">${ref.behaviorType}</td>
-                        <td style="padding: 16px; text-align: center;">
-                            <span style="background: ${severityColor}; color: white; padding: 6px 14px; border-radius: 14px; font-size: 12px; font-weight: 600;">
-                                ${ref.severity}
-                            </span>
-                        </td>
-                        <td style="padding: 16px;">${ref.location}</td>
-                        <td style="padding: 16px;">${ref.referredBy}</td>
-                        <td style="padding: 16px; text-align: center;">${statusBadge}</td>
-                        <td style="padding: 16px; text-align: center;">
-                            ${ref.status === 'pending' ? 
-                                `<button class="btn btn-sm" onclick="reviewReferral('${ref.id}')" style="padding: 6px 12px; font-size: 13px; background: #2F67A7;">Review</button>` :
-                                `<button class="btn btn-sm" onclick="viewReferralDetails('${ref.id}')" style="padding: 6px 12px; font-size: 13px; background: #6c757d;">View</button>`
-                            }
-                        </td>
-                    </tr>
-                `;
+                <tr class="wc-row">
+                    <td>
+                        <div class="cell-strong">${escapeHtml(r.studentName)}</div>
+                        <div class="cell-sub">${escapeHtml(r.school || '')} &middot; Grade ${escapeHtml(String(r.studentGrade || '—'))}</div>
+                    </td>
+                    <td><span class="cat-chip">${escapeHtml(r.behavior || r.behaviorType || '—')}</span></td>
+                    <td class="cell-muted">${escapeHtml(r.location || '—')}</td>
+                    <td>
+                        <div class="cell-strong">${escapeHtml(r.date || '')}</div>
+                        <div class="cell-sub">filed ${d.toLocaleDateString()}</div>
+                    </td>
+                    <td class="cell-center">
+                        <span class="count-pill${ivCount >= 3 ? ' count-pill-on' : ''}" title="Interventions attempted before referring">${ivCount}</span>
+                    </td>
+                    <td>
+                        <button class="btn btn-sm-blue" onclick="viewReferralDetails('${r.id}')">View</button>
+                        <button class="btn btn-sm-close" onclick="openCloseReferralModal('${r.id}')">Close</button>
+                    </td>
+                </tr>`;
             }).join('');
         }
 
-        function reviewReferral(referralId) {
-            const referral = behaviorReferrals.find(r => r.id === referralId);
-            if (!referral) {
-                alert('⚠️ Referral not found');
+        function updateClosedReferralsList() {
+            const host = document.getElementById('closedReferralsList');
+            if (!host) return;
+            const term = ((document.getElementById('searchClosedReferrals') || {}).value || '').toLowerCase();
+            let closed = getClosedReferrals().slice().sort((a, b) =>
+                new Date(b.closedAt || b.submittedAt) - new Date(a.closedAt || a.submittedAt));
+            if (term) {
+                closed = closed.filter(r =>
+                    String(r.studentName || '').toLowerCase().includes(term) ||
+                    String(r.studentId || '').toLowerCase().includes(term));
+            }
+            const countEl = document.getElementById('closedReferralCount');
+            if (countEl) countEl.textContent = getClosedReferrals().length;
+
+            if (!closed.length) {
+                host.innerHTML = `<div class="empty-state">
+                    <div class="empty-icon">📁</div>
+                    <div class="empty-title">${term ? 'No matches' : 'No closed referrals yet'}</div>
+                    <div class="empty-sub">${term ? 'Try a different name or ID.' : 'Closed referrals will appear here.'}</div>
+                </div>`;
                 return;
             }
-            
-            const student = students.find(s => s.id === referral.studentId);
-            if (!student) {
-                alert('⚠️ Student not found');
-                return;
-            }
-            
-            // Show review modal
-            const severityColor = referral.severity === 'Minor' ? '#2E7D52' : referral.severity === 'Major' ? '#f59e0b' : '#B3392F';
-            
-            const html = `
-                <div style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000; display: flex; align-items: center; justify-content: center; padding: 20px;" id="reviewReferralModal" onclick="if(event.target === this) document.getElementById('reviewReferralModal').remove();">
-                    <div style="background: white; border-radius: 16px; max-width: 700px; width: 100%; max-height: 90vh; overflow-y: auto;" onclick="event.stopPropagation();">
-                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 16px 16px 0 0; color: white;">
-                            <h2 style="margin: 0 0 10px 0;">📋 Review Behavior Referral</h2>
-                            <p style="margin: 0; opacity: 0.9; font-size: 14px;">Referral ID: ${referral.id}</p>
+
+            host.innerHTML = closed.map(r => {
+                const actions = (r.closingActions || []);
+                const loopBadge = r.loopClosed
+                    ? '<span class="tag-ok">Loop closed</span>'
+                    : `<button class="btn btn-sm-loop" onclick="openCloseLoopModal('${r.id}')">Loop pending — close it</button>`;
+                return `
+                <div class="wc-card closed-ref-card">
+                    <div class="closed-ref-head">
+                        <div>
+                            <div class="closed-ref-name">✅ ${escapeHtml(r.studentName)}</div>
+                            <div class="cell-sub">ID: ${escapeHtml(r.studentId)} &middot; incident ${escapeHtml(r.date || '')} &middot; closed ${r.closedAt ? new Date(r.closedAt).toLocaleDateString() : '—'}</div>
                         </div>
-                        
-                        <div style="padding: 30px;">
-                            <!-- Referral Details -->
-                            <div style="background: #f9fafb; padding: 20px; border-radius: 12px; margin-bottom: 25px;">
-                                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 15px;">
-                                    <div>
-                                        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Student</div>
-                                        <div style="font-weight: 600; font-size: 16px;">${referral.studentName}</div>
-                                    </div>
-                                    <div>
-                                        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Date & Time</div>
-                                        <div style="font-weight: 600;">${new Date(referral.dateTime).toLocaleString()}</div>
-                                    </div>
-                                    <div>
-                                        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Location</div>
-                                        <div style="font-weight: 600;">${referral.location}</div>
-                                    </div>
-                                    <div>
-                                        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Severity</div>
-                                        <div><span style="background: ${severityColor}; color: white; padding: 6px 14px; border-radius: 14px; font-size: 13px; font-weight: 600;">${referral.severity}</span></div>
-                                    </div>
-                                </div>
-                                <div style="margin-bottom: 15px;">
-                                    <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Behavior Type</div>
-                                    <div style="font-weight: 600;">${referral.behaviorType}</div>
-                                </div>
-                                <div>
-                                    <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Description</div>
-                                    <div style="padding: 12px; background: white; border-radius: 6px; border: 1px solid #e5e7eb;">${referral.description}</div>
-                                </div>
-                                <div style="margin-top: 15px;">
-                                    <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Referred By</div>
-                                    <div style="font-weight: 600;">${referral.referredBy}</div>
-                                </div>
-                            </div>
-                            
-                            <!-- Consequence Assignment -->
-                            <div style="margin-bottom: 25px;">
-                                <label style="font-weight: 600; color: #333; margin-bottom: 8px; display: block;">Consequence / Action Taken</label>
-                                <textarea id="referralConsequence" rows="3" placeholder="Enter consequence or action taken..." style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-family: inherit; resize: vertical;">${referral.consequence || ''}</textarea>
-                            </div>
-                            
-                            <!-- Admin Notes -->
-                            <div style="margin-bottom: 25px;">
-                                <label style="font-weight: 600; color: #333; margin-bottom: 8px; display: block;">Admin Notes (Optional)</label>
-                                <textarea id="referralAdminNotes" rows="3" placeholder="Any additional notes or follow-up needed..." style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-family: inherit; resize: vertical;">${referral.adminNotes || ''}</textarea>
-                            </div>
-                            
-                            <!-- Ticket/Cash Deduction -->
-                            <div style="background: #fef3c7; border: 2px solid #f59e0b; border-radius: 12px; padding: 20px; margin-bottom: 25px;">
-                                <h4 style="margin: 0 0 15px 0; color: #d97706;">⚠️ Optional: Apply Consequences to Student Record</h4>
-                                <div style="margin-bottom: 15px;">
-                                    <label style="display: flex; align-items: center; cursor: pointer;">
-                                        <input type="checkbox" id="deductTickets" style="margin-right: 10px; width: 18px; height: 18px;">
-                                        <span style="font-weight: 600;">Deduct Raffle Tickets</span>
-                                    </label>
-                                    <div id="ticketDeductionOptions" style="display: none; margin-top: 10px; padding-left: 28px;">
-                                        <input type="number" id="ticketsToDeduct" min="1" max="10" value="1" style="width: 80px; padding: 8px; border: 2px solid #e0e0e0; border-radius: 6px; margin-right: 8px;">
-                                        <span style="color: #666;">tickets</span>
-                                    </div>
-                                </div>
-                                <div>
-                                    <label style="display: flex; align-items: center; cursor: pointer;">
-                                        <input type="checkbox" id="deductCash" style="margin-right: 10px; width: 18px; height: 18px;">
-                                        <span style="font-weight: 600;">Deduct Wildcat Cash</span>
-                                    </label>
-                                    <div id="cashDeductionOptions" style="display: none; margin-top: 10px; padding-left: 28px;">
-                                        <span style="margin-right: 8px;">$</span>
-                                        <input type="number" id="cashToDeduct" min="50" step="50" value="100" style="width: 100px; padding: 8px; border: 2px solid #e0e0e0; border-radius: 6px;">
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <!-- Email Parent -->
-                            <div style="background: #e0f2fe; border: 2px solid #0ea5e9; border-radius: 12px; padding: 20px; margin-bottom: 25px;">
-                                <label style="display: flex; align-items: center; cursor: pointer;">
-                                    <input type="checkbox" id="emailParent" style="margin-right: 10px; width: 18px; height: 18px;">
-                                    <span style="font-weight: 600;">📧 Email Parent/Guardian</span>
-                                </label>
-                                <p style="margin: 10px 0 0 28px; font-size: 13px; color: #666;">Send an automated notification email about this incident</p>
-                            </div>
-                            
-                            <!-- Action Buttons -->
-                            <div style="display: flex; gap: 10px;">
-                                <button class="btn" onclick="saveReferralReview('${referral.id}')" style="flex: 1; background: #2F67A7; padding: 14px; font-size: 16px; font-weight: 600;">
-                                    ✓ Complete Review
-                                </button>
-                                <button class="btn btn-secondary" onclick="document.getElementById('reviewReferralModal').remove()" style="padding: 14px 24px;">
-                                    Cancel
-                                </button>
-                            </div>
+                        <div class="closed-ref-badges">
+                            <span class="tag-ok">Closed</span>
+                            ${r.resolutionType === 'no_action' ? '<span class="tag-neutral">No action required</span>' : '<span class="tag-info">Action taken</span>'}
+                            ${loopBadge}
                         </div>
                     </div>
+                    <div class="closed-ref-body">
+                        <div class="closed-ref-label">Behavior</div>
+                        <div class="closed-ref-val">${escapeHtml(r.behavior || r.behaviorType || '—')}</div>
+                        ${actions.length ? `
+                        <div class="closed-ref-label">Actions taken</div>
+                        <ul class="closed-ref-actions">${actions.map(a => `<li>${escapeHtml(a)}</li>`).join('')}</ul>` : ''}
+                        ${r.adminNotes ? `
+                        <div class="closed-ref-label">Administrator notes</div>
+                        <div class="closed-ref-note">${escapeHtml(r.adminNotes)}</div>` : ''}
+                        <div class="closed-ref-foot">
+                            <span>Referred by <strong>${escapeHtml(r.referredBy || '—')}</strong></span>
+                            <span>Closed by <strong>${escapeHtml(r.closedBy || '—')}</strong></span>
+                            ${(r.forwardedTo || []).length ? `<span>Summary sent to <strong>${(r.forwardedTo || []).length}</strong> staff</span>` : '<span>Summary not forwarded</span>'}
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        // ---------- Stage 1: close the referral ----------
+        function openCloseReferralModal(referralId) {
+            const r = (behaviorReferrals || []).find(x => x.id === referralId);
+            if (!r) return;
+            const modal = document.getElementById('closeReferralModal');
+            const body = document.getElementById('closeReferralBody');
+            if (!modal || !body) return;
+
+            body.innerHTML = `
+                <div class="modal-context">
+                    <div><span class="ctx-label">Student</span><strong>${escapeHtml(r.studentName)}</strong></div>
+                    <div><span class="ctx-label">Behavior</span>${escapeHtml(r.behavior || r.behaviorType || '—')}</div>
+                    <div><span class="ctx-label">Incident date</span>${escapeHtml(r.date || '—')}</div>
+                    <div><span class="ctx-label">Referred by</span>${escapeHtml(r.referredBy || '—')}</div>
                 </div>
-            `;
-            
-            document.body.insertAdjacentHTML('beforeend', html);
-            
-            // Add checkbox listeners
-            document.getElementById('deductTickets').addEventListener('change', (e) => {
-                document.getElementById('ticketDeductionOptions').style.display = e.target.checked ? 'block' : 'none';
-            });
-            document.getElementById('deductCash').addEventListener('change', (e) => {
-                document.getElementById('cashDeductionOptions').style.display = e.target.checked ? 'block' : 'none';
+                ${r.description ? `<div class="modal-desc"><span class="ctx-label">Description</span>${escapeHtml(r.description)}</div>` : ''}
+
+                <label class="field-label" style="margin-top:14px;">Resolution Type <span class="req">*</span></label>
+                <div class="resolution-choice">
+                    <label class="res-card">
+                        <input type="radio" name="closeResolution" value="action_taken" checked>
+                        <span class="res-title">Action Taken</span>
+                        <span class="res-sub">Intervention or disciplinary action applied</span>
+                    </label>
+                    <label class="res-card">
+                        <input type="radio" name="closeResolution" value="no_action">
+                        <span class="res-title">No Action Required</span>
+                        <span class="res-sub">Issue resolved without formal action</span>
+                    </label>
+                </div>
+
+                <label class="field-label" style="margin-top:14px;">Actions taken (check all that apply)</label>
+                <div class="check-grid check-grid-1">
+                    ${REFERRAL_CLOSING_ACTIONS.map((a, i) => `
+                        <label class="check-item">
+                            <input type="checkbox" class="closing-action" value="${escapeHtml(a)}">
+                            <span>${escapeHtml(a)}</span>
+                        </label>`).join('')}
+                </div>
+
+                <label class="field-label" style="margin-top:14px;">Administrator Notes</label>
+                <textarea id="closeReferralNotes" rows="3" class="wc-input"
+                    placeholder="Enter any additional notes or context about the resolution..."></textarea>
+
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="closeModalById('closeReferralModal')">Cancel</button>
+                    <button class="btn btn-referral-submit" onclick="confirmCloseReferral('${r.id}')">Close Referral</button>
+                </div>`;
+            modal.classList.remove('hidden');
+            modal.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        async function confirmCloseReferral(referralId) {
+            const r = (behaviorReferrals || []).find(x => x.id === referralId);
+            if (!r) return;
+            const resolution = (document.querySelector('input[name="closeResolution"]:checked') || {}).value || 'action_taken';
+            const actions = Array.from(document.querySelectorAll('.closing-action:checked')).map(cb => cb.value);
+            const notes = ((document.getElementById('closeReferralNotes') || {}).value || '').trim();
+
+            if (resolution === 'action_taken' && !actions.length) {
+                alert('⚠️ "Action Taken" needs at least one action checked.\n\nIf nothing formal was done, choose "No Action Required" instead.');
+                return;
+            }
+
+            r.status = 'closed';
+            r.resolutionType = resolution;
+            r.closingActions = actions;
+            r.adminNotes = notes;
+            r.closedBy = currentUser.name;
+            r.closedAt = new Date().toISOString();
+            r.consequence = actions.join('; '); // legacy field kept populated
+
+            // Auto-create a Detention Tracker record when that action is checked.
+            let detentionMade = false;
+            if (actions.includes(DETENTION_CLOSING_ACTION)) {
+                detentionMade = createDetentionFromReferral(r);
+            }
+
+            await saveData();
+            closeModalById('closeReferralModal');
+            updateReferralReviewTable();
+            updateClosedReferralsList();
+            if (typeof updateDetentionLists === 'function') updateDetentionLists();
+
+            alert('✅ Referral closed.' +
+                  (detentionMade ? '\n\n🕐 A detention record was created in the Detention Tracker.' : '') +
+                  '\n\nNext step: "Close the Loop" to document the resolution and notify staff.');
+        }
+
+        function createDetentionFromReferral(r) {
+            try {
+                const student = students.find(s => s.id === r.studentId);
+                if (!student) return false;
+                const today = new Date().toISOString().split('T')[0];
+                detentions.push({
+                    id: 'detention_' + detentionIdCounter++,
+                    studentId: r.studentId,
+                    studentName: r.studentName,
+                    grade: student.grade,
+                    location: (detentionLocations && detentionLocations[0]) || 'Main Office',
+                    dateAssigned: today,
+                    totalDays: 1,
+                    daysServed: 0,
+                    daysRemaining: 1,
+                    startDate: today,
+                    reason: `Referral ${r.id}: ${r.behavior || r.behaviorType || 'behavior referral'}`,
+                    status: 'active',
+                    assignedBy: currentUser.name,
+                    assignedAt: new Date().toISOString(),
+                    servedDates: [],
+                    completedAt: null,
+                    sourceReferralId: r.id   // link back to the referral
+                });
+                return true;
+            } catch (e) {
+                console.error('Could not auto-create detention:', e);
+                return false;
+            }
+        }
+
+        // ---------- Stage 2: close the loop ----------
+        function openCloseLoopModal(referralId) {
+            const r = (behaviorReferrals || []).find(x => x.id === referralId);
+            if (!r) return;
+            const modal = document.getElementById('closeLoopModal');
+            const body = document.getElementById('closeLoopBody');
+            if (!modal || !body) return;
+
+            const staff = (teachers || []).slice().sort((a, b) =>
+                String(a.name || '').localeCompare(String(b.name || '')));
+
+            body.innerHTML = `
+                <div class="modal-context">
+                    <div><span class="ctx-label">Student</span><strong>${escapeHtml(r.studentName)}</strong></div>
+                    <div><span class="ctx-label">Original behavior</span>${escapeHtml(r.behavior || r.behaviorType || '—')}</div>
+                    <div><span class="ctx-label">Incident date</span>${escapeHtml(r.date || '—')}</div>
+                    <div><span class="ctx-label">Closed date</span>${r.closedAt ? new Date(r.closedAt).toLocaleDateString() : '—'}</div>
+                </div>
+
+                ${(r.closingActions || []).length ? `
+                <div class="modal-desc">
+                    <span class="ctx-label">Actions recorded at closing</span>
+                    <ul class="closed-ref-actions">${r.closingActions.map(a => `<li>${escapeHtml(a)}</li>`).join('')}</ul>
+                </div>` : ''}
+
+                <label class="field-label" style="margin-top:14px;">Forward closing summary to staff (optional)</label>
+                <input type="text" id="loopStaffSearch" class="wc-input" placeholder="🔍 Search staff by name..."
+                       onkeyup="filterLoopStaff()">
+                <div class="staff-picker" id="loopStaffList">
+                    ${staff.map(t => `
+                        <label class="check-item staff-row" data-name="${escapeHtml((t.name || '').toLowerCase())}">
+                            <input type="checkbox" class="loop-staff" value="${escapeHtml(t.name || '')}">
+                            <span>${escapeHtml(t.name || t.username || '')}</span>
+                        </label>`).join('')}
+                </div>
+                <p class="panel-hint">The referring staff member is included automatically.</p>
+
+                <label class="field-label" style="margin-top:14px;">Additional notes for the summary</label>
+                <textarea id="loopNotes" rows="3" class="wc-input"
+                    placeholder="Anything else staff should know..."></textarea>
+
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="closeModalById('closeLoopModal')">Cancel</button>
+                    <button class="btn btn-loop-close" onclick="confirmCloseLoop('${r.id}')">Close the Loop</button>
+                </div>`;
+            modal.classList.remove('hidden');
+            modal.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        function filterLoopStaff() {
+            const term = ((document.getElementById('loopStaffSearch') || {}).value || '').toLowerCase();
+            document.querySelectorAll('#loopStaffList .staff-row').forEach(row => {
+                row.style.display = (row.dataset.name || '').includes(term) ? '' : 'none';
             });
         }
 
-        async function saveReferralReview(referralId) {
-            const referral = behaviorReferrals.find(r => r.id === referralId);
-            if (!referral) {
-                alert('⚠️ Referral not found');
-                return;
-            }
-            
-            const student = students.find(s => s.id === referral.studentId);
-            if (!student) {
-                alert('⚠️ Student not found');
-                return;
-            }
-            
-            const consequence = document.getElementById('referralConsequence').value.trim();
-            const adminNotes = document.getElementById('referralAdminNotes').value.trim();
-            const deductTickets = document.getElementById('deductTickets').checked;
-            const deductCash = document.getElementById('deductCash').checked;
-            const emailParent = document.getElementById('emailParent').checked;
-            
-            if (!consequence) {
-                alert('⚠️ Please enter a consequence or action taken');
-                return;
-            }
-            
-            // Update referral
-            referral.consequence = consequence;
-            referral.adminNotes = adminNotes;
-            referral.status = 'reviewed';
-            referral.reviewedBy = currentUser.name;
-            referral.reviewedAt = new Date().toISOString();
-            
-            // Apply ticket deduction
-            if (deductTickets) {
-                const ticketsToDeduct = parseInt(document.getElementById('ticketsToDeduct').value) || 1;
-                student.pbisTickets = Math.max(0, (student.pbisTickets || 0) - ticketsToDeduct);
-                
-                // Log in history
-                if (!student.ticketHistory) student.ticketHistory = [];
-                student.ticketHistory.push({
-                    type: 'pbis',
-                    subcategory: `Behavior Referral - ${referral.behaviorType}`,
-                    amount: -ticketsToDeduct,
-                    teacher: currentUser.name,
-                    timestamp: new Date().toISOString(),
-                    week: currentWeek,
-                    cycle: getCurrentCycleNumber(),
-                    notes: `Deducted due to referral ${referral.id}: ${referral.behaviorType} (${referral.severity})`
-                });
-                
-                referral.ticketsDeducted = ticketsToDeduct;
-            }
-            
-            // Apply cash deduction
-            if (deductCash) {
-                const cashToDeduct = parseInt(document.getElementById('cashToDeduct').value) || 100;
-                student.wildcatCashBalance = Math.max(0, (student.wildcatCashBalance || 0) - cashToDeduct);
-                student.wildcatCashDeducted = (student.wildcatCashDeducted || 0) + cashToDeduct;
-                
-                // Log transaction
-                if (!student.wildcatCashTransactions) student.wildcatCashTransactions = [];
-                student.wildcatCashTransactions.push({
-                    type: 'negative',
-                    amount: -cashToDeduct,
-                    category: `Behavior Referral - ${referral.behaviorType}`,
-                    teacher: currentUser.name,
-                    timestamp: new Date().toISOString(),
-                    notes: `Deducted due to referral ${referral.id}: ${referral.behaviorType} (${referral.severity})`
-                });
-                
-                referral.cashDeducted = cashToDeduct;
-            }
-            
-            // Send email if requested
-            if (emailParent && emailJSConfig.publicKey && typeof emailjs !== 'undefined') {
-                try {
-                    const emailParams = {
-                        to_email: student.email || 'parent@example.com', // You'd need to add parent email to student records
-                        student_name: `${student.firstName} ${student.lastName}`,
-                        behavior_type: referral.behaviorType,
-                        severity: referral.severity,
-                        date: new Date(referral.dateTime).toLocaleDateString(),
-                        location: referral.location,
-                        description: referral.description,
-                        consequence: consequence,
-                        admin_name: currentUser.name
-                    };
-                    
-                    await emailjs.send(emailJSConfig.serviceId, 'behavior_referral_template', emailParams);
-                    referral.parentNotified = true;
-                } catch (error) {
-                    console.error('Failed to send parent email:', error);
-                }
-            }
-            
+        async function confirmCloseLoop(referralId) {
+            const r = (behaviorReferrals || []).find(x => x.id === referralId);
+            if (!r) return;
+            const picked = Array.from(document.querySelectorAll('.loop-staff:checked')).map(cb => cb.value);
+            const notes = ((document.getElementById('loopNotes') || {}).value || '').trim();
+
+            const recipients = Array.from(new Set([r.referredBy, ...picked].filter(Boolean)));
+            r.loopClosed = true;
+            r.loopClosedBy = currentUser.name;
+            r.loopClosedAt = new Date().toISOString();
+            r.forwardedTo = recipients;
+            if (notes) r.adminNotes = (r.adminNotes ? r.adminNotes + '\n\n' : '') + notes;
+
             await saveData();
-            
-            // Close modal
-            document.getElementById('reviewReferralModal').remove();
-            
-            // Show success
-            alert('✅ Referral review completed and saved!');
-            
-            // Refresh the review table
-            updateReferralReviewTable();
+            closeModalById('closeLoopModal');
+            updateClosedReferralsList();
+            alert(`✅ Loop closed.\n\nSummary recorded for ${recipients.length} staff member(s).`);
+        }
+
+        function closeModalById(id) {
+            const m = document.getElementById(id);
+            if (m) m.classList.add('hidden');
         }
 
         function viewReferralDetails(referralId) {
-            const referral = behaviorReferrals.find(r => r.id === referralId);
-            if (!referral) {
-                alert('⚠️ Referral not found');
-                return;
-            }
-            
-            const severityColor = referral.severity === 'Minor' ? '#2E7D52' : referral.severity === 'Major' ? '#f59e0b' : '#B3392F';
-            
-            const html = `
-                <div style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000; display: flex; align-items: center; justify-content: center; padding: 20px;" id="viewReferralModal" onclick="if(event.target === this) document.getElementById('viewReferralModal').remove();">
-                    <div style="background: white; border-radius: 16px; max-width: 700px; width: 100%; max-height: 90vh; overflow-y: auto;" onclick="event.stopPropagation();">
-                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 16px 16px 0 0; color: white;">
-                            <h2 style="margin: 0 0 10px 0;">📋 Referral Details</h2>
-                            <p style="margin: 0; opacity: 0.9; font-size: 14px;">Referral ID: ${referral.id} • Reviewed by ${referral.reviewedBy}</p>
-                        </div>
-                        
-                        <div style="padding: 30px;">
-                            <div style="background: #f9fafb; padding: 20px; border-radius: 12px; margin-bottom: 20px;">
-                                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 15px;">
-                                    <div>
-                                        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Student</div>
-                                        <div style="font-weight: 600; font-size: 16px;">${referral.studentName}</div>
-                                    </div>
-                                    <div>
-                                        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Date & Time</div>
-                                        <div style="font-weight: 600;">${new Date(referral.dateTime).toLocaleString()}</div>
-                                    </div>
-                                    <div>
-                                        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Location</div>
-                                        <div style="font-weight: 600;">${referral.location}</div>
-                                    </div>
-                                    <div>
-                                        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Severity</div>
-                                        <div><span style="background: ${severityColor}; color: white; padding: 6px 14px; border-radius: 14px; font-size: 13px; font-weight: 600;">${referral.severity}</span></div>
-                                    </div>
-                                </div>
-                                <div style="margin-bottom: 15px;">
-                                    <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Behavior Type</div>
-                                    <div style="font-weight: 600;">${referral.behaviorType}</div>
-                                </div>
-                                <div style="margin-bottom: 15px;">
-                                    <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Description</div>
-                                    <div style="padding: 12px; background: white; border-radius: 6px; border: 1px solid #e5e7eb;">${referral.description}</div>
-                                </div>
-                                <div>
-                                    <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Referred By</div>
-                                    <div style="font-weight: 600;">${referral.referredBy}</div>
-                                </div>
-                            </div>
-                            
-                            <div style="background: #e0f2fe; padding: 20px; border-radius: 12px; margin-bottom: 20px;">
-                                <div style="font-size: 12px; color: #0369a1; margin-bottom: 4px; font-weight: 600;">CONSEQUENCE / ACTION TAKEN</div>
-                                <div style="padding: 12px; background: white; border-radius: 6px;">${referral.consequence}</div>
-                            </div>
-                            
-                            ${referral.adminNotes ? `
-                                <div style="background: #fef3c7; padding: 20px; border-radius: 12px; margin-bottom: 20px;">
-                                    <div style="font-size: 12px; color: #d97706; margin-bottom: 4px; font-weight: 600;">ADMIN NOTES</div>
-                                    <div style="padding: 12px; background: white; border-radius: 6px;">${referral.adminNotes}</div>
-                                </div>
-                            ` : ''}
-                            
-                            ${referral.ticketsDeducted || referral.cashDeducted ? `
-                                <div style="background: #fee2e2; padding: 15px; border-radius: 12px; margin-bottom: 20px;">
-                                    <div style="font-size: 12px; color: #dc2626; margin-bottom: 8px; font-weight: 600;">CONSEQUENCES APPLIED</div>
-                                    ${referral.ticketsDeducted ? `<div style="margin-bottom: 5px;">🎫 Deducted ${referral.ticketsDeducted} ticket(s)</div>` : ''}
-                                    ${referral.cashDeducted ? `<div>💰 Deducted $${referral.cashDeducted}</div>` : ''}
-                                </div>
-                            ` : ''}
-                            
-                            <div style="text-align: center;">
-                                <button class="btn btn-secondary" onclick="document.getElementById('viewReferralModal').remove()" style="padding: 12px 30px;">
-                                    Close
-                                </button>
-                            </div>
-                        </div>
-                    </div>
+            const r = (behaviorReferrals || []).find(x => x.id === referralId);
+            if (!r) { alert('⚠️ Referral not found'); return; }
+            const modal = document.getElementById('referralDetailModal');
+            const body = document.getElementById('referralDetailBody');
+            if (!modal || !body) return;
+
+            const iv = r.interventions || [];
+            const ca = r.closingActions || [];
+            body.innerHTML = `
+                <div class="modal-context">
+                    <div><span class="ctx-label">Student</span><strong>${escapeHtml(r.studentName)}</strong></div>
+                    <div><span class="ctx-label">School / Grade</span>${escapeHtml(r.school || '—')} &middot; ${escapeHtml(String(r.studentGrade || '—'))}</div>
+                    <div><span class="ctx-label">Behavior</span>${escapeHtml(r.behavior || r.behaviorType || '—')}</div>
+                    <div><span class="ctx-label">Location</span>${escapeHtml(r.location || 'Not recorded')}</div>
+                    <div><span class="ctx-label">Incident</span>${escapeHtml(r.date || '—')}${r.time ? ' at ' + escapeHtml(r.time) : ''}</div>
+                    <div><span class="ctx-label">Referred by</span>${escapeHtml(r.referredBy || '—')}</div>
                 </div>
-            `;
-            
-            document.body.insertAdjacentHTML('beforeend', html);
+
+                <div class="modal-desc">
+                    <span class="ctx-label">Description of incident</span>
+                    ${escapeHtml(r.description || 'None provided')}
+                </div>
+
+                <div class="modal-desc">
+                    <span class="ctx-label">Interventions implemented (${iv.length})</span>
+                    ${iv.length
+                        ? `<ul class="closed-ref-actions">${iv.map(a => `<li>${escapeHtml(a)}</li>`).join('')}</ul>`
+                        : '<span class="cell-empty">None logged before referring</span>'}
+                </div>
+
+                ${r.additionalActions ? `<div class="modal-desc">
+                    <span class="ctx-label">Additional actions / notes</span>
+                    ${escapeHtml(r.additionalActions)}
+                </div>` : ''}
+
+                ${r.status === 'closed' ? `<div class="modal-desc">
+                    <span class="ctx-label">Resolution</span>
+                    ${r.resolutionType === 'no_action' ? 'No action required' : 'Action taken'}
+                    ${ca.length ? `<ul class="closed-ref-actions">${ca.map(a => `<li>${escapeHtml(a)}</li>`).join('')}</ul>` : ''}
+                    ${r.adminNotes ? `<div class="closed-ref-note">${escapeHtml(r.adminNotes)}</div>` : ''}
+                    <div class="cell-sub" style="margin-top:6px;">Closed by ${escapeHtml(r.closedBy || '—')}${r.loopClosed ? ' &middot; loop closed' : ' &middot; loop still pending'}</div>
+                </div>` : '<div class="modal-desc"><span class="ctx-label">Status</span>Open — awaiting administrator</div>'}
+
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="closeModalById('referralDetailModal')">Close</button>
+                    ${r.status !== 'closed' ? `<button class="btn btn-referral-submit" onclick="closeModalById('referralDetailModal'); openCloseReferralModal('${r.id}')">Close this referral</button>` : ''}
+                </div>`;
+            modal.classList.remove('hidden');
+            modal.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
 
         function updateStudentReferralHistory() {
@@ -18107,9 +18189,10 @@
             document.getElementById('studentReferralSummary').classList.remove('hidden');
             document.getElementById('noHistoryMessage').classList.add('hidden');
             
-            const minorCount = studentReferrals.filter(r => r.severity === 'Minor').length;
-            const majorCount = studentReferrals.filter(r => r.severity === 'Major').length;
-            const severeCount = studentReferrals.filter(r => r.severity === 'Severe').length;
+            // Severity retired — summarise by status and closure instead.
+            const minorCount = studentReferrals.filter(r => r.status !== 'closed').length;   // open
+            const majorCount = studentReferrals.filter(r => r.status === 'closed').length;   // closed
+            const severeCount = studentReferrals.filter(r => r.loopClosed).length;           // loop closed
             
             document.getElementById('summaryMinor').textContent = minorCount;
             document.getElementById('summaryMajor').textContent = majorCount;
@@ -18123,7 +18206,7 @@
             const sorted = [...studentReferrals].sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime));
             
             tbody.innerHTML = sorted.map(ref => {
-                const severityColor = ref.severity === 'Minor' ? '#2E7D52' : ref.severity === 'Major' ? '#f59e0b' : '#B3392F';
+                const severityColor = ref.status === 'closed' ? '#2E7D52' : '#B7791F';
                 
                 return `
                     <tr style="border-bottom: 1px solid #e5e7eb;">
@@ -18131,7 +18214,7 @@
                         <td style="padding: 14px;">${ref.behaviorType}</td>
                         <td style="padding: 14px; text-align: center;">
                             <span style="background: ${severityColor}; color: white; padding: 5px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">
-                                ${ref.severity}
+                                ${ref.status === 'closed' ? 'Closed' : 'Open'}
                             </span>
                         </td>
                         <td style="padding: 14px;">${ref.location}</td>
@@ -18146,91 +18229,78 @@
         }
 
         function updateReferralAnalytics() {
-            // Update summary cards
-            const totalReferrals = behaviorReferrals.length;
+            // Severity was dropped; the school tracks its TOP BEHAVIOURS instead,
+            // which is more actionable ("Habitual Defiance is our #1") than a
+            // Minor/Major/Severe split.
+            const all = behaviorReferrals || [];
+            const open = getOpenReferrals();
             const now = new Date();
-            const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-            const thisWeek = behaviorReferrals.filter(r => new Date(r.submittedAt) >= weekAgo).length;
-            const pending = behaviorReferrals.filter(r => r.status === 'pending').length;
-            const uniqueStudents = new Set(behaviorReferrals.map(r => r.studentId)).size;
-            
-            document.getElementById('analyticsTotalReferrals').textContent = totalReferrals;
-            document.getElementById('analyticsThisWeek').textContent = thisWeek;
-            document.getElementById('analyticsPending').textContent = pending;
-            document.getElementById('analyticsStudents').textContent = uniqueStudents;
-            
-            // Behavior Type Chart
-            const behaviorCounts = {};
-            behaviorReferrals.forEach(r => {
-                behaviorCounts[r.behaviorType] = (behaviorCounts[r.behaviorType] || 0) + 1;
-            });
-            
-            const behaviorTypeCtx = document.getElementById('behaviorTypeChart');
-            if (behaviorTypeCtx) {
-                if (window.behaviorTypeChartInstance) {
-                    window.behaviorTypeChartInstance.destroy();
-                }
-                window.behaviorTypeChartInstance = new Chart(behaviorTypeCtx, {
-                    type: 'bar',
-                    data: {
-                        labels: Object.keys(behaviorCounts),
-                        datasets: [{
-                            label: 'Number of Referrals',
-                            data: Object.values(behaviorCounts),
-                            backgroundColor: 'rgba(47, 103, 167, 0.85)',
-                            borderColor: 'rgba(47, 103, 167, 1)',
-                            borderWidth: 2
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: true,
-                        plugins: {
-                            legend: { display: false }
-                        },
-                        scales: {
-                            y: {
-                                beginAtZero: true,
-                                ticks: { stepSize: 1 }
-                            }
-                        }
-                    }
+            const weekAgo = new Date(now.getTime() - 7 * 864e5);
+            const thisWeek = all.filter(r => new Date(r.submittedAt) >= weekAgo);
+            const uniqueStudents = new Set(all.map(r => r.studentId)).size;
+
+            const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+            set('analyticsTotalReferrals', all.length);
+            set('analyticsThisWeek', thisWeek.length);
+            set('analyticsPending', open.length);
+            set('analyticsStudents', uniqueStudents);
+
+            const rank = (arr, key) => {
+                const counts = {};
+                arr.forEach(r => {
+                    const k = (typeof key === 'function' ? key(r) : r[key]) || 'Not recorded';
+                    counts[k] = (counts[k] || 0) + 1;
                 });
-            }
-            
-            // Severity Chart
-            const severityCounts = {
-                Minor: behaviorReferrals.filter(r => r.severity === 'Minor').length,
-                Major: behaviorReferrals.filter(r => r.severity === 'Major').length,
-                Severe: behaviorReferrals.filter(r => r.severity === 'Severe').length
+                return Object.entries(counts).sort((a, b) => b[1] - a[1]);
             };
-            
-            const severityCtx = document.getElementById('severityChart');
-            if (severityCtx) {
-                if (window.severityChartInstance) {
-                    window.severityChartInstance.destroy();
-                }
-                window.severityChartInstance = new Chart(severityCtx, {
-                    type: 'doughnut',
-                    data: {
-                        labels: ['Minor', 'Major', 'Severe'],
-                        datasets: [{
-                            data: [severityCounts.Minor, severityCounts.Major, severityCounts.Severe],
-                            backgroundColor: ['#2E7D52', '#f59e0b', '#B3392F'],
-                            borderWidth: 2,
-                            borderColor: '#fff'
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: true,
-                        plugins: {
-                            legend: {
-                                position: 'bottom'
-                            }
-                        }
-                    }
-                });
+
+            const barList = (rows, total, limit) => {
+                if (!rows.length) return '<p class="cell-empty">No data yet</p>';
+                const top = rows.slice(0, limit || 10);
+                const max = top[0][1] || 1;
+                return top.map(([label, n], i) => `
+                    <div class="rank-bar-row">
+                        <div class="rank-bar-top">
+                            <span class="rank-bar-label"><span class="rank-bar-num">${i + 1}</span>${escapeHtml(label)}</span>
+                            <span class="rank-bar-count">${n}<span class="rank-bar-pct"> · ${total ? Math.round(n / total * 100) : 0}%</span></span>
+                        </div>
+                        <div class="sh-track"><div class="sh-fill sh-mid" style="width:${(n / max * 100).toFixed(1)}%"></div></div>
+                    </div>`).join('');
+            };
+
+            const behaviours = rank(all, r => r.behavior || r.behaviorType);
+            const locations = rank(all, 'location');
+            const staff = rank(all, 'referredBy');
+
+            const host = document.getElementById('behaviorTypeChart');
+            if (host) {
+                host.innerHTML =
+                    `<div class="analytics-block">
+                        <h4 class="chart-title">Top 10 Behaviors</h4>
+                        ${barList(behaviours, all.length, 10)}
+                     </div>
+                     <div class="analytics-block">
+                        <h4 class="chart-title">Where incidents happen</h4>
+                        ${barList(locations, all.length, 7)}
+                     </div>
+                     <div class="analytics-block">
+                        <h4 class="chart-title">Referrals by staff member</h4>
+                        ${barList(staff, all.length, 10)}
+                     </div>
+                     <div class="analytics-block">
+                        <h4 class="chart-title">Intervention practice</h4>
+                        ${(() => {
+                            if (!all.length) return '<p class="cell-empty">No data yet</p>';
+                            const withThree = all.filter(r => (r.interventions || []).length >= 3).length;
+                            const none = all.filter(r => !(r.interventions || []).length).length;
+                            const pct = Math.round(withThree / all.length * 100);
+                            return `<div class="mini-grid">
+                                <div class="mini-tile"><div class="mini-label">Met the 3-intervention expectation</div><div class="mini-num">${pct}%</div></div>
+                                <div class="mini-tile${none ? ' mini-tile-warn' : ''}"><div class="mini-label">Filed with none logged</div><div class="mini-num">${none}</div></div>
+                                <div class="mini-tile"><div class="mini-label">Closed &amp; loop closed</div><div class="mini-num">${all.filter(r => r.loopClosed).length}</div></div>
+                            </div>`;
+                        })()}
+                     </div>`;
             }
         }
         
@@ -18746,7 +18816,10 @@
                 'Time': new Date(r.dateTime).toLocaleTimeString(),
                 'Student Name': r.studentName,
                 'Behavior Type': r.behaviorType,
-                'Severity': r.severity,
+                'Interventions Attempted': (r.interventions || []).length,
+                'Resolution': r.resolutionType === 'no_action' ? 'No action required' : (r.status === 'closed' ? 'Action taken' : ''),
+                'Closing Actions': (r.closingActions || []).join('; '),
+                'Loop Closed': r.loopClosed ? 'Yes' : 'No',
                 'Location': r.location,
                 'Description': r.description,
                 'Referred By': r.referredBy,
