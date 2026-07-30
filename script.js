@@ -3106,6 +3106,8 @@
             } finally {
                 isSyncing = false;
                 lastUserActivity = Date.now();
+                // Storage watch: report only, never block a save.
+                if (typeof checkStorageHealth === 'function') checkStorageHealth();
             }
         }
 
@@ -14886,6 +14888,11 @@
                 content.classList.add('active');
             }
             
+            // Storage Health renders when System Admin opens
+            if (tabName === 'system' && typeof renderStorageHealth === 'function') {
+                renderStorageHealth();
+            }
+
             // Populate settings when Settings tab is opened
             if (tabName === 'settings') {
                 populateSettingsFields();
@@ -15132,6 +15139,191 @@
         // ========================================
 
         // Mode Switching
+
+
+        // ============================================================
+        // STORAGE HEALTH MONITOR
+        //
+        // Firestore allows 1MB per document. This system stores growing
+        // arrays inside a handful of documents, so any of them can fill
+        // up and start silently rejecting saves — which is what caused
+        // the spring 2026 outages.
+        //
+        // This module measures the payloads the app WOULD write, from
+        // data already in memory. It performs no reads, no writes, and
+        // never blocks a save (blocking would lose a teacher's work).
+        // It warns early instead.
+        // ============================================================
+
+        const STORAGE_DOC_LIMIT = 1048576; // 1MB, Firestore hard limit
+        const STORAGE_WARN_AT = 0.60;      // console warning — set below main's
+                                           // current 67% on purpose, so the
+                                           // document that caused the spring
+                                           // outages is visibly flagged rather
+                                           // than sitting quietly in the green.
+        const STORAGE_ALERT_AT = 0.80;     // visible banner for admins
+        const STORAGE_CRITICAL_AT = 0.90;  // loud warning
+
+        function _byteSize(obj) {
+            try {
+                return new TextEncoder().encode(JSON.stringify(obj)).length;
+            } catch (e) {
+                return 0;
+            }
+        }
+
+        function getStorageEstimates() {
+            // Mirrors how saveData() partitions data across documents.
+            // ticketHistory is stripped from `main` (it lives in the
+            // per-school history docs), so it is excluded here too.
+            const studentsForMain = (students || []).map(s => {
+                const copy = Object.assign({}, s);
+                delete copy.ticketHistory;
+                return copy;
+            });
+
+            const mainPayload = {
+                students: studentsForMain,
+                teachers: teachers || [],
+                currentWeek: typeof currentWeek !== 'undefined' ? currentWeek : null,
+                cycleDuration: typeof cycleDuration !== 'undefined' ? cycleDuration : null,
+                weeklyWinners: typeof weeklyWinners !== 'undefined' ? weeklyWinners : [],
+                bigRaffleWinners: typeof bigRaffleWinners !== 'undefined' ? bigRaffleWinners : [],
+                weeklyHistory: typeof weeklyHistory !== 'undefined' ? weeklyHistory : [],
+                currentCycle: typeof currentCycle !== 'undefined' ? currentCycle : null
+            };
+
+            const secondaryPayload = {
+                loginHistory: typeof loginHistory !== 'undefined' ? loginHistory : [],
+                hallPasses: typeof hallPasses !== 'undefined' ? hallPasses : [],
+                preventionGroups: typeof preventionGroups !== 'undefined' ? preventionGroups : [],
+                behaviorReferrals: typeof behaviorReferrals !== 'undefined' ? behaviorReferrals : [],
+                detentions: typeof detentions !== 'undefined' ? detentions : [],
+                wildcatCashTransactions: typeof wildcatCashTransactions !== 'undefined' ? wildcatCashTransactions : []
+            };
+
+            // Ticket history split by school, same rule as saveData()
+            const msHist = {}, hsHist = {};
+            (students || []).forEach(s => {
+                const g = parseInt(s.grade, 10);
+                const h = s.ticketHistory || [];
+                if (!h.length) return;
+                if (g >= 6 && g <= 8) msHist[s.id] = h;
+                else if (g >= 9 && g <= 12) hsHist[s.id] = h;
+            });
+
+            const auditPayload = { auditLog: typeof auditLog !== 'undefined' ? auditLog : [] };
+
+            const rows = [
+                { key: 'main',              label: 'Main (students, teachers, settings)', bytes: _byteSize(mainPayload) },
+                { key: 'secondary',         label: 'Secondary (passes, referrals, cash, detentions)', bytes: _byteSize(secondaryPayload) },
+                { key: 'audit_log',         label: 'Audit log (this month)', bytes: _byteSize(auditPayload) },
+                { key: 'ticket_history_hs', label: 'Ticket history — High School', bytes: _byteSize(hsHist) },
+                { key: 'ticket_history_ms', label: 'Ticket history — Middle School', bytes: _byteSize(msHist) }
+            ];
+            rows.forEach(r => { r.pct = r.bytes / STORAGE_DOC_LIMIT; });
+
+            // What's taking up room inside `main` — the actionable detail
+            const detail = [
+                { label: 'Class schedules (students.sections)', bytes: (students || []).reduce((n, s) => n + _byteSize(s.sections || []), 0) },
+                { label: 'Cash transactions on students',       bytes: (students || []).reduce((n, s) => n + _byteSize(s.cashTransactions || []), 0) },
+                { label: 'Teacher records',                     bytes: _byteSize(teachers || []) }
+            ];
+
+            return { rows, detail };
+        }
+
+        function renderStorageHealth() {
+            const host = document.getElementById('storageHealthBars');
+            if (!host) return;
+            const { rows, detail } = getStorageEstimates();
+            const esc = (typeof escapeHtml === 'function') ? escapeHtml : (s => String(s == null ? '' : s));
+            const kb = b => (b / 1024).toFixed(0) + ' KB';
+
+            const band = pct => pct >= STORAGE_CRITICAL_AT ? 'crit'
+                              : pct >= STORAGE_ALERT_AT   ? 'high'
+                              : pct >= STORAGE_WARN_AT    ? 'warn'
+                              : pct >= 0.35               ? 'mid' : 'ok';
+            const words = {
+                ok:   'Plenty of room',
+                mid:  'Fine',
+                warn: 'Getting full — plan a fix',
+                high: 'Act soon',
+                crit: 'Fix now — saves may fail'
+            };
+
+            let html = '';
+            rows.sort((a, b) => b.pct - a.pct).forEach(r => {
+                const b = band(r.pct);
+                const pctTxt = (r.pct * 100).toFixed(0) + '%';
+                html += '<div class="sh-row">' +
+                    '<div class="sh-top">' +
+                        '<span class="sh-name">' + esc(r.label) + '</span>' +
+                        '<span class="sh-num">' + kb(r.bytes) + ' &middot; ' + pctTxt + '</span>' +
+                    '</div>' +
+                    '<div class="sh-track"><div class="sh-fill sh-' + b + '" style="width:' + Math.min(100, r.pct * 100).toFixed(1) + '%"></div></div>' +
+                    '<div class="sh-note sh-text-' + b + '">' + words[b] + '</div>' +
+                '</div>';
+            });
+
+            const worst = rows[0];
+            if (worst && worst.pct >= STORAGE_WARN_AT) {
+                html = '<div class="sh-banner sh-banner-' + band(worst.pct) + '">' +
+                       '<strong>' + esc(worst.label) + '</strong> is ' + (worst.pct * 100).toFixed(0) +
+                       '% full. Nothing is broken yet, but this is the one to fix.' +
+                       '</div>' + html;
+            }
+
+            const shown = detail.filter(d => d.bytes > 1024).sort((a, b) => b.bytes - a.bytes);
+            if (shown.length) {
+                html += '<div class="sh-detail"><div class="sh-detail-head">Biggest things inside the Main document</div>';
+                shown.forEach(d => {
+                    html += '<div class="sh-detail-row"><span>' + esc(d.label) + '</span><span>' + kb(d.bytes) + '</span></div>';
+                });
+                html += '</div>';
+            }
+
+            host.innerHTML = html;
+        }
+
+        function checkStorageHealth(silent) {
+            // Called from saveData(). Never blocks — only reports.
+            try {
+                const { rows } = getStorageEstimates();
+                const worst = rows.reduce((a, b) => (a.pct > b.pct ? a : b));
+                if (worst.pct >= STORAGE_CRITICAL_AT) {
+                    console.error(`🔴 STORAGE CRITICAL: ${worst.key} is ${(worst.pct*100).toFixed(0)}% of the 1MB limit. Saves may start failing. See Settings → System Admin → Storage Health.`);
+                } else if (worst.pct >= STORAGE_ALERT_AT) {
+                    console.warn(`🟠 STORAGE HIGH: ${worst.key} is ${(worst.pct*100).toFixed(0)}% of the 1MB limit.`);
+                } else if (worst.pct >= STORAGE_WARN_AT) {
+                    console.warn(`🟡 Storage notice: ${worst.key} is ${(worst.pct*100).toFixed(0)}% of the 1MB limit.`);
+                }
+                // Persistent banner for admins once we cross the alert line
+                if (!silent) showStorageBannerIfNeeded(worst);
+                return worst;
+            } catch (e) {
+                console.warn('Storage health check skipped:', e);
+                return null;
+            }
+        }
+
+        function showStorageBannerIfNeeded(worst) {
+            if (!worst || worst.pct < STORAGE_ALERT_AT) return;
+            if (!currentUser || (currentUser.role !== 'admin' && currentUser.role !== 'superadmin')) return;
+            if (document.getElementById('storageTopBanner')) return; // already shown this session
+
+            const body = document.querySelector('#mainApp .app-content');
+            if (!body) return;
+            const div = document.createElement('div');
+            div.id = 'storageTopBanner';
+            div.className = 'sh-banner sh-banner-' + (worst.pct >= STORAGE_CRITICAL_AT ? 'crit' : 'high');
+            div.innerHTML = '<strong>Storage warning:</strong> the ' + worst.key +
+                ' document is ' + (worst.pct * 100).toFixed(0) +
+                '% full (limit 1 MB). Saves can start failing when it fills. ' +
+                'Open <em>Settings → System Admin → Storage Health</em> for details.' +
+                '<button class="sh-banner-x" onclick="this.parentElement.remove()">Dismiss</button>';
+            body.insertBefore(div, body.firstChild);
+        }
 
         // ============================================================
         // SCHOOL YEAR ROLLOVER — PREVIEW (read-only)
