@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Wildcat Rewards</title>
-    <link rel="stylesheet" href="styles.css?v=20260728j">
+    <link rel="stylesheet" href="styles.css?v=20260728n">
 </head>
 <body>
     <!-- Login Screen -->
@@ -1695,39 +1695,6 @@
                 </div>
             </div>
 
-            <!-- Audit Log Tab (moved down) -->
-            <div id="audit" class="tab-content">
-                <h2>📋 Audit Log</h2>
-                <p style="margin: 15px 0; color: #666;">Track all ticket awards and raffle activities</p>
-
-                <div class="search-bar">
-                    <input type="text" id="searchAudit" placeholder="🔍 Search by student, teacher, or category..." onkeyup="searchAuditLog()">
-                </div>
-
-                <div style="overflow-x: auto;">
-                    <table class="log-table">
-                        <thead>
-                            <tr>
-                                <th>Date/Time</th>
-                                <th>Teacher</th>
-                                <th>Action</th>
-                                <th>Student</th>
-                                <th>Category</th>
-                                <th>Tickets</th>
-                                <th>Reason</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="auditLogTable">
-                            <tr>
-                                <td colspan="8" style="text-align: center; padding: 40px; color: #999;">
-                                    No activity logged yet
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
 
             <!-- Login Activity Tab (Super Admin Only) -->
             <div id="loginActivity" class="tab-content super-admin-only">
@@ -1843,6 +1810,9 @@
                     </button>
                     <button class="settings-subtab-button" onclick="switchSettingsSubtab('cash')" id="cashSettingsSubtab">
                         💰 Cash Mode
+                    </button>
+                    <button class="settings-subtab-button superadmin-only" onclick="switchSettingsSubtab('schoolyear')" id="schoolyearSettingsSubtab">
+                        🎓 School Year
                     </button>
                     <button class="settings-subtab-button" onclick="switchSettingsSubtab('corrections'); initCorrectionsPanel();" id="correctionsSettingsSubtab">
                         🔧 Corrections
@@ -2199,6 +2169,37 @@
                 </div>
 
                 <!-- CORRECTIONS SUBTAB -->
+                <div id="schoolyearSettingsContent" class="settings-subtab-content superadmin-only" style="display: none;">
+                    <div class="wc-card banner-card">
+                        <h3 class="banner-title">🎓 School Year Rollover</h3>
+                        <p class="banner-sub">Compare a new PowerSchool export against the current roster to see exactly what a rollover would change.</p>
+                    </div>
+
+                    <div class="wc-card preview-safe-card">
+                        <div class="safe-badge">🔒 PREVIEW ONLY</div>
+                        <p class="safe-text">
+                            This tool <strong>reads your file and reports what it finds</strong>. It does not save anything,
+                            does not change any student, and does not touch the database. Nothing here can affect live data —
+                            run it as many times as you like.
+                        </p>
+                    </div>
+
+                    <div class="wc-card panel-card">
+                        <div class="panel-head"><span class="panel-icon">📁</span><h3>Step 1 — Choose the new roster file</h3></div>
+                        <p class="panel-hint" style="margin: 0 0 12px 0;">
+                            Accepts the same PowerSchool export you already use (CSV or Excel), including the
+                            schedule format with one row per class.
+                        </p>
+                        <input type="file" id="rolloverFileInput" accept=".csv,.xlsx,.xls" class="wc-input" style="padding: 9px;">
+                        <div style="margin-top: 14px;">
+                            <button class="btn btn-draw" onclick="previewYearRollover()">🔍 Analyze File (no changes)</button>
+                        </div>
+                        <div id="rolloverStatus" class="filter-showing" style="display: none;"></div>
+                    </div>
+
+                    <div id="rolloverResults" style="display: none;"></div>
+                </div>
+
                 <div id="correctionsSettingsContent" class="settings-subtab-content" style="display: none;">
                     <div style="background: #B7791F; color: white; padding: 20px 25px; border-radius: 12px; margin-bottom: 25px;">
                         <h3 style="color: white; margin: 0 0 6px 0; font-size: 20px;">🔧 Admin Corrections</h3>
@@ -3871,6 +3872,8 @@
             </div>
 
         </div>
+            </main>
+        </div><!-- /app-body -->
     </div>
 
     <!-- Active Hall Pass Display Modal -->
@@ -4238,8 +4241,6 @@
                 </button>
             </div>
         </div>
-            </main>
-        </div><!-- /app-body -->
     </div>
 
     <!-- Student View -->
@@ -4529,6 +4530,6 @@
     <!-- Chart.js for Data Visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-    <script src="script.js?v=20260728j"></script>
+    <script src="script.js?v=20260728n"></script>
 </body>
 </html>
