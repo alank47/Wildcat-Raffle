@@ -2008,7 +2008,9 @@
         // ========================================
         
         function saveCycleDuration() {
-            const newDuration = parseInt(document.getElementById('cycleDurationInput').value);
+            const durEl = document.getElementById('cycleDurationInput');
+            if (!durEl) return;
+            const newDuration = parseInt(durEl.value);
             
             if (!newDuration || newDuration < 1 || newDuration > 10) {
                 alert('⚠️ Please enter a valid cycle duration between 1 and 10 weeks');
@@ -2023,7 +2025,8 @@
             }
             
             cycleDuration = newDuration;
-            document.getElementById('cycleDurationDisplay').textContent = cycleDuration;
+            const durDisp = document.getElementById('cycleDurationDisplay');
+            if (durDisp) durDisp.textContent = cycleDuration;
             
             saveData();
             updateAllDisplays();
@@ -8243,9 +8246,16 @@
                 grid.appendChild(card);
             });
             
-            // Auto-refresh every 5 seconds
+            // Auto-refresh every 5 seconds.
+            // NOTE: this used to check #activePassesTab, an element that does not
+            // exist (renamed to #hallMonitorTab long ago), so the dereference threw
+            // inside the timer and silently killed the refresh loop — active pass
+            // timers went stale until the user re-navigated. offsetParent is null
+            // whenever the element or any ancestor is hidden, which also stops the
+            // loop when the user leaves Claw Pass mode entirely.
             setTimeout(() => {
-                if (document.getElementById('activePassesTab').style.display !== 'none') {
+                const monitorTab = document.getElementById('hallMonitorTab');
+                if (monitorTab && monitorTab.offsetParent !== null) {
                     updateActivePassesDisplay();
                 }
             }, 5000);
@@ -15122,6 +15132,370 @@
         // ========================================
 
         // Mode Switching
+
+        // ============================================================
+        // SCHOOL YEAR ROLLOVER — PREVIEW (read-only)
+        //
+        // Parses a new PowerSchool export and reports what a rollover
+        // WOULD do. It never writes: no saveData, no setDoc, no mutation
+        // of `students`, `teachers`, or config. Safe to run on live data.
+        //
+        // Why this is separate from the existing importer:
+        // importPowerSchoolWithHeaders() seeds its map from the CURRENT
+        // roster, so students absent from the new file are kept, and
+        // returning students keep their tickets. That is correct for a
+        // mid-year schedule refresh but wrong for a year rollover, where
+        // graduates must leave and counters must reset.
+        // ============================================================
+
+        function previewYearRollover() {
+            const input = document.getElementById('rolloverFileInput');
+            const status = document.getElementById('rolloverStatus');
+            const results = document.getElementById('rolloverResults');
+            if (!input || !status || !results) return;
+
+            const file = input.files && input.files[0];
+            if (!file) {
+                alert('Please choose a roster file first.');
+                return;
+            }
+
+            status.style.display = 'block';
+            status.textContent = '⏳ Reading ' + file.name + '…';
+            results.style.display = 'none';
+
+            const reader = new FileReader();
+            reader.onerror = function () {
+                status.textContent = '❌ Could not read that file. Try re-exporting it from PowerSchool.';
+            };
+            reader.onload = function (e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+                    const analysis = analyseRolloverFile(rows);
+                    if (analysis.error) {
+                        status.textContent = '❌ ' + analysis.error;
+                        return;
+                    }
+                    status.textContent = '✅ Analyzed ' + file.name + ' — ' + analysis.rowCount +
+                                         ' rows, ' + analysis.incoming.size + ' unique students. Nothing was saved.';
+                    renderRolloverPreview(analysis);
+                    results.style.display = 'block';
+                    results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                } catch (err) {
+                    console.error('Rollover preview failed:', err);
+                    status.textContent = '❌ Could not parse that file: ' + err.message;
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function analyseRolloverFile(rows) {
+            if (!rows || rows.length < 2) return { error: 'That file appears to be empty.' };
+
+            // Locate columns by header name so column order changes don't break this.
+            const header = (rows[0] || []).map(h => String(h || '').trim().toLowerCase());
+            const col = (...names) => {
+                for (const n of names) {
+                    const i = header.indexOf(n);
+                    if (i !== -1) return i;
+                }
+                return -1;
+            };
+            const cId    = col('student number', 'student id', 'studentid');
+            const cFirst = col('first name', 'firstname');
+            const cLast  = col('last name', 'lastname');
+            const cGrade = col('grade level', 'grade');
+            const cCourse= col('course', 'course name');
+            const cPeriod= col('period');
+            const cTeach = col('teacher');
+
+            if (cId === -1 || cFirst === -1 || cLast === -1) {
+                return { error: 'Could not find "Student Number", "First Name" and "Last Name" columns in the header row.' };
+            }
+
+            const incoming = new Map();   // id -> {id, firstName, lastName, grade, sectionCount}
+            const teacherSet = new Set();
+            const sectionSet = new Set();
+            let rowCount = 0, blankId = 0, missingName = 0, missingGrade = 0;
+
+            for (let i = 1; i < rows.length; i++) {
+                const r = rows[i];
+                if (!r || r.length === 0) continue;
+                rowCount++;
+
+                const id = String(r[cId] || '').trim();
+                if (!id) { blankId++; continue; }
+                const first = String(r[cFirst] || '').trim();
+                const last  = String(r[cLast]  || '').trim();
+                const grade = cGrade !== -1 ? String(r[cGrade] || '').trim() : '';
+                if (!first || !last) missingName++;
+                if (!grade) missingGrade++;
+
+                if (!incoming.has(id)) {
+                    incoming.set(id, { id, firstName: first, lastName: last, grade, sectionCount: 0 });
+                }
+                const rec = incoming.get(id);
+                rec.sectionCount++;
+
+                const course = cCourse !== -1 ? String(r[cCourse] || '').trim() : '';
+                const period = cPeriod !== -1 ? String(r[cPeriod] || '').trim() : '';
+                const teach  = cTeach  !== -1 ? String(r[cTeach]  || '').trim() : '';
+                if (teach) teacherSet.add(teach);
+                if (teach && course && period) sectionSet.add(teach + '|' + period + '|' + course);
+            }
+
+            // Compare against the CURRENT roster (read-only).
+            const current = Array.isArray(students) ? students : [];
+            const currentById = new Map(current.map(s => [String(s.id), s]));
+
+            const returning = [], newStudents = [], departing = [], gradeChanges = [], schoolMoves = [];
+            incoming.forEach((inc, id) => {
+                const existing = currentById.get(id);
+                if (existing) {
+                    returning.push({ inc, existing });
+                    const oldG = String(existing.grade || '').trim();
+                    const newG = String(inc.grade || '').trim();
+                    if (oldG && newG && oldG !== newG) {
+                        gradeChanges.push({ inc, existing, oldG, newG });
+                        const oldHS = parseInt(oldG, 10) >= 9;
+                        const newHS = parseInt(newG, 10) >= 9;
+                        if (oldHS !== newHS) schoolMoves.push({ inc, existing, oldG, newG });
+                    }
+                } else {
+                    newStudents.push(inc);
+                }
+            });
+            currentById.forEach((s, id) => {
+                if (!incoming.has(id)) departing.push(s);
+            });
+
+            const ticketsOf = s => (Number(s.pbisTickets) || 0) + (Number(s.attendanceTickets) || 0) + (Number(s.academicTickets) || 0);
+
+            // --- Departure sanity check -------------------------------------
+            // A rollover run with a STALE export is the main way this tool could
+            // mislead: every student who enrolled after the file was produced
+            // would look like they had left. Graduating students share the top
+            // grade, so departures from any other grade are worth questioning.
+            const gradeNums = current.map(s => parseInt(s.grade, 10)).filter(n => !isNaN(n));
+            const topGrade = gradeNums.length ? Math.max(...gradeNums) : null;
+            const departingByGrade = {};
+            departing.forEach(s => {
+                const g = String(s.grade || '?').trim() || '?';
+                departingByGrade[g] = (departingByGrade[g] || 0) + 1;
+            });
+            const isExpectedDeparture = s => topGrade !== null && parseInt(s.grade, 10) === topGrade;
+            const unexpectedDepartures = departing.filter(s => !isExpectedDeparture(s));
+            const unexpectedWithTickets = unexpectedDepartures.filter(s => ticketsOf(s) > 0);
+            const departingShare = current.length ? (departing.length / current.length) : 0;
+            const gradeCounts = {};
+            incoming.forEach(s => {
+                const g = s.grade || '?';
+                gradeCounts[g] = (gradeCounts[g] || 0) + 1;
+            });
+
+            return {
+                rowCount, incoming, teacherSet, sectionSet,
+                returning, newStudents, departing, gradeChanges, schoolMoves,
+                gradeCounts,
+                currentCount: current.length,
+                quality: { blankId, missingName, missingGrade },
+                ticketsOf,
+                topGrade, departingByGrade, isExpectedDeparture,
+                unexpectedDepartures, unexpectedWithTickets, departingShare,
+                isSchedule: rowCount > 0 && (rowCount / Math.max(1, incoming.size)) > 1.5
+            };
+        }
+
+        function renderRolloverPreview(a) {
+            const esc = (typeof escapeHtml === 'function') ? escapeHtml : (s => String(s == null ? '' : s));
+            const results = document.getElementById('rolloverResults');
+            const sortByName = arr => arr.slice().sort((x, y) =>
+                String(x.lastName || '').localeCompare(String(y.lastName || '')));
+
+            // ---- Summary ----
+            let html = '<div class="stat-grid">' +
+                statTile('Returning', a.returning.length, 'In both the current roster and the new file') +
+                statTile('Departing', a.departing.length, 'In the system but NOT in the new file') +
+                statTile('New', a.newStudents.length, 'In the new file only') +
+                statTile('Roster after rollover', a.returning.length + a.newStudents.length,
+                         'Currently ' + a.currentCount + ' students') +
+                '</div>';
+
+            // ---- File shape ----
+            html += '<div class="wc-card insight-card">' +
+                '<h3 class="panel-title">📄 What this file looks like</h3>' +
+                '<p class="panel-note">' +
+                    a.rowCount + ' data rows describing <strong>' + a.incoming.size + ' unique students</strong>' +
+                    (a.isSchedule
+                        ? ' — about ' + (a.rowCount / a.incoming.size).toFixed(1) + ' rows each, so this is a <strong>schedule export</strong> (one row per class). Duplicate rows per student are expected and were collapsed by Student Number.'
+                        : ' — roughly one row per student.') +
+                '</p>' +
+                (a.teacherSet.size
+                    ? '<p class="panel-note" style="margin-top:8px;">It also contains <strong>' + a.teacherSet.size +
+                      ' teachers</strong> across <strong>' + a.sectionSet.size +
+                      ' sections</strong>, so period and teacher assignments could be rebuilt from this same file.</p>'
+                    : '') +
+                '</div>';
+
+            // ---- Data quality ----
+            const q = a.quality;
+            const issues = [];
+            if (q.blankId)      issues.push(q.blankId + ' row(s) had a blank Student Number and would be skipped');
+            if (q.missingName)  issues.push(q.missingName + ' row(s) were missing a first or last name');
+            if (q.missingGrade) issues.push(q.missingGrade + ' row(s) were missing a grade level');
+            html += '<div class="wc-card insight-card">' +
+                '<h3 class="panel-title">' + (issues.length ? '⚠️ Data quality' : '✅ Data quality') + '</h3>' +
+                (issues.length
+                    ? '<ul class="rollover-list">' + issues.map(i => '<li>' + esc(i) + '</li>').join('') + '</ul>'
+                    : '<p class="panel-note">No blank IDs, missing names, or missing grades found.</p>') +
+                '</div>';
+
+            // ---- Departure sanity check (stale-file guard) ----
+            const unexp = a.unexpectedDepartures.length;
+            if (a.departing.length === 0) {
+                html += '<div class="wc-card check-ok">' +
+                    '<h3 class="panel-title">✅ Departure check</h3>' +
+                    '<p class="panel-note">No students would be removed.</p></div>';
+            } else if (unexp === 0) {
+                html += '<div class="wc-card check-ok">' +
+                    '<h3 class="panel-title">✅ Departure check looks normal</h3>' +
+                    '<p class="panel-note">All ' + a.departing.length + ' departing students are in grade ' +
+                    a.topGrade + ', the highest grade in your roster — exactly what graduation looks like.</p></div>';
+            } else {
+                html += '<div class="wc-card check-warn">' +
+                    '<div class="warn-badge">⚠️ CHECK THIS BEFORE ANY ROLLOVER</div>' +
+                    '<h3 class="panel-title">' + unexp + ' of ' + a.departing.length +
+                    ' departing students are not in the graduating grade</h3>' +
+                    '<p class="panel-note">Graduating students should all be in grade ' + (a.topGrade === null ? '?' : a.topGrade) +
+                    '. These ' + unexp + ' are not, which usually means one of:</p>' +
+                    '<ul class="rollover-list">' +
+                    '<li><strong>The file is out of date.</strong> Students who enrolled after this export was produced are missing from it, so they look like they left. This is the most common cause — re-export from PowerSchool and run this again.</li>' +
+                    '<li><strong>They genuinely transferred out</strong> during the year, which is normal.</li>' +
+                    '<li><strong>Their Student Number changed</strong> in PowerSchool, so they no longer match.</li>' +
+                    '</ul>' +
+                    (a.unexpectedWithTickets.length
+                        ? '<p class="panel-note" style="margin-top:10px;"><strong>' + a.unexpectedWithTickets.length +
+                          '</strong> of them currently hold tickets, so they are active students — a strong sign the file is stale rather than that they left.</p>'
+                        : '') +
+                    (a.departingShare > 0.25
+                        ? '<p class="panel-note" style="margin-top:10px;"><strong>' + Math.round(a.departingShare * 100) +
+                          '% of your entire roster</strong> would be removed. That is high enough to stop and verify the file.</p>'
+                        : '') +
+                    '</div>';
+            }
+
+            // Departing broken down by grade, so the pattern is obvious at a glance
+            const dgKeys = Object.keys(a.departingByGrade).sort((x, y) => (parseInt(x, 10) || 99) - (parseInt(y, 10) || 99));
+            if (dgKeys.length) {
+                html += '<div class="wc-card insight-card"><h3 class="panel-title">Departing by grade</h3><div class="mini-grid" style="margin-top:10px;">';
+                dgKeys.forEach(g => {
+                    const expected = a.topGrade !== null && parseInt(g, 10) === a.topGrade;
+                    html += '<div class="mini-tile' + (expected ? '' : ' mini-tile-warn') + '">' +
+                            '<div class="mini-label">Grade ' + esc(g) + (expected ? ' (graduating)' : '') + '</div>' +
+                            '<div class="mini-num">' + a.departingByGrade[g] + '</div></div>';
+                });
+                html += '</div></div>';
+            }
+
+            // ---- Departing (the list to eyeball) ----
+            html += '<div class="wc-card panel-card">' +
+                '<div class="panel-head"><span class="panel-icon">👋</span><h3>Departing — ' + a.departing.length + ' student' + (a.departing.length === 1 ? '' : 's') + '</h3></div>' +
+                '<p class="panel-hint" style="margin:0 0 12px 0;">These are in the system but absent from the new file — normally graduates and transfers out. <strong>Check this list carefully:</strong> anyone here by mistake would be removed from the active roster by a real rollover.</p>';
+            if (!a.departing.length) {
+                html += '<p class="cell-empty">Nobody would depart.</p>';
+            } else {
+                html += '<div class="table-scroll"><table class="wc-table"><thead><tr>' +
+                    '<th>Student ID</th><th>Name</th><th class="th-center">Grade</th><th class="th-center">Tickets held</th><th class="th-center">Weeks qualified</th><th>Assessment</th>' +
+                    '</tr></thead><tbody>';
+                // Unexpected departures first — those are the ones to inspect.
+                const depSorted = sortByName(a.departing).sort((x, y) =>
+                    (a.isExpectedDeparture(x) ? 1 : 0) - (a.isExpectedDeparture(y) ? 1 : 0));
+                depSorted.forEach(s => {
+                    const expected = a.isExpectedDeparture(s);
+                    html += '<tr class="wc-row' + (expected ? '' : ' row-alert') + '">' +
+                        '<td class="cell-muted">' + esc(s.id) + '</td>' +
+                        '<td><span class="student-name">' + esc(s.firstName) + ' ' + esc(s.lastName) + '</span></td>' +
+                        '<td class="cell-center">' + esc(s.grade || '—') + '</td>' +
+                        '<td class="cell-center"><span class="count-pill' + (a.ticketsOf(s) ? ' count-pill-on' : '') + '">' + a.ticketsOf(s) + '</span></td>' +
+                        '<td class="cell-center">' + (Number(s.weeksQualified) || 0) + '</td>' +
+                        '<td>' + (expected
+                            ? '<span class="tag-ok">Graduating</span>'
+                            : '<span class="tag-warn">Verify — not graduating grade</span>') + '</td>' +
+                        '</tr>';
+                });
+                html += '</tbody></table></div>';
+            }
+            html += '</div>';
+
+            // ---- New students ----
+            html += '<div class="wc-card panel-card">' +
+                '<div class="panel-head"><span class="panel-icon">✨</span><h3>New — ' + a.newStudents.length + ' student' + (a.newStudents.length === 1 ? '' : 's') + '</h3></div>' +
+                '<p class="panel-hint" style="margin:0 0 12px 0;">In the new file but not yet in the system — incoming students and transfers in.</p>';
+            if (!a.newStudents.length) {
+                html += '<p class="cell-empty">No new students.</p>';
+            } else {
+                html += '<div class="table-scroll"><table class="wc-table"><thead><tr>' +
+                    '<th>Student ID</th><th>Name</th><th class="th-center">Grade</th><th class="th-center">Classes in file</th>' +
+                    '</tr></thead><tbody>';
+                sortByName(a.newStudents).forEach(s => {
+                    html += '<tr class="wc-row">' +
+                        '<td class="cell-muted">' + esc(s.id) + '</td>' +
+                        '<td><span class="student-name">' + esc(s.firstName) + ' ' + esc(s.lastName) + '</span></td>' +
+                        '<td class="cell-center">' + esc(s.grade || '—') + '</td>' +
+                        '<td class="cell-center">' + s.sectionCount + '</td>' +
+                        '</tr>';
+                });
+                html += '</tbody></table></div>';
+            }
+            html += '</div>';
+
+            // ---- Grade / school movement ----
+            html += '<div class="wc-card insight-card">' +
+                '<h3 class="panel-title">🎓 Grade changes</h3>' +
+                '<p class="panel-note"><strong>' + a.gradeChanges.length + '</strong> returning students would change grade' +
+                (a.schoolMoves.length
+                    ? ', including <strong>' + a.schoolMoves.length + '</strong> crossing between middle and high school — their tickets would start recording in the other school\'s history document.'
+                    : '.') + '</p>';
+            const gks = Object.keys(a.gradeCounts).sort((x, y) => (parseInt(x, 10) || 99) - (parseInt(y, 10) || 99));
+            if (gks.length) {
+                html += '<div class="mini-grid" style="margin-top:12px;">';
+                gks.forEach(g => {
+                    html += '<div class="mini-tile"><div class="mini-label">Grade ' + esc(g) + '</div>' +
+                            '<div class="mini-num">' + a.gradeCounts[g] + '</div></div>';
+                });
+                html += '</div>';
+            }
+            html += '</div>';
+
+            // ---- What a real rollover would still need ----
+            html += '<div class="wc-card insight-card">' +
+                '<h3 class="panel-title">🛠️ What a real rollover would do beyond this</h3>' +
+                '<ul class="rollover-list">' +
+                '<li>Archive this year\'s ticket history, then reset every student\'s PBIS, attendance and academic counts to 0</li>' +
+                '<li>Clear jackpot qualifications — this must bypass the normal save path, because the merge rules <em>union</em> qualification arrays and would silently keep them</li>' +
+                '<li>Reset to Cycle 1, Week 1 — which requires deliberately overriding the guard that blocks the cycle from moving backwards</li>' +
+                '<li>Preserve teacher accounts, settings, and the Hall of Fame</li>' +
+                '<li>Rebuild period and teacher section assignments' + (a.sectionSet.size ? ' from the ' + a.sectionSet.size + ' sections in this file' : '') + '</li>' +
+                '<li>Students who enroll <em>after</em> the rollover are added by the normal Students &rarr; Import, which only adds and updates — it never removes anyone, so it is safe to re-run mid-year as new students arrive</li>' +
+                '</ul>' +
+                '<p class="panel-note" style="margin-top:10px;">None of that has happened. This was a read-only report.</p>' +
+                '</div>';
+
+            results.innerHTML = html;
+        }
+
+        function statTile(label, num, foot) {
+            const esc = (typeof escapeHtml === 'function') ? escapeHtml : (s => String(s == null ? '' : s));
+            return '<div class="wc-card wc-stat">' +
+                   '<div class="stat-label">' + esc(label) + '</div>' +
+                   '<div class="stat-num">' + num + '</div>' +
+                   '<div class="stat-foot">' + esc(foot) + '</div>' +
+                   '</div>';
+        }
+
         // ============================================================
         // SIDEBAR SHELL (Phase 1 redesign)
         //
