@@ -15978,6 +15978,7 @@
                 if (typeof removeCashTabButtons === 'function') removeCashTabButtons();
                 if (typeof renderModeSubnav === 'function') renderModeSubnav('discipline');
                 switchDisciplineTab('submit'); // Default to submit view
+                if (typeof populateReferringStaffDropdown === 'function') populateReferringStaffDropdown();
             } else if (hallPassEnabled) {
                 // Hide raffle/cash tabs and normal content, show Claw Pass
                 if (tabsContainer) tabsContainer.style.display = 'none';
@@ -17677,27 +17678,56 @@
         function populateReferringStaffDropdown() {
             const sel = document.getElementById('referralReferringStaff');
             const hint = document.getElementById('referringStaffHint');
-            if (!sel || !currentUser) return;
+            if (!sel) return;
 
-            const isAdmin = currentUser.role === 'admin' || currentUser.role === 'superadmin';
-            const me = currentUser.name || currentUser.username || '';
+            const me = (currentUser && (currentUser.name || currentUser.username)) || '';
+            const isAdmin = !!(currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin'));
 
-            if (isAdmin) {
-                const list = (teachers || []).slice().sort((a, b) =>
-                    String(a.name || '').localeCompare(String(b.name || '')));
-                sel.innerHTML = '<option value="">Select referring staff...</option>' +
-                    list.map(t => {
-                        const nm = escapeHtml(t.name || t.username || '');
-                        return `<option value="${nm}"${(t.name === me) ? ' selected' : ''}>${nm}</option>`;
-                    }).join('');
+            // Build the list so it ALWAYS contains the logged-in user. The previous
+            // version emitted an empty "Select referring staff..." placeholder and
+            // relied on a name match against the teachers array to mark an option
+            // selected. When that match failed the box stayed on the empty option,
+            // which then failed the required check and made submission impossible.
+            let names = isAdmin
+                ? (teachers || []).map(t => (t.name || t.username || '')).filter(Boolean)
+                : [];
+            if (me) names.push(me);
+            names = Array.from(new Set(names)).sort((a, b) => a.localeCompare(b));
+
+            if (!names.length) {
+                sel.innerHTML = '<option value="">(staff list unavailable)</option>';
                 sel.disabled = false;
-                if (hint) hint.textContent = 'Defaults to you. You may file on another staff member\'s behalf.';
-            } else {
-                sel.innerHTML = `<option value="${escapeHtml(me)}" selected>${escapeHtml(me)}</option>`;
-                sel.disabled = true;
-                if (hint) hint.textContent = 'Referrals are filed under your name.';
+                if (hint) hint.textContent = 'Could not load the staff list — the referral will be filed under your account.';
+                console.warn('populateReferringStaffDropdown: no names available',
+                             { me: me, role: currentUser && currentUser.role, teachers: (teachers || []).length });
+                return;
+            }
+
+            sel.innerHTML = names.map(n =>
+                `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+            // Select explicitly rather than via the `selected` attribute, so the
+            // field always holds a real value.
+            sel.value = (me && names.indexOf(me) !== -1) ? me : names[0];
+            sel.disabled = false;  // never disabled — a disabled control is easy to
+                                   // mistake for a broken one, and teachers only get
+                                   // one entry anyway.
+
+            if (hint) {
+                hint.textContent = isAdmin
+                    ? 'Defaults to you. You may file on another staff member\'s behalf.'
+                    : 'Referrals are filed under your name.';
             }
         }
+
+        // Intervention counter via delegation, so it works no matter how the
+        // Submit screen was reached.
+        document.addEventListener('change', function (e) {
+            if (e.target && e.target.classList &&
+                e.target.classList.contains('referral-intervention') &&
+                typeof updateInterventionCount === 'function') {
+                updateInterventionCount();
+            }
+        });
 
         function updateInterventionCount() {
             const boxes = document.querySelectorAll('.referral-intervention:checked');
@@ -17730,7 +17760,16 @@
             const behavior = (document.getElementById('referralBehaviorType') || {}).value || '';
             const description = ((document.getElementById('referralDescription') || {}).value || '').trim();
             const additionalActions = ((document.getElementById('referralAdditionalActions') || {}).value || '').trim();
-            const referringStaff = (document.getElementById('referralReferringStaff') || {}).value || '';
+            let referringStaff = (document.getElementById('referralReferringStaff') || {}).value || '';
+            if (!referringStaff) {
+                // Last-resort fallback: we always know who is logged in, so an empty
+                // dropdown must never be the thing that blocks a referral.
+                referringStaff = (currentUser && (currentUser.name || currentUser.username)) || '';
+                if (referringStaff) {
+                    console.warn('Referring staff field was empty; defaulted to the logged-in user.');
+                    if (typeof populateReferringStaffDropdown === 'function') populateReferringStaffDropdown();
+                }
+            }
             const interventions = Array.from(document.querySelectorAll('.referral-intervention:checked')).map(cb => cb.value);
 
             // Required: student, date, behaviour, description, referring staff.
@@ -17738,7 +17777,7 @@
             if (!date)            { alert('⚠️ Please select the date of the incident'); return; }
             if (!behavior)        { alert('⚠️ Please select the behavior/violation'); return; }
             if (!description)     { alert('⚠️ Please describe the incident'); return; }
-            if (!referringStaff)  { alert('⚠️ Please select the referring staff member'); return; }
+            if (!referringStaff)  { alert('⚠️ Could not determine the referring staff member. Please reload and try again.'); return; }
 
             const student = students.find(s => s.id === studentId);
             if (!student) { alert('⚠️ Student not found'); return; }
