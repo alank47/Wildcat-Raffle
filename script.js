@@ -1634,7 +1634,7 @@
                         getDoc(doc(firebaseDb, 'raffle_data', auditDocName(mk)))
                     );
                     
-                    const [mainSnap, secondarySnap, referralsSnap, ticketHistoryMsSnap, ticketHistoryHsSnap, ticketHistoryLegacySnap, auditLogLegacySnap, ...monthlyAuditSnaps] = await Promise.all([
+                    const [mainSnap, secondarySnap, referralsSnap, schedulesSnap, ticketHistoryMsSnap, ticketHistoryHsSnap, ticketHistoryLegacySnap, auditLogLegacySnap, ...monthlyAuditSnaps] = await Promise.all([
                         getDoc(doc(firebaseDb, 'raffle_data', 'main')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'secondary')),
                         // Referrals live in their own document. The expanded referral
@@ -1642,6 +1642,8 @@
                         // size of each record, and `secondary` shares the same 1MB
                         // ceiling as every other Firestore document.
                         getDoc(doc(firebaseDb, 'raffle_data', 'referrals')),
+                        // Class schedules, lifted out of `main` (see saveData).
+                        getDoc(doc(firebaseDb, 'raffle_data', 'schedules')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_ms')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_hs')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history')),
@@ -1861,6 +1863,19 @@
                         loginHistory = secondaryData.loginHistory || [];
                         hallPasses = secondaryData.hallPasses || [];
                         preventionGroups = secondaryData.preventionGroups || [];
+                        // Re-attach class schedules from their own document. Students loaded
+                        // from `main` no longer carry a sections array.
+                        try {
+                            const schedData = schedulesSnap.exists() ? (schedulesSnap.data().sections || {}) : {};
+                            if (Object.keys(schedData).length) {
+                                students.forEach(s => { s.sections = schedData[s.id] || s.sections || []; });
+                                console.log(`✅ Schedules loaded for ${Object.keys(schedData).length} students`);
+                            } else {
+                                // First run after the split: sections are still on the student
+                                // records from `main`. They migrate out on the next save.
+                                students.forEach(s => { if (!Array.isArray(s.sections)) s.sections = []; });
+                            }
+                        } catch (e) { console.warn('Schedule load skipped:', e); }
                         // Prefer the dedicated referrals document; fall back to the
                         // legacy location so nothing is lost on first run after this
                         // change (and so an old tab's data still loads).
@@ -2582,6 +2597,16 @@
                             }
                         });
                         
+                        // Prepare class schedules (extracted from students, same pattern).
+                        // These are reference data from the roster import and were the
+                        // single biggest thing inside `main`.
+                        const sectionsToSave = {};
+                        students.forEach(s => {
+                            if (s.sections && s.sections.length > 0) {
+                                sectionsToSave[s.id] = s.sections;
+                            }
+                        });
+                        
                         // TRANSACTION 1: Main Document (students + teachers + metadata)
                         const mainDocRef = doc(firebaseDb, 'raffle_data', 'main');
                         const mainTransactionResult = await runTransaction(firebaseDb, async (transaction) => {
@@ -2678,6 +2703,7 @@
                                         };
                                         
                                         delete studentData.ticketHistory;
+                                        delete studentData.sections;   // stored in the `schedules` document
                                         return studentData;
                                     });
                                 
@@ -2687,6 +2713,7 @@
                                     if (!firebaseStudents.find(s => s.id === localStudent.id)) {
                                         const studentData = {...localStudent};
                                         delete studentData.ticketHistory;
+                                        delete studentData.sections;   // stored in the `schedules` document
                                         mergedStudents.push(studentData);
                                     }
                                 });
@@ -2754,7 +2781,8 @@
                         // Update local references AFTER transaction completes
                         students = mainTransactionResult.studentsToSave.map(s => ({
                             ...s,
-                            ticketHistory: ticketHistoriesToSave[s.id] || []
+                            ticketHistory: ticketHistoriesToSave[s.id] || [],
+                            sections: sectionsToSave[s.id] || []
                         }));
                         teachers = mainTransactionResult.teachersToSave;
                         
@@ -2977,6 +3005,18 @@
                         
                         // DOCUMENT 4: Secondary (weekly data + other features)
                         // Uses regular setDoc since these have fewer conflicts
+                        // DOCUMENT: schedules — class schedule data lifted out of `main`.
+                        // 9 sections x 446 students was 372KB, over half of the main
+                        // document. It is reference data that only changes on import,
+                        // so it does not belong in the doc rewritten on every save.
+                        await setDoc(doc(firebaseDb, 'raffle_data', 'schedules'), {
+                            sections: sectionsToSave,
+                            lastSaveTimestamp: timestamp
+                        });
+                        console.log('✅ Schedules document saved');
+                        
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                        
                         const secondaryDoc = doc(firebaseDb, 'raffle_data', 'secondary');
                         await setDoc(secondaryDoc, {
                             weeklyWinners,
@@ -15225,8 +15265,14 @@
             // per-school history docs), so it is excluded here too.
             const studentsForMain = (students || []).map(s => {
                 const copy = Object.assign({}, s);
-                delete copy.ticketHistory;
+                delete copy.ticketHistory;   // lives in ticket_history_ms / _hs
+                delete copy.sections;        // lives in the schedules document
                 return copy;
+            });
+
+            const schedulesPayload = { sections: {} };
+            (students || []).forEach(s => {
+                if (s.sections && s.sections.length) schedulesPayload.sections[s.id] = s.sections;
             });
 
             const mainPayload = {
@@ -15252,6 +15298,19 @@
                 behaviorReferrals: typeof behaviorReferrals !== 'undefined' ? behaviorReferrals : []
             };
 
+            // The daily automatic backup writes a FULL copy of everything into a
+            // single document (backups/YYYY-MM-DD). It is subject to the same 1MB
+            // limit, and unlike the others it is not split — so it is the first
+            // thing to fail as data grows, silently taking the safety net with it.
+            const backupPayload = {
+                teachers: teachers || [],
+                students: students || [],
+                auditLog: (typeof auditLog !== 'undefined' ? auditLog : []).slice(-1000),
+                weeklyWinners: typeof weeklyWinners !== 'undefined' ? weeklyWinners : [],
+                bigRaffleWinners: typeof bigRaffleWinners !== 'undefined' ? bigRaffleWinners : [],
+                weeklyHistory: typeof weeklyHistory !== 'undefined' ? weeklyHistory : []
+            };
+
             // Ticket history split by school, same rule as saveData()
             const msHist = {}, hsHist = {};
             (students || []).forEach(s => {
@@ -15262,13 +15321,34 @@
                 else if (g >= 9 && g <= 12) hsHist[s.id] = h;
             });
 
-            const auditPayload = { auditLog: typeof auditLog !== 'undefined' ? auditLog : [] };
+            // The audit log is stored as one document PER MONTH (audit_log_YYYY_MM),
+            // so measuring the whole in-memory array — which holds ~14 months —
+            // wildly overstates any single document. Partition it the same way
+            // saveData() does and report the largest month.
+            let auditBytes = 0, auditWorstMonth = '';
+            try {
+                const byMonth = {};
+                (typeof auditLog !== 'undefined' ? auditLog : []).forEach(e => {
+                    const mk = (typeof monthKeyFromTimestamp === 'function')
+                        ? (monthKeyFromTimestamp(e.timestamp) || '_unknown')
+                        : '_unknown';
+                    (byMonth[mk] = byMonth[mk] || []).push(e);
+                });
+                Object.entries(byMonth).forEach(([mk, entries]) => {
+                    const b = _byteSize({ auditLog: entries });
+                    if (b > auditBytes) { auditBytes = b; auditWorstMonth = mk; }
+                });
+            } catch (e) {
+                auditBytes = _byteSize({ auditLog: typeof auditLog !== 'undefined' ? auditLog : [] });
+            }
 
             const rows = [
                 { key: 'main',              label: 'Main (students, teachers, settings)', bytes: _byteSize(mainPayload) },
                 { key: 'secondary',         label: 'Secondary (passes, cash, detentions)', bytes: _byteSize(secondaryPayload) },
                 { key: 'referrals',         label: 'Referrals', bytes: _byteSize(referralsPayload) },
-                { key: 'audit_log',         label: 'Audit log (this month)', bytes: _byteSize(auditPayload) },
+                { key: 'schedules',         label: 'Class schedules', bytes: _byteSize(schedulesPayload) },
+                { key: 'daily_backup',      label: 'Daily automatic backup (full copy)', bytes: _byteSize(backupPayload) },
+                { key: 'audit_log',         label: 'Audit log (largest month' + (auditWorstMonth ? ': ' + auditWorstMonth.replace('_', '-') : '') + ')', bytes: auditBytes },
                 { key: 'ticket_history_hs', label: 'Ticket history — High School', bytes: _byteSize(hsHist) },
                 { key: 'ticket_history_ms', label: 'Ticket history — Middle School', bytes: _byteSize(msHist) }
             ];
@@ -15276,7 +15356,7 @@
 
             // What's taking up room inside `main` — the actionable detail
             const detail = [
-                { label: 'Class schedules (students.sections)', bytes: (students || []).reduce((n, s) => n + _byteSize(s.sections || []), 0) },
+                { label: 'Cash balances & counters on students', bytes: (students || []).reduce((n, s) => n + _byteSize(s.wildcatCashTransactions || []), 0) },
                 { label: 'Cash transactions on students',       bytes: (students || []).reduce((n, s) => n + _byteSize(s.cashTransactions || []), 0) },
                 { label: 'Teacher records',                     bytes: _byteSize(teachers || []) }
             ];
