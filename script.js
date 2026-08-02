@@ -1656,7 +1656,7 @@
                         getDoc(doc(firebaseDb, 'raffle_data', auditDocName(mk)))
                     );
                     
-                    const [mainSnap, secondarySnap, referralsSnap, schedulesSnap, ticketHistoryMsSnap, ticketHistoryHsSnap, ticketHistoryLegacySnap, auditLogLegacySnap, ...monthlyAuditSnaps] = await Promise.all([
+                    const [mainSnap, secondarySnap, referralsSnap, schedulesSnap, ticketHistoryMsSnap, ticketHistoryHsSnap, ticketHistoryHs910Snap, ticketHistoryHs1112Snap, ticketHistoryLegacySnap, auditLogLegacySnap, ...monthlyAuditSnaps] = await Promise.all([
                         getDoc(doc(firebaseDb, 'raffle_data', 'main')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'secondary')),
                         // Referrals live in their own document. The expanded referral
@@ -1668,6 +1668,9 @@
                         getDoc(doc(firebaseDb, 'raffle_data', 'schedules')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_ms')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_hs')),
+                        // HS split into grade bands; the doc above is legacy (read-only now).
+                        getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_hs_910')),
+                        getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_hs_1112')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'audit_log')),
                         ...monthlyAuditPromises
@@ -1706,11 +1709,15 @@
                         // Per-student dedupe by entryId so overlap doesn't double-count.
                         const msHistories = ticketHistoryMsSnap.exists() ? (ticketHistoryMsSnap.data().histories || {}) : {};
                         const hsHistories = ticketHistoryHsSnap.exists() ? (ticketHistoryHsSnap.data().histories || {}) : {};
+                        const hs910Histories = ticketHistoryHs910Snap.exists() ? (ticketHistoryHs910Snap.data().histories || {}) : {};
+                        const hs1112Histories = ticketHistoryHs1112Snap.exists() ? (ticketHistoryHs1112Snap.data().histories || {}) : {};
                         const legacyHistories = ticketHistoryLegacySnap.exists() ? (ticketHistoryLegacySnap.data().histories || {}) : {};
                         const firebaseTicketHistories = {};
                         const allHistoryStudentIds = new Set([
                             ...Object.keys(msHistories),
                             ...Object.keys(hsHistories),
+                            ...Object.keys(hs910Histories),
+                            ...Object.keys(hs1112Histories),
                             ...Object.keys(legacyHistories)
                         ]);
                         allHistoryStudentIds.forEach(sid => {
@@ -1722,7 +1729,9 @@
                                 });
                             };
                             collect(msHistories[sid]);
-                            collect(hsHistories[sid]);
+                            collect(hs910Histories[sid]);
+                            collect(hs1112Histories[sid]);
+                            collect(hsHistories[sid]);      // legacy combined HS doc
                             collect(legacyHistories[sid]);
                             const merged = Array.from(byId.values())
                                 .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
@@ -1735,6 +1744,8 @@
                             tombstones: [
                                 ...(ticketHistoryMsSnap.exists() ? (ticketHistoryMsSnap.data().tombstones || []) : []),
                                 ...(ticketHistoryHsSnap.exists() ? (ticketHistoryHsSnap.data().tombstones || []) : []),
+                                ...(ticketHistoryHs910Snap.exists() ? (ticketHistoryHs910Snap.data().tombstones || []) : []),
+                                ...(ticketHistoryHs1112Snap.exists() ? (ticketHistoryHs1112Snap.data().tombstones || []) : []),
                                 ...(ticketHistoryLegacySnap.exists() ? (ticketHistoryLegacySnap.data().tombstones || []) : [])
                             ]
                         };
@@ -2826,14 +2837,23 @@
                         // Partition local histories by grade
                         const studentGradeById = {};
                         students.forEach(s => { studentGradeById[s.id] = parseInt(s.grade); });
+                        // HS is split again into 9-10 and 11-12. ticket_history_hs
+                        // covers four grades to MS's three and reached 69% of the
+                        // 1MB limit partway through a year (263KB in April → 702KB
+                        // by July). The extra split keeps each band near 40%.
+                        // ticket_history_hs is still READ on load so existing data
+                        // is never orphaned; it simply stops being written to.
                         const msHistoriesToSave = {};
-                        const hsHistoriesToSave = {};
+                        const hs910HistoriesToSave = {};
+                        const hs1112HistoriesToSave = {};
                         Object.keys(ticketHistoriesToSave).forEach(sid => {
                             const grade = studentGradeById[sid];
                             if (grade >= 6 && grade <= 8) {
                                 msHistoriesToSave[sid] = ticketHistoriesToSave[sid];
-                            } else if (grade >= 9 && grade <= 12) {
-                                hsHistoriesToSave[sid] = ticketHistoriesToSave[sid];
+                            } else if (grade >= 9 && grade <= 10) {
+                                hs910HistoriesToSave[sid] = ticketHistoriesToSave[sid];
+                            } else if (grade >= 11 && grade <= 12) {
+                                hs1112HistoriesToSave[sid] = ticketHistoriesToSave[sid];
                             } else {
                                 // Unknown grade — skip rather than guess. Will be visible
                                 // in console for investigation.
@@ -2892,25 +2912,36 @@
                             });
                         }
 
-                        let msResult, hsResult;
+                        let msResult, hs910Result, hs1112Result;
                         try {
                             msResult = await commitHistoryDoc('ticket_history_ms', msHistoriesToSave);
-                            console.log(`✅ Ticket history MS document saved (${Object.keys(msResult.mergedHistories).length} students)`);
+                            console.log(`✅ Ticket history MS saved (${Object.keys(msResult.mergedHistories).length} students)`);
                         } catch (msErr) {
                             console.error('❌ ticket_history_ms save failed:', msErr?.code, msErr?.message);
                             throw msErr;
                         }
                         try {
-                            hsResult = await commitHistoryDoc('ticket_history_hs', hsHistoriesToSave);
-                            console.log(`✅ Ticket history HS document saved (${Object.keys(hsResult.mergedHistories).length} students)`);
-                        } catch (hsErr) {
-                            console.error('❌ ticket_history_hs save failed:', hsErr?.code, hsErr?.message);
-                            throw hsErr;
+                            hs910Result = await commitHistoryDoc('ticket_history_hs_910', hs910HistoriesToSave);
+                            console.log(`✅ Ticket history HS 9-10 saved (${Object.keys(hs910Result.mergedHistories).length} students)`);
+                        } catch (e) {
+                            console.error('❌ ticket_history_hs_910 save failed:', e?.code, e?.message);
+                            throw e;
+                        }
+                        try {
+                            hs1112Result = await commitHistoryDoc('ticket_history_hs_1112', hs1112HistoriesToSave);
+                            console.log(`✅ Ticket history HS 11-12 saved (${Object.keys(hs1112Result.mergedHistories).length} students)`);
+                        } catch (e) {
+                            console.error('❌ ticket_history_hs_1112 save failed:', e?.code, e?.message);
+                            throw e;
                         }
 
                         // Combined result for downstream code that read from the old single doc
                         const ticketHistoryResult = {
-                            mergedHistories: { ...msResult.mergedHistories, ...hsResult.mergedHistories }
+                            mergedHistories: {
+                                ...msResult.mergedHistories,
+                                ...hs910Result.mergedHistories,
+                                ...hs1112Result.mergedHistories
+                            }
                         };
 
                         // Sync local state with what was actually saved.
@@ -3289,10 +3320,17 @@
                     delete c.wildcatCashTransactions;
                     return c;
                 });
-                const backupHistories = {};
+                // Histories are split BY SCHOOL, the same way ticket_history_ms /
+                // ticket_history_hs are. Bundling both schools produced a 1051KB
+                // slice (103% of the limit) — the split gives ~702KB and ~349KB.
+                const backupHistMs = {}, backupHistHs = {};
                 const backupCash = {};
                 (students || []).forEach(s => {
-                    if (s.ticketHistory && s.ticketHistory.length) backupHistories[s.id] = s.ticketHistory;
+                    if (s.ticketHistory && s.ticketHistory.length) {
+                        const g = parseInt(s.grade, 10);
+                        if (g >= 9) backupHistHs[s.id] = s.ticketHistory;
+                        else backupHistMs[s.id] = s.ticketHistory;
+                    }
                     const tx = s.wildcatCashTransactions || s.cashTransactions;
                     if (tx && tx.length) backupCash[s.id] = tx;
                 });
@@ -3316,14 +3354,18 @@
                 
                 await setDoc(doc(firebaseDb, 'backups', today), backupData);
                 await new Promise(r => setTimeout(r, 50));
-                await setDoc(doc(firebaseDb, 'backups', `${today}_histories`), {
-                    ticketHistories: backupHistories, backupDate: serverTimestamp(), backupType: 'automatic-slice'
+                await setDoc(doc(firebaseDb, 'backups', `${today}_histories_ms`), {
+                    ticketHistories: backupHistMs, backupDate: serverTimestamp(), backupType: 'automatic-slice'
+                });
+                await new Promise(r => setTimeout(r, 50));
+                await setDoc(doc(firebaseDb, 'backups', `${today}_histories_hs`), {
+                    ticketHistories: backupHistHs, backupDate: serverTimestamp(), backupType: 'automatic-slice'
                 });
                 await new Promise(r => setTimeout(r, 50));
                 await setDoc(doc(firebaseDb, 'backups', `${today}_cash`), {
                     cashTransactions: backupCash, backupDate: serverTimestamp(), backupType: 'automatic-slice'
                 });
-                console.log(`✅ Automatic backup created: ${today} (3 slices)`);
+                console.log(`✅ Automatic backup created: ${today} (4 slices)`);
                 
                 // Clean up old backups (keep last 30 days)
                 // Note: Cleanup happens on next load to avoid slowing down this save
@@ -15358,27 +15400,32 @@
                 delete c.cashTransactions; delete c.wildcatCashTransactions;
                 return c;
             });
-            const bkHist = {}, bkCash = {};
+            const bkHistMs = {}, bkHistHs = {}, bkCash = {};
             (students || []).forEach(s => {
-                if (s.ticketHistory && s.ticketHistory.length) bkHist[s.id] = s.ticketHistory;
+                if (s.ticketHistory && s.ticketHistory.length) {
+                    const g = parseInt(s.grade, 10);
+                    if (g >= 9) bkHistHs[s.id] = s.ticketHistory; else bkHistMs[s.id] = s.ticketHistory;
+                }
                 const tx = s.wildcatCashTransactions || s.cashTransactions;
                 if (tx && tx.length) bkCash[s.id] = tx;
             });
             const backupBytes = Math.max(
                 _byteSize({ teachers: teachers || [], students: bkCore,
                             auditLog: (typeof auditLog !== 'undefined' ? auditLog : []).slice(-1000) }),
-                _byteSize({ ticketHistories: bkHist }),
+                _byteSize({ ticketHistories: bkHistMs }),
+                _byteSize({ ticketHistories: bkHistHs }),
                 _byteSize({ cashTransactions: bkCash })
             );
 
             // Ticket history split by school, same rule as saveData()
-            const msHist = {}, hsHist = {};
+            const msHist = {}, hs910Hist = {}, hs1112Hist = {};
             (students || []).forEach(s => {
                 const g = parseInt(s.grade, 10);
                 const h = s.ticketHistory || [];
                 if (!h.length) return;
                 if (g >= 6 && g <= 8) msHist[s.id] = h;
-                else if (g >= 9 && g <= 12) hsHist[s.id] = h;
+                else if (g >= 9 && g <= 10) hs910Hist[s.id] = h;
+                else if (g >= 11 && g <= 12) hs1112Hist[s.id] = h;
             });
 
             // The audit log is stored as one document PER MONTH (audit_log_YYYY_MM),
@@ -15409,7 +15456,8 @@
                 { key: 'schedules',         label: 'Class schedules', bytes: _byteSize(schedulesPayload) },
                 { key: 'daily_backup',      label: 'Daily automatic backup (largest slice)', bytes: backupBytes },
                 { key: 'audit_log',         label: 'Audit log (largest week' + (auditWorstMonth ? ': ' + auditWorstMonth.replace('_', '-') : '') + ')', bytes: auditBytes },
-                { key: 'ticket_history_hs', label: 'Ticket history — High School', bytes: _byteSize(hsHist) },
+                { key: 'ticket_history_hs_910',  label: 'Ticket history — Grades 9-10', bytes: _byteSize(hs910Hist) },
+                { key: 'ticket_history_hs_1112', label: 'Ticket history — Grades 11-12', bytes: _byteSize(hs1112Hist) },
                 { key: 'ticket_history_ms', label: 'Ticket history — Middle School', bytes: _byteSize(msHist) }
             ];
             rows.forEach(r => { r.pct = r.bytes / STORAGE_DOC_LIMIT; });
