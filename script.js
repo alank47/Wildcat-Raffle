@@ -193,13 +193,30 @@
         //   outside the window land in the legacy combined doc as a
         //   safety net.
         // ============================================================
+        // Audit partitioning moved from MONTHLY to WEEKLY.
+        //
+        // April 2026 produced 2,011 entries in a single month — 966KB, 94% of
+        // the 1MB limit — before Wildcat Cash and Claw Pass went live. Those
+        // add an estimated 200+ actions/day, so monthly documents would
+        // overflow outright. Weekly keys ("2026_W18") divide by ~4.
+        //
+        // Backwards compatible: monthly documents already in Firebase are
+        // still read on load (see getKnownAuditMonthKeys). Old entries stay
+        // where they are; new entries land in weekly docs.
         function monthKeyFromTimestamp(ts) {
             if (!ts) return '';
             const s = String(ts);
-            // ISO format: "2026-05-10T..." → "2026_05"
-            const match = s.match(/^(\d{4})-(\d{2})/);
+            const match = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
             if (!match) return '';
-            return `${match[1]}_${match[2]}`;
+            const d = new Date(`${match[1]}-${match[2]}-${match[3]}T00:00:00Z`);
+            if (isNaN(d.getTime())) return `${match[1]}_${match[2]}`;
+            // ISO-8601 week number
+            const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+            const day = t.getUTCDay() || 7;
+            t.setUTCDate(t.getUTCDate() + 4 - day);
+            const yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+            const week = Math.ceil(((t - yearStart) / 86400000 + 1) / 7);
+            return `${t.getUTCFullYear()}_W${String(week).padStart(2, '0')}`;
         }
 
         function auditDocName(monthKey) {
@@ -212,11 +229,16 @@
         function getKnownAuditMonthKeys() {
             const keys = [];
             const now = new Date();
+            // Weekly docs: cover the last 60 weeks (a full academic year plus slack).
+            for (let i = 0; i < 60; i++) {
+                const d = new Date(now.getTime() - i * 7 * 86400000);
+                const wk = monthKeyFromTimestamp(d.toISOString());
+                if (wk && keys.indexOf(wk) === -1) keys.push(wk);
+            }
+            // Legacy MONTHLY docs, still read so historical entries stay visible.
             for (let i = 0; i < 14; i++) {
                 const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-                const yyyy = d.getFullYear();
-                const mm = String(d.getMonth() + 1).padStart(2, '0');
-                keys.push(`${yyyy}_${mm}`);
+                keys.push(`${d.getFullYear()}_${String(d.getMonth() + 1).padStart(2, '0')}`);
             }
             return keys;
         }
@@ -3256,9 +3278,28 @@
                 const { doc, setDoc, serverTimestamp } = window.firebaseModules;
                 const today = new Date().toISOString().split('T')[0];
                 
+                // The full-copy backup exceeded 1MB (213% at last check), so this
+                // document was silently failing to write — the daily safety net
+                // was not there. Split into slices, each well under the limit.
+                const backupStudentsCore = (students || []).map(s => {
+                    const c = Object.assign({}, s);
+                    delete c.ticketHistory;   // sliced out below
+                    delete c.sections;        // reference data, rebuilt from import
+                    delete c.cashTransactions;
+                    delete c.wildcatCashTransactions;
+                    return c;
+                });
+                const backupHistories = {};
+                const backupCash = {};
+                (students || []).forEach(s => {
+                    if (s.ticketHistory && s.ticketHistory.length) backupHistories[s.id] = s.ticketHistory;
+                    const tx = s.wildcatCashTransactions || s.cashTransactions;
+                    if (tx && tx.length) backupCash[s.id] = tx;
+                });
+
                 const backupData = {
                     teachers,
-                    students,
+                    students: backupStudentsCore,
                     currentWeek,
                     cycleDuration,
                     weeklyWinners,
@@ -3274,7 +3315,15 @@
                 };
                 
                 await setDoc(doc(firebaseDb, 'backups', today), backupData);
-                console.log(`✅ Automatic backup created: ${today}`);
+                await new Promise(r => setTimeout(r, 50));
+                await setDoc(doc(firebaseDb, 'backups', `${today}_histories`), {
+                    ticketHistories: backupHistories, backupDate: serverTimestamp(), backupType: 'automatic-slice'
+                });
+                await new Promise(r => setTimeout(r, 50));
+                await setDoc(doc(firebaseDb, 'backups', `${today}_cash`), {
+                    cashTransactions: backupCash, backupDate: serverTimestamp(), backupType: 'automatic-slice'
+                });
+                console.log(`✅ Automatic backup created: ${today} (3 slices)`);
                 
                 // Clean up old backups (keep last 30 days)
                 // Note: Cleanup happens on next load to avoid slowing down this save
@@ -15302,14 +15351,25 @@
             // single document (backups/YYYY-MM-DD). It is subject to the same 1MB
             // limit, and unlike the others it is not split — so it is the first
             // thing to fail as data grows, silently taking the safety net with it.
-            const backupPayload = {
-                teachers: teachers || [],
-                students: students || [],
-                auditLog: (typeof auditLog !== 'undefined' ? auditLog : []).slice(-1000),
-                weeklyWinners: typeof weeklyWinners !== 'undefined' ? weeklyWinners : [],
-                bigRaffleWinners: typeof bigRaffleWinners !== 'undefined' ? bigRaffleWinners : [],
-                weeklyHistory: typeof weeklyHistory !== 'undefined' ? weeklyHistory : []
-            };
+            // Backup is now written as three slices; report the largest.
+            const bkCore = (students || []).map(s => {
+                const c = Object.assign({}, s);
+                delete c.ticketHistory; delete c.sections;
+                delete c.cashTransactions; delete c.wildcatCashTransactions;
+                return c;
+            });
+            const bkHist = {}, bkCash = {};
+            (students || []).forEach(s => {
+                if (s.ticketHistory && s.ticketHistory.length) bkHist[s.id] = s.ticketHistory;
+                const tx = s.wildcatCashTransactions || s.cashTransactions;
+                if (tx && tx.length) bkCash[s.id] = tx;
+            });
+            const backupBytes = Math.max(
+                _byteSize({ teachers: teachers || [], students: bkCore,
+                            auditLog: (typeof auditLog !== 'undefined' ? auditLog : []).slice(-1000) }),
+                _byteSize({ ticketHistories: bkHist }),
+                _byteSize({ cashTransactions: bkCash })
+            );
 
             // Ticket history split by school, same rule as saveData()
             const msHist = {}, hsHist = {};
@@ -15347,8 +15407,8 @@
                 { key: 'secondary',         label: 'Secondary (passes, cash, detentions)', bytes: _byteSize(secondaryPayload) },
                 { key: 'referrals',         label: 'Referrals', bytes: _byteSize(referralsPayload) },
                 { key: 'schedules',         label: 'Class schedules', bytes: _byteSize(schedulesPayload) },
-                { key: 'daily_backup',      label: 'Daily automatic backup (full copy)', bytes: _byteSize(backupPayload) },
-                { key: 'audit_log',         label: 'Audit log (largest month' + (auditWorstMonth ? ': ' + auditWorstMonth.replace('_', '-') : '') + ')', bytes: auditBytes },
+                { key: 'daily_backup',      label: 'Daily automatic backup (largest slice)', bytes: backupBytes },
+                { key: 'audit_log',         label: 'Audit log (largest week' + (auditWorstMonth ? ': ' + auditWorstMonth.replace('_', '-') : '') + ')', bytes: auditBytes },
                 { key: 'ticket_history_hs', label: 'Ticket history — High School', bytes: _byteSize(hsHist) },
                 { key: 'ticket_history_ms', label: 'Ticket history — Middle School', bytes: _byteSize(msHist) }
             ];
