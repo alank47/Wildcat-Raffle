@@ -3245,8 +3245,8 @@ body {
 .ref-toast {
     position: fixed;
     left: 50%;
-    bottom: 26px;
-    transform: translateX(-50%) translateY(140%);
+    top: calc(var(--wc-topbar-h) + 14px);
+    transform: translateX(-50%) translateY(-150%);
     z-index: 4000;
     max-width: min(560px, 92vw);
     padding: 14px 20px;
@@ -3309,3 +3309,130 @@ body {
     margin-left: 6px;
 }
 .btn-sm-pdf:hover { background: var(--wc-blue-mist) !important; }
+
+
+/* ============================================================
+   IN-APP DIALOGS — replaces browser alert/confirm/prompt
+   ============================================================ */
+
+.wc-dialog-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 5000;
+    background: rgba(14, 14, 14, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    animation: wc-fade .15s ease;
+}
+@keyframes wc-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes wc-rise { from { transform: translateY(12px) scale(.98); opacity: 0; } to { transform: none; opacity: 1; } }
+
+.wc-dialog {
+    background: #ffffff;
+    border-radius: 14px;
+    width: 100%;
+    max-width: 460px;
+    max-height: calc(100vh - 60px);
+    overflow-y: auto;
+    box-shadow: 0 24px 64px rgba(4, 24, 46, 0.45);
+    animation: wc-rise .2s cubic-bezier(.2,.8,.3,1);
+    border-top: 4px solid var(--wc-blue);
+}
+.wc-dialog-success { border-top-color: #2E7D52; }
+.wc-dialog-warning { border-top-color: #B7791F; }
+.wc-dialog-error   { border-top-color: #B3392F; }
+.wc-dialog-question{ border-top-color: var(--wc-blue); }
+
+.wc-dialog-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 20px 22px 0;
+}
+.wc-dialog-icon { font-size: 22px; line-height: 1.2; flex-shrink: 0; }
+.wc-dialog-title {
+    margin: 0;
+    font-size: 16.5px;
+    font-weight: 700;
+    color: var(--wc-ink);
+    line-height: 1.4;
+}
+.wc-dialog-body {
+    padding: 10px 22px 0 56px;
+    color: var(--wc-gray-text);
+    font-size: 13.5px;
+    line-height: 1.6;
+}
+.wc-dialog-body p { margin: 0 0 7px; }
+.wc-dialog-body p:last-child { margin-bottom: 0; }
+.wc-dialog-input { padding: 14px 22px 0 56px; }
+.wc-dialog-input .wc-input { width: 100%; }
+
+.wc-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 9px;
+    padding: 20px 22px;
+    margin-top: 6px;
+}
+.wc-dialog-btn {
+    padding: 10px 20px !important;
+    font-size: 13.5px !important;
+    font-weight: 700;
+    border-radius: 9px;
+    background-image: none !important;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+}
+.wc-btn-primary { background: var(--wc-blue) !important; color: #fff !important; }
+.wc-btn-primary:hover { background: var(--wc-blue-dark) !important; }
+.wc-btn-danger  { background: #B3392F !important; color: #fff !important; }
+.wc-btn-danger:hover { background: #973027 !important; }
+.wc-btn-cancel  { background: #ffffff !important; color: var(--wc-gray-text) !important; border: 1px solid #d7dde5 !important; }
+.wc-btn-cancel:hover { background: #f2f4f8 !important; color: var(--wc-ink) !important; }
+.wc-dialog-btn:focus-visible { outline: 3px solid rgba(47,103,167,.35); outline-offset: 2px; }
+
+@media (max-width: 520px) {
+    .wc-dialog-body, .wc-dialog-input { padding-left: 22px; }
+    .wc-dialog-actions { flex-direction: column-reverse; }
+    .wc-dialog-btn { width: 100%; }
+}
+
+/* --- Toast (non-blocking success) --- */
+.wc-toast {
+    position: fixed;
+    left: 50%;
+    /* Sits just under the sticky top bar (--wc-topbar-h) so it reads as part
+       of the app chrome rather than floating over the content. */
+    top: calc(var(--wc-topbar-h) + 14px);
+    transform: translateX(-50%) translateY(-150%);
+    z-index: 5200;
+    display: flex;
+    align-items: flex-start;
+    gap: 11px;
+    max-width: min(520px, 92vw);
+    padding: 14px 20px;
+    border-radius: 12px;
+    background: #12341f;
+    color: #fff;
+    font-size: 14px;
+    line-height: 1.45;
+    box-shadow: 0 12px 38px rgba(4, 24, 46, 0.4);
+    opacity: 0;
+    transition: transform .3s cubic-bezier(.2,.8,.3,1), opacity .3s;
+    pointer-events: none;
+}
+.wc-toast-show { transform: translateX(-50%) translateY(0); opacity: 1; }
+@media (max-width: 900px) {
+    .wc-toast { top: calc(var(--wc-topbar-h) + 8px); }
+}
+.wc-toast-success { background: #1f6b45; }
+.wc-toast-warning { background: #96631A; }
+.wc-toast-error   { background: #973027; }
+.wc-toast-info    { background: var(--wc-blue-dark); }
+.wc-toast-icon { font-size: 16px; line-height: 1.3; }
+.wc-toast-text { display: flex; flex-direction: column; gap: 2px; }
+.wc-toast-sub { font-size: 12.5px; opacity: .88; font-weight: 400; }
