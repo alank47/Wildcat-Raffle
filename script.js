@@ -2520,9 +2520,13 @@
 
         async function saveData() {
             let saveSucceeded = false;
+            if (typeof showSavingIndicator === 'function') showSavingIndicator(true);
             if (isSyncing) {
                 await new Promise(resolve => setTimeout(resolve, 100));
-                if (isSyncing) return;
+                if (isSyncing) {
+                    if (typeof showSavingIndicator === 'function') showSavingIndicator(false);
+                    return;
+                }
             }
             
             isSyncing = true;
@@ -2837,8 +2841,6 @@
                             console.error('❌ referrals save failed:', refErr?.code, refErr?.message);
                         }
                         
-                        await new Promise(resolve => setTimeout(resolve, 50));
-                        
                         // TRANSACTION 2: Ticket History Documents (SPLIT BY SCHOOL).
                         // History is partitioned across two documents to keep each under
                         // Firestore's 1MB-per-document limit:
@@ -2932,31 +2934,31 @@
                         // NOT abort the save chain: referrals, schedules and secondary
                         // are written after this point, and an early throw meant a
                         // teacher's referral silently never reached Firebase.
-                        let msResult = { mergedHistories: {} },
-                            hs910Result = { mergedHistories: {} },
-                            hs1112Result = { mergedHistories: {} };
+                        // The three history documents are independent, so they commit
+                        // CONCURRENTLY rather than one after another. Sequentially this
+                        // was three full network round trips; in parallel it costs one.
                         const historyFailures = [];
-                        try {
-                            msResult = await commitHistoryDoc('ticket_history_ms', msHistoriesToSave);
-                            console.log(`✅ Ticket history MS saved (${Object.keys(msResult.mergedHistories).length} students)`);
-                        } catch (msErr) {
-                            console.error('❌ ticket_history_ms save failed:', msErr?.code, msErr?.message);
-                            historyFailures.push('ticket_history_ms');
-                        }
-                        try {
-                            hs910Result = await commitHistoryDoc('ticket_history_hs_910', hs910HistoriesToSave);
-                            console.log(`✅ Ticket history HS 9-10 saved (${Object.keys(hs910Result.mergedHistories).length} students)`);
-                        } catch (e) {
-                            console.error('❌ ticket_history_hs_910 save failed:', e?.code, e?.message);
-                            historyFailures.push('ticket_history_hs_910');
-                        }
-                        try {
-                            hs1112Result = await commitHistoryDoc('ticket_history_hs_1112', hs1112HistoriesToSave);
-                            console.log(`✅ Ticket history HS 11-12 saved (${Object.keys(hs1112Result.mergedHistories).length} students)`);
-                        } catch (e) {
-                            console.error('❌ ticket_history_hs_1112 save failed:', e?.code, e?.message);
-                            historyFailures.push('ticket_history_hs_1112');
-                        }
+                        const historyJobs = [
+                            ['ticket_history_ms',        msHistoriesToSave,     'MS'],
+                            ['ticket_history_hs_910',    hs910HistoriesToSave,  'HS 9-10'],
+                            ['ticket_history_hs_1112',   hs1112HistoriesToSave, 'HS 11-12']
+                        ];
+                        const historySettled = await Promise.allSettled(
+                            historyJobs.map(([docName, payload]) => commitHistoryDoc(docName, payload))
+                        );
+                        const [msSettled, hs910Settled, hs1112Settled] = historySettled;
+                        historySettled.forEach((res, idx) => {
+                            const [docName, , label] = historyJobs[idx];
+                            if (res.status === 'fulfilled') {
+                                console.log(`✅ Ticket history ${label} saved (${Object.keys(res.value.mergedHistories).length} students)`);
+                            } else {
+                                console.error(`❌ ${docName} save failed:`, res.reason?.code, res.reason?.message);
+                                historyFailures.push(docName);
+                            }
+                        });
+                        const msResult     = msSettled.status === 'fulfilled'     ? msSettled.value     : { mergedHistories: {} };
+                        const hs910Result  = hs910Settled.status === 'fulfilled'  ? hs910Settled.value  : { mergedHistories: {} };
+                        const hs1112Result = hs1112Settled.status === 'fulfilled' ? hs1112Settled.value : { mergedHistories: {} };
                         if (historyFailures.length) {
                             console.error(`⚠️ ${historyFailures.length} history document(s) failed: ${historyFailures.join(', ')}. Other documents still saved.`);
                         }
@@ -2983,8 +2985,6 @@
                         });
 
                         console.log(`✅ Ticket history document saved (transaction)`);
-                        
-                        await new Promise(resolve => setTimeout(resolve, 50));
                         
                         // TRANSACTION 3: Audit Log — SPLIT BY MONTH.
                         // Entries are partitioned by timestamp's month into separate documents
@@ -3085,38 +3085,42 @@
                             }
                         }
                         
-                        await new Promise(resolve => setTimeout(resolve, 50));
-                        
                         // DOCUMENT 4: Secondary (weekly data + other features)
                         // Uses regular setDoc since these have fewer conflicts
-                        // DOCUMENT: schedules — class schedule data lifted out of `main`.
-                        // 9 sections x 446 students was 372KB, over half of the main
-                        // document. It is reference data that only changes on import,
-                        // so it does not belong in the doc rewritten on every save.
-                        await setDoc(doc(firebaseDb, 'raffle_data', 'schedules'), {
-                            sections: sectionsToSave,
-                            lastSaveTimestamp: timestamp
+                        // schedules + secondary are plain writes to independent
+                        // documents, so they go out CONCURRENTLY. Previously each
+                        // waited on the one before, plus a 50ms pause, which added
+                        // network round trips to every single save.
+                        //
+                        // schedules: class schedule data lifted out of `main`
+                        //   (9 sections x 446 students was 372KB, over half of main).
+                        const independentWrites = await Promise.allSettled([
+                            setDoc(doc(firebaseDb, 'raffle_data', 'schedules'), {
+                                sections: sectionsToSave,
+                                lastSaveTimestamp: timestamp
+                            }),
+                            setDoc(doc(firebaseDb, 'raffle_data', 'secondary'), {
+                                weeklyWinners,
+                                bigRaffleWinners,
+                                weeklyHistory,
+                                loginHistory,
+                                hallPasses,
+                                preventionGroups,
+                                detentions,
+                                detentionLocations,
+                                detentionReasons,
+                                wildcatCashTransactions,
+                                lastSaveTimestamp: timestamp
+                            })
+                        ]);
+                        ['schedules', 'secondary'].forEach((name, i) => {
+                            if (independentWrites[i].status === 'fulfilled') {
+                                console.log(`✅ ${name} document saved`);
+                            } else {
+                                console.error(`❌ ${name} save failed:`, independentWrites[i].reason?.code,
+                                              independentWrites[i].reason?.message);
+                            }
                         });
-                        console.log('✅ Schedules document saved');
-                        
-                        await new Promise(resolve => setTimeout(resolve, 50));
-                        
-                        const secondaryDoc = doc(firebaseDb, 'raffle_data', 'secondary');
-                        await setDoc(secondaryDoc, {
-                            weeklyWinners,
-                            bigRaffleWinners,
-                            weeklyHistory,
-                            loginHistory,
-                            hallPasses,
-                            preventionGroups,
-                            detentions,
-                            detentionLocations,
-                            detentionReasons,
-                            wildcatCashTransactions,
-                            lastSaveTimestamp: timestamp
-                        });
-                        
-                        console.log(`✅ Secondary document saved`);
                         
                         
                         lastSaveTimestamp = timestamp;
@@ -3251,6 +3255,7 @@
             } finally {
                 isSyncing = false;
                 lastUserActivity = Date.now();
+                if (typeof showSavingIndicator === 'function') showSavingIndicator(false);
                 // Storage watch: report only, never block a save.
                 if (typeof checkStorageHealth === 'function') checkStorageHealth();
             }
@@ -18031,6 +18036,35 @@
         // return a value synchronously and a styled dialog cannot — so those
         // call sites use `await showConfirm(...)` / `await showPrompt(...)`.
         // ============================================================
+
+
+        // ============================================================
+        // SAVING INDICATOR
+        //
+        // Several actions must await saveData() before confirming — awarding
+        // tickets, for instance, warns in-code that returning early risks a
+        // stale overwrite. Rather than weaken that, this shows the click
+        // registered immediately: a pill appears under the top bar for the
+        // duration of the save, so the gap before the confirmation no longer
+        // looks like nothing happened.
+        // ============================================================
+        function showSavingIndicator(on) {
+            let el = document.getElementById('wcSaving');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'wcSaving';
+                el.className = 'wc-saving';
+                el.innerHTML = '<span class="wc-saving-dot"></span><span>Saving…</span>';
+                document.body.appendChild(el);
+            }
+            clearTimeout(el._hide);
+            if (on) {
+                el.classList.add('wc-saving-show');
+            } else {
+                // Brief minimum on-screen time so it doesn't flicker on fast saves.
+                el._hide = setTimeout(() => el.classList.remove('wc-saving-show'), 220);
+            }
+        }
 
         function _wcDialogHost() {
             let host = document.getElementById('wcDialogRoot');
