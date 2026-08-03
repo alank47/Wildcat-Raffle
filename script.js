@@ -2519,6 +2519,7 @@
         setInterval(checkWeeklyEmailSchedule, 60 * 60 * 1000); // Check every hour
 
         async function saveData() {
+            let saveSucceeded = false;
             if (isSyncing) {
                 await new Promise(resolve => setTimeout(resolve, 100));
                 if (isSyncing) return;
@@ -2821,6 +2822,21 @@
                         
                         console.log(`✅ Main document saved (transaction)`);
                         
+                        // Referrals are written EARLY and in their own try block.
+                        // They used to be written last, after seven other documents,
+                        // so any upstream failure meant a referral never persisted.
+                        // The document is tiny, so writing it first costs nothing.
+                        try {
+                            await setDoc(doc(firebaseDb, 'raffle_data', 'referrals'), {
+                                behaviorReferrals,
+                                referralIdCounter,
+                                lastSaveTimestamp: timestamp
+                            });
+                            console.log(`✅ Referrals saved (${(behaviorReferrals || []).length} records)`);
+                        } catch (refErr) {
+                            console.error('❌ referrals save failed:', refErr?.code, refErr?.message);
+                        }
+                        
                         await new Promise(resolve => setTimeout(resolve, 50));
                         
                         // TRANSACTION 2: Ticket History Documents (SPLIT BY SCHOOL).
@@ -2912,27 +2928,37 @@
                             });
                         }
 
-                        let msResult, hs910Result, hs1112Result;
+                        // Each history document is independent. A failure in one must
+                        // NOT abort the save chain: referrals, schedules and secondary
+                        // are written after this point, and an early throw meant a
+                        // teacher's referral silently never reached Firebase.
+                        let msResult = { mergedHistories: {} },
+                            hs910Result = { mergedHistories: {} },
+                            hs1112Result = { mergedHistories: {} };
+                        const historyFailures = [];
                         try {
                             msResult = await commitHistoryDoc('ticket_history_ms', msHistoriesToSave);
                             console.log(`✅ Ticket history MS saved (${Object.keys(msResult.mergedHistories).length} students)`);
                         } catch (msErr) {
                             console.error('❌ ticket_history_ms save failed:', msErr?.code, msErr?.message);
-                            throw msErr;
+                            historyFailures.push('ticket_history_ms');
                         }
                         try {
                             hs910Result = await commitHistoryDoc('ticket_history_hs_910', hs910HistoriesToSave);
                             console.log(`✅ Ticket history HS 9-10 saved (${Object.keys(hs910Result.mergedHistories).length} students)`);
                         } catch (e) {
                             console.error('❌ ticket_history_hs_910 save failed:', e?.code, e?.message);
-                            throw e;
+                            historyFailures.push('ticket_history_hs_910');
                         }
                         try {
                             hs1112Result = await commitHistoryDoc('ticket_history_hs_1112', hs1112HistoriesToSave);
                             console.log(`✅ Ticket history HS 11-12 saved (${Object.keys(hs1112Result.mergedHistories).length} students)`);
                         } catch (e) {
                             console.error('❌ ticket_history_hs_1112 save failed:', e?.code, e?.message);
-                            throw e;
+                            historyFailures.push('ticket_history_hs_1112');
+                        }
+                        if (historyFailures.length) {
+                            console.error(`⚠️ ${historyFailures.length} history document(s) failed: ${historyFailures.join(', ')}. Other documents still saved.`);
                         }
 
                         // Combined result for downstream code that read from the old single doc
@@ -2948,7 +2974,12 @@
                         // Tombstones are NOT updated here — they're managed by their own dedicated doc
                         // and updated via persistTombstone / loadPersistentTombstones.
                         students.forEach(s => {
-                            s.ticketHistory = ticketHistoryResult.mergedHistories[s.id] || [];
+                            // Only adopt the merged result when that student's document
+                            // actually saved; otherwise keep local history so a failed
+                            // write cannot erase a teacher's tickets from memory.
+                            const merged = ticketHistoryResult.mergedHistories[s.id];
+                            if (merged) s.ticketHistory = merged;
+                            else if (!historyFailures.length) s.ticketHistory = [];
                         });
 
                         console.log(`✅ Ticket history document saved (transaction)`);
@@ -3087,16 +3118,6 @@
                         
                         console.log(`✅ Secondary document saved`);
                         
-                        await new Promise(resolve => setTimeout(resolve, 50));
-                        
-                        // DOCUMENT 5: Referrals (own document — see loadData comment)
-                        await setDoc(doc(firebaseDb, 'raffle_data', 'referrals'), {
-                            behaviorReferrals,
-                            referralIdCounter,
-                            lastSaveTimestamp: timestamp
-                        });
-                        
-                        console.log(`✅ Referrals document saved (${(behaviorReferrals || []).length} records)`);
                         
                         lastSaveTimestamp = timestamp;
                         
@@ -3223,14 +3244,19 @@
                     }));
                     console.log('✅ Saved to localStorage');
                 }
+                saveSucceeded = true;
             } catch (error) {
                 console.error('Save error:', error);
+                saveSucceeded = false;
             } finally {
                 isSyncing = false;
                 lastUserActivity = Date.now();
                 // Storage watch: report only, never block a save.
                 if (typeof checkStorageHealth === 'function') checkStorageHealth();
             }
+            // saveData() never rethrows (callers rely on that), so it reports
+            // outcome via the return value instead. Existing callers ignore it.
+            return saveSucceeded;
         }
 
         // ========================================
@@ -3323,12 +3349,15 @@
                 // Histories are split BY SCHOOL, the same way ticket_history_ms /
                 // ticket_history_hs are. Bundling both schools produced a 1051KB
                 // slice (103% of the limit) — the split gives ~702KB and ~349KB.
-                const backupHistMs = {}, backupHistHs = {};
+                // Mirrors the live grade-band split (ms / hs_910 / hs_1112) so a
+                // backup slice can never be larger than the document it backs up.
+                const backupHistMs = {}, backupHist910 = {}, backupHist1112 = {};
                 const backupCash = {};
                 (students || []).forEach(s => {
                     if (s.ticketHistory && s.ticketHistory.length) {
                         const g = parseInt(s.grade, 10);
-                        if (g >= 9) backupHistHs[s.id] = s.ticketHistory;
+                        if (g >= 11) backupHist1112[s.id] = s.ticketHistory;
+                        else if (g >= 9) backupHist910[s.id] = s.ticketHistory;
                         else backupHistMs[s.id] = s.ticketHistory;
                     }
                     const tx = s.wildcatCashTransactions || s.cashTransactions;
@@ -3358,14 +3387,18 @@
                     ticketHistories: backupHistMs, backupDate: serverTimestamp(), backupType: 'automatic-slice'
                 });
                 await new Promise(r => setTimeout(r, 50));
-                await setDoc(doc(firebaseDb, 'backups', `${today}_histories_hs`), {
-                    ticketHistories: backupHistHs, backupDate: serverTimestamp(), backupType: 'automatic-slice'
+                await setDoc(doc(firebaseDb, 'backups', `${today}_histories_hs910`), {
+                    ticketHistories: backupHist910, backupDate: serverTimestamp(), backupType: 'automatic-slice'
+                });
+                await new Promise(r => setTimeout(r, 50));
+                await setDoc(doc(firebaseDb, 'backups', `${today}_histories_hs1112`), {
+                    ticketHistories: backupHist1112, backupDate: serverTimestamp(), backupType: 'automatic-slice'
                 });
                 await new Promise(r => setTimeout(r, 50));
                 await setDoc(doc(firebaseDb, 'backups', `${today}_cash`), {
                     cashTransactions: backupCash, backupDate: serverTimestamp(), backupType: 'automatic-slice'
                 });
-                console.log(`✅ Automatic backup created: ${today} (4 slices)`);
+                console.log(`✅ Automatic backup created: ${today} (5 slices)`);
                 
                 // Clean up old backups (keep last 30 days)
                 // Note: Cleanup happens on next load to avoid slowing down this save
@@ -15400,11 +15433,13 @@
                 delete c.cashTransactions; delete c.wildcatCashTransactions;
                 return c;
             });
-            const bkHistMs = {}, bkHistHs = {}, bkCash = {};
+            const bkHistMs = {}, bkHist910 = {}, bkHist1112 = {}, bkCash = {};
             (students || []).forEach(s => {
                 if (s.ticketHistory && s.ticketHistory.length) {
                     const g = parseInt(s.grade, 10);
-                    if (g >= 9) bkHistHs[s.id] = s.ticketHistory; else bkHistMs[s.id] = s.ticketHistory;
+                    if (g >= 11) bkHist1112[s.id] = s.ticketHistory;
+                    else if (g >= 9) bkHist910[s.id] = s.ticketHistory;
+                    else bkHistMs[s.id] = s.ticketHistory;
                 }
                 const tx = s.wildcatCashTransactions || s.cashTransactions;
                 if (tx && tx.length) bkCash[s.id] = tx;
@@ -15413,7 +15448,8 @@
                 _byteSize({ teachers: teachers || [], students: bkCore,
                             auditLog: (typeof auditLog !== 'undefined' ? auditLog : []).slice(-1000) }),
                 _byteSize({ ticketHistories: bkHistMs }),
-                _byteSize({ ticketHistories: bkHistHs }),
+                _byteSize({ ticketHistories: bkHist910 }),
+                _byteSize({ ticketHistories: bkHist1112 }),
                 _byteSize({ cashTransactions: bkCash })
             );
 
@@ -17863,6 +17899,66 @@
         // superadmins may file on another staff member's behalf.
         // ============================================================
 
+
+        // ============================================================
+        // Instant feedback for referral actions.
+        //
+        // saveData() writes eight documents sequentially (transactions plus
+        // 50ms spacing), so awaiting it before confirming took several
+        // seconds — long enough that staff re-clicked Submit and filed
+        // duplicates. These actions now confirm immediately and persist in
+        // the background, surfacing an error only if the save actually fails.
+        // ============================================================
+        function showReferralToast(message, kind) {
+            let host = document.getElementById('referralToast');
+            if (!host) {
+                host = document.createElement('div');
+                host.id = 'referralToast';
+                document.body.appendChild(host);
+            }
+            host.className = 'ref-toast ref-toast-' + (kind || 'ok') + ' ref-toast-show';
+            host.innerHTML = message;
+            clearTimeout(host._t);
+            host._t = setTimeout(() => { host.className = 'ref-toast'; }, 4200);
+        }
+
+        function setButtonBusy(btn, busy, busyLabel) {
+            if (!btn) return;
+            if (busy) {
+                btn._label = btn.innerHTML;
+                btn.disabled = true;
+                btn.classList.add('btn-busy');
+                btn.innerHTML = busyLabel || 'Working…';
+            } else {
+                btn.disabled = false;
+                btn.classList.remove('btn-busy');
+                if (btn._label) btn.innerHTML = btn._label;
+            }
+        }
+
+        function saveInBackground(label) {
+            // Fire-and-report. Never blocks the UI.
+            // saveData() catches its own errors and resolves either way, so the
+            // outcome is read from the returned boolean rather than a rejection.
+            return Promise.resolve(saveData())
+                .then(ok => {
+                    if (ok === false) {
+                        console.error(`❌ ${label} did not save`);
+                        showReferralToast(
+                            `<strong>Not saved.</strong> ${label} is still only on this device. Check your connection and reload before closing this tab.`,
+                            'warn');
+                    } else {
+                        console.log(`✅ ${label} persisted`);
+                    }
+                })
+                .catch(err => {
+                    console.error(`❌ ${label} failed to save:`, err);
+                    showReferralToast(
+                        `<strong>Not saved.</strong> ${label} may not have persisted. Reload before closing this tab.`,
+                        'warn');
+                });
+        }
+
         function populateReferringStaffDropdown() {
             const sel = document.getElementById('referralReferringStaff');
             const hint = document.getElementById('referringStaffHint');
@@ -17918,13 +18014,19 @@
         });
 
         function updateInterventionCount() {
-            const boxes = document.querySelectorAll('.referral-intervention:checked');
+            const n = document.querySelectorAll('.referral-intervention:checked').length;
             const el = document.getElementById('interventionCount');
             if (!el) return;
-            const n = boxes.length;
-            el.textContent = n === 0 ? '0 selected'
-                : `${n} selected` + (n < 3 ? ' — three are expected before referring' : ' ✓');
-            el.className = 'panel-hint' + (n > 0 && n < 3 ? ' hint-warn' : '');
+            if (n === 0) {
+                el.textContent = 'Select at least 3 interventions below';
+                el.className = 'intervention-banner';
+            } else if (n < 3) {
+                el.textContent = `${n} of 3 selected — ${3 - n} more expected before referring`;
+                el.className = 'intervention-banner intervention-banner-warn';
+            } else {
+                el.textContent = `✓ ${n} interventions selected`;
+                el.className = 'intervention-banner intervention-banner-ok';
+            }
         }
 
         function clearReferralForm() {
@@ -18003,12 +18105,19 @@
                 forwardedTo: []
             };
 
-            behaviorReferrals.push(referral);
-            await saveData();
+            const submitBtn = document.querySelector('.btn-referral-submit');
+            setButtonBusy(submitBtn, true, 'Submitting…');
 
-            alert('✅ Referral submitted.\n\nIt has been sent to administration for review.');
+            behaviorReferrals.push(referral);
+
+            // Confirm now; persist in the background.
+            showReferralToast(
+                `✅ <strong>Referral submitted</strong> for ${escapeHtml(referral.studentName)} — sent to administration for review.`, 'ok');
             clearReferralForm();
             if (typeof updateReferralReviewTable === 'function') updateReferralReviewTable();
+            setButtonBusy(submitBtn, false);
+
+            saveInBackground('Referral for ' + referral.studentName);
         }
 
         // Closure action list — mirrors the "Closing the Loop Options" checklist.
@@ -18171,11 +18280,21 @@
 
                 <label class="field-label" style="margin-top:14px;">Actions taken (check all that apply)</label>
                 <div class="check-grid check-grid-1">
-                    ${REFERRAL_CLOSING_ACTIONS.map((a, i) => `
+                    ${REFERRAL_CLOSING_ACTIONS.map(a => {
+                        const isDetention = (a === DETENTION_CLOSING_ACTION);
+                        return `
                         <label class="check-item">
-                            <input type="checkbox" class="closing-action" value="${escapeHtml(a)}">
+                            <input type="checkbox" class="closing-action" value="${escapeHtml(a)}"
+                                   ${isDetention ? 'onchange="toggleDetentionDays(this)"' : ''}>
                             <span>${escapeHtml(a)}</span>
-                        </label>`).join('')}
+                        </label>` + (isDetention ? `
+                        <div class="detention-days-row" id="detentionDaysRow" style="display:none;">
+                            <label class="field-label" style="margin:0;">How many days of detention?</label>
+                            <input type="number" id="detentionDaysForReferral" class="wc-input"
+                                   value="1" min="1" max="20" step="1">
+                            <span class="panel-hint" style="margin:0;">Added straight to the Detention Tracker.</span>
+                        </div>` : '');
+                    }).join('')}
                 </div>
 
                 <label class="field-label" style="margin-top:14px;">Administrator Notes</label>
@@ -18211,27 +18330,35 @@
             r.consequence = actions.join('; '); // legacy field kept populated
 
             // Auto-create a Detention Tracker record when that action is checked.
-            let detentionMade = false;
+            // Days come from the inline field that appears with the checkbox, so
+            // admins don't have to go and edit the tracker afterwards.
+            let detentionMade = false, detentionDays = 0;
             if (actions.includes(DETENTION_CLOSING_ACTION)) {
-                detentionMade = createDetentionFromReferral(r);
+                const daysEl = document.getElementById('detentionDaysForReferral');
+                detentionDays = Math.max(1, Math.min(20, parseInt(daysEl && daysEl.value, 10) || 1));
+                detentionMade = createDetentionFromReferral(r, detentionDays);
+                r.detentionDays = detentionDays;
             }
 
-            await saveData();
             closeModalById('closeReferralModal');
             updateReferralReviewTable();
             updateClosedReferralsList();
             if (typeof updateDetentionLists === 'function') updateDetentionLists();
 
-            alert('✅ Referral closed.' +
-                  (detentionMade ? '\n\n🕐 A detention record was created in the Detention Tracker.' : '') +
-                  '\n\nNext step: "Close the Loop" to document the resolution and notify staff.');
+            showReferralToast(
+                `✅ <strong>Referral closed</strong> for ${escapeHtml(r.studentName)}.` +
+                (detentionMade ? ` 🕐 ${detentionDays} day${detentionDays === 1 ? '' : 's'} of detention added to the tracker.` : '') +
+                ` Next: close the loop from Closed Referrals.`, 'ok');
+
+            saveInBackground('Closing referral for ' + r.studentName);
         }
 
-        function createDetentionFromReferral(r) {
+        function createDetentionFromReferral(r, days) {
             try {
                 const student = students.find(s => s.id === r.studentId);
                 if (!student) return false;
                 const today = new Date().toISOString().split('T')[0];
+                const totalDays = Math.max(1, Math.min(20, parseInt(days, 10) || 1));
                 detentions.push({
                     id: 'detention_' + detentionIdCounter++,
                     studentId: r.studentId,
@@ -18239,9 +18366,9 @@
                     grade: student.grade,
                     location: (detentionLocations && detentionLocations[0]) || 'Main Office',
                     dateAssigned: today,
-                    totalDays: 1,
+                    totalDays: totalDays,
                     daysServed: 0,
-                    daysRemaining: 1,
+                    daysRemaining: totalDays,
                     startDate: today,
                     reason: `Referral ${r.id}: ${r.behavior || r.behaviorType || 'behavior referral'}`,
                     status: 'active',
@@ -18327,10 +18454,21 @@
             r.forwardedTo = recipients;
             if (notes) r.adminNotes = (r.adminNotes ? r.adminNotes + '\n\n' : '') + notes;
 
-            await saveData();
             closeModalById('closeLoopModal');
             updateClosedReferralsList();
-            alert(`✅ Loop closed.\n\nSummary recorded for ${recipients.length} staff member(s).`);
+            showReferralToast(
+                `✅ <strong>Loop closed.</strong> Summary recorded for ${recipients.length} staff member${recipients.length === 1 ? '' : 's'}.`, 'ok');
+            saveInBackground('Loop closure for ' + r.studentName);
+        }
+
+        function toggleDetentionDays(cb) {
+            const row = document.getElementById('detentionDaysRow');
+            if (!row) return;
+            row.style.display = cb.checked ? 'flex' : 'none';
+            if (cb.checked) {
+                const el = document.getElementById('detentionDaysForReferral');
+                if (el) { el.focus(); el.select(); }
+            }
         }
 
         function closeModalById(id) {
