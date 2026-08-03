@@ -2074,7 +2074,7 @@
         // KICKBOARD & EMAILJS FUNCTIONS
         // ========================================
         
-        function saveCycleDuration() {
+        async function saveCycleDuration() {
             const durEl = document.getElementById('cycleDurationInput');
             if (!durEl) return;
             const newDuration = parseInt(durEl.value);
@@ -2086,7 +2086,7 @@
             
             // Warn if current week exceeds new duration
             if (currentWeek > newDuration) {
-                if (!confirm(`⚠️ WARNING: Current week (${currentWeek}) is greater than new cycle duration (${newDuration}).\n\nThis means you're already past the end of the cycle with this new setting.\n\nYou should probably:\n1. Run the Wildcat Jackpot now\n2. Click "End Week" to reset to Week 1\n3. Then set your new cycle duration\n\nDo you still want to change the cycle duration to ${newDuration} weeks?`)) {
+                if (!await showConfirm(`⚠️ WARNING: Current week (${currentWeek}) is greater than new cycle duration (${newDuration}).\n\nThis means you're already past the end of the cycle with this new setting.\n\nYou should probably:\n1. Run the Wildcat Jackpot now\n2. Click "End Week" to reset to Week 1\n3. Then set your new cycle duration\n\nDo you still want to change the cycle duration to ${newDuration} weeks?`)) {
                     return;
                 }
             }
@@ -2453,7 +2453,7 @@
                 return;
             }
             
-            if (!confirm('📧 Send weekly reports to all teachers now?\n\nThis will email a Kickboard summary to every teacher with an email address.')) {
+            if (!await showConfirm('📧 Send weekly reports to all teachers now?\n\nThis will email a Kickboard summary to every teacher with an email address.')) {
                 return;
             }
             
@@ -3410,7 +3410,7 @@
         }
         
         // Restore from backup file
-        function restoreFromBackup() {
+        async function restoreFromBackup() {
             if (currentUser.role !== 'superadmin') {
                 alert('⚠️ Only superadmins can restore backups');
                 return;
@@ -3424,7 +3424,7 @@
                 const file = e.target.files[0];
                 if (!file) return;
                 
-                if (!confirm(`⚠️ RESTORE BACKUP\n\nThis will replace ALL current data with data from:\n${file.name}\n\nCurrent data will be lost unless you export a backup first.\n\nContinue?`)) {
+                if (!await showConfirm(`⚠️ RESTORE BACKUP\n\nThis will replace ALL current data with data from:\n${file.name}\n\nCurrent data will be lost unless you export a backup first.\n\nContinue?`)) {
                     return;
                 }
                 
@@ -5049,7 +5049,7 @@
             if (newWeek === entry.week && newCycle === entry.cycle) { alert('No change — week and cycle are already those values.'); return; }
 
             const auditMatch = correctionFindAuditMatch(student, entry);
-            const ok = confirm(
+            const ok = await showConfirm(
                 `Re-tag this ticket?\n\n` +
                 `Student: ${student.firstName} ${student.lastName}\n` +
                 `Ticket: ${entry.category} (${entry.tickets || entry.amount || 0}) on ${new Date(entry.timestamp).toLocaleString()}\n` +
@@ -5141,7 +5141,7 @@
             if (!reason) { alert('A reason is required — it goes in the audit trail.'); return; }
 
             const auditMatch = correctionFindAuditMatch(student, entry);
-            const ok = confirm(
+            const ok = await showConfirm(
                 `Permanently remove this ticket?\n\n` +
                 `Student: ${student.firstName} ${student.lastName}\n` +
                 `Ticket: ${entry.category} (${entry.tickets || entry.amount || 0}) on ${new Date(entry.timestamp).toLocaleString()}\n` +
@@ -5345,7 +5345,7 @@
             if (!oldEntry) { alert('Original winner entry no longer found.'); return; }
 
             const winner = state.pool[Math.floor(Math.random() * state.pool.length)];
-            const ok = confirm(
+            const ok = await showConfirm(
                 `Confirm redraw:\n\n` +
                 `INVALIDATE: ${oldEntry.studentName} (${oldEntry.category})\n` +
                 `Reason: ${reason}\n\n` +
@@ -6159,9 +6159,9 @@
             alert(`Added "${newSub}" to PBIS subcategories`);
         }
 
-        function removePbisSubcategory(index) {
+        async function removePbisSubcategory(index) {
             const sub = pbisSubcategories[index];
-            if (confirm(`Remove "${sub}" from PBIS subcategories?`)) {
+            if (await showConfirm(`Remove "${sub}" from PBIS subcategories?`)) {
                 pbisSubcategories.splice(index, 1);
                 saveData();
                 updateSubcategoryLists();
@@ -6189,9 +6189,9 @@
             alert(`Added "${newSub}" to Academic subcategories`);
         }
 
-        function removeAcademicSubcategory(index) {
+        async function removeAcademicSubcategory(index) {
             const sub = academicSubcategories[index];
-            if (confirm(`Remove "${sub}" from Academic subcategories?`)) {
+            if (await showConfirm(`Remove "${sub}" from Academic subcategories?`)) {
                 academicSubcategories.splice(index, 1);
                 saveData();
                 updateSubcategoryLists();
@@ -6644,8 +6644,8 @@
             // checkAndRunAutoWeekReset();
         }
 
-        function logout() {
-            if (confirm('Are you sure you want to logout?')) {
+        async function logout() {
+            if (await showConfirm('Are you sure you want to logout?')) {
                 currentUser = null;
                 currentStudent = null;
                 clearSession(); // Clear saved session
@@ -7061,7 +7061,7 @@
             }
             
             // Confirm deletion
-            if (!confirm(`⚠️ DELETE TICKET ENTRY?\n\n` +
+            if (!await showConfirm(`⚠️ DELETE TICKET ENTRY?\n\n` +
                         `Teacher: ${entry.teacher}\n` +
                         `Student: ${entry.studentName}\n` +
                         `Category: ${entry.category}\n` +
@@ -7446,7 +7446,7 @@
             alert(`✅ Teacher updated!\n\n${name}'s information has been saved.`);
         }
 
-        function deleteTeacher(teacherId) {
+        async function deleteTeacher(teacherId) {
             if (currentUser.role !== 'admin' && currentUser.role !== 'superadmin') {
                 alert('Only admins can delete teachers');
                 return;
@@ -7457,7 +7457,7 @@
                 return;
             }
 
-            if (confirm('Are you sure you want to delete this teacher?')) {
+            if (await showConfirm('Are you sure you want to delete this teacher?')) {
                 // Tombstone the teacher so deletion survives the main-document merge
                 const key = `teacher:${teacherId}`;
                 if (!entityTombstones.some(t => t.key === key)) {
@@ -7476,7 +7476,7 @@
         }
 
         // System Admin Functions
-        function promoteToSuperAdmin() {
+        async function promoteToSuperAdmin() {
             if (currentUser.role !== 'superadmin') {
                 alert('Only Super Admins can promote others');
                 return;
@@ -7496,7 +7496,7 @@
                 return;
             }
 
-            if (confirm(`Promote ${teacher.name} to Super Admin?\n\nThey will have access to:\n• System reset\n• All admin features\n• Promote other admins`)) {
+            if (await showConfirm(`Promote ${teacher.name} to Super Admin?\n\nThey will have access to:\n• System reset\n• All admin features\n• Promote other admins`)) {
                 teacher.role = 'superadmin';
                 saveData();
                 updateTeachersTable();
@@ -7520,7 +7520,7 @@
             });
         }
 
-        function resetSystemData() {
+        async function resetSystemData() {
             if (currentUser.role !== 'superadmin') {
                 alert('Only Super Admins can reset the system');
                 return;
@@ -7533,12 +7533,12 @@
                 return;
             }
 
-            if (!confirm('⚠️ FINAL WARNING ⚠️\n\nThis will PERMANENTLY DELETE:\n• All students\n• All tickets\n• All raffle winners\n• All audit logs\n• All weekly history\n\nThis CANNOT be undone!\n\nAre you ABSOLUTELY SURE?')) {
+            if (!await showConfirm('⚠️ FINAL WARNING ⚠️\n\nThis will PERMANENTLY DELETE:\n• All students\n• All tickets\n• All raffle winners\n• All audit logs\n• All weekly history\n\nThis CANNOT be undone!\n\nAre you ABSOLUTELY SURE?')) {
                 return;
             }
 
             // Second confirmation
-            if (!confirm('Last chance! Click OK to DELETE EVERYTHING or Cancel to abort.')) {
+            if (!await showConfirm('Last chance! Click OK to DELETE EVERYTHING or Cancel to abort.')) {
                 return;
             }
 
@@ -10156,7 +10156,7 @@
             }
             
             // Double-check with native confirm dialog
-            const finalConfirm = confirm(
+            const finalConfirm = await showConfirm(
                 `⚠️ FINAL WARNING ⚠️\n\n` +
                 `You are about to PERMANENTLY DELETE:\n` +
                 `• ${hallPasses.length} hall passes\n` +
@@ -11045,7 +11045,7 @@
             const group = preventionGroups.find(g => g.id === groupId);
             if (!group) return;
             
-            if (!confirm(`Delete prevention group "${group.name}"?\n\nThis cannot be undone.`)) {
+            if (!await showConfirm(`Delete prevention group "${group.name}"?\n\nThis cannot be undone.`)) {
                 return;
             }
             
@@ -11171,7 +11171,7 @@
         // END CLAW PASS FUNCTIONS
         // ============================================
 
-        function resetTeacherPassword(teacherId) {
+        async function resetTeacherPassword(teacherId) {
             if (currentUser.role !== 'admin' && currentUser.role !== 'superadmin') {
                 alert('Only admins can reset passwords');
                 return;
@@ -11183,7 +11183,7 @@
                 return;
             }
 
-            const newPassword = prompt(`Reset password for ${teacher.name}\n\nEnter new password:`);
+            const newPassword = await showPrompt(`Reset password for ${teacher.name}\n\nEnter new password:`);
             
             if (!newPassword) {
                 return; // User cancelled
@@ -11194,7 +11194,7 @@
                 return;
             }
 
-            const confirmPassword = prompt('Confirm new password:');
+            const confirmPassword = await showPrompt('Confirm new password:');
             
             if (newPassword !== confirmPassword) {
                 alert('Passwords do not match. Please try again.');
@@ -14132,7 +14132,7 @@
 
         // Draw a single winner for ONE school (Attendance only, per admin request).
         // Independent of the MS+HS combined flow — can be run separately at different times.
-        function drawBySchoolSingle(category, categoryName, school) {
+        async function drawBySchoolSingle(category, categoryName, school) {
             const pool = school === 'MS'
                 ? students.filter(s => s.grade >= 6 && s.grade <= 8)
                 : students.filter(s => s.grade >= 9 && s.grade <= 12);
@@ -14159,7 +14159,7 @@
                 w.school === schoolLabel
             );
             if (alreadyDrawn) {
-                const proceed = confirm(
+                const proceed = await showConfirm(
                     `A ${schoolLabel} winner for ${categoryName} has already been drawn this week.\n\n` +
                     `Drawing again will add a second winner. Are you sure you want to continue?`
                 );
@@ -14713,7 +14713,7 @@
 
         async function nextWeek() {
             if (currentWeek >= cycleDuration) {
-                if (confirm(`You've completed ${cycleDuration} weeks! Run the Wildcat Jackpot before starting a new cycle?`)) {
+                if (await showConfirm(`You've completed ${cycleDuration} weeks! Run the Wildcat Jackpot before starting a new cycle?`)) {
                     return;
                 }
             }
@@ -14930,7 +14930,7 @@
         }
 
         async function completeWeek() {
-            if (!confirm('⚠️ END OF WEEK PROCESS\n\nThis will:\n• Save this week\'s ticket data\n• Qualify eligible students for Wildcat Jackpot\n• Reset all ticket counts to 0\n• Move to next week\n\nOnly do this when the school week is over!\n\nContinue?')) return;
+            if (!await showConfirm('⚠️ END OF WEEK PROCESS\n\nThis will:\n• Save this week\'s ticket data\n• Qualify eligible students for Wildcat Jackpot\n• Reset all ticket counts to 0\n• Move to next week\n\nOnly do this when the school week is over!\n\nContinue?')) return;
 
             await performWeekReset(false); // false = manual reset
         }
@@ -14944,7 +14944,7 @@
             const currentNum = getCurrentCycleNumber();
             const nextNum = currentNum + 1;
 
-            if (!confirm(
+            if (!await showConfirm(
                 `This will close out Cycle ${currentNum} and start Cycle ${nextNum}.\n\n` +
                 `What this does:\n` +
                 `  • All students start fresh at 0 tickets\n` +
@@ -17020,8 +17020,8 @@
             renderBehaviors(negative, '❌ Negative Behaviors', '#B3392F');
         }
 
-        function deleteBehavior(behaviorId) {
-            if (!confirm('Are you sure you want to delete this behavior?')) return;
+        async function deleteBehavior(behaviorId) {
+            if (!await showConfirm('Are you sure you want to delete this behavior?')) return;
             
             const index = wildcatCashBehaviors.findIndex(b => b.id === behaviorId);
             if (index !== -1) {
@@ -17216,8 +17216,8 @@
             alert('✅ Settings saved successfully!');
         }
 
-        function resetAllStudentCash() {
-            const confirmation = prompt('⚠️ WARNING: This will reset ALL student Wildcat Cash balances to $0.\n\nType "RESET ALL CASH" to confirm:');
+        async function resetAllStudentCash() {
+            const confirmation = await showPrompt('⚠️ WARNING: This will reset ALL student Wildcat Cash balances to $0.\n\nType "RESET ALL CASH" to confirm:');
             
             if (confirmation !== 'RESET ALL CASH') {
                 if (confirmation !== null) {
@@ -17872,7 +17872,7 @@
             return '';
         }
 
-        function printReferral(referralId) {
+        async function printReferral(referralId) {
             const r = (behaviorReferrals || []).find(x => x.id === referralId);
             if (!r) { alert('⚠️ Referral not found'); return; }
             const student = (students || []).find(s => s.id === r.studentId) || {};
@@ -18015,17 +18015,193 @@
             setTimeout(() => { try { w.focus(); w.print(); } catch (e) { console.warn(e); } }, 450);
         }
 
-        function showReferralToast(message, kind) {
-            let host = document.getElementById('referralToast');
+
+        // ============================================================
+        // IN-APP DIALOGS
+        //
+        // Replaces the browser's alert() / await showConfirm() / await showPrompt(), which are
+        // unstyled, say "wildcatraffle.com says", and block the page.
+        //
+        // window.alert is overridden so all ~216 existing calls are restyled
+        // without touching their call sites. Messages beginning with ✅ become
+        // a non-blocking toast; anything else opens a dialog that must be
+        // acknowledged, which preserves the original "stop and read" intent.
+        //
+        // await showConfirm() and await showPrompt() cannot be overridden the same way — they
+        // return a value synchronously and a styled dialog cannot — so those
+        // call sites use `await showConfirm(...)` / `await showPrompt(...)`.
+        // ============================================================
+
+        function _wcDialogHost() {
+            let host = document.getElementById('wcDialogRoot');
             if (!host) {
                 host = document.createElement('div');
-                host.id = 'referralToast';
+                host.id = 'wcDialogRoot';
                 document.body.appendChild(host);
             }
-            host.className = 'ref-toast ref-toast-' + (kind || 'ok') + ' ref-toast-show';
-            host.innerHTML = message;
-            clearTimeout(host._t);
-            host._t = setTimeout(() => { host.className = 'ref-toast'; }, 4200);
+            return host;
+        }
+
+        function _wcKindOf(message) {
+            const m = String(message || '');
+            if (m.indexOf('✅') === 0 || m.indexOf('🎉') === 0) return 'success';
+            if (m.indexOf('❌') === 0) return 'error';
+            if (m.indexOf('⚠️') === 0 || m.indexOf('⚠') === 0) return 'warning';
+            return 'info';
+        }
+
+        function _wcFormat(message) {
+            // Preserve line breaks from the original alert() strings, and let the
+            // first line stand as a heading when the message has several lines.
+            const parts = String(message == null ? '' : message).split('\n');
+            const head = escapeHtml(parts[0]).replace(_WC_LEAD_ICON, '');
+            const rest = parts.slice(1).filter(l => l.trim() !== '');
+            return {
+                title: head,
+                body: rest.map(l => `<p>${escapeHtml(l)}</p>`).join('')
+            };
+        }
+
+        // Leading status emoji are stripped before display because the dialog
+        // shows its own icon. Note ⚠️ is TWO code points (U+26A0 + U+FE0F), so a
+        // single-character class would leave the variation selector behind.
+        const _WC_LEAD_ICON = /^(?:[\u2705\u274C\u26A0\u2139\u{1F389}\u{1F512}\u{1F4CB}\u{1F550}\uFE0F]|\s)+/u;
+
+        const WC_ICONS = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️', question: '❓' };
+
+        function showToast(message, kind, ms) {
+            let t = document.getElementById('wcToast');
+            if (!t) {
+                t = document.createElement('div');
+                t.id = 'wcToast';
+                document.body.appendChild(t);
+            }
+            const k = kind || 'success';
+            const text = String(message || '').replace(_WC_LEAD_ICON, '').split('\n').filter(Boolean);
+            t.className = `wc-toast wc-toast-${k} wc-toast-show`;
+            t.innerHTML = `<span class="wc-toast-icon">${WC_ICONS[k] || ''}</span>
+                           <span class="wc-toast-text"><strong>${escapeHtml(text[0] || '')}</strong>${
+                               text.length > 1 ? `<span class="wc-toast-sub">${escapeHtml(text.slice(1).join(' '))}</span>` : ''
+                           }</span>`;
+            clearTimeout(t._timer);
+            t._timer = setTimeout(() => { t.className = 'wc-toast'; }, ms || 4200);
+        }
+
+        function _wcDialog({ kind, title, body, buttons, input }) {
+            return new Promise(resolve => {
+                const host = _wcDialogHost();
+                const k = kind || 'info';
+                host.innerHTML = `
+                    <div class="wc-dialog-backdrop" id="wcDialogBackdrop">
+                        <div class="wc-dialog wc-dialog-${k}" role="dialog" aria-modal="true">
+                            <div class="wc-dialog-head">
+                                <span class="wc-dialog-icon">${WC_ICONS[k] || WC_ICONS.info}</span>
+                                <h3 class="wc-dialog-title">${title || ''}</h3>
+                            </div>
+                            ${body ? `<div class="wc-dialog-body">${body}</div>` : ''}
+                            ${input ? `<div class="wc-dialog-input">
+                                <input type="${input.type || 'text'}" id="wcDialogInput"
+                                       class="wc-input" placeholder="${escapeHtml(input.placeholder || '')}"
+                                       value="${escapeHtml(input.value || '')}">
+                            </div>` : ''}
+                            <div class="wc-dialog-actions">
+                                ${buttons.map((b, i) => `
+                                    <button class="btn wc-dialog-btn ${b.cls || ''}" data-i="${i}">${escapeHtml(b.label)}</button>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>`;
+
+                const backdrop = document.getElementById('wcDialogBackdrop');
+                const inputEl = document.getElementById('wcDialogInput');
+                const finish = (val) => {
+                    host.innerHTML = '';
+                    document.removeEventListener('keydown', onKey);
+                    resolve(val);
+                };
+                const onKey = (e) => {
+                    if (e.key === 'Escape') {
+                        const cancelIdx = buttons.findIndex(b => b.value === false || b.value === null);
+                        finish(cancelIdx >= 0 ? buttons[cancelIdx].value : (buttons[0].value !== undefined ? buttons[0].value : undefined));
+                    }
+                    if (e.key === 'Enter' && input) {
+                        const okBtn = buttons.find(b => b.value !== false && b.value !== null);
+                        if (okBtn) finish(inputEl ? inputEl.value : okBtn.value);
+                    }
+                };
+                document.addEventListener('keydown', onKey);
+
+                host.querySelectorAll('.wc-dialog-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const b = buttons[parseInt(btn.dataset.i, 10)];
+                        if (input && b.value !== false && b.value !== null) {
+                            finish(inputEl ? inputEl.value : '');
+                        } else {
+                            finish(b.value);
+                        }
+                    });
+                });
+                backdrop.addEventListener('click', (e) => {
+                    if (e.target === backdrop) {
+                        const cancel = buttons.find(b => b.value === false || b.value === null);
+                        if (cancel) finish(cancel.value);
+                    }
+                });
+                setTimeout(() => {
+                    if (inputEl) { inputEl.focus(); inputEl.select(); }
+                    else {
+                        const primary = host.querySelector('.wc-dialog-btn:last-child');
+                        if (primary) primary.focus();
+                    }
+                }, 60);
+            });
+        }
+
+        // Drop-in replacement for alert(). Kept synchronous-looking so the ~216
+        // existing call sites work untouched.
+        function showAlert(message) {
+            const kind = _wcKindOf(message);
+            if (kind === 'success') { showToast(message, 'success'); return Promise.resolve(); }
+            const { title, body } = _wcFormat(message);
+            return _wcDialog({
+                kind, title, body,
+                buttons: [{ label: 'OK', value: true, cls: 'wc-btn-primary' }]
+            });
+        }
+
+        function showConfirm(message, opts) {
+            opts = opts || {};
+            const { title, body } = _wcFormat(message);
+            const kind = opts.kind || (_wcKindOf(message) === 'info' ? 'question' : _wcKindOf(message));
+            return _wcDialog({
+                kind, title, body,
+                buttons: [
+                    { label: opts.cancelLabel || 'Cancel', value: false, cls: 'wc-btn-cancel' },
+                    { label: opts.confirmLabel || 'Confirm', value: true,
+                      cls: opts.danger ? 'wc-btn-danger' : 'wc-btn-primary' }
+                ]
+            });
+        }
+
+        function showPrompt(message, opts) {
+            opts = opts || {};
+            const { title, body } = _wcFormat(message);
+            return _wcDialog({
+                kind: opts.kind || 'question', title, body,
+                input: { type: opts.type || 'text', placeholder: opts.placeholder || '', value: opts.value || '' },
+                buttons: [
+                    { label: 'Cancel', value: null, cls: 'wc-btn-cancel' },
+                    { label: opts.confirmLabel || 'OK', value: true, cls: 'wc-btn-primary' }
+                ]
+            });
+        }
+
+        // Override the browser dialog so every existing alert() is restyled.
+        window.alert = showAlert;
+
+        function showReferralToast(message, kind) {
+            // Kept for the referral flows; now routed through the shared toast.
+            showToast(String(message).replace(/<[^>]+>/g, ''), kind === 'warn' ? 'warning' : 'success');
         }
 
         function setButtonBusy(btn, busy, busyLabel) {
@@ -19070,7 +19246,7 @@
             `;
         }
         
-        function markDetentionDay(detentionId) {
+        async function markDetentionDay(detentionId) {
             const detention = detentions.find(d => d.id === detentionId);
             if (!detention || detention.status !== 'active') return;
             
@@ -19089,7 +19265,7 @@
             }
             
             // Ask for attendance status
-            const attendance = confirm(
+            const attendance = await showConfirm(
                 `📋 DETENTION ATTENDANCE\n\n` +
                 `Student: ${detention.studentName}\n` +
                 `Date: ${new Date(today).toLocaleDateString()}\n\n` +
@@ -19131,11 +19307,11 @@
             updateDetentionLists();
         }
         
-        function editDetention(detentionId) {
+        async function editDetention(detentionId) {
             const detention = detentions.find(d => d.id === detentionId);
             if (!detention) return;
             
-            const newDays = prompt(`Edit total detention days for ${detention.studentName}\n\nCurrent: ${detention.totalDays} days\nServed: ${detention.daysServed} days\n\nEnter new total days (must be >= days served):`, detention.totalDays);
+            const newDays = await showPrompt(`Edit total detention days for ${detention.studentName}\n\nCurrent: ${detention.totalDays} days\nServed: ${detention.daysServed} days\n\nEnter new total days (must be >= days served):`, detention.totalDays);
             
             if (newDays === null) return; // Cancelled
             
@@ -19251,9 +19427,9 @@
             showSuccessToast(`✅ Location "${newLocation}" added`);
         }
         
-        function removeDetentionLocation(index) {
+        async function removeDetentionLocation(index) {
             const location = detentionLocations[index];
-            if (confirm(`Remove location "${location}"?`)) {
+            if (await showConfirm(`Remove location "${location}"?`)) {
                 detentionLocations.splice(index, 1);
                 updateDetentionSettingsLists();
                 saveData();
@@ -19282,9 +19458,9 @@
             showSuccessToast(`✅ Reason "${newReason}" added`);
         }
         
-        function removeDetentionReason(index) {
+        async function removeDetentionReason(index) {
             const reason = detentionReasons[index];
-            if (confirm(`Remove reason "${reason}"?`)) {
+            if (await showConfirm(`Remove reason "${reason}"?`)) {
                 detentionReasons.splice(index, 1);
                 updateDetentionSettingsLists();
                 saveData();
