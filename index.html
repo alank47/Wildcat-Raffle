@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Wildcat Rewards</title>
-    <link rel="stylesheet" href="styles.css?v=20260729k">
+    <link rel="stylesheet" href="styles.css?v=20260729m">
 </head>
 <body>
     <!-- Login Screen -->
@@ -2763,13 +2763,18 @@
 
                 <!-- Analytics Subtab -->
                 <div id="behaviorAnalytics" class="discipline-subtab hidden">
-                    <h3 style="color: #2F67A7; margin-bottom: 25px;">📊 Referral Analytics & Reports</h3>
+                    <div class="page-header">
+                        <div>
+                            <h2 class="page-title">📊 Referral Analytics</h2>
+                            <p class="page-subtitle">Behavior patterns, locations, and intervention practice</p>
+                        </div>
+                    </div>
                     
                     <!-- Summary Cards -->
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px;">
-                        <div class="wc-card banner-card">
-                            <div style="font-size: 14px; opacity: 0.9; margin-bottom: 8px;">Total Referrals</div>
-                            <div id="analyticsTotalReferrals" style="font-size: 42px; font-weight: 700;">0</div>
+                        <div class="wc-card wc-stat stat-compact">
+                            <div class="stat-label">Total Referrals</div>
+                            <div class="stat-num" id="analyticsTotalReferrals">0</div>
                         </div>
                         <div class="wc-card wc-stat stat-compact">
                             <div class="stat-label">This Week</div>
@@ -2785,17 +2790,13 @@
                         </div>
                     </div>
 
-                    <!-- Charts -->
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 25px; margin-bottom: 30px;">
-                        <div class="wc-card panel-card">
-                            <h4 style="margin: 0 0 20px 0; color: #333;">Referrals by Behavior Type</h4>
-                            <canvas id="behaviorTypeChart" style="max-height: 300px;"></canvas>
-                        </div>
-                        <div class="wc-card panel-card">
-                            <h4 style="margin: 0 0 20px 0; color: #333;">Referrals by Severity</h4>
-                            <canvas id="severityChart" style="max-height: 300px;"></canvas>
-                        </div>
-                    </div>
+                    <!-- Breakdowns.
+                         These were canvas elements driven by Chart.js. The new
+                         analytics render HTML bars, and innerHTML on a canvas draws
+                         nothing — the content must go into a normal container.
+                         The severity chart is gone: severity was retired in favour
+                         of ranking by behaviour frequency. -->
+                    <div class="wc-card panel-card" id="behaviorTypeChart"></div>
 
                     <!-- Export Button -->
                     <div class="wc-card panel-card">
@@ -4615,6 +4616,6 @@
     <!-- Chart.js for Data Visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-    <script src="script.js?v=20260729k"></script>
+    <script src="script.js?v=20260729m"></script>
 </body>
 </html>
