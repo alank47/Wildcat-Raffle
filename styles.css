@@ -3262,3 +3262,50 @@ body {
 .ref-toast-ok   { background: #1f6b45; color: #fff; }
 .ref-toast-warn { background: #96631A; color: #fff; }
 .ref-toast strong { font-weight: 700; }
+
+
+/* ============================================================
+   REFERRAL MODALS — true overlays
+   Previously these were inline cards inside a subtab pane, so they
+   were invisible whenever that pane carried .hidden.
+   ============================================================ */
+
+.ref-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 3000;
+    background: rgba(14, 14, 14, 0.55);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 40px 20px;
+    overflow-y: auto;
+}
+.ref-modal.hidden { display: none !important; }
+.ref-modal-card {
+    background: #ffffff;
+    border-radius: 14px;
+    width: 100%;
+    max-width: 760px;
+    max-height: calc(100vh - 80px);
+    overflow-y: auto;
+    box-shadow: 0 24px 60px rgba(4, 24, 46, 0.4);
+}
+@media (max-width: 700px) {
+    .ref-modal { padding: 16px 10px; }
+    .ref-modal-card { max-height: calc(100vh - 32px); }
+}
+
+/* PDF button */
+.btn-sm-pdf {
+    padding: 6px 13px !important;
+    font-size: 12.5px !important;
+    border-radius: 7px;
+    font-weight: 700;
+    background: #ffffff !important;
+    background-image: none !important;
+    color: var(--wc-blue) !important;
+    border: 1px solid var(--wc-blue-pale) !important;
+    margin-left: 6px;
+}
+.btn-sm-pdf:hover { background: var(--wc-blue-mist) !important; }
