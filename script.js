@@ -7951,82 +7951,11 @@
             }
         }
 
-        function switchDisciplineTab(tabName) {
-            // Hide all discipline subtabs
-            document.querySelectorAll('.discipline-subtab').forEach(tab => {
-                tab.style.display = 'none';
-            });
-            document.querySelectorAll('#disciplineContent .subtab-button').forEach(btn => {
-                btn.style.background = '#f5f5f5';
-                btn.style.color = '#333';
-            });
-            
-            // Show selected tab
-            // NOTE: 'detention' was missing from this map, so the Detention
-            // Tracker sidebar button did nothing. 'closed' is the new
-            // Closed Referrals view.
-            const tabMap = {
-                'submit': 'behaviorSubmit',
-                'review': 'behaviorReview',
-                'detention': 'behaviorDetention',
-                'closed': 'behaviorClosed',
-                'history': 'behaviorHistory',
-                'analytics': 'behaviorAnalytics'
-            };
-            
-            const tabElement = document.getElementById(tabMap[tabName]);
-            if (tabElement) {
-                tabElement.style.display = 'block';
-            }
-            
-            // Highlight active button
-            const btnMap = {
-                'submit': 'submitTabBtn',
-                'review': 'reviewTabBtn',
-                'history': 'historyDisciplineTabBtn',
-                'analytics': 'analyticsDisciplineTabBtn'
-            };
-            
-            const btn = document.getElementById(btnMap[tabName]);
-            if (btn) {
-                btn.style.background = '#f59e0b';
-                btn.style.color = 'white';
-            }
-            
-            // Load data for specific tabs
-            if (tabName === 'detention' && typeof updateDetentionLists === 'function') {
-                updateDetentionLists();
-            }
-            if (tabName === 'closed' && typeof updateClosedReferralsList === 'function') {
-                updateClosedReferralsList();
-            }
-            if (tabName === 'submit') {
-                populateReferralStudentDropdown();
-                if (typeof populateReferringStaffDropdown === 'function') populateReferringStaffDropdown();
-                const dEl = document.getElementById('referralDate');
-                if (dEl && !dEl.value) dEl.value = new Date().toISOString().split('T')[0];
-                document.querySelectorAll('.referral-intervention').forEach(cb => {
-                    cb.onchange = updateInterventionCount;
-                });
-                if (typeof updateInterventionCount === 'function') updateInterventionCount();
-                // Set current date and time
-                const now = new Date();
-                const dateInput = document.getElementById('referralDate');
-                const timeInput = document.getElementById('referralTime');
-                if (dateInput) dateInput.value = now.toISOString().split('T')[0];
-                if (timeInput) timeInput.value = now.toTimeString().slice(0,5);
-            } else if (tabName === 'review') {
-                updateReferralReviewTable();
-            } else if (tabName === 'history') {
-                populateHistoryStudentDropdown();
-                // Hide summary and table initially
-                document.getElementById('studentReferralSummary').classList.add('hidden');
-                document.getElementById('studentReferralHistoryContainer').classList.add('hidden');
-                document.getElementById('noHistoryMessage').classList.add('hidden');
-            } else if (tabName === 'analytics') {
-                updateReferralAnalytics();
-            }
-        }
+        // NOTE: an earlier duplicate of switchDisciplineTab() lived here.
+        // JavaScript keeps the LAST definition, so this copy never ran — and
+        // edits made to it (the 'closed' subtab, the submit-tab hooks) silently
+        // did nothing. It has been removed; the live version is below, near
+        // the other discipline functions.
 
         function loadStudentForPass() {
             const studentId = document.getElementById('kioskStudentId').value.trim();
@@ -17815,46 +17744,62 @@
         // ========================================
 
         function switchDisciplineTab(subtab) {
-            // Hide all subtabs
+            // Panes are hidden via the .hidden class, which is `display:none
+            // !important` — inline styles cannot override it, so visibility MUST
+            // be toggled by class here.
             document.querySelectorAll('.discipline-subtab').forEach(tab => tab.classList.add('hidden'));
-            
-            // Reset all button styles
+
             document.querySelectorAll('.subtab-button').forEach(btn => {
                 btn.style.background = '#f5f5f5';
                 btn.style.color = '#333';
             });
-            
-            // Show selected subtab and highlight button
+
+            const PANES = {
+                submit:    { pane: 'behaviorSubmit',    btn: 'submitTabBtn' },
+                review:    { pane: 'behaviorReview',    btn: 'reviewTabBtn' },
+                closed:    { pane: 'behaviorClosed',    btn: null },
+                detention: { pane: 'behaviorDetention', btn: 'detentionTabBtn' },
+                history:   { pane: 'behaviorHistory',   btn: 'historyDisciplineTabBtn' },
+                analytics: { pane: 'behaviorAnalytics', btn: 'analyticsDisciplineTabBtn' }
+            };
+            const target = PANES[subtab];
+            if (!target) { console.warn('switchDisciplineTab: unknown subtab', subtab); return; }
+
+            const paneEl = document.getElementById(target.pane);
+            if (paneEl) {
+                paneEl.classList.remove('hidden');
+                paneEl.style.display = '';   // clear any stale inline display
+            }
+            if (target.btn) {
+                const btn = document.getElementById(target.btn);   // null-safe
+                if (btn) { btn.style.background = '#f59e0b'; btn.style.color = 'white'; }
+            }
+
+            // Mark the matching sidebar item active
+            document.querySelectorAll('#modeSubNav .tab').forEach(b => b.classList.remove('active'));
+            const sideBtn = document.getElementById(`sideSub_discipline_${subtab}`);
+            if (sideBtn) sideBtn.classList.add('active');
+
+            // Per-tab data loading
             if (subtab === 'submit') {
-                document.getElementById('behaviorSubmit').classList.remove('hidden');
-                const btn = document.getElementById('submitTabBtn');
-                btn.style.background = '#f59e0b';
-                btn.style.color = 'white';
                 populateReferralStudentDropdown();
+                if (typeof populateReferringStaffDropdown === 'function') populateReferringStaffDropdown();
+                const now = new Date();
+                const dateInput = document.getElementById('referralDate');
+                const timeInput = document.getElementById('referralTime');
+                if (dateInput && !dateInput.value) dateInput.value = now.toISOString().split('T')[0];
+                if (timeInput && !timeInput.value) timeInput.value = now.toTimeString().slice(0, 5);
+                if (typeof updateInterventionCount === 'function') updateInterventionCount();
             } else if (subtab === 'review') {
-                document.getElementById('behaviorReview').classList.remove('hidden');
-                const btn = document.getElementById('reviewTabBtn');
-                btn.style.background = '#f59e0b';
-                btn.style.color = 'white';
                 updateReferralReviewTable();
+            } else if (subtab === 'closed') {
+                if (typeof updateClosedReferralsList === 'function') updateClosedReferralsList();
             } else if (subtab === 'detention') {
-                document.getElementById('behaviorDetention').classList.remove('hidden');
-                const btn = document.getElementById('detentionTabBtn');
-                btn.style.background = '#f59e0b';
-                btn.style.color = 'white';
-                initializeDetentionForm();
-                updateDetentionLists();
+                if (typeof initializeDetentionForm === 'function') initializeDetentionForm();
+                if (typeof updateDetentionLists === 'function') updateDetentionLists();
             } else if (subtab === 'history') {
-                document.getElementById('behaviorHistory').classList.remove('hidden');
-                const btn = document.getElementById('historyDisciplineTabBtn');
-                btn.style.background = '#f59e0b';
-                btn.style.color = 'white';
                 populateHistoryStudentDropdown();
             } else if (subtab === 'analytics') {
-                document.getElementById('behaviorAnalytics').classList.remove('hidden');
-                const btn = document.getElementById('analyticsDisciplineTabBtn');
-                btn.style.background = '#f59e0b';
-                btn.style.color = 'white';
                 updateReferralAnalytics();
             }
         }
