@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Wildcat Rewards</title>
-    <link rel="stylesheet" href="styles.css?v=20260729m">
+    <link rel="stylesheet" href="styles.css?v=20260729n">
 </head>
 <body>
     <!-- Login Screen -->
@@ -2345,6 +2345,40 @@
                 </div>
 
                 <!-- Submit Referral Subtab -->
+                <!-- Referral modals live OUTSIDE the subtab panes. They were inside
+                     #behaviorReview, so opening a referral from Student History did
+                     nothing — the modal sat in a pane carrying .hidden
+                     (display:none !important). -->
+                <div id="closeReferralModal" class="ref-modal hidden">
+                    <div class="ref-modal-card">
+                        <div class="inline-modal-head">
+                            <h3>Close Referral</h3>
+                            <button class="inline-modal-x" onclick="closeModalById('closeReferralModal')">✕</button>
+                        </div>
+                        <div id="closeReferralBody"></div>
+                    </div>
+                </div>
+
+                <div id="referralDetailModal" class="ref-modal hidden">
+                    <div class="ref-modal-card">
+                        <div class="inline-modal-head">
+                            <h3>Referral Details</h3>
+                            <button class="inline-modal-x" onclick="closeModalById('referralDetailModal')">✕</button>
+                        </div>
+                        <div id="referralDetailBody"></div>
+                    </div>
+                </div>
+
+                <div id="closeLoopModal" class="ref-modal hidden">
+                    <div class="ref-modal-card">
+                        <div class="inline-modal-head inline-modal-head-green">
+                            <h3>Referral Closed — Loop Summary</h3>
+                            <button class="inline-modal-x" onclick="closeModalById('closeLoopModal')">✕</button>
+                        </div>
+                        <div id="closeLoopBody"></div>
+                    </div>
+                </div>
+
                 <div id="behaviorSubmit" class="discipline-subtab">
                     <div class="wc-card referral-form-card">
                         <div class="referral-form-head">
@@ -2515,22 +2549,10 @@
                     </div>
 
                     <!-- Close Referral modal -->
-                    <div id="closeReferralModal" class="wc-card inline-modal hidden">
-                        <div class="inline-modal-head">
-                            <h3>Close Referral</h3>
-                            <button class="inline-modal-x" onclick="closeModalById('closeReferralModal')">✕</button>
-                        </div>
-                        <div id="closeReferralBody"></div>
-                    </div>
+                    
 
                     <!-- Referral detail modal -->
-                    <div id="referralDetailModal" class="wc-card inline-modal hidden">
-                        <div class="inline-modal-head">
-                            <h3>Referral Details</h3>
-                            <button class="inline-modal-x" onclick="closeModalById('referralDetailModal')">✕</button>
-                        </div>
-                        <div id="referralDetailBody"></div>
-                    </div>
+                    
                 </div>
 
                 <!-- Closed Referrals Subtab -->
@@ -2549,13 +2571,7 @@
                     <div id="closedReferralsList"></div>
 
                     <!-- Close the Loop modal -->
-                    <div id="closeLoopModal" class="wc-card inline-modal hidden">
-                        <div class="inline-modal-head inline-modal-head-green">
-                            <h3>Referral Closed — Loop Summary</h3>
-                            <button class="inline-modal-x" onclick="closeModalById('closeLoopModal')">✕</button>
-                        </div>
-                        <div id="closeLoopBody"></div>
-                    </div>
+                    
                 </div>
 
 
@@ -4616,6 +4632,6 @@
     <!-- Chart.js for Data Visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-    <script src="script.js?v=20260729m"></script>
+    <script src="script.js?v=20260729n"></script>
 </body>
 </html>
