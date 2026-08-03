@@ -9497,13 +9497,13 @@
                 return;
             }
             
-            const confirm = window.confirm(
+            const confirmed = await showConfirm(
                 `⚠️ Delete Custom Schedule\n\n` +
                 `Are you sure you want to delete "${schedule.name}"?\n\n` +
                 `This action cannot be undone.`
             );
             
-            if (!confirm) return;
+            if (!confirmed) return;
             
             // Check if this schedule is currently active
             if (passSettings.activeSchedule === scheduleName) {
@@ -9622,16 +9622,16 @@
         }
 
         // Reset schedule to defaults
-        function resetScheduleToDefaults() {
+        async function resetScheduleToDefaults() {
             const scheduleName = document.getElementById('scheduleEditorSelect').value;
             
-            const confirm = window.confirm(
+            const confirmed = await showConfirm(
                 '⚠️ Reset to Default Schedule\n\n' +
                 'This will reset all period times to the default values.\n\n' +
                 'Are you sure?'
             );
             
-            if (!confirm) return;
+            if (!confirmed) return;
             
             // Default schedules (these are just placeholders - you'll customize in the editor)
             const defaults = {
@@ -10257,10 +10257,10 @@
         }
         
         // Toggle test mode
-        function toggleEncounterTestMode() {
+        async function toggleEncounterTestMode() {
             if (encounterTestMode) {
                 // Switching to live mode
-                const confirm = window.confirm(
+                const confirmed = await showConfirm(
                     '⚠️ Switch to Live Mode?\n\n' +
                     'This will:\n' +
                     '• Use real student data for pattern detection\n' +
@@ -10269,7 +10269,7 @@
                     'Are you sure?'
                 );
                 
-                if (!confirm) return;
+                if (!confirmed) return;
                 
                 encounterTestMode = false;
                 clearTestData();
@@ -12968,14 +12968,14 @@
             showSuccessToast('👁️ Preview applied! Click "Save Branding" to make it permanent.');
         }
         
-        function saveBranding() {
-            const confirm = window.confirm(
+        async function saveBranding() {
+            const confirmed = await showConfirm(
                 '💾 Save School Branding\n\n' +
                 'This will apply your custom branding to the entire system for ALL users.\n\n' +
                 'Are you sure you want to save these changes?'
             );
             
-            if (!confirm) return;
+            if (!confirmed) return;
             
             // Update global branding object
             schoolBranding = {
@@ -13003,14 +13003,14 @@
             showSuccessToast('✅ School branding saved successfully!');
         }
         
-        function resetBrandingToDefault() {
-            const confirm = window.confirm(
+        async function resetBrandingToDefault() {
+            const confirmed = await showConfirm(
                 '🔄 Reset to Default Branding\n\n' +
                 'This will remove all custom branding and restore the default Wildcat theme.\n\n' +
                 'Are you sure you want to reset?'
             );
             
-            if (!confirm) return;
+            if (!confirmed) return;
             
             // Reset to defaults
             schoolBranding = {
@@ -14003,13 +14003,13 @@
                 return;
             }
             
-            const confirm = window.confirm(
+            const confirmed = await showConfirm(
                 `⚠️ UNDO Last Award\n\n` +
                 `This will reverse the last ticket award for ${lastAwardAction.students.length} student(s).\n\n` +
                 `Are you sure you want to undo?`
             );
             
-            if (!confirm) return;
+            if (!confirmed) return;
             
             // Restore each student's previous state
             for (const prevState of lastAwardAction.students) {
