@@ -3207,3 +3207,58 @@ body {
 }
 .rank-bar-count { font-size: 13px; font-weight: 700; color: var(--wc-blue-deep); white-space: nowrap; }
 .rank-bar-pct { color: var(--wc-gray-text); font-weight: 500; }
+
+
+/* --- Referral form: guidance + intervention counter --- */
+.guidance-strong { color: #8a2b23; font-weight: 700; font-style: normal; }
+.intervention-banner {
+    display: block;
+    background: var(--wc-blue-mist);
+    color: var(--wc-blue-deep);
+    border-radius: 8px;
+    padding: 9px 13px;
+    font-size: 13.5px;
+    font-weight: 700;
+    margin: 0 0 10px;
+}
+.intervention-banner-warn { background: #fdf8ef; color: #96631A; }
+.intervention-banner-ok   { background: #eff8f2; color: #2E7D52; }
+
+/* --- Detention days, revealed by its checkbox --- */
+.detention-days-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: 4px 0 6px 26px;
+    padding: 10px 13px;
+    background: #fdf8ef;
+    border: 1px solid #E4C58A;
+    border-radius: 9px;
+}
+.detention-days-row .wc-input { width: 90px; }
+
+/* --- Busy button --- */
+.btn-busy { opacity: 0.7; cursor: progress !important; }
+
+/* --- Toast --- */
+.ref-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 26px;
+    transform: translateX(-50%) translateY(140%);
+    z-index: 4000;
+    max-width: min(560px, 92vw);
+    padding: 14px 20px;
+    border-radius: 12px;
+    font-size: 14px;
+    line-height: 1.5;
+    box-shadow: 0 10px 34px rgba(4, 24, 46, 0.32);
+    opacity: 0;
+    transition: transform .28s cubic-bezier(.2,.8,.3,1), opacity .28s;
+    pointer-events: none;
+}
+.ref-toast-show { transform: translateX(-50%) translateY(0); opacity: 1; }
+.ref-toast-ok   { background: #1f6b45; color: #fff; }
+.ref-toast-warn { background: #96631A; color: #fff; }
+.ref-toast strong { font-weight: 700; }
