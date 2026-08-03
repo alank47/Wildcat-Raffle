@@ -17854,6 +17854,167 @@
         // duplicates. These actions now confirm immediately and persist in
         // the background, surfacing an error only if the save actually fails.
         // ============================================================
+
+        // ============================================================
+        // PRINTABLE REFERRAL DOCUMENT
+        //
+        // Opens a branded, print-ready page in a new window and triggers the
+        // browser print dialog, where "Save as PDF" produces the file. Done
+        // this way rather than with a PDF library so the document uses the
+        // real Visuelt font and the school logo already in the page, with no
+        // extra dependency and no font-embedding step.
+        // ============================================================
+
+        function getSchoolLogoSrc() {
+            const img = document.querySelector('.topbar-logo');
+            if (img && img.src) return img.src;
+            if (schoolBranding && schoolBranding.logoBase64) return schoolBranding.logoBase64;
+            return '';
+        }
+
+        function printReferral(referralId) {
+            const r = (behaviorReferrals || []).find(x => x.id === referralId);
+            if (!r) { alert('⚠️ Referral not found'); return; }
+            const student = (students || []).find(s => s.id === r.studentId) || {};
+            const esc = escapeHtml;
+
+            const fmtDate = (d) => {
+                if (!d) return '—';
+                const dt = new Date(String(d).length <= 10 ? d + 'T12:00:00' : d);
+                return isNaN(dt) ? esc(d) : dt.toLocaleDateString('en-US',
+                    { year: 'numeric', month: 'long', day: 'numeric' });
+            };
+            const statusText = r.status === 'closed'
+                ? (r.loopClosed ? 'Resolved — loop closed' : 'Resolved')
+                : 'Open — awaiting administrator';
+
+            const interventions = (r.interventions || []);
+            const closingActions = (r.closingActions || []);
+            const logo = getSchoolLogoSrc();
+            const fileName = `Referral_${(r.studentName || 'Student').replace(/[^A-Za-z0-9]+/g, '_')}_${r.date || ''}`;
+
+            const row = (label, value) =>
+                `<div class="f"><div class="fl">${label}</div><div class="fv">${value || '—'}</div></div>`;
+
+            const doc = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>${esc(fileName)}</title>
+<style>
+  @font-face { font-family:'Visuelt'; src:url('fonts/VisueltPro-Regular.woff') format('woff'); font-weight:400 500; }
+  @font-face { font-family:'Visuelt'; src:url('fonts/VisueltPro-Bold.woff') format('woff'); font-weight:700; }
+  * { box-sizing:border-box; }
+  body { font-family:'Visuelt','Figtree',-apple-system,sans-serif; color:#0E0E0E; margin:0; padding:38px 44px; font-size:12.5px; line-height:1.5; }
+  .head { display:flex; align-items:center; gap:16px; border-bottom:3px solid #2F67A7; padding-bottom:14px; margin-bottom:6px; }
+  .head img { height:56px; width:auto; }
+  .head h1 { font-size:19px; margin:0; font-weight:700; color:#0E0E0E; }
+  .head h2 { font-size:13.5px; margin:3px 0 0; font-weight:500; color:#2F67A7; letter-spacing:.03em; text-transform:uppercase; }
+  .gen { font-size:10.5px; color:#5F5E5A; margin:0 0 22px; }
+  .sec { margin-bottom:20px; }
+  .sec-title { font-size:11px; font-weight:700; letter-spacing:.09em; text-transform:uppercase;
+               color:#fff; background:#2F67A7; padding:6px 12px; border-radius:4px; margin-bottom:12px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:11px 26px; }
+  .f { border-bottom:1px solid #e3e8ef; padding-bottom:6px; }
+  .fl { font-size:9.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:#5F5E5A; margin-bottom:2px; }
+  .fv { font-size:13px; font-weight:500; }
+  .block { border:1px solid #e3e8ef; border-left:3px solid #2F67A7; border-radius:6px; padding:11px 14px; background:#fafbfd; }
+  ul.list { margin:0; padding-left:18px; }
+  ul.list li { margin-bottom:4px; }
+  .none { color:#8a94a3; font-style:italic; }
+  .sigs { display:grid; grid-template-columns:1fr 1fr 1fr; gap:26px; margin-top:32px; }
+  .sig { border-top:1.5px solid #0E0E0E; padding-top:6px; }
+  .sig-l { font-size:9.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:#5F5E5A; }
+  .sig-d { font-size:10px; color:#8a94a3; margin-top:14px; }
+  .foot { margin-top:34px; padding-top:10px; border-top:1px solid #e3e8ef;
+          font-size:9.5px; color:#8a94a3; display:flex; justify-content:space-between; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:10.5px; font-weight:700;
+          background:#E6F1FB; color:#0C447C; }
+  @media print { body { padding:0; } @page { margin:16mm; } }
+</style></head><body>
+  <div class="head">
+    ${logo ? `<img src="${logo}" alt="">` : ''}
+    <div>
+      <h1>Westbrook Middle &amp; High School</h1>
+      <h2>Behavioral Referral Report</h2>
+    </div>
+  </div>
+  <p class="gen">Generated: ${new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' })}</p>
+
+  <div class="sec">
+    <div class="sec-title">Student Details</div>
+    <div class="grid">
+      ${row('Full Name', esc(r.studentName))}
+      ${row('Student ID', esc(r.studentId))}
+      ${row('Grade', esc(r.studentGrade || student.grade || ''))}
+      ${row('School', esc(r.school || ''))}
+      ${row('Referring Staff', esc(r.referredBy))}
+      ${row('Status', `<span class="pill">${esc(statusText)}</span>`)}
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title">Incident Information</div>
+    <div class="grid">
+      ${row('Date of Incident', fmtDate(r.date))}
+      ${row('Time', esc(r.time || ''))}
+      ${row('Location', esc(r.location || ''))}
+      ${row('Behavior / Violation', esc(r.behavior || r.behaviorType || ''))}
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title">Incident Description</div>
+    <div class="block">${esc(r.description) || '<span class="none">No description recorded</span>'}</div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title">Interventions Prior to Referral</div>
+    <div class="block">
+      ${interventions.length
+        ? `<ul class="list">${interventions.map(i => `<li>${esc(i)}</li>`).join('')}</ul>`
+        : '<span class="none">None recorded</span>'}
+    </div>
+  </div>
+
+  ${r.additionalActions ? `<div class="sec">
+    <div class="sec-title">Additional Actions / Notes</div>
+    <div class="block">${esc(r.additionalActions)}</div>
+  </div>` : ''}
+
+  ${r.status === 'closed' ? `<div class="sec">
+    <div class="sec-title">Resolution</div>
+    <div class="block">
+      <strong>${r.resolutionType === 'no_action' ? 'No action required' : 'Action taken'}</strong>
+      ${closingActions.length ? `<ul class="list" style="margin-top:6px;">${closingActions.map(a => `<li>${esc(a)}</li>`).join('')}</ul>` : ''}
+      ${r.adminNotes ? `<div style="margin-top:8px;">${esc(r.adminNotes)}</div>` : ''}
+      <div style="margin-top:8px; font-size:11px; color:#5F5E5A;">
+        Closed by ${esc(r.closedBy || '—')}${r.closedAt ? ' on ' + fmtDate(r.closedAt) : ''}
+      </div>
+    </div>
+  </div>` : ''}
+
+  <div class="sigs">
+    <div class="sig"><div class="sig-l">Student Signature</div><div class="sig-d">Date: ______________</div></div>
+    <div class="sig"><div class="sig-l">Parent / Guardian Signature</div><div class="sig-d">Date: ______________</div></div>
+    <div class="sig"><div class="sig-l">Administrator Signature</div><div class="sig-d">Date: ______________</div></div>
+  </div>
+
+  <div class="foot">
+    <span>Westbrook Referral System</span>
+    <span>Referral ${esc(r.id)} &middot; Page 1 of 1</span>
+  </div>
+</body></html>`;
+
+            const w = window.open('', '_blank');
+            if (!w) {
+                alert('⚠️ Your browser blocked the pop-up.\n\nAllow pop-ups for this site, then try again.');
+                return;
+            }
+            w.document.write(doc);
+            w.document.close();
+            w.document.title = fileName;
+            // Give the font and logo a moment to load before printing.
+            setTimeout(() => { try { w.focus(); w.print(); } catch (e) { console.warn(e); } }, 450);
+        }
+
         function showReferralToast(message, kind) {
             let host = document.getElementById('referralToast');
             if (!host) {
@@ -18126,6 +18287,7 @@
                     </td>
                     <td>
                         <button class="btn btn-sm-blue" onclick="viewReferralDetails('${r.id}')">View</button>
+                        <button class="btn btn-sm-pdf" onclick="printReferral('${r.id}')" title="Printable referral">📄</button>
                         <button class="btn btn-sm-close" onclick="openCloseReferralModal('${r.id}')">Close</button>
                     </td>
                 </tr>`;
@@ -18168,6 +18330,7 @@
                             <div class="cell-sub">ID: ${escapeHtml(r.studentId)} &middot; incident ${escapeHtml(r.date || '')} &middot; closed ${r.closedAt ? new Date(r.closedAt).toLocaleDateString() : '—'}</div>
                         </div>
                         <div class="closed-ref-badges">
+                            <button class="btn btn-sm-pdf" onclick="printReferral('${r.id}')">📄 PDF</button>
                             <span class="tag-ok">Closed</span>
                             ${r.resolutionType === 'no_action' ? '<span class="tag-neutral">No action required</span>' : '<span class="tag-info">Action taken</span>'}
                             ${loopBadge}
@@ -18250,8 +18413,7 @@
                     <button class="btn btn-secondary" onclick="closeModalById('closeReferralModal')">Cancel</button>
                     <button class="btn btn-referral-submit" onclick="confirmCloseReferral('${r.id}')">Close Referral</button>
                 </div>`;
-            modal.classList.remove('hidden');
-            modal.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            openRefModal(modal.id);
         }
 
         async function confirmCloseReferral(referralId) {
@@ -18375,8 +18537,7 @@
                     <button class="btn btn-secondary" onclick="closeModalById('closeLoopModal')">Cancel</button>
                     <button class="btn btn-loop-close" onclick="confirmCloseLoop('${r.id}')">Close the Loop</button>
                 </div>`;
-            modal.classList.remove('hidden');
-            modal.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            openRefModal(modal.id);
         }
 
         function filterLoopStaff() {
@@ -18420,6 +18581,26 @@
             const m = document.getElementById(id);
             if (m) m.classList.add('hidden');
         }
+
+        function openRefModal(id) {
+            const m = document.getElementById(id);
+            if (!m) return;
+            m.classList.remove('hidden');
+            const card = m.querySelector('.ref-modal-card');
+            if (card) card.scrollTop = 0;
+        }
+
+        // Click the dark backdrop (not the card) or press Esc to dismiss.
+        document.addEventListener('click', function (e) {
+            if (e.target && e.target.classList && e.target.classList.contains('ref-modal')) {
+                e.target.classList.add('hidden');
+            }
+        });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') {
+                document.querySelectorAll('.ref-modal:not(.hidden)').forEach(m => m.classList.add('hidden'));
+            }
+        });
 
         function viewReferralDetails(referralId) {
             const r = (behaviorReferrals || []).find(x => x.id === referralId);
@@ -18467,10 +18648,10 @@
 
                 <div class="modal-actions">
                     <button class="btn btn-secondary" onclick="closeModalById('referralDetailModal')">Close</button>
+                    <button class="btn btn-sm-pdf" onclick="printReferral('${r.id}')">📄 Download PDF</button>
                     ${r.status !== 'closed' ? `<button class="btn btn-referral-submit" onclick="closeModalById('referralDetailModal'); openCloseReferralModal('${r.id}')">Close this referral</button>` : ''}
                 </div>`;
-            modal.classList.remove('hidden');
-            modal.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            openRefModal(modal.id);
         }
 
         function updateStudentReferralHistory() {
@@ -18531,7 +18712,8 @@
                         <td style="padding: 14px;">${ref.referredBy}</td>
                         <td style="padding: 14px;">${ref.consequence || '<span style="color: #999;">Pending</span>'}</td>
                         <td style="padding: 14px; text-align: center;">
-                            <button class="btn btn-sm" onclick="viewReferralDetails('${ref.id}')" style="padding: 5px 12px; font-size: 12px; background: #6c757d;">View</button>
+                            <button class="btn btn-sm-blue" onclick="viewReferralDetails('${ref.id}')">View</button>
+                            <button class="btn btn-sm-pdf" onclick="printReferral('${ref.id}')" title="Open a printable referral (save as PDF)">📄 PDF</button>
                         </td>
                     </tr>
                 `;
