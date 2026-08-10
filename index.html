@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Wildcat Rewards</title>
-    <link rel="stylesheet" href="styles.css?v=20260729t">
+    <link rel="stylesheet" href="styles.css?v=20260730a">
 </head>
 <body>
     <!-- Login Screen -->
@@ -2244,6 +2244,25 @@
 
                 <div class="alert" style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin-bottom: 30px;">
                     <strong>⚠️ Warning:</strong> These operations cannot be undone. Use with extreme caution!
+                </div>
+
+                <!-- ===== CASH TEST DATA ===== -->
+                <div class="wc-card panel-card">
+                    <div class="panel-head">
+                        <span class="panel-icon">🧪</span>
+                        <h3>Wildcat Cash — Test Data</h3>
+                    </div>
+                    <p class="panel-hint" style="margin: 0 0 14px 0;">
+                        Creates 30 clearly-marked test students (IDs beginning <strong>TEST-</strong>) with a few
+                        hundred transactions spread across several teachers and the last three weeks.
+                        Deliberately includes a teacher who awards nothing, a teacher who mostly deducts,
+                        and students nobody has recognised — so the reports can be checked against
+                        patterns we already know are there. Real students are never touched.
+                    </p>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button class="btn btn-draw" onclick="seedCashTestData()">🧪 Seed test data</button>
+                        <button class="btn btn-secondary" onclick="clearCashTestData()">Remove all test data</button>
+                    </div>
                 </div>
 
                 <!-- ===== STORAGE HEALTH ===== -->
@@ -4632,6 +4651,6 @@
     <!-- Chart.js for Data Visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-    <script src="script.js?v=20260729t"></script>
+    <script src="script.js?v=20260730a"></script>
 </body>
 </html>
