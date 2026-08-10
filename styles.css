@@ -3470,3 +3470,69 @@ body {
     50%      { opacity: 1;   transform: scale(1.15); }
 }
 @media (max-width: 900px) { .wc-saving { top: calc(var(--wc-topbar-h) + 8px); } }
+
+
+/* ============================================================
+   WILDCAT CASH — screen polish
+   Same recipe as the other modes. Money values are the one place
+   colour still carries meaning: positive green, negative red.
+   ============================================================ */
+
+/* Balances and amounts */
+.cash-amount { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cash-positive { color: #2E7D52; }
+.cash-negative { color: #B3392F; }
+.cash-zero     { color: #8a94a3; }
+
+/* A negative balance must be unmistakable — students start at $0 and
+   deductions are allowed to go below it. */
+.cash-balance {
+    font-weight: 700;
+    font-size: 15px;
+    font-variant-numeric: tabular-nums;
+}
+.cash-balance-negative {
+    color: #B3392F;
+    background: #fdf2f1;
+    padding: 3px 10px;
+    border-radius: 999px;
+}
+.cash-balance-positive { color: var(--wc-blue-deep); }
+
+/* Behaviour chips */
+.cash-chip {
+    display: inline-block;
+    padding: 4px 11px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.cash-chip-pos { background: #e8f3ec; color: #2E7D52; }
+.cash-chip-neg { background: #fdf2f1; color: #B3392F; }
+
+/* Award panel: positive / negative toggle */
+.cash-type-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.cash-type-btn {
+    border: 2px solid var(--wc-border);
+    background: #fff;
+    border-radius: 10px;
+    padding: 13px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--wc-gray-text);
+    transition: border-color .15s, background .15s, color .15s;
+}
+.cash-type-btn:hover { border-color: var(--wc-blue); }
+.cash-type-btn.active-pos { border-color: #2E7D52; background: #f4faf6; color: #2E7D52; }
+.cash-type-btn.active-neg { border-color: #B3392F; background: #fdf2f1; color: #B3392F; }
+
+/* Reward store cards */
+.reward-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.reward-card { padding: 16px 18px; }
+.reward-name { font-size: 15px; font-weight: 700; color: var(--wc-ink); }
+.reward-cost { font-size: 22px; font-weight: 700; color: var(--wc-blue); margin: 6px 0 10px; }
+
+/* Leaderboard rows reuse the shared rank styles; nothing extra needed. */
