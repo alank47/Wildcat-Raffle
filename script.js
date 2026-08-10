@@ -7261,28 +7261,28 @@
                 let actionText = '';
                 
                 if (log.action === 'cash_award') {
-                    actionBadge = 'background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);';
-                    rowStyle = 'background: linear-gradient(to right, rgba(16, 185, 129, 0.08), transparent); border-left: 4px solid #10b981;';
+                    actionBadge = 'background: #2E7D52; color: white; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);';
+                    rowStyle = 'background: var(--wc-blue), transparent); border-left: 4px solid #10b981;';
                     actionIcon = '💰';
                     actionText = 'Cash Awarded';
                 } else if (log.action === 'cash_deduct') {
-                    actionBadge = 'background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(239, 68, 68, 0.3);';
-                    rowStyle = 'background: linear-gradient(to right, rgba(239, 68, 68, 0.08), transparent); border-left: 4px solid #ef4444;';
+                    actionBadge = 'background: #B3392F; color: white; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(239, 68, 68, 0.3);';
+                    rowStyle = 'background: var(--wc-blue), transparent); border-left: 4px solid #ef4444;';
                     actionIcon = '⚠️';
                     actionText = 'Cash Deducted';
                 } else if (log.action === 'reward_redemption') {
-                    actionBadge = 'background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(139, 92, 246, 0.3);';
-                    rowStyle = 'background: linear-gradient(to right, rgba(139, 92, 246, 0.08), transparent); border-left: 4px solid #8b5cf6;';
+                    actionBadge = 'background: var(--wc-blue); color: white; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(139, 92, 246, 0.3);';
+                    rowStyle = 'background: var(--wc-blue), transparent); border-left: 4px solid #8b5cf6;';
                     actionIcon = '🎁';
                     actionText = 'Reward Redeemed';
                 } else if (log.action === 'reset_all_student_cash') {
-                    actionBadge = 'background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); color: white; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(220, 53, 69, 0.3);';
-                    rowStyle = 'background: linear-gradient(to right, rgba(220, 53, 69, 0.08), transparent); border-left: 4px solid #dc3545;';
+                    actionBadge = 'background: #B3392F; color: white; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(220, 53, 69, 0.3);';
+                    rowStyle = 'background: var(--wc-blue), transparent); border-left: 4px solid #dc3545;';
                     actionIcon = '🔄';
                     actionText = 'System Reset';
                 } else {
-                    actionBadge = 'background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); color: #333; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(168, 237, 234, 0.3);';
-                    rowStyle = 'background: linear-gradient(to right, rgba(168, 237, 234, 0.08), transparent); border-left: 4px solid #a8edea;';
+                    actionBadge = 'background: var(--wc-blue); color: #333; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(168, 237, 234, 0.3);';
+                    rowStyle = 'background: var(--wc-blue), transparent); border-left: 4px solid #a8edea;';
                     actionIcon = '📝';
                     actionText = log.action;
                 }
@@ -16412,7 +16412,7 @@
                 }
                 
                 const balanceColor = student.wildcatCashBalance >= 0 ? '#2E7D52' : '#B3392F';
-                const balanceStyle = `background: ${balanceColor}; color: white; padding: 6px 12px; border-radius: 20px; font-weight: 700; display: inline-block; min-width: 60px; text-align: center;`;
+                const balanceStyle = `background: ${balanceColor}; padding: 6px 12px; border-radius: 20px; font-weight: 700; display: inline-block; min-width: 60px; text-align: center;`;
                 
                 const row = document.createElement('tr');
                 row.style.background = tbody.children.length % 2 === 0 ? '#f9f9f9' : 'white';
@@ -16427,8 +16427,8 @@
                     <td style="color: #666; font-size: 14px;">${student.id}</td>
                     <td style="font-weight: 600; color: #333; font-size: 14px;">${student.lastName}, ${student.firstName}</td>
                     <td style="text-align: center;"><span style="${balanceStyle}">$${student.wildcatCashBalance}</span></td>
-                    <td style="text-align: center;"><span style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 6px 12px; border-radius: 20px; font-weight: 700; display: inline-block; min-width: 60px;">$${student.wildcatCashEarned}</span></td>
-                    <td style="text-align: center;"><span style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 6px 12px; border-radius: 20px; font-weight: 700; display: inline-block; min-width: 60px;">$${student.wildcatCashSpent}</span></td>
+                    <td style="text-align: center;"><span style="background: #2E7D52; padding: 6px 12px; border-radius: 20px; font-weight: 700; display: inline-block; min-width: 60px;">$${student.wildcatCashEarned}</span></td>
+                    <td style="text-align: center;"><span style="background: var(--wc-blue); padding: 6px 12px; border-radius: 20px; font-weight: 700; display: inline-block; min-width: 60px;">$${student.wildcatCashSpent}</span></td>
                 `;
                 
                 tbody.appendChild(row);
@@ -16578,8 +16578,8 @@
                     const div = document.createElement('div');
                     div.style.cssText = 'background: rgba(255,255,255,0.2); padding: 12px; border-radius: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;';
                     div.innerHTML = `
-                        <span style="color: white; font-weight: 600;">${medal} ${student.firstName} ${student.lastName}</span>
-                        <span style="color: white; font-weight: 700;">$${student.wildcatCashEarned}</span>
+                        <span style="font-weight: 600;">${medal} ${student.firstName} ${student.lastName}</span>
+                        <span style="font-weight: 700;">$${student.wildcatCashEarned}</span>
                     `;
                     topEarnersBoard.appendChild(div);
                 });
@@ -16603,8 +16603,8 @@
                     const div = document.createElement('div');
                     div.style.cssText = 'background: rgba(255,255,255,0.2); padding: 12px; border-radius: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;';
                     div.innerHTML = `
-                        <span style="color: white; font-weight: 600;">${medal} ${student.firstName} ${student.lastName}</span>
-                        <span style="color: white; font-weight: 700;">$${student.wildcatCashSpent}</span>
+                        <span style="font-weight: 600;">${medal} ${student.firstName} ${student.lastName}</span>
+                        <span style="font-weight: 700;">$${student.wildcatCashSpent}</span>
                     `;
                     topSpendersBoard.appendChild(div);
                 });
@@ -16625,8 +16625,8 @@
                 const div = document.createElement('div');
                 div.style.cssText = 'background: rgba(255,255,255,0.2); padding: 12px; border-radius: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;';
                 div.innerHTML = `
-                    <span style="color: white; font-weight: 600;">${medal} ${student.firstName} ${student.lastName}</span>
-                    <span style="color: white; font-weight: 700;">$${balance}</span>
+                    <span style="font-weight: 600;">${medal} ${student.firstName} ${student.lastName}</span>
+                    <span style="font-weight: 700;">$${balance}</span>
                 `;
                 richestBoard.appendChild(div);
             });
@@ -16792,10 +16792,10 @@
                     </div>
                     
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
-                        <button onclick="showAddCashModal('${student.id}')" style="background: #10b981; color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 14px; transition: all 0.3s;">
+                        <button onclick="showAddCashModal('${student.id}')" style="background: #10b981; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 14px; transition: all 0.3s;">
                             ➕ Add Cash
                         </button>
-                        <button onclick="showRemoveCashModal('${student.id}')" style="background: #ef4444; color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 14px; transition: all 0.3s;">
+                        <button onclick="showRemoveCashModal('${student.id}')" style="background: #ef4444; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 14px; transition: all 0.3s;">
                             ➖ Remove Cash
                         </button>
                     </div>
