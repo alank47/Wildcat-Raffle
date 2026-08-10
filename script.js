@@ -715,8 +715,12 @@
             { id: 'reward4', name: 'Front of Line Pass', cost: 500, available: true },
             { id: 'reward5', name: 'Extra Recess Time', cost: 750, available: true }
         ];
-        let wildcatCashTransactions = []; // All transactions across all students
-        let STARTING_BALANCE = 2500; // All students start with $2500 Wildcat Cash
+        // Single source of truth for cash history, persisted to weekly documents.
+        // Named distinctly from student.wildcatCashTransactions, which previously
+        // shared the same identifier and made the code ambiguous to read.
+        let cashTransactions = [];
+        let wildcatCashTransactions = []; // legacy alias, no longer written to
+        let STARTING_BALANCE = 0; // Students earn from scratch each year
         
         // Claw Pass (Digital Hall Pass) System Variables
         let hallPasses = []; // All hall passes (active and historical)
@@ -1656,7 +1660,11 @@
                         getDoc(doc(firebaseDb, 'raffle_data', auditDocName(mk)))
                     );
                     
-                    const [mainSnap, secondarySnap, referralsSnap, schedulesSnap, ticketHistoryMsSnap, ticketHistoryHsSnap, ticketHistoryHs910Snap, ticketHistoryHs1112Snap, ticketHistoryLegacySnap, auditLogLegacySnap, ...monthlyAuditSnaps] = await Promise.all([
+                    // Cash week snapshots sit between `schedules` and the ticket
+                    // history docs, so they are sliced out by count rather than
+                    // destructured positionally.
+                    const _cashWeekKeys = getKnownCashWeekKeys();
+                    const _allSnaps = await Promise.all([
                         getDoc(doc(firebaseDb, 'raffle_data', 'main')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'secondary')),
                         // Referrals live in their own document. The expanded referral
@@ -1666,6 +1674,8 @@
                         getDoc(doc(firebaseDb, 'raffle_data', 'referrals')),
                         // Class schedules, lifted out of `main` (see saveData).
                         getDoc(doc(firebaseDb, 'raffle_data', 'schedules')),
+                        // Weekly cash transaction documents (see the cash engine).
+                        ...getKnownCashWeekKeys().map(wk => getDoc(doc(firebaseDb, 'raffle_data', `cash_tx_${wk}`))),
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_ms')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_hs')),
                         // HS split into grade bands; the doc above is legacy (read-only now).
@@ -1675,7 +1685,24 @@
                         getDoc(doc(firebaseDb, 'raffle_data', 'audit_log')),
                         ...monthlyAuditPromises
                     ]);
-                    
+                    const [mainSnap, secondarySnap, referralsSnap, schedulesSnap] = _allSnaps;
+                    const _cashSnaps = _allSnaps.slice(4, 4 + _cashWeekKeys.length);
+                    const [ticketHistoryMsSnap, ticketHistoryHsSnap, ticketHistoryHs910Snap,
+                           ticketHistoryHs1112Snap, ticketHistoryLegacySnap, auditLogLegacySnap] =
+                           _allSnaps.slice(4 + _cashWeekKeys.length);
+                    const monthlyAuditSnaps = _allSnaps.slice(4 + _cashWeekKeys.length + 6);
+
+                    // Rebuild cash history from the weekly documents.
+                    cashTransactions = [];
+                    _cashSnaps.forEach(snap => {
+                        if (snap && snap.exists()) {
+                            const txs = snap.data().transactions || [];
+                            cashTransactions = cashTransactions.concat(txs);
+                        }
+                    });
+                    cashTransactions.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                    console.log(`✅ Cash transactions loaded: ${cashTransactions.length}`);
+
                     // Check if we have data (at least main document should exist)
                     if (mainSnap.exists()) {
                         const mainData = mainSnap.data();
@@ -1896,6 +1923,10 @@
                         loginHistory = secondaryData.loginHistory || [];
                         hallPasses = secondaryData.hallPasses || [];
                         preventionGroups = secondaryData.preventionGroups || [];
+                        // Rebuild each student's cash view from the weekly documents.
+                        // Balances live on the student record; history does not.
+                        if (typeof distributeCashTransactions === 'function') distributeCashTransactions();
+
                         // Re-attach class schedules from their own document. Students loaded
                         // from `main` no longer carry a sections array.
                         try {
@@ -3094,7 +3125,21 @@
                         //
                         // schedules: class schedule data lifted out of `main`
                         //   (9 sections x 446 students was 372KB, over half of main).
+                        // Cash transactions: one document per ISO week, written
+                        // alongside the other independent documents.
+                        const cashByWeek = {};
+                        (cashTransactions || []).forEach(t => {
+                            const k = cashWeekKey(t.timestamp);
+                            (cashByWeek[k] = cashByWeek[k] || []).push(t);
+                        });
+                        const cashWrites = Object.entries(cashByWeek).map(([wk, txs]) =>
+                            setDoc(doc(firebaseDb, 'raffle_data', `cash_tx_${wk}`), {
+                                transactions: txs,
+                                lastSaveTimestamp: timestamp
+                            }));
+
                         const independentWrites = await Promise.allSettled([
+                            ...cashWrites,
                             setDoc(doc(firebaseDb, 'raffle_data', 'schedules'), {
                                 sections: sectionsToSave,
                                 lastSaveTimestamp: timestamp
@@ -3109,17 +3154,16 @@
                                 detentions,
                                 detentionLocations,
                                 detentionReasons,
-                                wildcatCashTransactions,
                                 lastSaveTimestamp: timestamp
                             })
                         ]);
-                        ['schedules', 'secondary'].forEach((name, i) => {
-                            if (independentWrites[i].status === 'fulfilled') {
-                                console.log(`✅ ${name} document saved`);
-                            } else {
-                                console.error(`❌ ${name} save failed:`, independentWrites[i].reason?.code,
-                                              independentWrites[i].reason?.message);
-                            }
+                        const writeNames = [
+                            ...Object.keys(cashByWeek).map(w => `cash_tx_${w}`),
+                            'schedules', 'secondary'
+                        ];
+                        independentWrites.forEach((res, i) => {
+                            if (res.status === 'fulfilled') console.log(`✅ ${writeNames[i]} saved`);
+                            else console.error(`❌ ${writeNames[i]} save failed:`, res.reason?.code, res.reason?.message);
                         });
                         
                         
@@ -3150,7 +3194,7 @@
                             detentionIdCounter,
                             detentionLocations,
                             detentionReasons,
-                            wildcatCashTransactions,
+                            cashTransactions,
                             loginHistory,
                             autoWeekEnabled,
                             lastAutoResetDate,
@@ -7701,59 +7745,33 @@
 
         async function confirmAddCash() {
             const behaviorId = document.getElementById('addCashBehaviorSelect').value;
-            const notes = document.getElementById('addCashNotes').value.trim();
-            
-            if (!behaviorId) {
-                alert('Please select a behavior');
-                return;
-            }
-            
-            const behavior = wildcatCashBehaviors.find(b => b.id === behaviorId);
-            if (!behavior) {
-                alert('Invalid behavior selected');
-                return;
-            }
-            
+            const notes = (document.getElementById('addCashNotes') || {}).value || '';
+            if (!behaviorId) { alert('Please select a behavior'); return; }
             if (!selectedStudentForCash) return;
-            
-            const amount = behavior.points;
-            
-            // Initialize if needed
-            if (selectedStudentForCash.wildcatCashBalance === undefined) {
-                selectedStudentForCash.wildcatCashBalance = STARTING_BALANCE;
-                selectedStudentForCash.wildcatCashEarned = 0;
-                selectedStudentForCash.wildcatCashSpent = 0;
-                selectedStudentForCash.wildcatCashDeducted = 0;
-                selectedStudentForCash.wildcatCashTransactions = [];
-            }
-            
-            // Add the cash
-            selectedStudentForCash.wildcatCashBalance += amount;
-            selectedStudentForCash.wildcatCashEarned += amount;
-            
-            // Record transaction
-            const transaction = {
-                timestamp: new Date().toISOString(),
-                amount: amount,
+
+            const behavior = wildcatCashBehaviors.find(b => b.id === behaviorId);
+            if (!behavior) { alert('Behavior not found'); return; }
+
+            const amount = Math.abs(behavior.points);
+            recordCashTransaction({
+                student: selectedStudentForCash,
+                amount,
                 behaviorId: behavior.id,
                 behaviorName: behavior.name,
-                notes: notes || '',
-                type: 'positive',
-                addedBy: currentUser.username
-            };
-            
-            selectedStudentForCash.wildcatCashTransactions.push(transaction);
-            wildcatCashTransactions.push({
-                ...transaction,
-                studentId: selectedStudentForCash.id,
-                studentName: `${selectedStudentForCash.firstName} ${selectedStudentForCash.lastName}`
+                notes: notes.trim(),
+                kind: 'award'
             });
-            
+            if (typeof addToAuditLog === 'function') {
+                addToAuditLog('Awarded Wildcat Cash',
+                    selectedStudentForCash.id, 'Wildcat Cash',
+                    behavior.name + (notes.trim() ? ' — ' + notes.trim() : ''), Math.abs(amount));
+            }
+
+            closeAddCashModal();
+            if (typeof updateStudentAccounts === 'function') updateStudentAccounts();
+            if (typeof updateCashTable === 'function') updateCashTable();
+            showToast(`✅ +$${Math.abs(amount)} · ${behavior.name}\n${selectedStudentForCash.firstName} ${selectedStudentForCash.lastName}`, 'success');
             await saveData();
-            alert(`✅ Successfully added $${amount} to ${selectedStudentForCash.firstName} ${selectedStudentForCash.lastName}'s account!\n\nBehavior: ${behavior.name}`);
-            
-            cancelAddCash();
-            updateStudentAccounts();
         }
 
         // Remove Cash Modal Functions
@@ -7805,59 +7823,33 @@
 
         async function confirmRemoveCash() {
             const behaviorId = document.getElementById('removeCashBehaviorSelect').value;
-            const notes = document.getElementById('removeCashNotes').value.trim();
-            
-            if (!behaviorId) {
-                alert('Please select a behavior');
-                return;
-            }
-            
-            const behavior = wildcatCashBehaviors.find(b => b.id === behaviorId);
-            if (!behavior) {
-                alert('Invalid behavior selected');
-                return;
-            }
-            
+            const notes = (document.getElementById('removeCashNotes') || {}).value || '';
+            if (!behaviorId) { alert('Please select a behavior'); return; }
             if (!selectedStudentForCash) return;
-            
-            const amount = Math.abs(behavior.points);
-            
-            // Initialize if needed
-            if (selectedStudentForCash.wildcatCashBalance === undefined) {
-                selectedStudentForCash.wildcatCashBalance = STARTING_BALANCE;
-                selectedStudentForCash.wildcatCashEarned = 0;
-                selectedStudentForCash.wildcatCashSpent = 0;
-                selectedStudentForCash.wildcatCashDeducted = 0;
-                selectedStudentForCash.wildcatCashTransactions = [];
-            }
-            
-            // Remove the cash
-            selectedStudentForCash.wildcatCashBalance -= amount;
-            selectedStudentForCash.wildcatCashDeducted += amount;
-            
-            // Record transaction
-            const transaction = {
-                timestamp: new Date().toISOString(),
-                amount: -amount,
+
+            const behavior = wildcatCashBehaviors.find(b => b.id === behaviorId);
+            if (!behavior) { alert('Behavior not found'); return; }
+
+            const amount = -Math.abs(behavior.points);
+            recordCashTransaction({
+                student: selectedStudentForCash,
+                amount,
                 behaviorId: behavior.id,
                 behaviorName: behavior.name,
-                notes: notes || '',
-                type: 'negative',
-                removedBy: currentUser.username
-            };
-            
-            selectedStudentForCash.wildcatCashTransactions.push(transaction);
-            wildcatCashTransactions.push({
-                ...transaction,
-                studentId: selectedStudentForCash.id,
-                studentName: `${selectedStudentForCash.firstName} ${selectedStudentForCash.lastName}`
+                notes: notes.trim(),
+                kind: 'deduct'
             });
-            
+            if (typeof addToAuditLog === 'function') {
+                addToAuditLog('Deducted Wildcat Cash',
+                    selectedStudentForCash.id, 'Wildcat Cash',
+                    behavior.name + (notes.trim() ? ' — ' + notes.trim() : ''), Math.abs(amount));
+            }
+
+            closeRemoveCashModal();
+            if (typeof updateStudentAccounts === 'function') updateStudentAccounts();
+            if (typeof updateCashTable === 'function') updateCashTable();
+            showToast(`✅ -$${Math.abs(amount)} · ${behavior.name}\n${selectedStudentForCash.firstName} ${selectedStudentForCash.lastName}`, 'success');
             await saveData();
-            alert(`✅ Successfully removed $${amount} from ${selectedStudentForCash.firstName} ${selectedStudentForCash.lastName}'s account!\n\nBehavior: ${behavior.name}`);
-            
-            cancelRemoveCash();
-            updateStudentAccounts();
         }
 
         // ============================================
@@ -16274,141 +16266,59 @@
 
         // Award Cash
         async function awardCashToSelected() {
-            console.log('🎯 awardCashToSelected() called');
-            
             const behaviorType = document.getElementById('cashBehaviorType').value;
             const behaviorId = document.getElementById('cashBehaviorSelect').value;
             const notes = document.getElementById('cashNotes').value.trim();
-            
-            console.log('Selected type:', behaviorType);
-            console.log('Selected behavior ID:', behaviorId);
-            
-            if (!behaviorType) {
-                alert('Please select a behavior type (Positive or Negative)');
-                return;
-            }
-            
-            if (!behaviorId) {
-                alert('Please select a specific behavior');
-                return;
-            }
-            
+
+            if (!behaviorType) { alert('Please select a behavior type (Positive or Negative)'); return; }
+            if (!behaviorId)   { alert('Please select a specific behavior'); return; }
+
             const behavior = wildcatCashBehaviors.find(b => b.id === behaviorId);
-            if (!behavior) {
-                alert('Behavior not found');
-                console.error('Behavior not found:', behaviorId);
-                return;
-            }
-            
-            console.log('Found behavior:', behavior);
-            
+            if (!behavior) { alert('Behavior not found'); return; }
+
             const checkboxes = document.querySelectorAll('#cashStudentTableBody input[type="checkbox"]:checked');
-            console.log('Checked boxes:', checkboxes.length);
-            
-            if (checkboxes.length === 0) {
-                alert('Please select at least one student');
-                return;
-            }
-            
-            const selectedStudents = Array.from(checkboxes).map(cb => cb.dataset.studentId);
-            console.log('Selected student IDs:', selectedStudents);
-            
-            // Process each student
-            let processed = 0;
-            selectedStudents.forEach(studentId => {
+            if (checkboxes.length === 0) { alert('Please select at least one student'); return; }
+
+            const ids = Array.from(checkboxes).map(cb => cb.dataset.studentId);
+            const awarded = [];
+            ids.forEach(studentId => {
                 const student = students.find(s => s.id === studentId);
-                if (!student) {
-                    console.error('Student not found:', studentId);
-                    return;
-                }
-                
-                console.log('Processing student:', student.firstName, student.lastName);
-                
-                // Initialize if needed
-                if (student.wildcatCashBalance === undefined) {
-                    student.wildcatCashBalance = STARTING_BALANCE;
-                    student.wildcatCashEarned = 0;
-                    student.wildcatCashSpent = 0;
-                    student.wildcatCashDeducted = 0;
-                    student.wildcatCashTransactions = [];
-                    student.wildcatCashRewardsRedeemed = [];
-                }
-                
-                // Update balance
-                const amount = behavior.points;
-                const oldBalance = student.wildcatCashBalance;
-                student.wildcatCashBalance += amount;
-                student.cashBalance = student.wildcatCashBalance; // Keep both in sync
-                
-                console.log(`  ${student.firstName}: $${oldBalance} → $${student.wildcatCashBalance} (${amount > 0 ? '+' : ''}$${amount})`);
-                
-                if (amount > 0) {
-                    student.wildcatCashEarned += amount;
-                } else {
-                    student.wildcatCashDeducted += Math.abs(amount);
-                }
-                
-                // Create transaction
-                const transaction = {
-                    id: 'txn_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
-                    timestamp: new Date().toISOString(),
-                    studentId: student.id,
-                    teacherId: currentUser.id,
-                    teacherName: currentUser.name,
-                    type: behavior.type,
+                if (!student) return;
+                // Deductions may take a balance negative — the student owes it back.
+                const tx = recordCashTransaction({
+                    student,
+                    amount: behavior.points,
                     behaviorId: behavior.id,
                     behaviorName: behavior.name,
-                    amount: amount,
-                    newBalance: student.wildcatCashBalance,
-                    notes: notes || '',
-                    period: student.sections && student.sections.length > 0 ? student.sections[0].period : 'N/A'
-                };
-                
-                // Add to student's transactions
-                if (!student.wildcatCashTransactions) {
-                    student.wildcatCashTransactions = [];
+                    notes,
+                    kind: behavior.points >= 0 ? 'award' : 'deduct'
+                });
+                if (tx) awarded.push(student);
+                if (typeof addToAuditLog === 'function') {
+                    addToAuditLog(
+                        behavior.points >= 0 ? 'Awarded Wildcat Cash' : 'Deducted Wildcat Cash',
+                        student.id, 'Wildcat Cash',
+                        `${behavior.name}${notes ? ' — ' + notes : ''}`,
+                        Math.abs(behavior.points)
+                    );
                 }
-                student.wildcatCashTransactions.push(transaction);
-                
-                // Add to global transactions
-                wildcatCashTransactions.push(transaction);
-                
-                // Add to audit log
-                const logEntry = {
-                    timestamp: new Date().toISOString(),
-                    teacherId: currentUser.id,
-                    teacherName: currentUser.name,
-                    action: amount > 0 ? 'cash_award' : 'cash_deduct',
-                    details: `${behavior.name}: $${amount} to ${student.firstName} ${student.lastName} (New balance: $${student.wildcatCashBalance})`,
-                    studentId: student.id
-                };
-                auditLog.push(logEntry);
-                
-                processed++;
             });
-            
-            console.log(`✅ Processed ${processed} students`);
-            
-            // Save and update
-            await saveData(); // CRITICAL: Wait for save to complete
-            
-            alert(`✅ Successfully awarded cash to ${selectedStudents.length} student(s)!`);
-            
-            // Clear form
-            document.getElementById('cashBehaviorType').value = '';
-            document.getElementById('cashBehaviorSelect').value = '';
-            document.getElementById('cashBehaviorSelect').style.display = 'none';
-            document.getElementById('cashAmount').value = '';
+
+            if (!awarded.length) { alert('⚠️ No students were updated.'); return; }
+
+            // Clear the form and refresh before saving so the screen responds at once.
             document.getElementById('cashNotes').value = '';
-            document.getElementById('cashSelectAll').checked = false;
-            
-            // Refresh table and displays
-            updateCashTable();
-            updateCashActivityLog();
-            updateCashLeaderboards();
-            updateCashAnalytics();
-            
-            console.log('🎉 Award cash completed successfully');
+            document.querySelectorAll('#cashStudentTableBody input[type="checkbox"]:checked')
+                .forEach(cb => { cb.checked = false; });
+            const selectAllCash = document.getElementById('cashSelectAll');
+            if (selectAllCash) selectAllCash.checked = false;
+            if (typeof updateCashTable === 'function') updateCashTable();
+            if (typeof updateCashActivityLog === 'function') updateCashActivityLog();
+
+            const sign = behavior.points >= 0 ? '+' : '-';
+            showToast(`✅ ${sign}$${Math.abs(behavior.points)} · ${behavior.name}\n${awarded.length} student${awarded.length === 1 ? '' : 's'}`, 'success');
+
+            await saveData();
         }
 
         // Update Cash Table
@@ -17215,7 +17125,7 @@
         }
 
         function saveCashSettings() {
-            STARTING_BALANCE = parseInt(document.getElementById('startingBalance').value) || 250;
+            STARTING_BALANCE = parseInt(document.getElementById('startingBalance').value) || 0;
             // Save other settings as needed
             saveData();
             alert('✅ Settings saved successfully!');
@@ -18037,6 +17947,296 @@
         // call sites use `await showConfirm(...)` / `await showPrompt(...)`.
         // ============================================================
 
+
+
+        // ============================================================
+        // WILDCAT CASH — DATA ENGINE
+        //
+        // Rebuilt because the previous model wrote every transaction TWICE
+        // (once onto the student record inside `main`, once into a global
+        // array inside `secondary`). At ~150 transactions/day that added
+        // roughly 4x the 1MB document limit to `main` per school year.
+        //
+        // Model now:
+        //   • Source of truth = weekly documents `cash_tx_YYYY_Www`
+        //     (~750 transactions/week ≈ 113KB, never fills up). Weekly rather
+        //     than one-document-per-transaction because the app loads all data
+        //     at startup: 27,000 individual reads x 49 staff would blow past
+        //     Firestore's daily read quota. Weekly docs ≈ 36 reads/year.
+        //   • Student record keeps ONLY balance + counters, so balances render
+        //     without loading any history.
+        //   • student.wildcatCashTransactions is rebuilt in memory on load for
+        //     the existing read paths, and stripped again before saving `main`.
+        //
+        // Rules (set with the school):
+        //   • Everyone starts at $0 and earns from scratch.
+        //   • Deductions may take a balance negative — the student owes it back.
+        //   • All staff may award and deduct.
+        // ============================================================
+
+        function cashWeekKey(ts) {
+            const s = String(ts || new Date().toISOString());
+            const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+            if (!m) return 'unknown';
+            const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+            const day = d.getUTCDay() || 7;
+            d.setUTCDate(d.getUTCDate() + 4 - day);
+            const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+            const week = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+            return `${d.getUTCFullYear()}_W${String(week).padStart(2, '0')}`;
+        }
+
+        function getKnownCashWeekKeys() {
+            const keys = [];
+            const now = new Date();
+            for (let i = 0; i < 60; i++) {
+                const k = cashWeekKey(new Date(now.getTime() - i * 7 * 86400000).toISOString());
+                if (k !== 'unknown' && keys.indexOf(k) === -1) keys.push(k);
+            }
+            return keys;
+        }
+
+        function ensureCashFields(student) {
+            if (!student) return null;
+            if (typeof student.wildcatCashBalance !== 'number')  student.wildcatCashBalance = 0;
+            if (typeof student.wildcatCashEarned !== 'number')   student.wildcatCashEarned = 0;
+            if (typeof student.wildcatCashSpent !== 'number')    student.wildcatCashSpent = 0;
+            if (typeof student.wildcatCashDeducted !== 'number') student.wildcatCashDeducted = 0;
+            if (!Array.isArray(student.wildcatCashTransactions)) student.wildcatCashTransactions = [];
+            if (!Array.isArray(student.wildcatCashRewardsRedeemed)) student.wildcatCashRewardsRedeemed = [];
+            // Legacy fields retired: cashBalance / cashTransactions.
+            if ('cashBalance' in student) delete student.cashBalance;
+            if ('cashTransactions' in student) delete student.cashTransactions;
+            return student;
+        }
+
+        // THE single place a cash transaction is created. Every award, deduction
+        // and redemption goes through here so the shape stays consistent and the
+        // analytics can rely on it.
+        function recordCashTransaction(opts) {
+            const student = ensureCashFields(opts.student);
+            if (!student) return null;
+
+            const amount = Number(opts.amount) || 0;
+            const actor = currentUser || {};
+            const now = new Date().toISOString();
+
+            student.wildcatCashBalance += amount;
+            if (opts.kind === 'redeem')      student.wildcatCashSpent += Math.abs(amount);
+            else if (amount > 0)             student.wildcatCashEarned += amount;
+            else                             student.wildcatCashDeducted += Math.abs(amount);
+
+            const tx = {
+                id: 'txn_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9),
+                timestamp: now,
+                studentId: student.id,
+                studentName: `${student.firstName} ${student.lastName}`,
+                studentGrade: student.grade || '',
+                school: (parseInt(student.grade, 10) >= 9) ? 'High School' : 'Middle School',
+                // Teacher identity is recorded on EVERY transaction: the point of
+                // this log is knowing who is participating, not just the balance.
+                teacherId: actor.id || '',
+                teacherUsername: actor.username || '',
+                teacherName: actor.name || actor.username || 'Unknown',
+                kind: opts.kind || (amount >= 0 ? 'award' : 'deduct'),
+                type: amount >= 0 ? 'positive' : 'negative',
+                behaviorId: opts.behaviorId || '',
+                behaviorName: opts.behaviorName || '',
+                amount: amount,
+                notes: opts.notes || '',
+                balanceAfter: student.wildcatCashBalance
+            };
+
+            cashTransactions.push(tx);
+            student.wildcatCashTransactions.push(tx);
+            return tx;
+        }
+
+        // Derive a balance from history — the previous model only ever
+        // incremented, so a failed save desynced a student permanently with
+        // nothing able to detect it (28 students had already drifted).
+        function recalculateCashBalance(student) {
+            ensureCashFields(student);
+            const txs = cashTransactions.filter(t => t.studentId === student.id);
+            let bal = 0, earned = 0, spent = 0, deducted = 0;
+            txs.forEach(t => {
+                const a = Number(t.amount) || 0;
+                bal += a;
+                if (t.kind === 'redeem') spent += Math.abs(a);
+                else if (a > 0) earned += a;
+                else deducted += Math.abs(a);
+            });
+            return { balance: bal, earned, spent, deducted, count: txs.length };
+        }
+
+        function reconcileCashBalances(applyFix) {
+            const report = [];
+            (students || []).forEach(s => {
+                const calc = recalculateCashBalance(s);
+                if (calc.balance !== s.wildcatCashBalance) {
+                    report.push({
+                        id: s.id, name: `${s.firstName} ${s.lastName}`,
+                        stored: s.wildcatCashBalance, calculated: calc.balance,
+                        difference: calc.balance - s.wildcatCashBalance
+                    });
+                    if (applyFix) {
+                        s.wildcatCashBalance = calc.balance;
+                        s.wildcatCashEarned = calc.earned;
+                        s.wildcatCashSpent = calc.spent;
+                        s.wildcatCashDeducted = calc.deducted;
+                    }
+                }
+            });
+            return report;
+        }
+
+        // Rebuild the per-student view from the single source of truth.
+        function distributeCashTransactions() {
+            const byStudent = {};
+            (cashTransactions || []).forEach(t => {
+                (byStudent[t.studentId] = byStudent[t.studentId] || []).push(t);
+            });
+            (students || []).forEach(s => {
+                ensureCashFields(s);
+                s.wildcatCashTransactions = byStudent[s.id] || [];
+            });
+        }
+
+
+        // ============================================================
+        // CASH TEST DATA
+        //
+        // The analytics that matter here — who is participating, who is being
+        // overlooked — cannot be validated by clicking a few buttons. This
+        // seeds enough volume to check them, and deliberately builds in the
+        // patterns the reports are supposed to surface:
+        //   • a teacher who awards nothing
+        //   • a teacher who only deducts (inverted positive:negative ratio)
+        //   • students nobody has recognised
+        //   • a couple of clear overperformers
+        // Everything created is prefixed TEST- and removable in one action.
+        // ============================================================
+
+        const CASH_TEST_PREFIX = 'TEST-';
+
+        function seedCashTestData() {
+            if (!wildcatCashBehaviors || !wildcatCashBehaviors.length) {
+                alert('⚠️ No cash behaviors configured.\n\nAdd behaviors in Settings first.');
+                return;
+            }
+            const positives = wildcatCashBehaviors.filter(b => b.points > 0);
+            const negatives = wildcatCashBehaviors.filter(b => b.points < 0);
+            if (!positives.length || !negatives.length) {
+                alert('⚠️ Need at least one positive and one negative behavior configured.');
+                return;
+            }
+
+            const firsts = ['Ava','Liam','Mia','Noah','Zoe','Eli','Nora','Kai','Luna','Owen',
+                            'Iris','Cruz','Sage','Milo','Wren','Otto','Vera','Dax','Cleo','Rex',
+                            'Juno','Finn','Lyra','Ezra','Nova','Rhys','Tess','Beau','Isla','Jude'];
+            const grades = [6,7,8,9,10,11,12];
+
+            // 30 test students
+            const made = [];
+            firsts.forEach((f, i) => {
+                const id = CASH_TEST_PREFIX + String(1000 + i);
+                if (students.find(s => s.id === id)) return;
+                const s = {
+                    id, firstName: f, lastName: 'Testcase',
+                    grade: String(grades[i % grades.length]),
+                    pbisTickets: 0, attendanceTickets: 0, academicTickets: 0,
+                    bigRaffleQualified: [], weeksQualified: 0,
+                    ticketHistory: [], sections: []
+                };
+                ensureCashFields(s);
+                students.push(s);
+                made.push(s);
+            });
+
+            // Teachers to attribute transactions to, including a silent one
+            const staff = (teachers || []).slice(0, 5);
+            if (!staff.length) { alert('⚠️ No teachers found to attribute transactions to.'); return; }
+            const silent = staff[staff.length - 1];              // awards nothing
+            const negativeHeavy = staff[0];                       // mostly deductions
+            const givers = staff.filter(t => t !== silent);
+
+            const realActor = currentUser;
+            const daysBack = 21;
+            let created = 0;
+
+            made.forEach((student, idx) => {
+                // Every 6th student is deliberately left with nothing, so the
+                // "forgotten students" report has something real to find.
+                if (idx % 6 === 0) return;
+                const isOverperformer = (idx % 10 === 3);
+                const n = isOverperformer ? 14 : 2 + (idx % 5);
+
+                for (let k = 0; k < n; k++) {
+                    const actor = givers[(idx + k) % givers.length];
+                    const negativeBias = (actor === negativeHeavy) ? 0.7 : 0.15;
+                    const goNegative = Math.random() < negativeBias;
+                    const pool = goNegative ? negatives : positives;
+                    const behavior = pool[Math.floor(Math.random() * pool.length)];
+
+                    // Impersonate the attributed teacher so teacherId is realistic.
+                    currentUser = actor;
+                    const tx = recordCashTransaction({
+                        student,
+                        amount: behavior.points,
+                        behaviorId: behavior.id,
+                        behaviorName: behavior.name,
+                        notes: 'Seeded test data',
+                        kind: behavior.points >= 0 ? 'award' : 'deduct'
+                    });
+                    if (tx) {
+                        // Back-date across the last three weeks so weekly
+                        // partitioning and date filters get exercised.
+                        const d = new Date();
+                        d.setDate(d.getDate() - Math.floor(Math.random() * daysBack));
+                        d.setHours(8 + Math.floor(Math.random() * 8), Math.floor(Math.random() * 60));
+                        tx.timestamp = d.toISOString();
+                        created++;
+                    }
+                }
+            });
+            currentUser = realActor;
+
+            // Balances were accumulated in timestamp-agnostic order; recompute.
+            students.forEach(s => {
+                if (String(s.id).startsWith(CASH_TEST_PREFIX)) {
+                    const c = recalculateCashBalance(s);
+                    s.wildcatCashBalance = c.balance;
+                    s.wildcatCashEarned = c.earned;
+                    s.wildcatCashSpent = c.spent;
+                    s.wildcatCashDeducted = c.deducted;
+                }
+            });
+            cashTransactions.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+            distributeCashTransactions();
+
+            if (typeof updateCashTable === 'function') updateCashTable();
+            if (typeof updateAllDisplays === 'function') updateAllDisplays();
+            saveData();
+
+            showToast(`✅ Seeded ${made.length} test students and ${created} transactions\nIncludes a silent teacher, a deduction-heavy teacher, and unrecognised students`, 'success', 7000);
+        }
+
+        async function clearCashTestData() {
+            const testIds = students.filter(s => String(s.id).startsWith(CASH_TEST_PREFIX)).map(s => s.id);
+            if (!testIds.length) { alert('No test data found.'); return; }
+            const ok = await showConfirm(
+                `Remove all test data?\n\n${testIds.length} test students and every transaction attached to them will be deleted.\n\nReal students and their transactions are not touched.`,
+                { danger: true, confirmLabel: 'Remove test data' });
+            if (!ok) return;
+
+            students = students.filter(s => !String(s.id).startsWith(CASH_TEST_PREFIX));
+            cashTransactions = cashTransactions.filter(t => !String(t.studentId).startsWith(CASH_TEST_PREFIX));
+            distributeCashTransactions();
+            if (typeof updateCashTable === 'function') updateCashTable();
+            if (typeof updateAllDisplays === 'function') updateAllDisplays();
+            await saveData();
+            showToast(`✅ Removed ${testIds.length} test students and their transactions`, 'success');
+        }
 
         // ============================================================
         // SAVING INDICATOR
