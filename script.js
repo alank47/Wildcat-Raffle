@@ -16,6 +16,11 @@
         let firebaseDb = null;
         let firebaseAuth = null;
         let firebaseInitialized = false;
+        // True only once anonymous sign-in has actually succeeded. This is the
+        // preflight for firestore.rules: while it is false, the locked rules
+        // would deny every read and write. Check window.wildcatAuthReady in the
+        // console before deploying them.
+        let firebaseAuthReady = false;
         
         // Initialize Firebase
         async function initFirebase() {
@@ -31,19 +36,37 @@
                 // Initialize Firebase app
                 firebaseApp = initializeApp(firebaseConfig);
 
-                // Sign in BEFORE touching Firestore. The firestore.rules in the repo
-                // root require request.auth != null on raffle_data, so every read and
-                // write needs an identity. Awaiting here means no call can race the
-                // rules and fail with permission-denied on a cold load.
-                // This is anonymous auth as a floor; Entra ID replaces it, and the
-                // rule swap is already written, commented, in firestore.rules.
+                // Sign in BEFORE touching Firestore. The locked firestore.rules
+                // require request.auth != null on raffle_data, so every read and
+                // write needs an identity, and awaiting here means no call can
+                // race the rules and fail with permission-denied on a cold load.
+                //
+                // A failure here must NOT take Firestore down with it. Anonymous
+                // sign-in is not enabled on every project yet, and the currently
+                // deployed rules are still permissive, so the app works fine
+                // without an identity. Killing init on an auth error would drop
+                // the whole app to local-only storage for no reason.
                 firebaseAuth = getAuth(firebaseApp);
-                await signInAnonymously(firebaseAuth);
+                try {
+                    await signInAnonymously(firebaseAuth);
+                    firebaseAuthReady = true;
+                } catch (authError) {
+                    firebaseAuthReady = false;
+                    console.warn(
+                        '⚠️ Anonymous sign-in unavailable (' + (authError && authError.code) + '). ' +
+                        'Continuing unauthenticated. DO NOT deploy firestore.rules until this ' +
+                        'resolves: the locked rules would deny every read and write. ' +
+                        'Fix: enable Anonymous sign-in in Firebase Console > Authentication > Sign-in method.'
+                    );
+                }
+                window.wildcatAuthReady = firebaseAuthReady;
 
                 firebaseDb = getFirestore(firebaseApp);
                 firebaseInitialized = true;
 
-                console.log('✅ Firebase initialized successfully (anonymous auth)');
+                console.log('✅ Firebase initialized' + (firebaseAuthReady
+                    ? ' successfully (anonymous auth)'
+                    : ' WITHOUT auth. Rules must stay permissive until sign-in works.'));
                 return true;
             } catch (error) {
                 console.error('❌ Firebase initialization failed:', error);
