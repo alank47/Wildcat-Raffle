@@ -14,6 +14,7 @@
         // Firebase initialization - will be set up when page loads
         let firebaseApp = null;
         let firebaseDb = null;
+        let firebaseAuth = null;
         let firebaseInitialized = false;
         
         // Initialize Firebase
@@ -22,16 +23,27 @@
                 // Dynamically import Firebase modules
                 const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js');
                 const { getFirestore, doc, getDoc, setDoc, serverTimestamp, runTransaction, updateDoc, arrayUnion } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
-                
+                const { getAuth, signInAnonymously } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js');
+
                 // Store imports globally
                 window.firebaseModules = { doc, getDoc, setDoc, serverTimestamp, runTransaction, updateDoc, arrayUnion };
-                
+
                 // Initialize Firebase app
                 firebaseApp = initializeApp(firebaseConfig);
+
+                // Sign in BEFORE touching Firestore. The firestore.rules in the repo
+                // root require request.auth != null on raffle_data, so every read and
+                // write needs an identity. Awaiting here means no call can race the
+                // rules and fail with permission-denied on a cold load.
+                // This is anonymous auth as a floor; Entra ID replaces it, and the
+                // rule swap is already written, commented, in firestore.rules.
+                firebaseAuth = getAuth(firebaseApp);
+                await signInAnonymously(firebaseAuth);
+
                 firebaseDb = getFirestore(firebaseApp);
                 firebaseInitialized = true;
-                
-                console.log('✅ Firebase initialized successfully');
+
+                console.log('✅ Firebase initialized successfully (anonymous auth)');
                 return true;
             } catch (error) {
                 console.error('❌ Firebase initialization failed:', error);

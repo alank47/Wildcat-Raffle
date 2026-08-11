@@ -1,0 +1,17 @@
+{
+  "name": "wildcat-hub-powerschool-sync",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read only PowerSchool extraction harness for Wildcat Hub. Staging and validation only.",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "test": "node src/selftest.ts",
+    "auth": "node --env-file=.env src/auth.ts",
+    "probe": "node --env-file=.env src/probe.ts",
+    "queries": "node --env-file=.env src/run-queries.ts",
+    "build:plugin": "node scripts/build-plugin.mjs"
+  }
+}

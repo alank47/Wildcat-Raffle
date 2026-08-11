@@ -1,0 +1,453 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Wildcat Hub PowerQueries.
+
+  SCHEMA NOTES, learned the hard way from a failed install:
+    - The root element is <queries> with NO namespace and NO schemaLocation.
+      Declaring xmlns="http://plugin.powerschool.pearson.com" here makes
+      PowerSchool report "Cannot find the declaration of element 'queries'".
+    - Each <column column="TABLE.COLUMN">alias</column> must reference a real
+      table and column that the access request grants. The attribute drives
+      permission mapping. The element text is the alias and must match the
+      SQL output column name.
+    - The number of <column> entries must equal the number of columns the SQL
+      returns, in the same order.
+    - For a computed column with no database source, point the attribute at a
+      granted core field (STUDENTS.ID is the convention) and let the alias
+      carry the real name.
+    - There is no <summary> element. Every bind variable used in the SQL MUST
+      be declared in an <args> block, after <description> and before <columns>.
+      An undeclared :name leaves the query unregistered: the plugin installs and
+      enables with no validation error, then every call returns 404 not found.
+    - named_queries.xml files live FLAT in queries_root, not in a namespace
+      subfolder. The query name attribute carries the namespace, the path does not.
+
+  DESIGN NOTES:
+    - SECTIONMEETING is not a valid table in this instance, so period comes
+      from SECTIONS.EXPRESSION and CC.EXPRESSION. Parsing those is a Phase 4
+      test requirement covering a single period section, a multi period block,
+      and an alternating day section.
+    - Attendance aggregation happens here in SQL, never in application code.
+    - days_absent respects ATTENDANCE_CODE.PRESENCE_STATUS_CD and counts
+      DISTINCT ATT_DATE, never rows. This school records attendance per
+      period, so a row count would multiply one absence by the period count.
+    - STUDENTRACE stays one to many and is never collapsed.
+    - A null percent stays null. Never COALESCE a grade percent to 0.
+    - No query hardcodes a term id or a school id.
+-->
+<queries>
+
+  <!-- ==================================================================
+       ROSTER. Manifest fields 1, 2, 3, 4, 5, 6, 9.
+       One row per student per section enrollment.
+       ================================================================== -->
+  <query name="com.lapromisefund.wildcathub.roster" coreTable="students" flattened="true">
+    <description>
+      Active student enrollments joined to section, course and teacher for one
+      school and one term. Standard class fields only. No restricted fields.
+    </description>
+    <args>
+      <arg name="schoolid" required="true" type="primitive" description="Schools.School_Number for the school being read" />
+      <arg name="termid" required="true" type="primitive" description="Terms.ID for the term being read" />
+    </args>
+    <columns>
+      <column column="STUDENTS.ID">student_id</column>
+      <column column="STUDENTS.DCID">student_dcid</column>
+      <column column="STUDENTS.STUDENT_NUMBER">student_number</column>
+      <column column="STUDENTS.STATE_STUDENTNUMBER">state_student_number</column>
+      <column column="STUDENTS.FIRST_NAME">first_name</column>
+      <column column="STUDENTS.LAST_NAME">last_name</column>
+      <column column="STUDENTS.GRADE_LEVEL">grade_level</column>
+      <column column="STUDENTS.GENDER">gender</column>
+      <column column="STUDENTS.ENROLL_STATUS">enroll_status</column>
+      <column column="SECTIONS.ID">section_id</column>
+      <column column="SECTIONS.DCID">section_dcid</column>
+      <column column="SECTIONS.SECTION_NUMBER">section_number</column>
+      <column column="SECTIONS.EXPRESSION">section_expression</column>
+      <column column="CC.EXPRESSION">cc_expression</column>
+      <column column="COURSES.COURSE_NUMBER">course_number</column>
+      <column column="COURSES.COURSE_NAME">course_name</column>
+      <column column="TEACHERS.ID">teacher_id</column>
+      <column column="TEACHERS.TEACHERNUMBER">teacher_number</column>
+      <column column="TEACHERS.FIRST_NAME">teacher_first_name</column>
+      <column column="TEACHERS.LAST_NAME">teacher_last_name</column>
+      <column column="USERS.EMAIL_ADDR">teacher_email</column>
+      <column column="TERMS.ID">term_id</column>
+      <column column="TERMS.ABBREVIATION">term_abbreviation</column>
+      <column column="STUDENTS.SCHOOLID">school_id</column>
+    </columns>
+    <sql>
+      <![CDATA[
+        SELECT
+          S.ID                    AS student_id,
+          S.DCID                  AS student_dcid,
+          S.STUDENT_NUMBER        AS student_number,
+          S.STATE_STUDENTNUMBER   AS state_student_number,
+          S.FIRST_NAME            AS first_name,
+          S.LAST_NAME             AS last_name,
+          S.GRADE_LEVEL           AS grade_level,
+          S.GENDER                AS gender,
+          S.ENROLL_STATUS         AS enroll_status,
+          SEC.ID                  AS section_id,
+          SEC.DCID                AS section_dcid,
+          SEC.SECTION_NUMBER      AS section_number,
+          SEC.EXPRESSION          AS section_expression,
+          CC.EXPRESSION           AS cc_expression,
+          C.COURSE_NUMBER         AS course_number,
+          C.COURSE_NAME           AS course_name,
+          TCH.ID                  AS teacher_id,
+          TCH.TEACHERNUMBER       AS teacher_number,
+          TCH.FIRST_NAME          AS teacher_first_name,
+          TCH.LAST_NAME           AS teacher_last_name,
+          USR.EMAIL_ADDR          AS teacher_email,
+          T.ID                    AS term_id,
+          T.ABBREVIATION          AS term_abbreviation,
+          S.SCHOOLID              AS school_id
+        FROM STUDENTS S
+        JOIN CC              ON CC.STUDENTID = S.ID
+        JOIN SECTIONS SEC    ON SEC.ID = CC.SECTIONID
+        JOIN COURSES C       ON C.COURSE_NUMBER = SEC.COURSE_NUMBER
+                            AND C.SCHOOLID      = SEC.SCHOOLID
+        JOIN TERMS T         ON T.ID       = CC.TERMID
+                            AND T.SCHOOLID = CC.SCHOOLID
+        LEFT JOIN TEACHERS TCH ON TCH.ID = SEC.TEACHER
+        LEFT JOIN USERS USR    ON USR.DCID = TCH.USERS_DCID
+        WHERE S.SCHOOLID      = :schoolid
+          AND CC.TERMID       = :termid
+          AND S.ENROLL_STATUS = 0
+          AND (CC.DATELEFT IS NULL OR CC.DATELEFT >= TRUNC(SYSDATE))
+      ]]>
+    </sql>
+  </query>
+
+  <!-- ==================================================================
+       ATTENDANCE SUMMARY. Manifest field 10.
+       Term and year to date in one pass, aggregated in SQL.
+
+       VERIFIED against Westbrook Academy on 2026-08-07:
+         - ATT_MODE_CODE is ATT_ModeMeeting, not ATT_ModeDaily. One absence
+           produces one row PER PERIOD, so summing rows overcounts a single
+           absence by the number of periods in the day. Every absence figure
+           here is therefore COUNT(DISTINCT ATT_DATE), not a row count.
+         - PRESENCE_STATUS_CD only ever holds Present or Absent at this
+           school. There is no Half_Day_Absent, so no half day arithmetic.
+         - Tardy is NOT a presence status here. Tardy codes carry
+           PRESENCE_STATUS_CD = Present and are identified by ATT_CODE = 'T'.
+         - ATTENDANCE is LEFT JOINed on purpose. An inner join drops every
+           student with no attendance rows, which silently deletes perfect
+           attendance students from the result instead of showing them as 0.
+       Consequence to state on any dashboard: a student who misses a single
+       period reads as one day absent. Reconcile against the SIS attendance
+       report before trusting any number.
+       ================================================================== -->
+  <query name="com.lapromisefund.wildcathub.attendance_summary" coreTable="students" flattened="true">
+    <description>
+      Days absent for one term and days absent year to date, counted as
+      distinct calendar dates so period level (meeting mode) attendance is not
+      multiplied by the number of periods. Bounded by the term record dates so
+      no term id is hardcoded.
+    </description>
+    <args>
+      <arg name="schoolid" required="true" type="primitive" description="Schools.School_Number for the school being read" />
+      <arg name="termid" required="true" type="primitive" description="Terms.ID for the term being read" />
+      <arg name="yeartermid" required="true" type="primitive" description="Terms.ID of the full year record (IsYearRec = 1)" />
+    </args>
+    <columns>
+      <column column="STUDENTS.ID">student_id</column>
+      <column column="STUDENTS.STUDENT_NUMBER">student_number</column>
+      <column column="STUDENTS.ID">days_absent_term</column>
+      <column column="STUDENTS.ID">days_absent_ytd</column>
+      <column column="STUDENTS.ID">days_tardy_term</column>
+      <column column="STUDENTS.ID">attendance_rows_ytd</column>
+      <column column="TERMS.FIRSTDAY">term_first_day</column>
+      <column column="TERMS.LASTDAY">term_last_day</column>
+    </columns>
+    <sql>
+      <![CDATA[
+        SELECT
+          S.ID             AS student_id,
+          S.STUDENT_NUMBER AS student_number,
+          COUNT(DISTINCT
+            CASE
+              WHEN A.ATT_DATE BETWEEN TM.FIRSTDAY AND TM.LASTDAY
+               AND AC.PRESENCE_STATUS_CD = 'Absent' THEN A.ATT_DATE
+            END
+          )                AS days_absent_term,
+          COUNT(DISTINCT
+            CASE
+              WHEN AC.PRESENCE_STATUS_CD = 'Absent' THEN A.ATT_DATE
+            END
+          )                AS days_absent_ytd,
+          COUNT(DISTINCT
+            CASE
+              WHEN A.ATT_DATE BETWEEN TM.FIRSTDAY AND TM.LASTDAY
+               AND AC.ATT_CODE = 'T' THEN A.ATT_DATE
+            END
+          )                AS days_tardy_term,
+          COUNT(A.ID)      AS attendance_rows_ytd,
+          TM.FIRSTDAY      AS term_first_day,
+          TM.LASTDAY       AS term_last_day
+        FROM STUDENTS S
+        JOIN TERMS TM
+          ON TM.ID       = :termid
+         AND TM.SCHOOLID = :schoolid
+        JOIN TERMS YR
+          ON YR.ID       = :yeartermid
+         AND YR.SCHOOLID = :schoolid
+        LEFT JOIN ATTENDANCE A
+          ON A.STUDENTID = S.ID
+         AND A.ATT_DATE BETWEEN YR.FIRSTDAY AND YR.LASTDAY
+         AND A.ATT_MODE_CODE IN ('ATT_ModeDaily', 'ATT_ModeMeeting')
+        LEFT JOIN ATTENDANCE_CODE AC
+          ON AC.ID = A.ATTENDANCE_CODEID
+        WHERE S.SCHOOLID      = :schoolid
+          AND S.ENROLL_STATUS = 0
+        GROUP BY S.ID, S.STUDENT_NUMBER, TM.FIRSTDAY, TM.LASTDAY
+      ]]>
+    </sql>
+  </query>
+
+  <!-- ==================================================================
+       GRADES. Manifest field 11.
+       PGFinalGrades first, StoredGrades fallback.
+
+       grade_source of NONE means neither table had a row. That must reach
+       the UI as "not available". A student with no gradebook percent must
+       never appear to have 0%.
+       ================================================================== -->
+  <query name="com.lapromisefund.wildcathub.grades" coreTable="students" flattened="true">
+    <description>
+      Current grade and percent per student per section. Live gradebook value
+      when present, otherwise the stored grade for the same reporting term.
+      Null percent is preserved as null.
+    </description>
+    <args>
+      <arg name="schoolid" required="true" type="primitive" description="Schools.School_Number for the school being read" />
+      <arg name="termid" required="true" type="primitive" description="Terms.ID for the term being read" />
+      <arg name="finalgradename" required="true" type="primitive" description="PGFinalGrades.FinalGradeName for the reporting term" />
+      <arg name="storecode" required="true" type="primitive" description="StoredGrades.StoreCode fallback for the same reporting term" />
+    </args>
+    <columns>
+      <column column="STUDENTS.ID">student_id</column>
+      <column column="STUDENTS.STUDENT_NUMBER">student_number</column>
+      <column column="SECTIONS.ID">section_id</column>
+      <column column="COURSES.COURSE_NUMBER">course_number</column>
+      <column column="COURSES.COURSE_NAME">course_name</column>
+      <column column="PGFINALGRADES.GRADE">current_grade</column>
+      <column column="PGFINALGRADES.PERCENT">current_percent</column>
+      <column column="STUDENTS.ID">grade_source</column>
+      <column column="PGFINALGRADES.LASTGRADEUPDATE">last_grade_update</column>
+    </columns>
+    <sql>
+      <![CDATA[
+        SELECT
+          S.ID             AS student_id,
+          S.STUDENT_NUMBER AS student_number,
+          SEC.ID           AS section_id,
+          C.COURSE_NUMBER  AS course_number,
+          C.COURSE_NAME    AS course_name,
+          COALESCE(PGF.GRADE,   SG.GRADE)   AS current_grade,
+          COALESCE(PGF.PERCENT, SG.PERCENT) AS current_percent,
+          CASE
+            WHEN PGF.GRADE IS NOT NULL OR PGF.PERCENT IS NOT NULL THEN 'PGFinalGrades'
+            WHEN SG.GRADE  IS NOT NULL OR SG.PERCENT  IS NOT NULL THEN 'StoredGrades'
+            ELSE 'NONE'
+          END              AS grade_source,
+          PGF.LASTGRADEUPDATE AS last_grade_update
+        FROM STUDENTS S
+        JOIN CC           ON CC.STUDENTID = S.ID
+        JOIN SECTIONS SEC ON SEC.ID = CC.SECTIONID
+        JOIN COURSES C    ON C.COURSE_NUMBER = SEC.COURSE_NUMBER
+                         AND C.SCHOOLID      = SEC.SCHOOLID
+        LEFT JOIN PGFINALGRADES PGF
+          ON PGF.STUDENTID      = S.ID
+         AND PGF.SECTIONID      = SEC.ID
+         AND PGF.FINALGRADENAME = :finalgradename
+        LEFT JOIN STOREDGRADES SG
+          ON SG.STUDENTID = S.ID
+         AND SG.SECTIONID = SEC.ID
+         AND SG.STORECODE = :storecode
+        WHERE S.SCHOOLID      = :schoolid
+          AND CC.TERMID       = :termid
+          AND S.ENROLL_STATUS = 0
+      ]]>
+    </sql>
+  </query>
+
+  <!-- ==================================================================
+       STAFF DIRECTORY. Manifest fields 15, 16, 17, 18.
+
+       role_hint is named a hint on purpose. It is derived from whether the
+       person teaches any section, which is a proxy and not an answer. A dean
+       who teaches one section reads as a teacher. Phase 1 must confirm
+       whether PowerSchool can separate admin from teacher at all, and if not
+       the role comes from Entra ID group membership instead.
+       ================================================================== -->
+  <query name="com.lapromisefund.wildcathub.staff" coreTable="teachers" flattened="true">
+    <description>
+      Active staff for one school with the identifiers the Hub needs to key a
+      signed in Google account to a PowerSchool teacher record.
+    </description>
+    <args>
+      <arg name="schoolid" required="true" type="primitive" description="Schools.School_Number for the school being read" />
+    </args>
+    <columns>
+      <column column="USERS.DCID">user_dcid</column>
+      <column column="TEACHERS.ID">teacher_id</column>
+      <column column="USERS.TEACHERNUMBER">teacher_number</column>
+      <column column="USERS.FIRST_NAME">first_name</column>
+      <column column="USERS.LAST_NAME">last_name</column>
+      <column column="USERS.EMAIL_ADDR">email_addr</column>
+      <column column="SCHOOLSTAFF.SCHOOLID">school_id</column>
+      <column column="SCHOOLSTAFF.STAFFSTATUS">staff_status</column>
+      <column column="SCHOOLSTAFF.STATUS">status</column>
+      <column column="USERS.DCID">role_hint</column>
+      <column column="USERS.DCID">section_count</column>
+    </columns>
+    <sql>
+      <![CDATA[
+        SELECT
+          USR.DCID          AS user_dcid,
+          TCH.ID            AS teacher_id,
+          USR.TEACHERNUMBER AS teacher_number,
+          USR.FIRST_NAME    AS first_name,
+          USR.LAST_NAME     AS last_name,
+          USR.EMAIL_ADDR    AS email_addr,
+          SS.SCHOOLID       AS school_id,
+          SS.STAFFSTATUS    AS staff_status,
+          SS.STATUS         AS status,
+          CASE
+            WHEN NVL(SECS.SECTION_COUNT, 0) > 0 THEN 'HAS_SECTIONS'
+            ELSE 'NO_SECTIONS'
+          END               AS role_hint,
+          NVL(SECS.SECTION_COUNT, 0) AS section_count
+        FROM USERS USR
+        JOIN SCHOOLSTAFF SS
+          ON SS.USERS_DCID = USR.DCID
+        LEFT JOIN TEACHERS TCH
+          ON TCH.USERS_DCID = USR.DCID
+         AND TCH.SCHOOLID   = SS.SCHOOLID
+        LEFT JOIN (
+          SELECT SEC.TEACHER AS TEACHER_ID, COUNT(SEC.ID) AS SECTION_COUNT
+          FROM SECTIONS SEC
+          GROUP BY SEC.TEACHER
+        ) SECS
+          ON SECS.TEACHER_ID = TCH.ID
+        WHERE SS.SCHOOLID = :schoolid
+          AND SS.STATUS   = 1
+      ]]>
+    </sql>
+  </query>
+
+  <!-- ==================================================================
+       RESTRICTED: FEDERAL RACE CODES. Manifest field 8.
+       One row per student per code. Separate query so it can be deleted as a
+       unit if descoped, and tested separately in Phase 5.
+       ================================================================== -->
+  <query name="com.lapromisefund.wildcathub.student_race_restricted" coreTable="students" flattened="true">
+    <description>
+      RESTRICTED. One to many. Multi race students return one row per code.
+      Callers must not collapse this to a single value.
+    </description>
+    <args>
+      <arg name="schoolid" required="true" type="primitive" description="Schools.School_Number for the school being read" />
+    </args>
+    <columns>
+      <column column="STUDENTS.ID">student_id</column>
+      <column column="STUDENTS.STUDENT_NUMBER">student_number</column>
+      <column column="STUDENTRACE.RACECD">race_code</column>
+    </columns>
+    <sql>
+      <![CDATA[
+        SELECT
+          S.ID             AS student_id,
+          S.STUDENT_NUMBER AS student_number,
+          SR.RACECD        AS race_code
+        FROM STUDENTS S
+        JOIN STUDENTRACE SR ON SR.STUDENTID = S.ID
+        WHERE S.SCHOOLID      = :schoolid
+          AND S.ENROLL_STATUS = 0
+      ]]>
+    </sql>
+  </query>
+
+  <!-- ==================================================================
+       RESTRICTED: FEDERAL ETHNICITY AND ENGLISH LEARNER STATUS.
+       Manifest fields 7 and 14. IEP and 504 are NOT here because their
+       source is unconfirmed. See docs/field-sourcing.md.
+       ================================================================== -->
+  <query name="com.lapromisefund.wildcathub.student_restricted" coreTable="students" flattened="true">
+    <description>
+      RESTRICTED. Federal ethnicity flag and current English Learner status
+      from the California state extension. Loads into its own staging table.
+    </description>
+    <args>
+      <arg name="schoolid" required="true" type="primitive" description="Schools.School_Number for the school being read" />
+    </args>
+    <columns>
+      <column column="STUDENTS.ID">student_id</column>
+      <column column="STUDENTS.STUDENT_NUMBER">student_number</column>
+      <column column="STUDENTS.FEDETHNICITY">fed_ethnicity</column>
+      <column column="S_CA_STU_X.ELASTATUS">ela_status</column>
+    </columns>
+    <sql>
+      <![CDATA[
+        SELECT
+          S.ID             AS student_id,
+          S.STUDENT_NUMBER AS student_number,
+          S.FEDETHNICITY   AS fed_ethnicity,
+          X.ELASTATUS      AS ela_status
+        FROM STUDENTS S
+        LEFT JOIN S_CA_STU_X X ON X.STUDENTSDCID = S.DCID
+        WHERE S.SCHOOLID      = :schoolid
+          AND S.ENROLL_STATUS = 0
+      ]]>
+    </sql>
+  </query>
+
+  <!-- ==================================================================
+       CALENDAR HELPER. Resolves the term ids the other queries need.
+       Run this first, then feed its output into the rest.
+       ================================================================== -->
+  <query name="com.lapromisefund.wildcathub.terms" coreTable="schools" flattened="true">
+    <description>
+      Every term for one school and one school year, including the full year
+      record. Used to resolve :termid and :yeartermid at run time so nothing
+      hardcodes a term.
+    </description>
+    <args>
+      <arg name="schoolid" required="true" type="primitive" description="Schools.School_Number for the school being read" />
+      <arg name="yearid" required="true" type="primitive" description="Terms.YearID for the school year being read" />
+    </args>
+    <columns>
+      <column column="TERMS.ID">term_id</column>
+      <column column="TERMS.ABBREVIATION">abbreviation</column>
+      <column column="TERMS.NAME">name</column>
+      <column column="TERMS.FIRSTDAY">first_day</column>
+      <column column="TERMS.LASTDAY">last_day</column>
+      <column column="TERMS.ISYEARREC">is_year_rec</column>
+      <column column="TERMS.PORTION">portion</column>
+      <column column="TERMS.SCHOOLID">school_id</column>
+      <column column="TERMS.YEARID">year_id</column>
+    </columns>
+    <sql>
+      <![CDATA[
+        SELECT
+          T.ID           AS term_id,
+          T.ABBREVIATION AS abbreviation,
+          T.NAME         AS name,
+          T.FIRSTDAY     AS first_day,
+          T.LASTDAY      AS last_day,
+          T.ISYEARREC    AS is_year_rec,
+          T.PORTION      AS portion,
+          T.SCHOOLID     AS school_id,
+          T.YEARID       AS year_id
+        FROM TERMS T
+        WHERE T.SCHOOLID = :schoolid
+          AND T.YEARID   = :yearid
+        ORDER BY T.ISYEARREC DESC, T.FIRSTDAY
+      ]]>
+    </sql>
+  </query>
+
+</queries>
