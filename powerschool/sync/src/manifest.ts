@@ -179,6 +179,19 @@ export const MANIFEST: ManifestEntry[] = [
     unconfirmed:
       "SchoolStaff is likely insufficient to separate an assigning admin from a classroom teacher. If it cannot, derive role from Entra ID group membership and document the mapping.",
   },
+  {
+    n: 19,
+    label: "Student Email",
+    fieldClass: "Key",
+    probes: [
+      { table: "students", fields: ["student_email", "email"] },
+      { table: "u_studentsuserfields", fields: ["studentsdcid", "student_email"] },
+      { table: "studentcorefields", fields: ["studentsdcid", "student_email"] },
+    ],
+    deliveredBy: `${QUERY_PREFIX}.roster`,
+    unconfirmed:
+      "Added 2026-08-11 for Google Workspace student sign in on westbrookacademy.org: the student email is the key that links a signed in Google account to a student record, and no such key exists in fields 1 through 18. Column is install specific, so the probe order runs most to least likely and the access request must be re-approved before this field can be relied on. Confirm the address issued in Google Workspace matches what PowerSchool stores; if it does not, this field is the wrong key. See docs/auth-architecture.md.",
+  },
 ];
 
 /** Every distinct table the manifest touches, deduplicated. */

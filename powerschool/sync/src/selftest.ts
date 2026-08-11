@@ -112,9 +112,9 @@ async function main(): Promise<void> {
   );
 
   console.log("\nManifest integrity");
-  check("manifest has 18 entries", MANIFEST.length === 18, `has ${MANIFEST.length}`);
+  check("manifest has 19 entries", MANIFEST.length === 19, `has ${MANIFEST.length}`);
   check(
-    "manifest numbers are 1 through 18 with no gaps",
+    "manifest numbers are 1 through 19 with no gaps",
     MANIFEST.every((entry, index) => entry.n === index + 1),
   );
   const restricted = MANIFEST.filter((e) => e.fieldClass === "Restricted").map((e) => e.n);
@@ -125,8 +125,8 @@ async function main(): Promise<void> {
   );
   const unconfirmed = MANIFEST.filter((e) => e.unconfirmed).map((e) => e.n);
   check(
-    "fields 5, 12, 13, 18 are flagged unconfirmed",
-    JSON.stringify(unconfirmed) === JSON.stringify([5, 12, 13, 18]),
+    "fields 5, 12, 13, 18, 19 are flagged unconfirmed",
+    JSON.stringify(unconfirmed) === JSON.stringify([5, 12, 13, 18, 19]),
     JSON.stringify(unconfirmed),
   );
   check(

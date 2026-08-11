@@ -48,6 +48,13 @@
       <field table="Students" field="Enroll_Status"       access="ViewOnly"/>
       <field table="Students" field="EntryDate"           access="ViewOnly"/>
       <field table="Students" field="ExitDate"            access="ViewOnly"/>
+      <!-- Manifest field 19, Student Email. Added 2026-08-11. This is the key
+           that links a student's Google Workspace account on westbrookacademy.org
+           to their record; without it a signed in student cannot be matched to
+           any data. The column name is install specific, so both spellings are
+           requested and the harness probes them in order. Still ViewOnly. -->
+      <field table="Students" field="Student_Email"       access="ViewOnly"/>
+      <field table="Students" field="Email"               access="ViewOnly"/>
 
       <!-- ================================================================
            MANIFEST 4, 5, 6: course, section, period, teacher assignment
