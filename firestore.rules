@@ -1,0 +1,52 @@
+rules_version = '2';
+
+// Wildcat Rewards / Wildcat Raffle Firestore rules.
+//
+// WHY THIS FILE EXISTS
+// The raffle_data collection previously answered callers that presented no
+// credentials at all. These rules require a signed in Firebase identity on
+// every read and every write.
+//
+// DEPLOY ORDER MATTERS. The sign in patch in script.js must ship FIRST.
+// Without it the app never establishes an identity, request.auth is null on
+// every call it makes, and deploying these rules takes the app offline for
+// every user. Ship the patch, confirm the app still loads, then deploy rules.
+//
+// WHAT THIS IS NOT
+// This is a floor, not a ceiling. Anonymous auth stops drive by reads from a
+// stranger with curl. It does not stop someone who opens devtools, copies the
+// public config, and signs in anonymously themselves. Real authorization
+// needs a server side identity, which is the Entra ID / Azure work planned
+// next. Until then, treat everything in raffle_data as sensitive but not
+// secret, and do not add new secrets to it.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny. Any path not explicitly granted below is refused.
+    // Firestore rules are OR based: a request is allowed only if some rule
+    // grants it, so this block is here to make the intent unmistakable to
+    // the next reader rather than to do work on its own.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Application data. Requires a signed in Firebase identity.
+    //
+    // Step 1 (now):   anonymous auth, so the app keeps working and the
+    //                 collection stops answering unauthenticated callers.
+    // Step 2 (Azure): replace this with a check on a verified claim, for
+    //                 example request.auth.token.email.matches('.*@lapromisefund[.]org$')
+    //                 once Entra ID issues the token. The line is written
+    //                 below, commented, so the swap is a one line change.
+    match /raffle_data/{docId} {
+      allow read, write: if request.auth != null;
+
+      // AZURE / ENTRA ID VERSION. Uncomment and delete the line above once
+      // federated sign in is issuing tokens with a verified email claim.
+      // allow read, write: if request.auth != null
+      //   && request.auth.token.email_verified == true
+      //   && request.auth.token.email.matches('.*@lapromisefund[.]org$');
+    }
+  }
+}

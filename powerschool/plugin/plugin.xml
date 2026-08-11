@@ -1,0 +1,225 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Wildcat Hub PowerSchool data access plugin.
+
+  READ ONLY. Every field below is requested with access="ViewOnly".
+  There is no write, update, or delete access anywhere in this file.
+  If a future task appears to need a write, stop and escalate rather
+  than editing this file.
+
+  Restricted fields (federal ethnicity, federal race, English Learner
+  status, and the future IEP / 504 sources) are grouped and commented
+  so they can be removed as a block if the requester cannot name an
+  operational use case. See docs/field-sourcing.md.
+
+  Version history lives in docs/plugin-install.md. Bumping the version
+  attribute is required for PowerSchool to accept a re-upload.
+-->
+<plugin xmlns="http://plugin.powerschool.pearson.com"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://plugin.powerschool.pearson.com plugin.xsd"
+        name="Wildcat Hub Sync"
+        version="1.0.6"
+        description="Read only student and staff data sync for the Wildcat Hub teacher and admin dashboard at Westbrook Academy.">
+
+  <publisher name="LA Promise Fund">
+    <contact email="lawrencb@lapromisefund.org"/>
+  </publisher>
+
+  <!-- Enables OAuth 2.0 client credentials. PowerSchool generates the
+       client id and secret when the plugin is enabled. Never paste
+       those values into this file or any other file in the repo. -->
+  <oauth/>
+
+  <access_request>
+
+      <!-- ================================================================
+           MANIFEST 1, 2, 3, 9: student identity and demographics (Standard)
+           ================================================================ -->
+      <field table="Students" field="ID"                  access="ViewOnly"/>
+      <field table="Students" field="DCID"                access="ViewOnly"/>
+      <field table="Students" field="Student_Number"      access="ViewOnly"/>
+      <field table="Students" field="State_StudentNumber" access="ViewOnly"/>
+      <field table="Students" field="First_Name"          access="ViewOnly"/>
+      <field table="Students" field="Last_Name"           access="ViewOnly"/>
+      <field table="Students" field="Grade_Level"         access="ViewOnly"/>
+      <field table="Students" field="Gender"              access="ViewOnly"/>
+      <field table="Students" field="SchoolID"            access="ViewOnly"/>
+      <field table="Students" field="Enroll_Status"       access="ViewOnly"/>
+      <field table="Students" field="EntryDate"           access="ViewOnly"/>
+      <field table="Students" field="ExitDate"            access="ViewOnly"/>
+
+      <!-- ================================================================
+           MANIFEST 4, 5, 6: course, section, period, teacher assignment
+           CC is the student to section enrollment table.
+           ================================================================ -->
+      <field table="CC" field="ID"          access="ViewOnly"/>
+      <field table="CC" field="StudentID"   access="ViewOnly"/>
+      <field table="CC" field="SectionID"   access="ViewOnly"/>
+      <field table="CC" field="Course_Number" access="ViewOnly"/>
+      <field table="CC" field="TermID"      access="ViewOnly"/>
+      <field table="CC" field="SchoolID"    access="ViewOnly"/>
+      <field table="CC" field="DateEnrolled" access="ViewOnly"/>
+      <field table="CC" field="DateLeft"    access="ViewOnly"/>
+      <field table="CC" field="Expression"  access="ViewOnly"/>
+
+      <field table="Courses" field="ID"            access="ViewOnly"/>
+      <field table="Courses" field="Course_Number" access="ViewOnly"/>
+      <field table="Courses" field="Course_Name"   access="ViewOnly"/>
+      <field table="Courses" field="SchoolID"      access="ViewOnly"/>
+
+      <field table="Sections" field="ID"             access="ViewOnly"/>
+      <field table="Sections" field="DCID"           access="ViewOnly"/>
+      <field table="Sections" field="Course_Number"  access="ViewOnly"/>
+      <field table="Sections" field="Section_Number" access="ViewOnly"/>
+      <field table="Sections" field="Expression"     access="ViewOnly"/>
+      <field table="Sections" field="Teacher"        access="ViewOnly"/>
+      <field table="Sections" field="TermID"         access="ViewOnly"/>
+      <field table="Sections" field="SchoolID"       access="ViewOnly"/>
+
+      <!-- Period comes from SECTIONS.EXPRESSION and CC.EXPRESSION.
+           SECTIONMEETING, PERIOD and CYCLE_DAY were requested in 1.0.0 and
+           PowerSchool rejected SECTIONMEETING as an invalid table in this
+           instance, which leaves no join path to PERIOD or CYCLE_DAY. They
+           are removed rather than left as unusable granted access.
+           Parsing EXPRESSION is a Phase 4 test requirement: one single
+           period section, one multi period block, one alternating day
+           section. See docs/field-sourcing.md for the question to the SIS
+           admin about whether a meeting table exists under another name. -->
+
+      <!-- ================================================================
+           MANIFEST 15, 16, 17, 18: staff
+           Sections.Teacher points at Teachers.ID. Email lives on Users.
+           Teachers.Users_DCID is the bridge. Verify this link against the
+           instance in Phase 0 before trusting it.
+           ================================================================ -->
+      <field table="Teachers" field="ID"           access="ViewOnly"/>
+      <field table="Teachers" field="DCID"         access="ViewOnly"/>
+      <field table="Teachers" field="Users_DCID"   access="ViewOnly"/>
+      <field table="Teachers" field="TeacherNumber" access="ViewOnly"/>
+      <field table="Teachers" field="First_Name"   access="ViewOnly"/>
+      <field table="Teachers" field="Last_Name"    access="ViewOnly"/>
+      <field table="Teachers" field="SchoolID"     access="ViewOnly"/>
+      <field table="Teachers" field="Status"       access="ViewOnly"/>
+
+      <field table="Users" field="DCID"          access="ViewOnly"/>
+      <field table="Users" field="TeacherNumber" access="ViewOnly"/>
+      <field table="Users" field="First_Name"    access="ViewOnly"/>
+      <field table="Users" field="Last_Name"     access="ViewOnly"/>
+      <field table="Users" field="Email_Addr"    access="ViewOnly"/>
+
+      <field table="SchoolStaff" field="ID"          access="ViewOnly"/>
+      <field table="SchoolStaff" field="DCID"        access="ViewOnly"/>
+      <field table="SchoolStaff" field="Users_DCID"  access="ViewOnly"/>
+      <field table="SchoolStaff" field="SchoolID"    access="ViewOnly"/>
+      <field table="SchoolStaff" field="Status"      access="ViewOnly"/>
+      <field table="SchoolStaff" field="StaffStatus" access="ViewOnly"/>
+
+      <!-- ================================================================
+           MANIFEST 10: attendance. Aggregation happens in the PowerQuery,
+           not in application code. Presence_Status_CD is the field that
+           decides what counts as an absence.
+           ================================================================ -->
+      <field table="Attendance" field="ID"                access="ViewOnly"/>
+      <field table="Attendance" field="StudentID"         access="ViewOnly"/>
+      <field table="Attendance" field="Att_Date"          access="ViewOnly"/>
+      <field table="Attendance" field="Attendance_CodeID" access="ViewOnly"/>
+      <field table="Attendance" field="Att_Mode_Code"     access="ViewOnly"/>
+      <field table="Attendance" field="SchoolID"          access="ViewOnly"/>
+      <field table="Attendance" field="Yearid"            access="ViewOnly"/>
+      <field table="Attendance" field="CCID"              access="ViewOnly"/>
+      <field table="Attendance" field="PeriodID"          access="ViewOnly"/>
+
+      <field table="Attendance_Code" field="ID"                 access="ViewOnly"/>
+      <field table="Attendance_Code" field="Att_Code"           access="ViewOnly"/>
+      <field table="Attendance_Code" field="Description"        access="ViewOnly"/>
+      <field table="Attendance_Code" field="Presence_Status_CD" access="ViewOnly"/>
+      <field table="Attendance_Code" field="SchoolID"           access="ViewOnly"/>
+      <field table="Attendance_Code" field="Yearid"             access="ViewOnly"/>
+
+      <!-- ================================================================
+           MANIFEST 11: grades. PGFinalGrades is the live gradebook value.
+           StoredGrades is the fallback for closed terms.
+           A null percent must stay null all the way to the UI. It is not
+           a zero. See docs/plugin-install.md.
+           ================================================================ -->
+      <field table="PGFinalGrades" field="ID"             access="ViewOnly"/>
+      <field table="PGFinalGrades" field="StudentID"      access="ViewOnly"/>
+      <field table="PGFinalGrades" field="SectionID"      access="ViewOnly"/>
+      <field table="PGFinalGrades" field="FinalGradeName" access="ViewOnly"/>
+      <field table="PGFinalGrades" field="Grade"          access="ViewOnly"/>
+      <field table="PGFinalGrades" field="Percent"        access="ViewOnly"/>
+      <field table="PGFinalGrades" field="LastGradeUpdate" access="ViewOnly"/>
+
+      <field table="StoredGrades" field="DCID"           access="ViewOnly"/>
+      <field table="StoredGrades" field="StudentID"      access="ViewOnly"/>
+      <field table="StoredGrades" field="SectionID"      access="ViewOnly"/>
+      <field table="StoredGrades" field="Course_Number"  access="ViewOnly"/>
+      <field table="StoredGrades" field="StoreCode"      access="ViewOnly"/>
+      <field table="StoredGrades" field="Grade"          access="ViewOnly"/>
+      <field table="StoredGrades" field="Percent"        access="ViewOnly"/>
+      <field table="StoredGrades" field="TermID"         access="ViewOnly"/>
+      <field table="StoredGrades" field="SchoolID"       access="ViewOnly"/>
+
+      <!-- ================================================================
+           Calendar scaffolding used to parameterize every query by school
+           year and term. No query hardcodes a term id.
+           ================================================================ -->
+      <field table="Terms" field="ID"           access="ViewOnly"/>
+      <field table="Terms" field="Abbreviation" access="ViewOnly"/>
+      <field table="Terms" field="Name"         access="ViewOnly"/>
+      <field table="Terms" field="FirstDay"     access="ViewOnly"/>
+      <field table="Terms" field="LastDay"      access="ViewOnly"/>
+      <field table="Terms" field="SchoolID"     access="ViewOnly"/>
+      <field table="Terms" field="Yearid"       access="ViewOnly"/>
+      <field table="Terms" field="IsYearRec"    access="ViewOnly"/>
+      <field table="Terms" field="Portion"      access="ViewOnly"/>
+
+      <field table="Schools" field="ID"           access="ViewOnly"/>
+      <field table="Schools" field="School_Number" access="ViewOnly"/>
+      <field table="Schools" field="Name"         access="ViewOnly"/>
+      <field table="Schools" field="Abbreviation" access="ViewOnly"/>
+
+      <!-- ================================================================
+           RESTRICTED BLOCK. Manifest 7, 8, 14.
+           Everything below this line is column level restricted. It lands
+           in its own staging tables, gets its own access tests in Phase 5,
+           and gets its own line in the go / no go checklist.
+
+           Manifest 7 and 8 are pending an answer to the open question in
+           the prompt: what teacher facing decision do federal ethnicity and
+           federal race codes inform? If no use case is named, delete this
+           block, bump the plugin version, and have the SIS admin disable
+           and re-enable the plugin.
+           ================================================================ -->
+      <field table="Students" field="FedEthnicity" access="ViewOnly"/>
+
+      <field table="StudentRace" field="ID"        access="ViewOnly"/>
+      <field table="StudentRace" field="StudentID" access="ViewOnly"/>
+      <field table="StudentRace" field="RaceCD"    access="ViewOnly"/>
+
+      <!-- Manifest 14: English Learner. California state extension tables.
+           S_CA_STU_X is the current status. S_CA_STU_ELA_C is the history.
+           If the probe reports these as not granted, the state extension
+           is either not installed or named differently in this instance.
+           Confirm with the SIS admin before assuming the data is absent. -->
+      <field table="S_CA_STU_X" field="StudentsDCID" access="ViewOnly"/>
+      <field table="S_CA_STU_X" field="ELAStatus"    access="ViewOnly"/>
+
+      <field table="S_CA_STU_ELA_C" field="StudentsDCID"     access="ViewOnly"/>
+      <field table="S_CA_STU_ELA_C" field="ELAStatus"        access="ViewOnly"/>
+      <field table="S_CA_STU_ELA_C" field="ELAStatusStartDate" access="ViewOnly"/>
+
+      <!-- ================================================================
+           MANIFEST 12 and 13: IEP / Special Ed status and 504 status.
+           DELIBERATELY ABSENT. The source is unconfirmed. Do not guess a
+           table name here. Phase 1 resolves where this data actually lives
+           in our instance, then this block gets filled in exactly once and
+           the plugin is re-uploaded at version 1.1.0.
+           See docs/field-sourcing.md for the questions to send the
+           registrar and the SIS admin.
+           ================================================================ -->
+
+  </access_request>
+
+</plugin>
