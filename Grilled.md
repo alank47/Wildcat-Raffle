@@ -23,8 +23,15 @@ Out of scope this session: Phases 3 through 7. Nothing is loaded anywhere.
 ## Target users
 
 Classroom teachers (own roster only) and school administrators (explicitly
-enumerated wider scope, never "everything"). Auth is Google sign in keyed on
-`@lapromisefund.org`.
+enumerated wider scope, never "everything"). Students see their own totals.
+
+**Auth, decided 2026-08-11 (supersedes "Google sign in keyed on
+`@lapromisefund.org`"):** two providers behind Firebase Auth. Staff sign in with
+**Microsoft Entra ID (O365)**; students sign in with **Google Workspace on
+`westbrookacademy.org`**. **Email is the identity key on both sides** and is what
+links a signed in person to their record. Role comes from provider plus email
+domain, never from a client settable field. Full design and the deploy order in
+`docs/auth-architecture.md`.
 
 ## Stack
 
@@ -77,6 +84,18 @@ enumerated wider scope, never "everything"). Auth is Google sign in keyed on
    is a local sandbox stopgap only.
 8. **Retention.** No retention policy exists yet for the warehouse copy of
    student records. It is a go / no go line.
+9. **Student email is not in the manifest.** The 18 field manifest has Staff
+   Email (17) and no student email, and app student records have no email
+   field. Google sign in returns an address with nothing to join it to, so
+   student auth is blocked on a **new field 19, Student Email**, which amends
+   the access request and needs PowerSchool admin re-approval. Deliberate scope
+   change, recorded here rather than added quietly against constraint 4.
+10. **Staff email domain is unconfirmed.** This doc says `@lapromisefund.org`,
+   the org's GAM tooling uses `laspromise.org`, and students are on
+   `westbrookacademy.org`. The staff domain constant is set from real
+   PowerSchool `teacher_email` values, never guessed.
+11. **Do Entra UPNs match PowerSchool `email_addr`?** If they diverge the email
+   join needs an alias map, which is a schema change.
 
 ## Where things are
 

@@ -74,6 +74,162 @@
                 return false;
             }
         }
+
+        // ============================================================
+        // FEDERATED IDENTITY: Entra ID for staff, Google for students
+        // ============================================================
+        // Design and deploy order: docs/auth-architecture.md
+        //
+        // Replaces two paths that are not really authentication:
+        //   - staff: username + CLEARTEXT password compared in the browser
+        //   - students: typing a student ID *or just a name*
+        //
+        // SHIPPED DARK. AUTH_CONFIG.enabled is false, so none of this runs for
+        // live users yet. Flipping it before the providers are enabled in the
+        // Firebase Console would lock every teacher out of a raffle system that
+        // is in daily use. Turn it on only after the console work is done and
+        // a real staff account has been verified. Order is in the design doc.
+        const AUTH_CONFIG = {
+            // MASTER SWITCH. false = legacy username/password stays in control.
+            enabled: false,
+
+            // Staff domain is NOT guessed. Grilled.md says lapromisefund.org,
+            // this org's GAM tooling uses laspromise.org. Set this from real
+            // PowerSchool users.email_addr values before enabling.
+            staffDomain: null,
+
+            studentDomain: 'westbrookacademy.org',
+
+            // Student sign in is blocked on PowerSchool manifest field 19,
+            // Student Email, which does not exist yet. Google returns an
+            // address with nothing to join it to. See docs/auth-architecture.md.
+            studentAuthEnabled: false
+        };
+
+        // Entra ID issues the email claim with directory casing, often
+        // First.Last@domain, while records hold first.last@domain. An exact
+        // compare then fails silently and the user bounces to the login screen
+        // with no error. Both sides of every compare go through this.
+        function normalizeEmail(email) {
+            return (email || '').trim().toLowerCase();
+        }
+
+        function emailDomain(email) {
+            const at = normalizeEmail(email).lastIndexOf('@');
+            return at === -1 ? '' : normalizeEmail(email).slice(at + 1);
+        }
+
+        // Role comes from provider + domain, never from anything the client
+        // can set. A Google token on the staff domain, or a Microsoft token on
+        // the student domain, is rejected: that mix is how a student ends up
+        // holding a teacher's ticket-awarding rights.
+        function classifyIdentity(email, providerId) {
+            const domain = emailDomain(email);
+            if (!domain) return { ok: false, reason: 'Token carried no email address.' };
+
+            if (providerId === 'microsoft.com') {
+                if (!AUTH_CONFIG.staffDomain) {
+                    return { ok: false, reason: 'Staff domain is not configured yet.' };
+                }
+                if (domain !== AUTH_CONFIG.staffDomain) {
+                    return { ok: false, reason: `${domain} is not the staff domain.` };
+                }
+                return { ok: true, kind: 'staff' };
+            }
+
+            if (providerId === 'google.com') {
+                if (domain !== AUTH_CONFIG.studentDomain) {
+                    return { ok: false, reason: `${domain} is not the student domain.` };
+                }
+                return { ok: true, kind: 'student' };
+            }
+
+            return { ok: false, reason: `Unsupported sign-in provider: ${providerId}` };
+        }
+
+        // Joins a verified identity to an existing record by normalized email.
+        // Deliberately does NOT create records: a valid token from the right
+        // domain still is not authorization to appear in this system.
+        function linkIdentityToStaffRecord(email) {
+            const target = normalizeEmail(email);
+            const teacher = teachers.find(t => normalizeEmail(t.email) === target);
+            if (!teacher) {
+                return {
+                    ok: false,
+                    reason: `No staff record matches ${target}. An admin must add it, ` +
+                            `or the PowerSchool teacher_email does not match the Entra address.`
+                };
+            }
+            return { ok: true, record: teacher };
+        }
+
+        async function signInStaffWithEntra() {
+            if (!AUTH_CONFIG.enabled) throw new Error('Federated auth is not enabled yet.');
+            const { OAuthProvider, signInWithPopup } =
+                await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js');
+
+            const provider = new OAuthProvider('microsoft.com');
+            provider.setCustomParameters({ prompt: 'select_account' });
+
+            const cred = await signInWithPopup(firebaseAuth, provider);
+            const email = cred.user.email;
+            const providerId = cred.user.providerData[0] && cred.user.providerData[0].providerId;
+
+            const verdict = classifyIdentity(email, providerId);
+            if (!verdict.ok || verdict.kind !== 'staff') {
+                await firebaseAuth.signOut();
+                throw new Error(verdict.reason || 'Not a staff identity.');
+            }
+
+            const link = linkIdentityToStaffRecord(email);
+            if (!link.ok) {
+                await firebaseAuth.signOut();
+                throw new Error(link.reason);
+            }
+            return link.record;
+        }
+
+        async function signInStudentWithGoogle() {
+            if (!AUTH_CONFIG.enabled) throw new Error('Federated auth is not enabled yet.');
+            if (!AUTH_CONFIG.studentAuthEnabled) {
+                throw new Error(
+                    'Student sign-in is not available yet. It is blocked on PowerSchool ' +
+                    'manifest field 19 (Student Email); student records currently carry no ' +
+                    'email to match a Google account against.'
+                );
+            }
+            const { GoogleAuthProvider, signInWithPopup } =
+                await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js');
+
+            const provider = new GoogleAuthProvider();
+            provider.setCustomParameters({ hd: AUTH_CONFIG.studentDomain });
+
+            const cred = await signInWithPopup(firebaseAuth, provider);
+            const providerId = cred.user.providerData[0] && cred.user.providerData[0].providerId;
+
+            const verdict = classifyIdentity(cred.user.email, providerId);
+            if (!verdict.ok || verdict.kind !== 'student') {
+                await firebaseAuth.signOut();
+                throw new Error(verdict.reason || 'Not a student identity.');
+            }
+
+            const target = normalizeEmail(cred.user.email);
+            const student = students.find(s => normalizeEmail(s.email) === target);
+            if (!student) {
+                await firebaseAuth.signOut();
+                throw new Error(`No student record matches ${target}.`);
+            }
+            return student;
+        }
+
+        // Exposed for console preflight before the rules swap.
+        window.wildcatAuth = {
+            config: AUTH_CONFIG,
+            normalizeEmail,
+            classifyIdentity,
+            signInStaffWithEntra,
+            signInStudentWithGoogle
+        };
         
         // ========================================
         // VERSION MANAGEMENT & AUTO-UPDATE
