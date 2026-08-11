@@ -25,13 +25,16 @@ Out of scope this session: Phases 3 through 7. Nothing is loaded anywhere.
 Classroom teachers (own roster only) and school administrators (explicitly
 enumerated wider scope, never "everything"). Students see their own totals.
 
-**Auth, decided 2026-08-11 (supersedes "Google sign in keyed on
-`@lapromisefund.org`"):** two providers behind Firebase Auth. Staff sign in with
-**Microsoft Entra ID (O365)**; students sign in with **Google Workspace on
-`westbrookacademy.org`**. **Email is the identity key on both sides** and is what
-links a signed in person to their record. Role comes from provider plus email
-domain, never from a client settable field. Full design and the deploy order in
-`docs/auth-architecture.md`.
+**Auth and data, decided 2026-08-11 (supersedes "Google sign in keyed on
+`@lapromisefund.org`"):** **Convex** replaces Firebase for both the database and
+identity verification. Staff sign in with **Microsoft Entra ID (O365)**; students
+sign in with **Google**, which they already use on their Chromebooks. Convex
+accepts both as custom OIDC providers and validates the tokens itself, so no auth
+broker is needed. **Email is the identity key on both sides** and is what links a
+signed in person to their record. Role comes from provider plus email domain,
+checked server side, never from a client settable field. The browser never touches
+the database; it calls functions. No build step: Convex's HTTP API is reachable by
+plain fetch. Full design in `docs/auth-architecture.md`.
 
 ## Stack
 
@@ -41,7 +44,8 @@ domain, never from a client settable field. Full design and the deploy order in
   dependencies on purpose, so the harness runs with no install step
 - Current app: static HTML, CSS, and a single `script.js`, backed by Firebase
   (project `wildcat-hub-94025`)
-- Warehouse per the brief: Supabase, `staging` schema, row level security
+- Warehouse per the brief: Supabase, `staging` schema, row level security.
+  App tier is **Convex** as of 2026-08-11, see open question 3
 
 ## Constraints
 
@@ -70,10 +74,12 @@ domain, never from a client settable field. Full design and the deploy order in
    is an escalation, not a workaround.
 2. **Credentials.** Needs a PowerSchool admin to install and enable the
    plugin, then hand over the client id and secret through the secret store.
-3. **Firebase versus Supabase.** The brief specifies Supabase with migration
-   files and row level security. The app runs on Firebase today. Phase 3
-   cannot start until this is decided. Phase 5's access control requirements
-   are expressible in either, but Phase 3 point 5 assumes Postgres.
+3. **RESOLVED 2026-08-11: Convex.** The brief specified Supabase and the app ran
+   on Firebase. Neither won. Convex is the app tier because authorization runs in
+   server side functions rather than a rules DSL, so the browser never gets a
+   direct line to the data, and "students read only their own row" is expressible
+   at all. Whether the PowerSchool warehouse also moves to Convex or stays
+   Postgres per the brief is still open and does not block the app tier.
 4. **Fields 12 and 13.** Source unknown. Deliberately absent from the access
    request rather than guessed. See `docs/field-sourcing.md`.
 5. **Field 18.** `SchoolStaff` probably cannot separate an assigning admin

@@ -78,19 +78,25 @@
         // ============================================================
         // FEDERATED IDENTITY: Entra ID for staff, Google for students
         // ============================================================
-        // Design and deploy order: docs/auth-architecture.md
+        // Design: docs/auth-architecture.md
         //
         // Replaces two paths that are not really authentication:
         //   - staff: username + CLEARTEXT password compared in the browser
         //   - students: typing a student ID *or just a name*
         //
-        // SHIPPED DARK. AUTH_CONFIG.enabled is false, so none of this runs for
-        // live users yet. Flipping it before the providers are enabled in the
-        // Firebase Console would lock every teacher out of a raffle system that
-        // is in daily use. Turn it on only after the console work is done and
-        // a real staff account has been verified. Order is in the design doc.
+        // ⚠️ THE FIREBASE SIGN-IN WRAPPERS BELOW ARE SUPERSEDED. On 2026-08-11
+        // the backend decision changed to CONVEX, which validates Entra and
+        // Google OIDC tokens itself, so no Firebase Auth broker is involved.
+        // Do NOT set enabled: true. It would sign users in against a backend
+        // this app is moving off, on top of a live raffle system.
+        //
+        // What survives the move, deliberately: normalizeEmail(), emailDomain()
+        // and classifyIdentity() are pure functions with no Firebase in them.
+        // The same 12 tested cases become the server-side check inside a Convex
+        // function, where the decision belongs. A client-side check is advice;
+        // a server-side check is a rule.
         const AUTH_CONFIG = {
-            // MASTER SWITCH. false = legacy username/password stays in control.
+            // MASTER SWITCH. Stays false. See the Convex note above.
             enabled: false,
 
             // Staff domain is NOT guessed. Grilled.md says lapromisefund.org,
