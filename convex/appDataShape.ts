@@ -123,3 +123,78 @@ export function mergeIncoming(
   }
   return patch;
 }
+
+/**
+ * The fields a BROWSER may write on a student.
+ *
+ * An allowlist, because a denylist fails open: the day somebody adds a field,
+ * a denylist silently permits the browser to write it. Identity and enrollment
+ * are absent on purpose. Those belong to the SIS, and a teacher's browser has
+ * no business renaming a child or changing their grade level.
+ */
+export const STUDENT_WRITABLE = [
+  "pbisTickets",
+  "attendanceTickets",
+  "academicTickets",
+  "bigRaffleQualified",
+  "weeksQualified",
+  "wildcatCashBalance",
+  "wildcatCashEarned",
+  "wildcatCashSpent",
+  "wildcatCashDeducted",
+  "wildcatCashRewardsRedeemed",
+  "wildcatCashTransactions",
+  "cashBalance",
+  "cashTransactions",
+] as const;
+
+/** Same reasoning for staff. Email and role are NOT writable from a browser. */
+export const TEACHER_WRITABLE = ["name", "ticketsAwarded", "sections"] as const;
+
+function pick(source: Record<string, any>, keys: readonly string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of keys) out[key] = source?.[key];
+  return out;
+}
+
+export type PlannedPatch = { key: string; rowId: unknown; patch: Record<string, unknown> };
+export type SavePlan = { patches: PlannedPatch[]; skipped: string[] };
+
+/**
+ * Decide what a save WOULD write, without writing anything.
+ *
+ * Pulled out of the mutation so the dangerous path is unit testable. Proving
+ * the mutation refuses a hostile payload otherwise means removing its auth
+ * gate to call it, and a gate that gets commented out to test it is a gate
+ * that eventually ships commented out.
+ *
+ * `matchKeys` maps every key a row can be addressed by (legacy id and student
+ * number) to that row. An incoming record matching nothing is SKIPPED, never
+ * inserted: the SIS owns the roster, and inserting on a key miss is how a typo
+ * becomes a phantom child with a balance.
+ */
+export function planSave(
+  rows: Array<Record<string, any>>,
+  incoming: Array<Record<string, any>>,
+  writable: readonly string[],
+  keysOf: (row: Record<string, any>) => string[],
+): SavePlan {
+  const byKey = new Map<string, Record<string, any>>();
+  for (const row of rows) {
+    for (const key of keysOf(row)) if (key) byKey.set(key, row);
+  }
+
+  const patches: PlannedPatch[] = [];
+  const skipped: string[] = [];
+  for (const record of incoming ?? []) {
+    const key = String(record?.id ?? record?.studentNumber ?? "");
+    const row = key ? byKey.get(key) : undefined;
+    if (!row) {
+      if (key) skipped.push(key);
+      continue;
+    }
+    const patch = mergeIncoming(row, pick(record, writable));
+    if (Object.keys(patch).length > 0) patches.push({ key, rowId: row._id, patch });
+  }
+  return { patches, skipped };
+}

@@ -6,7 +6,7 @@
 // backfill wrote its stale view over everything. That is not hypothetical: it
 // wiped 38 staff emails on 2026-08-11. These tests reproduce that shape.
 
-import { toAppStudent, toAppTeacher, mergeIncoming } from "./appDataShape.ts";
+import { toAppStudent, toAppTeacher, mergeIncoming, planSave, STUDENT_WRITABLE } from "./appDataShape.ts";
 
 let pass = 0;
 let fail = 0;
@@ -116,6 +116,47 @@ console.log("\nThe stale tab rule, which is why this file exists");
 {
   const patch = mergeIncoming({ a: 1 }, { a: undefined, b: undefined });
   check("undefined never writes, even for a field that does not exist yet", Object.keys(patch).length === 0, JSON.stringify(patch));
+}
+
+console.log("\nWhat a save would actually write");
+const ROWS = [
+  { _id: "r1", legacyId: "s-1", studentNumber: "11095", pbisTickets: 3, wildcatCashBalance: 15000, firstName: "Ada", lastName: "L" },
+  { _id: "r2", legacyId: "s-2", studentNumber: "11096", pbisTickets: 0, wildcatCashBalance: 0, firstName: "Bob", lastName: "M" },
+];
+const keysOf = (r) => [r.legacyId, r.studentNumber];
+{
+  const plan = planSave(ROWS, [{ id: "s-1", pbisTickets: 4 }], STUDENT_WRITABLE, keysOf);
+  check("a real award produces one patch", plan.patches.length === 1, JSON.stringify(plan));
+  check("and it targets the right row", plan.patches[0].rowId === "r1");
+  check("and contains only the changed field", Object.keys(plan.patches[0].patch).join() === "pbisTickets");
+}
+{
+  // The whole point: a browser cannot invent a student.
+  const plan = planSave(ROWS, [{ id: "NOT-A-STUDENT", wildcatCashBalance: 999999 }], STUDENT_WRITABLE, keysOf);
+  check("an unknown student is NEVER inserted", plan.patches.length === 0);
+  check("and the skip is reported, not silent", plan.skipped[0] === "NOT-A-STUDENT", JSON.stringify(plan.skipped));
+}
+{
+  // A browser must not be able to rename a child or move their grade.
+  const plan = planSave(ROWS, [{ id: "s-1", firstName: "Hacked", grade: "12", studentNumber: "99999", pbisTickets: 4 }], STUDENT_WRITABLE, keysOf);
+  const written = Object.keys(plan.patches[0].patch);
+  check("identity fields are not writable from a browser", !written.includes("firstName") && !written.includes("grade"), written.join());
+  check("the student number cannot be reassigned", !written.includes("studentNumber"), written.join());
+  check("but the legitimate field still applies", written.includes("pbisTickets"));
+}
+{
+  // A student can be addressed by student number as well as legacy id.
+  const plan = planSave(ROWS, [{ id: "11096", pbisTickets: 2 }], STUDENT_WRITABLE, keysOf);
+  check("a student number resolves to the same row", plan.patches[0]?.rowId === "r2", JSON.stringify(plan));
+}
+{
+  const plan = planSave(ROWS, [{ id: "s-1", pbisTickets: 3, wildcatCashBalance: 15000 }], STUDENT_WRITABLE, keysOf);
+  check("a save that changes nothing writes nothing", plan.patches.length === 0, JSON.stringify(plan));
+}
+{
+  // The 2026-08-11 incident, at save scope.
+  const plan = planSave(ROWS, [{ id: "s-1", wildcatCashBalance: null }, { id: "s-2", wildcatCashBalance: "" }], STUDENT_WRITABLE, keysOf);
+  check("a stale tab cannot null a balance", plan.patches.length === 0, JSON.stringify(plan));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

@@ -9,6 +9,8 @@
  */
 
 import type * as accessRules from "../accessRules.js";
+import type * as appData from "../appData.js";
+import type * as appDataShape from "../appDataShape.js";
 import type * as authEvents from "../authEvents.js";
 import type * as crons from "../crons.js";
 import type * as identity from "../identity.js";
@@ -16,6 +18,7 @@ import type * as identityRules from "../identityRules.js";
 import type * as me from "../me.js";
 import type * as migrate from "../migrate.js";
 import type * as mirror from "../mirror.js";
+import type * as psBehavior from "../psBehavior.js";
 import type * as psSync from "../psSync.js";
 import type * as restrictedPolicy from "../restrictedPolicy.js";
 import type * as seed from "../seed.js";
@@ -37,6 +40,8 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   accessRules: typeof accessRules;
+  appData: typeof appData;
+  appDataShape: typeof appDataShape;
   authEvents: typeof authEvents;
   crons: typeof crons;
   identity: typeof identity;
@@ -44,6 +49,7 @@ declare const fullApi: ApiFromModules<{
   me: typeof me;
   migrate: typeof migrate;
   mirror: typeof mirror;
+  psBehavior: typeof psBehavior;
   psSync: typeof psSync;
   restrictedPolicy: typeof restrictedPolicy;
   seed: typeof seed;
