@@ -1,11 +1,13 @@
-// MSAL leaves an "interaction in progress" flag in storage while a popup is
-// open, and refuses to start another while it is set. A popup that dies before
-// completing (an AADSTS error, or the user closing the window) never clears it,
-// so every later attempt fails with interaction_in_progress and the user is
-// locked out by a flag rather than by anything real.
+// MSAL sets an "interaction in progress" flag in storage while a sign-in is
+// running and refuses to start another while it is set. A sign-in that dies
+// before completing never clears it, so every later attempt fails with
+// interaction_in_progress and the user is locked out by a leftover flag rather
+// than by anything real.
 //
-// This happened for real: an AADSTS50011 redirect-URI failure left the lock set,
-// and the next click could not open a popup at all.
+// This happened for real, in the popup flow: an AADSTS50011 failure left the
+// lock set and the next click could not start at all. The flow is now redirect
+// based, but the lock and the failure mode are the same, so the recovery still
+// matters and is still tested.
 import fs from "node:fs";
 
 const src = fs.readFileSync(new URL("./wildcat-auth.js", import.meta.url), "utf8");
@@ -29,7 +31,7 @@ const ss = mkStore({
 });
 const ls = mkStore({ "msal.old-client.interaction.status": "interaction_in_progress" });
 
-let popupCalls = 0;
+let signInCalls = 0;
 globalThis.window = {
   location: { origin: "https://wildcatraffle.com" },
   addEventListener() {}, dispatchEvent() {},
@@ -38,14 +40,14 @@ globalThis.window = {
     PublicClientApplication: class {
       async initialize() {}
       async handleRedirectPromise() { return null; }
-      async loginPopup() {
-        popupCalls++;
-        if (popupCalls === 1) {
+      async loginRedirect() {
+        signInCalls++;
+        if (signInCalls === 1) {
           const e = new Error("interaction_in_progress");
           e.errorCode = "interaction_in_progress";
           throw e;
         }
-        return { idToken: "TOKEN" };
+        return undefined;   // a real redirect navigates away and returns nothing
       }
       getAllAccounts() { return []; }
     },
@@ -68,9 +70,13 @@ let pass = 0, fail = 0;
 const check = (l, c) => { c ? (pass++, console.log(`  PASS  ${l}`)) : (fail++, console.log(`  FAIL  ${l}`)); };
 
 console.log("\nRecovery from a stale interaction lock");
-const me = await window.WildcatAuth.signInStaff();
-check("recovers and completes the sign-in", me && me.kind === "staff");
-check("retries exactly once, never loops", popupCalls === 2);
+// signInStaff never resolves in redirect flow: the browser leaves the page.
+// Race it against a tick so the test can assert on what happened before that.
+await Promise.race([
+  window.WildcatAuth.signInStaff(),
+  new Promise((r) => setTimeout(r, 50)),
+]);
+check("retries exactly once, never loops", signInCalls === 2);
 check("clears the stale sessionStorage lock", !("msal.0f22dd11.interaction.status" in ss._m));
 check("clears the stale localStorage lock", !("msal.old-client.interaction.status" in ls._m));
 check("leaves other msal keys alone (tokens survive)", ss._m["msal.0f22dd11.some.token"] === "KEEP-ME");
