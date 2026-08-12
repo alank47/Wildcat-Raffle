@@ -277,6 +277,12 @@ export default defineSchema({
     at: v.string(),
   }).index("by_email", ["email"]),
 
+  /** One row per sync run: rows in, rows changed, duration, errors. */
+  syncRuns: defineTable({
+    at: v.string(),
+    summary: v.any(),
+  }).index("by_at", ["at"]),
+
   /** App settings and cycle state: the scalar and map fields of raffle_data/main. */
   appState: defineTable({
     key: v.string(),
