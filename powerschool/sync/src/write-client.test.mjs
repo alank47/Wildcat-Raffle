@@ -224,12 +224,13 @@ console.log("\n1. The real plugin grant blocks every write, read not attempted")
 {
   const grants = loadAccessRequest();
   check("plugin.xml parses", grants.counts.total > 0, `${grants.counts.total}`);
-  // The working tree carries 1.1.0, which adds Log and Gen at ViewOnly. It is
+  // The working tree carries 1.1.1, which adds Log and Gen at ViewOnly and
+  // removes the two STUDENTS email columns PowerSchool rejected. It is
   // NOT installed on the instance yet: that needs an administrator. The version
   // pin below is what keeps those two facts from being confused.
-  check("plugin version is 1.1.0", grants.pluginVersion === "1.1.0", String(grants.pluginVersion));
-  check("123 fields declared", grants.counts.total === 123, String(grants.counts.total));
-  check("every one of them is ViewOnly", grants.counts.viewOnly === 123, String(grants.counts.viewOnly));
+  check("plugin version is 1.1.1", grants.pluginVersion === "1.1.1", String(grants.pluginVersion));
+  check("121 fields declared", grants.counts.total === 121, String(grants.counts.total));
+  check("every one of them is ViewOnly", grants.counts.viewOnly === 121, String(grants.counts.viewOnly));
   check("ZERO FullAccess grants exist", grants.counts.fullAccess === 0, String(grants.counts.fullAccess));
   check("18 tables declared", grants.counts.tables === 18, String(grants.counts.tables));
 
@@ -1226,8 +1227,8 @@ console.log("\n24. REGRESSION: the grant check cannot be answered with a file of
   // new zip. Until they do, the working tree is not evidence of what PowerSchool
   // granted, and the client refuses on exactly that basis.
   //
-  // AFTER the administrator installs 1.1.0: set INSTALLED_PLUGIN_VERSION to
-  // "1.1.0" in write-client.ts and flip these two assertions back to expecting
+  // AFTER the administrator installs 1.1.1: set INSTALLED_PLUGIN_VERSION to
+  // "1.1.1" in write-client.ts and flip these two assertions back to expecting
   // no problems. Do not do it before, and do not do it to make a test pass.
   check(
     "the pin fires, because 1.1.0 is not installed on the instance yet",
@@ -1235,7 +1236,7 @@ console.log("\n24. REGRESSION: the grant check cannot be answered with a file of
     grantSourceProblems(installedGrant()).join(" | "),
   );
   check("the recorded installed version is still 1.0.6", INSTALLED_PLUGIN_VERSION === "1.0.6", INSTALLED_PLUGIN_VERSION);
-  check("the working tree has moved ahead of it", installedGrant().pluginVersion === "1.1.0", String(installedGrant().pluginVersion));
+  check("the working tree has moved ahead of it", installedGrant().pluginVersion === "1.1.1", String(installedGrant().pluginVersion));
 
   // And the loopback carve-out is genuinely narrow: an override is honoured
   // only for a target that cannot be a PowerSchool instance.

@@ -1,6 +1,31 @@
-# Administrator request: Wildcat Hub Sync 1.1.0
+# Administrator request: Wildcat Hub Sync 1.1.1
 
-Prepared 2026-08-12. Read only. No write access anywhere in this request.
+> **URGENT, and this supersedes 1.1.0.** The 1.1.0 upload failed validation and
+> **the plugin is currently not enabled, so the sync is down.** The OAuth client
+> returns `401 invalid_client` and the twice daily sync is failing silently.
+> Installing 1.1.1 restores it. Nothing a user sees is broken: the dashboard
+> reads Convex, so roster data is simply frozen at its last good sync.
+>
+> **What went wrong.** 1.1.0 requested two columns that do not exist on this
+> instance:
+>
+> ```
+> STUDENTS  STUDENT_EMAIL   Invalid Column
+> STUDENTS  EMAIL           Invalid Column
+> PowerQuery ...roster refers to non-existent core table column STUDENT_EMAIL
+> ```
+>
+> Requesting a column that does not exist does not fail softly. PowerSchool
+> refuses to enable the plugin at all. Both lines are removed in 1.1.1, along
+> with the roster query's reference to them. The build now refuses to package
+> either one ever again.
+>
+> Student email is real, it just is not on the STUDENTS table. It lives at
+> Student Profile > Email. Sourcing it properly is tracked in
+> `docs/student-email-sourcing.md` and is NOT part of this request.
+
+Prepared 2026-08-12, revised the same day after the 1.1.0 upload was rejected.
+Read only. No write access anywhere in this request.
 
 This is Path 1 from `docs/gauntlet-report.md` section 4. Write access is a
 separate, later, riskier ask that is **not ready** and is not being made here.
@@ -9,22 +34,23 @@ separate, later, riskier ask that is **not ready** and is not being made here.
 
 ## The ask, in one paragraph
 
-Wildcat Hub Sync (plugin id **9741**) is installed and running at version 1.0.6.
-Version 1.1.0 adds **16 read only fields** so the dashboard can see the behavior
+Wildcat Hub Sync (plugin id **9741**) is installed at version 1.0.6 and is
+currently **not enabled**, because the 1.1.0 upload was rejected.
+Version 1.1.1 adds **16 read only fields** so the dashboard can see the behavior
 record the SIS already holds, and fixes a defect in the existing roster query
 that is currently hiding about a third of the school's enrollments. Upgrading
 takes five to ten minutes and needs an administrator, because PowerSchool
 requires a human to approve any change to a plugin's access request.
 
-**File to install:** `powerschool/out/wildcat-hub-sync-1.1.0.zip`
+**File to install:** `powerschool/out/wildcat-hub-sync-1.1.1.zip`
 
 ---
 
 ## What changes
 
-| | 1.0.6, installed now | 1.1.0 |
+| | 1.0.6, installed now | 1.1.1 |
 |---|---|---|
-| Field lines | 107 | **123** |
+| Field lines | 107 | **121** |
 | Access level | all ViewOnly | **all ViewOnly, zero FullAccess** |
 | PowerQueries | 7 | **13** |
 | Tables | 16 | **18** (adds `Log`, `Gen`) |
@@ -49,7 +75,7 @@ teacher a number instead of "Defiance" or "Positive Referral".
 - **`Log.Subject`**, the title. Same reasoning, weaker but still true.
 - **32 of the 34 `Discipline_` columns.** Only the two above inform a teacher
   facing view. The rest are state reporting.
-- **Any write access at all.** Every one of the 123 lines is `ViewOnly`.
+- **Any write access at all.** Every one of the 121 lines is `ViewOnly`.
 
 ---
 
@@ -87,7 +113,7 @@ PowerSchool names the field and the resource. The unfiltered count is readable
 because it touches no column; the moment a column is referenced, the access
 request decides. `SchoolID` and `Entry_Date` answer 403 the same way.
 
-So the 16 field lines below are the minimum that unblocks this, and there is no
+So the 16 behavior field lines below are the minimum that unblocks this, and there is no
 route to the same data that skips the approval.
 
 ---
@@ -127,7 +153,7 @@ The existing `roster` and `grades` queries join courses on
 carry `SCHOOLID` 0**, so that equality silently discards every enrollment
 pointing at them.
 
-| Measure | Currently installed | After 1.1.0 |
+| Measure | Currently installed | After 1.1.1 |
 |---|---:|---:|
 | Live enrollment rows | 3,805 | **5,767** |
 | Sections visible, of 231 | 146 | **231** |
@@ -144,9 +170,9 @@ Sign in to `lapf.powerschool.com` as an administrator.
 
 1. **System > System Settings > Plugin Management Configuration.**
 2. Find **Wildcat Hub Sync**. **Untick Enable.** The sync stops here.
-3. **Install**, choose `wildcat-hub-sync-1.1.0.zip`, then **Import**.
+3. **Install**, choose `wildcat-hub-sync-1.1.1.zip`, then **Import**.
    This is an upgrade over the existing plugin, not a fresh install.
-4. On the access request screen, confirm it reads **123 lines, all view only,
+4. On the access request screen, confirm it reads **121 lines, all view only,
    zero full access**. **If any line says full access, stop and tell us.**
 5. **Approve** the access request.
 6. Back on the plugin list, **tick Enable.**
@@ -192,7 +218,7 @@ npm run queries -- behavior_log     # one redacted sample, expect rows
 npm run sync -- --dry               # expect roster near 5767, not 3805
 ```
 
-Then a real sync: `npx convex run sisAction:syncFromPowerSchool '{"reason":"post 1.1.0"}'`.
+Then a real sync: `npx convex run sisAction:syncFromPowerSchool '{"reason":"post 1.1.1"}'`.
 
 **Expect the enrollment count to jump from 3,805 to about 5,767.** That is the
 roster fix landing, not a bug. Any Convex side check comparing against 3,805
@@ -224,10 +250,10 @@ This request does not resolve any of the following, and none of them blocks it:
 
 | Claim | How it was checked |
 |---|---|
-| 123 fields, all ViewOnly | `grep -c '<field ' plugin.xml`, and the access level counts |
+| 121 fields, all ViewOnly | `grep -c '<field ' plugin.xml`, and the access level counts |
 | No write access anywhere | `build-plugin.mjs` refuses to package a non ViewOnly access level |
 | XML is well formed | `xmllint --noout` on plugin.xml and both query files |
-| Queries agree with the grant | `npm run validate:queries`, 13 queries checked against 123 granted fields |
+| Queries agree with the grant | `npm run validate:queries`, 13 queries checked against 121 granted fields, plus 3 columns this instance has already rejected |
 | Zip layout is correct | `plugin.xml` at the archive root, verified by the build |
 | Expansion queries excluded | Named in the build output |
 

@@ -60,8 +60,6 @@
       <column column="STUDENTS.GRADE_LEVEL">grade_level</column>
       <column column="STUDENTS.GENDER">gender</column>
       <column column="STUDENTS.ENROLL_STATUS">enroll_status</column>
-      <!-- Manifest field 19. Key for Google Workspace student sign in. -->
-      <column column="STUDENTS.STUDENT_EMAIL">student_email</column>
       <column column="SECTIONS.ID">section_id</column>
       <column column="SECTIONS.DCID">section_dcid</column>
       <column column="SECTIONS.SECTION_NUMBER">section_number</column>
@@ -90,11 +88,6 @@
           S.GRADE_LEVEL           AS grade_level,
           S.GENDER                AS gender,
           S.ENROLL_STATUS         AS enroll_status,
-          -- Manifest field 19. Key linking a Google Workspace account on
-          -- westbrookacademy.org to this record. STUDENT_EMAIL is the common
-          -- spelling; if this install uses S.EMAIL or a u_ extension table
-          -- instead, `npm run probe` reports it and this line changes.
-          S.STUDENT_EMAIL         AS student_email,
           SEC.ID                  AS section_id,
           SEC.DCID                AS section_dcid,
           SEC.SECTION_NUMBER      AS section_number,

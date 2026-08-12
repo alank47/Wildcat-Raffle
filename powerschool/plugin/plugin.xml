@@ -19,7 +19,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://plugin.powerschool.pearson.com plugin.xsd"
         name="Wildcat Hub Sync"
-        version="1.1.0"
+        version="1.1.1"
         description="Read only student and staff data sync for the Wildcat Hub teacher and admin dashboard at Westbrook Academy.">
 
   <publisher name="LA Promise Fund">
@@ -48,13 +48,24 @@
       <field table="Students" field="Enroll_Status"       access="ViewOnly"/>
       <field table="Students" field="EntryDate"           access="ViewOnly"/>
       <field table="Students" field="ExitDate"            access="ViewOnly"/>
-      <!-- Manifest field 19, Student Email. Added 2026-08-11. This is the key
-           that links a student's Google Workspace account on westbrookacademy.org
-           to their record; without it a signed in student cannot be matched to
-           any data. The column name is install specific, so both spellings are
-           requested and the harness probes them in order. Still ViewOnly. -->
-      <field table="Students" field="Student_Email"       access="ViewOnly"/>
-      <field table="Students" field="Email"               access="ViewOnly"/>
+      <!-- MANIFEST 19, Student Email. REMOVED 2026-08-12, and this is the
+           reason, so nobody adds it back on the same hunch.
+
+           Both spellings were requested on the theory that the column name is
+           install specific. PowerSchool rejected BOTH at upload:
+
+             STUDENTS  EMAIL          Invalid Column
+             STUDENTS  STUDENT_EMAIL  Invalid Column
+
+           and refused to enable the plugin at all. That is not a permission
+           failure, it is PowerSchool saying the columns do not exist on the
+           core table. Requesting a column that does not exist does not fail
+           softly: it blocks the whole plugin, which took the sync down.
+
+           Student email is real and lives in the UI at Student Profile > Email.
+           That tab is backed by the PERSON email tables, not by a column on
+           STUDENTS. Sourcing it is tracked separately; do not guess another
+           STUDENTS column name here. See docs/student-email-sourcing.md. -->
 
       <!-- ================================================================
            MANIFEST 4, 5, 6: course, section, period, teacher assignment

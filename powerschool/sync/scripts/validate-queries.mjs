@@ -39,9 +39,75 @@ const PLUGIN_DIR = resolve(HERE, "..", "..", "plugin");
 const QUERIES_DIR = resolve(PLUGIN_DIR, "queries_root");
 const PLUGIN_XML = resolve(PLUGIN_DIR, "plugin.xml");
 
+/**
+ * Columns and tables PowerSchool has explicitly rejected on THIS instance.
+ *
+ * This list is not a guess and must only ever grow from real upload output.
+ * The failure it prevents is the worst one available here: PowerSchool refuses
+ * to enable a plugin that requests a column which does not exist, so a single
+ * bad line does not degrade one query, it takes the whole plugin down. When
+ * that happens the OAuth client stops authenticating, the twice daily sync
+ * fails, and the failure is silent because syncFromPowerSchool only records a
+ * run on success.
+ *
+ * Granted and existing are different questions. Everything else in this file
+ * checks that a query's columns are GRANTED in plugin.xml. Nothing in the repo
+ * can check that a column EXISTS, because only the instance knows. So the
+ * instance's own answers get written down here as they arrive.
+ */
+const KNOWN_INVALID = [
+  {
+    ref: "students.student_email",
+    when: "1.1.0 upload, 2026-08-12",
+    said: "STUDENTS STUDENT_EMAIL: Invalid Column, and the plugin could not be enabled",
+    instead: "Student email lives at Student Profile > Email, backed by the PERSON email tables. See docs/student-email-sourcing.md.",
+  },
+  {
+    ref: "students.email",
+    when: "1.1.0 upload, 2026-08-12",
+    said: "STUDENTS EMAIL: Invalid Column, and the plugin could not be enabled",
+    instead: "Same as above. Do not guess a third spelling on the core table.",
+  },
+  {
+    ref: "sectionmeeting.*",
+    when: "1.0.0 upload",
+    said: "SECTIONMEETING is not a valid table in this instance",
+    instead: "Period comes from SECTIONS.EXPRESSION and CC.EXPRESSION.",
+  },
+];
+
 const problems = [];
 const notes = [];
 let queriesChecked = 0;
+
+/** Refuse anything the instance has already said does not exist. */
+function checkKnownInvalid(pluginXml, files) {
+  for (const bad of KNOWN_INVALID) {
+    const [table, field] = bad.ref.split(".");
+    const detail = `PowerSchool rejected this on ${bad.when}: "${bad.said}". ${bad.instead}`;
+
+    const fieldPattern =
+      field === "*"
+        ? new RegExp(`<field\\s+table="${table}"`, "i")
+        : new RegExp(`<field\\s+table="${table}"\\s+field="${field}"`, "i");
+    if (fieldPattern.test(pluginXml)) {
+      problems.push(
+        `plugin.xml requests ${bad.ref}, which does not exist on this instance. ${detail}`,
+      );
+    }
+
+    for (const file of files) {
+      const xml = readFileSync(file, "utf8");
+      const colPattern =
+        field === "*"
+          ? new RegExp(`column="${table}\\.`, "i")
+          : new RegExp(`column="${table}\\.${field}"`, "i");
+      if (colPattern.test(xml)) {
+        problems.push(`${basename(file)} references ${bad.ref}, which does not exist. ${detail}`);
+      }
+    }
+  }
+}
 
 /** Fields plugin.xml grants, lowercased as "table.field". */
 function grantedFields(xml) {
@@ -196,7 +262,8 @@ if (!existsSync(PLUGIN_XML)) {
   console.error(`FAILED: plugin.xml not found at ${PLUGIN_XML}`);
   process.exit(1);
 }
-const granted = grantedFields(readFileSync(PLUGIN_XML, "utf8"));
+const pluginXml = readFileSync(PLUGIN_XML, "utf8");
+const granted = grantedFields(pluginXml);
 
 const files = existsSync(QUERIES_DIR)
   ? readdirSync(QUERIES_DIR)
@@ -205,10 +272,12 @@ const files = existsSync(QUERIES_DIR)
       .map((n) => resolve(QUERIES_DIR, n))
   : [];
 
+checkKnownInvalid(pluginXml, files);
 for (const file of files) checkFile(file, granted);
 
 console.log(
-  `Checked ${queriesChecked} queries across ${files.length} file(s) against ${granted.size} granted fields.`,
+  `Checked ${queriesChecked} queries across ${files.length} file(s) against ${granted.size} granted fields,\n` +
+    `plus ${KNOWN_INVALID.length} column(s) this instance has already rejected.`,
 );
 for (const note of notes) console.log(`  note: ${note}`);
 
