@@ -144,26 +144,80 @@
       auth: {
         clientId: CONFIG.entra.clientId,
         authority: `https://login.microsoftonline.com/${CONFIG.entra.tenantId}`,
-        // A dedicated near-empty page, NOT the app itself. Microsoft returns
-        // the auth code in this page's fragment and the parent window polls
-        // the popup to read it. Pointing this at the app made the popup load
-        // index.html plus ~1MB of script.js, render the login screen again
-        // inside the popup, and time the parent out before the fragment could
-        // be read. See auth-redirect.html.
-        redirectUri: window.location.origin + '/auth-redirect.html',
+        // REDIRECT flow, so this is the app itself: the browser comes back
+        // here with the code and the app processes it on load.
+        //
+        // The popup flow was tried first and abandoned. It depends on the
+        // opener polling the popup's URL for the fragment, which failed in
+        // ways that were slow to diagnose (timed_out, then block_nested_popups
+        // from cached HTML). Redirect has no cross-window handshake to go
+        // wrong, and popups are blocked by default on mobile Safari anyway,
+        // which matters for Chromebooks and phones.
+        redirectUri: window.location.origin + '/',
       },
       cache: { cacheLocation: 'sessionStorage' },
     });
     if (msalApp.initialize) await msalApp.initialize();
 
-    // Resolves and clears any interaction MSAL thinks is still outstanding.
-    // Without this, a popup that closed without finishing (an AADSTS error, or
-    // the user closing the window) leaves MSAL believing a sign-in is still
-    // running, and every later attempt fails with interaction_in_progress.
+    // This is the return leg of the redirect flow: it parses the code out of
+    // the URL and exchanges it for tokens. It also clears any interaction MSAL
+    // still believes is outstanding, so a sign-in abandoned halfway does not
+    // block the next attempt with interaction_in_progress.
     if (msalApp.handleRedirectPromise) {
-      await msalApp.handleRedirectPromise().catch(() => {});
+      redirectResult = await msalApp.handleRedirectPromise().catch(function (err) {
+        console.error('[wildcat-auth] redirect handling failed:', err);
+        return null;
+      });
     }
     return msalApp;
+  }
+
+  let redirectResult = null;
+
+  /**
+   * Runs on page load. If we came back from Microsoft carrying a code, finish
+   * the sign-in; otherwise do nothing at all.
+   *
+   * Guarded on the fragment so a normal visit never pays for loading MSAL:
+   * every teacher who signs in with a password, and every student, would
+   * otherwise download ~270KB of SDK for nothing.
+   */
+  async function completeRedirectSignIn() {
+    const hash = String(window.location.hash || '');
+    if (!/[#&](code|error|id_token|access_token)=/.test(hash)) return;
+    if (!configured.entra()) return;
+
+    const errorEl = document.getElementById('entraSignInError');
+    try {
+      await entraClient();                      // processes the response
+      if (!redirectResult || !redirectResult.idToken) return;
+
+      const me = await finishSignIn(redirectResult.idToken, 'staff');
+
+      const target = (me.email || '').trim().toLowerCase();
+      const teacher =
+        typeof teachers !== 'undefined' &&
+        teachers.find(function (t) {
+          return (t.email || '').trim().toLowerCase() === target;
+        });
+
+      if (!teacher) {
+        throw new Error(
+          `Signed in as ${target}, but no local staff record carries that ` +
+          `email address. An admin needs to add it to your profile.`,
+        );
+      }
+      await establishTeacherSession(teacher);
+    } catch (err) {
+      if (errorEl) errorEl.textContent = String((err && err.message) || err);
+      console.error('[wildcat-auth] redirect sign-in failed:', err);
+    } finally {
+      // Strip the fragment either way, so a refresh does not replay a consumed
+      // code and so the address bar is not left holding an auth artifact.
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+      }
+    }
   }
 
   /**
@@ -196,20 +250,17 @@
       prompt: 'select_account',
     };
 
-    let result;
+    // Navigates away. Nothing after this runs; the browser leaves the page and
+    // comes back to redirectUri, where completeRedirectSignIn() picks it up.
     try {
-      result = await app.loginPopup(request);
+      await app.loginRedirect(request);
     } catch (err) {
       const code = (err && (err.errorCode || err.message)) || '';
       if (!/interaction_in_progress/i.test(String(code))) throw err;
-      // Retried exactly once. A second failure is a real problem, not a stale
-      // flag, and looping would hide it behind an endless spinner.
       clearStaleInteractionLock();
-      result = await app.loginPopup(request);
+      await app.loginRedirect(request);
     }
-
-    if (!result || !result.idToken) throw new Error('Entra returned no ID token.');
-    return finishSignIn(result.idToken, 'staff');
+    return new Promise(() => {});   // never resolves; the navigation takes over
   }
 
   // ---------------------------------------------------------------------
@@ -404,10 +455,22 @@
     });
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', wireStudentButtonLazily);
-  } else {
+  function onReady() {
     wireStudentButtonLazily();
+    // script.js defines establishTeacherSession and the teachers array, and it
+    // loads AFTER this file. Defer to the end of the task queue so both exist
+    // by the time the redirect is processed.
+    setTimeout(function () {
+      completeRedirectSignIn().catch(function (err) {
+        console.error('[wildcat-auth] redirect completion error:', err);
+      });
+    }, 0);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', onReady);
+  } else {
+    onReady();
   }
 
   window.WildcatAuth = {
