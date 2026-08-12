@@ -1,0 +1,18 @@
+{
+  "name": "wildcat-hub-convex",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Convex backend for Wildcat Hub. The static site in the repo root stays build-free and reaches this over the HTTP API.",
+  "scripts": {
+    "dev": "convex dev",
+    "deploy": "convex deploy",
+    "typecheck": "tsc --noEmit -p convex",
+    "test": "node convex/identityRules.test.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "convex": "^1.43.0",
+    "typescript": "^5.6.0"
+  }
+}
