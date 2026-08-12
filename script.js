@@ -34,7 +34,7 @@
         // buster bump, because the fallback path is still fully present.
         // ---------------------------------------------------------------
         const DATA_SOURCE = 'convex';    // 'convex' | 'firestore'
-        const DATA_WRITE = 'firestore';  // 'firestore' | 'both' | 'convex'
+        const DATA_WRITE = 'both';       // 'firestore' | 'both' | 'convex'
 
         /**
          * Students and staff from Convex, in the shape this file already uses.
@@ -3147,8 +3147,59 @@
                             sections: sectionsToSave[s.id] || []
                         }));
                         teachers = mainTransactionResult.teachersToSave;
-                        
+
                         console.log(`✅ Main document saved (transaction)`);
+
+                        // ---- Convex cutover, stage 2: dual write --------------
+                        //
+                        // Runs AFTER the Firestore transaction has already
+                        // committed, never instead of it and never before. While
+                        // DATA_WRITE is 'both', Firestore stays the system of
+                        // record and this is a shadow copy being proven correct
+                        // against it with `npm run drift`.
+                        //
+                        // A failure here is logged and swallowed on purpose. The
+                        // teacher's award is already saved; turning a shadow write
+                        // failure into a visible error would train people to
+                        // distrust a save that actually worked.
+                        //
+                        // What Convex accepts is narrower than what is sent:
+                        // appData:save allowlists the earned-value fields, ignores
+                        // identity and enrollment, and refuses to create a student
+                        // it has never seen. So sending the whole array is safe,
+                        // and the server decides what of it counts.
+                        if (DATA_WRITE === 'both' || DATA_WRITE === 'convex') {
+                            try {
+                                const auth = window.WildcatAuth;
+                                const session = auth && auth.getSession();
+                                if (!session) throw new Error('Not signed in to Convex.');
+                                const result = await auth.convexMutation('appData:save', {
+                                    students: mainTransactionResult.studentsToSave,
+                                    teachers: mainTransactionResult.teachersToSave,
+                                    settings: {
+                                        currentWeek, cycleDuration, pbisSubcategories,
+                                        academicSubcategories, lastPowerSchoolSync,
+                                        // emailJSConfig holds only a publicKey, which
+                                        // ships in the browser by design. Included for
+                                        // fidelity; it is not a credential.
+                                        kickboardSettings, emailJSConfig, passSettings, schoolBranding,
+                                        referralIdCounter, autoWeekEnabled,
+                                        lastAutoResetDate, lastWeekResetTime,
+                                        weekResetDay, weekResetHour, currentCycle,
+                                        cycleHistory, cycleStartTimestamp,
+                                    },
+                                }, session.idToken);
+                                console.log(
+                                    `✅ Convex: ${result.studentsChanged} student(s), ` +
+                                    `${result.teachersChanged} staff changed` +
+                                    (result.skippedUnknownStudents
+                                        ? `, ${result.skippedUnknownStudents} unknown skipped`
+                                        : ''),
+                                );
+                            } catch (err) {
+                                console.error('[save] Convex shadow write failed:', err.message);
+                            }
+                        }
                         
                         // Referrals are written EARLY and in their own try block.
                         // They used to be written last, after seven other documents,

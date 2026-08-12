@@ -79,6 +79,25 @@ console.log("\nloadRosterFromConvex refuses to fake success");
   check("it passes the id token", /session\.idToken/.test(fn));
 }
 
+console.log("\nThe shadow write cannot break a save that already worked");
+{
+  const at = script.indexOf("DATA_WRITE === 'both'");
+  const branch = script.slice(at, at + 2200);
+  check("the Convex write is guarded by try", /try\s*\{/.test(branch));
+  check(
+    "and its catch does not rethrow",
+    !/catch\s*\([^)]*\)\s*\{[^}]*\bthrow\b/.test(branch),
+    "the Firestore transaction has already committed; a shadow failure must not surface as a failed save",
+  );
+  check("the failure is still logged", /console\.error/.test(branch));
+  // Ordering matters: writing to Convex BEFORE the transaction commits would
+  // record an award that Firestore then rejected.
+  check(
+    "it runs after the transaction, not before",
+    script.indexOf("Main document saved (transaction)") < at,
+  );
+}
+
 console.log("\nCache busters");
 {
   const tags = [...html.matchAll(/(script|wildcat-auth)\.js\?v=([\w-]+)/g)].map((m) => m[2]);
