@@ -3005,9 +3005,26 @@
                                             return firebaseTeacher;
                                         }
                                         
+                                        // Local wins field by field, EXCEPT that an
+                                        // empty local value must never erase a real
+                                        // remote one. A tab loaded before a field was
+                                        // populated still holds "" for it, and the
+                                        // spread below would push that blank over the
+                                        // top. That is how 38 staff email addresses
+                                        // were wiped minutes after being written:
+                                        // absence in a stale tab is not a value.
+                                        const keepIfLocalBlank = ['email', 'name', 'username', 'role'];
+                                        const preserved = {};
+                                        keepIfLocalBlank.forEach(k => {
+                                            const localVal = (localTeacher[k] ?? '').toString().trim();
+                                            const remoteVal = (firebaseTeacher[k] ?? '').toString().trim();
+                                            if (!localVal && remoteVal) preserved[k] = firebaseTeacher[k];
+                                        });
+
                                         return {
                                             ...firebaseTeacher,
                                             ...localTeacher,
+                                            ...preserved,
                                             ticketsAwarded: Math.max(localTeacher.ticketsAwarded || 0, firebaseTeacher.ticketsAwarded || 0)
                                         };
                                     });
