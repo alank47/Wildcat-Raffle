@@ -45,10 +45,36 @@ export default defineSchema({
       v.union(v.literal("middleschool"), v.literal("highschool")),
     ),
     email: v.optional(v.string()), // normalized. The Google join key.
+
+    // ------------------------------------------------------------------
+    // EARNED VALUE. Everything below was earned by a child and must never
+    // be recomputed, defaulted, or dropped by a roster sync. PowerSchool
+    // knows nothing about any of it, so a sync has no business writing it.
+    //
+    // An earlier version of this schema carried only the first four and
+    // would have silently discarded the nine below on migration, including
+    // wildcatCashBalance, which is spendable. If a new earned field appears
+    // in the app, it belongs here AND in EARNED_FIELDS in sisSync.ts.
+    // ------------------------------------------------------------------
     pbisTickets: v.number(),
     attendanceTickets: v.number(),
     academicTickets: v.number(),
     bigRaffleQualified: v.array(v.string()),
+    weeksQualified: v.optional(v.number()),
+
+    wildcatCashBalance: v.optional(v.number()),
+    wildcatCashEarned: v.optional(v.number()),
+    wildcatCashSpent: v.optional(v.number()),
+    wildcatCashDeducted: v.optional(v.number()),
+    wildcatCashRewardsRedeemed: v.optional(v.number()),
+    wildcatCashTransactions: v.optional(v.array(v.any())),
+    cashBalance: v.optional(v.number()),
+    cashTransactions: v.optional(v.array(v.any())),
+
+    // Set when a student stops appearing in the SIS roster. They are never
+    // deleted: a transferred student still has a balance, and a roster gap
+    // is not proof a person ceased to exist.
+    archivedAt: v.optional(v.string()),
   })
     .index("by_email", ["email"])
     .index("by_studentNumber", ["studentNumber"]),

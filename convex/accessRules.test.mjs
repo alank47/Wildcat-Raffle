@@ -1,0 +1,59 @@
+// Who can drill into which student.
+//
+// Grilled.md: teachers see their OWN roster only; admins see wider scope.
+// Getting this wrong means a teacher can pull up any child in the school,
+// which in a system holding SIS data is the failure that matters most.
+import { canViewStudent } from "./accessRules.ts";
+
+let pass = 0, fail = 0;
+const check = (l, c, d = "") => {
+  if (c) { pass++; console.log(`  PASS  ${l}`); }
+  else { fail++; console.log(`  FAIL  ${l}${d ? `  (${d})` : ""}`); }
+};
+
+const TEACHER = { email: "sarahr@lapromisefund.org", role: "teacher" };
+const OTHER   = { email: "sergior@lapromisefund.org", role: "teacher" };
+const AIDE    = { email: "leoc@lapromisefund.org", role: "campusaide" };
+const ADMIN   = { email: "leahr@lapromisefund.org", role: "admin" };
+const SUPER   = { email: "alank@lapromisefund.org", role: "superadmin" };
+
+const ON_SARAHS_ROSTER = [
+  { teacherEmail: "sarahr@lapromisefund.org" },
+  { teacherEmail: "amberc@lapromisefund.org" },
+];
+const NOT_HERS = [{ teacherEmail: "amberc@lapromisefund.org" }];
+
+console.log("\nTeachers: own roster only");
+check("teacher CAN view a student they teach", canViewStudent(TEACHER, ON_SARAHS_ROSTER).allowed === true);
+check("scope is reported as own-roster", canViewStudent(TEACHER, ON_SARAHS_ROSTER).scope === "own-roster");
+check("teacher CANNOT view a student they do not teach", canViewStudent(OTHER, NOT_HERS).allowed === false);
+check("teacher CANNOT view a student with no roster rows at all", canViewStudent(TEACHER, []).allowed === false);
+check("a campus aide is not implicitly an admin", canViewStudent(AIDE, NOT_HERS).allowed === false);
+
+console.log("\nAdmins: wider scope");
+check("admin can view a student they do not teach", canViewStudent(ADMIN, NOT_HERS).allowed === true);
+check("superadmin likewise", canViewStudent(SUPER, NOT_HERS).allowed === true);
+check("admin scope is labelled", canViewStudent(ADMIN, NOT_HERS).scope === "admin");
+
+console.log("\nMatching is normalized, and cannot be spoofed");
+check("directory casing still matches (the Entra bug)",
+  canViewStudent({ email: "SarahR@LaPromiseFund.org", role: "teacher" }, ON_SARAHS_ROSTER).allowed === true);
+check("whitespace still matches",
+  canViewStudent({ email: "  sarahr@lapromisefund.org  ", role: "teacher" }, ON_SARAHS_ROSTER).allowed === true);
+check("roster-side casing also normalized",
+  canViewStudent(TEACHER, [{ teacherEmail: "SARAHR@LAPROMISEFUND.ORG" }]).allowed === true);
+check("an empty identity is refused", canViewStudent({ email: "", role: "admin" }, []).allowed === false);
+check("a substring of a real address does not match",
+  canViewStudent({ email: "arahr@lapromisefund.org", role: "teacher" }, ON_SARAHS_ROSTER).allowed === false);
+check("an unknown role gets no privileges",
+  canViewStudent({ email: "x@lapromisefund.org", role: "principal" }, NOT_HERS).allowed === false);
+
+console.log("\nA refusal does not leak");
+{
+  const r = canViewStudent(OTHER, NOT_HERS);
+  check("refusal names no other teacher", !r.reason.includes("amberc"));
+  check("refusal does not confirm or deny the student exists", !/exists|not found|no student/i.test(r.reason));
+}
+
+console.log(`\n${pass} passed, ${fail} failed\n`);
+process.exit(fail ? 1 : 0);

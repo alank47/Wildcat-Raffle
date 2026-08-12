@@ -8,11 +8,15 @@
  * @module
  */
 
+import type * as accessRules from "../accessRules.js";
 import type * as identity from "../identity.js";
 import type * as identityRules from "../identityRules.js";
 import type * as me from "../me.js";
 import type * as psSync from "../psSync.js";
 import type * as seed from "../seed.js";
+import type * as sisMerge from "../sisMerge.js";
+import type * as sisSync from "../sisSync.js";
+import type * as studentDetail from "../studentDetail.js";
 import type * as students from "../students.js";
 import type * as views from "../views.js";
 
@@ -23,11 +27,15 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  accessRules: typeof accessRules;
   identity: typeof identity;
   identityRules: typeof identityRules;
   me: typeof me;
   psSync: typeof psSync;
   seed: typeof seed;
+  sisMerge: typeof sisMerge;
+  sisSync: typeof sisSync;
+  studentDetail: typeof studentDetail;
   students: typeof students;
   views: typeof views;
 }>;

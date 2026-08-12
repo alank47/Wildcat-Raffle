@@ -21,6 +21,7 @@ export type RosterRowLike = {
   courseNumber?: string;
   period?: string;
   sectionExpression?: string;
+  sectionNumber?: string;
   teacherFirstName?: string;
   teacherLastName?: string;
   teacherEmail?: string;
@@ -66,6 +67,27 @@ export function staffRosterView(row: RosterRowLike) {
     courseName: row.courseName ?? null,
     courseNumber: row.courseNumber ?? null,
     period: row.period ?? row.sectionExpression ?? null,
+    term: row.termAbbreviation ?? null,
+  };
+}
+
+/**
+ * One SIS schedule row as STAFF see it in a student drill-down.
+ *
+ * Wider than the student's own view (it names the section) but still an
+ * allowlist built field by field. Restricted fields are not in psRoster at
+ * all, so this cannot surface one; the allowlist is the second line, for the
+ * day someone adds a column upstream.
+ */
+export function studentSisView(row: RosterRowLike) {
+  return {
+    courseName: row.courseName ?? null,
+    courseNumber: row.courseNumber ?? null,
+    period: row.period ?? row.sectionExpression ?? null,
+    sectionNumber: row.sectionNumber ?? null,
+    teacher:
+      [row.teacherFirstName, row.teacherLastName].filter(Boolean).join(" ") ||
+      null,
     term: row.termAbbreviation ?? null,
   };
 }
