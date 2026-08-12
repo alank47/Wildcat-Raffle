@@ -238,6 +238,53 @@
    * every teacher who signs in with a password, and every student, would
    * otherwise download ~270KB of SDK for nothing.
    */
+  /**
+   * Re-establish the session on a normal page load, without asking the user.
+   *
+   * THE BUG THIS FIXES. completeRedirectSignIn() returns immediately unless the
+   * URL hash carries a redirect response, so the session existed for exactly
+   * ONE page load: the one returning from Microsoft. Every reload after that
+   * had `session` null, `appData:load` refused, and the app silently fell back
+   * to the old Firestore roster. A teacher would sign in, see the right data,
+   * refresh, and see the wrong data with nothing to explain it.
+   *
+   * MSAL caches the account in sessionStorage, so it survives a reload in the
+   * same tab. It was simply never asked. acquireTokenSilent uses that cached
+   * account and returns a fresh id token with no user interaction.
+   *
+   * Silent means silent: a failure here is NOT an error. It means nobody is
+   * signed in, or the cached token cannot be renewed without a prompt, and the
+   * correct response is to leave the sign-in button where it is.
+   *
+   * finishSignIn emits `wildcat-auth-signin`, so the app's roster refresh
+   * happens through exactly the same path as an interactive sign-in.
+   */
+  async function resumeSession() {
+    if (session) return session;
+    if (!configured.entra()) return null;
+    try {
+      const app = await entraClient();
+      const accounts = app.getAllAccounts ? app.getAllAccounts() : [];
+      if (!accounts.length) return null;
+
+      const result = await app.acquireTokenSilent({
+        account: accounts[0],
+        scopes: ['openid', 'profile', 'email'],
+      });
+      if (!result || !result.idToken) return null;
+
+      await finishSignIn(result.idToken, 'staff');
+      console.log('[wildcat-auth] session resumed silently');
+      return session;
+    } catch (err) {
+      // Expected whenever the token needs a real prompt. Logged at debug level
+      // rather than as an error, because "nobody is signed in" is the normal
+      // state of a login screen.
+      console.debug('[wildcat-auth] no session to resume:', err && err.message);
+      return null;
+    }
+  }
+
   async function completeRedirectSignIn() {
     const hash = String(window.location.hash || '');
     if (!/[#&](code|error|id_token|access_token)=/.test(hash)) return;
@@ -538,6 +585,12 @@
     // loads AFTER this file. Defer to the end of the task queue so both exist
     // by the time the redirect is processed.
     setTimeout(function () {
+      // Resume first: on a normal load there is no redirect hash and this is
+      // the only thing that re-establishes the session. On a redirect return it
+      // is a cheap no-op, because completeRedirectSignIn sets `session` and
+      // resumeSession returns early when one already exists.
+      resumeSession().catch(function () { /* silent by design */ });
+
       completeRedirectSignIn().catch(function (err) {
         console.error('[wildcat-auth] redirect completion error:', err);
       });
@@ -554,6 +607,7 @@
     CONFIG,
     configured,
     signInWithMicrosoft,
+    resumeSession,
     signInStaff,
     initStudentButton,
     signOut,

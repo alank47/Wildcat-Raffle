@@ -152,6 +152,48 @@ export const loadSelfCheck = internalQuery({
   },
 });
 
+/**
+ * What a save WOULD do, against the real rows, writing nothing.
+ *
+ * internalQuery, so it needs the deploy key and cannot be reached from a
+ * browser. It exists because the shadow write failing is SILENT by design: the
+ * Firestore transaction has already committed, so the browser logs and moves
+ * on, and the only symptom is a drift number hours later.
+ *
+ * Pass a student key and a value and it reports whether planSave would find the
+ * row and what it would patch. That turns "the write did not land" into either
+ * "the row was never matched" or "the patch was empty".
+ */
+export const savePlanDryRun = internalQuery({
+  args: { key: v.string(), pbisTickets: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const rows = await ctx.db.query("students").collect();
+    const incoming = [{ id: args.key, pbisTickets: args.pbisTickets ?? 99 }];
+    const plan = planSave(rows, incoming, STUDENT_WRITABLE, (r) => [r.legacyId, r.studentNumber]);
+
+    const matched = rows.find(
+      (r) => r.legacyId === args.key || r.studentNumber === args.key,
+    );
+    return {
+      totalRows: rows.length,
+      rowMatched: Boolean(matched),
+      matchedBy: matched
+        ? matched.legacyId === args.key
+          ? "legacyId"
+          : "studentNumber"
+        : null,
+      currentPbis: matched?.pbisTickets ?? null,
+      patches: plan.patches.length,
+      patch: plan.patches[0]?.patch ?? null,
+      skipped: plan.skipped,
+      // How many rows even HAVE each key, which is the thing that silently
+      // breaks matching after a migration.
+      rowsWithLegacyId: rows.filter((r) => r.legacyId).length,
+      rowsWithStudentNumber: rows.filter((r) => r.studentNumber).length,
+    };
+  },
+});
+
 export const save = mutation({
   args: {
     students: v.optional(v.array(v.any())),

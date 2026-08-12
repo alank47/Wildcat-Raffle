@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 
 const script = readFileSync(new URL("./script.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
+const auth = readFileSync(new URL("./wildcat-auth.js", import.meta.url), "utf8");
 
 let pass = 0;
 let fail = 0;
@@ -240,6 +241,32 @@ console.log("\nEnrolled and former students are split at the source");
     "the raffle draws from the enrolled roster",
     /const roster = enrolledStudents\(\)/.test(script) && /const pbisRoster = enrolledStudents\(\)/.test(script),
     "a transferred student could otherwise be drawn as a winner",
+  );
+}
+
+console.log("\nThe session survives a reload");
+{
+  check(
+    "there is a silent resume",
+    /async function resumeSession/.test(auth),
+    "without it the session existed for exactly ONE page load, the redirect return",
+  );
+  check("it uses the cached MSAL account", /acquireTokenSilent/.test(auth));
+  check(
+    "it runs on load, not only on a redirect return",
+    /resumeSession\(\)\.catch/.test(auth),
+    "completeRedirectSignIn returns early when the URL has no auth hash",
+  );
+  check(
+    "a failed resume is NOT an error",
+    /console\.debug\('\[wildcat-auth\] no session to resume/.test(auth),
+    "nobody being signed in is the normal state of a login screen",
+  );
+  check("it is exported so the app can retry", /\n    resumeSession,/.test(auth));
+  check(
+    "MSAL still caches where a reload can find it",
+    /cacheLocation: 'sessionStorage'/.test(auth),
+    "localStorage or memory would change what resume can recover",
   );
 }
 
