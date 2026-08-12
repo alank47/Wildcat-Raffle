@@ -148,3 +148,14 @@ export const backfillEmails = internalMutation({
     return { filled, skippedAlreadySet, notFound, rejected };
   },
 });
+
+/** legacyId -> email, for pushing the backfill back into the app's own store. */
+export const exportStaffEmails = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("teachers").collect();
+    return all
+      .filter((t) => (t.email ?? "").includes("@"))
+      .map((t) => ({ legacyId: t.legacyId ?? "", email: t.email }));
+  },
+});
