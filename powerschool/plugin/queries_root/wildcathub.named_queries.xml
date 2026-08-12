@@ -67,7 +67,7 @@
       <column column="SECTIONS.SECTION_NUMBER">section_number</column>
       <column column="SECTIONS.EXPRESSION">section_expression</column>
       <column column="CC.EXPRESSION">cc_expression</column>
-      <column column="COURSES.COURSE_NUMBER">course_number</column>
+      <column column="SECTIONS.COURSE_NUMBER">course_number</column>
       <column column="COURSES.COURSE_NAME">course_name</column>
       <column column="TEACHERS.ID">teacher_id</column>
       <column column="TEACHERS.TEACHERNUMBER">teacher_number</column>
@@ -100,7 +100,7 @@
           SEC.SECTION_NUMBER      AS section_number,
           SEC.EXPRESSION          AS section_expression,
           CC.EXPRESSION           AS cc_expression,
-          C.COURSE_NUMBER         AS course_number,
+          SEC.COURSE_NUMBER       AS course_number,
           C.COURSE_NAME           AS course_name,
           TCH.ID                  AS teacher_id,
           TCH.TEACHERNUMBER       AS teacher_number,
@@ -113,8 +113,8 @@
         FROM STUDENTS S
         JOIN CC              ON CC.STUDENTID = S.ID
         JOIN SECTIONS SEC    ON SEC.ID = CC.SECTIONID
-        JOIN COURSES C       ON C.COURSE_NUMBER = SEC.COURSE_NUMBER
-                            AND C.SCHOOLID      = SEC.SCHOOLID
+        LEFT JOIN COURSES C  ON C.COURSE_NUMBER = SEC.COURSE_NUMBER
+                            AND (C.SCHOOLID = SEC.SCHOOLID OR C.SCHOOLID = 0)
         JOIN TERMS T         ON T.ID       = CC.TERMID
                             AND T.SCHOOLID = CC.SCHOOLID
         LEFT JOIN TEACHERS TCH ON TCH.ID = SEC.TEACHER
@@ -238,7 +238,7 @@
       <column column="STUDENTS.ID">student_id</column>
       <column column="STUDENTS.STUDENT_NUMBER">student_number</column>
       <column column="SECTIONS.ID">section_id</column>
-      <column column="COURSES.COURSE_NUMBER">course_number</column>
+      <column column="SECTIONS.COURSE_NUMBER">course_number</column>
       <column column="COURSES.COURSE_NAME">course_name</column>
       <column column="PGFINALGRADES.GRADE">current_grade</column>
       <column column="PGFINALGRADES.PERCENT">current_percent</column>
@@ -251,7 +251,7 @@
           S.ID             AS student_id,
           S.STUDENT_NUMBER AS student_number,
           SEC.ID           AS section_id,
-          C.COURSE_NUMBER  AS course_number,
+          SEC.COURSE_NUMBER AS course_number,
           C.COURSE_NAME    AS course_name,
           COALESCE(PGF.GRADE,   SG.GRADE)   AS current_grade,
           COALESCE(PGF.PERCENT, SG.PERCENT) AS current_percent,
@@ -264,8 +264,8 @@
         FROM STUDENTS S
         JOIN CC           ON CC.STUDENTID = S.ID
         JOIN SECTIONS SEC ON SEC.ID = CC.SECTIONID
-        JOIN COURSES C    ON C.COURSE_NUMBER = SEC.COURSE_NUMBER
-                         AND C.SCHOOLID      = SEC.SCHOOLID
+        LEFT JOIN COURSES C ON C.COURSE_NUMBER = SEC.COURSE_NUMBER
+                           AND (C.SCHOOLID = SEC.SCHOOLID OR C.SCHOOLID = 0)
         LEFT JOIN PGFINALGRADES PGF
           ON PGF.STUDENTID      = S.ID
          AND PGF.SECTIONID      = SEC.ID

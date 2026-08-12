@@ -1,0 +1,432 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Wildcat Hub PowerSchool data access plugin, version 2 PROPOSAL.
+
+  ===========================================================================
+  WHERE THIS FILE LIVES, AND WHY IT IS NOT IN powerschool/plugin/
+  ===========================================================================
+  powerschool/sync/scripts/build-plugin.mjs packages a plugin by zipping the
+  ENTIRE contents of powerschool/plugin/. A proposal file sitting in that
+  folder is therefore shipped inside the next read only 1.0.x package handed
+  to the district, and the script's own anti write guard cannot catch it
+  because that guard reads only plugin.xml. So this file lives one level up,
+  outside the packaged folder, where no build can pick it up.
+
+  It is also deliberately NOT named plugin.xml. PowerSchool requires the
+  archive root file to be called plugin.xml, so this file cannot be installed
+  by accident even if someone zips the folder it sits in.
+
+  To promote it after approval: copy it over powerschool/plugin/plugin.xml,
+  then run npm run build:plugin so the queries_root folder is packaged with
+  it. Never hand PowerSchool a zip built from this file alone: that would
+  install version 2.0.0 with no PowerQueries and silently remove the seven
+  that are live today.
+
+  ===========================================================================
+  DO NOT SEND THIS TO AN ADMINISTRATOR YET
+  ===========================================================================
+  One question gates this entire file and it has not been answered:
+
+    GET /ws/schema/table/log?projection=dcid&pagesize=1
+
+  A 403 means Log is exposed over the table endpoint and this request is the
+  fix. A 405 "GET, POST and PUT are not allowed on table" means PowerSchool
+  does not expose Log there at all, no grant can change that, and every line
+  in the write block below is worthless. Teachers is granted in 1.0.6 and
+  still answers 405, so this is a real possibility, not a formality. Table
+  exposure and field grant are independent gates.
+
+  That GET has not been run. See docs/write-access-request.md, "Gate A".
+
+  ===========================================================================
+  WHAT THIS FILE IS
+  ===========================================================================
+  THIS FILE IS NOT INSTALLED. plugin.xml at version 1.0.6 is what runs
+  today. This file is the amended access request an administrator is
+  being asked to approve. Nothing here takes effect until a PowerSchool
+  administrator uploads it and disables and re-enables plugin 9741.
+  Read docs/write-access-request.md before doing that.
+
+  WHAT CHANGED FROM 1.0.6, in one sentence: eleven columns on one table,
+  Log, move from absent to FullAccess, and ten more columns on Log and
+  Gen are added as view only so those writes can be addressed and read
+  back and so the two behavior PowerQueries shipping in the same zip do
+  not answer 403 on their own columns. Nothing that was ViewOnly in 1.0.6
+  changes. No field is removed. 107 field lines become 128.
+
+  THREE OF THOSE TEN WERE ADDED LATE, AND THE REASON MATTERS. This file
+  and queries_root/behavior.named_queries.xml were written by two people
+  in parallel. The query file was finished eleven minutes after this one
+  and, in that window, added three columns that this file did not grant:
+  Gen.Value, Log.Discipline_ActionTaken and Log.Discipline_IncidentDate.
+  Approving 2.0.0 in that state would have installed an access request
+  and two PowerQueries that disagree, both queries would have answered
+  403 on first call, and a second approval cycle would have been needed
+  for three view only lines. They are granted below, each with its own
+  justification. The check that caught it, and the reason the previous
+  check could not, are in docs/write-access-request.md, "Cross file
+  coherence". Run that check again before anyone is asked to approve
+  this, because the query files can change after this one is written.
+
+  Note for anyone counting: no comment in this file spells an access
+  value or a field tag as literal markup. Version 1.0.6's header did spell
+  an access value, and every tool that counted grants by matching the raw
+  string reported 108 grants where there were 107. Count elements, not
+  quoted strings.
+
+  1.0.6 said "READ ONLY ... if a future task appears to need a write,
+  stop and escalate rather than editing this file". This file is that
+  escalation, written as a separate file so the running plugin is not
+  edited by the act of proposing a change to it.
+
+  THE ONE RULE THIS FILE ENFORCES AT THE SIS BOUNDARY: a sync must never
+  write earned student value. Wildcat Cash balances hold 6,616,500 points
+  that PowerSchool never issued and has no column for. Not one column
+  granted below can hold a balance, and no balance-bearing column exists
+  anywhere in this file at FullAccess. This access request is the second
+  copy of the allowlist in convex/sisMerge.ts, enforced by PowerSchool
+  instead of by our own code. Keep it an allowlist. A denylist here fails
+  open the same way it would there.
+
+  Restricted fields (federal ethnicity, federal race, English Learner
+  status, and the future IEP / 504 sources) are grouped and commented
+  so they can be removed as a block if the requester cannot name an
+  operational use case. See docs/field-sourcing.md.
+
+  Version history lives in docs/plugin-install.md. Bumping the version
+  attribute is required for PowerSchool to accept a re-upload.
+-->
+<plugin xmlns="http://plugin.powerschool.pearson.com"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://plugin.powerschool.pearson.com plugin.xsd"
+        name="Wildcat Hub Sync"
+        version="2.0.0"
+        description="Student and staff data sync for Wildcat Hub at Westbrook Academy. Read only everywhere except the Log table, where it inserts behavior log entries staff created in the Hub. No write access to any student, grade, attendance or enrollment field.">
+
+  <publisher name="LA Promise Fund">
+    <contact email="lawrenceb@lapromisefund.org"/>
+  </publisher>
+
+  <!-- Enables OAuth 2.0 client credentials. PowerSchool generates the
+       client id and secret when the plugin is enabled. Never paste
+       those values into this file or any other file in the repo.
+
+       Unchanged from 1.0.6 on purpose. Disabling and re-enabling the
+       plugin to apply this access request does NOT rotate the client id
+       or secret. Do not press Regenerate Client ID and Secret while
+       doing it: that does rotate them, and it breaks the running sync. -->
+  <oauth/>
+
+  <access_request>
+
+      <!-- ================================================================
+           MANIFEST 1, 2, 3, 9: student identity and demographics (Standard)
+           ================================================================ -->
+      <field table="Students" field="ID"                  access="ViewOnly"/>
+      <field table="Students" field="DCID"                access="ViewOnly"/>
+      <field table="Students" field="Student_Number"      access="ViewOnly"/>
+      <field table="Students" field="State_StudentNumber" access="ViewOnly"/>
+      <field table="Students" field="First_Name"          access="ViewOnly"/>
+      <field table="Students" field="Last_Name"           access="ViewOnly"/>
+      <field table="Students" field="Grade_Level"         access="ViewOnly"/>
+      <field table="Students" field="Gender"              access="ViewOnly"/>
+      <field table="Students" field="SchoolID"            access="ViewOnly"/>
+      <field table="Students" field="Enroll_Status"       access="ViewOnly"/>
+      <field table="Students" field="EntryDate"           access="ViewOnly"/>
+      <field table="Students" field="ExitDate"            access="ViewOnly"/>
+      <!-- Manifest field 19, Student Email. Added 2026-08-11. This is the key
+           that links a student's Google Workspace account on westbrookacademy.org
+           to their record; without it a signed in student cannot be matched to
+           any data. The column name is install specific, so both spellings are
+           requested and the harness probes them in order. Still ViewOnly. -->
+      <field table="Students" field="Student_Email"       access="ViewOnly"/>
+      <field table="Students" field="Email"               access="ViewOnly"/>
+
+      <!-- ================================================================
+           MANIFEST 4, 5, 6: course, section, period, teacher assignment
+           CC is the student to section enrollment table.
+           ================================================================ -->
+      <field table="CC" field="ID"          access="ViewOnly"/>
+      <field table="CC" field="StudentID"   access="ViewOnly"/>
+      <field table="CC" field="SectionID"   access="ViewOnly"/>
+      <field table="CC" field="Course_Number" access="ViewOnly"/>
+      <field table="CC" field="TermID"      access="ViewOnly"/>
+      <field table="CC" field="SchoolID"    access="ViewOnly"/>
+      <field table="CC" field="DateEnrolled" access="ViewOnly"/>
+      <field table="CC" field="DateLeft"    access="ViewOnly"/>
+      <field table="CC" field="Expression"  access="ViewOnly"/>
+
+      <field table="Courses" field="ID"            access="ViewOnly"/>
+      <field table="Courses" field="Course_Number" access="ViewOnly"/>
+      <field table="Courses" field="Course_Name"   access="ViewOnly"/>
+      <field table="Courses" field="SchoolID"      access="ViewOnly"/>
+
+      <field table="Sections" field="ID"             access="ViewOnly"/>
+      <field table="Sections" field="DCID"           access="ViewOnly"/>
+      <field table="Sections" field="Course_Number"  access="ViewOnly"/>
+      <field table="Sections" field="Section_Number" access="ViewOnly"/>
+      <field table="Sections" field="Expression"     access="ViewOnly"/>
+      <field table="Sections" field="Teacher"        access="ViewOnly"/>
+      <field table="Sections" field="TermID"         access="ViewOnly"/>
+      <field table="Sections" field="SchoolID"       access="ViewOnly"/>
+
+      <!-- Period comes from SECTIONS.EXPRESSION and CC.EXPRESSION.
+           SECTIONMEETING, PERIOD and CYCLE_DAY were requested in 1.0.0 and
+           PowerSchool rejected SECTIONMEETING as an invalid table in this
+           instance, which leaves no join path to PERIOD or CYCLE_DAY. They
+           are removed rather than left as unusable granted access.
+           Parsing EXPRESSION is a Phase 4 test requirement: one single
+           period section, one multi period block, one alternating day
+           section. See docs/field-sourcing.md for the question to the SIS
+           admin about whether a meeting table exists under another name. -->
+
+      <!-- ================================================================
+           MANIFEST 15, 16, 17, 18: staff
+           Sections.Teacher points at Teachers.ID. Email lives on Users.
+           Teachers.Users_DCID is the bridge. Verify this link against the
+           instance in Phase 0 before trusting it.
+           ================================================================ -->
+      <field table="Teachers" field="ID"           access="ViewOnly"/>
+      <field table="Teachers" field="DCID"         access="ViewOnly"/>
+      <field table="Teachers" field="Users_DCID"   access="ViewOnly"/>
+      <field table="Teachers" field="TeacherNumber" access="ViewOnly"/>
+      <field table="Teachers" field="First_Name"   access="ViewOnly"/>
+      <field table="Teachers" field="Last_Name"    access="ViewOnly"/>
+      <field table="Teachers" field="SchoolID"     access="ViewOnly"/>
+      <field table="Teachers" field="Status"       access="ViewOnly"/>
+
+      <field table="Users" field="DCID"          access="ViewOnly"/>
+      <field table="Users" field="TeacherNumber" access="ViewOnly"/>
+      <field table="Users" field="First_Name"    access="ViewOnly"/>
+      <field table="Users" field="Last_Name"     access="ViewOnly"/>
+      <field table="Users" field="Email_Addr"    access="ViewOnly"/>
+
+      <field table="SchoolStaff" field="ID"          access="ViewOnly"/>
+      <field table="SchoolStaff" field="DCID"        access="ViewOnly"/>
+      <field table="SchoolStaff" field="Users_DCID"  access="ViewOnly"/>
+      <field table="SchoolStaff" field="SchoolID"    access="ViewOnly"/>
+      <field table="SchoolStaff" field="Status"      access="ViewOnly"/>
+      <field table="SchoolStaff" field="StaffStatus" access="ViewOnly"/>
+
+      <!-- ================================================================
+           MANIFEST 10: attendance. Aggregation happens in the PowerQuery,
+           not in application code. Presence_Status_CD is the field that
+           decides what counts as an absence.
+           ================================================================ -->
+      <field table="Attendance" field="ID"                access="ViewOnly"/>
+      <field table="Attendance" field="StudentID"         access="ViewOnly"/>
+      <field table="Attendance" field="Att_Date"          access="ViewOnly"/>
+      <field table="Attendance" field="Attendance_CodeID" access="ViewOnly"/>
+      <field table="Attendance" field="Att_Mode_Code"     access="ViewOnly"/>
+      <field table="Attendance" field="SchoolID"          access="ViewOnly"/>
+      <field table="Attendance" field="Yearid"            access="ViewOnly"/>
+      <field table="Attendance" field="CCID"              access="ViewOnly"/>
+      <field table="Attendance" field="PeriodID"          access="ViewOnly"/>
+
+      <field table="Attendance_Code" field="ID"                 access="ViewOnly"/>
+      <field table="Attendance_Code" field="Att_Code"           access="ViewOnly"/>
+      <field table="Attendance_Code" field="Description"        access="ViewOnly"/>
+      <field table="Attendance_Code" field="Presence_Status_CD" access="ViewOnly"/>
+      <field table="Attendance_Code" field="SchoolID"           access="ViewOnly"/>
+      <field table="Attendance_Code" field="Yearid"             access="ViewOnly"/>
+
+      <!-- ================================================================
+           MANIFEST 11: grades. PGFinalGrades is the live gradebook value.
+           StoredGrades is the fallback for closed terms.
+           A null percent must stay null all the way to the UI. It is not
+           a zero. See docs/plugin-install.md.
+           ================================================================ -->
+      <field table="PGFinalGrades" field="ID"             access="ViewOnly"/>
+      <field table="PGFinalGrades" field="StudentID"      access="ViewOnly"/>
+      <field table="PGFinalGrades" field="SectionID"      access="ViewOnly"/>
+      <field table="PGFinalGrades" field="FinalGradeName" access="ViewOnly"/>
+      <field table="PGFinalGrades" field="Grade"          access="ViewOnly"/>
+      <field table="PGFinalGrades" field="Percent"        access="ViewOnly"/>
+      <field table="PGFinalGrades" field="LastGradeUpdate" access="ViewOnly"/>
+
+      <field table="StoredGrades" field="DCID"           access="ViewOnly"/>
+      <field table="StoredGrades" field="StudentID"      access="ViewOnly"/>
+      <field table="StoredGrades" field="SectionID"      access="ViewOnly"/>
+      <field table="StoredGrades" field="Course_Number"  access="ViewOnly"/>
+      <field table="StoredGrades" field="StoreCode"      access="ViewOnly"/>
+      <field table="StoredGrades" field="Grade"          access="ViewOnly"/>
+      <field table="StoredGrades" field="Percent"        access="ViewOnly"/>
+      <field table="StoredGrades" field="TermID"         access="ViewOnly"/>
+      <field table="StoredGrades" field="SchoolID"       access="ViewOnly"/>
+
+      <!-- ================================================================
+           Calendar scaffolding used to parameterize every query by school
+           year and term. No query hardcodes a term id.
+           ================================================================ -->
+      <field table="Terms" field="ID"           access="ViewOnly"/>
+      <field table="Terms" field="Abbreviation" access="ViewOnly"/>
+      <field table="Terms" field="Name"         access="ViewOnly"/>
+      <field table="Terms" field="FirstDay"     access="ViewOnly"/>
+      <field table="Terms" field="LastDay"      access="ViewOnly"/>
+      <field table="Terms" field="SchoolID"     access="ViewOnly"/>
+      <field table="Terms" field="Yearid"       access="ViewOnly"/>
+      <field table="Terms" field="IsYearRec"    access="ViewOnly"/>
+      <field table="Terms" field="Portion"      access="ViewOnly"/>
+
+      <field table="Schools" field="ID"           access="ViewOnly"/>
+      <field table="Schools" field="School_Number" access="ViewOnly"/>
+      <field table="Schools" field="Name"         access="ViewOnly"/>
+      <field table="Schools" field="Abbreviation" access="ViewOnly"/>
+
+      <!-- ================================================================
+           RESTRICTED BLOCK. Manifest 7, 8, 14.
+           Everything below this line is column level restricted. It lands
+           in its own staging tables, gets its own access tests in Phase 5,
+           and gets its own line in the go / no go checklist.
+
+           Manifest 7 and 8 are pending an answer to the open question in
+           the prompt: what teacher facing decision do federal ethnicity and
+           federal race codes inform? If no use case is named, delete this
+           block, bump the plugin version, and have the SIS admin disable
+           and re-enable the plugin.
+           ================================================================ -->
+      <field table="Students" field="FedEthnicity" access="ViewOnly"/>
+
+      <field table="StudentRace" field="ID"        access="ViewOnly"/>
+      <field table="StudentRace" field="StudentID" access="ViewOnly"/>
+      <field table="StudentRace" field="RaceCD"    access="ViewOnly"/>
+
+      <!-- Manifest 14: English Learner. California state extension tables.
+           S_CA_STU_X is the current status. S_CA_STU_ELA_C is the history.
+           If the probe reports these as not granted, the state extension
+           is either not installed or named differently in this instance.
+           Confirm with the SIS admin before assuming the data is absent. -->
+      <field table="S_CA_STU_X" field="StudentsDCID" access="ViewOnly"/>
+      <field table="S_CA_STU_X" field="ELAStatus"    access="ViewOnly"/>
+
+      <field table="S_CA_STU_ELA_C" field="StudentsDCID"     access="ViewOnly"/>
+      <field table="S_CA_STU_ELA_C" field="ELAStatus"        access="ViewOnly"/>
+      <field table="S_CA_STU_ELA_C" field="ELAStatusStartDate" access="ViewOnly"/>
+
+      <!-- ================================================================
+           MANIFEST 12 and 13: IEP / Special Ed status and 504 status.
+           DELIBERATELY ABSENT. The source is unconfirmed. Do not guess a
+           table name here. Phase 1 resolves where this data actually lives
+           in our instance, then this block gets filled in exactly once and
+           the plugin is re-uploaded at version 1.1.0.
+           See docs/field-sourcing.md for the questions to send the
+           registrar and the SIS admin.
+           ================================================================ -->
+
+      <!-- ================================================================
+           THE WRITE HALF. New at 2.0.0. This block is the entire write
+           surface of the plugin: eleven columns, one table, Log.
+
+           The feature, stated once so every line below can be checked
+           against it: a behavior a teacher records in Wildcat Hub becomes
+           a PowerSchool log entry. Westbrook currently runs two behavior
+           records that do not know about each other, the district's
+           permanent one in Log and the one teachers touch every day in
+           the Hub. This block is what lets the second write into the
+           first. Nothing else in the app syncs outward.
+
+           Log is the right home rather than Incident Management: log
+           entries are the lightweight, teacher-facing, minute-or-less
+           record, while incidents are administrator-only, take several
+           minutes each, and are the state discipline reporting source.
+           An app that files state-reportable incidents unattended is not
+           something to ask an administrator to approve.
+
+           NOT REQUESTED, and each one is a decision rather than an
+           oversight:
+             - Log.Custom. It is a shared free-text import bucket. The
+               app's idempotency key belongs on our side, as the returned
+               row id stored next to the app event, not stamped into a
+               column other integrations also write.
+             - Any Log.Discipline_* column at FullAccess. All 34 of them,
+               without exception. They exist for federal Gun Free Schools
+               Act reporting. A behavior a teacher records in the Hub is
+               not a federal discipline incident and this integration
+               must never be able to record one as if it were.
+               THE PRINCIPLE AS RESTATED AT 2.0.0: none of the 34 at
+               FullAccess, exactly two readable. Two are ViewOnly below,
+               named one at a time, because a shipped PowerQuery reads
+               them. The 5.2 data dictionary describes only those two,
+               Discipline_ActionTaken and Discipline_IncidentDate, as
+               live and marks the other 32 no longer used. The 32 are
+               refused at every level. Naming the two individually rather
+               than granting the prefix is what keeps a 35th from
+               arriving by pattern match.
+             - Log.Category. The dictionary says no longer used.
+             - Log.Student_Number. StudentID already identifies the child.
+             - Any Gen column at FullAccess. The app must never create or
+               rename a log type. It reads the school's list and maps onto
+               it, or it fails loudly and writes nothing.
+             - Any Students column at anything other than ViewOnly. All 15
+               stay exactly as 1.0.6 granted them.
+             - The Incident family, all 12 tables.
+             - The student identity lead (U_StudentsUserFields,
+               StudentCoreFields). Real gap, different change, and the
+               column names are still unknown. Guessing one here would
+               spend an approval cycle on a 400.
+
+           READ THIS BEFORE APPROVING. PowerSchool's access model has no
+           per verb setting: the plugin schema enumerates exactly two
+           values, ViewOnly and FullAccess. So FullAccess on these eleven
+           columns permits INSERT, UPDATE and DELETE against ANY row of
+           Log in the instance, including entries a dean wrote about a
+           suspension. Restricting this integration to insert is the
+           application's job and cannot be expressed in this file. The
+           mitigation and how to audit it are in
+           docs/write-access-request.md, section "What this grant does
+           not stop".
+           ================================================================ -->
+
+      <!-- The eleven columns an insert writes. One line each, one reason each. -->
+      <field table="Log" field="StudentID"    access="FullAccess"/>  <!-- Which child the entry is about. Log.StudentID is the same Students.ID the roster PowerQuery already joins on, so the write reuses the read's key instead of inventing one. -->
+      <field table="Log" field="SchoolID"     access="FullAccess"/>  <!-- Scopes the entry to Westbrook. PowerSchool filters log views by school, so an entry written without it is invisible to the staff who need it. -->
+      <field table="Log" field="TeacherID"    access="FullAccess"/>  <!-- Which staff member owns the entry, resolved server side from the signed in Entra user through the staff query. Never taken from the browser. -->
+      <field table="Log" field="Entry_Date"   access="FullAccess"/>  <!-- The date the behavior happened, taken from the app event, not from the time the sync ran. A Friday incident synced Monday must not read as Monday. -->
+      <field table="Log" field="Entry_Time"   access="FullAccess"/>  <!-- The time of day, same reason. Period level behavior is unreadable without it. -->
+      <field table="Log" field="Entry_Author" access="FullAccess"/>  <!-- The last name and first name string PowerSchool shows in the log list. Without it the entry displays with no author and looks like it arrived from nowhere. -->
+      <field table="Log" field="LogTypeID"    access="FullAccess"/>  <!-- The log type. Read from Gen at run time and never hardcoded: these integers are district defined and arbitrary, so a hardcoded id files the entry under the wrong type or under another school's. -->
+      <field table="Log" field="Subtype"      access="FullAccess"/>  <!-- The specific behavior, mapped from the app's eight core behaviors (Be Respectful, Defiance/Disrespect and so on) onto the school's configured subtype list. -->
+      <field table="Log" field="Consequence"  access="FullAccess"/>  <!-- The consequence, written only when the app actually assigned one, which today means a detention. Omitted from the payload otherwise so an entry never implies an action nobody took. -->
+      <field table="Log" field="Subject"      access="FullAccess"/>  <!-- The one line title of the entry, which is all most staff ever see in a list view. -->
+      <field table="Log" field="Entry"        access="FullAccess"/>  <!-- The body text a teacher typed. This is the entry; without it the write carries a classification and no account of what happened. -->
+
+      <!-- Read only on Log. Needed to address and verify a write. Never written. -->
+      <field table="Log" field="DCID"         access="ViewOnly"/>  <!-- The row id PowerSchool assigns. Stored beside the app event so a retry updates one entry instead of filing a second. ViewOnly on purpose: writing it would be asking for the right to choose a primary key. -->
+      <field table="Log" field="ID"           access="ViewOnly"/>  <!-- Log carries both an ID and a DCID and nothing states which one an insert returns. Both must be readable to resolve that once, empirically, rather than by assumption. -->
+
+      <!-- The two Discipline_ columns, ViewOnly, never FullAccess. Both are
+           read by com.lapromisefund.wildcathub.behavior_log, which ships in
+           the same zip as this file. Neither is ever written: the app files
+           behavior, not discipline, and the FullAccess block above contains
+           no Discipline_ column at all. -->
+      <field table="Log" field="Discipline_ActionTaken"  access="ViewOnly"/>  <!-- The action a dean took, "such as S=Suspend" in the dictionary's words. The feature is the staff behavior timeline: deducting Wildcat Cash from a child who was serving a suspension that day is the concrete mistake this one column prevents. -->
+      <field table="Log" field="Discipline_IncidentDate" access="ViewOnly"/>  <!-- When that action applies. An action with no date cannot be lined up against the day a teacher is looking at, which is the only question the timeline asks of it. -->
+
+      <!-- NOT granted, and this is the boundary the read stops at: Log.Entry
+           and Log.Subject are FullAccess above because an insert writes them,
+           and the behavior_log query deliberately does not select either. A
+           log entry's narrative is a sentence a teacher wrote about a child
+           and routinely carries a second child's name or a medical detail.
+           The app may put its own words in; it does not take PowerSchool's
+           out. If Gate C resolves that FullAccess does not include read, do
+           not "fix" that by adding ViewOnly lines for these two. -->
+
+      <!-- ================================================================
+           Gen, ViewOnly only. The code list a log entry has to be mapped
+           onto. Log types are rows here, not an enum in code: Gen.Cat is
+           'logtype', 'subtype' or 'consequence', Gen.ID is the integer
+           Log.LogTypeID points at, and every id is site specific. A real
+           district's published mapping runs Merits=404, Contact=461,
+           MTSS=24018, so hardcoding is not a shortcut, it is a wrong
+           answer. Map by name, per school, at run time.
+           ================================================================ -->
+      <field table="Gen" field="ID"       access="ViewOnly"/>  <!-- The integer Log.LogTypeID points at. This is the value the write puts in LogTypeID, and it can only be discovered, never assumed. -->
+      <field table="Gen" field="Cat"      access="ViewOnly"/>  <!-- The discriminator. Log types, subtypes and consequences all share this one table and are told apart only by Cat, so without it the code list cannot be filtered at all. -->
+      <field table="Gen" field="Name"     access="ViewOnly"/>  <!-- The display name. The app maps its behavior names onto these strings; this is the join that replaces hardcoded ids. -->
+      <field table="Gen" field="Value"    access="ViewOnly"/>  <!-- The other candidate for the subtype code. Log.Subtype is a String 20 and a subtype is configured as a code plus a description, but no document states which Gen column holds the code. behavior_types selects Name and Value side by side so one look at the output settles it. Without this the mapping is a guess, and a wrong guess writes entries under a subtype the school never configured. -->
+      <field table="Gen" field="SchoolID" access="ViewOnly"/>  <!-- Codes are school scoped. Without it Westbrook's picker can pick up another school's log types and file entries under a type this school never configured. -->
+      <field table="Gen" field="SortOrder" access="ViewOnly"/>  <!-- The order the school configured its log types in, which is the order the staff picker has to show them in. Also the ORDER BY of the shipped behavior_types query in queries_root/behavior.named_queries.xml, so omitting it breaks a query that already exists. -->
+
+  </access_request>
+
+</plugin>

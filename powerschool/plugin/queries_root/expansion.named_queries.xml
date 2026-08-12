@@ -1,0 +1,447 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Wildcat Hub PowerQueries, coverage expansion set.
+
+  Companion to wildcathub.named_queries.xml, which is NOT edited by this piece.
+  A second file in queries_root is legal: named_queries.xml files live flat in
+  queries_root and the query name attribute carries the namespace, not the path.
+
+  ==========================================================================
+  WHAT THIS FILE COSTS TO SHIP, stated precisely because it is easy to get
+  wrong in both directions.
+  ==========================================================================
+  Every column referenced below is ALREADY granted ViewOnly in plugin.xml.
+  This file requests NO new data. Zero new <field> lines.
+
+  It still cannot be called until the plugin is rebuilt, the version bumped,
+  the zip re-uploaded and an admin disables and re-enables the plugin, because
+  PowerQueries ship inside the plugin zip. So the deployment cost is one
+  version bump; the APPROVAL cost is close to nothing, because the reviewer is
+  being asked to accept four SELECT statements over data they already granted,
+  not to widen access. Those are very different conversations and the request
+  should say so.
+
+  ==========================================================================
+  SCHEMA RULES, inherited from the sibling file's hard won notes.
+  ==========================================================================
+    - Root element is <queries> with NO namespace and NO schemaLocation.
+    - Order inside <query> is <description>, <args>, <columns>, <sql>.
+    - EVERY bind variable used in the SQL must be declared in <args>. An
+      undeclared :name installs cleanly with no validation error and then 404s
+      on every call, forever. This is the single most expensive mistake in the
+      file format.
+    - The number of <column> entries must equal the number of columns the SQL
+      returns, in the same order.
+    - Each column attribute must name a real table and column that the access
+      request grants; it drives permission mapping. Computed columns point at a
+      granted core field by convention and let the alias carry the real name.
+    - Every calculated column must be aliased.
+    - SELECT only. No wildcard SELECT.
+
+  ==========================================================================
+  THE COURSES JOIN. Read this before copying the spine from the sibling file.
+  ==========================================================================
+  The sibling file's roster and grades queries both join COURSES like this:
+
+      JOIN COURSES C ON C.COURSE_NUMBER = SEC.COURSE_NUMBER
+                    AND C.SCHOOLID      = SEC.SCHOOLID
+
+  That predicate is wrong on this instance and the first version of this file
+  inherited it by copying. 130 of the 484 COURSES rows here are DISTRICT level
+  and carry SCHOOLID 0. Westbrook sections point straight at them. `0 = 1817`
+  is false, so an INNER JOIN on equality throws every one of those rows away
+  and reports no error at all.
+
+  Measured on live term 3601, the current school year:
+
+      SECTIONS in the term ........................ 231
+      surviving the equality predicate ............ 146
+      live CC rows in the term .................... 5767
+      surviving the equality predicate ............ 3805   (34.0 percent lost)
+      distinct students touched by a lost row ..... 639 of 641
+
+  Two consequences that are easy to miss:
+
+    1. The project's own established figures, "3805 enrollments, 145 sections",
+       are the POST DROP numbers. They are measurements of the defect, not of
+       the school. Anything calibrated against them needs revisiting.
+    2. Period token "9" exists on 340 enrollments and lives ENTIRELY inside the
+       dropped set, so a period vocabulary query built on the equality
+       predicate cannot see a whole period of the school day.
+
+  This file therefore does two things the sibling file does not:
+
+    - The predicate is `(C.SCHOOLID = SEC.SCHOOLID OR C.SCHOOLID = 0)`, which
+      recovers the district level courses. It cannot fan rows out: no
+      course_number in this instance exists at both the school and at 0, and no
+      course_number appears twice at the same SCHOOLID. Both measured.
+    - The join is a LEFT JOIN. Even with the OR, two Westbrook sections still
+      resolve to nothing, because course_number 7002A ("RSP A") is defined only
+      at school 1818. Those two sections carry 20 students. A course row that
+      is missing is a reason to show a blank course name, never a reason to
+      drop a child's attendance. The LEFT JOIN is what puts both queries in
+      this file on the same basis as enrollment_window: EVERY live CC row.
+
+  BASIS, stated once and repeated in each description so the three queries can
+  never quietly disagree about how many sections a student has: every query in
+  this file counts over every live CC row for the term, meaning DATELEFT null
+  or in the future. On term 3601 that is 5767 rows. No query in this file drops
+  a row because of a COURSES lookup.
+
+  ==========================================================================
+  ONE UNVERIFIED ASSUMPTION, called out rather than buried.
+  ==========================================================================
+  attendance_by_section joins ATTENDANCE to CC on ATTENDANCE.CCID. That column
+  is granted and is referenced by nothing in the project today, so nobody has
+  ever checked whether this instance populates it. If it is null, every count
+  in attendance_by_section is a correct zero for the wrong reason.
+
+  That is why attendance_join_health exists and why it is first in this file.
+  Run it before anyone builds a screen on attendance_by_section. It answers the
+  question in one call, returns one row, and carries no student data at all.
+  attendance_by_section also returns attendance_rows_section_term so a caller
+  can always tell "this student was never absent in this class" from "no
+  attendance rows joined to this class at all". Those must never render the
+  same way.
+-->
+<queries>
+
+  <!-- ==================================================================
+       0. ATTENDANCE JOIN HEALTH.
+
+       One row. No student identifiers, no dates tied to a person, nothing
+       that needs redacting. Purely: is the CCID join viable in this
+       instance, and does this school year have any attendance in it yet?
+
+       Read this before trusting query 1. The 26-27 school year began
+       2026-08-12, so pass a prior :yearid to see a populated year and the
+       current :yearid to see how far the current one has filled in.
+       ================================================================== -->
+  <query name="com.lapromisefund.wildcathub.attendance_join_health" coreTable="attendance" flattened="true">
+    <description>
+      Diagnostic. Counts ATTENDANCE rows for one school and one year and
+      reports how many carry a CCID and a PERIODID. Answers whether per
+      section attendance is buildable at all before anyone builds on it.
+      Returns exactly one row and no student level data.
+    </description>
+    <args>
+      <arg name="schoolid" required="true" type="primitive" description="Schools.School_Number for the school being read" />
+      <arg name="yearid" required="true" type="primitive" description="Attendance.Yearid for the school year being measured" />
+    </args>
+    <columns>
+      <column column="ATTENDANCE.ID">attendance_rows</column>
+      <column column="ATTENDANCE.CCID">rows_with_ccid</column>
+      <column column="ATTENDANCE.PERIODID">rows_with_periodid</column>
+      <column column="ATTENDANCE.ID">distinct_students</column>
+      <column column="ATTENDANCE.ATT_MODE_CODE">distinct_mode_codes</column>
+      <column column="ATTENDANCE.ATT_DATE">first_att_date</column>
+      <column column="ATTENDANCE.ATT_DATE">last_att_date</column>
+    </columns>
+    <sql>
+      <![CDATA[
+        SELECT
+          COUNT(A.ID)                    AS attendance_rows,
+          COUNT(A.CCID)                  AS rows_with_ccid,
+          COUNT(A.PERIODID)              AS rows_with_periodid,
+          COUNT(DISTINCT A.STUDENTID)    AS distinct_students,
+          COUNT(DISTINCT A.ATT_MODE_CODE) AS distinct_mode_codes,
+          MIN(A.ATT_DATE)                AS first_att_date,
+          MAX(A.ATT_DATE)                AS last_att_date
+        FROM ATTENDANCE A
+        WHERE A.SCHOOLID = :schoolid
+          AND A.YEARID   = :yearid
+      ]]>
+    </sql>
+  </query>
+
+  <!-- ==================================================================
+       1. ATTENDANCE BY SECTION. Closes the accuracy ceiling that
+       attendance_summary documents in its own comment: because this school
+       records attendance per meeting, a student who cuts one period is
+       indistinguishable from a student who missed the whole day.
+
+       One row per student per section enrollment for one term. The section
+       identity comes from the same CC / SECTIONS / COURSES spine the roster
+       query already uses, so a caller can join this to psRoster on
+       (student_id, section_id) with no new key.
+
+       days_absent_section_term is COUNT(DISTINCT ATT_DATE) inside a single
+       CC, not a row count, for the same reason the daily query counts
+       distinct dates: a double period block writes two rows for one absence.
+
+       attendance_rows_section_term is NOT decoration. Zero absences and zero
+       rows mean different things and a dashboard must not draw them the same.
+       ================================================================== -->
+  <query name="com.lapromisefund.wildcathub.attendance_by_section" coreTable="students" flattened="true">
+    <description>
+      Absences and tardies per student per section for one term, counted as
+      distinct dates within each section enrollment. Includes the raw joined
+      row count so a caller can distinguish a real zero from an empty join.
+      LEFT JOINed throughout so a student with perfect attendance is returned
+      as zero rather than dropped. BASIS: every live CC row for the term,
+      DATELEFT null or in the future, 5767 rows on term 3601. The COURSES join
+      is a LEFT JOIN with an OR on the district level SCHOOLID 0, so no
+      enrollment is ever dropped for a course lookup. course_number comes from
+      SECTIONS, which always has one; only course_name can be null.
+    </description>
+    <args>
+      <arg name="schoolid" required="true" type="primitive" description="Schools.School_Number for the school being read" />
+      <arg name="termid" required="true" type="primitive" description="Terms.ID for the term being read" />
+    </args>
+    <columns>
+      <column column="STUDENTS.ID">student_id</column>
+      <column column="STUDENTS.STUDENT_NUMBER">student_number</column>
+      <column column="SECTIONS.ID">section_id</column>
+      <column column="SECTIONS.SECTION_NUMBER">section_number</column>
+      <column column="CC.EXPRESSION">section_expression</column>
+      <column column="SECTIONS.COURSE_NUMBER">course_number</column>
+      <column column="COURSES.COURSE_NAME">course_name</column>
+      <column column="TEACHERS.ID">teacher_id</column>
+      <column column="STUDENTS.ID">days_absent_section_term</column>
+      <column column="STUDENTS.ID">days_tardy_section_term</column>
+      <column column="STUDENTS.ID">attendance_rows_section_term</column>
+      <column column="ATTENDANCE.ATT_DATE">last_absence_date</column>
+      <column column="TERMS.FIRSTDAY">term_first_day</column>
+      <column column="TERMS.LASTDAY">term_last_day</column>
+    </columns>
+    <sql>
+      <![CDATA[
+        SELECT
+          S.ID                AS student_id,
+          S.STUDENT_NUMBER    AS student_number,
+          SEC.ID              AS section_id,
+          SEC.SECTION_NUMBER  AS section_number,
+          CC.EXPRESSION       AS section_expression,
+          SEC.COURSE_NUMBER   AS course_number,
+          C.COURSE_NAME       AS course_name,
+          TCH.ID              AS teacher_id,
+          COUNT(DISTINCT
+            CASE WHEN AC.PRESENCE_STATUS_CD = 'Absent' THEN A.ATT_DATE END
+          )                   AS days_absent_section_term,
+          COUNT(DISTINCT
+            CASE WHEN AC.ATT_CODE = 'T' THEN A.ATT_DATE END
+          )                   AS days_tardy_section_term,
+          COUNT(A.ID)         AS attendance_rows_section_term,
+          MAX(
+            CASE WHEN AC.PRESENCE_STATUS_CD = 'Absent' THEN A.ATT_DATE END
+          )                   AS last_absence_date,
+          TM.FIRSTDAY         AS term_first_day,
+          TM.LASTDAY          AS term_last_day
+        FROM STUDENTS S
+        JOIN CC              ON CC.STUDENTID = S.ID
+        JOIN SECTIONS SEC    ON SEC.ID = CC.SECTIONID
+        LEFT JOIN COURSES C  ON C.COURSE_NUMBER = SEC.COURSE_NUMBER
+                            AND (C.SCHOOLID = SEC.SCHOOLID OR C.SCHOOLID = 0)
+        JOIN TERMS TM        ON TM.ID       = :termid
+                            AND TM.SCHOOLID = :schoolid
+        LEFT JOIN TEACHERS TCH ON TCH.ID = SEC.TEACHER
+        LEFT JOIN ATTENDANCE A
+          ON A.CCID    = CC.ID
+         AND A.ATT_DATE BETWEEN TM.FIRSTDAY AND TM.LASTDAY
+        LEFT JOIN ATTENDANCE_CODE AC
+          ON AC.ID = A.ATTENDANCE_CODEID
+        WHERE S.SCHOOLID      = :schoolid
+          AND CC.TERMID       = :termid
+          AND S.ENROLL_STATUS = 0
+          AND (CC.DATELEFT IS NULL OR CC.DATELEFT >= TRUNC(SYSDATE))
+        GROUP BY
+          S.ID, S.STUDENT_NUMBER, SEC.ID, SEC.SECTION_NUMBER, CC.EXPRESSION,
+          SEC.COURSE_NUMBER, C.COURSE_NAME, TCH.ID, TM.FIRSTDAY, TM.LASTDAY
+      ]]>
+    </sql>
+  </query>
+
+  <!-- ==================================================================
+       2. ENROLLMENT WINDOW. Correct denominators.
+
+       NAMED CAREFULLY. This is called enrollment_WINDOW and not
+       enrollment_history because it is not history. STUDENTS holds the
+       student's CURRENT enrollment only. A student's PRIOR spans at this
+       school, which is what "transfer history" means, live in the
+       REENROLLMENTS table. A live probe confirms REENROLLMENTS exists in
+       this instance and every useful column on it answers 403, meaning it
+       exists and is not granted. Anyone who needs transfer history needs
+       that grant; this query cannot supply it and does not claim to.
+
+       STUDENTS.ENTRYDATE, STUDENTS.EXITDATE and CC.DATEENROLLED have been
+       granted since 1.0.0 and are selected by nothing. Without them a
+       student who enrolled three weeks into a term is measured against the
+       whole term. In a product that converts behaviour into currency, a
+       denominator error is not cosmetic.
+
+       WHAT IT IS WORTH TODAY, measured rather than assumed. A live read of
+       all 644 active students found TWO distinct entry dates, because the
+       probe ran the day before the school year opened and the whole school
+       rolls over together. So today this query returns the same window for
+       almost every student and changes no number on any screen. Across all
+       1490 students on file, active and inactive, the same column holds 103
+       distinct entry dates, so the variation is real, it just arrives with
+       the students who arrive after day one. Ship it as a correct guard that
+       is currently inert, and do not let anyone sell it as a fix for a
+       visible problem.
+
+       BASIS RECONCILIATION. section_count here and the row grain of
+       attendance_by_section are now the same population by construction:
+       every CC row for the term whose DATELEFT is null or in the future, with
+       no COURSES lookup able to remove one. The DATELEFT clause on the CC
+       LEFT JOIN below exists for that reason alone. Without it this query
+       counts a dropped class and attendance_by_section does not, and two
+       queries shipping in one file would report different section counts for
+       the same student the first time anyone changes their timetable.
+
+       calendar_days_enrolled_in_term is CALENDAR days, deliberately not
+       school days. School days need the school calendar, which lives in
+       CALENDAR_DAY, which this plugin does not grant. Naming it calendar
+       days keeps a caller from dividing by it as though it were instruction
+       days.
+       ================================================================== -->
+  <query name="com.lapromisefund.wildcathub.enrollment_window" coreTable="students" flattened="true">
+    <description>
+      One row per active student for one term: school entry and exit dates,
+      the clipped window during which the student was actually enrolled inside
+      that term, and whether they entered late or left early. Gives every rate
+      on the dashboard a denominator that matches the student rather than the
+      calendar. This is the CURRENT enrollment window only; prior enrollment
+      spans live in REENROLLMENTS, which this plugin does not grant. BASIS:
+      section_count counts every live CC row for the term, with no COURSES
+      lookup, which is the same basis attendance_by_section uses. The two
+      cannot disagree about how many sections a student has.
+    </description>
+    <args>
+      <arg name="schoolid" required="true" type="primitive" description="Schools.School_Number for the school being read" />
+      <arg name="termid" required="true" type="primitive" description="Terms.ID for the term being read" />
+    </args>
+    <columns>
+      <column column="STUDENTS.ID">student_id</column>
+      <column column="STUDENTS.STUDENT_NUMBER">student_number</column>
+      <column column="STUDENTS.ENTRYDATE">school_entry_date</column>
+      <column column="STUDENTS.EXITDATE">school_exit_date</column>
+      <column column="STUDENTS.ENROLL_STATUS">enroll_status</column>
+      <column column="TERMS.FIRSTDAY">term_first_day</column>
+      <column column="TERMS.LASTDAY">term_last_day</column>
+      <column column="STUDENTS.ENTRYDATE">enrolled_from</column>
+      <column column="STUDENTS.EXITDATE">enrolled_to</column>
+      <column column="STUDENTS.ID">calendar_days_enrolled_in_term</column>
+      <column column="STUDENTS.ID">entered_after_term_start</column>
+      <column column="STUDENTS.ID">exited_before_term_end</column>
+      <column column="CC.DATEENROLLED">first_section_date_enrolled</column>
+      <column column="STUDENTS.ID">section_count</column>
+    </columns>
+    <sql>
+      <![CDATA[
+        SELECT
+          S.ID              AS student_id,
+          S.STUDENT_NUMBER  AS student_number,
+          S.ENTRYDATE       AS school_entry_date,
+          S.EXITDATE        AS school_exit_date,
+          S.ENROLL_STATUS   AS enroll_status,
+          TM.FIRSTDAY       AS term_first_day,
+          TM.LASTDAY        AS term_last_day,
+          GREATEST(NVL(S.ENTRYDATE, TM.FIRSTDAY), TM.FIRSTDAY) AS enrolled_from,
+          LEAST(NVL(S.EXITDATE, TM.LASTDAY), TM.LASTDAY)       AS enrolled_to,
+          (
+            LEAST(NVL(S.EXITDATE, TM.LASTDAY), TM.LASTDAY)
+            - GREATEST(NVL(S.ENTRYDATE, TM.FIRSTDAY), TM.FIRSTDAY)
+            + 1
+          )                 AS calendar_days_enrolled_in_term,
+          CASE
+            WHEN S.ENTRYDATE IS NOT NULL AND S.ENTRYDATE > TM.FIRSTDAY THEN 1
+            ELSE 0
+          END               AS entered_after_term_start,
+          CASE
+            WHEN S.EXITDATE IS NOT NULL AND S.EXITDATE < TM.LASTDAY THEN 1
+            ELSE 0
+          END               AS exited_before_term_end,
+          MIN(CC.DATEENROLLED) AS first_section_date_enrolled,
+          COUNT(CC.ID)         AS section_count
+        FROM STUDENTS S
+        JOIN TERMS TM
+          ON TM.ID       = :termid
+         AND TM.SCHOOLID = :schoolid
+        LEFT JOIN CC
+          ON CC.STUDENTID = S.ID
+         AND CC.TERMID    = :termid
+         AND (CC.DATELEFT IS NULL OR CC.DATELEFT >= TRUNC(SYSDATE))
+        WHERE S.SCHOOLID      = :schoolid
+          AND S.ENROLL_STATUS = 0
+        GROUP BY
+          S.ID, S.STUDENT_NUMBER, S.ENTRYDATE, S.EXITDATE, S.ENROLL_STATUS,
+          TM.FIRSTDAY, TM.LASTDAY
+      ]]>
+    </sql>
+  </query>
+
+  <!-- ==================================================================
+       3. PERIOD STRUCTURE.
+
+       SECTIONMEETING was rejected as an invalid table when plugin 1.0.0 was
+       validated, which left this project with no structured period source
+       and no join path to PERIOD or CYCLE_DAY. The fallback the sibling file
+       chose was to parse SECTIONS.EXPRESSION and CC.EXPRESSION.
+
+       Meanwhile script.js hardcodes the bell schedule that ClawPass matches
+       those expressions against: periods A1, P1 through P6, HPU and A2, with
+       literal start and end times, maintained by hand. When a student scans
+       out, detectCurrentPeriod() finds the period by wall clock time and
+       then looks for a section whose period equals that token. A token the
+       SIS uses and the app does not know produces no error. It produces a
+       hall pass with the wrong teacher on it.
+
+       This query returns the period vocabulary the SIS is actually using,
+       with how many sections and how many students sit behind each token, so
+       the hand maintained list can be diffed against reality instead of
+       trusted. It is a configuration query, not a per student query: it
+       returns no student identifiers at all.
+       ================================================================== -->
+  <query name="com.lapromisefund.wildcathub.period_structure" coreTable="students" flattened="true">
+    <description>
+      The distinct period expressions in live use for one school and term,
+      with section, student and teacher counts behind each. Aggregate only,
+      no student identifiers. Feeds a check of the ClawPass bell schedule
+      against the SIS rather than a student facing screen. BASIS: every live CC
+      row for the term, the same basis as the other two queries in this file.
+      The COURSES join is a LEFT JOIN with an OR on the district level SCHOOLID
+      0, without which period token 9 is invisible entirely and every other
+      token under counts by 20 to 50 percent.
+    </description>
+    <args>
+      <arg name="schoolid" required="true" type="primitive" description="Schools.School_Number for the school being read" />
+      <arg name="termid" required="true" type="primitive" description="Terms.ID for the term being read" />
+    </args>
+    <columns>
+      <column column="CC.EXPRESSION">section_expression</column>
+      <column column="SECTIONS.ID">section_count</column>
+      <column column="CC.STUDENTID">student_count</column>
+      <column column="SECTIONS.TEACHER">teacher_count</column>
+      <column column="COURSES.COURSE_NAME">example_course_name</column>
+      <column column="TERMS.ID">term_id</column>
+      <column column="TERMS.ABBREVIATION">term_abbreviation</column>
+      <column column="CC.SCHOOLID">school_id</column>
+    </columns>
+    <sql>
+      <![CDATA[
+        SELECT
+          NVL(CC.EXPRESSION, SEC.EXPRESSION) AS section_expression,
+          COUNT(DISTINCT SEC.ID)             AS section_count,
+          COUNT(DISTINCT CC.STUDENTID)       AS student_count,
+          COUNT(DISTINCT SEC.TEACHER)        AS teacher_count,
+          MIN(C.COURSE_NAME)                 AS example_course_name,
+          T.ID                               AS term_id,
+          T.ABBREVIATION                     AS term_abbreviation,
+          CC.SCHOOLID                        AS school_id
+        FROM CC
+        JOIN SECTIONS SEC ON SEC.ID = CC.SECTIONID
+        LEFT JOIN COURSES C ON C.COURSE_NUMBER = SEC.COURSE_NUMBER
+                           AND (C.SCHOOLID = SEC.SCHOOLID OR C.SCHOOLID = 0)
+        JOIN TERMS T      ON T.ID       = CC.TERMID
+                         AND T.SCHOOLID = CC.SCHOOLID
+        WHERE CC.SCHOOLID = :schoolid
+          AND CC.TERMID   = :termid
+          AND (CC.DATELEFT IS NULL OR CC.DATELEFT >= TRUNC(SYSDATE))
+        GROUP BY
+          NVL(CC.EXPRESSION, SEC.EXPRESSION), T.ID, T.ABBREVIATION, CC.SCHOOLID
+      ]]>
+    </sql>
+  </query>
+
+</queries>

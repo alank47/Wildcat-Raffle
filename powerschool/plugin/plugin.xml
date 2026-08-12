@@ -19,7 +19,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://plugin.powerschool.pearson.com plugin.xsd"
         name="Wildcat Hub Sync"
-        version="1.0.6"
+        version="1.1.0"
         description="Read only student and staff data sync for the Wildcat Hub teacher and admin dashboard at Westbrook Academy.">
 
   <publisher name="LA Promise Fund">
@@ -226,6 +226,54 @@
            See docs/field-sourcing.md for the questions to send the
            registrar and the SIS admin.
            ================================================================ -->
+
+      <!-- ================================================================
+           BEHAVIOR. Added at 1.1.0. Read only, like everything else here.
+
+           WHY THIS TABLE AND NOT INCIDENT MANAGEMENT: PowerSchool ships two
+           independent behavior models and a school uses one of them. This was
+           measured rather than assumed, on 2026-08-12, through the count
+           endpoint, which answers without a grant:
+             GET /ws/schema/table/log/count       -> 16987
+             GET /ws/schema/table/incident/count  -> 13
+           Westbrook's behavior record is LOG. If that ratio ever inverts, this
+           block is pointed at the wrong table and needs rewriting, not extending.
+
+           WHY THE APP NEEDS IT: the Hub runs a complete parallel behavior
+           economy (eight core behaviors at plus or minus 100 points, referrals,
+           detentions, hall passes) that cannot see the SIS record at all. A
+           teacher deducting Wildcat Cash for defiance currently cannot tell that
+           the student already has three log entries this week, or was serving a
+           suspension that day.
+
+           DELIBERATELY ABSENT, and not an oversight:
+             Log.Entry    the narrative CLOB. A log entry narrative routinely
+                          names a second child or carries a medical detail, and
+                          nothing in this product reads free text.
+             Log.Subject  the title, same reason, weaker but still true.
+             32 of the 34 Discipline_ columns. Only the two below inform a
+                          teacher facing view. The rest are state reporting.
+           ================================================================ -->
+      <field table="Log" field="ID"                       access="ViewOnly"/>
+      <field table="Log" field="StudentID"                access="ViewOnly"/>
+      <field table="Log" field="SchoolID"                 access="ViewOnly"/>
+      <field table="Log" field="Entry_Date"               access="ViewOnly"/>
+      <field table="Log" field="Entry_Author"             access="ViewOnly"/>
+      <field table="Log" field="LogTypeID"                access="ViewOnly"/>
+      <field table="Log" field="Subtype"                  access="ViewOnly"/>
+      <field table="Log" field="Consequence"              access="ViewOnly"/>
+      <field table="Log" field="Discipline_ActionTaken"   access="ViewOnly"/>
+      <field table="Log" field="Discipline_IncidentDate"  access="ViewOnly"/>
+
+      <!-- GEN carries the school configured log type vocabulary. Without it a
+           LogTypeID is an integer with no meaning, and the app would be showing
+           teachers a number instead of "Defiance" or "Positive Referral". -->
+      <field table="Gen" field="ID"        access="ViewOnly"/>
+      <field table="Gen" field="Cat"       access="ViewOnly"/>
+      <field table="Gen" field="Name"      access="ViewOnly"/>
+      <field table="Gen" field="Value"     access="ViewOnly"/>
+      <field table="Gen" field="SchoolID"  access="ViewOnly"/>
+      <field table="Gen" field="SortOrder" access="ViewOnly"/>
 
   </access_request>
 

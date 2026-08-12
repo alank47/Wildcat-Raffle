@@ -1,0 +1,357 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Wildcat Hub behavior PowerQueries.
+
+  STATUS: NOT INSTALLED. plugin.xml 1.0.6 grants 108 fields and none of them is
+  on Log or Gen, so both queries below would answer 403 today.
+
+  ===========================================================================
+  THE PREMISE IS NO LONGER AN ASSUMPTION. It was measured on 2026-08-11,
+  against lapf.powerschool.com, with GET requests only.
+
+    /ws/schema/table/log/count       -> 200  {"count":16987}
+    /ws/schema/table/gen/count       -> 200  {"count":1164}
+    /ws/schema/table/incident/count  -> 200  {"count":13}
+
+  Westbrook's behavior record lives in LOG, by 16987 to 13. PowerSchool ships
+  two independent behavior models and the reference is explicit that Incident
+  Management, not log entries, is the administrator side and state reporting
+  source. Had that been the one in use here, every artifact in this file would
+  have been pointed at the wrong table. It is not. The Incident Management
+  vocabulary IS configured at this district (incident_lu_sub_code holds 160
+  rows) and is essentially unused: 13 incidents, 10 participants, 9 actions,
+  ever, across the whole instance.
+
+  That count endpoint answers WITHOUT a grant, which is why this was knowable
+  before anyone was asked to approve anything. A filtered count does not:
+  /ws/schema/table/log/count?q=schoolid==1817 answers 403 naming SchoolID. So
+  16987 is district wide and its recency is NOT established. Both are stated
+  again in docs/behavior-sourcing.md as open questions rather than smoothed
+  over here.
+  ===========================================================================
+
+  EVERY TABLE AND COLUMN BELOW WAS VERIFIED TO EXIST ON THE LIVE INSTANCE.
+
+  PowerSchool validates a column name BEFORE it checks permission, so on an
+  ungranted table a real column answers 403 NoAccess and a made up one answers
+  400 "is not valid column for table". Calibrated both ways on 2026-08-11:
+
+    students.zzz_definitely_not_a_column -> 400 "not valid column for: Students"
+    log.zzz_definitely_not_a_column      -> 400 "not valid column for: Log"
+    log.entry_date                       -> 403 NoAccess field=Entry_Date
+
+  Better still, the q filter path normalises the name before rejecting it, so
+  PowerSchool ITSELF supplied the canonical spelling of every column in the
+  access request. The <field> lines in docs/behavior-sourcing.md are copied
+  from those responses, not from a data dictionary PDF. A typo in the ask would
+  have cost a second trip to the SIS admin.
+
+  Two findings worth carrying:
+    - log.entry answers 400 "Querying not supported against clob or blob field
+      types". LOG.Entry is a CLOB. That is independent confirmation, from the
+      instance rather than from documentation, that the narrative column is
+      exactly the free text this file refuses to touch.
+    - Log and Gen answer 403, NOT the 405 that teachers answers. Both tables
+      ARE exposed over /ws/schema/table here. The earlier worry that LOG might
+      be unreachable the way teachers is has been retired by measurement.
+
+  PACKAGING HAZARD, still open, read before running npm run build:plugin.
+  That script zips the whole powerschool/plugin directory with `zip -r .`, so
+  it picks this file up automatically. Verified again on 2026-08-11: the
+  archive contains queries_root/behavior.named_queries.xml. Two outcomes are
+  possible and only one is now likely:
+    - PowerSchool rejects the upload during validation, as it rejected
+      SECTIONMEETING in 1.0.0. That would break the whole plugin upload.
+      SECTIONMEETING was rejected because it is not a real table. Log and Gen
+      ARE real tables in this instance, measured above, so this outcome is far
+      less likely than it looked before the probe. Less likely is not the same
+      as ruled out.
+    - PowerSchool accepts it and both queries answer 403, which is useless but
+      harmless.
+  The same sweep also picks up queries_root/expansion.named_queries.xml, which
+  belongs to a different change and is under the same hazard. `zip -r .` takes
+  the whole directory; neither file has to be named for it to ship.
+  docs/behavior-sourcing.md carries the exact exclusion diff for
+  build-plugin.mjs. This change may not edit that file, so it is escalated as
+  a blocker in the handoff rather than encoded as a test that fails: the test
+  suite is not wired into npm test or into CI, so a red assertion there is as
+  inert as this comment. Section 17 of convex/psBehavior.test.mjs REPORTS the
+  live state of the hazard on every run instead of asserting on it.
+
+  SCHEMA NOTES, inherited from wildcathub.named_queries.xml and repeated here
+  because this file will be edited by someone who has not read that one:
+    - Root element is <queries> with NO namespace and NO schemaLocation.
+      Declaring xmlns="http://plugin.powerschool.pearson.com" makes PowerSchool
+      report "Cannot find the declaration of element 'queries'".
+    - Each <column column="TABLE.COLUMN">alias</column> must reference a real
+      table and column that the ACCESS REQUEST GRANTS. The attribute drives
+      permission mapping; the element text is the alias and must match the SQL
+      output column name.
+    - The number of <column> entries must equal the number of columns the SQL
+      returns, IN THE SAME ORDER.
+    - There is no <summary> element. Every bind variable used in the SQL MUST be
+      declared in <args>, after <description> and before <columns>. An undeclared
+      :name leaves the query unregistered: the plugin installs and enables with
+      no validation error, then every call returns 404.
+    - named_queries.xml files live FLAT in queries_root. The name attribute
+      carries the namespace, the path does not.
+    - ORDER BY may only reference columns that are both SELECTed and fully
+      qualified.
+
+  WHICH SQL CONSTRUCTS HAVE LIVE PRECEDENT HERE, and which do not. Measured
+  against the seven queries already working on this instance:
+    PROVEN: coreTable="schools" (the terms query uses it), flattened="true"
+      (all seven), a repeated bind variable (attendance_summary binds :schoolid
+      three times), LEFT JOIN to a derived table with COUNT and GROUP BY plus
+      NVL(U.COL, 0) (the staff query), COALESCE, CASE WHEN, TRUNC(SYSDATE).
+    NOT PROVEN: TO_DATE, in the window predicate of behavior_log. It is now
+      the ONLY untested construct left in this file.
+    REMOVED, AND WHY: date formatting with TO_CHAR. Three columns on this
+      instance already come back as raw Oracle dates (TERMS.FIRSTDAY,
+      TERMS.LASTDAY, PGFINALGRADES.LASTGRADEUPDATE) and the pipeline carries
+      them as plain strings, convex/sisAction.ts:181 and :206. canonicalDate in
+      convex/psBehavior.ts was written to absorb exactly those raw shapes. So
+      formatting the date in SQL bought nothing and spent the one thing worth
+      conserving here, which is untested surface. The four date columns now
+      come back raw, like the three that already work.
+    REMOVED: string concatenation with || had no live precedent either, and it
+      was being used to build the UNMAPPED_LOGTYPE_ marker inside the SQL while
+      convex/psBehavior.ts held the same prefix as a constant. Two copies of
+      one string in two languages is a drift waiting to happen. The SQL now
+      returns G.NAME as it finds it, null included, and the module builds the
+      marker. One unprecedented construct fewer and one duplicated literal
+      fewer, for no loss.
+  BEFORE THE PLUGIN IS BUMPED: paste both SQL bodies into the PowerSchool query
+  tester and run them. That step is a blocking gate in docs/behavior-sourcing.md
+  and it now exists to test one thing, TO_DATE. The fallback, if it is
+  rejected, is written out there.
+
+  DESIGN NOTES, and these are the load bearing ones:
+
+    1. NO NARRATIVE FREE TEXT IS READ, AND ONE CODE FIELD IS NOT NOTHING.
+       LOG.Entry (the narrative, confirmed a CLOB by the instance itself) and
+       LOG.Subject (the title) are deliberately not selected, not aliased, and
+       not in the access request. A log entry narrative is a sentence a teacher
+       wrote about a child and it routinely carries a second child's name, a
+       medical detail, or a family circumstance. That stays in PowerSchool,
+       behind the access controls that already govern it and the audit trail
+       that records the reading.
+
+       The honest qualifier, because the earlier absolute claim was false:
+       LOG.Discipline_ActionTaken IS selected, and it is a String 79 that a
+       district CAN type prose into. "Suspended for fighting with Jose in the
+       cafeteria" is 48 characters, names a second child, and a length cap
+       cannot exclude it. So the guard is not a length cap. isActionCode in
+       convex/psBehavior.ts admits a value only if it is code SHAPED: no
+       whitespace of any kind, at most one '=', and nothing outside letters,
+       digits and . _ / + and -. That sentence is rejected on its first space.
+       What a shape guard still cannot exclude is a single bare token, so a one
+       word value that happens to be a person's name would pass. That is
+       stated here rather than papered over, the first sync counts every
+       rejected value, and open question 4 in docs/behavior-sourcing.md is
+       whether this column comes back out of the ask entirely.
+
+    2. EXACTLY TWO Discipline_ COLUMNS, NAMED, AND NO OTHERS. There are 34.
+       The 5.2 data dictionary marks 32 of them "no longer used by
+       application" and describes only Discipline_ActionTaken ("the action
+       taken for disciplining the student, such as S=Suspend") and
+       Discipline_IncidentDate as live. Those two, and only those two, are
+       selected here. They answer the single most decision relevant question a
+       rewards app can ask: was this student suspended, and when. Deducting
+       Wildcat Cash from a child who was serving a suspension that day is the
+       concrete mistake this prevents.
+       Discipline_ActionTaken is admitted only through the shape guard in note
+       1, and every value the guard refuses is counted and reported by the
+       first sync. If that count is not 0, Westbrook uses the column as a notes
+       field and it comes back out of the ask without touching anything else.
+       The other 32 remain excluded, and the test enumerates the two
+       that are allowed rather than pattern matching on the prefix, so adding
+       a 35th is a test failure and not an oversight.
+
+    3. LOGTYPEID IS NEVER HARDCODED. Log types are district configured rows in
+       GEN where CAT = 'logtype', and the integers are arbitrary per instance:
+       a published real district has Merits=404, Contact=461, Medical=514,
+       MTSS=24018 and a built-in Response To Behavior at -100000. Every query
+       here joins GEN and maps by NAME. A future edit that hardcodes an integer
+       is a bug that will pass every test and silently mislabel real entries.
+
+    4. AN UNMAPPED TYPE IS SURFACED, NOT DROPPED. The GEN join is a LEFT JOIN
+       so an entry whose type cannot be resolved keeps its row with a null
+       name, and convex/psBehavior.ts labels it UNMAPPED_LOGTYPE_<id>. An INNER
+       JOIN would silently delete every entry whose GEN row was deleted or
+       whose id is one of the negative built-ins, and the resulting count would
+       look plausible while being wrong.
+
+    5. SUBTYPE IS A CODE AND IS NEVER SHOWN AS IF IT WERE A NAME. LOG.Subtype
+       is a String 20, and the admin documentation says a subtype is configured
+       as a code plus a description. Which GEN column holds the code is NOT
+       documented and was NOT probeable without the grant, so this file does
+       not guess a join. It selects GEN.Value alongside GEN.Name in
+       behavior_types, and convex/psBehavior.ts resolves a subtype code against
+       BOTH, reporting resolved:false when neither matches rather than printing
+       a bare code at a teacher as though it were meaningful. Once the grant
+       lands, one look at the behavior_types output settles which column it is
+       and the resolution can move into SQL.
+
+    6. behavior_types CARRIES NO STUDENT DATA AT ALL. Run it first.
+  -->
+<queries>
+
+  <!-- ==================================================================
+       BEHAVIOR TYPES. The vocabulary, plus how much of it is actually used.
+
+       Zero student data. Not one column here can identify a child.
+
+       GEN is PowerSchool's catchall lookup table. Its CAT column enumerates
+       the categories verbatim, and three of them matter here:
+         CAT = 'logtype'      the log entry types
+         CAT = 'subtype'      the subtypes under them
+         CAT = 'consequence'  the consequence popup values
+       GEN.ID is the integer LOG.LOGTYPEID points at, GEN.NAME is the display
+       name, and GEN.VALUE is the other candidate for the subtype code. Both
+       are selected because design note 5 refuses to guess which.
+
+       The SCHOOLID filter accepts 0 and NULL as well as the school, because a
+       district level lookup row is scoped to school 0 and dropping those would
+       hide types that are in daily use.
+
+       coreTable="schools" is not a guess: the live terms query uses exactly
+       that value and works.
+
+       IF THE SIS ADMIN GRANTS GEN BUT NOT LOG: delete the LEFT JOIN and the
+       last three columns (entries_all_time, first_entry_date, last_entry_date)
+       from both the columns block and the SQL. The vocabulary alone still
+       answers most of the question, and the district wide count of 16987 log
+       entries is already known without either grant.
+       ================================================================== -->
+  <query name="com.lapromisefund.wildcathub.behavior_types" coreTable="schools" flattened="true">
+    <description>
+      Log entry types, subtypes and consequences as configured at this school,
+      each with how many log entries reference it and the date range over which
+      they were filed. Configuration and counts only. No student data.
+    </description>
+    <args>
+      <arg name="schoolid" required="true" type="primitive" description="Schools.School_Number for the school being read" />
+    </args>
+    <columns>
+      <column column="GEN.ID">gen_id</column>
+      <column column="GEN.Cat">gen_cat</column>
+      <column column="GEN.Name">gen_name</column>
+      <column column="GEN.Value">gen_value</column>
+      <column column="GEN.SchoolID">school_id</column>
+      <column column="GEN.SortOrder">sort_order</column>
+      <column column="LOG.ID">entries_all_time</column>
+      <column column="LOG.Entry_Date">first_entry_date</column>
+      <column column="LOG.Entry_Date">last_entry_date</column>
+    </columns>
+    <sql>
+      <![CDATA[
+        SELECT
+          G.ID        AS gen_id,
+          G.CAT       AS gen_cat,
+          G.NAME      AS gen_name,
+          G.VALUE     AS gen_value,
+          G.SCHOOLID  AS school_id,
+          G.SORTORDER AS sort_order,
+          NVL(U.ENTRY_COUNT, 0) AS entries_all_time,
+          U.FIRST_ENTRY         AS first_entry_date,
+          U.LAST_ENTRY          AS last_entry_date
+        FROM GEN G
+        LEFT JOIN (
+          SELECT
+            L.LOGTYPEID        AS LOGTYPEID,
+            COUNT(L.ID)        AS ENTRY_COUNT,
+            MIN(L.ENTRY_DATE)  AS FIRST_ENTRY,
+            MAX(L.ENTRY_DATE)  AS LAST_ENTRY
+          FROM LOG L
+          WHERE L.SCHOOLID = :schoolid
+          GROUP BY L.LOGTYPEID
+        ) U ON U.LOGTYPEID = G.ID
+        WHERE G.CAT IN ('logtype', 'subtype', 'consequence')
+          AND (G.SCHOOLID = :schoolid OR G.SCHOOLID = 0 OR G.SCHOOLID IS NULL)
+        ORDER BY G.CAT, G.SORTORDER, G.NAME
+      ]]>
+    </sql>
+  </query>
+
+  <!-- ==================================================================
+       BEHAVIOR LOG. One row per log entry, for one school, over an explicit
+       date window.
+
+       Keyed on STUDENTS.STUDENT_NUMBER, not STUDENTS.ID, because
+       student_number is what psRoster, psAttendance and psGrades already key
+       on. Joining on anything else would create a second student key in a
+       codebase that already has enough of them.
+
+       DATE WINDOW IS REQUIRED, not optional. An unbounded pull of a discipline
+       log is both a large read and a larger disclosure than anyone has agreed
+       to, and the district wide table holds 16987 rows. The window is half
+       open on the SQL side (>= start, < end + 1 day) so an entry filed on the
+       last day is included exactly once regardless of whether ENTRY_DATE
+       carries a time component.
+
+       ENROLL_STATUS = 0 matches the roster query. A student who has left keeps
+       their SIS record and their entries; this dashboard is for currently
+       enrolled students and pulling the rest widens the disclosure for no gain.
+
+       log_type_name is G.NAME as found, null included. The UNMAPPED_LOGTYPE_
+       marker is built in convex/psBehavior.ts, in one place, in one language.
+
+       DELIBERATELY ABSENT: LOG.Entry, LOG.Subject, and 32 of the 34
+       Discipline_ columns. See design notes 1 and 2.
+       ================================================================== -->
+  <query name="com.lapromisefund.wildcathub.behavior_log" coreTable="students" flattened="true">
+    <description>
+      Student log entries for one school over a date window: when, what type,
+      what subtype, what consequence, what action was taken, and which staff
+      member filed it. Carries no free text.
+    </description>
+    <args>
+      <arg name="schoolid"  required="true" type="primitive" description="Schools.School_Number for the school being read" />
+      <arg name="startdate" required="true" type="primitive" description="First day of the window, YYYY-MM-DD, inclusive" />
+      <arg name="enddate"   required="true" type="primitive" description="Last day of the window, YYYY-MM-DD, inclusive" />
+    </args>
+    <columns>
+      <column column="STUDENTS.Student_Number">student_number</column>
+      <column column="LOG.ID">log_entry_id</column>
+      <column column="LOG.Entry_Date">entry_date</column>
+      <column column="LOG.LogTypeID">log_type_id</column>
+      <column column="GEN.Name">log_type_name</column>
+      <column column="LOG.Subtype">subtype</column>
+      <column column="LOG.Consequence">consequence</column>
+      <column column="LOG.Discipline_ActionTaken">action_taken</column>
+      <column column="LOG.Discipline_IncidentDate">incident_date</column>
+      <column column="LOG.Entry_Author">entry_author</column>
+      <column column="LOG.SchoolID">school_id</column>
+    </columns>
+    <sql>
+      <![CDATA[
+        SELECT
+          S.STUDENT_NUMBER AS student_number,
+          L.ID             AS log_entry_id,
+          L.ENTRY_DATE     AS entry_date,
+          L.LOGTYPEID      AS log_type_id,
+          G.NAME           AS log_type_name,
+          L.SUBTYPE        AS subtype,
+          L.CONSEQUENCE    AS consequence,
+          L.DISCIPLINE_ACTIONTAKEN AS action_taken,
+          L.DISCIPLINE_INCIDENTDATE AS incident_date,
+          L.ENTRY_AUTHOR   AS entry_author,
+          L.SCHOOLID       AS school_id
+        FROM LOG L
+        JOIN STUDENTS S
+          ON S.ID = L.STUDENTID
+        LEFT JOIN GEN G
+          ON G.ID  = L.LOGTYPEID
+         AND G.CAT = 'logtype'
+        WHERE L.SCHOOLID      = :schoolid
+          AND S.SCHOOLID      = :schoolid
+          AND S.ENROLL_STATUS = 0
+          AND L.ENTRY_DATE >= TO_DATE(:startdate, 'YYYY-MM-DD')
+          AND L.ENTRY_DATE <  TO_DATE(:enddate, 'YYYY-MM-DD') + 1
+        ORDER BY S.STUDENT_NUMBER, L.ID
+      ]]>
+    </sql>
+  </query>
+
+</queries>

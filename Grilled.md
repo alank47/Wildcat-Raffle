@@ -62,10 +62,57 @@ plain fetch. Full design in `docs/auth-architecture.md`.
 
 ## Non-goals
 
-- Writing anything back to PowerSchool
+- ~~Writing anything back to PowerSchool~~ **SUPERSEDED 2026-08-12, see below**
 - Pulling production student records
 - Loading data anywhere before the Phase 0 gate is cleared
 - Adding manifest fields opportunistically
+
+## Scope change 2026-08-12: two way sync
+
+Directed by the user, twice, in their own words: "sync powerschool 2 way for
+updating student behavioral, and point data", and "any uploaded or updated info
+from the app should sync on demand back to sis". This reverses the first
+non-goal above. Recorded here rather than done quietly.
+
+Also directed: pull "every feature we can get from SIS". The measuring stick is
+the published API reference at `developer.powerschool.com`, not a summary of it.
+Two numbers decide the work: manifest coverage, 15 of 19 today, and a behavior
+event written to PowerSchool and read back unchanged.
+
+### What does not change
+
+Constraint 4 (secrets never enter a file) and constraint 6 (no em dashes) hold
+unchanged. Constraint 1 (read only) is now **read only until the access request
+is amended and re-approved**, which is a gate, not a permanent state.
+
+**New hard rule.** A sync must never write earned student value in either
+direction. Balances hold 6,616,500 in Wildcat Cash and PowerSchool knows nothing
+about any of it, so any value the SIS appears to offer for a balance is absence,
+not zero. Enforced by the allowlist in `convex/sisMerge.ts`. The write half needs
+its own mirror of that guard: the app is authoritative for points, PowerSchool is
+authoritative for enrollment, and neither may overwrite the other's truth.
+
+### The gate this ends at
+
+The plugin holds `ViewOnly` on all 108 fields, so the write path cannot close
+without: new fields and write access in `plugin.xml`, a version bump, and **a
+PowerSchool admin disabling and re-enabling plugin 9741**. Everything up to that
+line is buildable and provable now. Build to the line, prove it fails with a 403
+today, and stop there.
+
+### Open questions this raises, not yet answered
+
+12. **What object does a behavior event become in PowerSchool?** The `Log` table
+    is the likely home, but that is an assumption to check against the real API
+    reference, not a decision. Log entry type, subtype, and consequence codes are
+    school configured and have to be read from the instance.
+13. **Does point data go back at all, or only behavior?** Points are an app
+    invention. PowerSchool has no native field for them, so writing them means a
+    custom field, an extension table, or a Log entry body. Cheapest honest answer
+    may be that behavior events go back and balances stay in the app.
+14. **What is authoritative on a conflict?** If a Log entry is edited in
+    PowerSchool after the app wrote it, does the next sync overwrite it or leave
+    it? Needs a stated rule before any write ships.
 
 ## Open questions
 

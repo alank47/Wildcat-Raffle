@@ -11,7 +11,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -67,17 +67,61 @@ if (/client[_-]?secret|client[_-]?id\s*=\s*"[^"]{6,}"/i.test(xml)) {
   fail("plugin.xml appears to contain a client id or secret. Remove it before packaging.");
 }
 
-// Guard: the em dash rule applies to shipped files too. Written as an escape
-// so this file does not itself contain the character it is banning.
-const EM_DASH = "—";
+// Guard: the em dash rule applies to shipped files too. Written as an escape so
+// this file does not itself contain the character it is banning, which it did
+// until 2026-08-12 while claiming in this very comment that it did not.
+//
+// It also used to name one query file by hand, and there are three now. It globs
+// the directory instead: a file the guard does not know about is a file whose em
+// dashes ship.
+const EM_DASH = "\u2014";
+const QUERIES_DIR = resolve(PLUGIN_DIR, "queries_root");
+const queryFiles = existsSync(QUERIES_DIR)
+  ? readdirSync(QUERIES_DIR)
+      .filter((name) => name.endsWith(".xml"))
+      .map((name) => resolve(QUERIES_DIR, name))
+  : [];
 const emDashFiles = [];
-for (const file of [PLUGIN_XML, resolve(PLUGIN_DIR, "queries_root", "wildcathub.named_queries.xml")]) {
+for (const file of [PLUGIN_XML, ...queryFiles]) {
   if (existsSync(file) && readFileSync(file, "utf8").includes(EM_DASH)) {
     emDashFiles.push(file);
   }
 }
 if (emDashFiles.length > 0) {
   fail(`Em dash found in: ${emDashFiles.join(", ")}`);
+}
+
+// A query whose columns are not granted either fails validation on upload, which
+// is what SECTIONMEETING did in 1.0.0 and it took the whole plugin down with it,
+// or installs and 403s on every call. So a query file only ships once the access
+// request it depends on actually exists. Both guards switch themselves off the
+// moment the corresponding grant lands, which is the only way this stays true
+// without somebody remembering to come back and delete it.
+const zipExcludes = [".DS_Store", "__MACOSX/*", "*/.DS_Store"];
+const excluded = [];
+
+const grantsBehavior = /<field\s+table="Log"/i.test(xml) && /<field\s+table="Gen"/i.test(xml);
+if (existsSync(resolve(QUERIES_DIR, "behavior.named_queries.xml")) && !grantsBehavior) {
+  zipExcludes.push("queries_root/behavior.named_queries.xml");
+  excluded.push("behavior.named_queries.xml (plugin.xml grants neither Log nor Gen)");
+}
+
+// The expansion set is held back for a different reason: it is granted, but its
+// date predicate returns zero rows on every term that has attendance data, so
+// shipping it installs a capability that cannot answer. Held until the predicate
+// and the assertion that pins it are both fixed. See docs/gauntlet-report.md 2.6.
+if (existsSync(resolve(QUERIES_DIR, "expansion.named_queries.xml"))) {
+  zipExcludes.push("queries_root/expansion.named_queries.xml");
+  excluded.push("expansion.named_queries.xml (DATELEFT predicate returns no rows on completed terms)");
+}
+
+// Every query agrees with the access request, or no zip is built. Three of the
+// four ways a query can be wrong install cleanly and then 404 or 403 forever,
+// and finding that out costs a second trip to a PowerSchool administrator.
+try {
+  execFileSync("node", [resolve(HERE, "validate-queries.mjs")], { stdio: "inherit" });
+} catch {
+  fail("Query validation failed. Nothing was packaged. See the problems above.");
 }
 
 mkdirSync(OUT_DIR, { recursive: true });
@@ -87,7 +131,7 @@ rmSync(zipPath, { force: true });
 // -r zips recursively, -x excludes macOS cruft that PowerSchool rejects.
 execFileSync(
   "zip",
-  ["-r", "-q", zipPath, ".", "-x", ".DS_Store", "-x", "__MACOSX/*", "-x", "*/.DS_Store"],
+  ["-r", "-q", zipPath, ".", ...zipExcludes.flatMap((pattern) => ["-x", pattern])],
   { cwd: PLUGIN_DIR, stdio: "inherit" },
 );
 
@@ -99,6 +143,7 @@ if (!/\splugin\.xml\s*$/m.test(listing)) {
 console.log(listing);
 console.log(`Built ${zipPath}`);
 console.log(`Plugin version ${version}, ${fieldCount} fields requested, all ViewOnly`);
+for (const note of excluded) console.log(`EXCLUDED from this zip: ${note}`);
 console.log("");
 console.log("Next: PowerSchool > System > System Settings > Plugin Management Configuration");
 console.log("      Install, then Enable, then copy the client id and secret into .env.");
