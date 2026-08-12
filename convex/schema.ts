@@ -88,6 +88,58 @@ export default defineSchema({
     deletedAt: v.string(),
   }).index("by_entryId", ["entryId"]),
 
+  /**
+   * PowerSchool roster, one row per student per section, exactly as the
+   * `wildcathub.roster` PowerQuery returns it.
+   *
+   * The denormalized shape is what makes "match this account to its PowerSchool
+   * data" work in both directions from ONE table: a row carries both the
+   * teacher's email and the student's email, so
+   *   - a teacher's roster  = rows where teacherEmail = their email
+   *   - a student's schedule = rows where studentEmail = their email
+   * and each direction is a single indexed lookup.
+   *
+   * Both email columns are stored NORMALIZED (trimmed, lowercased) so they
+   * match the token claim. Writing a raw address here breaks the join silently.
+   *
+   * RESTRICTED FIELDS ARE NOT IN THIS TABLE, deliberately. Federal ethnicity
+   * (7), federal race (8), IEP (12), 504 (13) and English Learner (14) are
+   * behind their own go/no-go gate per Grilled.md constraint 3, and get a
+   * separate table with separate access tests if that gate is ever cleared.
+   * Keeping them out means no query over this table can leak them by accident.
+   */
+  psRoster: defineTable({
+    // student side
+    studentNumber: v.string(),
+    studentEmail: v.optional(v.string()), // normalized. Manifest field 19.
+    firstName: v.string(),
+    lastName: v.string(),
+    gradeLevel: v.optional(v.string()),
+
+    // section / course
+    sectionId: v.optional(v.string()),
+    sectionNumber: v.optional(v.string()),
+    sectionExpression: v.optional(v.string()),
+    courseNumber: v.optional(v.string()),
+    courseName: v.optional(v.string()),
+    period: v.optional(v.string()),
+
+    // staff side
+    teacherEmail: v.optional(v.string()), // normalized. Manifest field 17.
+    teacherFirstName: v.optional(v.string()),
+    teacherLastName: v.optional(v.string()),
+    teacherNumber: v.optional(v.string()),
+
+    termId: v.optional(v.string()),
+    termAbbreviation: v.optional(v.string()),
+    schoolId: v.optional(v.string()),
+
+    syncedAt: v.string(),
+  })
+    .index("by_teacherEmail", ["teacherEmail"])
+    .index("by_studentEmail", ["studentEmail"])
+    .index("by_studentNumber", ["studentNumber"]),
+
   schedules: defineTable({
     label: v.string(),
     payload: v.any(), // shape not yet pinned down; tighten before it carries logic
