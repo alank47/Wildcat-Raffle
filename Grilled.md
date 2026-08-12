@@ -90,7 +90,11 @@ plain fetch. Full design in `docs/auth-architecture.md`.
    is a local sandbox stopgap only.
 8. **Retention.** No retention policy exists yet for the warehouse copy of
    student records. It is a go / no go line.
-9. **Student email is not in the manifest.** The 18 field manifest has Staff
+9. **Student email is not in the manifest.** Format confirmed as initials plus
+   student number, e.g. `ar11414@westbrookacademy.org`, and the student number is
+   already the `id` on all 446 records. Deriving them was declined in favour of
+   waiting for the authoritative source; the format is kept as a verification
+   check against field 19 when it lands. The 18 field manifest has Staff
    Email (17) and no student email, and app student records have no email
    field. Google sign in returns an address with nothing to join it to, so
    student auth is blocked on a **new field 19, Student Email**, which amends

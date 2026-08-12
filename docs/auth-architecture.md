@@ -130,6 +130,17 @@ it yet:
 
 **Manifest field 19, Student Email** is added and pushed, but it amends the plugin
 access request and needs PowerSchool admin re-approval before it delivers anything.
+
+The address format is **initials plus student number**, for example
+`ar11414@westbrookacademy.org`. Worth writing down for two reasons. First, the app
+already holds the student number: it IS the `id` on all 446 student records. Second,
+that makes the format a free CHECK on field 19 when it arrives: derive the expected
+address from initials and id, compare against what PowerSchool actually returns, and
+any row that disagrees is either a name change, a duplicate, or a transfer worth
+looking at rather than silently trusting. Deriving addresses and loading them was
+considered and deliberately NOT done: PowerSchool is the authoritative source and a
+derived address that happens to collide would sign a student into another student's
+record.
 The Chromebook detail confirms the Google accounts exist; it does not confirm
 PowerSchool stores the same address. Those must be verified to be equal, or field 19
 is the wrong key.

@@ -264,6 +264,70 @@
 
   window.signInWithMicrosoft = signInWithMicrosoft;
 
+  /**
+   * Student side of the same pattern: Convex verifies the Google token first
+   * and returns the email, then the local record is looked up. Never the other
+   * way round, or knowing a classmate's address would be enough to become them.
+   *
+   * Until PowerSchool manifest field 19 (Student Email) lands, no student
+   * record carries an email, so the expected outcome here is a clear
+   * "no record matches" rather than a successful sign-in.
+   */
+  window.addEventListener('wildcat-auth-signin', function (ev) {
+    const me = ev.detail;
+    if (!me || me.kind !== 'student') return;
+
+    const errorEl = document.getElementById('googleSignInError');
+    const target = (me.email || '').trim().toLowerCase();
+    const student =
+      typeof students !== 'undefined' &&
+      students.find((s) => (s.email || '').trim().toLowerCase() === target);
+
+    if (!student) {
+      if (errorEl) {
+        errorEl.textContent =
+          `Signed in as ${target}, but no student record is linked to that ` +
+          `address yet. Student accounts are still being connected.`;
+      }
+      return;
+    }
+    if (errorEl) errorEl.textContent = '';
+    establishStudentSession(student);
+  });
+
+  window.addEventListener('wildcat-auth-error', function (ev) {
+    const d = ev.detail || {};
+    if (d.kind !== 'student') return;
+    const el = document.getElementById('googleSignInError');
+    if (el) el.textContent = d.message || 'Sign-in failed.';
+  });
+
+  /**
+   * Render the Google button lazily, the first time someone opens the Student
+   * tab. Doing it on page load would pull Google's SDK for every teacher who
+   * never touches the student side.
+   */
+  function wireStudentButtonLazily() {
+    const tab = document.getElementById('studentLoginBtn');
+    if (!tab) return;
+    let done = false;
+    tab.addEventListener('click', function () {
+      if (done || !configured.google()) return;
+      done = true;
+      initStudentButton('googleSignInButton').catch(function (err) {
+        const el = document.getElementById('googleSignInError');
+        if (el) el.textContent = err.message;
+        console.error('[wildcat-auth] Google button failed to render:', err);
+      });
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', wireStudentButtonLazily);
+  } else {
+    wireStudentButtonLazily();
+  }
+
   window.WildcatAuth = {
     CONFIG,
     configured,

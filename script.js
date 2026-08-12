@@ -1134,6 +1134,15 @@
                 return;
             }
 
+            return establishStudentSession(student);
+        }
+
+        /**
+         * Everything after a student has been identified. Extracted from
+         * studentLogin() so Google sign-in and the legacy name lookup share
+         * one session path. Callers must have already established identity.
+         */
+        function establishStudentSession(student) {
             currentStudent = student;
             
             // Hide login, show dashboard
