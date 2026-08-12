@@ -12,6 +12,7 @@ import type * as identity from "../identity.js";
 import type * as identityRules from "../identityRules.js";
 import type * as me from "../me.js";
 import type * as psSync from "../psSync.js";
+import type * as seed from "../seed.js";
 import type * as students from "../students.js";
 import type * as views from "../views.js";
 
@@ -26,6 +27,7 @@ declare const fullApi: ApiFromModules<{
   identityRules: typeof identityRules;
   me: typeof me;
   psSync: typeof psSync;
+  seed: typeof seed;
   students: typeof students;
   views: typeof views;
 }>;
