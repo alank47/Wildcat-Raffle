@@ -2886,7 +2886,24 @@
                     <span class="mode-pill"></span>
                 </div>
 
-                <div style="background: #f7f7f7; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                <button class="btn" onclick="openAddTeacherModal()" style="margin-bottom: 20px;">
+                    &#43; Add New Teacher
+                </button>
+
+                <!-- Add New Teacher, moved into a modal 2026-08-12. The form
+                     markup is unchanged: same ids, same handlers, same
+                     validation. Only where it sits moved, so the teachers list
+                     is the first thing on the page instead of a form nobody
+                     uses more than once a term. -->
+                <div id="addTeacherModal" class="hidden"
+                     style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 10000; align-items: center; justify-content: center; padding: 20px; overflow-y: auto;">
+                    <div style="background: #fff; border-radius: 10px; padding: 24px; max-width: 640px; width: 100%; max-height: 90vh; overflow-y: auto;">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                            <h3 style="margin: 0;">Add New Teacher</h3>
+                            <button onclick="closeAddTeacherModal()" aria-label="Close"
+                                    style="border: none; background: none; font-size: 26px; line-height: 1; cursor: pointer; color: #6b7280;">&times;</button>
+                        </div>
+
                     <h3 style="margin-bottom: 15px;">Add New Teacher</h3>
                     
                     <div class="form-group">
@@ -2934,6 +2951,7 @@
                             🔄 Re-match All Teachers to CSV
                         </button>
                     </div>
+                                    </div>
                 </div>
 
                 <h3>Current Teachers</h3>
@@ -4726,7 +4744,7 @@
     <!-- Chart.js for Data Visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-    <script src="wildcat-auth.js?v=20260812e"></script>
-    <script src="script.js?v=20260812e"></script>
+    <script src="wildcat-auth.js?v=20260812f"></script>
+    <script src="script.js?v=20260812f"></script>
 </body>
 </html>

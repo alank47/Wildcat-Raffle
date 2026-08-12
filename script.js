@@ -7762,7 +7762,12 @@
             document.getElementById('newTeacherUsername').value = '';
             document.getElementById('newTeacherEmail').value = '';
             document.getElementById('newTeacherPassword').value = '';
-            
+
+            // Only after the teacher is actually in the array and saved. Closing
+            // on click would dismiss the form on a validation failure too, and
+            // take the half-typed record with it.
+            closeAddTeacherModal();
+
             if (matched) {
                 alert(`✅ Teacher added successfully!\n\n` +
                       `${newTeacher.sections.length} class sections auto-assigned from CSV.\n` +
@@ -11559,6 +11564,45 @@
             alert(`✅ Password reset successfully for ${teacher.name}\n\nNew password: ${newPassword}\n\nMake sure to share this with the teacher securely!`);
         }
 
+        // ---------------------------------------------------------------
+        // Add New Teacher modal.
+        //
+        // The form used to sit above the teachers list, so the first thing on
+        // the page was a form used a handful of times a term while the list
+        // people actually came for was pushed below the fold.
+        //
+        // The form markup itself is untouched: same ids, same addTeacher()
+        // handler, same validation. Only its container changed.
+        // ---------------------------------------------------------------
+        function openAddTeacherModal() {
+            const modal = document.getElementById('addTeacherModal');
+            if (!modal) return;
+            modal.classList.remove('hidden');
+            modal.style.display = 'flex';
+            const first = document.getElementById('newTeacherName');
+            if (first) first.focus();
+        }
+
+        function closeAddTeacherModal() {
+            const modal = document.getElementById('addTeacherModal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.style.display = 'none';
+        }
+
+        // Click the backdrop to dismiss, but only the backdrop. Without the
+        // target check, a click that starts inside the form and drifts onto the
+        // panel edge closes it and loses whatever was typed.
+        document.addEventListener('click', (event) => {
+            if (event.target && event.target.id === 'addTeacherModal') closeAddTeacherModal();
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key !== 'Escape') return;
+            const modal = document.getElementById('addTeacherModal');
+            if (modal && !modal.classList.contains('hidden')) closeAddTeacherModal();
+        });
+
         function updateTeachersTable() {
             const tbody = document.getElementById('teachersTable');
             if (!tbody) {
@@ -11567,7 +11611,9 @@
             }
             
             try {
-                tbody.innerHTML = teachers.map(t => {
+                const view = paginate('teachers', teachers, true);
+                renderPager('teachers', 'teachersTable', view);
+                tbody.innerHTML = view.slice.map(t => {
                     let roleDisplay = t.role;
                     let roleColor = '#6c757d';
                     
@@ -12835,15 +12881,117 @@
         }
         
         // Render student table (separated from filtering logic)
-        function renderStudentTable(studentsToRender) {
-            const tbody = document.getElementById('studentsTableBody');
-            
-            if (studentsToRender.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px; color: #999;">No students found matching your criteria.</td></tr>';
+        // ---------------------------------------------------------------
+        // Pagination.
+        //
+        // The roster went from 446 to 646 when the app started reading the SIS
+        // through Convex, and every one of those rows was being written into the
+        // DOM at once. Both tables share this so they cannot drift apart in
+        // behaviour, which is what happens when the second one is copied from
+        // the first and then fixed in only one place.
+        //
+        // State is keyed by table id rather than held in two globals, for the
+        // same reason.
+        // ---------------------------------------------------------------
+        const PAGE_SIZE = 50;
+        const pagerState = {};
+
+        /**
+         * The slice to draw, plus the controls under it.
+         *
+         * `rows` is the FULL filtered list, not a page. Callers keep passing
+         * everything they already had and this decides what is visible, so
+         * search, sort and grade filtering did not have to learn about paging.
+         *
+         * Page resets to 1 whenever the list changes, which is what somebody
+         * expects after typing in a search box. Paging itself passes keepPage.
+         */
+        function paginate(key, rows, keepPage) {
+            const state = pagerState[key] || (pagerState[key] = { page: 1 });
+            const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+            if (!keepPage) state.page = 1;
+            // Deleting the last student on the last page must not strand the
+            // view on a page that no longer exists.
+            if (state.page > pages) state.page = pages;
+            const start = (state.page - 1) * PAGE_SIZE;
+            return {
+                slice: rows.slice(start, start + PAGE_SIZE),
+                page: state.page,
+                pages,
+                total: rows.length,
+                from: rows.length === 0 ? 0 : start + 1,
+                to: Math.min(start + PAGE_SIZE, rows.length),
+            };
+        }
+
+        /** Move one table to a page and redraw it through its own renderer. */
+        function goToPage(key, page) {
+            const state = pagerState[key];
+            if (!state) return;
+            state.page = page;
+            if (key === 'students') renderStudentTable(lastStudentRows, true);
+            else if (key === 'teachers') updateTeachersTable();
+        }
+
+        /**
+         * Controls drawn under a table, into a container created on demand.
+         *
+         * Created rather than required in index.html so this works for both
+         * tables without touching markup, and so a table that has not been
+         * paginated yet simply has no controls instead of a broken layout.
+         *
+         * Hidden entirely on a single page: a pager that always says "Page 1 of
+         * 1" is noise, and on the teachers table with 40 rows that is every time.
+         */
+        function renderPager(key, containerAfterId, info) {
+            const table = document.getElementById(containerAfterId);
+            if (!table) return;
+            const host = table.closest('table') || table;
+            const id = key + 'Pager';
+            let bar = document.getElementById(id);
+            if (!bar) {
+                bar = document.createElement('div');
+                bar.id = id;
+                bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 4px;flex-wrap:wrap;';
+                host.parentNode.insertBefore(bar, host.nextSibling);
+            }
+            if (info.pages <= 1) {
+                bar.innerHTML = '';
+                bar.style.display = 'none';
                 return;
             }
-            
-            tbody.innerHTML = studentsToRender.map(s => {
+            bar.style.display = 'flex';
+            const btn = (label, page, disabled) =>
+                `<button onclick="goToPage('${key}', ${page})" ${disabled ? 'disabled' : ''} ` +
+                `style="padding:6px 12px;border:1px solid #d1d5db;border-radius:6px;background:${disabled ? '#f3f4f6' : '#fff'};` +
+                `color:${disabled ? '#9ca3af' : '#374151'};cursor:${disabled ? 'default' : 'pointer'};">${label}</button>`;
+            bar.innerHTML =
+                `<span style="color:#6b7280;font-size:14px;">Showing ${info.from} to ${info.to} of ${info.total}</span>` +
+                `<span style="display:flex;gap:6px;align-items:center;">` +
+                btn('&laquo; Prev', info.page - 1, info.page === 1) +
+                `<span style="color:#374151;font-size:14px;padding:0 4px;">Page ${info.page} of ${info.pages}</span>` +
+                btn('Next &raquo;', info.page + 1, info.page === info.pages) +
+                `</span>`;
+        }
+
+        /** The full list last handed to renderStudentTable, so paging can redraw. */
+        let lastStudentRows = [];
+
+        function renderStudentTable(studentsToRender, keepPage) {
+            const tbody = document.getElementById('studentsTableBody');
+
+            lastStudentRows = studentsToRender;
+
+            if (studentsToRender.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px; color: #999;">No students found matching your criteria.</td></tr>';
+                renderPager('students', 'studentsTableBody', { pages: 1 });
+                return;
+            }
+
+            const view = paginate('students', studentsToRender, keepPage);
+            renderPager('students', 'studentsTableBody', view);
+
+            tbody.innerHTML = view.slice.map(s => {
                 // Check if student currently has all 3 ticket types (real-time qualification)
                 const hasAllThreeTickets = s.pbisTickets > 0 && s.attendanceTickets > 0 && s.academicTickets > 0;
                 

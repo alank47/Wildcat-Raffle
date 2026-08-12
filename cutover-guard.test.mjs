@@ -127,6 +127,43 @@ console.log("\nThe roster is re-read once a Convex session exists");
   );
 }
 
+console.log("\nPagination and the teacher modal");
+{
+  check("both tables share one paginator", /function paginate\(/.test(script));
+  check(
+    "the student renderer slices rather than drawing everything",
+    /view\.slice\.map/.test(script),
+    "646 rows were going into the DOM at once",
+  );
+  check("the teachers table paginates too", /paginate\('teachers'/.test(script));
+  check(
+    "a page beyond the end is clamped",
+    /state\.page > pages/.test(script),
+    "deleting the last row on the last page must not strand the view",
+  );
+  check(
+    "the pager hides itself on a single page",
+    /info\.pages <= 1/.test(script),
+    "Page 1 of 1 is noise",
+  );
+  check("the add-teacher modal has an opener", /function openAddTeacherModal/.test(script));
+  check("and a closer", /function closeAddTeacherModal/.test(script));
+  check(
+    "the backdrop click checks the target",
+    /event\.target\.id === 'addTeacherModal'/.test(script),
+    "without it, a drag from inside the form closes it and loses the input",
+  );
+  check("Escape closes it", /event\.key !== 'Escape'/.test(script));
+  check(
+    "it closes only after the teacher is saved",
+    script.indexOf("closeAddTeacherModal();", script.indexOf("teachers.push(newTeacher)")) > 0,
+    "closing on click would dismiss a validation failure too",
+  );
+  check("the form still has its original ids", /newTeacherName/.test(html) && /newTeacherPassword/.test(html));
+  check("the modal exists in the markup", /id="addTeacherModal"/.test(html));
+  check("the teachers list survived the move", /Current Teachers/.test(html));
+}
+
 console.log("\nCache busters");
 {
   const tags = [...html.matchAll(/(script|wildcat-auth)\.js\?v=([\w-]+)/g)].map((m) => m[2]);
