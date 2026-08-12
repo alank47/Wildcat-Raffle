@@ -12,6 +12,7 @@ import type * as accessRules from "../accessRules.js";
 import type * as identity from "../identity.js";
 import type * as identityRules from "../identityRules.js";
 import type * as me from "../me.js";
+import type * as migrate from "../migrate.js";
 import type * as psSync from "../psSync.js";
 import type * as seed from "../seed.js";
 import type * as sisMerge from "../sisMerge.js";
@@ -31,6 +32,7 @@ declare const fullApi: ApiFromModules<{
   identity: typeof identity;
   identityRules: typeof identityRules;
   me: typeof me;
+  migrate: typeof migrate;
   psSync: typeof psSync;
   seed: typeof seed;
   sisMerge: typeof sisMerge;

@@ -59,14 +59,19 @@ export default defineSchema({
     pbisTickets: v.number(),
     attendanceTickets: v.number(),
     academicTickets: v.number(),
-    bigRaffleQualified: v.array(v.string()),
+    // Real data holds week NUMBERS here, not strings. The union keeps the
+    // source faithful rather than coercing, because coercing a key silently
+    // changes what "qualified for week 3" compares equal to.
+    bigRaffleQualified: v.array(v.union(v.string(), v.number())),
     weeksQualified: v.optional(v.number()),
 
     wildcatCashBalance: v.optional(v.number()),
     wildcatCashEarned: v.optional(v.number()),
     wildcatCashSpent: v.optional(v.number()),
     wildcatCashDeducted: v.optional(v.number()),
-    wildcatCashRewardsRedeemed: v.optional(v.number()),
+    // A LIST of redeemed rewards, not a count. Assumed to be a number
+    // first; the import refused it, which is the validator doing its job.
+    wildcatCashRewardsRedeemed: v.optional(v.array(v.any())),
     wildcatCashTransactions: v.optional(v.array(v.any())),
     cashBalance: v.optional(v.number()),
     cashTransactions: v.optional(v.array(v.any())),
