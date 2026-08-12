@@ -29,8 +29,8 @@
     convexUrl: 'https://quick-cassowary-644.convex.cloud',
 
     entra: {
-      clientId: null,   // Application (client) ID  -> docs/entra-signin-setup.md
-      tenantId: null,   // Directory (tenant) ID
+      clientId: '65fe084a-1eb2-4fed-8df8-8607f8c4c225',  // Application (client) ID
+      tenantId: 'afc1d09c-9f9b-4d45-9643-198f7dc264c4',  // Directory (tenant) ID
     },
 
     google: {
