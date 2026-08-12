@@ -14,7 +14,38 @@ import { ConvexError } from "convex/values";
  * your address" and an admin guessing for an hour, so they have to survive.
  */
 
-export const STUDENT_DOMAIN = "westbrookacademy.org";
+/**
+ * Student domains. There is MORE THAN ONE, and assuming otherwise locked real
+ * students out.
+ *
+ * Verified against the PowerSchool New Students list on 2026-08-12. Currently
+ * enrolled Westbrook Academy students hold addresses on both:
+ *
+ *   ms10826@westbrookacademy.org   Sierra, Matthew, 10826, grade 11
+ *   magat10856@rwwnms.org          Agaton Colin, Maria, 10856, grade 12
+ *
+ * Both are at school WA. `rwwnms.org` is Russell Westbrook Why Not? Middle
+ * School, which appears in enrollment histories as the school students promote
+ * FROM, and they keep the address when they arrive. So a student who came up
+ * through the middle school signs in on a different domain from one who did not,
+ * and both are equally legitimate.
+ *
+ * A single domain constant refused every one of the first group with
+ * "Not a student account", which reads like a bug in their account rather than
+ * in ours.
+ *
+ * This is a list, and it is still exact equality per entry, never endsWith or a
+ * suffix match. Adding a domain here admits every Google account in that
+ * workspace, so it takes the same care as adding a staff domain.
+ */
+export const STUDENT_DOMAINS = ["westbrookacademy.org", "rwwnms.org"] as const;
+
+/**
+ * Kept as the primary domain for anything that must name one, such as the
+ * Google sign in hint. It is NOT the authorization boundary: STUDENT_DOMAINS is.
+ */
+export const STUDENT_DOMAIN = STUDENT_DOMAINS[0];
+
 export const GOOGLE_ISSUER = "https://accounts.google.com";
 export const ENTRA_ISSUER_PREFIX = "https://login.microsoftonline.com/";
 
@@ -70,7 +101,11 @@ export function classify(
   }
 
   if (issuer === GOOGLE_ISSUER) {
-    if (domain !== STUDENT_DOMAIN) throw new ConvexError("Not a student account.");
+    // Exact equality against each entry, never a suffix match, for the same
+    // reason as the staff check above.
+    if (!STUDENT_DOMAINS.some((d) => domain === d)) {
+      throw new ConvexError("Not a student account.");
+    }
     return { kind: "student", email };
   }
 

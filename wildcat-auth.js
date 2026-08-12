@@ -62,7 +62,19 @@
 
     google: {
       clientId: '718452352756-cclr7dbvucal375vrj5m9fg25fn3eh3s.apps.googleusercontent.com',
-      hostedDomain: 'westbrookacademy.org',
+
+      // DELIBERATELY UNSET. `hd` pins the account chooser to ONE workspace
+      // domain, and Westbrook students are on two: students who came up through
+      // Russell Westbrook Why Not? Middle School keep an @rwwnms.org address,
+      // the rest are @westbrookacademy.org. Pinning it to either one hides the
+      // other half's account and looks to them like their account does not
+      // exist.
+      //
+      // Dropping it costs nothing in security. `hd` is a UX filter that the
+      // client asks for and cannot enforce; the real check is server side in
+      // convex/identityRules.ts, which compares the verified token's issuer AND
+      // domain against STUDENT_DOMAINS by exact equality.
+      hostedDomain: null,
     },
   };
 
@@ -320,10 +332,13 @@
     await loadScript(GIS_CDN);
     window.google.accounts.id.initialize({
       client_id: CONFIG.google.clientId,
-      // A UX hint that picks the account chooser. NOT a security control:
-      // anyone can call the endpoint with a token from another domain, which is
-      // why the domain is checked again server side on the verified claims.
-      hd: CONFIG.google.hostedDomain,
+      // `hd` is a UX hint that filters the account chooser. NOT a security
+      // control: anyone can call the endpoint with a token from another domain,
+      // which is why the domain is checked again server side on the verified
+      // claims. It is omitted entirely when unset rather than passed as null,
+      // because Westbrook students are on two domains and pinning either one
+      // hides the other half's account. See the CONFIG comment.
+      ...(CONFIG.google.hostedDomain ? { hd: CONFIG.google.hostedDomain } : {}),
       auto_select: false,
       callback: (response) => {
         finishSignIn(response.credential, 'student').catch((err) => {

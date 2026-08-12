@@ -22,6 +22,16 @@ const CASES = [
   [MS, "teacher@lapromisefund.org", "staff", "normal staff"],
   [MS, "  Teacher@Lapromisefund.org  ", "staff", "staff, whitespace + case"],
   [GOOGLE, "kid@westbrookacademy.org", "student", "normal student"],
+  // Westbrook students are on TWO domains. Students who came up through Russell
+  // Westbrook Why Not? Middle School keep an @rwwnms.org address and are just as
+  // enrolled. A single domain constant refused every one of them, which is why
+  // both are asserted here rather than only the one somebody thought of first.
+  [GOOGLE, "magat10856@rwwnms.org", "student", "student on the middle school domain"],
+  [GOOGLE, "  MAGAT10856@RWWNMS.org ", "student", "second domain, whitespace + case"],
+  // Widening to a list must not have widened it to a suffix match.
+  [GOOGLE, "kid@rwwnms.org.evil.test", null, "second domain as a suffix is refused"],
+  [GOOGLE, "kid@notrwwnms.org", null, "second domain as a substring is refused"],
+  [MS, "magat10856@rwwnms.org", null, "second student domain via Microsoft"],
   [GOOGLE, "  Kid@WestbrookAcademy.org ", "student", "student, whitespace + case"],
 
   // Privilege escalation, both directions. Checking domain or provider alone

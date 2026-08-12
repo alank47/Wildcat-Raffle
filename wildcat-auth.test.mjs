@@ -51,7 +51,14 @@ console.log("\nConfig");
 check("entra is configured (tenant + client id present)", A.configured.entra() === true);
 check("google is configured (client id present)", A.configured.google() === true);
 check("convexUrl points at the real deployment", A.status().convexUrl.includes("quick-cassowary-644"));
-check("google hosted domain is the student domain", A.CONFIG.google.hostedDomain === "westbrookacademy.org");
+// `hd` is deliberately UNSET. Westbrook students are on two domains
+// (@westbrookacademy.org and @rwwnms.org, the latter carried up from Russell
+// Westbrook Why Not? Middle School), and `hd` pins the account chooser to one
+// workspace, hiding the other half's account. It was never a security control:
+// the real check is server side in convex/identityRules.ts against
+// STUDENT_DOMAINS. Asserting it stays unset, because setting it again would
+// silently lock out real students.
+check("google hosted domain is NOT pinned to one domain", !A.CONFIG.google.hostedDomain);
 check(
   "no client SECRET is present anywhere in config",
   !JSON.stringify(A.CONFIG).toLowerCase().includes("secret"),
