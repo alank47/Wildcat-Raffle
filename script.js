@@ -15834,6 +15834,32 @@
                 updateLoginActivityTable();
             }
             
+            // Wildcat Cash is SUPERADMIN ONLY. See the "Force admin, teacher, and
+            // campus aide users to Raffle Mode only" branch on sign-in.
+            //
+            // Enforcement used to happen only here, by not populating the data.
+            // A non-superadmin who reached these tabs anyway, most often from a
+            // `systemMode` left in localStorage by an earlier session, got a
+            // fully navigable mode with permanently empty tables and nothing
+            // saying why. That reads as a broken app rather than a closed door.
+            //
+            // This does not change who may use Cash mode. It makes the existing
+            // answer visible instead of silent.
+            const cashTabs = ['awardCash', 'cashActivity', 'cashLeaderboard',
+                              'rewardsStore', 'studentAccounts', 'cashAnalytics', 'cashAudit'];
+            if (cashTabs.includes(tabName) && currentUser && currentUser.role !== 'superadmin') {
+                const body = document.getElementById('cashStudentTableBody');
+                if (body) {
+                    body.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:#999;">' +
+                        '<div style="font-weight:600;margin-bottom:6px;">Wildcat Cash is limited to super admins</div>' +
+                        '<div style="font-size:13px;max-width:520px;margin:0 auto;">' +
+                        `Your account is "${currentUser.role}". Switch to Raffle Mode to award tickets, ` +
+                        'or ask a super admin to change your access level.</div></td></tr>';
+                }
+                console.warn(`[cash] ${tabName} is superadmin only; current role is ${currentUser.role}`);
+                return;
+            }
+
             // Handle Wildcat Cash tab-specific updates (data population)
             if (tabName === 'awardCash' && currentUser && currentUser.role === 'superadmin') {
                 updateCashPeriodFilter();
