@@ -15,6 +15,7 @@
     "build:plugin": "node scripts/build-plugin.mjs",
     "sync": "node --env-file=.env src/sync-to-app.ts",
     "validate:queries": "node scripts/validate-queries.mjs",
-    "probe:logtypes": "node --env-file=.env src/probe-logtypes.ts"
+    "probe:logtypes": "node --env-file=.env src/probe-logtypes.ts",
+    "staff:match": "node --env-file=.env src/staff-match.ts"
   }
 }

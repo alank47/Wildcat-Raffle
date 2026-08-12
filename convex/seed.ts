@@ -159,3 +159,53 @@ export const exportStaffEmails = internalMutation({
       .map((t) => ({ legacyId: t.legacyId ?? "", email: t.email }));
   },
 });
+
+/**
+ * Create staff rows for people who exist in Entra but not here.
+ *
+ * ALWAYS at role "teacher", the lowest privilege. Role is a human decision and
+ * the directory cannot make it: a jobTitle of "Principal" is not the same
+ * statement as "may zero out a child's balance". An admin promotes afterwards.
+ *
+ * Only creates. An existing row is never touched, so running this cannot
+ * change somebody's role, rename them, or reset their ticket count.
+ *
+ * Matched and deduplicated on normalized email, because Entra issues the claim
+ * with directory casing (First.Last@domain) while records hold first.last.
+ */
+export const provisionStaff = internalMutation({
+  args: {
+    staff: v.array(v.object({ email: v.string(), name: v.string() })),
+  },
+  handler: async (ctx, { staff }) => {
+    let created = 0;
+    let skipped = 0;
+    const now = new Date().toISOString();
+
+    for (const person of staff) {
+      const email = person.email.trim().toLowerCase();
+      if (!email.includes("@")) {
+        skipped++;
+        continue;
+      }
+      const existing = await ctx.db
+        .query("teachers")
+        .withIndex("by_email", (q) => q.eq("email", email))
+        .unique();
+      if (existing) {
+        skipped++;
+        continue;
+      }
+      await ctx.db.insert("teachers", {
+        name: person.name || email,
+        email,
+        role: "teacher",
+        ticketsAwarded: 0,
+        createdDate: now,
+      });
+      created++;
+    }
+
+    return { created, skipped };
+  },
+});
