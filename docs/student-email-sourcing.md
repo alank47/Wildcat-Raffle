@@ -1,7 +1,11 @@
 # Student email: where it actually lives
 
-Manifest field 19. Blocked since 2026-08-11. Substantially narrowed 2026-08-12
-after seeing the data in the PowerSchool UI.
+Manifest field 19. **SOLVED 2026-08-12.** The source is confirmed, every column
+name is verified against the instance, and plugin 1.2.0 requests them.
+
+Blocked since 2026-08-11, twice on a wrong assumption, and the second wrong
+assumption disabled the plugin. The method that finally worked is at the bottom
+and is worth more than the answer.
 
 This is the key that links a student's Google Workspace account to their record.
 Without it a signed in student cannot be matched to any data.
@@ -59,77 +63,85 @@ A derived address that is wrong signs a student into another student's record.
 This stays declined. The format remains useful as a **verification check** once
 the real values are read, never as a source.
 
-## Where it lives: narrowed to two tables
+## The answer
 
-The Phase 0 probe already produced the decisive evidence, in `docs/access-gap.md`.
-The status codes are diagnostic and were not read closely enough at the time:
+```
+STUDENTS.PERSON_ID -> PERSON.ID
+                   -> PERSONEMAILADDRESSASSOC.PERSONID
+                   -> PERSONEMAILADDRESSASSOC.EMAILADDRESSID
+                   -> EMAILADDRESS.EMAILADDRESSID -> EMAILADDRESS.EMAILADDRESS
+```
 
-| Probe | Result | What that proves |
-|---|---|---|
-| `students.student_email` | 400 not a valid column for Students | Column does not exist |
-| `students.email` | 400 not a valid column for Students | Column does not exist |
-| `u_studentsuserfields.studentsdcid` | **403** lacks permission | **Table AND column exist**, just not granted |
-| `u_studentsuserfields.student_email` | 400 not a valid column for U_StudentsUserFields | Table exists, that column does not |
-| `studentcorefields.studentsdcid` | **403** lacks permission | **Table AND column exist**, not granted |
-| `studentcorefields.student_email` | 400 not a valid column for StudentCoreFields | Table exists, that column does not |
+Confirmed on the live instance 2026-08-12. Row counts: `emailaddress` 3,022,
+`personemailaddressassoc` 4,048, `person` 10,546.
 
-**400 and 403 mean different things and the difference is the whole finding.**
-A 400 naming the table proves PowerSchool resolved the table and enumerated its
-columns. A 403 proves the column exists too and only permission is missing.
+Every column below answered **403, exists but not granted**, before it was
+written into `plugin.xml`:
 
-So `U_StudentsUserFields` and `StudentCoreFields` both exist on this instance.
-The email column is very likely in one of them under a name nobody has guessed
-yet, and the extension tables are exactly where a district puts a field like this.
+| Table | Columns confirmed to exist |
+|---|---|
+| `Students` | `Person_Id` |
+| `Person` | `ID`, `DCID` |
+| `PersonEmailAddressAssoc` | `PersonID`, `EmailAddressID`, `IsPrimaryEmailAddress`, `EmailAddressPriorityOrder` |
+| `EmailAddress` | `EmailAddressID`, `EmailAddress` |
 
-### The candidate never tried
+And these answered **400, does not exist**, so nobody retries them:
+`Students.Student_Email`, `Students.Email`, `Students.Email_Addr`,
+`PersonEmailAddressAssoc.EmailTypeID`, `EmailAddress.ID`, `EmailAddress.DCID`,
+`U_StudentsUserFields.*`, `StudentCoreFields.*`, and `U_Def_Ext_Students.email`
+(that table exists with 623 rows and `StudentsDCID`, but has no email column).
 
-`STUDENTS.EMAIL_ADDR`. Staff email is `USERS.EMAIL_ADDR`, which exists, is
-granted and works. Only `student_email` and `email` were probed on `STUDENTS`;
-the spelling that is already proven to exist elsewhere in the schema was not.
+**A person can hold several addresses**, which is why the association table
+carries `IsPrimaryEmailAddress` and `EmailAddressPriorityOrder`. Picking one
+arbitrarily would hand a student an address that is not theirs to sign in with.
+`queries_root/identity.named_queries.xml` returns every address per student and
+orders primary first, leaving the choice to the application.
 
-Cheap, and it costs one request.
+## How it was found, which is the reusable part
 
-## What to do next, cheapest first
+**The table endpoint distinguishes two failures, and the difference is the whole
+method:**
 
-The plugin must be enabled again before any of this can run. Nothing below needs
-a new access request.
+| Response | Meaning |
+|---|---|
+| `400 not a valid column for table X` | The table exists. The column does not. |
+| `403 lacks sufficient permission` | Both exist. Only the grant is missing. |
 
-1. **Probe the untried spelling and enumerate the extension tables.**
+So an ungranted table can still be mapped, one column at a time, without any
+access request and without asking anyone. That is how nine column names were
+confirmed and nine more were eliminated in a single pass of GETs.
 
-   ```
-   cd powerschool/sync
-   npm run probe          # regenerates docs/access-gap.md
-   ```
+It also means the earlier probe already held the answer's shape and it was not
+read closely enough: `u_studentsuserfields.studentsdcid` answered 403 on
+2026-08-11, which proved that table existed, and that was recorded as a failure.
 
-   Add `students.email_addr`, and then ask the table endpoint for the extension
-   tables' shape rather than guessing column names one at a time.
+## What is left
 
-2. **If that does not settle it, ask the SIS administrator.** One question,
-   phrased so the answer is a column name and not a yes:
-
-   > On the Student Profile > Email page, which database field backs the "Email
-   > Address" box? We need the table and column name, for example
-   > `U_StudentsUserFields.<something>`. We have confirmed it is not
-   > `Students.Student_Email` or `Students.Email`.
-
-3. **Only then** add fields to `plugin.xml`, in their own version, with a
-   PowerQuery that has been run in the query tester first.
+1. **Install plugin 1.2.0.** Nine new fields, all ViewOnly, all confirmed to
+   exist. `docs/admin-ask-1.2.0.md` is the request.
+2. **Run the query once in the PowerSchool query tester** before the upload.
+   Oracle has not parsed it, and that gate is not automatable.
+3. **Wire it up.** `student_email` is not in `run-queries.ts` or in any sync
+   action yet, and `students` in Convex has no email field. The query returns
+   several addresses per student, so the app picks primary first and stores one.
+4. **Check the values against the expected format** as a sanity pass, never as a
+   source: two domains, and `djack002` belongs to student 11002.
 
 ## The rule this document exists to enforce
 
-Two uploads have now been rejected for requesting columns that do not exist, and
-the second one **disabled the plugin and took the sync down**. Both invalid
-spellings are in `KNOWN_INVALID` in `powerschool/sync/scripts/validate-queries.mjs`
-and the build refuses to package them.
+Two uploads were rejected for requesting columns that do not exist, and the
+second one **disabled the plugin and took the sync down**. Every invalid
+spelling found so far is in `KNOWN_INVALID` in
+`powerschool/sync/scripts/validate-queries.mjs`, and the build refuses to
+package any of them.
 
-Nothing goes into `plugin.xml` for this field until the instance has confirmed
-the name. Not a third guess.
+Nothing goes into `plugin.xml` until the instance has answered 403 for it.
+That standard is what produced 1.2.0, and it cost one pass of GETs.
 
 ## What this blocks, and what it does not
 
-**Blocks:** student sign in, and `myStudentView`, which is written and has no way
-to identify its caller.
+**Blocks until 1.2.0 is installed:** student sign in, and `myStudentView`, which
+is written and has no way to identify its caller.
 
-**Does not block:** anything in the 1.1.1 request. Behavior, the roster fix and
-the expansion queries are all independent. Staff sign in is unaffected, since it
-keys on `USERS.EMAIL_ADDR`.
+**Does not block:** anything already installed. Staff sign in is unaffected,
+since it keys on `USERS.EMAIL_ADDR`.

@@ -19,7 +19,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://plugin.powerschool.pearson.com plugin.xsd"
         name="Wildcat Hub Sync"
-        version="1.1.1"
+        version="1.2.0"
         description="Read only student and staff data sync for the Wildcat Hub teacher and admin dashboard at Westbrook Academy.">
 
   <publisher name="LA Promise Fund">
@@ -63,9 +63,54 @@
            softly: it blocks the whole plugin, which took the sync down.
 
            Student email is real and lives in the UI at Student Profile > Email.
-           That tab is backed by the PERSON email tables, not by a column on
-           STUDENTS. Sourcing it is tracked separately; do not guess another
-           STUDENTS column name here. See docs/student-email-sourcing.md. -->
+           It is NOT a column on STUDENTS. It is in the Person email model, and
+           the fields for it are requested below. See docs/student-email-sourcing.md.
+           ================================================================ -->
+
+      <!-- ================================================================
+           MANIFEST 19, Student Email. Added at 1.2.0.
+
+           EVERY FIELD BELOW WAS CONFIRMED TO EXIST BEFORE IT WAS WRITTEN HERE.
+           The table endpoint distinguishes the two failures, and that is the
+           whole method:
+
+             400 "not a valid column for table X"  the column does not exist
+             403 "lacks sufficient permission"     it exists, we lack the grant
+
+           Every line below answered 403 on 2026-08-12. Nothing here is a guess,
+           because guessing is what got 1.1.0 rejected and took the sync down.
+
+           The join, and why it needs four tables:
+
+             STUDENTS.PERSON_ID
+               -> PERSON.ID
+               -> PERSONEMAILADDRESSASSOC.PERSONID
+               -> PERSONEMAILADDRESSASSOC.EMAILADDRESSID
+               -> EMAILADDRESS.EMAILADDRESSID -> EMAILADDRESS.EMAILADDRESS
+
+           A person can hold several addresses, which is why the association
+           table carries IsPrimaryEmailAddress and EmailAddressPriorityOrder.
+           Picking one arbitrarily would hand a student someone else's address
+           to sign in with, so both selectors are requested and the query orders
+           by them explicitly.
+
+           Ruled out by probe, so nobody retries them: Students.Student_Email,
+           Students.Email, Students.Email_Addr, U_StudentsUserFields.*,
+           StudentCoreFields.*, U_Def_Ext_Students.* (that table exists and has
+           StudentsDCID, but no email column at all).
+           ================================================================ -->
+      <field table="Students" field="Person_Id" access="ViewOnly"/>
+
+      <field table="Person" field="ID"   access="ViewOnly"/>
+      <field table="Person" field="DCID" access="ViewOnly"/>
+
+      <field table="PersonEmailAddressAssoc" field="PersonID"                  access="ViewOnly"/>
+      <field table="PersonEmailAddressAssoc" field="EmailAddressID"            access="ViewOnly"/>
+      <field table="PersonEmailAddressAssoc" field="IsPrimaryEmailAddress"     access="ViewOnly"/>
+      <field table="PersonEmailAddressAssoc" field="EmailAddressPriorityOrder" access="ViewOnly"/>
+
+      <field table="EmailAddress" field="EmailAddressID" access="ViewOnly"/>
+      <field table="EmailAddress" field="EmailAddress"   access="ViewOnly"/>
 
       <!-- ================================================================
            MANIFEST 4, 5, 6: course, section, period, teacher assignment

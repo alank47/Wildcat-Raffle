@@ -69,6 +69,18 @@ const KNOWN_INVALID = [
     instead: "Same as above. Do not guess a third spelling on the core table.",
   },
   {
+    ref: "students.email_addr",
+    when: "probe, 2026-08-12",
+    said: "400 Invalid field specified: email_addr is not valid column for table: Students",
+    instead: "Staff email is USERS.EMAIL_ADDR; students do not have the equivalent. Use the Person email model.",
+  },
+  {
+    ref: "u_def_ext_students.email",
+    when: "probe, 2026-08-12",
+    said: "400 not a valid column. The table exists and has StudentsDCID, but no email column at all",
+    instead: "Not the source. Use the Person email model.",
+  },
+  {
     ref: "sectionmeeting.*",
     when: "1.0.0 upload",
     said: "SECTIONMEETING is not a valid table in this instance",

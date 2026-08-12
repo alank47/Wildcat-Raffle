@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Wildcat Hub identity queries. Added at plugin 1.2.0.
+
+  ONE JOB: return the school issued email address for each enrolled student, so
+  a Google sign in can be matched to a student record. This is manifest field 19
+  and it has blocked student sign in since 2026-08-11.
+
+  WHY IT IS NOT A COLUMN ON STUDENTS
+
+  It was assumed to be, twice, and both assumptions were wrong. Students.Email
+  and Students.Student_Email do not exist on this instance; requesting them got
+  plugin 1.1.0 rejected and took the sync down. Student email lives in the
+  Person email model, which is shared by students, contacts and staff:
+
+    STUDENTS.PERSON_ID -> PERSON.ID
+                       -> PERSONEMAILADDRESSASSOC.PERSONID
+                       -> PERSONEMAILADDRESSASSOC.EMAILADDRESSID
+                       -> EMAILADDRESS.EMAILADDRESSID
+                       -> EMAILADDRESS.EMAILADDRESS
+
+  Every table and column above was confirmed to exist on this instance before
+  this file was written, using the difference between a 400 (column does not
+  exist) and a 403 (exists, not granted). See docs/student-email-sourcing.md.
+
+  ONE PERSON CAN HAVE SEVERAL ADDRESSES
+
+  PERSONEMAILADDRESSASSOC is one to many, which is the whole reason it exists.
+  Taking an arbitrary row would hand a student an address that is not theirs to
+  sign in with, so this query returns EVERY address per student with the two
+  selectors PowerSchool provides, and the application picks. It does not collapse
+  the set here, for the same reason STUDENTRACE is never collapsed.
+
+  ORDERING is explicit: primary first, then priority order, then the address
+  itself so the result is stable across runs rather than depending on whatever
+  order Oracle happens to return.
+
+  TWO DOMAINS ARE EXPECTED AND BOTH ARE VALID. Students who came up through
+  Russell Westbrook Why Not? Middle School hold @rwwnms.org; the rest hold
+  @westbrookacademy.org. Anything downstream that assumes one domain is wrong.
+-->
+<queries>
+
+  <query name="com.lapromisefund.wildcathub.student_email" coreTable="students" flattened="true">
+    <description>
+      School issued email addresses for enrolled students, from the Person email
+      model. One row per student per address. No narrative or contact data.
+    </description>
+    <args>
+      <arg name="schoolid" required="true" type="primitive" description="Schools.School_Number for the school being read" />
+    </args>
+    <columns>
+      <column column="STUDENTS.STUDENT_NUMBER">student_number</column>
+      <column column="STUDENTS.DCID">student_dcid</column>
+      <column column="EMAILADDRESS.EMAILADDRESS">email_address</column>
+      <column column="PERSONEMAILADDRESSASSOC.ISPRIMARYEMAILADDRESS">is_primary</column>
+      <column column="PERSONEMAILADDRESSASSOC.EMAILADDRESSPRIORITYORDER">priority_order</column>
+    </columns>
+    <sql>
+      <![CDATA[
+        SELECT
+          S.STUDENT_NUMBER              AS student_number,
+          S.DCID                        AS student_dcid,
+          E.EMAILADDRESS                AS email_address,
+          A.ISPRIMARYEMAILADDRESS       AS is_primary,
+          A.EMAILADDRESSPRIORITYORDER   AS priority_order
+        FROM STUDENTS S
+        JOIN PERSON P                   ON P.ID = S.PERSON_ID
+        JOIN PERSONEMAILADDRESSASSOC A  ON A.PERSONID = P.ID
+        JOIN EMAILADDRESS E             ON E.EMAILADDRESSID = A.EMAILADDRESSID
+        WHERE S.SCHOOLID      = :schoolid
+          AND S.ENROLL_STATUS = 0
+          AND E.EMAILADDRESS IS NOT NULL
+        ORDER BY
+          S.STUDENT_NUMBER,
+          A.ISPRIMARYEMAILADDRESS DESC,
+          A.EMAILADDRESSPRIORITYORDER,
+          E.EMAILADDRESS
+      ]]>
+    </sql>
+  </query>
+
+</queries>
