@@ -1,5 +1,5 @@
 import { internalMutation } from "./_generated/server";
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { normalizeEmail } from "./identityRules";
 
 /**
@@ -180,11 +180,35 @@ export const provisionStaff = internalMutation({
   handler: async (ctx, { staff }) => {
     let created = 0;
     let skipped = 0;
+    const wrongDomain: string[] = [];
     const now = new Date().toISOString();
+
+    // Staff and students are on SEPARATE domains, and that separation is the
+    // whole identity model: staff are @lapromisefund.org via Entra, students
+    // are @westbrookacademy.org via Google.
+    //
+    // PowerSchool holds at least one staff record carrying a STUDENT domain
+    // address (sub1@westbrookacademy.org, a vacancy), so this is not
+    // hypothetical. Such a row could never sign in as staff, because classify()
+    // requires the Entra issuer AND the staff domain together, so it is not a
+    // privilege escalation. It is worse in a quieter way: a permanently
+    // unusable staff row that looks like an account somebody has.
+    //
+    // Refused here rather than in the script, because the script is one caller
+    // and this is the only place that writes.
+    const staffDomain = (process.env.STAFF_DOMAIN ?? "").trim().toLowerCase();
+    if (!staffDomain) {
+      throw new ConvexError("STAFF_DOMAIN is not configured on this deployment.");
+    }
 
     for (const person of staff) {
       const email = person.email.trim().toLowerCase();
       if (!email.includes("@")) {
+        skipped++;
+        continue;
+      }
+      if (email.slice(email.lastIndexOf("@") + 1) !== staffDomain) {
+        wrongDomain.push(email);
         skipped++;
         continue;
       }
@@ -206,6 +230,13 @@ export const provisionStaff = internalMutation({
       created++;
     }
 
-    return { created, skipped };
+    return {
+      created,
+      skipped,
+      // Named, not just counted. A staff record on the student domain is a
+      // data error in PowerSchool that somebody has to go and fix, and a
+      // silent skip is how it stays broken for a year.
+      refusedWrongDomain: wrongDomain,
+    };
   },
 });
