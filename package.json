@@ -9,7 +9,9 @@
     "deploy": "convex deploy",
     "typecheck": "tsc --noEmit -p convex",
     "test": "node convex/identityRules.test.mjs && node convex/views.test.mjs && node convex/sisMerge.test.mjs && node convex/accessRules.test.mjs && node wildcat-auth.test.mjs && node msal-recovery.test.mjs && node popup-guard.test.mjs && node cdn-reachable.test.mjs",
-    "drift": "node scripts/migration-drift.mjs"
+    "drift": "node scripts/migration-drift.mjs",
+    "mirror": "node scripts/mirror-refresh.mjs",
+    "purge-passwords": "node scripts/purge-cleartext-passwords.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

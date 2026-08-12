@@ -201,6 +201,22 @@ export default defineSchema({
     .index("by_doc", ["doc"])
     .index("by_doc_collection", ["doc", "collection"]),
 
+  /**
+   * Proof that federated sign-in actually works, recorded by the app itself.
+   *
+   * This exists so the cutover gate is mechanical rather than a line in a
+   * runbook. Deleting the cleartext passwords removes the only other way into
+   * the system, so it must not happen on someone's recollection that "Entra
+   * seemed fine". Rows here can only be written by a caller Convex has already
+   * authenticated, so they cannot be faked from a browser console.
+   */
+  authEvents: defineTable({
+    email: v.string(),      // normalized
+    provider: v.string(),   // microsoft.com | google.com
+    kind: v.string(),       // staff | student
+    at: v.string(),
+  }).index("by_email", ["email"]),
+
   /** App settings and cycle state: the scalar and map fields of raffle_data/main. */
   appState: defineTable({
     key: v.string(),

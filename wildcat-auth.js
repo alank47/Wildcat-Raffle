@@ -107,6 +107,27 @@
     return body.value;
   }
 
+  /** Same contract as convexQuery, against the mutation endpoint. */
+  async function convexMutation(path, args, idToken) {
+    const res = await fetch(`${CONFIG.convexUrl}/api/mutation`, {
+      method: 'POST',
+      headers: Object.assign(
+        { 'Content-Type': 'application/json' },
+        idToken ? { Authorization: `Bearer ${idToken}` } : {},
+      ),
+      body: JSON.stringify({ path, args: args || {}, format: 'json' }),
+    });
+    if (!res.ok) throw new Error(`Convex HTTP ${res.status}`);
+    const body = await res.json();
+    if (body.status === 'error') {
+      throw new Error(
+        (typeof body.errorData === 'string' && body.errorData) ||
+        body.errorMessage || 'Convex mutation failed',
+      );
+    }
+    return body.value;
+  }
+
   function loadScript(src) {
     return new Promise((resolve, reject) => {
       if (document.querySelector(`script[src="${src}"]`)) return resolve();
@@ -317,6 +338,16 @@
     }
 
     session = { idToken, me };
+
+    // Record that federated sign-in actually worked. The cutover script that
+    // deletes the cleartext passwords refuses to run until enough distinct
+    // staff appear in this table, so this is what unlocks the last step of the
+    // migration. Best effort: a failure here must never break a sign-in that
+    // has already succeeded.
+    convexMutation('authEvents:record', {}, idToken).catch(function (err) {
+      console.warn('[wildcat-auth] could not record sign-in proof:', err.message);
+    });
+
     emit('wildcat-auth-signin', me);
     return me;
   }
@@ -481,6 +512,7 @@
     initStudentButton,
     signOut,
     convexQuery,
+    convexMutation,
     getSession: () => session,
     /** Console preflight: what is wired up and what is still missing. */
     status: () => ({

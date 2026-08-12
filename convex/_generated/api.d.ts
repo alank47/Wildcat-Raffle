@@ -9,6 +9,7 @@
  */
 
 import type * as accessRules from "../accessRules.js";
+import type * as authEvents from "../authEvents.js";
 import type * as identity from "../identity.js";
 import type * as identityRules from "../identityRules.js";
 import type * as me from "../me.js";
@@ -30,6 +31,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   accessRules: typeof accessRules;
+  authEvents: typeof authEvents;
   identity: typeof identity;
   identityRules: typeof identityRules;
   me: typeof me;
