@@ -67,6 +67,29 @@ GET /ws/schema/table/incident/count  -> {"count":13}
 16,987 to 13. Westbrook's behavior record is `Log`. Guessing the other way would
 have spent this entire approval cycle on the wrong table.
 
+## We checked whether this request is avoidable. It is not.
+
+Before asking for an administrator's time, the cheap route was tried: the count
+endpoint answers without a grant, so if it also accepted a filter on
+`LogTypeID`, the log type vocabulary could be enumerated by sweeping integers
+with no plugin change at all. That would have made this request unnecessary.
+
+It does not. Run 2026-08-12, `npm run probe:logtypes`:
+
+```
+GET /ws/schema/table/log/count                  -> 200  {"count":16987}
+GET /ws/schema/table/log/count?q=logtypeid==1   -> 403
+    {"message":"At least one column lacks sufficient permission",
+     "errors":[{"code":"NoAccess","field":"LogTypeID","resource":"Log"}]}
+```
+
+PowerSchool names the field and the resource. The unfiltered count is readable
+because it touches no column; the moment a column is referenced, the access
+request decides. `SchoolID` and `Entry_Date` answer 403 the same way.
+
+So the 16 field lines below are the minimum that unblocks this, and there is no
+route to the same data that skips the approval.
+
 ---
 
 ## Why this matters to the school
