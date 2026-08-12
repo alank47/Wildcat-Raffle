@@ -18,6 +18,7 @@ import type * as mirror from "../mirror.js";
 import type * as psSync from "../psSync.js";
 import type * as seed from "../seed.js";
 import type * as sisMerge from "../sisMerge.js";
+import type * as sisStats from "../sisStats.js";
 import type * as sisSync from "../sisSync.js";
 import type * as studentDetail from "../studentDetail.js";
 import type * as students from "../students.js";
@@ -40,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   psSync: typeof psSync;
   seed: typeof seed;
   sisMerge: typeof sisMerge;
+  sisStats: typeof sisStats;
   sisSync: typeof sisSync;
   studentDetail: typeof studentDetail;
   students: typeof students;

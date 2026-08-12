@@ -171,6 +171,66 @@ export default defineSchema({
     .index("by_studentEmail", ["studentEmail"])
     .index("by_studentNumber", ["studentNumber"]),
 
+  /**
+   * Attendance statistics per student per term, aggregated in SQL on the
+   * PowerSchool side (brief Phase 2: days_absent respects
+   * Attendance_Code.Presence_Status_CD rather than counting rows).
+   *
+   * Absent means "not synced yet", NOT zero. A student with no row here has
+   * unknown attendance; rendering that as 0 days absent would invent a fact
+   * about a child. See the brief, Phase 6 point 3.
+   */
+  psAttendance: defineTable({
+    studentNumber: v.string(),
+    daysAbsentTerm: v.optional(v.number()),
+    daysAbsentYtd: v.optional(v.number()),
+    daysTardyTerm: v.optional(v.number()),
+    attendanceRowsYtd: v.optional(v.number()),
+    termFirstDay: v.optional(v.string()),
+    termLastDay: v.optional(v.string()),
+    termId: v.optional(v.string()),
+    syncedAt: v.string(),
+  }).index("by_studentNumber", ["studentNumber"]),
+
+  /**
+   * Current grade per student per section.
+   *
+   * currentPercent is OPTIONAL on purpose. A student with no PGFinalGrades row
+   * is a known gap, not a zero, and the brief is explicit that they must not
+   * appear to have 0%.
+   */
+  psGrades: defineTable({
+    studentNumber: v.string(),
+    sectionId: v.optional(v.string()),
+    courseNumber: v.optional(v.string()),
+    courseName: v.optional(v.string()),
+    currentGrade: v.optional(v.string()),
+    currentPercent: v.optional(v.number()),
+    gradeSource: v.optional(v.string()),
+    lastGradeUpdate: v.optional(v.string()),
+    syncedAt: v.string(),
+  })
+    .index("by_studentNumber", ["studentNumber"])
+    .index("by_section", ["sectionId"]),
+
+  /**
+   * RESTRICTED demographics: federal ethnicity, federal race, English Learner.
+   *
+   * A SEPARATE TABLE, never blended into a student view, per Grilled.md
+   * constraint 3 and the brief's Phase 3 point 1. Deliberately NOT LOADED yet:
+   * the brief's closing question asks what decision federal race and ethnicity
+   * inform in a teacher-facing dashboard, and says to descope them if nobody
+   * can name one. The table exists so the shape is decided; loading it is a
+   * separate, deliberate act with its own go/no-go line.
+   */
+  psRestricted: defineTable({
+    studentNumber: v.string(),
+    fedEthnicity: v.optional(v.string()),
+    elaStatus: v.optional(v.string()),
+    raceCodes: v.optional(v.array(v.string())),  // one-to-many, never collapsed
+    syncedAt: v.string(),
+  }).index("by_studentNumber", ["studentNumber"]),
+
   schedules: defineTable({
     label: v.string(),
     payload: v.any(), // shape not yet pinned down; tighten before it carries logic

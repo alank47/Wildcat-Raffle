@@ -12,6 +12,7 @@
     "auth": "node --env-file=.env src/auth.ts",
     "probe": "node --env-file=.env src/probe.ts",
     "queries": "node --env-file=.env src/run-queries.ts",
-    "build:plugin": "node scripts/build-plugin.mjs"
+    "build:plugin": "node scripts/build-plugin.mjs",
+    "sync": "node --env-file=.env src/sync-to-app.ts"
   }
 }
