@@ -196,6 +196,29 @@
   let redirectResult = null;
 
   /**
+   * Polls until the app's roster is loaded, then returns the matching record.
+   *
+   * Bounded, so a genuinely missing record still reports as missing rather than
+   * hanging forever on a spinner. Resolves as soon as the roster appears, so
+   * the normal case costs one tick, not the whole timeout.
+   */
+  async function waitForTeacherRecord(normalizedEmail, timeoutMs) {
+    const deadline = Date.now() + (timeoutMs || 20000);
+    for (;;) {
+      if (typeof teachers !== 'undefined' && Array.isArray(teachers) && teachers.length) {
+        const hit = teachers.find(function (t) {
+          return (t.email || '').trim().toLowerCase() === normalizedEmail;
+        });
+        if (hit) return hit;
+        // Roster is loaded and the address genuinely is not in it.
+        return null;
+      }
+      if (Date.now() > deadline) return null;
+      await new Promise(function (r) { setTimeout(r, 200); });
+    }
+  }
+
+  /**
    * Runs on page load. If we came back from Microsoft carrying a code, finish
    * the sign-in; otherwise do nothing at all.
    *
@@ -215,12 +238,13 @@
 
       const me = await finishSignIn(redirectResult.idToken, 'staff');
 
+      // WAIT for the app to finish loading its roster before deciding a record
+      // is missing. script.js fills `teachers` asynchronously from Firestore,
+      // and on a redirect return this code runs first, so the array is still
+      // empty. Reporting "no staff record" then is not a lookup failure, it is
+      // a race, and it looked exactly like a real data problem.
       const target = (me.email || '').trim().toLowerCase();
-      const teacher =
-        typeof teachers !== 'undefined' &&
-        teachers.find(function (t) {
-          return (t.email || '').trim().toLowerCase() === target;
-        });
+      const teacher = await waitForTeacherRecord(target);
 
       if (!teacher) {
         throw new Error(
@@ -344,9 +368,16 @@
     // staff appear in this table, so this is what unlocks the last step of the
     // migration. Best effort: a failure here must never break a sign-in that
     // has already succeeded.
-    convexMutation('authEvents:record', {}, idToken).catch(function (err) {
-      console.warn('[wildcat-auth] could not record sign-in proof:', err.message);
-    });
+    // Awaited, not fire-and-forget. This row is what unlocks the final step of
+    // the migration, so a failure here needs to be loud rather than a warning
+    // nobody reads. It still cannot fail the sign-in itself.
+    try {
+      await convexMutation('authEvents:record', {}, idToken);
+      console.log('[wildcat-auth] sign-in recorded for', me.email);
+    } catch (err) {
+      console.error('[wildcat-auth] FAILED to record sign-in proof:', err && err.message);
+      window.__wildcatAuthRecordError = String((err && err.message) || err);
+    }
 
     emit('wildcat-auth-signin', me);
     return me;
