@@ -17,6 +17,7 @@ import type * as me from "../me.js";
 import type * as migrate from "../migrate.js";
 import type * as mirror from "../mirror.js";
 import type * as psSync from "../psSync.js";
+import type * as restrictedPolicy from "../restrictedPolicy.js";
 import type * as seed from "../seed.js";
 import type * as sisAction from "../sisAction.js";
 import type * as sisMerge from "../sisMerge.js";
@@ -26,6 +27,7 @@ import type * as studentDetail from "../studentDetail.js";
 import type * as students from "../students.js";
 import type * as syncLog from "../syncLog.js";
 import type * as views from "../views.js";
+import type * as views_app from "../views_app.js";
 
 import type {
   ApiFromModules,
@@ -43,6 +45,7 @@ declare const fullApi: ApiFromModules<{
   migrate: typeof migrate;
   mirror: typeof mirror;
   psSync: typeof psSync;
+  restrictedPolicy: typeof restrictedPolicy;
   seed: typeof seed;
   sisAction: typeof sisAction;
   sisMerge: typeof sisMerge;
@@ -52,6 +55,7 @@ declare const fullApi: ApiFromModules<{
   students: typeof students;
   syncLog: typeof syncLog;
   views: typeof views;
+  views_app: typeof views_app;
 }>;
 
 /**
