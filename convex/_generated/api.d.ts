@@ -13,6 +13,7 @@ import type * as appData from "../appData.js";
 import type * as appDataShape from "../appDataShape.js";
 import type * as authEvents from "../authEvents.js";
 import type * as crons from "../crons.js";
+import type * as entraSync from "../entraSync.js";
 import type * as identity from "../identity.js";
 import type * as identityRules from "../identityRules.js";
 import type * as me from "../me.js";
@@ -45,6 +46,7 @@ declare const fullApi: ApiFromModules<{
   appDataShape: typeof appDataShape;
   authEvents: typeof authEvents;
   crons: typeof crons;
+  entraSync: typeof entraSync;
   identity: typeof identity;
   identityRules: typeof identityRules;
   me: typeof me;

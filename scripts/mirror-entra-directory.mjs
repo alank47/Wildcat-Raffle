@@ -4,12 +4,17 @@
  *
  *   npm run staff:mirror
  *
- * WHY A MIRROR AND NOT A LIVE QUERY. The app cannot call Microsoft Graph. That
- * needs application permissions and a client secret, and the Wildcat Hub
- * registration is a SPA that holds neither; adding one is an admin consent
- * cycle. This runs as a signed-in human through `az`, which needs nothing new.
- * When a secret exists, this becomes a Convex action on a cron and the table it
- * writes does not change.
+ * SUPERSEDED 2026-08-12 by convex/entraSync.ts, which does the same thing on a
+ * nightly cron using its own app registration and client secret. That is the
+ * one that keeps the mirror fresh.
+ *
+ * This is kept as the MANUAL path, for two cases the cron does not cover:
+ *   - a new hire needs to be invitable now rather than after tonight's run
+ *   - the Graph credential is broken and somebody needs the mirror refreshed
+ *     while that is being fixed
+ *
+ * It authenticates as a signed-in human through `az`, so it works even when the
+ * server side credential does not, which is exactly when it is wanted.
  *
  * WHAT IT WRITES, and what it deliberately does not:
  *

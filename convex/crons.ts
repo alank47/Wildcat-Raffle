@@ -29,4 +29,20 @@ crons.daily(
   { reason: "scheduled: midday" },
 );
 
+// Refresh the Entra directory mirror nightly.
+//
+// Nightly rather than hourly because the thing it tracks, who works here,
+// changes on the timescale of a hiring cycle. The only symptom of a stale
+// mirror is a brand new hire not appearing in staff search for a few hours,
+// and `npm run staff:mirror` fixes that on demand.
+//
+// 09:20 UTC is roughly 02:20 in Los Angeles: away from the PowerSchool syncs at
+// 13:00 and 19:00, and on a minute nobody else picked.
+crons.cron(
+  "mirror entra directory",
+  "20 9 * * *",
+  internal.entraSync.mirrorDirectory,
+  { reason: "nightly" },
+);
+
 export default crons;
