@@ -29,7 +29,7 @@
     convexUrl: 'https://quick-cassowary-644.convex.cloud',
 
     entra: {
-      clientId: '65fe084a-1eb2-4fed-8df8-8607f8c4c225',  // Application (client) ID
+      clientId: '0f22dd11-7c0a-4356-93d7-0abf07642001',  // Application (client) ID -- app registration "Wildcat Hub"
       tenantId: 'afc1d09c-9f9b-4d45-9643-198f7dc264c4',  // Directory (tenant) ID
     },
 
