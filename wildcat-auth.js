@@ -34,7 +34,7 @@
     },
 
     google: {
-      clientId: null,   // ...apps.googleusercontent.com -> docs/google-signin-setup.md
+      clientId: '718452352756-cclr7dbvucal375vrj5m9fg25fn3eh3s.apps.googleusercontent.com',
       hostedDomain: 'westbrookacademy.org',
     },
   };
