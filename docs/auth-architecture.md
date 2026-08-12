@@ -84,16 +84,33 @@ const email  = identity.email.trim().toLowerCase();
 const domain = email.slice(email.lastIndexOf("@") + 1);
 const issuer = identity.issuer;
 
-const isStaff   = issuer.startsWith("https://login.microsoftonline.com/") && domain === STAFF_DOMAIN;
-const isStudent = issuer === "https://accounts.google.com"                && domain === "westbrookacademy.org";
+// Note the EXACT issuer match, including the tenant id.
+const isStaff   = issuer === `https://login.microsoftonline.com/${ENTRA_TENANT_ID}/v2.0`
+                  && domain === "lapromisefund.org";
+const isStudent = issuer === "https://accounts.google.com"
+                  && domain === "westbrookacademy.org";
 if (!isStaff && !isStudent) throw new Error("Unrecognized identity");
 ```
 
-Provider and domain are checked **together**. Either alone is a privilege escalation:
-a Google account on the staff domain would otherwise award tickets. Domain comparison
-is exact equality, never `endsWith`, so `a@b.westbrookacademy.org.evil.com` fails.
-Twelve cases covering both escalation directions, suffix spoofing and malformed input
-pass today against the client-side version and carry over unchanged.
+Three rules, each of which was a real bug in an earlier draft of this file:
+
+1. **Provider and domain are checked together.** Either alone is a privilege
+   escalation: a Google account on the staff domain would otherwise award tickets.
+2. **Domain comparison is exact equality, never `endsWith`**, which accepts
+   `a@b.westbrookacademy.org.evil.com`.
+3. **The Entra issuer is matched exactly, including the tenant id, never by prefix.**
+   This one is the least obvious and the most dangerous. Anyone can create their own
+   Microsoft tenant and mint `attacker@lapromisefund.org` inside it. A prefix match on
+   `https://login.microsoftonline.com/` accepts that token as staff. The tenant id is
+   the only thing in the issuer that identifies *this* organization.
+
+Google's issuer, by contrast, is shared by every Google account in existence, so for
+students the issuer proves nothing on its own and the domain check carries all the
+weight. That asymmetry is why the two branches are not symmetrical.
+
+21 cases pass in `convex/identityRules.test.mjs`, including cross-tenant, both
+escalation directions, suffix spoofing, and malformed or missing claims. The tests
+import the real module rather than a copy, because a copy can drift and still pass.
 
 ### Email normalization on both sides of every compare
 
@@ -157,9 +174,12 @@ vendor review, not a blocker.
 1. **Did alank47 already build a Convex schema?** Reported as pushed, but it is not in
    `alank47/Wildcat-Raffle` (no Convex files, no branches, no forks, no open PRs).
    Find it before writing a competing schema.
-2. **Staff email domain.** `Grilled.md` says `lapromisefund.org`, the org's GAM tooling
-   uses `laspromise.org`, students are on `westbrookacademy.org`. Set from real
-   PowerSchool `teacher_email` values, never guessed.
+2. **RESOLVED: staff domain is `lapromisefund.org`.** Students are on
+   `westbrookacademy.org`. Two distinct domains with no overlap, so neither side can
+   be mistaken for the other. Lives in `STAFF_DOMAIN` on the deployment, not in code,
+   so a wrong value is a config change rather than a commit. PowerSchool
+   `teacher_email` values must be on this domain for the join to work, which is
+   question 3.
 3. **Do Entra UPNs equal PowerSchool `users.email_addr`?** If they diverge the join
    needs an alias map, which is a schema change.
 4. **Do students' Google addresses equal what PowerSchool stores?** Field 19 is the

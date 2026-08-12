@@ -96,10 +96,11 @@ plain fetch. Full design in `docs/auth-architecture.md`.
    student auth is blocked on a **new field 19, Student Email**, which amends
    the access request and needs PowerSchool admin re-approval. Deliberate scope
    change, recorded here rather than added quietly against constraint 4.
-10. **Staff email domain is unconfirmed.** This doc says `@lapromisefund.org`,
-   the org's GAM tooling uses `laspromise.org`, and students are on
-   `westbrookacademy.org`. The staff domain constant is set from real
-   PowerSchool `teacher_email` values, never guessed.
+10. **RESOLVED 2026-08-11: staff domain is `lapromisefund.org`.** Students are
+   on `westbrookacademy.org`. The two are different domains with no overlap,
+   so a staff address can never be mistaken for a student one or the reverse.
+   Set as `STAFF_DOMAIN` on the Convex deployment, not in code. The org's GAM
+   tooling uses `laspromise.org` for a different purpose; it is not this.
 11. **Do Entra UPNs match PowerSchool `email_addr`?** If they diverge the email
    join needs an alias map, which is a schema change.
 
