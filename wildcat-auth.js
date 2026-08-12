@@ -21,6 +21,33 @@
   'use strict';
 
   // ---------------------------------------------------------------------
+  // Are we the app, or are we an auth popup that landed on the app by
+  // mistake?
+  //
+  // The redirect target is auth-redirect.html, a near-empty page. But the bare
+  // origin is also still a registered redirect URI, and any browser holding a
+  // cached index.html keeps using the OLD redirect for as long as that cache
+  // lives. When that happens the popup loads the whole app, this file runs
+  // inside the popup, and MSAL refuses with block_nested_popups: it is being
+  // asked to open a popup from within a popup.
+  //
+  // If we are clearly an auth landing (opened by another window, carrying an
+  // auth fragment), do nothing at all. MSAL's parent reads the fragment off
+  // this window's URL; it does not need us to run, and running is what breaks
+  // it. Stopping here turns a confusing nested-popup error into a normal
+  // successful sign-in.
+  // ---------------------------------------------------------------------
+  try {
+    const hash = String(window.location.hash || '');
+    const isAuthLanding = /[#&](code|error|id_token|access_token)=/.test(hash);
+    if (window.opener && window.opener !== window && isAuthLanding) {
+      return; // let the opener collect the fragment
+    }
+  } catch (_) {
+    /* cross-origin opener access can throw; fall through and behave normally */
+  }
+
+  // ---------------------------------------------------------------------
   // CONFIG. All four values are public: they ship in the page and appear in
   // every token. The Entra client SECRET and the Google client SECRET are NOT
   // used by these flows and must never appear here. This repo is public.

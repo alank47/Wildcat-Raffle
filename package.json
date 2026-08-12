@@ -8,7 +8,7 @@
     "dev": "convex dev",
     "deploy": "convex deploy",
     "typecheck": "tsc --noEmit -p convex",
-    "test": "node convex/identityRules.test.mjs && node convex/views.test.mjs && node wildcat-auth.test.mjs && node msal-recovery.test.mjs && node cdn-reachable.test.mjs"
+    "test": "node convex/identityRules.test.mjs && node convex/views.test.mjs && node wildcat-auth.test.mjs && node msal-recovery.test.mjs && node popup-guard.test.mjs && node cdn-reachable.test.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
