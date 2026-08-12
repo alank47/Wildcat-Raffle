@@ -164,6 +164,38 @@ console.log("\nPagination and the teacher modal");
   check("the teachers list survived the move", /Current Teachers/.test(html));
 }
 
+console.log("\nRemoved and collapsed sections");
+{
+  check(
+    "the CSV student import UI is gone",
+    !/onclick="uploadFile\(\)"/.test(html) && !/id="fileInput"/.test(html),
+    "the SIS owns the roster; a CSV import could only fight it",
+  );
+  check("perfect attendance upload is behind a button", /openAttendanceUploadModal\(\)/.test(html));
+  check("its modal exists", /id="perfectAttendanceUploadModal"/.test(html));
+  check(
+    "its form keeps the original ids",
+    /id="perfectAttendanceFile"/.test(html) && /id="perfectAttendanceWeek"/.test(html),
+  );
+  check(
+    "opening it refreshes the week list with the REAL function name",
+    /initPerfectAttendanceUploadUI\(\)/.test(script) && !/populatePerfectAttendanceWeeks/.test(script),
+    "currentWeek moves during a session, so a load-time fill goes stale",
+  );
+  check("the preview modal it feeds still exists", /id="perfectAttendanceModal"/.test(html));
+  // Two different modals, two different close functions. The upload panel was
+  // first given the preview modal's name, which is a duplicate declaration and
+  // takes the entire file down at parse time.
+  check(
+    "the upload modal does not reuse the preview modal's close function",
+    /function closeAttendanceUploadModal/.test(script) && /function closePerfectAttendanceModal/.test(script),
+  );
+  check(
+    "and the preview modal keeps its own close wired up",
+    (html.match(/closePerfectAttendanceModal\(\)/g) || []).length >= 2,
+  );
+}
+
 console.log("\nCache busters");
 {
   const tags = [...html.matchAll(/(script|wildcat-auth)\.js\?v=([\w-]+)/g)].map((m) => m[2]);

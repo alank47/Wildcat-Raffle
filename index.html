@@ -436,20 +436,31 @@
                     </div>
                     <span class="mode-pill"></span>
                 </div>
-                <div class="upload-section">
-                    <h3>📁 Import Students from PowerSchool</h3>
-                    <p>Upload a CSV or Excel file with student information</p>
-                    <p style="font-size: 14px; color: #666; margin-top: 10px;">
-                        Required columns: Student ID, First Name, Last Name<br>
-                        Optional columns: Grade, Homeroom
-                    </p>
-                    <input type="file" id="fileInput" accept=".csv,.xlsx,.xls">
-                    <br>
-                    <button class="btn" onclick="uploadFile()">Import Students</button>
-                </div>
+                <!-- Import Students from PowerSchool: REMOVED 2026-08-12.
+                     The SIS is the roster now. It syncs 646 enrolled students
+                     into Convex twice a day, and a CSV import that replaced
+                     `students` wholesale could only ever fight with it or undo
+                     it. uploadFile() in script.js is left in place but is no
+                     longer reachable from the UI. -->
 
                 <!-- Perfect Attendance Upload (admin-only) -->
-                <div class="upload-section admin-only" style="margin-top: 20px; border-left: 4px solid #10b981;">
+                <button class="btn admin-only" onclick="openAttendanceUploadModal()"
+                        style="background: #10b981; margin-top: 20px;">
+                    &#128197; Perfect Attendance Upload
+                </button>
+
+                <!-- Collapsed into a modal 2026-08-12. Same ids, same
+                     previewPerfectAttendance() handler. It is used once a week
+                     at most and was taking up the top of the page every day. -->
+                <div id="perfectAttendanceUploadModal" class="hidden"
+                     style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 10000; align-items: center; justify-content: center; padding: 20px; overflow-y: auto;">
+                    <div style="background: #fff; border-radius: 10px; padding: 24px; max-width: 720px; width: 100%; max-height: 90vh; overflow-y: auto;">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                            <h3 style="margin: 0;">&#128197; Perfect Attendance Upload</h3>
+                            <button onclick="closeAttendanceUploadModal()" aria-label="Close"
+                                    style="border: none; background: none; font-size: 26px; line-height: 1; cursor: pointer; color: #6b7280;">&times;</button>
+                        </div>
+
                     <h3>📅 Perfect Attendance Upload</h3>
                     <p>Upload a CSV from PowerSchool with students who had perfect attendance. Each listed student receives 1 Attendance ticket for the selected week.</p>
                     <p style="font-size: 13px; color: #666; margin-top: 6px;">
@@ -472,6 +483,7 @@
                         </div>
                         <button class="btn" onclick="previewPerfectAttendance()" style="background: #10b981;">Preview Upload</button>
                     </div>
+                                    </div>
                 </div>
 
                 <!-- Perfect Attendance Preview Modal -->
@@ -4744,7 +4756,7 @@
     <!-- Chart.js for Data Visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-    <script src="wildcat-auth.js?v=20260812f"></script>
-    <script src="script.js?v=20260812f"></script>
+    <script src="wildcat-auth.js?v=20260812g"></script>
+    <script src="script.js?v=20260812g"></script>
 </body>
 </html>

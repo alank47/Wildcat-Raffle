@@ -11574,6 +11574,41 @@
         // The form markup itself is untouched: same ids, same addTeacher()
         // handler, same validation. Only its container changed.
         // ---------------------------------------------------------------
+        function openAttendanceUploadModal() {
+            const modal = document.getElementById('perfectAttendanceUploadModal');
+            if (!modal) return;
+            modal.classList.remove('hidden');
+            modal.style.display = 'flex';
+            // The week dropdown is filled by JS from currentWeek. It was
+            // populated on page load while this lived inline; opening the modal
+            // is now the moment it needs to be right, and currentWeek may have
+            // moved since.
+            // initPerfectAttendanceUploadUI fills the week dropdown from
+            // currentWeek and cycleDuration. It ran once at page load while this
+            // panel was inline; opening the modal is now the moment it has to be
+            // right, and currentWeek moves during a session.
+            if (typeof initPerfectAttendanceUploadUI === 'function') {
+                try { initPerfectAttendanceUploadUI(); } catch (e) { console.warn('week list refresh failed', e); }
+            }
+        }
+
+        function closeAttendanceUploadModal() {
+            const modal = document.getElementById('perfectAttendanceUploadModal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.style.display = 'none';
+        }
+
+        document.addEventListener('click', (event) => {
+            if (event.target && event.target.id === 'perfectAttendanceUploadModal') closeAttendanceUploadModal();
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key !== 'Escape') return;
+            const modal = document.getElementById('perfectAttendanceUploadModal');
+            if (modal && !modal.classList.contains('hidden')) closeAttendanceUploadModal();
+        });
+
         function openAddTeacherModal() {
             const modal = document.getElementById('addTeacherModal');
             if (!modal) return;
