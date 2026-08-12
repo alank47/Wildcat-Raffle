@@ -17030,12 +17030,16 @@
             const subtitle = document.getElementById('cashClassSubtitle');
             const count = document.getElementById('cashStudentCount');
             
-            // Filter students
+            // Filter students, recording what each stage removed so an empty
+            // table can say WHY it is empty instead of just that it is.
             let filteredStudents = students;
-            
+            const funnel = { loaded: students.length, afterGrade: null, afterPeriod: null, stage: 'none' };
+
             // Apply grade filter
             if (gradeFilter) {
                 filteredStudents = filteredStudents.filter(student => student.grade === gradeFilter);
+                funnel.afterGrade = filteredStudents.length;
+                if (filteredStudents.length === 0) funnel.stage = 'grade filter';
             }
             
             // Apply period filter (match Raffle Mode logic)
@@ -17047,6 +17051,8 @@
                     filteredStudents = filteredStudents.filter(student => 
                         section.students.includes(student.id)
                     );
+                    funnel.afterPeriod = filteredStudents.length;
+                    if (filteredStudents.length === 0) funnel.stage = 'class period';
                 }
             } else if (currentUser.role === 'teacher' && currentUser.sections && !periodFilter) {
                 // If no period selected, teachers only see students from ALL their sections
@@ -17054,6 +17060,9 @@
                 filteredStudents = filteredStudents.filter(student => 
                     allTeacherStudentIds.includes(student.id)
                 );
+                funnel.afterPeriod = filteredStudents.length;
+                funnel.teacherSectionIds = allTeacherStudentIds.length;
+                if (filteredStudents.length === 0) funnel.stage = 'your class rosters';
             }
             // Admins with no period selected see all students
             
@@ -17097,7 +17106,29 @@
             tbody.innerHTML = '';
             
             if (filteredStudents.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 40px; color: #999;">No students to display</td></tr>';
+                // An empty table that only says "empty" is a support ticket. This
+                // says which stage removed everyone, because the three causes need
+                // three different fixes: no roster loaded at all, a filter that
+                // matches nobody, or class rosters keyed to ids the roster no
+                // longer uses.
+                console.warn('[cash] table is empty. Funnel:', funnel);
+                let why;
+                if (funnel.loaded === 0) {
+                    why = 'No roster is loaded yet. If you signed in with a username and password, ' +
+                          'sign in with Microsoft instead: the roster comes from the SIS now.';
+                } else if (funnel.stage === 'your class rosters') {
+                    why = `${funnel.loaded} students are loaded, but none are on your class rosters ` +
+                          `(${funnel.teacherSectionIds || 0} student ids across your sections). ` +
+                          'Ask an admin to re-match your sections.';
+                } else if (funnel.stage !== 'none') {
+                    why = `${funnel.loaded} students are loaded, but the ${funnel.stage} matched none of them.`;
+                } else {
+                    why = `${funnel.loaded} students are loaded but none reached the table.`;
+                }
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 40px; color: #999;">' +
+                    '<div style="font-weight:600;margin-bottom:6px;">No students to display</div>' +
+                    '<div style="font-size:13px;max-width:520px;margin:0 auto;">' + why + '</div>' +
+                    '</td></tr>';
                 return;
             }
             
