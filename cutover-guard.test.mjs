@@ -196,6 +196,28 @@ console.log("\nRemoved and collapsed sections");
   );
 }
 
+console.log("\nStudents page shows the enrolled roster only");
+{
+  check("there is one helper, not a repeated filter", /function enrolledStudents\(\)/.test(script));
+  check(
+    "it hides only an EXPLICIT false",
+    /s\.enrolled !== false/.test(script),
+    "an unflagged student is an unknown, and hiding unknowns makes real children vanish",
+  );
+  const uses = (script.match(/enrolledStudents\(\)/g) || []).length;
+  check("every students-page path uses it", uses >= 7, `${uses} uses`);
+  check(
+    "the table, search and sort all start from it",
+    !/let filteredStudents = \[\.\.\.students\]/.test(script),
+    "a raw [...students] here puts prior-year students back on the page",
+  );
+  check(
+    "SAVING still carries every student",
+    /studentsToSave = students;/.test(script),
+    "saving only the enrolled would drop the 88 prior-year records and their balances",
+  );
+}
+
 console.log("\nCache busters");
 {
   const tags = [...html.matchAll(/(script|wildcat-auth)\.js\?v=([\w-]+)/g)].map((m) => m[2]);

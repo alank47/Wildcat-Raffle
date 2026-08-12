@@ -12732,6 +12732,30 @@
             });
         }
 
+        /**
+         * The students a teacher should see today: currently enrolled only.
+         *
+         * Convex holds 734 students and the current term's roster holds 646. The
+         * other 88 are prior year students who are kept rather than deleted,
+         * because a transferred student still has a balance and a roster gap is
+         * not proof a person ceased to exist. They simply do not belong on a page
+         * used to award tickets today.
+         *
+         * `enrolled` is computed server side from psRoster, which is replaced
+         * wholesale on every sync and therefore only ever holds the current term.
+         *
+         * The test is `!== false`, not truthy. A student record predating this
+         * flag is an UNKNOWN, and hiding an unknown is how a real child silently
+         * disappears from a teacher's list. Unknowns show; only an explicit false
+         * hides.
+         *
+         * One function rather than the same filter at each call site, because the
+         * fourth call site is the one that forgets.
+         */
+        function enrolledStudents() {
+            return students.filter(s => s.enrolled !== false);
+        }
+
         function updateStudentsTable() {
             // Reset search box and cache
             const searchBox = document.getElementById('studentSearchBox');
@@ -12751,10 +12775,23 @@
                 return;
             }
 
-            // Filter students by selected grade
-            let filteredStudents = students;
+            // CURRENTLY ENROLLED ONLY.
+            //
+            // Convex holds 734 students and the current term's roster holds 646.
+            // The other 88 are prior year students who are kept, not deleted,
+            // because a transferred student still has a balance. They do not
+            // belong on a page teachers use to award tickets today.
+            //
+            // `enrolled` is computed server side from psRoster, which is replaced
+            // wholesale on every sync and therefore only ever holds the current
+            // term. The check is `=== false` rather than falsy so that a student
+            // record predating this flag still shows up: an unflagged student is
+            // an unknown, and hiding an unknown is how a real child silently
+            // disappears from a teacher's list.
+            let filteredStudents = enrolledStudents();
+
             if (currentGradeFilter !== 'all') {
-                filteredStudents = students.filter(s => {
+                filteredStudents = filteredStudents.filter(s => {
                     const grade = parseInt(s.grade) || 'Unknown';
                     return grade.toString() === currentGradeFilter;
                 });
@@ -12798,8 +12835,8 @@
             console.log('Total students:', students.length);
             console.log('Current grade filter:', currentGradeFilter);
             
-            // Start with all students
-            let filteredStudents = [...students];
+            // Start with the currently enrolled, not every student on record.
+            let filteredStudents = enrolledStudents();
             console.log('Starting with students:', filteredStudents.length);
             
             // Apply grade filter first
@@ -12856,9 +12893,9 @@
             }
             
             // Get current filtered students (from search/grade filter)
-            let studentsToSort = filteredStudentsCache.length > 0 ? [...filteredStudentsCache] : [...students];
+            let studentsToSort = filteredStudentsCache.length > 0 ? [...filteredStudentsCache] : enrolledStudents();
             if (currentGradeFilter !== 'all' && filteredStudentsCache.length === 0) {
-                studentsToSort = students.filter(s => {
+                studentsToSort = enrolledStudents().filter(s => {
                     const grade = parseInt(s.grade) || 'Unknown';
                     return grade.toString() === currentGradeFilter;
                 });
@@ -13962,7 +13999,9 @@
             const classHeaderSubtitle = document.getElementById('classHeaderSubtitle');
             const classHeaderCount = document.getElementById('classHeaderCount');
             
-            let displayStudents = students;
+            // Enrolled only: this is the count a teacher reads at the top of
+            // the page they award tickets from.
+            let displayStudents = enrolledStudents();
             let headerTitle = 'All Students';
             let headerSubtitle = 'Select students to award tickets';
             
@@ -13972,7 +14011,7 @@
                 const section = currentUser.sections.find(s => s.sectionId === selectedPeriod);
                 if (section) {
                     console.log('Found section:', section);
-                    displayStudents = students.filter(s => section.students.includes(s.id));
+                    displayStudents = enrolledStudents().filter(s => section.students.includes(s.id));
                     headerTitle = `Period ${section.period} - ${section.courseName}`;
                     headerSubtitle = `${section.students.length} students in this class`;
                     console.log('Filtered to', displayStudents.length, 'students');
@@ -13982,7 +14021,7 @@
             } else if (currentUser && currentUser.role === 'campusaide') {
                 // Campus Aides can filter by grade
                 if (selectedGrade) {
-                    displayStudents = students.filter(s => s.grade == selectedGrade);
+                    displayStudents = enrolledStudents().filter(s => s.grade == selectedGrade);
                     headerTitle = `Grade ${selectedGrade} (Campus Aide)`;
                     headerSubtitle = `${displayStudents.length} students in grade ${selectedGrade}`;
                 } else {

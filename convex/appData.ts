@@ -53,20 +53,37 @@ export const load = query({
   handler: async (ctx) => {
     await requireStaff(ctx);
 
-    const [studentRows, teacherRows, settingsRow] = await Promise.all([
+    const [studentRows, teacherRows, settingsRow, rosterRows] = await Promise.all([
       ctx.db.query("students").collect(),
       ctx.db.query("teachers").collect(),
       ctx.db
         .query("appState")
         .withIndex("by_key", (q) => q.eq("key", SETTINGS_KEY))
         .unique(),
+      ctx.db.query("psRoster").collect(),
     ]);
 
-    // Archived students are RETURNED, not filtered. A student who left still
-    // has a balance, and hiding them here would make that balance unreachable
-    // from the only UI that can see it. The app decides what to display.
+    // WHO IS ACTUALLY ENROLLED RIGHT NOW.
+    //
+    // The students table holds 734 people and the current term's roster holds
+    // 646. The other 88 are prior year students who have not been deleted,
+    // deliberately: a student who transferred out still has a balance, and a
+    // roster gap is not proof a person ceased to exist.
+    //
+    // psRoster is replaced wholesale on every sync and only ever contains the
+    // term being synced, so membership in it IS current enrolment. That is a
+    // better test than archivedAt, which is only written when a sync runs with
+    // archiveMissing enabled and is currently set on nobody.
+    const enrolledNumbers = new Set(rosterRows.map((r) => r.studentNumber));
+
+    // Every student is still RETURNED, each flagged. Filtering here would hide
+    // a departed student's balance from the only UI that can see it. The app
+    // decides what to display, and the students table shows the enrolled.
     return {
-      students: studentRows.map(toAppStudent),
+      students: studentRows.map((row) => ({
+        ...toAppStudent(row),
+        enrolled: Boolean(row.studentNumber && enrolledNumbers.has(row.studentNumber)),
+      })),
       teachers: teacherRows.map(toAppTeacher),
       settings: (settingsRow?.value as Record<string, unknown>) ?? {},
       counts: {
@@ -104,6 +121,11 @@ export const loadSelfCheck = internalQuery({
 
     const students = studentRows.map(toAppStudent);
     const teachers = teacherRows.map(toAppTeacher);
+    const rosterRows = await ctx.db.query("psRoster").collect();
+    const enrolledSet = new Set(rosterRows.map((r) => r.studentNumber));
+    const enrolledCount = studentRows.filter(
+      (r) => r.studentNumber && enrolledSet.has(r.studentNumber),
+    ).length;
     const sum = (key: string) =>
       students.reduce((total, s) => total + (Number(s[key]) || 0), 0);
 
@@ -113,6 +135,8 @@ export const loadSelfCheck = internalQuery({
       studentsWithAName: students.filter((s) => String(s.name).trim()).length,
       studentsWithEmail: students.filter((s) => s.email).length,
       archivedStudents: students.filter((s) => s.archivedAt).length,
+      enrolledNow: enrolledCount,
+      notEnrolled: students.length - enrolledCount,
 
       teachers: teachers.length,
       teachersWithEmail: teachers.filter((t) => t.email).length,
