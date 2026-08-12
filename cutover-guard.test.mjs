@@ -155,12 +155,16 @@ console.log("\nPagination and the teacher modal");
     "without it, a drag from inside the form closes it and loses the input",
   );
   check("Escape closes it", /event\.key !== 'Escape'/.test(script));
+  // Was: "it closes only after the teacher is saved", against the old
+  // create-account form. That form is gone. The equivalent invariant for the
+  // invite flow is that the modal closes only after the server confirms, which
+  // is asserted in the invite section below.
   check(
-    "it closes only after the teacher is saved",
-    script.indexOf("closeAddTeacherModal();", script.indexOf("teachers.push(newTeacher)")) > 0,
-    "closing on click would dismiss a validation failure too",
+    "the modal closes only after a successful invite",
+    script.indexOf("closeAddTeacherModal();", script.indexOf("sendStaffInvite")) >
+      script.indexOf("convexMutation('staffInvites:inviteStaff'"),
+    "closing before the mutation returns would hide a refused invite",
   );
-  check("the form still has its original ids", /newTeacherName/.test(html) && /newTeacherPassword/.test(html));
   check("the modal exists in the markup", /id="addTeacherModal"/.test(html));
   check("the teachers list survived the move", /Current Teachers/.test(html));
 }
@@ -267,6 +271,33 @@ console.log("\nThe session survives a reload");
     "MSAL still caches where a reload can find it",
     /cacheLocation: 'sessionStorage'/.test(auth),
     "localStorage or memory would change what resume can recover",
+  );
+}
+
+console.log("\nStaff are invited from the directory, not created with a password");
+{
+  check(
+    "the cleartext password field is GONE from the form",
+    !/newTeacherPassword/.test(html),
+    "that field is the reason the Convex migration exists",
+  );
+  check("so are the hand-typed name and username fields", !/newTeacherUsername/.test(html));
+  check("addTeacher() is no longer reachable from the UI", !/onclick="addTeacher\(\)"/.test(html));
+  check("the modal searches the directory", /id="staffSearchInput"/.test(html));
+  check("and picks an access level at invite time", /id="staffInviteRole"/.test(html));
+  check(
+    "search is debounced",
+    /setTimeout\(\(\) => runStaffSearch/.test(script),
+    "it fires per keystroke and each one is a round trip",
+  );
+  check(
+    "a person who already has access is shown, not hidden",
+    /alreadyHasAccess/.test(script),
+    "hiding them makes an admin search again for a colleague they can see in Outlook",
+  );
+  check(
+    "the invite refreshes from the server rather than guessing the row",
+    /refreshRosterFromConvex\('staff invite'\)/.test(script),
   );
 }
 

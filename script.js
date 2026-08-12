@@ -11643,12 +11643,159 @@
             if (modal && !modal.classList.contains('hidden')) closeAttendanceUploadModal();
         });
 
+        // ---------------------------------------------------------------
+        // Invite staff from the Entra directory.
+        //
+        // This replaces a form that asked an admin to type a name, a username,
+        // an email and a CLEARTEXT PASSWORD, and then stored the password. That
+        // field is the reason the Convex migration exists and this was the last
+        // thing still creating them.
+        //
+        // There is no account to create. The person already has one, issued by
+        // the organization. An invite is a GRANT: it writes the row saying which
+        // role they get, and their next Microsoft sign-in matches on email and
+        // finds it. Nothing secret is generated and there is no reset flow.
+        // ---------------------------------------------------------------
+        let staffSearchTimer = null;
+        let staffChosen = null;
+
+        function staffSearchEls() {
+            return {
+                input: document.getElementById('staffSearchInput'),
+                status: document.getElementById('staffSearchStatus'),
+                results: document.getElementById('staffSearchResults'),
+                chosen: document.getElementById('staffInviteChosen'),
+                name: document.getElementById('staffInviteName'),
+                email: document.getElementById('staffInviteEmail'),
+                role: document.getElementById('staffInviteRole'),
+                age: document.getElementById('staffDirectoryAge'),
+            };
+        }
+
+        /**
+         * Debounced, because this fires on every keystroke and each one is a
+         * round trip. 250ms is below the threshold where typing feels laggy and
+         * well above the rate a person actually types.
+         */
+        function searchStaffDirectory() {
+            const el = staffSearchEls();
+            if (!el.input) return;
+            clearTimeout(staffSearchTimer);
+            const term = el.input.value.trim();
+
+            if (term.length < 2) {
+                el.results.style.display = 'none';
+                el.status.textContent = term.length ? 'Keep typing...' : '';
+                return;
+            }
+            el.status.textContent = 'Searching...';
+            staffSearchTimer = setTimeout(() => runStaffSearch(term), 250);
+        }
+
+        async function runStaffSearch(term) {
+            const el = staffSearchEls();
+            try {
+                const auth = window.WildcatAuth;
+                const session = auth && auth.getSession();
+                if (!session) throw new Error('Sign in with Microsoft to search the directory.');
+
+                const data = await auth.convexQuery('staffInvites:searchDirectory',
+                    { q: term, limit: 25 }, session.idToken);
+
+                if (el.age && data.mirroredAt) {
+                    el.age.textContent = new Date(data.mirroredAt).toLocaleString();
+                }
+
+                if (!data.results.length) {
+                    el.results.style.display = 'none';
+                    el.status.textContent =
+                        `No match for "${term}" in ${data.directorySize || 0} staff accounts.`;
+                    return;
+                }
+
+                el.status.textContent = `${data.results.length} match${data.results.length === 1 ? '' : 'es'}`;
+                el.results.style.display = 'block';
+                el.results.innerHTML = data.results.map(p => {
+                    const safeName = String(p.name).replace(/"/g, '&quot;');
+                    // Somebody who already has access is shown and flagged, not
+                    // hidden. Hiding them makes an admin search again for a
+                    // colleague they can see in Outlook and decide the search is
+                    // broken.
+                    const badge = p.alreadyHasAccess
+                        ? '<span style="font-size:11px;background:#e2ede5;color:#2f6b45;padding:2px 8px;border-radius:3px;">has access</span>'
+                        : '';
+                    return `<div onclick="chooseStaff('${p.email}', &quot;${safeName}&quot;)"
+                                 style="padding:10px 14px;border-bottom:1px solid #f1f1f1;cursor:pointer;display:flex;justify-content:space-between;gap:12px;align-items:center;"
+                                 onmouseover="this.style.background='#f7f7f7'" onmouseout="this.style.background='#fff'">
+                              <div style="min-width:0;">
+                                <div style="font-weight:600;">${p.name}</div>
+                                <div style="color:#6b7280;font-size:13px;overflow:hidden;text-overflow:ellipsis;">${p.email}${p.jobTitle ? ' &middot; ' + p.jobTitle : ''}</div>
+                              </div>${badge}
+                            </div>`;
+                }).join('');
+            } catch (err) {
+                el.results.style.display = 'none';
+                el.status.textContent = err.message;
+            }
+        }
+
+        function chooseStaff(email, name) {
+            staffChosen = { email, name };
+            const el = staffSearchEls();
+            el.results.style.display = 'none';
+            el.chosen.style.display = 'block';
+            el.name.textContent = name;
+            el.email.textContent = email;
+        }
+
+        function clearStaffChoice() {
+            staffChosen = null;
+            const el = staffSearchEls();
+            el.chosen.style.display = 'none';
+            el.input.value = '';
+            el.status.textContent = '';
+        }
+
+        async function sendStaffInvite() {
+            if (!staffChosen) return;
+            const el = staffSearchEls();
+            const role = el.role.value;
+            try {
+                const auth = window.WildcatAuth;
+                const session = auth && auth.getSession();
+                if (!session) throw new Error('Sign in with Microsoft first.');
+
+                const result = await auth.convexMutation('staffInvites:inviteStaff',
+                    { email: staffChosen.email, role }, session.idToken);
+
+                const what = result.outcome === 'invited'
+                    ? `${staffChosen.name} now has ${role} access. They sign in with Microsoft, no password needed.`
+                    : result.outcome === 'role-changed'
+                        ? `${staffChosen.name} changed from ${result.previousRole} to ${role}.`
+                        : `${staffChosen.name} already had ${role} access. Nothing changed.`;
+                alert(what);
+
+                // Refresh from the server rather than pushing a row into the
+                // local array: the server decides the final shape, and guessing
+                // it here is how the two drift.
+                if (typeof refreshRosterFromConvex === 'function') {
+                    await refreshRosterFromConvex('staff invite');
+                }
+                updateTeachersTable();
+                clearStaffChoice();
+                closeAddTeacherModal();
+            } catch (err) {
+                alert('Could not grant access: ' + err.message);
+            }
+        }
+
         function openAddTeacherModal() {
             const modal = document.getElementById('addTeacherModal');
             if (!modal) return;
             modal.classList.remove('hidden');
             modal.style.display = 'flex';
-            const first = document.getElementById('newTeacherName');
+            clearStaffChoice();
+            const first = document.getElementById('staffSearchInput');
             if (first) first.focus();
         }
 

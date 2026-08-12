@@ -12,7 +12,8 @@
     "drift": "node scripts/migration-drift.mjs",
     "mirror": "node scripts/mirror-refresh.mjs",
     "purge-passwords": "node scripts/purge-cleartext-passwords.mjs",
-    "staff:match": "cd powerschool/sync && node --env-file=.env src/staff-match.ts"
+    "staff:match": "cd powerschool/sync && node --env-file=.env src/staff-match.ts",
+    "staff:mirror": "node scripts/mirror-entra-directory.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

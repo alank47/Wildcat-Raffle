@@ -284,6 +284,31 @@ export default defineSchema({
   }).index("by_at", ["at"]),
 
   /** App settings and cycle state: the scalar and map fields of raffle_data/main. */
+  // A searchable mirror of the Entra directory, staff domain only.
+  //
+  // The app cannot query Microsoft Graph: that needs application permissions
+  // and a client secret, and the Wildcat Hub registration is a SPA that holds
+  // neither. So the directory is mirrored in by `npm run staff:mirror`, which
+  // runs as a signed-in human through `az`, and the app searches this table.
+  //
+  // MINIMAL BY DESIGN. Name, email and job title are what a person needs to
+  // pick the right colleague out of 543. No phone numbers, no manager chain, no
+  // object ids beyond the key. A mirror is a copy of somebody else's personal
+  // data and every extra column is a copy that has to be justified.
+  //
+  // Guests and disabled accounts are never written here, so they cannot be
+  // invited by accident.
+  entraDirectory: defineTable({
+    email: v.string(), // normalized, the join key to teachers
+    name: v.string(),
+    jobTitle: v.optional(v.string()),
+    department: v.optional(v.string()),
+    // Lowercased "name email jobtitle", so a search is one substring test
+    // rather than three, and matches how a person actually types a query.
+    searchText: v.string(),
+    mirroredAt: v.string(),
+  }).index("by_email", ["email"]),
+
   appState: defineTable({
     key: v.string(),
     value: v.any(),

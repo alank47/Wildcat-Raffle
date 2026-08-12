@@ -2899,7 +2899,7 @@
                 </div>
 
                 <button class="btn" onclick="openAddTeacherModal()" style="margin-bottom: 20px;">
-                    &#43; Add New Teacher
+                    &#43; Invite Staff
                 </button>
 
                 <!-- Add New Teacher, moved into a modal 2026-08-12. The form
@@ -2909,61 +2909,52 @@
                      uses more than once a term. -->
                 <div id="addTeacherModal" class="hidden"
                      style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 10000; align-items: center; justify-content: center; padding: 20px; overflow-y: auto;">
-                    <div style="background: #fff; border-radius: 10px; padding: 24px; max-width: 640px; width: 100%; max-height: 90vh; overflow-y: auto;">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-                            <h3 style="margin: 0;">Add New Teacher</h3>
+                    <div style="background: #fff; border-radius: 10px; padding: 24px; max-width: 680px; width: 100%; max-height: 90vh; overflow-y: auto;">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <h3 style="margin: 0;">Invite Staff</h3>
                             <button onclick="closeAddTeacherModal()" aria-label="Close"
                                     style="border: none; background: none; font-size: 26px; line-height: 1; cursor: pointer; color: #6b7280;">&times;</button>
                         </div>
+                        <p style="color:#6b7280; font-size:14px; margin:0 0 16px;">
+                            Search the district directory. The person signs in with Microsoft
+                            using the account they already have, so there is no password to set.
+                        </p>
 
-                    <h3 style="margin-bottom: 15px;">Add New Teacher</h3>
-                    
-                    <div class="form-group">
-                        <label>Teacher Name <span style="color: #dc3545; font-size: 13px;">(Must match PowerSchool exactly)</span></label>
-                        <input type="text" id="newTeacherName" placeholder="e.g., Rafael Chavez (First Last)">
-                        <p style="color: #666; font-size: 13px; margin-top: 5px;">
-                            💡 Tip: Use "First Last" format (e.g., "Rafael Chavez" not "Chavez, Rafael")
-                        </p>
+                        <div class="form-group">
+                            <label>Search by name or email</label>
+                            <input type="text" id="staffSearchInput" autocomplete="off"
+                                   placeholder="e.g. Rafael, or rchavez@lapromisefund.org"
+                                   oninput="searchStaffDirectory()">
+                            <p id="staffSearchStatus" style="color:#666; font-size:13px; margin-top:6px;"></p>
+                        </div>
+
+                        <div id="staffSearchResults" style="max-height: 320px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 6px; display: none;"></div>
+
+                        <div id="staffInviteChosen" style="display:none; margin-top:16px; padding:14px; background:#f7f7f7; border-radius:8px;">
+                            <div style="font-weight:600;" id="staffInviteName"></div>
+                            <div style="color:#6b7280; font-size:13px; margin-bottom:12px;" id="staffInviteEmail"></div>
+
+                            <div class="form-group" style="margin-bottom:12px;">
+                                <label>Access level</label>
+                                <select id="staffInviteRole">
+                                    <option value="teacher">Teacher (award tickets to their own students)</option>
+                                    <option value="campusaide">Campus Aide (view only)</option>
+                                    <option value="admin">Admin (manage staff, weeks and settings)</option>
+                                </select>
+                            </div>
+
+                            <button class="btn" onclick="sendStaffInvite()">Grant Access</button>
+                            <button class="btn btn-secondary" onclick="clearStaffChoice()" style="margin-left:8px;">Cancel</button>
+                        </div>
+
+                        <div style="margin-top: 18px; padding: 12px; background: #e3f2fd; border-left: 4px solid #2196F3; border-radius: 4px;">
+                            <small style="color: #555;">
+                                Directory last refreshed: <span id="staffDirectoryAge">unknown</span>.
+                                A new hire missing from the list means the mirror needs refreshing
+                                (<code>npm run staff:mirror</code>).
+                            </small>
+                        </div>
                     </div>
-                    
-                    <div class="form-group">
-                        <label>Username</label>
-                        <input type="text" id="newTeacherUsername" placeholder="Username for login">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>Email <span style="color: #dc3545; font-size: 13px;">(Required for weekly Kickboard reports)</span></label>
-                        <input type="email" id="newTeacherEmail" placeholder="e.g., rchavez@westbrook.edu">
-                        <p style="color: #666; font-size: 13px; margin-top: 5px;">
-                            📧 Weekly raffle ticket summaries will be sent to this email
-                        </p>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>Password</label>
-                        <input type="password" id="newTeacherPassword" placeholder="Create password">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>Role</label>
-                        <select id="newTeacherRole" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 6px;">
-                            <option value="teacher">Teacher (Can award tickets to their students)</option>
-                            <option value="campusaide">Campus Aide (Can award tickets to ALL students)</option>
-                            <option value="admin">Admin (Full access to management)</option>
-                            <option value="superadmin">Super Admin (System administration access)</option>
-                        </select>
-                    </div>
-                    
-                    <button class="btn" onclick="addTeacher()">Add Teacher</button>
-                    
-                    <div style="margin-top: 15px; padding: 12px; background: #e3f2fd; border-left: 4px solid #2196F3; border-radius: 4px;">
-                        <strong>📚 CSV Schedule Loaded:</strong> <span id="csvScheduleStatus">No</span><br>
-                        <small style="color: #666;">Teachers will auto-match to their class rosters from uploaded CSV</small>
-                        <button class="btn btn-secondary" onclick="rematchAllTeachers()" style="margin-top: 10px; font-size: 13px; padding: 8px 15px;">
-                            🔄 Re-match All Teachers to CSV
-                        </button>
-                    </div>
-                                    </div>
                 </div>
 
                 <h3>Current Teachers</h3>
@@ -4756,7 +4747,7 @@
     <!-- Chart.js for Data Visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-    <script src="wildcat-auth.js?v=20260812k"></script>
-    <script src="script.js?v=20260812k"></script>
+    <script src="wildcat-auth.js?v=20260812m"></script>
+    <script src="script.js?v=20260812m"></script>
 </body>
 </html>
