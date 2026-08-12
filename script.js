@@ -6750,6 +6750,16 @@
                 return;
             }
 
+            return establishTeacherSession(teacher);
+        }
+
+        /**
+         * Everything that happens AFTER a teacher has been authenticated.
+         * Extracted from login() so Entra sign-in and the legacy password
+         * form share one session path instead of two that drift apart.
+         * Callers must have already proven identity.
+         */
+        async function establishTeacherSession(teacher) {
             currentUser = teacher;
             
             // Track login activity

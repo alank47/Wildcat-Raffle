@@ -206,9 +206,68 @@
     emit('wildcat-auth-signout', {});
   }
 
+  /**
+   * The button handler on the staff login screen.
+   *
+   * Order matters here. Convex verifies the Microsoft token FIRST and tells us
+   * the email; only then do we look for a local record. Doing it the other way
+   * round, matching a record before the token is verified, would let anyone who
+   * knows a teacher's address in as that teacher.
+   *
+   * Hands off to establishTeacherSession(), the same function the password form
+   * calls once it has checked a password. One session path, so the two cannot
+   * drift apart.
+   */
+  async function signInWithMicrosoft() {
+    const errorEl = document.getElementById('entraSignInError');
+    const btn = document.getElementById('entraSignInBtn');
+    const setError = (msg) => { if (errorEl) errorEl.textContent = msg; };
+
+    setError('');
+    if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
+
+    try {
+      const me = await signInStaff();          // throws unless Convex says staff
+
+      // Match the app's own record by normalized email. Convex has already
+      // confirmed the identity; this is only finding the local row that holds
+      // role, sections and ticket counts.
+      const target = (me.email || '').trim().toLowerCase();
+      const teacher =
+        typeof teachers !== 'undefined' &&
+        teachers.find((t) => (t.email || '').trim().toLowerCase() === target);
+
+      if (!teacher) {
+        // Expected for most staff right now: 39 of 40 records have no email,
+        // so there is nothing to match even though the sign-in itself worked.
+        throw new Error(
+          `Signed in as ${target}, but no local staff record carries that ` +
+          `email address. An admin needs to add it to your profile.`,
+        );
+      }
+
+      await establishTeacherSession(teacher);
+    } catch (err) {
+      // Popup dismissal is a normal thing a person does, not an error worth
+      // shouting about.
+      const msg = String((err && err.message) || err);
+      if (/user_cancelled|popup_window_error|user_closed/i.test(msg)) {
+        setError('');
+      } else {
+        setError(msg);
+        console.error('[wildcat-auth] staff sign-in failed:', err);
+      }
+    } finally {
+      if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+    }
+  }
+
+  window.signInWithMicrosoft = signInWithMicrosoft;
+
   window.WildcatAuth = {
     CONFIG,
     configured,
+    signInWithMicrosoft,
     signInStaff,
     initStudentButton,
     signOut,

@@ -28,6 +28,24 @@
         
         <!-- Teacher Login Form -->
         <div id="teacherLoginForm">
+            <!-- Entra ID (O365) sign-in. Placed ABOVE the password form because it
+                 is the path staff should use; the password form below is the
+                 legacy fallback and stays until every staff record has an email
+                 (39 of 40 are missing one, so it cannot be removed yet). -->
+            <button id="entraSignInBtn" onclick="signInWithMicrosoft()"
+                style="width: 100%; padding: 13px; font-size: 15px; font-weight: 600; border-radius: 10px; border: 1.5px solid #d7dde5; background: #fff; color: #2b2b2b; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; transition: all 0.2s;"
+                onmouseover="this.style.background='#f6f8fb'" onmouseout="this.style.background='#fff'">
+                <svg width="17" height="17" viewBox="0 0 23 23" aria-hidden="true"><path fill="#f35325" d="M1 1h10v10H1z"/><path fill="#81bc06" d="M12 1h10v10H12z"/><path fill="#05a6f0" d="M1 12h10v10H1z"/><path fill="#ffba08" d="M12 12h10v10H12z"/></svg>
+                Sign in with Microsoft
+            </button>
+            <div id="entraSignInError" class="error-message" style="text-align: center; margin-top: 10px;"></div>
+
+            <div style="display: flex; align-items: center; gap: 10px; margin: 18px 0 14px;">
+                <div style="flex: 1; height: 1px; background: #eceff3;"></div>
+                <span style="color: #aab2bd; font-size: 11px; letter-spacing: 0.6px;">OR USE YOUR PASSWORD</span>
+                <div style="flex: 1; height: 1px; background: #eceff3;"></div>
+            </div>
+
             <div class="form-group">
                 <label>Username</label>
                 <input type="text" id="loginUsername" placeholder="Enter your username">
