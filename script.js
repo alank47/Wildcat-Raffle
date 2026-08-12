@@ -21,7 +21,50 @@
         // would deny every read and write. Check window.wildcatAuthReady in the
         // console before deploying them.
         let firebaseAuthReady = false;
-        
+
+        // ---------------------------------------------------------------
+        // Convex cutover. Two independent switches, so the read and the
+        // write can move one at a time and either can be reverted alone.
+        //
+        //   DATA_SOURCE  where students and teachers are READ from.
+        //   DATA_WRITE   where they are WRITTEN. Not yet used; stage 2.
+        //
+        // Set DATA_SOURCE back to 'firestore' to revert the read instantly.
+        // No deploy of Convex is needed to do it, only this line and a cache
+        // buster bump, because the fallback path is still fully present.
+        // ---------------------------------------------------------------
+        const DATA_SOURCE = 'convex';    // 'convex' | 'firestore'
+        const DATA_WRITE = 'firestore';  // 'firestore' | 'both' | 'convex'
+
+        /**
+         * Students and staff from Convex, in the shape this file already uses.
+         *
+         * Why this exists: the SIS syncs the real roster into Convex twice a
+         * day. Firestore has no idea any of it happened, so a student enrolled
+         * this morning is invisible to every teacher until somebody types them
+         * in by hand.
+         *
+         * Throws rather than returning empty. An empty roster and a failed
+         * request look identical to the caller otherwise, and the caller's
+         * fallback depends on telling them apart.
+         */
+        async function loadRosterFromConvex() {
+            const auth = window.WildcatAuth;
+            if (!auth) throw new Error('WildcatAuth is not loaded.');
+            const session = auth.getSession();
+            if (!session) throw new Error('Not signed in to Convex.');
+
+            const data = await auth.convexQuery('appData:load', {}, session.idToken);
+            if (!data || !Array.isArray(data.students)) {
+                throw new Error('appData:load returned no students array.');
+            }
+            return {
+                students: data.students,
+                teachers: Array.isArray(data.teachers) ? data.teachers : [],
+                settings: data.settings || {},
+            };
+        }
+
         // Initialize Firebase
         async function initFirebase() {
             try {
@@ -1912,6 +1955,33 @@
                     // Check if we have data (at least main document should exist)
                     if (mainSnap.exists()) {
                         const mainData = mainSnap.data();
+
+                        // ---- Convex cutover, stage 1: the ROSTER only -------------
+                        //
+                        // Students and teachers come from Convex; every other field
+                        // on this document, and every other document, is untouched.
+                        //
+                        // This is deliberately the smallest possible change. The SIS
+                        // syncs 646 enrolled students into Convex twice a day, but
+                        // the app reads Firestore, which holds 446 and never learns
+                        // about a new enrolment. Swapping just these two arrays fixes
+                        // that without touching ticket history, audit logs,
+                        // referrals, schedules, or the merge logic below, all of
+                        // which keep working exactly as before.
+                        //
+                        // On ANY failure it falls through to the Firestore copy. A
+                        // half-finished migration must never leave a teacher looking
+                        // at an empty roster in front of a class.
+                        if (DATA_SOURCE === 'convex') {
+                            try {
+                                const fresh = await loadRosterFromConvex();
+                                mainData.students = fresh.students;
+                                mainData.teachers = fresh.teachers;
+                                console.log(`✅ Roster from Convex: ${fresh.students.length} students, ${fresh.teachers.length} staff`);
+                            } catch (err) {
+                                console.error('[roster] Convex load failed, using the Firestore copy:', err.message);
+                            }
+                        }
                         const secondaryData = secondarySnap.exists() ? secondarySnap.data() : {};
                         
                         // Merge audit log from all monthly docs + legacy combined doc.
