@@ -15490,6 +15490,89 @@
             updateCycleDisplay();
         }
 
+        /**
+         * Pull the roster from Convex once a Convex session actually exists.
+         *
+         * THE ORDERING PROBLEM THIS SOLVES. Init calls loadData() before anyone
+         * has signed in, so at that moment there is no Entra token, appData:load
+         * refuses, and the Firestore fallback serves its 446 students. Signing in
+         * afterwards changed nothing, because nothing re-read the roster. The
+         * result looked exactly like "Convex is not working" while both halves
+         * were behaving correctly in isolation.
+         *
+         * wildcat-auth.js emits `wildcat-auth-signin` on success and script.js
+         * had no listener for it at all. This is that listener.
+         *
+         * ticketHistory and sections are NOT in the Convex roster: they live in
+         * their own Firestore documents and were attached during loadData. They
+         * are carried across by id here, otherwise signing in would silently
+         * empty every student's history.
+         */
+        async function refreshRosterFromConvex(reason) {
+            if (DATA_SOURCE !== 'convex') return;
+            try {
+                const fresh = await loadRosterFromConvex();
+
+                const previous = new Map(students.map((s) => [String(s.id), s]));
+                students = fresh.students.map((s) => {
+                    const prior = previous.get(String(s.id));
+                    return {
+                        ...s,
+                        ticketHistory: (prior && prior.ticketHistory) || [],
+                        sections: (prior && prior.sections) || [],
+                    };
+                });
+                if (fresh.teachers.length > 0) teachers = fresh.teachers;
+
+                console.log(`✅ Roster refreshed from Convex after ${reason}: ${students.length} students`);
+
+                // Redraw whatever is on screen. There is no `currentTab` variable
+                // and no data-tab attribute: the markup wires tabs up as
+                // onclick="switchTab('tickets')", so the name is read back out of
+                // that. Falls back to the students view, which is the one this
+                // refresh exists to correct.
+                const active = document.querySelector('#mainApp .tab.active');
+                const handler = (active && active.getAttribute('onclick')) || '';
+                const named = handler.match(/switchTab\('([^']+)'\)/);
+                if (typeof switchTab === 'function') switchTab(named ? named[1] : 'tickets');
+            } catch (err) {
+                console.error(`[roster] Convex refresh after ${reason} failed:`, err.message);
+            }
+        }
+
+        window.addEventListener('wildcat-auth-signin', () => {
+            refreshRosterFromConvex('sign-in');
+        });
+
+        /**
+         * The second case, which the event alone does not cover.
+         *
+         * On a page load that RESUMES an existing session, completeRedirectSignIn
+         * resolves asynchronously and may finish before this file attaches the
+         * listener above, or after loadData has already run. Either way no
+         * `wildcat-auth-signin` fires for a session that was simply already there,
+         * and the roster stays on the Firestore fallback for the whole visit.
+         *
+         * So the session is also polled for briefly. Bounded, and it stops the
+         * moment it succeeds: this is a startup race, not a heartbeat, and a
+         * timer that runs forever is how a page ends up re-fetching the roster
+         * every two seconds for an afternoon.
+         */
+        (function watchForConvexSession() {
+            if (DATA_SOURCE !== 'convex') return;
+            let attempts = 0;
+            const timer = setInterval(() => {
+                attempts++;
+                const auth = window.WildcatAuth;
+                if (auth && auth.getSession && auth.getSession()) {
+                    clearInterval(timer);
+                    refreshRosterFromConvex('resumed session');
+                } else if (attempts >= 15) {
+                    clearInterval(timer);
+                }
+            }, 1000);
+        })();
+
         // Initialize
         (async function() {
             // Load data first so teachers array is populated

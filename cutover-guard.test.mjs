@@ -98,6 +98,35 @@ console.log("\nThe shadow write cannot break a save that already worked");
   );
 }
 
+console.log("\nThe roster is re-read once a Convex session exists");
+{
+  check(
+    "script.js listens for wildcat-auth-signin",
+    /addEventListener\('wildcat-auth-signin'/.test(script),
+    "wildcat-auth emits it; without a listener, signing in never re-reads the roster",
+  );
+  check("there is a refresh function", /async function refreshRosterFromConvex/.test(script));
+  const fn = script.slice(
+    script.indexOf("async function refreshRosterFromConvex"),
+    script.indexOf("async function refreshRosterFromConvex") + 1800,
+  );
+  check(
+    "it carries ticketHistory across, rather than blanking it",
+    /ticketHistory/.test(fn),
+    "the Convex roster has no ticket history; it lives in a separate Firestore doc",
+  );
+  check("it re-renders after replacing the roster", /switchTab\(/.test(fn));
+  check(
+    "the tab name is read from the onclick, since there is no data-tab attribute",
+    /switchTab\\\('\(\[\^'\]\+\)/.test(fn) || /getAttribute\('onclick'\)/.test(fn),
+  );
+  check(
+    "the resumed-session poll is bounded",
+    /attempts >= \d+/.test(script),
+    "an unbounded timer would re-fetch the roster all afternoon",
+  );
+}
+
 console.log("\nCache busters");
 {
   const tags = [...html.matchAll(/(script|wildcat-auth)\.js\?v=([\w-]+)/g)].map((m) => m[2]);
