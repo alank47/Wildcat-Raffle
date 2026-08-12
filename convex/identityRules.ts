@@ -38,7 +38,28 @@ import { ConvexError } from "convex/values";
  * suffix match. Adding a domain here admits every Google account in that
  * workspace, so it takes the same care as adding a staff domain.
  */
-export const STUDENT_DOMAINS = ["westbrookacademy.org", "rwwnms.org"] as const;
+export const STUDENT_DOMAINS = [
+  "westbrookacademy.org", // 427 students
+  "rwwnms.org", //           8 students, Russell Westbrook Why Not? Middle School
+  "rwwnhs.org", //           1 student,  Russell Westbrook Why Not? High School
+] as const;
+
+/**
+ * Domains that are ALMOST a real one, and are refused anyway.
+ *
+ * `westrbookacademy.org` is a transposition typo of `westbrookacademy.org`,
+ * present on exactly one student record in PowerSchool (11895, local part
+ * `ep11895`, which matches the real convention exactly). It is a data entry
+ * error in the SIS, not a domain anyone owns.
+ *
+ * It is listed here rather than added to STUDENT_DOMAINS, because admitting a
+ * domain admits every Google account in that workspace and nobody controls this
+ * one. Listing it buys one thing: the refusal can say WHY, so the next person
+ * to hit it fixes the SIS record instead of debugging the auth layer.
+ */
+export const TYPO_DOMAINS: Record<string, string> = {
+  "westrbookacademy.org": "westbrookacademy.org",
+};
 
 /**
  * Kept as the primary domain for anything that must name one, such as the
@@ -104,6 +125,18 @@ export function classify(
     // Exact equality against each entry, never a suffix match, for the same
     // reason as the staff check above.
     if (!STUDENT_DOMAINS.some((d) => domain === d)) {
+      // Still refused. The only difference is that the person reading this
+      // learns the record is misspelled in PowerSchool, rather than concluding
+      // the sign in is broken.
+      const intended = TYPO_DOMAINS[domain];
+      if (intended) {
+        throw new ConvexError(
+          `The domain "${domain}" looks like a misspelling of "${intended}". ` +
+            `This address is almost certainly wrong in PowerSchool rather than ` +
+            `wrong here. Ask the registrar to correct the student's email on ` +
+            `Student Profile > Email, then sign in again.`,
+        );
+      }
       throw new ConvexError("Not a student account.");
     }
     return { kind: "student", email };

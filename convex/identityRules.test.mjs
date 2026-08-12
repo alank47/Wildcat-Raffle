@@ -32,6 +32,14 @@ const CASES = [
   [GOOGLE, "kid@rwwnms.org.evil.test", null, "second domain as a suffix is refused"],
   [GOOGLE, "kid@notrwwnms.org", null, "second domain as a substring is refused"],
   [MS, "magat10856@rwwnms.org", null, "second student domain via Microsoft"],
+  // Verified against the live SIS 2026-08-12: 427 students on westbrookacademy.org,
+  // 8 on rwwnms.org, 1 on rwwnhs.org (the RWWN high school).
+  [GOOGLE, "kescobar11306@rwwnhs.org", "student", "third domain, the RWWN high school"],
+  // And a real typo in a real PowerSchool record: student 11895 carries
+  // ep11895@westrbookacademy.org. It is REFUSED, because nobody owns that
+  // domain, but the refusal has to explain itself or the next person debugs
+  // the auth layer instead of fixing the SIS.
+  [GOOGLE, "ep11895@westrbookacademy.org", null, "transposition typo domain is refused"],
   [GOOGLE, "  Kid@WestbrookAcademy.org ", "student", "student, whitespace + case"],
 
   // Privilege escalation, both directions. Checking domain or provider alone
@@ -95,6 +103,22 @@ check(
   emailDomain("a@b@c.com") === "c.com",
 );
 check("no @ means no domain", emailDomain("nope") === "");
+
+// The typo refusal must name the intended domain. A generic "Not a student
+// account" sends somebody to debug sign in for an address that is simply
+// misspelled in PowerSchool.
+console.log("\nTypo domains explain themselves");
+{
+  let message = "";
+  try {
+    classify(GOOGLE, "ep11895@westrbookacademy.org", OPTS);
+  } catch (e) {
+    message = String(e?.data ?? e?.message ?? e);
+  }
+  check("the refusal names the misspelled domain", message.includes("westrbookacademy.org"), message);
+  check("and names the intended one", message.includes("westbrookacademy.org"), message);
+  check("and points at PowerSchool, not at the app", /PowerSchool|registrar/i.test(message), message);
+}
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
