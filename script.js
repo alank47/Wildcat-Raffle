@@ -22,6 +22,25 @@
         // console before deploying them.
         let firebaseAuthReady = false;
 
+        /**
+         * Students who are NOT on the current term's roster.
+         *
+         * Convex holds 734 students; the term holds 646. The other 88 transferred
+         * out or graduated. They are kept, never deleted, because they still have
+         * balances, and a roster gap is not proof a person ceased to exist.
+         *
+         * They are held HERE rather than in `students` because roughly thirty
+         * places across this file read `students` to build a chart, a leaderboard,
+         * a data table, an export, or a RAFFLE POOL. Filtering at each of those is
+         * how the thirty-first gets missed, and the cost of missing one is a
+         * transferred student winning a prize.
+         *
+         * saveData stitches them back on, so a save still writes every record.
+         * Dropping them from a save would delete them from the Firestore document,
+         * which is still the system of record while DATA_WRITE is 'both'.
+         */
+        let nonEnrolledStudents = [];
+
         // ---------------------------------------------------------------
         // Convex cutover. Two independent switches, so the read and the
         // write can move one at a time and either can be reverted alone.
@@ -1741,9 +1760,9 @@
             const isHighSchool = currentGrade >= 9 && currentGrade <= 12;
             
             // Filter students to only show same level (MS or HS)
-            let relevantStudents = students;
+            let relevantStudents = enrolledStudents();
             if (isMiddleSchool) {
-                relevantStudents = students.filter(s => {
+                relevantStudents = enrolledStudents().filter(s => {
                     const grade = parseInt(s.grade);
                     return grade >= 6 && grade <= 8;
                 });
@@ -1975,9 +1994,12 @@
                         if (DATA_SOURCE === 'convex') {
                             try {
                                 const fresh = await loadRosterFromConvex();
-                                mainData.students = fresh.students;
+                                // Enrolled feeds the app; the rest are set aside
+                                // for saveData to stitch back on.
+                                mainData.students = fresh.students.filter(s => s.enrolled !== false);
+                                nonEnrolledStudents = fresh.students.filter(s => s.enrolled === false);
                                 mainData.teachers = fresh.teachers;
-                                console.log(`✅ Roster from Convex: ${fresh.students.length} students, ${fresh.teachers.length} staff`);
+                                console.log(`✅ Roster from Convex: ${mainData.students.length} enrolled, ${nonEnrolledStudents.length} former, ${fresh.teachers.length} staff`);
                             } catch (err) {
                                 console.error('[roster] Convex load failed, using the Firestore copy:', err.message);
                             }
@@ -2957,7 +2979,12 @@
                         const mainTransactionResult = await runTransaction(firebaseDb, async (transaction) => {
                             const mainDoc = await transaction.get(mainDocRef);
                             
-                            let studentsToSave = students;
+                            // Every record, not just the enrolled. The Firestore
+                            // document is a wholesale replace, so omitting the
+                            // former students would DELETE them and their
+                            // balances. Convex would merely skip them, but
+                            // Firestore is still the system of record.
+                            let studentsToSave = students.concat(nonEnrolledStudents);
                             let teachersToSave = teachers;
                             
                             if (mainDoc.exists()) {
@@ -3141,11 +3168,18 @@
                         });
                         
                         // Update local references AFTER transaction completes
-                        students = mainTransactionResult.studentsToSave.map(s => ({
+                        // Re-split. studentsToSave is every record, including the
+                        // former students stitched on above, and assigning all of
+                        // it back to `students` would silently undo the enrolled
+                        // filter on every save: the roster would be right on load
+                        // and wrong again the moment a teacher awarded a ticket.
+                        const savedAll = mainTransactionResult.studentsToSave.map(s => ({
                             ...s,
                             ticketHistory: ticketHistoriesToSave[s.id] || [],
                             sections: sectionsToSave[s.id] || []
                         }));
+                        students = savedAll.filter(s => s.enrolled !== false);
+                        nonEnrolledStudents = savedAll.filter(s => s.enrolled === false);
                         teachers = mainTransactionResult.teachersToSave;
 
                         console.log(`✅ Main document saved (transaction)`);
@@ -5817,7 +5851,7 @@
             }
 
             // Filter students based on subtab
-            let filteredStudents = students;
+            let filteredStudents = enrolledStudents();
             if (suffix === 'MS') {
                 filteredStudents = students.filter(s => {
                     const grade = parseInt(s.grade);
@@ -5919,7 +5953,7 @@
             if (!ctx) return;
 
             // Filter students based on suffix (Academy/MS/HS)
-            let filteredStudents = students;
+            let filteredStudents = enrolledStudents();
             if (suffix === 'MS') {
                 filteredStudents = students.filter(s => {
                     const grade = parseInt(s.grade);
@@ -6030,7 +6064,7 @@
             if (!ctx) return;
 
             // Filter students based on suffix
-            let filteredStudents = students;
+            let filteredStudents = enrolledStudents();
             if (suffix === 'MS') {
                 filteredStudents = students.filter(s => {
                     const grade = parseInt(s.grade);
@@ -14706,9 +14740,13 @@
         // Draw a single winner for ONE school (Attendance only, per admin request).
         // Independent of the MS+HS combined flow — can be run separately at different times.
         async function drawBySchoolSingle(category, categoryName, school) {
+            // Enrolled only. A prior year student who transferred out could
+            // otherwise be drawn as a winner, and the prize would go to a child
+            // who is not at this school.
+            const roster = enrolledStudents();
             const pool = school === 'MS'
-                ? students.filter(s => s.grade >= 6 && s.grade <= 8)
-                : students.filter(s => s.grade >= 9 && s.grade <= 12);
+                ? roster.filter(s => s.grade >= 6 && s.grade <= 8)
+                : roster.filter(s => s.grade >= 9 && s.grade <= 12);
 
             let eligible = [];
             if (category === 'attendance') {
@@ -14761,11 +14799,12 @@
         function drawPBISByGrade(categoryName) {
             // PBIS draws 2 winners from Middle School (grades 6-8) and 2 from High School (grades 9-12).
             // Same student cannot win twice in one drawing (draws are without replacement).
-            const middleSchool = students.filter(s => {
+            const pbisRoster = enrolledStudents();
+            const middleSchool = pbisRoster.filter(s => {
                 const g = parseInt(s.grade);
                 return g >= 6 && g <= 8 && (s.pbisTickets || 0) > 0;
             });
-            const highSchool = students.filter(s => {
+            const highSchool = pbisRoster.filter(s => {
                 const g = parseInt(s.grade);
                 return g >= 9 && g <= 12 && (s.pbisTickets || 0) > 0;
             });
@@ -15736,7 +15775,8 @@
                 const fresh = await loadRosterFromConvex();
 
                 const previous = new Map(students.map((s) => [String(s.id), s]));
-                students = fresh.students.map((s) => {
+                nonEnrolledStudents = fresh.students.filter((s) => s.enrolled === false);
+                students = fresh.students.filter((s) => s.enrolled !== false).map((s) => {
                     const prior = previous.get(String(s.id));
                     return {
                         ...s,
@@ -15746,7 +15786,7 @@
                 });
                 if (fresh.teachers.length > 0) teachers = fresh.teachers;
 
-                console.log(`✅ Roster refreshed from Convex after ${reason}: ${students.length} students`);
+                console.log(`✅ Roster refreshed from Convex after ${reason}: ${students.length} enrolled, ${nonEnrolledStudents.length} former`);
 
                 // Redraw whatever is on screen. There is no `currentTab` variable
                 // and no data-tab attribute: the markup wires tabs up as

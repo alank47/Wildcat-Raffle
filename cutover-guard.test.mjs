@@ -213,8 +213,33 @@ console.log("\nStudents page shows the enrolled roster only");
   );
   check(
     "SAVING still carries every student",
-    /studentsToSave = students;/.test(script),
+    /studentsToSave = students\.concat\(nonEnrolledStudents\)/.test(script),
     "saving only the enrolled would drop the 88 prior-year records and their balances",
+  );
+}
+
+console.log("\nEnrolled and former students are split at the source");
+{
+  check("former students are held separately", /let nonEnrolledStudents = \[\]/.test(script));
+  check(
+    "the Convex overlay splits them",
+    /nonEnrolledStudents = fresh\.students\.filter/.test(script),
+    "roughly thirty places read `students`; filtering at each is how one gets missed",
+  );
+  check(
+    "SAVING stitches them back on",
+    /students\.concat\(nonEnrolledStudents\)/.test(script),
+    "the Firestore document is a wholesale replace, so omitting them DELETES them",
+  );
+  check(
+    "and the post-save reassignment re-splits instead of restoring all of them",
+    /students = savedAll\.filter/.test(script) && !/students = mainTransactionResult\.studentsToSave\.map/.test(script),
+    "otherwise the roster is right on load and wrong again after the first award",
+  );
+  check(
+    "the raffle draws from the enrolled roster",
+    /const roster = enrolledStudents\(\)/.test(script) && /const pbisRoster = enrolledStudents\(\)/.test(script),
+    "a transferred student could otherwise be drawn as a winner",
   );
 }
 
