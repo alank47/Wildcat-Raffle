@@ -23,7 +23,7 @@
         description="Read only student and staff data sync for the Wildcat Hub teacher and admin dashboard at Westbrook Academy.">
 
   <publisher name="LA Promise Fund">
-    <contact email="lawrencb@lapromisefund.org"/>
+    <contact email="lawrenceb@lapromisefund.org"/>
   </publisher>
 
   <!-- Enables OAuth 2.0 client credentials. PowerSchool generates the

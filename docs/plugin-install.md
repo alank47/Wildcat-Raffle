@@ -27,7 +27,7 @@ Our zip has both. It is already built.
 ## Step 1: Publisher contact (DONE)
 
 `powerschool/plugin/plugin.xml` line 26 is set to
-`lawrencb@lapromisefund.org`. PowerSchool shows this to the admin during
+`lawrenceb@lapromisefund.org`. PowerSchool shows this to the admin during
 install and records it as the owner. Change it only if ownership moves.
 
 ---

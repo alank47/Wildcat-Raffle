@@ -95,3 +95,56 @@ export const staffAuthReadiness = internalMutation({
     };
   },
 });
+
+/** Staff names for the one-time Entra email backfill. Internal only. */
+export const listStaffForMatching = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("teachers").collect();
+    return all.map((t) => ({
+      legacyId: t.legacyId ?? "",
+      name: t.name,
+      role: t.role,
+      hasEmail: Boolean((t.email ?? "").includes("@")),
+    }));
+  },
+});
+
+/**
+ * One-time backfill of staff emails matched from the Entra directory.
+ *
+ * Sets the email field and NOTHING else. Deliberately narrower than
+ * seedTeachers: a backfill that can also rewrite role or ticketsAwarded is a
+ * backfill that can silently demote someone or zero their counts.
+ *
+ * Refuses to overwrite an email that is already set, so re-running cannot
+ * clobber a correction made by hand afterwards.
+ */
+export const backfillEmails = internalMutation({
+  args: {
+    matches: v.array(v.object({ legacyId: v.string(), email: v.string() })),
+  },
+  handler: async (ctx, { matches }) => {
+    const all = await ctx.db.query("teachers").collect();
+    const byLegacyId = new Map(all.map((t) => [t.legacyId, t]));
+
+    let filled = 0, skippedAlreadySet = 0, notFound = 0, rejected = 0;
+    for (const m of matches) {
+      const t = byLegacyId.get(m.legacyId);
+      if (!t) { notFound++; continue; }
+      if ((t.email ?? "").includes("@")) { skippedAlreadySet++; continue; }
+
+      const email = normalizeEmail(m.email);
+      // Guard: only addresses on the staff domain. A directory match on a
+      // stale account from another domain must not become a sign-in identity.
+      const domain = email.slice(email.lastIndexOf("@") + 1);
+      if (!email.includes("@") || domain !== (process.env.STAFF_DOMAIN ?? "").toLowerCase()) {
+        rejected++;
+        continue;
+      }
+      await ctx.db.patch(t._id, { email });
+      filled++;
+    }
+    return { filled, skippedAlreadySet, notFound, rejected };
+  },
+});
