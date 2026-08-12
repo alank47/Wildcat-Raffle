@@ -95,7 +95,16 @@
   // ---------------------------------------------------------------------
   // Staff: Microsoft Entra ID
   // ---------------------------------------------------------------------
-  const MSAL_CDN = 'https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js';
+  // Microsoft's own CDN (alcdn.msauth.net / alcdn.msftauth.net) 404s on every
+  // version of this path now, which is what broke the first attempt: the script
+  // never loaded, so the popup never opened. jsdelivr serves the npm package.
+  //
+  // Pinned to an EXACT version on purpose. A floating major like @5 would let a
+  // breaking change land in a login page nobody redeployed, and the failure
+  // would look like "sign-in is broken" with no correlating commit.
+  const MSAL_VERSION = '5.18.0';
+  const MSAL_CDN =
+    `https://cdn.jsdelivr.net/npm/@azure/msal-browser@${MSAL_VERSION}/lib/msal-browser.min.js`;
   let msalApp = null;
 
   async function entraClient() {
