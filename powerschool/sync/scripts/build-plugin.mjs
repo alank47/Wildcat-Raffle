@@ -106,13 +106,22 @@ if (existsSync(resolve(QUERIES_DIR, "behavior.named_queries.xml")) && !grantsBeh
   excluded.push("behavior.named_queries.xml (plugin.xml grants neither Log nor Gen)");
 }
 
-// The expansion set is held back for a different reason: it is granted, but its
-// date predicate returns zero rows on every term that has attendance data, so
-// shipping it installs a capability that cannot answer. Held until the predicate
-// and the assertion that pins it are both fixed. See docs/gauntlet-report.md 2.6.
-if (existsSync(resolve(QUERIES_DIR, "expansion.named_queries.xml"))) {
-  zipExcludes.push("queries_root/expansion.named_queries.xml");
-  excluded.push("expansion.named_queries.xml (DATELEFT predicate returns no rows on completed terms)");
+// The expansion set was held back for a different reason: its enrollment window
+// was bounded by TRUNC(SYSDATE), so every row in a completed term had already
+// left and the queries returned zero on every term that has attendance data. A
+// correct looking zero, which is worse than an error. Fixed 2026-08-12 to bound
+// by the term instead, so the guard now checks for the defect rather than
+// excluding the file on sight. See docs/gauntlet-report.md 2.6.
+const EXPANSION_QUERIES = resolve(QUERIES_DIR, "expansion.named_queries.xml");
+if (existsSync(EXPANSION_QUERIES)) {
+  const expansion = readFileSync(EXPANSION_QUERIES, "utf8");
+  if (/CC\.DATELEFT\s*>=\s*TRUNC\s*\(\s*SYSDATE/i.test(expansion)) {
+    zipExcludes.push("queries_root/expansion.named_queries.xml");
+    excluded.push(
+      "expansion.named_queries.xml (enrollment window still bounded by TRUNC(SYSDATE), " +
+        "which returns zero rows on every completed term)",
+    );
+  }
 }
 
 // Every query agrees with the access request, or no zip is built. Three of the

@@ -26,7 +26,7 @@ requires a human to approve any change to a plugin's access request.
 |---|---|---|
 | Field lines | 107 | **123** |
 | Access level | all ViewOnly | **all ViewOnly, zero FullAccess** |
-| PowerQueries | 7 | **9** |
+| PowerQueries | 7 | **13** |
 | Tables | 16 | **18** (adds `Log`, `Gen`) |
 
 ### The 16 new fields
@@ -103,6 +103,20 @@ student already has three log entries this week, or was serving a suspension
 that day. This request is what makes those two records aware of each other.
 
 ---
+
+## Also in this version: four expansion queries
+
+`attendance_join_health`, `attendance_by_section`, `enrollment_window` and
+`period_structure`. They request **no new fields**: every column they touch is
+already granted. They ship now because a PowerQuery only travels inside the
+plugin zip, so holding them back would cost a second approval cycle to install
+files that are already written.
+
+They were nearly shipped broken. Their enrollment window was bounded by
+`TRUNC(SYSDATE)`, meaning "still enrolled today", so on any completed term every
+row had already left and the queries returned **zero rows that looked correct**.
+Now bounded by the term's own first and last day. The build refuses to package
+them if that regresses.
 
 ## Also in this version: a roster defect fix
 
@@ -197,9 +211,12 @@ This request does not resolve any of the following, and none of them blocks it:
    This is a question for the registrar, not for the SIS administrator.
 3. **Student email.** Absent from this instance entirely. Not an approval
    problem; the column does not exist. Student sign-in cannot key off the SIS.
-4. **The expansion queries.** Held back from this zip on purpose: their date
-   predicate returns zero rows on every term that has attendance data, so
-   shipping them would install a capability that cannot answer.
+4. **Oracle has not parsed the six new queries.** Two behavior, four expansion.
+   The validator checks the four failure modes that are mechanical; it cannot
+   check whether Oracle likes the SQL. Paste each `<sql>` body into the
+   PowerSchool query tester and run it once before uploading. A query that fails
+   there is a five minute fix; a query that fails after approval is another
+   approval cycle.
 
 ---
 

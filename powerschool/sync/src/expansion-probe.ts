@@ -2360,9 +2360,23 @@ async function selftest(): Promise<void> {
     const clean = stripSqlComments(query.sql);
     if (!/\bJOIN\s+CC\b|\bFROM\s+CC\b/i.test(clean)) continue;
     check(
-      `${label}: CC is filtered to live enrollments, the one shared basis`,
+      `${label}: CC is filtered to enrollments overlapping the term`,
       /CC\.DATELEFT\s+IS\s+NULL\s+OR\s+CC\.DATELEFT\s*>=/i.test(clean),
       "without this the queries in this file count different populations",
+    );
+    // The bound must be the TERM, not today. Against TRUNC(SYSDATE) every row
+    // in a completed term has already left, so the query returns nothing on
+    // every term that actually has attendance data, which is all of them except
+    // the one currently running. It looks like a correct zero and is not.
+    check(
+      `${label}: the enrollment window is bounded by the term, not by today`,
+      !/CC\.DATELEFT\s*>=\s*TRUNC\s*\(\s*SYSDATE/i.test(clean),
+      "TRUNC(SYSDATE) returns zero rows for every completed term",
+    );
+    check(
+      `${label}: and the near side of the window is bounded too`,
+      /CC\.DATEENROLLED\s*<=\s*\w+\.LASTDAY/i.test(clean),
+      "without an upper bound on DATEENROLLED the window is open ended",
     );
   }
 
