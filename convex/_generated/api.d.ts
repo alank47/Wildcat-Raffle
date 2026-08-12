@@ -8,8 +8,52 @@
  * @module
  */
 
-import type { AnyApi, AnyComponents } from "convex/server";
+import type * as identity from "../identity.js";
+import type * as identityRules from "../identityRules.js";
+import type * as me from "../me.js";
+import type * as psSync from "../psSync.js";
+import type * as students from "../students.js";
+import type * as views from "../views.js";
 
-export declare const api: AnyApi;
-export declare const internal: AnyApi;
-export declare const components: AnyComponents;
+import type {
+  ApiFromModules,
+  FilterApi,
+  FunctionReference,
+} from "convex/server";
+
+declare const fullApi: ApiFromModules<{
+  identity: typeof identity;
+  identityRules: typeof identityRules;
+  me: typeof me;
+  psSync: typeof psSync;
+  students: typeof students;
+  views: typeof views;
+}>;
+
+/**
+ * A utility for referencing Convex functions in your app's public API.
+ *
+ * Usage:
+ * ```js
+ * const myFunctionReference = api.myModule.myFunction;
+ * ```
+ */
+export declare const api: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "public">
+>;
+
+/**
+ * A utility for referencing Convex functions in your app's internal API.
+ *
+ * Usage:
+ * ```js
+ * const myFunctionReference = internal.myModule.myFunction;
+ * ```
+ */
+export declare const internal: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "internal">
+>;
+
+export declare const components: {};

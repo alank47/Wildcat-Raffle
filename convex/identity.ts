@@ -1,4 +1,5 @@
 import { QueryCtx, MutationCtx } from "./_generated/server";
+import { ConvexError } from "convex/values";
 import { classify, normalizeEmail, Identity } from "./identityRules";
 
 /**
@@ -22,8 +23,8 @@ export type { Identity } from "./identityRules";
 function staffOpts() {
   const staffDomain = process.env.STAFF_DOMAIN;
   const tenant = process.env.ENTRA_TENANT_ID;
-  if (!staffDomain) throw new Error("STAFF_DOMAIN is not configured on this deployment.");
-  if (!tenant) throw new Error("ENTRA_TENANT_ID is not configured on this deployment.");
+  if (!staffDomain) throw new ConvexError("STAFF_DOMAIN is not configured on this deployment.");
+  if (!tenant) throw new ConvexError("ENTRA_TENANT_ID is not configured on this deployment.");
   return {
     staffDomain,
     staffIssuer: `https://login.microsoftonline.com/${tenant}/v2.0`,
@@ -32,7 +33,7 @@ function staffOpts() {
 
 export async function requireIdentity(ctx: QueryCtx | MutationCtx): Promise<Identity> {
   const identity = await ctx.auth.getUserIdentity();
-  if (identity === null) throw new Error("Not authenticated.");
+  if (identity === null) throw new ConvexError("Not authenticated.");
   return classify(identity.issuer, identity.email, staffOpts());
 }
 
@@ -46,7 +47,7 @@ export async function requireIdentity(ctx: QueryCtx | MutationCtx): Promise<Iden
  */
 export async function requireStaff(ctx: QueryCtx | MutationCtx) {
   const id = await requireIdentity(ctx);
-  if (id.kind !== "staff") throw new Error("Staff only.");
+  if (id.kind !== "staff") throw new ConvexError("Staff only.");
 
   const teacher = await ctx.db
     .query("teachers")
@@ -54,7 +55,7 @@ export async function requireStaff(ctx: QueryCtx | MutationCtx) {
     .unique();
 
   if (!teacher) {
-    throw new Error(
+    throw new ConvexError(
       `No staff record for ${id.email}. An admin must add it, or the Entra ` +
         `address does not match the PowerSchool teacher_email.`,
     );
@@ -66,7 +67,7 @@ export async function requireStaff(ctx: QueryCtx | MutationCtx) {
 export async function requireAdmin(ctx: QueryCtx | MutationCtx) {
   const teacher = await requireStaff(ctx);
   if (teacher.role !== "admin" && teacher.role !== "superadmin") {
-    throw new Error("Admins only.");
+    throw new ConvexError("Admins only.");
   }
   return teacher;
 }
@@ -77,7 +78,7 @@ export async function requireAdmin(ctx: QueryCtx | MutationCtx) {
  */
 export async function requireStudentSelf(ctx: QueryCtx | MutationCtx) {
   const id = await requireIdentity(ctx);
-  if (id.kind !== "student") throw new Error("Students only.");
+  if (id.kind !== "student") throw new ConvexError("Students only.");
 
   const student = await ctx.db
     .query("students")
@@ -85,7 +86,7 @@ export async function requireStudentSelf(ctx: QueryCtx | MutationCtx) {
     .unique();
 
   if (!student) {
-    throw new Error(
+    throw new ConvexError(
       `No student record for ${id.email}. Student email arrives from ` +
         `PowerSchool manifest field 19, which is pending admin approval.`,
     );

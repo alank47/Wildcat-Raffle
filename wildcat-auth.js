@@ -66,9 +66,16 @@
 
     const body = await res.json();
     if (body.status === 'error') {
-      // errorMessage is the message thrown by the Convex function, which is
-      // written to be shown to a person (e.g. "No staff record for x@y").
-      throw new Error(body.errorMessage || 'Convex function failed');
+      // A ConvexError thrown server side arrives in errorData and keeps its
+      // text. A plain Error is REDACTED by Convex in production to
+      // "Server Error" plus a request id, so errorData is the one worth
+      // showing a person and errorMessage is only a fallback.
+      const detail =
+        (typeof body.errorData === 'string' && body.errorData) ||
+        (body.errorData && body.errorData.message) ||
+        body.errorMessage ||
+        'Convex function failed';
+      throw new Error(detail);
     }
     return body.value;
   }

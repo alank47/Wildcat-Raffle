@@ -1,10 +1,17 @@
+import { ConvexError } from "convex/values";
+
 /**
- * Pure identity rules. No Convex imports, no database, no I/O.
+ * Pure identity rules. No database, no I/O, no ctx.
  *
  * Split out from identity.ts on purpose: this is the part that decides whether
  * someone is staff, a student, or refused, and it should be testable directly
  * rather than through a mirror of itself in a test file. A mirror can drift
  * from the real thing and still pass, which is worse than no test.
+ *
+ * ConvexError, not Error, on every throw. Convex REDACTS a plain Error in
+ * production and the caller sees "Server Error" with a request id. These
+ * messages are the difference between a teacher reading "no staff record for
+ * your address" and an admin guessing for an hour, so they have to survive.
  */
 
 export const STUDENT_DOMAIN = "westbrookacademy.org";
@@ -53,19 +60,19 @@ export function classify(
 ): Identity {
   const email = normalizeEmail(rawEmail);
   const domain = emailDomain(email);
-  if (!domain) throw new Error("Token carried no email address.");
+  if (!domain) throw new ConvexError("Token carried no email address.");
 
   if (issuer === opts.staffIssuer) {
     if (domain !== normalizeEmail(opts.staffDomain)) {
-      throw new Error("Not a staff account.");
+      throw new ConvexError("Not a staff account.");
     }
     return { kind: "staff", email };
   }
 
   if (issuer === GOOGLE_ISSUER) {
-    if (domain !== STUDENT_DOMAIN) throw new Error("Not a student account.");
+    if (domain !== STUDENT_DOMAIN) throw new ConvexError("Not a student account.");
     return { kind: "student", email };
   }
 
-  throw new Error("Unrecognized token issuer.");
+  throw new ConvexError("Unrecognized token issuer.");
 }
