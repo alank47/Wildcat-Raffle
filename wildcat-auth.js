@@ -122,7 +122,34 @@
       cache: { cacheLocation: 'sessionStorage' },
     });
     if (msalApp.initialize) await msalApp.initialize();
+
+    // Resolves and clears any interaction MSAL thinks is still outstanding.
+    // Without this, a popup that closed without finishing (an AADSTS error, or
+    // the user closing the window) leaves MSAL believing a sign-in is still
+    // running, and every later attempt fails with interaction_in_progress.
+    if (msalApp.handleRedirectPromise) {
+      await msalApp.handleRedirectPromise().catch(() => {});
+    }
     return msalApp;
+  }
+
+  /**
+   * MSAL records "an interaction is happening" in storage and refuses to start
+   * another while it is set. A popup that dies before completing never clears
+   * it, so the user is locked out of retrying by a flag rather than by
+   * anything real. Clearing it is safe precisely because no interaction is
+   * actually running: the popup is gone.
+   */
+  function clearStaleInteractionLock() {
+    for (const store of [window.sessionStorage, window.localStorage]) {
+      if (!store) continue;
+      const doomed = [];
+      for (let i = 0; i < store.length; i++) {
+        const k = store.key(i);
+        if (k && k.startsWith('msal.') && k.includes('interaction.status')) doomed.push(k);
+      }
+      doomed.forEach((k) => store.removeItem(k));
+    }
   }
 
   async function signInStaff() {
@@ -131,10 +158,23 @@
     // If the optional claim was not configured on the app registration, the
     // token arrives without it and Convex refuses with a clear message rather
     // than guessing at identity.
-    const result = await app.loginPopup({
+    const request = {
       scopes: ['openid', 'profile', 'email'],
       prompt: 'select_account',
-    });
+    };
+
+    let result;
+    try {
+      result = await app.loginPopup(request);
+    } catch (err) {
+      const code = (err && (err.errorCode || err.message)) || '';
+      if (!/interaction_in_progress/i.test(String(code))) throw err;
+      // Retried exactly once. A second failure is a real problem, not a stale
+      // flag, and looping would hide it behind an endless spinner.
+      clearStaleInteractionLock();
+      result = await app.loginPopup(request);
+    }
+
     if (!result || !result.idToken) throw new Error('Entra returned no ID token.');
     return finishSignIn(result.idToken, 'staff');
   }
