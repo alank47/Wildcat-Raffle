@@ -46,12 +46,21 @@ async function firestoreDoc(name) {
 }
 
 function convexRun(fn, args = "{}") {
-  const out = execFileSync("npx", ["convex", "run", fn, args], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-    maxBuffer: 32 * 1024 * 1024,
-  });
-  return JSON.parse(out);
+  // stderr was discarded here, so any failure surfaced as "Command failed" with
+  // `stderr: null` and no way to tell a missing deploy key from a broken
+  // function. Convex writes everything useful to stderr, so it is captured and
+  // re-thrown.
+  try {
+    const out = execFileSync("npx", ["convex", "run", fn, args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    return JSON.parse(out);
+  } catch (error) {
+    const detail = String(error.stderr ?? "").trim() || String(error.message ?? error);
+    throw new Error(`convex run ${fn} failed.\n${detail}`);
+  }
 }
 
 const sum = (rows, f) => rows.reduce((a, r) => a + (Number(f(r)) || 0), 0);

@@ -79,23 +79,29 @@ That is in `TYPO_DOMAINS` in `convex/identityRules.ts`, with three assertions on
 the message text, because a generic "Not a student account" would send somebody
 to debug the auth layer for an address that is simply misspelled.
 
-## Finding 3: there are three student domains, not one
+## Finding 3: nine records carry a retired domain
 
-| Domain | Students | What it is |
+| Domain | Students | Status |
 |---|---:|---|
-| `westbrookacademy.org` | 427 | Westbrook Academy |
-| `rwwnms.org` | 8 | Russell Westbrook Why Not? **Middle** School |
-| `rwwnhs.org` | 1 | Russell Westbrook Why Not? **High** School |
+| `westbrookacademy.org` | 427 | **The only domain used for sign in** |
+| `rwwnms.org` | 8 | Retired. Russell Westbrook Why Not? Middle School |
+| `rwwnhs.org` | 1 | Retired. Russell Westbrook Why Not? High School |
 
-Students keep the address from the school they came up through. All three are in
-`STUDENT_DOMAINS` in `convex/identityRules.ts`, compared by exact equality per
-entry, never a suffix match.
+Confirmed by the user 2026-08-12: the RWWN domains are old and only the
+Westbrook address is used. `STUDENT_DOMAINS` is therefore a single entry.
 
-**Worth confirming with whoever runs Google Workspace:** the single student on
-`rwwnhs.org` is why that domain is on the allowlist. Adding a domain admits
-every account in that workspace, so if `rwwnhs.org` is not a workspace the
-organization controls, it should come off the list and that student's SIS record
-should be corrected instead.
+Those nine records are **stale SIS data**, the same class of problem as the
+misspelling above, and they get the same treatment: refused, with a refusal that
+explains itself and names where to fix it. A student carrying a retired address
+is told the record needs updating, not that their account is invalid.
+
+**For the office:** nine students need their email updated to an
+`@westbrookacademy.org` address on Student Profile > Email. Eight on
+`rwwnms.org`, one on `rwwnhs.org` (student 11306).
+
+Adding a retired domain to the allowlist would have been the sympathetic choice
+and the wrong one: admitting a domain admits every Google account in that
+workspace, whether or not the organization still controls it.
 
 ## Format: still a check, never a source
 

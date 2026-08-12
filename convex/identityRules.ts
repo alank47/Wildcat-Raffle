@@ -38,27 +38,43 @@ import { ConvexError } from "convex/values";
  * suffix match. Adding a domain here admits every Google account in that
  * workspace, so it takes the same care as adding a staff domain.
  */
-export const STUDENT_DOMAINS = [
-  "westbrookacademy.org", // 427 students
-  "rwwnms.org", //           8 students, Russell Westbrook Why Not? Middle School
-  "rwwnhs.org", //           1 student,  Russell Westbrook Why Not? High School
-] as const;
+/**
+ * The ONE domain students sign in on.
+ *
+ * `rwwnms.org` and `rwwnhs.org` appear on 9 PowerSchool records and are
+ * RETIRED domains, confirmed by the user 2026-08-12. They are not accepted.
+ * Nine students carrying one is a stale SIS record, not a second valid identity.
+ */
+export const STUDENT_DOMAINS = ["westbrookacademy.org"] as const;
 
 /**
- * Domains that are ALMOST a real one, and are refused anyway.
+ * Domains seen in real PowerSchool records that are REFUSED, each with the
+ * reason, because the reason is the difference between somebody fixing a
+ * student record in thirty seconds and somebody debugging the auth layer.
  *
- * `westrbookacademy.org` is a transposition typo of `westbrookacademy.org`,
- * present on exactly one student record in PowerSchool (11895, local part
- * `ep11895`, which matches the real convention exactly). It is a data entry
- * error in the SIS, not a domain anyone owns.
+ * None of these is admitted. Admitting a domain admits every Google account in
+ * that workspace, so a retired domain and a misspelled one are equally
+ * unacceptable however sympathetic the affected student is. What is negotiable
+ * is only whether the refusal explains itself.
  *
- * It is listed here rather than added to STUDENT_DOMAINS, because admitting a
- * domain admits every Google account in that workspace and nobody controls this
- * one. Listing it buys one thing: the refusal can say WHY, so the next person
- * to hit it fixes the SIS record instead of debugging the auth layer.
+ * Counts measured against the live instance on 2026-08-12.
  */
-export const TYPO_DOMAINS: Record<string, string> = {
-  "westrbookacademy.org": "westbrookacademy.org",
+export const REFUSED_DOMAINS: Record<string, string> = {
+  // 1 record: student 11895, ep11895@westrbookacademy.org. A transposition of
+  // "westbrook", and the local part matches the real convention exactly.
+  "westrbookacademy.org":
+    'looks like a misspelling of "westbrookacademy.org". The address is almost ' +
+    "certainly wrong in PowerSchool rather than wrong here",
+
+  // 8 records. Russell Westbrook Why Not? Middle School, retired.
+  "rwwnms.org":
+    "is a retired school domain that is no longer used for sign in. The student " +
+    "record still carries an old address",
+
+  // 1 record: student 11306. Russell Westbrook Why Not? High School, retired.
+  "rwwnhs.org":
+    "is a retired school domain that is no longer used for sign in. The student " +
+    "record still carries an old address",
 };
 
 /**
@@ -125,16 +141,14 @@ export function classify(
     // Exact equality against each entry, never a suffix match, for the same
     // reason as the staff check above.
     if (!STUDENT_DOMAINS.some((d) => domain === d)) {
-      // Still refused. The only difference is that the person reading this
-      // learns the record is misspelled in PowerSchool, rather than concluding
-      // the sign in is broken.
-      const intended = TYPO_DOMAINS[domain];
-      if (intended) {
+      // Still refused. The only difference is whether the person reading it
+      // learns the SIS record is stale, or concludes sign in is broken.
+      const why = REFUSED_DOMAINS[domain];
+      if (why) {
         throw new ConvexError(
-          `The domain "${domain}" looks like a misspelling of "${intended}". ` +
-            `This address is almost certainly wrong in PowerSchool rather than ` +
-            `wrong here. Ask the registrar to correct the student's email on ` +
-            `Student Profile > Email, then sign in again.`,
+          `The domain "${domain}" ${why}. Ask the office to update the student's ` +
+            `email to an @${STUDENT_DOMAINS[0]} address on Student Profile > Email ` +
+            `in PowerSchool, then sign in again.`,
         );
       }
       throw new ConvexError("Not a student account.");

@@ -26,15 +26,14 @@ const CASES = [
   // Westbrook Why Not? Middle School keep an @rwwnms.org address and are just as
   // enrolled. A single domain constant refused every one of them, which is why
   // both are asserted here rather than only the one somebody thought of first.
-  [GOOGLE, "magat10856@rwwnms.org", "student", "student on the middle school domain"],
-  [GOOGLE, "  MAGAT10856@RWWNMS.org ", "student", "second domain, whitespace + case"],
   // Widening to a list must not have widened it to a suffix match.
   [GOOGLE, "kid@rwwnms.org.evil.test", null, "second domain as a suffix is refused"],
   [GOOGLE, "kid@notrwwnms.org", null, "second domain as a substring is refused"],
-  [MS, "magat10856@rwwnms.org", null, "second student domain via Microsoft"],
-  // Verified against the live SIS 2026-08-12: 427 students on westbrookacademy.org,
-  // 8 on rwwnms.org, 1 on rwwnhs.org (the RWWN high school).
-  [GOOGLE, "kescobar11306@rwwnhs.org", "student", "third domain, the RWWN high school"],
+  // The RWWN middle and high school domains are RETIRED (user, 2026-08-12).
+  // 9 PowerSchool records still carry one. A stale SIS record is not a second
+  // valid identity, so both are refused.
+  [GOOGLE, "magat10856@rwwnms.org", null, "retired middle school domain is refused"],
+  [GOOGLE, "kescobar11306@rwwnhs.org", null, "retired high school domain is refused"],
   // And a real typo in a real PowerSchool record: student 11895 carries
   // ep11895@westrbookacademy.org. It is REFUSED, because nobody owns that
   // domain, but the refusal has to explain itself or the next person debugs
@@ -115,9 +114,16 @@ console.log("\nTypo domains explain themselves");
   } catch (e) {
     message = String(e?.data ?? e?.message ?? e);
   }
-  check("the refusal names the misspelled domain", message.includes("westrbookacademy.org"), message);
-  check("and names the intended one", message.includes("westbrookacademy.org"), message);
-  check("and points at PowerSchool, not at the app", /PowerSchool|registrar/i.test(message), message);
+  check("the refusal names the offending domain", message.includes("westrbookacademy.org"), message);
+  check("and names the domain to use instead", message.includes("westbrookacademy.org"), message);
+  check("and points at PowerSchool, not at the app", /PowerSchool/i.test(message), message);
+}
+
+{
+  let retired = "";
+  try { classify(GOOGLE, "magat10856@rwwnms.org", OPTS); } catch (e) { retired = String(e?.data ?? e?.message ?? e); }
+  check("a retired domain says it is retired", /retired/i.test(retired), retired);
+  check("and still names where to fix it", /PowerSchool/i.test(retired), retired);
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
