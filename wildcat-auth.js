@@ -117,7 +117,13 @@
       auth: {
         clientId: CONFIG.entra.clientId,
         authority: `https://login.microsoftonline.com/${CONFIG.entra.tenantId}`,
-        redirectUri: window.location.origin,
+        // A dedicated near-empty page, NOT the app itself. Microsoft returns
+        // the auth code in this page's fragment and the parent window polls
+        // the popup to read it. Pointing this at the app made the popup load
+        // index.html plus ~1MB of script.js, render the login screen again
+        // inside the popup, and time the parent out before the fragment could
+        // be read. See auth-redirect.html.
+        redirectUri: window.location.origin + '/auth-redirect.html',
       },
       cache: { cacheLocation: 'sessionStorage' },
     });

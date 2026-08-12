@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Signing in…</title>
+<meta name="robots" content="noindex">
+<!--
+  MSAL popup landing page. Deliberately almost empty.
+
+  WHY THIS FILE EXISTS
+  Microsoft redirects the popup back to this URL carrying the auth code in the
+  fragment (#code=...). The PARENT window polls the popup for that fragment and
+  reads it out. So the only job of this page is to exist, be same origin, and
+  load instantly.
+
+  Pointing the redirect at the app itself looked reasonable and failed: the
+  popup loaded index.html plus ~1MB of script.js, rendered the whole login
+  screen again inside the popup, and by the time it settled the parent had
+  given up with "timed_out". The user saw the login screen recursively inside
+  the popup, which is a confusing symptom for what is really "your redirect
+  page is too slow".
+
+  DO NOT add scripts, analytics, redirects, or app markup here. Every byte is
+  latency in the middle of an auth handshake, and anything that navigates away
+  destroys the fragment before the parent can read it.
+-->
+<style>
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #6b7280; background: #fff;
+  }
+  @media (prefers-color-scheme: dark) { body { background: #111; color: #9ca3af; } }
+</style>
+</head>
+<body>
+  <p>Signing you in…</p>
+</body>
+</html>
