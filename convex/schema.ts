@@ -176,6 +176,38 @@ export default defineSchema({
     payload: v.any(), // shape not yet pinned down; tighten before it carries logic
   }),
 
+  /**
+   * Faithful mirror of the remaining Firestore documents, one row per array
+   * element, payload stored verbatim.
+   *
+   * Deliberately NOT modelled into bespoke tables yet. The purpose of the
+   * mirror is to prove the data can be carried across and reconciled to the
+   * unit; committing to a shape for hall passes, detentions and referrals
+   * before the write paths are ported would be guessing at structures the app
+   * may still change, and a wrong guess here is silent (it imports, it
+   * reconciles by count, and the meaning quietly shifts). Modelling happens
+   * when writes move, one collection at a time.
+   *
+   * `doc` is the Firestore document, `collection` the array within it, `key`
+   * the map key where the source was a map rather than a list.
+   */
+  legacyMirror: defineTable({
+    doc: v.string(),
+    collection: v.string(),
+    key: v.optional(v.string()),
+    payload: v.any(),
+    mirroredAt: v.string(),
+  })
+    .index("by_doc", ["doc"])
+    .index("by_doc_collection", ["doc", "collection"]),
+
+  /** App settings and cycle state: the scalar and map fields of raffle_data/main. */
+  appState: defineTable({
+    key: v.string(),
+    value: v.any(),
+    mirroredAt: v.string(),
+  }).index("by_key", ["key"]),
+
   referrals: defineTable({
     studentId: v.optional(v.id("students")),
     payload: v.any(), // same caveat
