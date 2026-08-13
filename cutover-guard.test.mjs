@@ -14,6 +14,31 @@ const script = readFileSync(new URL("./script.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
 const auth = readFileSync(new URL("./wildcat-auth.js", import.meta.url), "utf8");
 
+
+/**
+ * The body of a top-level function, by brace matching.
+ *
+ * These guards used to slice a fixed number of characters after the function
+ * name, which is fine until somebody adds twenty lines to the function and an
+ * assertion fails for a reason that has nothing to do with what it tests. That
+ * happened, and a guard that cries wolf gets deleted rather than fixed.
+ */
+function fnBody(source, name) {
+  const start = source.indexOf(name);
+  if (start === -1) return "";
+  const open = source.indexOf("{", start);
+  if (open === -1) return "";
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === "{") depth++;
+    else if (source[i] === "}") {
+      depth--;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  return source.slice(start);
+}
+
 let pass = 0;
 let fail = 0;
 function check(label, ok, detail = "") {
@@ -67,10 +92,7 @@ console.log("\nThe fallback is intact");
 
 console.log("\nloadRosterFromConvex refuses to fake success");
 {
-  const fn = script.slice(
-    script.indexOf("async function loadRosterFromConvex"),
-    script.indexOf("async function loadRosterFromConvex") + 900,
-  );
+  const fn = fnBody(script, "async function loadRosterFromConvex");
   check("it throws when not signed in", /throw new Error\('Not signed in/.test(fn));
   check(
     "it throws rather than returning an empty roster",
@@ -107,10 +129,7 @@ console.log("\nThe roster is re-read once a Convex session exists");
     "wildcat-auth emits it; without a listener, signing in never re-reads the roster",
   );
   check("there is a refresh function", /async function refreshRosterFromConvex/.test(script));
-  const fn = script.slice(
-    script.indexOf("async function refreshRosterFromConvex"),
-    script.indexOf("async function refreshRosterFromConvex") + 1800,
-  );
+  const fn = fnBody(script, "async function refreshRosterFromConvex");
   check(
     "it carries ticketHistory across, rather than blanking it",
     /ticketHistory/.test(fn),
