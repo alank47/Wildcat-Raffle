@@ -15959,6 +15959,29 @@
                 });
                 if (fresh.teachers.length > 0) teachers = fresh.teachers;
 
+                // Re-sync the signed-in user from the refreshed staff list.
+                //
+                // loadSession() does this at load, but the Convex refresh runs
+                // AFTER it: the session does not exist yet when loadData runs.
+                // Without this, a role changed on the server does not reach the
+                // running page, and the only way to pick it up is a full sign
+                // out. That is the difference between "your access changed" and
+                // "your access changed, tomorrow".
+                //
+                // Matched by id, and the role is compared before logging so a
+                // routine refresh stays quiet.
+                if (currentUser) {
+                    const fresh = teachers.find(t => String(t.id) === String(currentUser.id));
+                    if (fresh) {
+                        const before = currentUser.role;
+                        currentUser = fresh;
+                        if (typeof saveSession === 'function') saveSession();
+                        if (before !== fresh.role) {
+                            console.log(`✅ Your access level changed: ${before} -> ${fresh.role}. Reload to apply it everywhere.`);
+                        }
+                    }
+                }
+
                 console.log(`✅ Roster refreshed from Convex after ${reason}: ${students.length} enrolled, ${nonEnrolledStudents.length} former`);
 
                 // Redraw whatever is on screen. There is no `currentTab` variable

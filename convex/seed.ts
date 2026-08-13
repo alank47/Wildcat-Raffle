@@ -240,3 +240,60 @@ export const provisionStaff = internalMutation({
     };
   },
 });
+
+/**
+ * Change one person's role.
+ *
+ * internalMutation, so it needs the deploy key and is unreachable from a
+ * browser. That is the point: the in-app invite flow deliberately refuses to
+ * grant superadmin unless the caller is already one, so an admin cannot promote
+ * themselves through the UI. Bootstrapping a second superadmin has to happen
+ * out of band, by somebody holding deployment credentials.
+ *
+ * Changes ONLY the role. Not the name, not the email, not ticketsAwarded, so a
+ * promotion cannot quietly rewrite anything else about a person.
+ *
+ * Returns the previous role rather than just succeeding, because "it was
+ * already superadmin" and "it was a teacher a moment ago" are different facts
+ * and only one of them is worth telling somebody about.
+ */
+export const setStaffRole = internalMutation({
+  args: {
+    email: v.string(),
+    role: v.union(
+      v.literal("teacher"),
+      v.literal("campusaide"),
+      v.literal("admin"),
+      v.literal("superadmin"),
+    ),
+  },
+  handler: async (ctx, { email, role }) => {
+    const target = normalizeEmail(email);
+    const teacher = await ctx.db
+      .query("teachers")
+      .withIndex("by_email", (q) => q.eq("email", target))
+      .unique();
+
+    if (!teacher) {
+      throw new ConvexError(
+        `No staff record for ${target}. Invite them first, or check the address.`,
+      );
+    }
+
+    const previousRole = teacher.role;
+    if (previousRole === role) {
+      return { outcome: "unchanged", email: target, role, previousRole };
+    }
+
+    await ctx.db.patch(teacher._id, { role });
+
+    // A superadmin count of zero locks everyone out of the settings that only a
+    // superadmin can reach, and a count of one means a single person leaving
+    // does exactly that. Returned so the caller sees it rather than finding out
+    // later.
+    const all = await ctx.db.query("teachers").collect();
+    const superadmins = all.filter((t) => t.role === "superadmin").length;
+
+    return { outcome: "changed", email: target, previousRole, role, superadmins };
+  },
+});
