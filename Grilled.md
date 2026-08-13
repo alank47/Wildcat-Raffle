@@ -100,7 +100,63 @@ PowerSchool admin disabling and re-enabling plugin 9741**. Everything up to that
 line is buildable and provable now. Build to the line, prove it fails with a 403
 today, and stop there.
 
-### Open questions this raises, not yet answered
+### Scope addition 2026-08-13: student pass wallet and NFC hall pass
+
+Directed by the user. NOT rolling out immediately; building the functions now.
+
+### What it is
+
+A **web app**, not an Apple Wallet pass. Students open a link and swipe through
+cards. Decided after establishing that a `.pkpass` renders exactly ONE barcode
+(the `barcodes` array is format fallback, not multiple payloads), that ChromeOS
+cannot install a pkpass at all, and that signing requires a paid Apple Developer
+certificate. A web app needs none of that and reaches every device.
+
+Three cards:
+1. **Hall pass** with a running timer
+2. **Clever QR**, scanned by a classroom computer to log the student in
+3. **Lunch ID barcode**, a different number from the student number
+
+### NFC: what actually works
+
+Tags encode a **URL**, not an app payload. iOS 14+ background tag reading opens
+the link with no app installed; Android Chrome does the same. The Web NFC API
+(`NDEFReader`) is Chrome-on-Android only and is deliberately NOT depended on.
+
+**A static tag is a deterrent, not proof of presence.** The URL can be
+photographed or shared and replayed from anywhere. Accepted knowingly. Software
+mitigations: taps only count inside an active pass window, destination must be
+tapped before origin, every tap is attributed to the signed-in student, and the
+sequence is visible to the teacher. Real proof needs rotating or powered tags,
+which is a hardware decision nobody has made.
+
+### Hall pass lifecycle, as specified
+
+1. Student **requests** a pass from their card.
+2. Teacher **approves** it. The pass becomes active and the timer starts.
+3. Student taps the NFC tag **at the destination** (restroom, office, nurse).
+4. Student taps the NFC tag **back at the classroom of origin**. The timer stops
+   and the pass closes.
+
+A pass is only active between approval and the return tap. Anything else, an
+unapproved request or a student who never taps back, is a state a teacher can
+see rather than a silent gap.
+
+### Open questions for this scope
+
+15. **Clever QR payload.** Clever Badges are QR codes, but static-per-student
+    versus rotating changes whether one may be stored and re-rendered at all. If
+    rotating, the card has to fetch it live and it cannot be cached.
+16. **Lunch ID source.** `students.lunch_id` EXISTS on this instance and answered
+    403, so it needs one field line in the access request. Confirmed present, not
+    yet granted.
+17. **Student sign-in is still blocked.** These cards identify a student, and
+    student sign-in does not work yet: 209 of 646 have no email, and the roster
+    read requires a session. The pass surface cannot ship before that does.
+18. **Tag hardware and placement.** Who buys, encodes and mounts the tags, and
+    what happens when one is peeled off a wall.
+
+## Open questions this raises, not yet answered
 
 12. **What object does a behavior event become in PowerSchool?** The `Log` table
     is the likely home, but that is an assumption to check against the real API
@@ -113,6 +169,62 @@ today, and stop there.
 14. **What is authoritative on a conflict?** If a Log entry is edited in
     PowerSchool after the app wrote it, does the next sync overwrite it or leave
     it? Needs a stated rule before any write ships.
+
+## Scope addition 2026-08-13: student pass wallet and NFC hall pass
+
+Directed by the user. NOT rolling out immediately; building the functions now.
+
+### What it is
+
+A **web app**, not an Apple Wallet pass. Students open a link and swipe through
+cards. Decided after establishing that a `.pkpass` renders exactly ONE barcode
+(the `barcodes` array is format fallback, not multiple payloads), that ChromeOS
+cannot install a pkpass at all, and that signing requires a paid Apple Developer
+certificate. A web app needs none of that and reaches every device.
+
+Three cards:
+1. **Hall pass** with a running timer
+2. **Clever QR**, scanned by a classroom computer to log the student in
+3. **Lunch ID barcode**, a different number from the student number
+
+### NFC: what actually works
+
+Tags encode a **URL**, not an app payload. iOS 14+ background tag reading opens
+the link with no app installed; Android Chrome does the same. The Web NFC API
+(`NDEFReader`) is Chrome-on-Android only and is deliberately NOT depended on.
+
+**A static tag is a deterrent, not proof of presence.** The URL can be
+photographed or shared and replayed from anywhere. Accepted knowingly. Software
+mitigations: taps only count inside an active pass window, destination must be
+tapped before origin, every tap is attributed to the signed-in student, and the
+sequence is visible to the teacher. Real proof needs rotating or powered tags,
+which is a hardware decision nobody has made.
+
+### Hall pass lifecycle, as specified
+
+1. Student **requests** a pass from their card.
+2. Teacher **approves** it. The pass becomes active and the timer starts.
+3. Student taps the NFC tag **at the destination** (restroom, office, nurse).
+4. Student taps the NFC tag **back at the classroom of origin**. The timer stops
+   and the pass closes.
+
+A pass is only active between approval and the return tap. Anything else, an
+unapproved request or a student who never taps back, is a state a teacher can
+see rather than a silent gap.
+
+### Open questions for this scope
+
+15. **Clever QR payload.** Clever Badges are QR codes, but static-per-student
+    versus rotating changes whether one may be stored and re-rendered at all. If
+    rotating, the card has to fetch it live and it cannot be cached.
+16. **Lunch ID source.** `students.lunch_id` EXISTS on this instance and answered
+    403, so it needs one field line in the access request. Confirmed present, not
+    yet granted.
+17. **Student sign-in is still blocked.** These cards identify a student, and
+    student sign-in does not work yet: 209 of 646 have no email, and the roster
+    read requires a session. The pass surface cannot ship before that does.
+18. **Tag hardware and placement.** Who buys, encodes and mounts the tags, and
+    what happens when one is peeled off a wall.
 
 ## Open questions
 

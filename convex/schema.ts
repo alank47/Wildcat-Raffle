@@ -309,6 +309,69 @@ export default defineSchema({
     mirroredAt: v.string(),
   }).index("by_email", ["email"]),
 
+  // Physical places with an NFC tag on the wall. A tag encodes a URL ending in
+  // the slug, so tapping it opens the app at /tap/<slug> on iOS and Android
+  // alike, with no app installed.
+  //
+  // `slug` is what is printed on the tag and cannot change without re-encoding
+  // it, so it is deliberately human-chosen and stable rather than a generated id.
+  tapLocations: defineTable({
+    slug: v.string(), // "restroom-2", "room-12"
+    name: v.string(), // "Restroom, 2nd floor"
+    kind: v.union(
+      v.literal("classroom"),
+      v.literal("restroom"),
+      v.literal("office"),
+      v.literal("nurse"),
+      v.literal("other"),
+    ),
+    active: v.boolean(), // a peeled-off or retired tag stops working without deletion
+    createdAt: v.string(),
+  }).index("by_slug", ["slug"]),
+
+  hallPasses: defineTable({
+    studentId: v.id("students"),
+    studentNumber: v.optional(v.string()),
+    originLocationId: v.id("tapLocations"),
+    destinationLocationId: v.optional(v.id("tapLocations")),
+
+    state: v.union(
+      v.literal("requested"),
+      v.literal("active"),
+      v.literal("out"),
+      v.literal("returned"),
+      v.literal("denied"),
+      v.literal("cancelled"),
+      v.literal("expired"),
+    ),
+
+    reason: v.optional(v.string()),
+    requestedAt: v.string(),
+    approvedAt: v.optional(v.string()),
+    approvedByEmail: v.optional(v.string()),
+    outAt: v.optional(v.string()),
+    returnedAt: v.optional(v.string()),
+    expiresAfterMinutes: v.number(),
+  })
+    .index("by_student", ["studentId"])
+    .index("by_state", ["state"]),
+
+  // Every tap, including the ones that were REFUSED.
+  //
+  // A refused tap is the interesting one: a student tapping the classroom tag
+  // on the way out, or tapping a tag with no approved pass, is exactly what a
+  // teacher wants to see. Recording only successful taps would erase it.
+  tapEvents: defineTable({
+    passId: v.optional(v.id("hallPasses")),
+    studentId: v.optional(v.id("students")),
+    locationSlug: v.string(),
+    at: v.string(),
+    accepted: v.boolean(),
+    outcome: v.string(), // the rule's own reason, verbatim
+  })
+    .index("by_pass", ["passId"])
+    .index("by_student", ["studentId"]),
+
   appState: defineTable({
     key: v.string(),
     value: v.any(),
