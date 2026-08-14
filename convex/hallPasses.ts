@@ -1,6 +1,6 @@
 import { query, mutation } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
-import { requireStaff } from "./identity";
+import { requireStaff, requireAdmin, requireStudentSelf } from "./identity";
 import { applyTap, canApprove, elapsedMinutes, isOverdue, hasLivePass } from "./hallPassRules";
 
 /**
@@ -133,31 +133,48 @@ export const deny = mutation({
  * approved pass, is precisely what a teacher wants to see. Recording only the
  * successful ones would erase the behaviour the system exists to notice.
  */
+/**
+ * A tap at a wall tag, BY THE STUDENT WHO TAPPED IT.
+ *
+ * No studentId argument. The student is whoever the verified Google token says
+ * they are. The earlier version took an id and required staff, which is the
+ * shape of a kiosk, not of a child holding a phone at a restroom door: it would
+ * have let anyone with a staff session close anyone's pass.
+ *
+ * EVERY TAP IS RECORDED, accepted or not. A refused tap is the interesting one:
+ * a student tapping the classroom tag on the way out, or tapping with no
+ * approved pass, is precisely what a teacher wants to see. Storing only
+ * successes would erase the behaviour this exists to notice.
+ *
+ * A tap proves somebody opened a URL, not that a body was in a room. See
+ * docs/nfc-tap-map.md.
+ */
 export const tap = mutation({
-  args: { studentId: v.id("students"), locationSlug: v.string() },
-  handler: async (ctx, { studentId, locationSlug }) => {
-    await requireStaff(ctx);
+  args: { locationSlug: v.string() },
+  handler: async (ctx, { locationSlug }) => {
+    const student = await requireStudentSelf(ctx);
     const now = new Date().toISOString();
+    const slug = locationSlug.trim().toLowerCase();
 
     const location = await ctx.db
       .query("tapLocations")
-      .withIndex("by_slug", (q) => q.eq("slug", locationSlug))
+      .withIndex("by_slug", (q) => q.eq("slug", slug))
       .unique();
 
     if (!location || !location.active) {
       await ctx.db.insert("tapEvents", {
-        studentId,
-        locationSlug,
+        studentId: student._id,
+        locationSlug: slug,
         at: now,
         accepted: false,
-        outcome: "Unknown or retired tag.",
+        outcome: location ? "Retired tag." : "Unknown tag.",
       });
-      return { ok: false, reason: "This tag is not in use." };
+      return { ok: false, reason: "This tag is not set up yet. Tell your teacher.", location: null };
     }
 
     const passes = await ctx.db
       .query("hallPasses")
-      .withIndex("by_student", (q) => q.eq("studentId", studentId))
+      .withIndex("by_student", (q) => q.eq("studentId", student._id))
       .collect();
     const live = passes.find(
       (p) => !["returned", "denied", "cancelled", "expired"].includes(p.state),
@@ -165,27 +182,31 @@ export const tap = mutation({
 
     if (!live) {
       await ctx.db.insert("tapEvents", {
-        studentId,
-        locationSlug,
+        studentId: student._id,
+        locationSlug: slug,
         at: now,
         accepted: false,
         outcome: "No open pass.",
       });
-      return { ok: false, reason: "You do not have a pass open. Ask your teacher first." };
+      return {
+        ok: false,
+        reason: "You do not have a pass open. Ask your teacher first.",
+        location: location.name,
+      };
     }
 
     const result = applyTap(live as any, location._id, now);
 
     await ctx.db.insert("tapEvents", {
       passId: live._id,
-      studentId,
-      locationSlug,
+      studentId: student._id,
+      locationSlug: slug,
       at: now,
       accepted: result.ok,
       outcome: result.reason,
     });
 
-    if (!result.ok) return { ok: false, reason: result.reason };
+    if (!result.ok) return { ok: false, reason: result.reason, location: location.name };
 
     await ctx.db.patch(live._id, {
       state: result.nextState,
@@ -193,7 +214,7 @@ export const tap = mutation({
       ...(result.field === "outAt" ? { destinationLocationId: location._id } : {}),
     } as any);
 
-    return { ok: true, state: result.nextState, reason: result.reason };
+    return { ok: true, state: result.nextState, reason: result.reason, location: location.name };
   },
 });
 

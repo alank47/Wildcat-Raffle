@@ -345,6 +345,42 @@ console.log("\nStudents sign in with Google, and only with Google");
   );
 }
 
+console.log("\nNFC tags");
+{
+  check(
+    "a tag URL is a QUERY STRING, not a path",
+    /\[\?&\]tap=/.test(script) && /\?tap=/.test(html),
+    "GitHub Pages cannot route /tap/<slug> to index.html without a 404 trick",
+  );
+  check(
+    "the slug is removed from the URL after handling",
+    /function clearTapFromUrl/.test(script) && /searchParams\.delete\('tap'\)/.test(script),
+    "otherwise a reload re-taps and logs a tap the student never made",
+  );
+  check(
+    "tapping is handled after sign-in too",
+    /addEventListener\('wildcat-auth-signin', \(\) => \{ handleTapArrival/.test(script),
+    "a tag opens the app before the student has a session; the slug must survive the redirect",
+  );
+  check(
+    "the tap mutation takes NO studentId",
+    /convexMutation\('hallPasses:tap', \{ locationSlug: slug \}/.test(script),
+    "an id argument would let any session close any student's pass",
+  );
+  check("staff tapping a tag registers it", /openTagRegistration/.test(script));
+  check("there is a tag manager", /id="tagManagerBody"/.test(html) && /function renderTagManager/.test(script));
+  check(
+    "the encoding instructions say to lock the tag",
+    /[Ll]ock the tag read-only/.test(html),
+    "an unlocked tag can be rewritten by any phone that touches it",
+  );
+  check(
+    "retiring is offered, deleting is not",
+    /tapLocations:retire/.test(script) && !/tapLocations:delete/.test(script),
+    "tapEvents refer to a slug; deleting a location orphans its history",
+  );
+}
+
 console.log("\nCache busters");
 {
   const tags = [...html.matchAll(/(script|wildcat-auth)\.js\?v=([\w-]+)/g)].map((m) => m[2]);

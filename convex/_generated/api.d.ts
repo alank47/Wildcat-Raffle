@@ -36,6 +36,7 @@ import type * as studentDetail from "../studentDetail.js";
 import type * as studentEmail from "../studentEmail.js";
 import type * as students from "../students.js";
 import type * as syncLog from "../syncLog.js";
+import type * as tapLocations from "../tapLocations.js";
 import type * as views from "../views.js";
 import type * as views_app from "../views_app.js";
 
@@ -74,6 +75,7 @@ declare const fullApi: ApiFromModules<{
   studentEmail: typeof studentEmail;
   students: typeof students;
   syncLog: typeof syncLog;
+  tapLocations: typeof tapLocations;
   views: typeof views;
   views_app: typeof views_app;
 }>;

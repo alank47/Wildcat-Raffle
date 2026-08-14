@@ -15869,6 +15869,11 @@
                 return;
             }
 
+            // The tag manager lives on the teachers tab.
+            if (tabName === 'teachers' && typeof renderTagManager === 'function') {
+                renderTagManager();
+            }
+
             // Handle Wildcat Cash tab-specific updates (data population)
             if (tabName === 'awardCash' && currentUser && currentUser.role === 'superadmin') {
                 updateCashPeriodFilter();
@@ -16152,6 +16157,166 @@
             const me = event.detail || {};
             if (me.kind === 'student') showStudentPassCards();
         });
+
+        // ---------------------------------------------------------------
+        // NFC tags.
+        //
+        // A tag holds https://wildcatraffle.com/?tap=<slug>. A QUERY STRING, not
+        // a path: this is a static site on GitHub Pages, which cannot route
+        // /tap/<slug> to index.html without a 404 redirect trick that behaves
+        // differently in different browsers. A query string is boring and works
+        // everywhere, and the tag is encoded once and mounted on a wall, so
+        // "boring and works everywhere" is the whole requirement.
+        //
+        // Tapping is a NAVIGATION, not a callback. iOS 14+ reads the tag in the
+        // background and opens the link; Android Chrome does the same. Nothing
+        // calls the app. See docs/nfc-tap-map.md.
+        // ---------------------------------------------------------------
+        function pendingTapSlug() {
+            const match = /[?&]tap=([a-zA-Z0-9-]+)/.exec(window.location.search);
+            return match ? match[1].toLowerCase() : null;
+        }
+
+        /**
+         * Take the slug out of the URL once it has been handled.
+         *
+         * Without this, a reload re-taps: the student refreshes, the same slug
+         * is still in the address bar, and the pass closes a second time or logs
+         * a second refusal. The record would show taps the student never made.
+         */
+        function clearTapFromUrl() {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('tap');
+            window.history.replaceState({}, '', url.toString());
+        }
+
+        async function handleTapArrival() {
+            const slug = pendingTapSlug();
+            if (!slug) return;
+
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+
+            // Not signed in: keep the slug in the URL so it survives the Google
+            // redirect, and handle it once they are back.
+            if (!session) return;
+
+            if (session.me && session.me.kind === 'student') {
+                try {
+                    const result = await auth.convexMutation('hallPasses:tap', { locationSlug: slug }, session.idToken);
+                    clearTapFromUrl();
+                    showTapResult(result);
+                } catch (e) {
+                    clearTapFromUrl();
+                    showTapResult({ ok: false, reason: e.message });
+                }
+                return;
+            }
+
+            // Staff tapped a tag. That is how a tag gets registered: an admin
+            // walks the building with the stickers and taps each one.
+            clearTapFromUrl();
+            openTagRegistration(slug);
+        }
+
+        function showTapResult(result) {
+            const view = document.getElementById('tapResultView');
+            if (!view) return;
+            view.classList.remove('hidden');
+            view.innerHTML = `
+              <div style="max-width:420px;margin:0 auto;padding:40px 20px;text-align:center;color:#e7e4dc;">
+                <div style="font-size:56px;margin-bottom:8px;">${result.ok ? '&#9989;' : '&#9888;'}</div>
+                <div style="font-size:20px;font-weight:700;margin-bottom:6px;">
+                  ${result.ok ? (result.location || 'Checked in') : 'Not checked in'}
+                </div>
+                <div style="color:#94a3b8;font-size:15px;line-height:1.5;">${result.reason || ''}</div>
+                <button onclick="document.getElementById('tapResultView').classList.add('hidden'); showStudentPassCards();"
+                        style="margin-top:24px;padding:12px 22px;border:none;border-radius:8px;background:#2a4b8d;color:#fff;font-size:15px;cursor:pointer;">
+                  My cards
+                </button>
+              </div>`;
+        }
+
+        /** An admin tapped an unregistered tag. Offer to name it. */
+        async function openTagRegistration(slug) {
+            const auth = window.WildcatAuth;
+            const session = auth.getSession();
+            let known = { known: false };
+            try {
+                known = await auth.convexQuery('tapLocations:lookup', { slug }, session.idToken);
+            } catch (e) { /* fall through and let them register it */ }
+
+            if (known.known && known.active) {
+                alert(`Tag "${slug}" is already registered as "${known.name}".`);
+                return;
+            }
+            const name = prompt(
+                `Register tag "${slug}"\n\nWhat is this place called? (e.g. "Restroom, 2nd floor")`,
+                known.name || '',
+            );
+            if (!name) return;
+            const kind = prompt(
+                'Type: classroom, restroom, office, nurse, or other',
+                known.kind || 'restroom',
+            );
+            if (!kind) return;
+            try {
+                const res = await auth.convexMutation('tapLocations:upsert',
+                    { slug, name, kind: kind.trim().toLowerCase() }, session.idToken);
+                alert(`Tag "${slug}" ${res.outcome}.`);
+                if (typeof renderTagManager === 'function') renderTagManager();
+            } catch (e) {
+                alert('Could not register the tag: ' + e.message);
+            }
+        }
+
+        /** The admin list of tags. */
+        async function renderTagManager() {
+            const host = document.getElementById('tagManagerBody');
+            if (!host) return;
+            try {
+                const auth = window.WildcatAuth;
+                const session = auth && auth.getSession();
+                if (!session) throw new Error('Sign in with Microsoft to manage tags.');
+                const data = await auth.convexQuery('tapLocations:list', {}, session.idToken);
+
+                if (!data.locations.length) {
+                    host.innerHTML = '<tr><td colspan="5" style="padding:30px;text-align:center;color:#999;">' +
+                        'No tags yet. Encode a sticker with the URL below, tap it with your phone, and it will offer to register itself.</td></tr>';
+                    return;
+                }
+                host.innerHTML = data.locations.map(l => `
+                  <tr style="${l.active ? '' : 'opacity:.5;'}">
+                    <td style="font-family:monospace;">${l.slug}</td>
+                    <td>${l.name}</td>
+                    <td>${l.kind}</td>
+                    <td style="font-size:12px;color:#666;">${l.lastTapAt ? new Date(l.lastTapAt).toLocaleString() : 'never tapped'}</td>
+                    <td>${l.active
+                        ? `<button onclick="retireTag('${l.id}','${l.slug}')" style="padding:4px 10px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Retire</button>`
+                        : '<span style="font-size:12px;color:#999;">retired</span>'}</td>
+                  </tr>`).join('');
+            } catch (e) {
+                host.innerHTML = `<tr><td colspan="5" style="padding:20px;color:#b3392f;">${e.message}</td></tr>`;
+            }
+        }
+
+        async function retireTag(id, slug) {
+            if (!confirm(`Retire tag "${slug}"? It stops working immediately. Its history is kept.`)) return;
+            try {
+                const auth = window.WildcatAuth;
+                await auth.convexMutation('tapLocations:retire', { id }, auth.getSession().idToken);
+                renderTagManager();
+            } catch (e) { alert('Could not retire: ' + e.message); }
+        }
+
+        async function addTagByHand() {
+            const slug = prompt('Tag slug, as printed on the sticker (e.g. restroom-2):');
+            if (!slug) return;
+            openTagRegistration(slug.trim().toLowerCase());
+        }
+
+        // A tap can arrive before OR after sign-in, so both paths handle it.
+        window.addEventListener('wildcat-auth-signin', () => { handleTapArrival(); });
 
         // Initialize
         (async function() {

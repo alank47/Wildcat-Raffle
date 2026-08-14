@@ -66,6 +66,10 @@
             </div>
         </div>
         
+        <!-- Where a tag tap lands. Full screen because a student is holding a
+             phone at a doorway, not reading a dashboard. -->
+        <div id="tapResultView" class="hidden" style="position:fixed; inset:0; background:#0f172a; z-index:9500; overflow-y:auto;"></div>
+
         <!-- Student pass cards. Shown after a Google sign-in, replacing the
              login screen. Swipeable horizontally: one card per code, because a
              single surface cannot show four scannable codes at once and asking
@@ -2973,6 +2977,42 @@
                     </div>
                 </div>
 
+                <!-- NFC tag manager. Admin only in practice: the mutations
+                     behind it require admin, so a teacher sees the list and
+                     cannot change it. -->
+                <div style="margin-top:34px; padding-top:24px; border-top:1px solid #e5e7eb;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+                        <div>
+                            <h3 style="margin:0;">&#128225; NFC Tags</h3>
+                            <p style="color:#6b7280; font-size:13px; margin:4px 0 0;">
+                                Places students can tap to check in. Encode a sticker with its URL,
+                                then tap it with your phone to register it.
+                            </p>
+                        </div>
+                        <div style="display:flex; gap:8px;">
+                            <button class="btn btn-secondary" onclick="renderTagManager()" style="font-size:13px;padding:8px 14px;">Refresh</button>
+                            <button class="btn" onclick="addTagByHand()" style="font-size:13px;padding:8px 14px;">&#43; Add tag</button>
+                        </div>
+                    </div>
+
+                    <div style="margin-top:14px; padding:12px; background:#f7f7f7; border-radius:6px; font-size:13px; color:#555;">
+                        <b>Encoding a sticker:</b> write this URL to an NTAG213 tag, replacing the slug:
+                        <code style="background:#fff;padding:2px 6px;border-radius:4px;">https://wildcatraffle.com/?tap=restroom-2</code>
+                        <br><b>Lock the tag read-only afterwards</b>, or any phone that touches it can rewrite where it points.
+                    </div>
+
+                    <div style="overflow-x:auto; margin-top:14px;">
+                        <table class="wc-table">
+                            <thead>
+                                <tr><th>Slug</th><th>Name</th><th>Type</th><th>Last tap</th><th></th></tr>
+                            </thead>
+                            <tbody id="tagManagerBody">
+                                <tr><td colspan="5" style="padding:20px;color:#999;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
                 <h3>Current Teachers</h3>
                 <div style="overflow-x: auto; margin-top: 15px;">
                     <table class="wc-table">
@@ -4764,7 +4804,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260814d"></script>
-    <script src="script.js?v=20260814d"></script>
+    <script src="wildcat-auth.js?v=20260814e"></script>
+    <script src="script.js?v=20260814e"></script>
 </body>
 </html>
