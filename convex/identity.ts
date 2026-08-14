@@ -87,8 +87,10 @@ export async function requireStudentSelf(ctx: QueryCtx | MutationCtx) {
 
   if (!student) {
     throw new ConvexError(
-      `No student record for ${id.email}. Student email arrives from ` +
-        `PowerSchool manifest field 19, which is pending admin approval.`,
+      `No student record for ${id.email}. Student emails now sync from the ` +
+        `Person email model in PowerSchool, so this address either belongs to a ` +
+        `student who is not enrolled at this school, or the record has a ` +
+        `different address on file. The office can check Student Profile > Email.`,
     );
   }
   return student;

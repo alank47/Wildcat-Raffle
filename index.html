@@ -66,6 +66,26 @@
             </div>
         </div>
         
+        <!-- Student pass cards. Shown after a Google sign-in, replacing the
+             login screen. Swipeable horizontally: one card per code, because a
+             single surface cannot show four scannable codes at once and asking
+             a student to pick from a menu at a scanner is slower than a swipe. -->
+        <div id="studentPassView" class="hidden" style="position:fixed; inset:0; background:#0f172a; z-index:9000; overflow-y:auto;">
+            <div style="max-width:520px; margin:0 auto; padding:20px 16px 40px; color:#e7e4dc;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                    <div>
+                        <div id="passStudentName" style="font-size:20px; font-weight:700;"></div>
+                        <div id="passStudentMeta" style="font-size:13px; color:#94a3b8;"></div>
+                    </div>
+                    <button onclick="studentPassSignOut()" style="background:none;border:1px solid #334155;color:#94a3b8;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13px;">Sign out</button>
+                </div>
+
+                <div id="passCards" style="display:flex; gap:14px; overflow-x:auto; scroll-snap-type:x mandatory; padding:16px 0 8px; -webkit-overflow-scrolling:touch;"></div>
+                <div id="passDots" style="display:flex; gap:6px; justify-content:center; padding:4px 0 12px;"></div>
+                <div id="passError" style="color:#fca5a5; font-size:14px; text-align:center;"></div>
+            </div>
+        </div>
+
         <!-- Student Login Form -->
         <div id="studentLoginForm" class="hidden">
             <!-- Google sign-in for students, using the westbrookacademy.org account
@@ -4747,7 +4767,8 @@
     <!-- Chart.js for Data Visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-    <script src="wildcat-auth.js?v=20260813a"></script>
-    <script src="script.js?v=20260813a"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+    <script src="wildcat-auth.js?v=20260814a"></script>
+    <script src="script.js?v=20260814a"></script>
 </body>
 </html>

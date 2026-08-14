@@ -16031,6 +16031,119 @@
             }, 1000);
         })();
 
+        // ---------------------------------------------------------------
+        // Student pass cards.
+        //
+        // Shown after a Google sign-in. Deliberately a separate full-screen
+        // surface rather than a tab inside the teacher app: a student and a
+        // teacher want completely different things from this product, and
+        // sharing a shell means every teacher-only control needs a role check
+        // that somebody eventually forgets.
+        //
+        // One card per code. A single surface cannot show four scannable codes
+        // at once, and a menu at a scanner is slower than a swipe.
+        // ---------------------------------------------------------------
+        async function showStudentPassCards() {
+            const view = document.getElementById('studentPassView');
+            const cards = document.getElementById('passCards');
+            const dots = document.getElementById('passDots');
+            const err = document.getElementById('passError');
+            if (!view || !cards) return;
+
+            view.classList.remove('hidden');
+            err.textContent = '';
+            cards.innerHTML = '<div style="color:#94a3b8;padding:20px;">Loading your cards...</div>';
+
+            try {
+                const auth = window.WildcatAuth;
+                const session = auth && auth.getSession();
+                if (!session) throw new Error('Not signed in.');
+
+                const data = await auth.convexQuery('passCard:mine', {}, session.idToken);
+
+                document.getElementById('passStudentName').textContent =
+                    `${data.student.firstName} ${data.student.lastName}`.trim();
+                document.getElementById('passStudentMeta').textContent =
+                    [data.student.grade ? `Grade ${data.student.grade}` : '', data.student.studentNumber]
+                        .filter(Boolean).join('  \u00b7  ');
+
+                const card = (title, body, footer) =>
+                    `<div style="flex:0 0 88%; scroll-snap-align:center; background:#fff; color:#1b2330;
+                                 border-radius:16px; padding:20px; min-height:260px; display:flex;
+                                 flex-direction:column; justify-content:space-between;">
+                       <div style="font-weight:700; font-size:15px;">${title}</div>
+                       <div style="flex:1; display:flex; align-items:center; justify-content:center;">${body}</div>
+                       <div style="font-size:12px; color:#6b7280; text-align:center;">${footer}</div>
+                     </div>`;
+
+                // Anything not available says WHY. A blank barcode looks broken;
+                // a sentence tells the student what to ask the office for.
+                const pending = (reason) =>
+                    `<div style="text-align:center; color:#9ca3af; font-size:13px; padding:0 10px;">${reason}</div>`;
+
+                const html = [];
+
+                html.push(card(
+                    'Student ID',
+                    data.studentId.available
+                        ? `<svg id="bc-student"></svg>`
+                        : pending('No student number on your record.'),
+                    data.studentId.value || '',
+                ));
+
+                html.push(card(
+                    'Lunch',
+                    data.lunchId.available ? `<svg id="bc-lunch"></svg>` : pending(data.lunchId.reason),
+                    data.lunchId.value || 'Not available yet',
+                ));
+
+                html.push(card(
+                    'Clever sign in',
+                    data.cleverBadge.available ? `<div id="qr-clever"></div>` : pending(data.cleverBadge.reason),
+                    'Scan on a classroom computer',
+                ));
+
+                const hp = data.hallPass;
+                html.push(card(
+                    'Hall Pass',
+                    hp.available
+                        ? `<div style="text-align:center;">
+                             <div style="font-size:42px;font-weight:700;${hp.overdue ? 'color:#b3392f;' : ''}">${hp.elapsedMinutes ?? 0}<span style="font-size:16px;"> min</span></div>
+                             <div style="color:#6b7280;font-size:13px;text-transform:uppercase;letter-spacing:.08em;">${hp.state}</div>
+                           </div>`
+                        : pending('No pass right now. Ask your teacher, then tap the tag where you are going.'),
+                    hp.available && hp.overdue ? 'You are past your time. Head back.' : 'Tap the wall tag to check in',
+                ));
+
+                cards.innerHTML = html.join('');
+
+                if (data.studentId.available && window.JsBarcode) {
+                    JsBarcode('#bc-student', String(data.studentId.value), {
+                        format: 'CODE128', displayValue: false, height: 90, margin: 0,
+                    });
+                }
+
+                dots.innerHTML = html.map((_, i) =>
+                    `<span style="width:7px;height:7px;border-radius:50%;background:${i === 0 ? '#e7e4dc' : '#475569'};"></span>`
+                ).join('');
+            } catch (e) {
+                cards.innerHTML = '';
+                err.textContent = e.message;
+            }
+        }
+
+        function studentPassSignOut() {
+            const view = document.getElementById('studentPassView');
+            if (view) view.classList.add('hidden');
+            if (window.WildcatAuth && window.WildcatAuth.signOut) window.WildcatAuth.signOut();
+        }
+
+        // A student signing in gets the cards, not the teacher app.
+        window.addEventListener('wildcat-auth-signin', (event) => {
+            const me = event.detail || {};
+            if (me.kind === 'student') showStudentPassCards();
+        });
+
         // Initialize
         (async function() {
             // Load data first so teachers array is populated

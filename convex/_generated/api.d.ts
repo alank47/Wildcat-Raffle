@@ -22,6 +22,7 @@ import type * as mail from "../mail.js";
 import type * as me from "../me.js";
 import type * as migrate from "../migrate.js";
 import type * as mirror from "../mirror.js";
+import type * as passCard from "../passCard.js";
 import type * as psBehavior from "../psBehavior.js";
 import type * as psSync from "../psSync.js";
 import type * as restrictedPolicy from "../restrictedPolicy.js";
@@ -59,6 +60,7 @@ declare const fullApi: ApiFromModules<{
   me: typeof me;
   migrate: typeof migrate;
   mirror: typeof mirror;
+  passCard: typeof passCard;
   psBehavior: typeof psBehavior;
   psSync: typeof psSync;
   restrictedPolicy: typeof restrictedPolicy;

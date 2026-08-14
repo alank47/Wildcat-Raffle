@@ -51,14 +51,19 @@ console.log("\nConfig");
 check("entra is configured (tenant + client id present)", A.configured.entra() === true);
 check("google is configured (client id present)", A.configured.google() === true);
 check("convexUrl points at the real deployment", A.status().convexUrl.includes("quick-cassowary-644"));
-// `hd` is deliberately UNSET. Westbrook students are on two domains
-// (@westbrookacademy.org and @rwwnms.org, the latter carried up from Russell
-// Westbrook Why Not? Middle School), and `hd` pins the account chooser to one
-// workspace, hiding the other half's account. It was never a security control:
-// the real check is server side in convex/identityRules.ts against
-// STUDENT_DOMAINS. Asserting it stays unset, because setting it again would
-// silently lock out real students.
-check("google hosted domain is NOT pinned to one domain", !A.CONFIG.google.hostedDomain);
+// `hd` filters the account chooser to the student workspace. It was unset
+// while students appeared to be on two domains; the RWWN ones are retired, so
+// there is one domain and pinning it hides nobody. On a shared Chromebook with
+// several accounts signed in this is one tap instead of a wrong pick.
+//
+// It must MATCH the server side allowlist. A chooser pinned to a domain the
+// server refuses would let a student sign in and then be rejected, which reads
+// as a broken account.
+check(
+  "google hosted domain is the student domain",
+  A.CONFIG.google.hostedDomain === "westbrookacademy.org",
+  String(A.CONFIG.google.hostedDomain),
+);
 check(
   "no client SECRET is present anywhere in config",
   !JSON.stringify(A.CONFIG).toLowerCase().includes("secret"),

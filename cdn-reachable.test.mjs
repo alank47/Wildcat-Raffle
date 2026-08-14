@@ -14,12 +14,18 @@ const src = fs.readFileSync(new URL("./wildcat-auth.js", import.meta.url), "utf8
 
 // Pull the URLs straight out of the shipped file rather than restating them,
 // so editing the file and forgetting the test cannot pass.
+const html = fs.readFileSync(new URL("./index.html", import.meta.url), "utf8");
 const msalVersion = /const MSAL_VERSION = '([^']+)'/.exec(src)?.[1];
 const urls = [
   msalVersion &&
     `https://cdn.jsdelivr.net/npm/@azure/msal-browser@${msalVersion}/lib/msal-browser.min.js`,
   /const GIS_CDN = '([^']+)'/.exec(src)?.[1],
   /convexUrl: '([^']+)'/.exec(src)?.[1],
+  // JsBarcode renders the student ID card and is loaded from index.html, not
+  // from wildcat-auth.js, so it is pulled from there. Same principle: read the
+  // URL out of the shipped file, so changing the file and forgetting the test
+  // cannot pass.
+  /src="(https:\/\/cdn\.jsdelivr\.net\/npm\/jsbarcode@[^"]+)"/.exec(html)?.[1],
 ].filter(Boolean);
 
 let pass = 0, fail = 0, skipped = 0;

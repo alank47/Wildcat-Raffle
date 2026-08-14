@@ -63,18 +63,16 @@
     google: {
       clientId: '718452352756-cclr7dbvucal375vrj5m9fg25fn3eh3s.apps.googleusercontent.com',
 
-      // DELIBERATELY UNSET. `hd` pins the account chooser to ONE workspace
-      // domain, and Westbrook students are on two: students who came up through
-      // Russell Westbrook Why Not? Middle School keep an @rwwnms.org address,
-      // the rest are @westbrookacademy.org. Pinning it to either one hides the
-      // other half's account and looks to them like their account does not
-      // exist.
+      // RESTORED 2026-08-14. It was unset while students appeared to be on two
+      // domains; the RWWN ones turned out to be retired, so STUDENT_DOMAINS is a
+      // single entry and pinning the chooser hides nobody. On a shared
+      // Chromebook with several Google accounts signed in, this is the
+      // difference between one tap and picking the wrong account.
       //
-      // Dropping it costs nothing in security. `hd` is a UX filter that the
-      // client asks for and cannot enforce; the real check is server side in
-      // convex/identityRules.ts, which compares the verified token's issuer AND
-      // domain against STUDENT_DOMAINS by exact equality.
-      hostedDomain: null,
+      // Still not a security control. `hd` is a filter the client asks for and
+      // cannot enforce; the real check is server side in identityRules.ts,
+      // comparing the verified token's issuer AND domain by exact equality.
+      hostedDomain: 'westbrookacademy.org',
     },
   };
 
