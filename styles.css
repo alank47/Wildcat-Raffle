@@ -1461,6 +1461,17 @@ th[onclick]:hover {
     color: var(--wc-gray-text);
 }
 
+/* Dynamic class header on the Award Cash tab. It sets its own blue
+   background inline, but its heading and copy carry no colour of their own,
+   so they inherited the shell's near-black ink and sat at roughly 3:1 against
+   the blue. The old cash theme hid this by filling every h2 with clipped
+   gradient text. The shell already pairs var(--wc-blue) with white on table
+   headers, so this follows that. */
+#cashClassHeader,
+#cashClassHeader h2,
+#cashClassHeader p,
+#cashClassHeader div { color: #ffffff; }
+
 /* Cash audit log rows. The action tint is a left border plus a very light
    wash, matching the referral rows in Discipline. */
 .cash-audit-row            { border-left: 4px solid var(--wc-blue-pale); }
