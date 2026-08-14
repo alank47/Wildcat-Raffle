@@ -115,6 +115,31 @@ It also means the earlier probe already held the answer's shape and it was not
 read closely enough: `u_studentsuserfields.studentsdcid` answered 403 on
 2026-08-11, which proved that table existed, and that was recorded as a failure.
 
+## Correction 2026-08-14: Entra is NOT a second source
+
+While looking for a mail sender I saw `@westbrookacademy.org` addresses in the
+Entra user list and recorded that student accounts exist there too, implying a
+second route to student email independent of PowerSchool.
+
+**That was wrong.** The tenant holds **12** `westbrookacademy.org` accounts and
+**all 12 are Guests**: invitations, not student accounts. Against 646 enrolled
+students, that is not a population, it is a handful of external invites.
+
+Tenant composition, measured:
+
+| Domain | Accounts |
+|---|---:|
+| lapromisefund.org | 397 |
+| rwwnhs.org | 46 |
+| lausd.net | 45 |
+| laspromise.org | 18 |
+| westbrookacademy.org | 12 (all Guests) |
+
+Student identities live in **Google Workspace**, which is a separate tenant this
+credential cannot see. PowerSchool remains the only source for a student email
+address, and the 209 students without one need the school to provision accounts.
+No amount of Graph access changes that.
+
 ## What is left
 
 1. **Install plugin 1.2.0.** Nine new fields, all ViewOnly, all confirmed to
