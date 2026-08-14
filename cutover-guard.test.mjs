@@ -320,6 +320,31 @@ console.log("\nStaff are invited from the directory, not created with a password
   );
 }
 
+console.log("\nStudents sign in with Google, and only with Google");
+{
+  check(
+    "the name lookup input is gone from the form",
+    !/id="studentLoginId"/.test(html),
+    "it matched on LAST NAME alone: typing a common surname signed you in as that student",
+  );
+  check(
+    "and the matching code is gone from script.js",
+    !/lastName\.toLowerCase\(\) === input/.test(script),
+    "removing the form is only removing the handle; every function here is global",
+  );
+  check(
+    "studentLogin() still exists and refuses",
+    /function studentLogin\(\)/.test(script) && /is retired/.test(script),
+    "callable from the console, so it has to refuse rather than merely be unreachable",
+  );
+  check("the Google button is still the way in", /id="googleSignInButton"/.test(html));
+  check(
+    "and the page says which account to use",
+    /westbrookacademy\.org/.test(html),
+    "a student who cannot sign in needs to know what to ask the office for",
+  );
+}
+
 console.log("\nCache busters");
 {
   const tags = [...html.matchAll(/(script|wildcat-auth)\.js\?v=([\w-]+)/g)].map((m) => m[2]);

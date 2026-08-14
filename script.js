@@ -1174,35 +1174,38 @@
         }
 
 
+        /**
+         * REMOVED 2026-08-14. Students sign in with Google.
+         *
+         * This looked up a student by id OR first name OR LAST NAME and signed
+         * the browser in as the first match. Typing a common surname signed you
+         * in as somebody else and showed their tickets and Wildcat Cash balance.
+         * It was not an authentication step; it was a search box that granted
+         * access to whatever it found.
+         *
+         * The form is gone, but the function is left refusing rather than
+         * deleted. Every function in this file is global, so a removed form is
+         * only a removed handle: `studentLogin()` was still callable from the
+         * console. Deleting the body and keeping the refusal closes the door
+         * without touching the twenty places that might reference the name.
+         */
         function studentLogin() {
-            const input = document.getElementById('studentLoginId').value.trim();
             const errorDiv = document.getElementById('studentLoginError');
-
-            if (!input) {
-                errorDiv.textContent = 'Please enter your Student ID or name';
-                return;
-            }
-
-            // Search by ID or name
-            const student = students.find(s => 
-                s.id.toLowerCase() === input.toLowerCase() ||
-                `${s.firstName} ${s.lastName}`.toLowerCase() === input.toLowerCase() ||
-                s.firstName.toLowerCase() === input.toLowerCase() ||
-                s.lastName.toLowerCase() === input.toLowerCase()
-            );
-
-            if (!student) {
-                errorDiv.textContent = 'Student not found. Please check your ID or name.';
-                return;
-            }
-
-            return establishStudentSession(student);
+            const message =
+                'Student sign in now uses your @westbrookacademy.org Google account.';
+            if (errorDiv) errorDiv.textContent = message;
+            console.warn('[auth] studentLogin() is retired. ' + message);
+            return;
         }
 
         /**
-         * Everything after a student has been identified. Extracted from
-         * studentLogin() so Google sign-in and the legacy name lookup share
-         * one session path. Callers must have already established identity.
+         * Everything after a student has been identified.
+         *
+         * Extracted from studentLogin() when Google sign-in was added, so both
+         * paths shared one session path. The name lookup is gone as of
+         * 2026-08-14, so Google is now the only caller, and that is the point:
+         * identity is established by a verified token before this runs. This
+         * function must never be the thing that decides WHO somebody is.
          */
         function establishStudentSession(student) {
             currentStudent = student;

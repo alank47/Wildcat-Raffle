@@ -91,25 +91,21 @@
             <!-- Google sign-in for students, using the westbrookacademy.org account
                  they already sign into their Chromebooks with. The button renders
                  itself into this container via Google Identity Services.
-                 The name/ID box below stays until PowerSchool manifest field 19
-                 (Student Email) lands: without it no student record carries an
-                 email, so there is nothing for a Google account to match. -->
+                 Student email now syncs from the PowerSchool Person model, so
+                 621 of 623 enrolled students can be matched by address. Google
+                 is the only student sign in. -->
             <div id="googleSignInButton" style="display: flex; justify-content: center; margin-bottom: 4px;"></div>
             <div id="googleSignInError" class="error-message" style="text-align: center; margin-top: 10px;"></div>
 
-            <div style="display: flex; align-items: center; gap: 10px; margin: 18px 0 14px;">
-                <div style="flex: 1; height: 1px; background: #eceff3;"></div>
-                <span style="color: #aab2bd; font-size: 11px; letter-spacing: 0.6px;">OR LOOK UP BY NAME</span>
-                <div style="flex: 1; height: 1px; background: #eceff3;"></div>
-            </div>
+            <!-- The name lookup was REMOVED 2026-08-14. It matched on last name
+                 alone, so typing any student's surname signed you in as them and
+                 showed their tickets and balance. Students sign in with Google. -->
+            <p style="color:#8892a0; font-size:13px; text-align:center; margin-top:14px; line-height:1.5;">
+                Sign in with your <b>@westbrookacademy.org</b> Google account,
+                the same one you use on your Chromebook.<br>
+                If it does not work, ask the front office to check your email address.
+            </p>
 
-            <div class="form-group">
-                <label>Student ID or Name</label>
-                <input type="text" id="studentLoginId" placeholder="Enter your Student ID or full name">
-            </div>
-            
-            <button class="btn" style="width: 100%; padding: 13px; font-size: 15px; font-weight: 600; border-radius: 10px; margin-top: 4px;" onclick="studentLogin()">View My Tickets</button>
-            
             <!-- HIDDEN FOR LAUNCH - BETA FEATURE -->
             <!--
             <div style="text-align: center; margin: 20px 0; padding: 20px 0; border-top: 2px solid #e0e0e0; border-bottom: 2px solid #e0e0e0;">
@@ -4768,7 +4764,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260814a"></script>
-    <script src="script.js?v=20260814a"></script>
+    <script src="wildcat-auth.js?v=20260814b"></script>
+    <script src="script.js?v=20260814b"></script>
 </body>
 </html>
