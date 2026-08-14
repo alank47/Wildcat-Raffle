@@ -138,16 +138,54 @@
     return body.value;
   }
 
+  // One promise per URL, resolved when the script has actually EXECUTED.
+  //
+  // The previous version returned early if a tag with this src was already in
+  // the DOM: `if (document.querySelector(...)) return resolve()`. A tag exists
+  // the instant it is appended, long before 270KB of MSAL has arrived, so the
+  // second caller was told "loaded" while window.msal was still undefined and
+  // then read PublicClientApplication off it.
+  //
+  // That is the "Cannot read properties of undefined (reading
+  // 'PublicClientApplication')" report, and the race is real on a cold cache:
+  // resumeSession() starts this download on page load, and the sign-in button
+  // is clickable immediately. Clicking during the download hit it every time.
+  // Clicking again worked, which is why it looked intermittent.
+  const scriptLoads = new Map();
+
   function loadScript(src) {
-    return new Promise((resolve, reject) => {
-      if (document.querySelector(`script[src="${src}"]`)) return resolve();
+    const inFlight = scriptLoads.get(src);
+    if (inFlight) return inFlight;
+
+    const p = new Promise((resolve, reject) => {
+      const fail = () => reject(new Error(`Failed to load ${src}`));
+
+      // A tag from a previous page render, or one this function added before
+      // the map existed. Attach to it rather than assuming it finished.
+      const existing = document.querySelector(`script[src="${src}"]`);
+      if (existing) {
+        if (existing.dataset && existing.dataset.wcLoaded === 'true') return resolve();
+        existing.addEventListener('load', () => resolve());
+        existing.addEventListener('error', fail);
+        return;
+      }
+
       const el = document.createElement('script');
       el.src = src;
       el.async = true;
-      el.onload = () => resolve();
-      el.onerror = () => reject(new Error(`Failed to load ${src}`));
+      el.onload = () => {
+        if (el.dataset) el.dataset.wcLoaded = 'true';
+        resolve();
+      };
+      el.onerror = fail;
       document.head.appendChild(el);
     });
+
+    // A failed load must not be cached, or one flaky download would poison
+    // every retry for the life of the page. Success stays cached.
+    p.catch(() => scriptLoads.delete(src));
+    scriptLoads.set(src, p);
+    return p;
   }
 
   // ---------------------------------------------------------------------
@@ -164,13 +202,43 @@
   const MSAL_CDN =
     `https://cdn.jsdelivr.net/npm/@azure/msal-browser@${MSAL_VERSION}/lib/msal-browser.min.js`;
   let msalApp = null;
+  let msalAppPromise = null;
 
-  async function entraClient() {
-    if (msalApp) return msalApp;
+  // Callers race each other as well as the download. resumeSession() runs on
+  // page load and signInStaff() runs on the click, and both used to see
+  // msalApp === null and build their own PublicClientApplication against the
+  // same sessionStorage. Everything after the first await is therefore held in
+  // one shared promise, so concurrent callers wait on the same construction
+  // instead of duplicating it.
+  function entraClient() {
+    if (msalApp) return Promise.resolve(msalApp);
     if (!configured.entra()) {
-      throw new Error('Entra is not configured yet. See docs/entra-signin-setup.md');
+      return Promise.reject(
+        new Error('Entra is not configured yet. See docs/entra-signin-setup.md'),
+      );
     }
+    if (msalAppPromise) return msalAppPromise;
+
+    msalAppPromise = buildEntraClient();
+    // A failed build must not be cached, or one dropped download would leave
+    // sign-in permanently broken until a reload.
+    msalAppPromise.catch(() => { msalAppPromise = null; });
+    return msalAppPromise;
+  }
+
+  async function buildEntraClient() {
     await loadScript(MSAL_CDN);
+
+    // loadScript resolving is not proof the global exists: a CDN can answer 200
+    // with something that is not this library. Say which of the two went wrong
+    // rather than throwing "cannot read properties of undefined".
+    if (!window.msal || !window.msal.PublicClientApplication) {
+      throw new Error(
+        'The Microsoft sign-in library loaded but did not register itself. ' +
+        'Reload the page, and if it persists check that ' + MSAL_CDN + ' is reachable.',
+      );
+    }
+
     msalApp = new window.msal.PublicClientApplication({
       auth: {
         clientId: CONFIG.entra.clientId,

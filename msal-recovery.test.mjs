@@ -53,9 +53,25 @@ globalThis.window = {
     },
   },
 };
+// A script element that behaves like one: appending it fires onload, so
+// loadScript resolves the way a browser would resolve it.
+//
+// This stub used to be `querySelector: () => ({})`, which returned a truthy
+// non-element for every lookup. loadScript then took its "a tag already
+// exists" branch on the very first call and resolved without loading
+// anything, which is why this file passed throughout the window in which
+// sign-in was broken by that exact branch. The thin stub hid the bug it was
+// closest to. See script-load-race.test.mjs.
 globalThis.document = {
-  readyState: "complete", querySelector: () => ({}), createElement: () => ({}),
-  head: { appendChild() {} }, addEventListener() {},
+  readyState: "complete",
+  querySelector: () => null,
+  createElement: () => ({
+    dataset: {}, src: "", async: false,
+    onload: null, onerror: null,
+    addEventListener() {},
+  }),
+  head: { appendChild(el) { if (el && el.onload) el.onload(); } },
+  addEventListener() {},
   getElementById: () => ({ textContent: "", addEventListener() {}, style: {} }),
 };
 globalThis.CustomEvent = class { constructor(n, o) { this.type = n; this.detail = o && o.detail; } };
