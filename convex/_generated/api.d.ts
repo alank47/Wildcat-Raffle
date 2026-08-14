@@ -32,6 +32,7 @@ import type * as sisStats from "../sisStats.js";
 import type * as sisSync from "../sisSync.js";
 import type * as staffInvites from "../staffInvites.js";
 import type * as studentDetail from "../studentDetail.js";
+import type * as studentEmail from "../studentEmail.js";
 import type * as students from "../students.js";
 import type * as syncLog from "../syncLog.js";
 import type * as views from "../views.js";
@@ -68,6 +69,7 @@ declare const fullApi: ApiFromModules<{
   sisSync: typeof sisSync;
   staffInvites: typeof staffInvites;
   studentDetail: typeof studentDetail;
+  studentEmail: typeof studentEmail;
   students: typeof students;
   syncLog: typeof syncLog;
   views: typeof views;

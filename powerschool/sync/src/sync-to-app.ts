@@ -121,7 +121,10 @@ console.log("\n  writing to Convex...");
 
 // enrollment: psRoster is a full replace, because a dropped section must
 // disappear from a teacher's roster and a merge cannot express a deletion.
-convex("psSync:clearRoster", {});
+for (let pass = 0; pass < 20; pass++) {
+  const cleared = convex("psSync:clearRoster", {});
+  if (cleared.remaining === "none") break;
+}
 const rosterRows = roster.map((r: any) => ({
   studentNumber: str(r.student_number) ?? "",
   firstName: str(r.first_name) ?? "",
@@ -187,11 +190,42 @@ const gradeRows = grades.map((g: any) => ({
   lastGradeUpdate: str(g.last_grade_update),
 })).filter((g) => g.studentNumber);
 for (let i = 0; i < gradeRows.length; i += CHUNK) {
+  if (i === 0) {
+    for (let pass = 0; pass < 20; pass++) {
+      const r = convex("sisStats:replaceGrades", { syncedAt, rows: [], clearFirst: true });
+      if (r.remaining !== "some") break;
+    }
+  }
   convex("sisStats:replaceGrades", {
-    syncedAt, rows: gradeRows.slice(i, i + CHUNK), clearFirst: i === 0,
+    syncedAt, rows: gradeRows.slice(i, i + CHUNK), clearFirst: false,
   });
 }
 console.log(`    psGrades      ${gradeRows.length} rows`);
+
+// ---- 3b. student email, the sign-in join key ------------------------------
+// Separate from the roster on purpose: identity is not enrollment, and a
+// failure in one should not quietly take the other with it.
+const { rows: emailRows } = await client.namedQuery(`${QUERY_PREFIX}.student_email`, {
+  schoolid: config.schoolId,
+});
+const emails = emailRows
+  .map((r: any) => ({
+    studentNumber: str(r.student_number) ?? "",
+    email: str(r.email_address) ?? "",
+    isPrimary: r.is_primary ?? null,
+  }))
+  .filter((r) => r.studentNumber && r.email);
+
+for (let i = 0; i < emails.length; i += CHUNK) {
+  const res = convex("studentEmail:setStudentEmails", { rows: emails.slice(i, i + CHUNK) });
+  if (i + CHUNK >= emails.length) {
+    console.log(`    studentEmail  ${res.studentsWithEmail} of ${res.totalStudents} students now have an address`);
+    if (res.refusedDomains?.length) {
+      console.log(`                  refused domains: ${res.refusedDomains.join(", ")}`);
+    }
+    if (res.noStudent) console.log(`                  ${res.noStudent} address(es) matched no student record`);
+  }
+}
 
 // ---- 4. report -----------------------------------------------------------
 const after = convex("sisStats:stats", {});

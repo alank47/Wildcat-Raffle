@@ -139,7 +139,13 @@ export const syncFromPowerSchool = internalAction({
       }))
       .filter((r) => r.studentNumber);
 
-    await ctx.runMutation(internal.psSync.clearRoster, {});
+    // Loop: one call deletes a batch, because the whole table no longer fits
+    // in a single execution's read budget. Bounded so a bug here cannot spin.
+    for (let pass = 0; pass < 20; pass++) {
+      const cleared: { deleted: number; remaining: string } =
+        await ctx.runMutation(internal.psSync.clearRoster, {});
+      if (cleared.remaining === "none") break;
+    }
     for (let i = 0; i < rosterRows.length; i += 200) {
       await ctx.runMutation(internal.psSync.upsertRoster, {
         syncedAt, rows: rosterRows.slice(i, i + 200),
@@ -207,8 +213,39 @@ export const syncFromPowerSchool = internalAction({
       }))
       .filter((g) => g.studentNumber);
     for (let i = 0; i < gradeRows.length; i += 200) {
+      // The first chunk clears, and clearing may need several passes because
+      // the table no longer fits in one execution's read budget.
+      if (i === 0) {
+        for (let pass = 0; pass < 20; pass++) {
+          const r: { remaining?: string } = await ctx.runMutation(
+            internal.sisStats.replaceGrades,
+            { syncedAt, rows: [], clearFirst: true },
+          );
+          if (r.remaining !== "some") break;
+        }
+      }
       await ctx.runMutation(internal.sisStats.replaceGrades, {
-        syncedAt, rows: gradeRows.slice(i, i + 200), clearFirst: i === 0,
+        syncedAt, rows: gradeRows.slice(i, i + 200), clearFirst: false,
+      });
+    }
+
+    // ---- student email: the sign-in join key ----
+    // Runs here, on the cron, rather than only in the local script. It is the
+    // one field student sign in cannot work without, so making it depend on a
+    // laptop being awake was the wrong call.
+    const emailQuery = await namedQuery(host, tok, `${prefix}.student_email`, { schoolid });
+    const emailRows = emailQuery.rows
+      .map((r) => ({
+        studentNumber: s(r.student_number) ?? "",
+        email: s(r.email_address) ?? "",
+        isPrimary: r.is_primary ?? null,
+      }))
+      .filter((r) => r.studentNumber && r.email);
+
+    let emailResult: any = { studentsWithEmail: 0, totalStudents: 0 };
+    for (let i = 0; i < emailRows.length; i += 200) {
+      emailResult = await ctx.runMutation(internal.studentEmail.setStudentEmails, {
+        rows: emailRows.slice(i, i + 200),
       });
     }
 
@@ -222,6 +259,9 @@ export const syncFromPowerSchool = internalAction({
       attendanceRows: attRows.length,
       gradeRows: gradeRows.length,
       gradeRowsMissingPercent: gradeRows.filter((g) => g.currentPercent === undefined).length,
+      studentEmailRows: emailRows.length,
+      studentsWithEmail: emailResult.studentsWithEmail,
+      studentsWithoutEmail: emailResult.totalStudents - emailResult.studentsWithEmail,
       durationMs: Date.now() - started,
     };
     await ctx.runMutation(internal.syncLog.record, { summary });

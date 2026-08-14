@@ -77,11 +77,37 @@ export const upsertRoster = internalMutation({
  * merge cannot express a deletion. Call immediately before upsertRoster in the
  * same sync run.
  */
+/**
+ * Delete a BATCH of roster rows, and say whether more remain.
+ *
+ * It used to collect() the whole table and delete it in one execution. That
+ * worked at 3,805 rows and broke at 5,812, because Convex allows 4,096 reads
+ * per function execution and collect() reads every row.
+ *
+ * The failure mode is what makes this worth the comment: syncFromPowerSchool
+ * records a run only on success, so a throw here writes no syncRuns row at all.
+ * The dashboard keeps showing the last good timestamp and looks healthy while
+ * the roster silently stops updating. It broke the moment the COURSES join fix
+ * pushed the row count past the limit, which is to say a correctness fix
+ * created a capacity bug two layers away.
+ *
+ * The caller loops until `remaining` is 0. Batched rather than paginated with a
+ * cursor because each call is its own transaction, so a cursor from the
+ * previous one would point into a table that has already changed.
+ */
 export const clearRoster = internalMutation({
-  args: {},
-  handler: async (ctx) => {
-    const rows = await ctx.db.query("psRoster").collect();
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    // Well under the 4,096 read ceiling, leaving room for the delete writes and
+    // anything else in the same execution.
+    const batch = Math.min(limit ?? 2000, 3000);
+
+    const rows = await ctx.db.query("psRoster").take(batch);
     for (const row of rows) await ctx.db.delete(row._id);
-    return { deleted: rows.length };
+
+    // One extra read to answer "is there more", rather than assuming a short
+    // batch means empty. A short batch can also mean a concurrent write.
+    const more = await ctx.db.query("psRoster").take(1);
+    return { deleted: rows.length, remaining: more.length > 0 ? "some" : "none" };
   },
 });

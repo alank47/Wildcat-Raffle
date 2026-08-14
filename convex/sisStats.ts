@@ -61,11 +61,27 @@ export const replaceGrades = internalMutation({
   handler: async (ctx, { rows, syncedAt, clearFirst }) => {
     let deleted = 0;
     if (clearFirst) {
-      const old = await ctx.db.query("psGrades").collect();
+      // take(), not collect(). Convex allows 4,096 reads per execution and
+      // collect() reads every row, so this broke the moment the COURSES join
+      // fix grew psGrades from 3,805 rows to 5,812. Same failure as
+      // psSync.clearRoster and found the same way: the sync threw, and because
+      // a run is recorded only on success, nothing was written down.
+      //
+      // The caller passes clearFirst on the first chunk only and keeps calling
+      // until `remaining` is "none", so a table larger than one batch still
+      // clears completely.
+      const old = await ctx.db.query("psGrades").take(2000);
       for (const r of old) { await ctx.db.delete(r._id); deleted++; }
+      const more = await ctx.db.query("psGrades").take(1);
+      if (more.length > 0) {
+        // Deliberately does NOT insert on a pass that did not finish clearing.
+        // Inserting now would mix this term's rows with last term's leftovers,
+        // and the result reads as real data rather than as an error.
+        return { inserted: 0, deleted, remaining: "some" };
+      }
     }
     for (const r of rows) await ctx.db.insert("psGrades", { ...r, syncedAt });
-    return { inserted: rows.length, deleted };
+    return { inserted: rows.length, deleted, remaining: "none" };
   },
 });
 
