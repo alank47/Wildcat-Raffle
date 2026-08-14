@@ -1401,371 +1401,101 @@ th[onclick]:hover {
 }
 
 /* ============================================
-   💰 WILDCAT CASH MODE - PREMIUM BANKING
+   WILDCAT CASH MODE
+   ============================================
+   Cash carries no theme of its own. It renders through the APP SHELL v2
+   system defined below, exactly like Discipline and Claw Pass, so the four
+   modes read as one product.
+
+   This block used to hold a 76 rule "premium banking" theme: a dark navy
+   body gradient with a grid overlay and a gold radial glow, gold gradient
+   buttons, uppercase tabs, gradient filled headings, and its own rules for
+   tables, inputs, cards and stat boxes. It predated the shell and overrode
+   it, which is why Cash looked like a different application. Source order
+   was not the reason: body.cash-mode outranks a bare body selector on
+   specificity, so it won no matter where it sat in the file.
+
+   Discipline and Claw Pass define no cosmetic rules at all, only the three
+   functional show and hide rules further up. Cash now matches that. Mode
+   identity comes from the same places theirs does: the page-header title,
+   the mode pill, and the sidebar mode card.
+
+   Only styling that shared classes cannot express belongs here.
    ============================================ */
 
-/* Premium Dark Navy Background */
-body.cash-mode {
-    background: linear-gradient(135deg, #0a2540 0%, #0d3a5f 50%, #134e6f 100%);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
-    position: relative;
-}
-
-/* Subtle grid pattern overlay */
-body.cash-mode::before {
-    content: "";
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-image: 
-        linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-    background-size: 50px 50px;
-    pointer-events: none;
-    z-index: 0;
-}
-
-/* Gold accent glow */
-body.cash-mode::after {
-    content: "";
-    position: fixed;
-    top: -200px;
-    right: -200px;
-    width: 600px;
-    height: 600px;
-    background: radial-gradient(circle, rgba(212, 175, 55, 0.15) 0%, transparent 70%);
-    pointer-events: none;
-    z-index: 0;
-}
-
-/* Premium Container - Elevated Card */
-body.cash-mode .container {
-    background: rgba(255, 255, 255, 0.98);
-    box-shadow: 0 20px 80px rgba(0, 0, 0, 0.4), 0 0 1px rgba(212, 175, 55, 0.3);
-    border: 1px solid rgba(212, 175, 55, 0.2);
-    position: relative;
-    z-index: 1;
-    border-radius: 24px;
-}
-
-/* Premium Tabs - Banking Style */
-body.cash-mode .tabs {
-    background: linear-gradient(135deg, rgba(10, 37, 64, 0.95) 0%, rgba(13, 58, 95, 0.95) 100%);
-    backdrop-filter: blur(20px);
-    border-radius: 16px;
-    padding: 6px;
-    margin-bottom: 32px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(212, 175, 55, 0.2);
-}
-
-body.cash-mode .tab {
-    background: transparent;
-    border: none;
-    color: rgba(255, 255, 255, 0.6);
-    font-weight: 500;
-    font-size: 14px;
-    padding: 12px 24px;
-    border-radius: 12px;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    letter-spacing: 0.3px;
-    text-transform: uppercase;
-    font-size: 12px;
-}
-
-body.cash-mode .tab:hover {
-    background: rgba(255, 255, 255, 0.05);
-    color: rgba(255, 255, 255, 0.9);
-    transform: none;
-}
-
-body.cash-mode .tab.active {
-    background: linear-gradient(135deg, #d4af37 0%, #f4d03f 100%);
-    color: #0a2540;
-    font-weight: 700;
-    box-shadow: 0 4px 20px rgba(212, 175, 55, 0.5), 0 0 30px rgba(212, 175, 55, 0.3);
-}
-
-/* Premium Typography */
-body.cash-mode h1 {
-    color: #0a2540;
-    font-weight: 700;
-    letter-spacing: -0.5px;
-}
-
-body.cash-mode h2 {
-    background: linear-gradient(135deg, #0a2540 0%, #134e6f 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    font-weight: 700;
-    letter-spacing: -0.5px;
-}
-
-body.cash-mode h3 {
-    color: #0a2540;
-    font-weight: 600;
-    letter-spacing: -0.3px;
-}
-
-/* Remove auto emojis */
-body.cash-mode .tab-content h2::before,
-body.cash-mode .tab-content h3::before {
-    content: none;
-}
-
-/* Premium Buttons - Gold Accent */
-body.cash-mode .btn {
-    background: linear-gradient(135deg, #d4af37 0%, #f4d03f 100%);
-    color: #0a2540;
-    border: none;
-    box-shadow: 0 4px 16px rgba(212, 175, 55, 0.4);
-    font-weight: 700;
-    font-size: 14px;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-    padding: 14px 28px;
-    border-radius: 12px;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-body.cash-mode .btn:hover {
-    background: linear-gradient(135deg, #f4d03f 0%, #ffd700 100%);
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(212, 175, 55, 0.6);
-}
-
-body.cash-mode .btn:active {
-    transform: translateY(0);
-}
-
-body.cash-mode .btn-secondary {
-    background: linear-gradient(135deg, #0a2540 0%, #134e6f 100%);
-    color: #ffffff;
-    border: 1px solid rgba(212, 175, 55, 0.3);
-    box-shadow: 0 4px 12px rgba(10, 37, 64, 0.3);
-}
-
-body.cash-mode .btn-secondary:hover {
-    background: linear-gradient(135deg, #134e6f 0%, #1a5d8a 100%);
-    border-color: rgba(212, 175, 55, 0.5);
-    box-shadow: 0 8px 20px rgba(10, 37, 64, 0.4);
-}
-
-/* Premium Cards - Banking Style */
-body.cash-mode .tab-content > div[style*="background: white"] {
-    background: #ffffff !important;
-    border-radius: 20px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.5);
-    border: 1px solid rgba(212, 175, 55, 0.15);
-    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
-}
-
-body.cash-mode .tab-content > div[style*="background: white"]::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 4px;
-    background: linear-gradient(90deg, #d4af37 0%, #f4d03f 50%, #d4af37 100%);
-    border-radius: 20px 20px 0 0;
-    opacity: 0;
-    transition: opacity 0.3s;
-}
-
-body.cash-mode .tab-content > div[style*="background: white"]:hover {
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(212, 175, 55, 0.3);
-    transform: translateY(-4px);
-}
-
-body.cash-mode .tab-content > div[style*="background: white"]:hover::before {
-    opacity: 1;
-}
-
-/* Premium Tables - Executive Style */
-body.cash-mode table {
-    border: none;
-    box-shadow: 0 2px 16px rgba(0, 0, 0, 0.08);
-    border-radius: 16px;
-    overflow: hidden;
-}
-
-body.cash-mode th {
-    background: linear-gradient(135deg, #0a2540 0%, #134e6f 100%);
-    color: #ffffff;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    padding: 18px 24px;
-    font-size: 12px;
-    border-bottom: 2px solid #d4af37;
-}
-
-body.cash-mode tbody tr {
-    border-bottom: 1px solid rgba(10, 37, 64, 0.08);
-    transition: all 0.2s ease;
-}
-
-body.cash-mode tbody tr:hover {
-    background: linear-gradient(90deg, rgba(212, 175, 55, 0.05) 0%, rgba(244, 208, 63, 0.05) 100%);
-    transform: none;
-}
-
-body.cash-mode tbody tr:last-child {
-    border-bottom: none;
-}
-
-body.cash-mode td {
-    padding: 18px 24px;
-    color: #0a2540;
-    font-weight: 500;
-}
-
-/* Premium Input Fields - Banking Forms */
-body.cash-mode input[type="text"],
-body.cash-mode input[type="number"],
-body.cash-mode select,
-body.cash-mode textarea {
-    border: 2px solid rgba(10, 37, 64, 0.15);
-    border-radius: 12px;
+/* Leaderboard rows on the Cash Leaderboards tab.
+   Built in JS by updateCashLeaderboards, which used to set an inline
+   rgba(255,255,255,0.2) background with white text. That was legible only
+   against the old dark theme; on the shell's light cards it rendered white
+   on white. The JS now emits these classes and the styling lives here. */
+.cash-rank-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 14px;
+    margin-bottom: 8px;
+    border-radius: 10px;
     background: #ffffff;
-    font-size: 15px;
-    padding: 14px 18px;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    font-weight: 500;
-    color: #0a2540;
+    border: 1px solid var(--wc-border);
+    border-left: 4px solid var(--wc-blue-pale);
+    color: var(--wc-ink);
+    font-size: 14px;
 }
 
-body.cash-mode input[type="text"]:focus,
-body.cash-mode input[type="number"]:focus,
-body.cash-mode select:focus,
-body.cash-mode textarea:focus {
-    border-color: #d4af37;
-    box-shadow: 0 0 0 4px rgba(212, 175, 55, 0.15), 0 4px 12px rgba(212, 175, 55, 0.2);
-    outline: none;
-    background: #fffef8;
+.cash-rank-row:last-child { margin-bottom: 0; }
+.cash-rank-name  { font-weight: 600; }
+.cash-rank-value { font-weight: 700; color: var(--wc-blue); white-space: nowrap; }
+
+/* Top three keep a medal accent, carried on the left border rather than as
+   a metallic gradient fill, so the text stays readable and the row still
+   belongs to the shell. */
+.cash-rank-row.rank-1 { border-left-color: #C9A227; background: #FFFDF4; }
+.cash-rank-row.rank-2 { border-left-color: #9A9A9A; background: #FAFAFA; }
+.cash-rank-row.rank-3 { border-left-color: #A0522D; background: #FDF8F4; }
+
+.cash-rank-empty {
+    margin: 0;
+    padding: 22px 0;
+    text-align: center;
+    color: var(--wc-gray-text);
 }
 
-/* Premium Stat Boxes - Banking Metrics */
-body.cash-mode [style*="grid-template-columns"] > div[style*="border-left"] {
-    background: linear-gradient(135deg, #ffffff 0%, #fafafa 100%);
-    border-radius: 18px;
-    border: 1px solid rgba(212, 175, 55, 0.2);
-    border-left: 4px solid #d4af37 !important;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
-    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
-    overflow: hidden;
+/* Dynamic class header on the Award Cash tab. It sets its own blue
+   background inline, but its heading and copy carry no colour of their own,
+   so they inherited the shell's near-black ink and sat at roughly 3:1 against
+   the blue. The old cash theme hid this by filling every h2 with clipped
+   gradient text. The shell already pairs var(--wc-blue) with white on table
+   headers, so this follows that. */
+#cashClassHeader,
+#cashClassHeader h2,
+#cashClassHeader p,
+#cashClassHeader div { color: #ffffff; }
+
+/* Cash audit log rows. The action tint is a left border plus a very light
+   wash, matching the referral rows in Discipline. */
+.cash-audit-row            { border-left: 4px solid var(--wc-blue-pale); }
+.cash-audit-row.act-award  { border-left-color: #2E7D52; background: #F4FBF7; }
+.cash-audit-row.act-deduct { border-left-color: #B3392F; background: #FDF5F4; }
+.cash-audit-row.act-redeem { border-left-color: #6D4AB8; background: #F7F5FD; }
+.cash-audit-row.act-reset  { border-left-color: #B3392F; background: #FDF5F4; }
+
+/* Action badge, one shape with a colour modifier. */
+.cash-action-badge {
+    display: inline-block;
+    padding: 5px 12px;
+    border-radius: 20px;
+    font-weight: 600;
+    font-size: 12px;
+    white-space: nowrap;
+    color: #ffffff;
 }
 
-body.cash-mode [style*="grid-template-columns"] > div[style*="border-left"]::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    right: 0;
-    width: 100px;
-    height: 100%;
-    background: linear-gradient(90deg, transparent 0%, rgba(212, 175, 55, 0.05) 100%);
-    pointer-events: none;
-}
-
-body.cash-mode [style*="grid-template-columns"] > div[style*="border-left"]:hover {
-    box-shadow: 0 12px 32px rgba(212, 175, 55, 0.2);
-    transform: translateY(-4px);
-    border-color: rgba(212, 175, 55, 0.4);
-}
-
-/* Premium Leaderboard - Executive Rankings */
-body.cash-mode #topEarnersBoard > div,
-body.cash-mode #topSpendersBoard > div,
-body.cash-mode #richestStudentsBoard > div {
-    background: rgba(255, 255, 255, 0.9);
-    border: 1px solid rgba(10, 37, 64, 0.1);
-    border-left: 4px solid #0a2540;
-    border-radius: 14px;
-    padding: 16px 20px;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    margin-bottom: 10px;
-    backdrop-filter: blur(10px);
-}
-
-body.cash-mode #topEarnersBoard > div:hover,
-body.cash-mode #topSpendersBoard > div:hover,
-body.cash-mode #richestStudentsBoard > div:hover {
-    background: rgba(255, 255, 255, 1);
-    border-left-color: #d4af37;
-    transform: translateX(6px);
-    box-shadow: 0 4px 20px rgba(212, 175, 55, 0.2);
-}
-
-/* Top 3 - Premium Medals */
-body.cash-mode #topEarnersBoard > div:nth-child(1),
-body.cash-mode #topSpendersBoard > div:nth-child(1),
-body.cash-mode #richestStudentsBoard > div:nth-child(1) {
-    background: linear-gradient(135deg, #d4af37 0%, #f4d03f 100%);
-    border: 2px solid #ffd700;
-    border-left: 4px solid #b8941e;
-    box-shadow: 0 8px 24px rgba(212, 175, 55, 0.4);
-}
-
-body.cash-mode #topEarnersBoard > div:nth-child(1) *,
-body.cash-mode #topSpendersBoard > div:nth-child(1) *,
-body.cash-mode #richestStudentsBoard > div:nth-child(1) * {
-    color: #0a2540 !important;
-    font-weight: 700 !important;
-}
-
-body.cash-mode #topEarnersBoard > div:nth-child(2),
-body.cash-mode #topSpendersBoard > div:nth-child(2),
-body.cash-mode #richestStudentsBoard > div:nth-child(2) {
-    background: linear-gradient(135deg, #c0c0c0 0%, #d9d9d9 100%);
-    border: 2px solid #e5e5e5;
-    border-left: 4px solid #9a9a9a;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
-}
-
-body.cash-mode #topEarnersBoard > div:nth-child(2) *,
-body.cash-mode #topSpendersBoard > div:nth-child(2) *,
-body.cash-mode #richestStudentsBoard > div:nth-child(2) * {
-    color: #0a2540 !important;
-    font-weight: 700 !important;
-}
-
-body.cash-mode #topEarnersBoard > div:nth-child(3),
-body.cash-mode #topSpendersBoard > div:nth-child(3),
-body.cash-mode #richestStudentsBoard > div:nth-child(3) {
-    background: linear-gradient(135deg, #cd7f32 0%, #e89d6c 100%);
-    border: 2px solid #e89d6c;
-    border-left: 4px solid #a0522d;
-    box-shadow: 0 6px 20px rgba(205, 127, 50, 0.3);
-}
-
-body.cash-mode #topEarnersBoard > div:nth-child(3) *,
-body.cash-mode #topSpendersBoard > div:nth-child(3) *,
-body.cash-mode #richestStudentsBoard > div:nth-child(3) * {
-    color: #ffffff !important;
-    font-weight: 700 !important;
-}
-
-/* Premium Alert Boxes */
-body.cash-mode [style*="background: #fef3c7"],
-body.cash-mode [style*="background: #d1fae5"] {
-    background: linear-gradient(135deg, #fffef8 0%, #fffcf0 100%) !important;
-    border-radius: 16px;
-    border: 1px solid rgba(212, 175, 55, 0.3);
-    border-left: 4px solid #d4af37;
-    box-shadow: 0 4px 16px rgba(212, 175, 55, 0.15);
-}
-
-/* Premium Success Elements */
-body.cash-mode [style*="background: linear-gradient(135deg, #10b981"] {
-    background: linear-gradient(135deg, #d4af37 0%, #f4d03f 100%) !important;
-    box-shadow: 0 4px 16px rgba(212, 175, 55, 0.4);
-}
+.cash-action-badge.act-award  { background: #2E7D52; }
+.cash-action-badge.act-deduct { background: #B3392F; }
+.cash-action-badge.act-redeem { background: #6D4AB8; }
+.cash-action-badge.act-reset  { background: #B3392F; }
+.cash-action-badge.act-other  { background: var(--wc-blue-mist); color: var(--wc-blue-deep); }
 
 /* Smooth transitions */
 body {
