@@ -18,6 +18,7 @@ import type * as hallPassRules from "../hallPassRules.js";
 import type * as hallPasses from "../hallPasses.js";
 import type * as identity from "../identity.js";
 import type * as identityRules from "../identityRules.js";
+import type * as mail from "../mail.js";
 import type * as me from "../me.js";
 import type * as migrate from "../migrate.js";
 import type * as mirror from "../mirror.js";
@@ -53,6 +54,7 @@ declare const fullApi: ApiFromModules<{
   hallPasses: typeof hallPasses;
   identity: typeof identity;
   identityRules: typeof identityRules;
+  mail: typeof mail;
   me: typeof me;
   migrate: typeof migrate;
   mirror: typeof mirror;
