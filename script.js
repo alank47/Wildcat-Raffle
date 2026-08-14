@@ -7646,34 +7646,40 @@
                 const formattedDate = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
                 
                 // Determine styling based on action
-                let actionBadge = '';
-                let rowStyle = '';
+                let actionClass = '';
                 let actionIcon = '';
                 let actionText = '';
-                
+
+                // Action styling is carried by classes (.cash-audit-row and
+                // .cash-action-badge in styles.css) instead of inline CSS.
+                //
+                // Every one of these rows previously set
+                //   background: var(--wc-blue), transparent);
+                // which is not valid CSS. The unbalanced parenthesis came
+                // from a find and replace that swapped a linear-gradient()
+                // colour for the token but left the gradient's arguments
+                // behind. Browsers dropped the whole declaration, so no row
+                // has had its intended tint. The same replace also flattened
+                // two badge colours to blue while their border-left kept the
+                // original colour; the badges are restored to match.
                 if (log.action === 'cash_award') {
-                    actionBadge = 'background: #2E7D52; color: white; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);';
-                    rowStyle = 'background: var(--wc-blue), transparent); border-left: 4px solid #10b981;';
+                    actionClass = 'act-award';
                     actionIcon = '💰';
                     actionText = 'Cash Awarded';
                 } else if (log.action === 'cash_deduct') {
-                    actionBadge = 'background: #B3392F; color: white; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(239, 68, 68, 0.3);';
-                    rowStyle = 'background: var(--wc-blue), transparent); border-left: 4px solid #ef4444;';
+                    actionClass = 'act-deduct';
                     actionIcon = '⚠️';
                     actionText = 'Cash Deducted';
                 } else if (log.action === 'reward_redemption') {
-                    actionBadge = 'background: var(--wc-blue); color: white; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(139, 92, 246, 0.3);';
-                    rowStyle = 'background: var(--wc-blue), transparent); border-left: 4px solid #8b5cf6;';
+                    actionClass = 'act-redeem';
                     actionIcon = '🎁';
                     actionText = 'Reward Redeemed';
                 } else if (log.action === 'reset_all_student_cash') {
-                    actionBadge = 'background: #B3392F; color: white; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(220, 53, 69, 0.3);';
-                    rowStyle = 'background: var(--wc-blue), transparent); border-left: 4px solid #dc3545;';
+                    actionClass = 'act-reset';
                     actionIcon = '🔄';
                     actionText = 'System Reset';
                 } else {
-                    actionBadge = 'background: var(--wc-blue); color: #333; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(168, 237, 234, 0.3);';
-                    rowStyle = 'background: var(--wc-blue), transparent); border-left: 4px solid #a8edea;';
+                    actionClass = 'act-other';
                     actionIcon = '📝';
                     actionText = log.action;
                 }
@@ -7703,16 +7709,16 @@
                 }
                 
                 return `
-                    <tr style="${rowStyle}">
+                    <tr class="cash-audit-row ${actionClass}">
                         <td style="padding: 12px 8px;">
                             <span style="font-size: 13px; color: #666;">${formattedDate}</span>
                         </td>
                         <td style="padding: 12px 8px;">
-                            <span class="teacher-badge" style="background: #e3f2fd; color: #1976d2; padding: 4px 10px; border-radius: 12px; font-size: 13px; font-weight: 500;">${log.teacherName || 'System'}</span>
+                            <span class="teacher-badge" style="background: #e3f2fd; color: #1976d2; padding: 4px 10px; border-radius: 12px; font-size: 13px; font-weight: 500;">${escapeHtml(log.teacherName || 'System')}</span>
                         </td>
                         <td style="padding: 12px 8px;">
-                            <span style="${actionBadge}">
-                                ${actionIcon} ${actionText}
+                            <span class="cash-action-badge ${actionClass}">
+                                ${actionIcon} ${escapeHtml(actionText)}
                             </span>
                         </td>
                         <td style="padding: 12px 8px; font-weight: 500;">${studentName}</td>
@@ -17600,78 +17606,68 @@
             });
         }
 
+        // Renders one leaderboard column.
+        //
+        // The three boards differed only in which number they showed, so they
+        // share a renderer now. Styling moved to .cash-rank-row: the old
+        // inline 'background: rgba(255,255,255,0.2)' with white text was
+        // built for the retired dark cash theme, and rendered white on white
+        // once Cash moved onto the shared shell.
+        //
+        // Names are escaped. They were interpolated raw into innerHTML, so a
+        // student record carrying markup could inject it here.
+        function renderCashRankBoard(elId, rows, emptyText) {
+            const board = document.getElementById(elId);
+            if (!board) return;
+
+            if (!rows.length) {
+                board.innerHTML = `<p class="cash-rank-empty">${escapeHtml(emptyText)}</p>`;
+                return;
+            }
+
+            board.innerHTML = rows.map((row, index) => {
+                const rank = index + 1;
+                const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `#${rank}`;
+                const rankClass = rank <= 3 ? ` rank-${rank}` : '';
+                return `
+                    <div class="cash-rank-row${rankClass}">
+                        <span class="cash-rank-name">${medal} ${escapeHtml(row.name)}</span>
+                        <span class="cash-rank-value">$${row.value}</span>
+                    </div>`;
+            }).join('');
+        }
+
         // Update Cash Leaderboards
         function updateCashLeaderboards() {
-            // Top Earners
+            const fullName = s => `${s.firstName} ${s.lastName}`;
+
             const topEarners = [...students]
                 .filter(s => s.wildcatCashEarned > 0)
                 .sort((a, b) => b.wildcatCashEarned - a.wildcatCashEarned)
-                .slice(0, 10);
-            
-            const topEarnersBoard = document.getElementById('topEarnersBoard');
-            topEarnersBoard.innerHTML = '';
-            
-            if (topEarners.length === 0) {
-                topEarnersBoard.innerHTML = '<p style="color: rgba(255,255,255,0.8); text-align: center;">No data yet</p>';
-            } else {
-                topEarners.forEach((student, index) => {
-                    const rank = index + 1;
-                    const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `#${rank}`;
-                    const div = document.createElement('div');
-                    div.style.cssText = 'background: rgba(255,255,255,0.2); padding: 12px; border-radius: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;';
-                    div.innerHTML = `
-                        <span style="font-weight: 600;">${medal} ${student.firstName} ${student.lastName}</span>
-                        <span style="font-weight: 700;">$${student.wildcatCashEarned}</span>
-                    `;
-                    topEarnersBoard.appendChild(div);
-                });
-            }
-            
-            // Top Spenders
+                .slice(0, 10)
+                .map(s => ({ name: fullName(s), value: s.wildcatCashEarned }));
+            renderCashRankBoard('topEarnersBoard', topEarners, 'No data yet');
+
             const topSpenders = [...students]
                 .filter(s => s.wildcatCashSpent > 0)
                 .sort((a, b) => b.wildcatCashSpent - a.wildcatCashSpent)
-                .slice(0, 10);
-            
-            const topSpendersBoard = document.getElementById('topSpendersBoard');
-            topSpendersBoard.innerHTML = '';
-            
-            if (topSpenders.length === 0) {
-                topSpendersBoard.innerHTML = '<p style="color: rgba(255,255,255,0.8); text-align: center;">No data yet</p>';
-            } else {
-                topSpenders.forEach((student, index) => {
-                    const rank = index + 1;
-                    const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `#${rank}`;
-                    const div = document.createElement('div');
-                    div.style.cssText = 'background: rgba(255,255,255,0.2); padding: 12px; border-radius: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;';
-                    div.innerHTML = `
-                        <span style="font-weight: 600;">${medal} ${student.firstName} ${student.lastName}</span>
-                        <span style="font-weight: 700;">$${student.wildcatCashSpent}</span>
-                    `;
-                    topSpendersBoard.appendChild(div);
-                });
-            }
-            
-            // Richest Students
+                .slice(0, 10)
+                .map(s => ({ name: fullName(s), value: s.wildcatCashSpent }));
+            renderCashRankBoard('topSpendersBoard', topSpenders, 'No data yet');
+
+            // Balance is resolved once and used for BOTH the sort and the
+            // display. The old code sorted on (balance || STARTING_BALANCE)
+            // but displayed (balance !== undefined ? balance : STARTING), so
+            // a student sitting at exactly 0 sorted as though they held the
+            // starting balance while showing $0.
             const richest = [...students]
-                .sort((a, b) => (b.wildcatCashBalance || STARTING_BALANCE) - (a.wildcatCashBalance || STARTING_BALANCE))
+                .map(s => ({
+                    name: fullName(s),
+                    value: s.wildcatCashBalance !== undefined ? s.wildcatCashBalance : STARTING_BALANCE
+                }))
+                .sort((a, b) => b.value - a.value)
                 .slice(0, 10);
-            
-            const richestBoard = document.getElementById('richestStudentsBoard');
-            richestBoard.innerHTML = '';
-            
-            richest.forEach((student, index) => {
-                const rank = index + 1;
-                const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `#${rank}`;
-                const balance = student.wildcatCashBalance !== undefined ? student.wildcatCashBalance : STARTING_BALANCE;
-                const div = document.createElement('div');
-                div.style.cssText = 'background: rgba(255,255,255,0.2); padding: 12px; border-radius: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;';
-                div.innerHTML = `
-                    <span style="font-weight: 600;">${medal} ${student.firstName} ${student.lastName}</span>
-                    <span style="font-weight: 700;">$${balance}</span>
-                `;
-                richestBoard.appendChild(div);
-            });
+            renderCashRankBoard('richestStudentsBoard', richest, 'No data yet');
         }
 
         // Update Rewards Store
