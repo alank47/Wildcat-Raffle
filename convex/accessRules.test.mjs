@@ -28,7 +28,31 @@ check("teacher CAN view a student they teach", canViewStudent(TEACHER, ON_SARAHS
 check("scope is reported as own-roster", canViewStudent(TEACHER, ON_SARAHS_ROSTER).scope === "own-roster");
 check("teacher CANNOT view a student they do not teach", canViewStudent(OTHER, NOT_HERS).allowed === false);
 check("teacher CANNOT view a student with no roster rows at all", canViewStudent(TEACHER, []).allowed === false);
-check("a campus aide is not implicitly an admin", canViewStudent(AIDE, NOT_HERS).allowed === false);
+console.log("\nCampus aides: whole campus, but not admins");
+// Decided 2026-08-14. An aide covers hallways, lunch and the yard, so the
+// student in front of them is whoever it is. They are the teacher of record
+// for nobody, so a roster-scoped rule refused them every student on the site.
+// The pre-Convex app already showed them all students with a grade filter;
+// this keeps that rather than granting anything new.
+check("a campus aide CAN view a student they do not teach",
+  canViewStudent(AIDE, NOT_HERS).allowed === true);
+check("a campus aide can view a student with no roster rows at all",
+  canViewStudent(AIDE, []).allowed === true);
+
+// The point of the original assertion, preserved. Aides reach students, but
+// they must never be indistinguishable from an admin: the scope is what
+// studentDetail records in its viewedAs audit trail, and admin powers hang off
+// requireAdmin, which tests the role directly and never consults this file.
+check("a campus aide is still NOT an admin: scope is campus, not admin",
+  canViewStudent(AIDE, NOT_HERS).scope === "campus");
+check("and an admin is still reported as admin",
+  canViewStudent(ADMIN, NOT_HERS).scope === "admin");
+check("an aide with no identity is refused like anyone else",
+  canViewStudent({ email: "", role: "campusaide" }, NOT_HERS).allowed === false);
+
+// An unknown role must not inherit the aide's reach by accident.
+check("an unrecognised role is still refused",
+  canViewStudent({ email: "x@lapromisefund.org", role: "volunteer" }, NOT_HERS).allowed === false);
 
 console.log("\nAdmins: wider scope");
 check("admin can view a student they do not teach", canViewStudent(ADMIN, NOT_HERS).allowed === true);
