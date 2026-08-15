@@ -123,3 +123,143 @@ codebase:
 5. **Density beats decoration on the roster.** 623 rows is the real test, not a
    dashboard with six cards. Where the reference's generous spacing would push
    a teacher's most-used table below the fold, the table wins.
+
+---
+
+# REVISION, 2026-08-15 — five annotated references, and a decision reversed
+
+The owner supplied five annotated images and named each after the screen it is
+for. The names are the mapping; use them.
+
+| File | The screen it specifies |
+|---|---|
+| `01-side-nav-layout.webp` | The sidebar |
+| `02-teacher-dashboard.webp` | The teacher dashboard, whole |
+| `03-events-timeline.webp` | Events / timeline panel |
+| `04-student-pass-and-cash.webp` | Student pass + Wildcat Cash view |
+| `05-student-detail-staff-view.webp` | Student detail, seen by staff |
+
+They live in the session scratchpad under `design-ref/`. **Look at them.** The
+notes below are what to check yourself against, not a replacement for seeing it.
+
+## The decision that is reversed
+
+I previously ruled that the teacher app should take the student portal's INK
+chrome — near-black sidebar and topbar — and keep a light content field. The
+owner's response to that build: *"I don't like the basic changes you made, looks
+cleaner but I want a full UI overhaul... get as close as possible to layout and
+look and feel to the images."*
+
+The reference sidebar is a **white rounded card on a pale field**, with a pale
+blue pill for the active item and a blue-filled icon square inside it. Not ink.
+So the ink chrome goes, and the whole app moves to the reference's airier,
+lighter, much more rounded world.
+
+Ink survives in exactly two places, both of which the reference itself uses as
+punctuation rather than as ground: the gauge's remaining arc, and the small
+circular action buttons at the top right of a panel.
+
+## What "as close as possible" means concretely
+
+- **Radii are much larger than what we shipped.** Panels read at roughly 20–24px,
+  the identity card larger still. Our 14px panel radius is the main reason the
+  first attempt reads as "cleaner" rather than as this.
+- **Cards are white with a hairline and a soft shadow**, and the timeline's cards
+  are outlined rather than filled — lighter than a panel, so a list of eight does
+  not read as eight slabs.
+- **The field is pale and slightly cool**, close to white, not a grey card deck.
+- **Air.** The spacing between cards is generous and consistent. Density is not
+  the aesthetic here; the roster is the one screen where our density rule still
+  wins over the reference.
+- **Tag pills** are small, rounded, and colour-coded by category, some outlined
+  and some filled. They are how the eye sorts a feed at a glance.
+- **Circular dark action buttons** (an arrow, top right) sit on panels that lead
+  somewhere.
+- **The identity card** is a large blue panel with a subtle wave pattern, a
+  two-line display title, and a white person-selector pill carrying an avatar and
+  a chevron. A circular badge overlaps its top-left corner.
+- **The day strip**: today is a filled blue rounded square with a word above the
+  number; the rest are outlined.
+- **The timeline** is a true vertical line with dots, the time above each card,
+  and quiet inline rows for breaks.
+- **The gauge** is a thick rounded arc with a large centred number and two small
+  ringed sub-figures beneath.
+
+## What still outranks the reference
+
+Unchanged from above: a missing value never renders as a real one; animation
+never decides visibility; hover stays gated; anything done hundreds of times a
+day gets no animation; the roster stays dense.
+
+And the branding rule the owner restated: **Westbrook Academy across the app.**
+The reference's Notasnet mark, its Spanish labels, its payment surfaces and its
+upsell card do not come with it. The banner slot at the bottom of the sidebar is
+worth keeping as a school announcement space rather than an upsell.
+
+---
+
+# WHAT WAS BUILT, 2026-08-15
+
+## Measured off the reference, not eyeballed
+
+Sampled out of `02-teacher-dashboard.webp` after cropping away the blue
+presentation backdrop — that bright blue is the slide, not the UI.
+
+| Role | Reference | Ours | Why they differ |
+|---|---|---|---|
+| Card / panel surface | `#FFFFFF` | `#FFFFFF` | same; no tint on any card |
+| Field | pale, cool | `--wu-paper #F2F6FB` | same character |
+| Identity card | `#0074E3` | `--wc-blue #2F67A7` | branding outranks fidelity |
+| Gauge accent arc | `#ECF869` | `--wc-yellow #E6E280` | branding outranks fidelity |
+| Gauge remainder | `#333333` | `--wu-gauge-rest #333333` | **not ink.** A charcoal recedes behind the accent; `--wc-ink` competes with it |
+
+Ours reads softer than the image and that is correct. The punch is bought
+back with radius, air, shadow and the size of the identity card, never by
+drifting the blue or the yellow toward the reference's.
+
+## Tokens that moved
+
+| Token | Was | Now |
+|---|---|---|
+| `--wu-r-card` | 17px | 28px |
+| `--wu-r-panel` | 14px | 22px |
+| `--wu-r-inner` | — | 16px (timeline / feed cards) |
+| `--wu-r-control` | 10px | 14px |
+| `--wu-r-chip` | 7px | 999px |
+| `--wu-paper` | `#F7F8FA` | `#F2F6FB` |
+| `--wu-shadow-1` | 1px+3px blur | 2px+22px blur |
+| `--wu-s5` / `--wu-s6` | 24 / 32 | 20 / 28 (+ `--wu-s7` 36) |
+| `--wc-topbar-h` | 58px | 66px |
+| `--wp-radius` (portal) | 17 / 15 / 20 | 20 / 17 / 26 |
+
+`--wp-strip`, `--wp-card-h` and `--wp-tuck` are UNTOUCHED. The portal's
+stack geometry was measured against Wallet and none of it moved.
+
+## The two compositions per view
+
+|  | Desktop | Phone | Switches at |
+|---|---|---|---|
+| Teacher dashboard | three columns: identity + tiles + gauge / events timeline / activity feed | one column re-ordered: identity, **award actions**, the day, tiles, gauge, feed | 1240px to two columns, 900px to one — 900 is where the sidebar becomes a drawer, so it is where the page stops being a desk |
+| Student detail (staff) | two columns: figures left, ticket history right | 05's own single column | 760px, where two columns stop being readable inside a modal |
+| Student portal | stack left, the open card's **body moved** into a detail panel right | the Wallet stack, unchanged | 1000px, the width at which a 430px stack plus a readable detail panel both fit |
+
+The teacher phone layout leads with Award Tickets because that is what a
+teacher opens a phone for while standing in front of a class. It is always
+in the markup and switched by a media query; no script decides whether it
+is visible.
+
+## Where we deliberately diverge
+
+- **Day strip runs backwards.** The reference's runs forward from today
+  because its events are lessons still to come. Ours looks back because
+  what is recorded on a day is what happened on it. Today is still the
+  filled cell and still first.
+- **No person photographs anywhere**, on either side of the app.
+- **No chevron without a destination.** The reference's person pill has a
+  selector chevron; ours only carries one because the pill goes somewhere
+  real (My Activity on the dashboard, the Profile tab in the modal).
+- **Filter chips are built from what is in the log**, so a chip can never
+  select an empty result.
+- **The roster keeps its density.** 13 rows above the fold at 1280x800 is
+  the number; the overhaul cost two and they were bought back above the
+  table, never inside a row.

@@ -7,16 +7,16 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Wildcat Hub</title>
-    <link rel="stylesheet" href="styles.css?v=20260815u">
+    <link rel="stylesheet" href="styles.css?v=20260815v">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260815u">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260815v">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20260815u">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260815v">
 </head>
 <body>
     <!-- Login Screen -->
@@ -133,6 +133,9 @@
     <div id="studentPassView" class="wp-root hidden">
         <div class="wp-shell">
             <header class="wp-top">
+                <!-- Initials in a tinted circle, never a photograph. Same rule
+                     as the staff side, for the same reason. -->
+                <span class="wp-avatar" id="wpAvatar" aria-hidden="true"></span>
                 <div class="wp-who">
                     <h1 class="wp-name" id="wpName"></h1>
                     <p class="wp-meta" id="wpMeta"></p>
@@ -157,6 +160,23 @@
                 <div class="wp-metric wp-metric-card" id="wpMetricCard" aria-hidden="true"></div>
                 <div class="wp-stack" id="wpStack" role="tablist" aria-label="Your passes"></div>
             </div>
+
+            <!-- THE DESK COMPOSITION.
+                 On a phone this element is empty and display:none, and the
+                 portal is exactly the card stack that was measured tonight.
+                 From 1000px the open card's BODY is moved in here — moved,
+                 not copied, so there is only ever one barcode in the
+                 document and it is never re-drawn — and the card beside it
+                 stays a card. The stack's geometry is untouched either way:
+                 wpLayout still writes the same tops, the same boxes and the
+                 same clips, because the body is not what any of them are
+                 measured from. See wpSyncWide() in script.js. -->
+            <aside class="wp-detail" id="wpDetail">
+                <div class="wp-detail-head">
+                    <h2 class="wp-detail-label" id="wpDetailLabel"></h2>
+                    <span class="wp-detail-lead" id="wpDetailLead"></span>
+                </div>
+            </aside>
 
             <p class="wp-asof" id="wpAsOf"></p>
             <div class="wp-note" id="wpError" role="status" aria-live="polite"></div>
@@ -458,7 +478,15 @@
             </div>
             <div class="topbar-right">
                 <span class="cycle-badge" id="cycleWeekBadge" title="Current cycle and week">Cycle — · Week —</span>
-                <span class="user-chip">👤 <strong id="currentUserName"></strong>&nbsp;<span class="user-role">(<span id="currentUserRole"></span>)</span></span>
+                <!-- The reference's top-right avatar pill. Initials, never a
+                     photograph: we have no staff photos either, and the same
+                     rule that keeps children's faces off a projected screen is
+                     the simplest one to keep whole. wcDecorateShell() fills the
+                     initials from the name beside it. -->
+                <span class="user-chip">
+                    <span class="topbar-avatar" id="topbarAvatar" aria-hidden="true"></span>
+                    <span><strong id="currentUserName"></strong>&nbsp;<span class="user-role">(<span id="currentUserRole"></span>)</span></span>
+                </span>
                 <button class="btn-topbar" onclick="showChangePassword()">Change Password</button>
                 <button class="btn-topbar btn-topbar-logout" onclick="logout()">Logout</button>
             </div>
@@ -477,7 +505,12 @@
 
         <div class="app-body">
             <!-- ============ APP SHELL: SIDEBAR ============ -->
-            <aside class="app-sidebar wu-ink" id="appSidebar">
+            <aside class="app-sidebar" id="appSidebar">
+              <!-- ONE white card holds the whole rail, which is what
+                   01-side-nav-layout draws. Four cards, one per group, read as
+                   four unrelated menus. Nothing inside is re-gated: every
+                   .admin-only and .super-admin-only is exactly where it was. -->
+              <div class="sidebar-card">
                 <!-- Overview sits above the mode switcher because it is the one
                      screen that is true in every mode. It is NOT the landing
                      screen: switchSystemMode() still opens Award Tickets, which
@@ -522,6 +555,16 @@
                     <button class="tab super-admin-only" id="loginActivityTab" onclick="switchTab('loginActivity')">🔐 Login Activity</button>
                     <button class="tab super-admin-only tab-danger" id="systemTab" onclick="switchTab('system')">🔒 System Admin</button>
                 </nav>
+              </div>
+
+              <!-- The banner slot 01 calls "seasonal banner space — for
+                   announcements or school campaigns". The reference's own card
+                   is an upsell; there is nothing to sell in a school system, so
+                   this carries the one school-wide notice the app owns. Filled
+                   by wcRenderSidebarBanner() in script.js, which says so in
+                   plain words when no cycle has been set rather than printing a
+                   number that is not true. -->
+              <div class="sidebar-banner" id="sidebarBanner"></div>
             </aside>
             <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar()"></div>
 
@@ -558,13 +601,43 @@
                     <span class="mode-pill"></span>
                 </div>
 
-                <div class="wu-shell wu-shell-inset">
+                <!-- THREE COLUMNS on a desk, which is what 02 is: who this is
+                     and how the school is doing, then the day, then what
+                     happened. The app's own sidebar is the reference's fourth
+                     column, so .wu-shell-inset drops the rail and .wc-dash3
+                     re-splits what is left.
+
+                     ON A PHONE this is a different composition, not this one
+                     shrunk: .wc-dash-main dissolves at 900px and the cards are
+                     re-ordered so the award flow is the second thing on screen.
+                     See "wc-dash-quick" in styles.css. -->
+                <div class="wu-shell wu-shell-inset wc-dash3">
                     <div class="wc-dash-main">
 
-                        <section class="wu-identity" id="dashIdentity">
-                            <p class="wu-eyebrow" style="color: rgba(255,255,255,.72);">Westbrook Academy</p>
-                            <h3 class="wu-identity-title">Wildcat Hub</h3>
-                        </section>
+                        <!-- The wrapper is what lets the badge overlap the
+                             corner: the card itself has to clip its own wave
+                             texture, so nothing inside it can hang outside. -->
+                        <div class="wc-identity-wrap">
+                            <span class="wu-identity-badge" aria-hidden="true">&#127891;</span>
+                            <section class="wu-identity" id="dashIdentity">
+                                <h3 class="wu-identity-title"><span class="wu-line">Westbrook</span><span class="wu-line">Academy</span></h3>
+                            </section>
+                        </div>
+
+                        <!-- Phone only. A teacher who opens this standing in
+                             front of a class came to award a ticket. Always in
+                             the markup, switched by a media query: no script
+                             decides whether it is visible. -->
+                        <div class="wc-dash-quick">
+                            <button type="button" class="wc-quick-btn" onclick="switchTab('tickets')">
+                                <span class="wu-rail-icon" aria-hidden="true">&#127903;</span>
+                                <span>Award Tickets</span>
+                            </button>
+                            <button type="button" class="wc-quick-btn" onclick="switchTab('myActivity')">
+                                <span class="wu-rail-icon" aria-hidden="true">&#128221;</span>
+                                <span>My Activity</span>
+                            </button>
+                        </div>
 
                         <div class="wc-dash-tiles" id="dashTiles"></div>
 
@@ -572,19 +645,30 @@
                             <div class="wu-panel-head">
                                 <div>
                                     <p class="wu-eyebrow">This cycle</p>
-                                    <h3 class="wu-panel-title">Wildcat Jackpot qualification</h3>
+                                    <h3 class="wu-panel-title">Jackpot rate</h3>
                                 </div>
-                                <button type="button" class="wu-action admin-only" aria-label="Open Wildcat Jackpot"
-                                        onclick="switchTab('bigRaffle')">&#8599;</button>
                             </div>
+                            <button type="button" class="wu-action admin-only" aria-label="Open Wildcat Jackpot"
+                                    onclick="switchTab('bigRaffle')">&#8599;</button>
                             <div class="wu-panel-body wc-gauge-body">
-                                <div class="wu-gauge" id="dashGauge" role="img" aria-label="Jackpot qualification rate">
+                                <!-- The three caps are what give the arc its
+                                     rounded ends. Two are fixed at the ends of
+                                     the sweep; the third rides an arm rotated
+                                     by the same registered custom property that
+                                     drives the gradient, so it cannot come away
+                                     from the end of the arc mid-animation. -->
+                                <div class="wu-gauge wu-gauge-empty" id="dashGauge" role="img" aria-label="Jackpot qualification rate">
+                                    <i class="wu-gauge-cap wu-gauge-cap-z" aria-hidden="true"></i>
+                                    <i class="wu-gauge-cap wu-gauge-cap-a" aria-hidden="true"></i>
+                                    <i class="wu-gauge-tip" aria-hidden="true"></i>
                                     <div class="wu-gauge-value" id="dashGaugeValue">&mdash;</div>
                                 </div>
                                 <div class="wc-gauge-legs" id="dashGaugeLegs"></div>
                             </div>
                         </section>
+                    </div>
 
+                    <div class="wc-dash-mid">
                         <section class="wu-panel">
                             <div class="wu-panel-head">
                                 <div>
@@ -594,8 +678,9 @@
                                 <span class="wu-chip" id="dashScheduleChip"></span>
                             </div>
                             <div class="wu-panel-body">
+                                <div class="wu-days-months" id="dashDayMonths" aria-hidden="true"></div>
                                 <div class="wu-days" id="dashDays" role="group" aria-label="Pick a day"></div>
-                                <div class="wu-timeline" id="dashTimeline" style="margin-top: 16px;">
+                                <div class="wu-timeline" id="dashTimeline" style="margin-top: 18px;">
                                     <p class="wu-absent">Loading today&rsquo;s schedule&hellip;</p>
                                 </div>
                             </div>
@@ -609,10 +694,15 @@
                                     <p class="wu-eyebrow">Recently</p>
                                     <h3 class="wu-panel-title">Activity</h3>
                                 </div>
-                                <button type="button" class="wu-action admin-only" aria-label="Open the audit log"
+                                <button type="button" class="wu-action wu-action-quiet admin-only" aria-label="Open the audit log"
                                         onclick="switchTab('audit')">&#8599;</button>
                             </div>
                             <div class="wu-panel-body">
+                                <!-- Filter chips. Only categories that are
+                                     actually in the log get a chip: a filter
+                                     that can only ever return nothing is a dead
+                                     control. Rendered by renderTeacherDashboard. -->
+                                <div class="wu-filters" id="dashFeedFilters" style="margin-bottom: 14px;"></div>
                                 <div class="wu-feed" id="dashFeed">
                                     <p class="wu-absent">Loading recent activity&hellip;</p>
                                 </div>
@@ -5066,11 +5156,18 @@
                 ×
             </button>
             
-            <!-- Profile Header. The reference's identity card, doing the job it
-                 does there: this is who the screen is about. It was the app's
-                 last purple gradient. -->
-            <div id="profileHeader" class="wu-identity sp-header">
-                <!-- Will be populated by JS -->
+            <!-- Profile Header. 05-student-detail-staff-view is the spec: an
+                 identity card INSET on the sheet with a circular badge over its
+                 top-left corner, a two-line display title, and a white person
+                 pill carrying an avatar, two lines and a chevron. The avatar is
+                 initials in a tinted circle and never a photograph — we have no
+                 student photos, and a child's face on a screen that gets
+                 projected in a classroom is a decision nobody has made. -->
+            <div class="sp-headwrap">
+                <span class="wu-identity-badge" aria-hidden="true">&#127891;</span>
+                <div id="profileHeader" class="wu-identity sp-header">
+                    <!-- Will be populated by JS -->
+                </div>
             </div>
             
             <!-- Tabs. Two, and only two: what this student EARNED, and who this
@@ -5094,23 +5191,27 @@
                 <div id="spPanePoints" role="tabpanel" aria-labelledby="spTabPoints">
 
                     <!-- Achievement Badges -->
-                    <div id="profileBadges" style="margin-bottom: 30px;">
+                    <div id="profileBadges" style="margin-bottom: 18px;">
                         <!-- Will be populated by JS -->
                     </div>
 
-                    <!-- Stats Grid. Three figures in three different arbitrary
-                         colours (indigo, green, amber) said nothing: none of
-                         them is good or bad, they are just counts. They are
-                         the reference's stat tiles now — the tile is quiet and
-                         the figure carries the weight. -->
-                    <div class="wc-dash-tiles" style="margin-bottom: 26px;">
+                    <!-- On a desk this is two columns: the figures on the
+                         left and what this student actually earned on the
+                         right. 05 is a phone panel, and a phone panel stretched
+                         across 900px is a column of very wide, very empty
+                         cards. On a phone the grid folds to one column and the
+                         order is 05's order exactly. -->
+                    <div class="sp-points-grid">
+                      <div class="sp-col">
+                    <!-- TWO stat tiles and then the gauge, which is how 05
+                         stacks them. Three figures in three arbitrary colours
+                         said nothing: none of them is good or bad, they are
+                         counts. The tile is quiet; the figure carries the
+                         weight. -->
+                    <div class="sp-figures">
                         <div class="wu-tile">
-                            <div class="wu-tile-label">Total tickets this week</div>
+                            <div class="wu-tile-label">Tickets this week</div>
                             <div class="wu-tile-figure" id="profileTotalTickets">0</div>
-                        </div>
-                        <div class="wu-tile">
-                            <div class="wu-tile-label">Weeks qualified</div>
-                            <div class="wu-tile-figure" id="profileWeeksQualified">0</div>
                         </div>
                         <div class="wu-tile">
                             <div class="wu-tile-label">Lifetime tickets</div>
@@ -5118,15 +5219,46 @@
                         </div>
                     </div>
 
+                    <!-- The hero figure. Weeks this student has qualified for
+                         the Wildcat Jackpot, against the length of the cycle.
+                         The two rings under it are the reference's best/worst
+                         pair: weeks kept and weeks missed, both read off the
+                         one array the app actually stores. -->
+                    <section class="wu-panel sp-gauge-card">
+                        <div class="wu-panel-head">
+                            <div>
+                                <p class="wu-eyebrow">This cycle</p>
+                                <h3 class="wu-panel-title">Wildcat Jackpot</h3>
+                            </div>
+                        </div>
+                        <button type="button" class="wu-action admin-only" aria-label="Open Wildcat Jackpot"
+                                onclick="closeStudentProfile(); switchTab('bigRaffle');">&#8599;</button>
+                        <div class="wu-panel-body sp-gauge-body">
+                            <div class="wu-gauge wu-gauge-empty" id="profileGauge" role="img"
+                                 aria-label="Weeks qualified this cycle">
+                                <i class="wu-gauge-cap wu-gauge-cap-z" aria-hidden="true"></i>
+                                <i class="wu-gauge-cap wu-gauge-cap-a" aria-hidden="true"></i>
+                                <i class="wu-gauge-tip" aria-hidden="true"></i>
+                                <div class="wu-gauge-value" id="profileWeeksQualified">0</div>
+                            </div>
+                            <div class="wc-gauge-legs" id="profileGaugeLegs"></div>
+                        </div>
+                    </section>
+
+                      </div>
+
+                      <div class="sp-col">
                     <!-- Ticket History Timeline -->
-                    <div class="wu-panel" style="padding: 20px 22px; margin-bottom: 26px;">
+                    <div class="wu-panel" style="padding: 20px 22px;">
                         <div class="panel-head" style="margin-bottom: 14px;">
                             <span class="panel-icon">📋</span>
                             <h3>Ticket History</h3>
                         </div>
-                        <div id="profileTicketHistory" style="max-height: 300px; overflow-y: auto;">
+                        <div id="profileTicketHistory" style="max-height: 360px; overflow-y: auto;">
                             <!-- Will be populated by JS -->
                         </div>
+                    </div>
+                      </div>
                     </div>
 
                 </div>
@@ -5153,10 +5285,10 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260815u"></script>
+    <script src="wildcat-auth.js?v=20260815v"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
-    <script src="wildcat-motion.js?v=20260815u"></script>
-    <script src="script.js?v=20260815u"></script>
+    <script src="wildcat-motion.js?v=20260815v"></script>
+    <script src="script.js?v=20260815v"></script>
 </body>
 </html>

@@ -1536,7 +1536,11 @@ body.raffle-mode {
     --wc-yellow: #E6E280;
     --wc-gray-text: #5F5E5A;
     --wc-border: #e3e8ef;
-    --wc-topbar-h: 58px;
+    /* Raised from 58px with the 2026-08-15 overhaul: the bar now
+       carries a white avatar pill and a rounded toggle on a pale
+       field rather than flat text on ink, and both want air around
+       them. Every sticky offset in the app reads this. */
+    --wc-topbar-h: 66px;
     --wc-sidebar-w: 250px;
     --wc-sidebar-rail: 64px;
 }
@@ -1650,7 +1654,10 @@ body.raffle-mode {
     color: #fff;
     box-shadow: 0 2px 6px rgba(4, 24, 46, 0.4), inset 0 1px 0 rgba(255,255,255,0.15);
 }
-.mode-card-active:hover { background: #c76525; }
+/* The hover for this lives in the gated block in PHASE 4, with the
+   rest of the mode card's 2026-08-15 restyle. An ungated :hover
+   sticks to whatever a tablet last touched, and this one painted a
+   solid orange over the tinted pill and stayed there. */
 .mode-card-empty {
     background: rgba(255,255,255,0.07);
     border: 2px dashed #F0B27E;
@@ -3345,7 +3352,13 @@ body.wp-open { overflow: hidden; }
     --wp-strip: clamp(48px, 7.4svh, 60px);
     --wp-card-h: clamp(196px, 32vh, 262px);
     --wp-card-h: clamp(196px, 32svh, 262px);
-    --wp-radius: 17px;
+    /* Raised from 17px on 2026-08-15 with the rest of the app. The
+       radius is the ONLY geometry number in this block that moved:
+       --wp-strip, --wp-card-h and the tuck in wildcat-motion.css are
+       untouched, so the tops, the exposed band and the total height of
+       the stack are exactly what they were measured at. script.js
+       reads this value back to round the clip. */
+    --wp-radius: 20px;
     --wp-gutter: 13px;
     --wp-col: 414px;
 
@@ -3437,11 +3450,29 @@ body.wp-open { overflow: hidden; }
 
 .wp-top {
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
+    align-items: center;
     gap: 12px;
     padding: 6px 2px 20px;
 }
+.wp-who { flex: 1 1 auto; min-width: 0; }
+
+/* Initials in a tinted circle. Never a photograph — the same rule the
+   staff side keeps, and the reason is the same on both. */
+.wp-avatar {
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    background: rgba(47, 103, 167, 0.34);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #EAF2FB;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+}
+.wp-avatar:empty { display: none; }
 
 .wp-name {
     font-size: 30px;
@@ -3893,6 +3924,153 @@ body.wp-open { overflow: hidden; }
     to   { background-position: -140% 0; }
 }
 
+/* ============================================================
+   THE STUDENT PORTAL ON A DESK
+   ------------------------------------------------------------
+   The phone layout is the card stack and it is not negotiable:
+   the geometry was measured against Apple Wallet, the exposed
+   band is exactly --wp-strip, the tops never move, the total
+   height does not change when a card opens, and the only
+   animated properties are transform, translate and clip-path at
+   260ms. None of that is touched below. This is a SECOND
+   composition, for a width the phone layout was never for —
+   today that width gets the phone layout centred in a 414px
+   column on a 1440px screen, which is a phone in a picture
+   frame.
+
+   WHAT CHANGES AT 1000px, and only there:
+     - the shell becomes a grid: identity across the top, the
+       stack on the left, a detail panel on the right;
+     - the open card's BODY is MOVED into that panel by
+       wpSyncWide() in script.js. Moved, not copied — there is
+       only ever one barcode in the document, it is never
+       redrawn, and the stack's boxes are written explicitly by
+       wpLayout so a card whose body is elsewhere is the same
+       box it always was;
+     - the card boxes are given a card's proportions, because
+       with the detail beside them they are cards rather than
+       containers. That is a plain media query, NOT keyed on
+       .wp-wide: wpLayout measures the rulers BEFORE
+       wpSyncWide adds that class, and a geometry token that
+       appeared one layout late would place the whole stack
+       against numbers it no longer had.
+
+   Everything else here IS keyed on .wp-wide or carries it for
+   specificity, because the (min-width: 700px) block further
+   down this file redeclares --wp-col and .wp-shell's padding
+   and would otherwise win on source order.
+
+   The barcode plate is capped at its phone width inside the
+   panel. A scanner reads bar WIDTHS, and the plate's svg is
+   preserveAspectRatio="none" — letting it stretch across a
+   700px panel would widen every bar in it. It is not scanned
+   here, but it must not become something that cannot be.
+   ============================================================ */
+
+.wp-detail { display: none; }
+
+@media (min-width: 1000px) {
+    /* Geometry only. See the note above about why this is not
+       scoped to .wp-wide. */
+    #studentPassView {
+        --wp-strip: 62px;
+        --wp-card-h: 262px;
+    }
+}
+
+#studentPassView.wp-wide { --wp-col: 1120px; }
+
+@media (min-width: 1000px) {
+    .wp-wide .wp-shell {
+        display: grid;
+        grid-template-columns: 430px minmax(0, 1fr);
+        grid-template-areas:
+            "top    top"
+            "stack  detail"
+            "asof   detail"
+            "note   detail";
+        column-gap: 44px;
+        align-content: start;
+        padding: calc(env(safe-area-inset-top, 0px) + 40px) var(--wp-gutter)
+                 calc(env(safe-area-inset-bottom, 0px) + 40px);
+    }
+    .wp-wide .wp-top    { grid-area: top; padding: 0 2px 30px; }
+    .wp-wide .wp-stage  { grid-area: stack; }
+    .wp-wide .wp-asof   { grid-area: asof; text-align: left; padding: 20px 2px 0; }
+    .wp-wide .wp-note   { grid-area: note; text-align: left; padding: 14px 2px 0; }
+
+    .wp-wide .wp-name { font-size: 38px; }
+    .wp-wide .wp-avatar { width: 56px; height: 56px; font-size: 18px; }
+
+    .wp-wide .wp-detail {
+        grid-area: detail;
+        display: flex;
+        flex-direction: column;
+        align-self: start;
+        min-width: 0;
+        min-height: 430px;
+        padding: 26px 30px 30px;
+        border-radius: var(--wp-radius);
+        /* The panel wears the open card's own face, which script.js
+           writes as an inline style. The fallback is the same dark
+           card face the stack uses, so a panel with no card selected
+           is still part of the same object rather than a white hole. */
+        background: var(--wp-face, #1a1c22);
+        color: var(--wp-ink, #ffffff);
+        box-shadow: 0 -0.5px 0 rgba(255, 255, 255, 0.14) inset,
+                    0 18px 44px rgba(0, 0, 0, 0.45);
+    }
+    .wp-wide .wp-detail-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 16px;
+        padding-bottom: 18px;
+        border-bottom: 1px solid var(--wp-rule, rgba(255, 255, 255, 0.10));
+    }
+    .wp-wide .wp-detail-label {
+        margin: 0;
+        font-size: 23px;
+        font-weight: 700;
+        letter-spacing: -0.022em;
+        white-space: nowrap;
+    }
+    .wp-wide .wp-detail-lead {
+        font-size: 16px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        font-variant-numeric: tabular-nums;
+        opacity: .78;
+        white-space: nowrap;
+    }
+    /* The moved body fills the panel instead of a card. */
+    .wp-wide .wp-detail > .wp-body {
+        flex: 1 1 auto;
+        min-height: 0;
+        padding: 18px 0 0;
+        opacity: 1;
+    }
+    .wp-wide .wp-detail .wp-rows { max-height: 420px; }
+    .wp-wide .wp-detail .wp-row { padding: 12px 0; }
+    .wp-wide .wp-detail .wp-rowtitle { font-size: 15.5px; }
+    .wp-wide .wp-detail .wp-rowsub { font-size: 13px; }
+    .wp-wide .wp-detail .wp-rowend { font-size: 19px; }
+    .wp-wide .wp-detail .wp-empty { max-width: 46ch; font-size: 15.5px; margin: 0; }
+    .wp-wide .wp-detail .wp-big { font-size: 92px; margin: 8px 0 0; }
+    .wp-wide .wp-detail .wp-foot { font-size: 13px; padding-top: 20px; }
+    .wp-wide .wp-detail .wp-actions { margin-top: 22px; }
+    /* Capped, so the bars keep the width they were drawn at. */
+    .wp-wide .wp-detail .wp-plate { max-width: 380px; margin-top: 24px; }
+    .wp-wide .wp-detail .wp-plate svg { height: 96px; }
+    .wp-wide .wp-detail .wp-wordmark { padding-bottom: 2px; font-size: 11.5px; }
+
+    /* With its body in the panel, the open card is a card: its face,
+       its name and its one value. Which is what a card is. */
+    .wp-wide .wp-card .wp-head { padding: 0 22px; }
+    .wp-wide .wp-label { font-size: 17px; }
+    .wp-wide .wp-lead { font-size: 17px; }
+}
+
 /* ---- Buttons on a card ------------------------------------- */
 
 .wp-actions {
@@ -4168,7 +4346,7 @@ body.wp-open { overflow: hidden; }
    under the fold, and the card you most want is the last one. */
 
 @media (max-height: 730px) and (max-width: 699px) {
-    #studentPassView { --wp-radius: 15px; }
+    #studentPassView { --wp-radius: 17px; }
     .wp-shell { padding-top: calc(env(safe-area-inset-top, 0px) + 12px); }
     .wp-name { font-size: 26px; }
     .wp-top { padding-bottom: 14px; }
@@ -4195,7 +4373,7 @@ body.wp-open { overflow: hidden; }
         --wp-strip: clamp(46px, 8.4svh, 68px);
         --wp-card-h: clamp(196px, 36vh, 300px);
         --wp-card-h: clamp(196px, 36svh, 300px);
-        --wp-radius: 20px;
+        --wp-radius: 26px;
         --wp-col: 468px;
         --wp-gutter: 24px;
     }
@@ -4449,17 +4627,25 @@ body.wp-open { overflow: hidden; }
    file; everything here is the app's own selectors adopting that
    language, so the two portals read as one product.
 
-   THE ONE STRUCTURAL DECISION, restated because it is the thing
-   somebody will want to "fix": the teacher app takes the student
-   portal's INK CHROME — topbar and sidebar — and keeps a LIGHT
-   content field. A 623 row roster on near-black is fatiguing to
-   scan and wrong when projected in a classroom. Same hand, two
-   jobs. The console does not become a wallet.
+   THE STRUCTURAL DECISION, REVERSED 2026-08-15. An earlier pass
+   gave the teacher app the student portal's INK CHROME — a
+   near-black topbar and sidebar over a light content field. The
+   owner then supplied five annotated references, and the chrome
+   in every one of them is the opposite: a WHITE rounded card on a
+   pale, slightly cool field. So the ink chrome is gone. Ink is
+   punctuation now and nothing else: the gauge's remaining arc and
+   the small circular action button at a panel's top right.
+
+   The console still does not become a wallet. What it becomes is
+   the reference — much larger radii, white cards with a hairline
+   and a soft shadow, and real air between them.
 
    ACCENT DISCIPLINE: --wc-yellow appears about twice per screen,
    which is what makes it read as designed rather than loud. On
-   the dashboard that is the gauge arc and the cycle badge. It is
-   never a button, never a chip, never a row highlight.
+   the dashboard that is the gauge arc and the identity card's
+   badge. It is never a button, never a chip, never a row
+   highlight — which is why the cycle badge, which used to be the
+   second accent, is a quiet blue pill now.
 
    Every :hover below is inside @media (hover: hover) and
    (pointer: fine) — a touch device fires a false hover on tap and
@@ -4486,47 +4672,111 @@ body.wp-open { overflow: hidden; }
    1. SHELL — topbar
    ------------------------------------------------------------ */
 
+/* The reference has no top bar at all: its brand sits at the head of
+   the sidebar and a bell and an avatar pill float at the top right of
+   the content. We keep a bar because ours has to carry the brand on a
+   phone, where the sidebar is a drawer and nothing in it is on screen.
+
+   So the bar is the SAME PALE FIELD as everything under it, with no
+   line and no fill of its own. Its left region is the width of the
+   sidebar, which puts the logo directly above the sidebar card and
+   makes it read as that card's head; its right region is the
+   reference's floating cluster. */
 .app-topbar {
-    background: var(--wu-ink-800, #131419);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-    padding: 0 18px;
+    background: var(--wu-paper, #F2F6FB);
+    color: var(--wu-fg, #14161B);
+    border-bottom: 0;
+    padding: 0 22px 0 18px;
+    gap: 12px;
 }
-.topbar-logo { height: 32px; border-radius: 7px; }
+/* The logo file is a JPEG with its own solid black plate and white
+   type baked in — it is the school's mark and it does not get
+   recoloured, cropped or redrawn. On a pale field it reads as a dark
+   tile, which is the same ink register as the circular action buttons.
+   Rounding the corners is the only thing done to it. */
+.topbar-logo { height: 38px; border-radius: 10px; }
 .topbar-school {
     font-size: 15.5px;
     font-weight: 650;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.012em;
+    color: var(--wu-fg, #14161B);
 }
 .sidebar-toggle,
 .btn-topbar {
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: var(--wu-r-control, 10px);
-    transition: background-color 160ms ease;
+    background: var(--wu-surface, #fff);
+    border: 1px solid var(--wu-hair-strong, rgba(19, 34, 58, .14));
+    border-radius: 999px;
+    color: var(--wu-fg-dim, #5F6570);
+    box-shadow: var(--wu-shadow-1);
+    transition: background-color 160ms ease, border-color 160ms ease;
 }
-.btn-topbar { font-size: 12.5px; font-weight: 600; padding: 7px 13px; }
-.btn-topbar-logout { background: var(--wc-blue); border-color: var(--wc-blue); }
-.user-chip { font-size: 12.5px; color: var(--wu-fg-on-ink-dim, #8E9199); }
-.user-chip strong { color: var(--wu-fg-on-ink, #F6F4EF); font-weight: 600; }
+.sidebar-toggle { width: 40px; height: 40px; padding: 0; display: grid; place-items: center; font-size: 15px; }
+.btn-topbar { font-size: 12.5px; font-weight: 600; padding: 9px 15px; }
+.btn-topbar-logout {
+    background: var(--wc-blue);
+    border-color: var(--wc-blue);
+    color: #fff;
+    box-shadow: none;
+}
 
-/* The cycle badge is one of this screen's two permitted accents. */
-.cycle-badge {
-    background: var(--wc-yellow);
-    color: #494400;
+/* The user chip is the reference's avatar pill: a white pill with an
+   initials avatar, the name, and the role under it. Initials, never a
+   photograph. */
+.user-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    max-width: 260px;
+    padding: 5px 14px 5px 5px;
+    border: 1px solid var(--wu-hair-strong, rgba(19, 34, 58, .14));
+    border-radius: 999px;
+    background: var(--wu-surface, #fff);
+    box-shadow: var(--wu-shadow-1);
+    font-size: 12.5px;
+    color: var(--wu-fg-dim, #5F6570);
+    overflow: visible;
+}
+.user-chip strong { color: var(--wu-fg, #14161B); font-weight: 650; }
+.user-role { color: var(--wu-fg-faint, #8B919C); }
+.topbar-avatar {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--wc-blue-mist);
+    color: var(--wc-blue-deep);
     font-size: 12px;
     font-weight: 700;
+}
+
+/* The cycle badge is NOT an accent any more. --wc-yellow gets two
+   appearances per screen and the gauge arc and the identity badge have
+   both of them, so this is a quiet blue pill. */
+.cycle-badge {
+    background: var(--wc-blue-mist);
+    color: var(--wc-blue-deep);
+    border: 1px solid var(--wc-blue-pale);
+    font-size: 12px;
+    font-weight: 650;
     letter-spacing: 0.01em;
+    padding: 6px 13px;
 }
 
 /* ------------------------------------------------------------
    2. SHELL — the sidebar as the reference's nav rail
    ------------------------------------------------------------
-   In the reference the rail is a white card on a light field with
-   an icon square beside each label and the active item as a soft
-   pill. Ours is the same card on ink. What it is NOT any more: a
-   solid blue column of raised blue slabs, each with its own
-   border, shadow and inset highlight, which made ten navigation
-   items look like ten buttons all asking to be pressed.
+   01-side-nav-layout is the spec for this. ONE white rounded card
+   on a pale field, holding human section names, an icon square
+   beside every label, and the active item as a pale blue pill with
+   a BLUE-FILLED square inside it. Under the card, a banner slot —
+   which in the reference is an upsell and here is a school
+   announcement, because this is a school system and there is no
+   plan to upgrade.
+
+   What it is NOT any more: a solid blue column of raised slabs,
+   and not the near-black column that replaced them this morning.
 
    The icon squares are filled at runtime by wcDecorateShell() in
    script.js, which splits the emoji already at the front of every
@@ -4535,37 +4785,52 @@ body.wp-open { overflow: hidden; }
    ------------------------------------------------------------ */
 
 .app-sidebar {
-    background: var(--wu-ink-900, #0B0B0E);
-    border-right: 1px solid rgba(255, 255, 255, 0.06);
-    padding: 14px 12px 28px;
-}
-.sidebar-label {
-    color: var(--wu-fg-on-ink-dim, #8E9199);
-    font-size: 10px;
-    letter-spacing: 0.12em;
-    margin: 18px 6px 7px;
+    background: var(--wu-paper, #F2F6FB);
+    border-right: 0;
+    padding: 0 14px 24px 18px;
 }
 
-/* Each nav group is a card, the way the reference's rail is. */
+/* The card. One card for the whole rail, as 01 draws it, rather
+   than one card per group: four stacked cards read as four
+   unrelated menus. */
+.sidebar-card {
+    padding: 10px;
+    background: var(--wu-surface, #fff);
+    border: 1px solid var(--wu-hair, rgba(19, 34, 58, .09));
+    border-radius: var(--wu-r-panel, 22px);
+    box-shadow: var(--wu-shadow-1);
+}
+
+.sidebar-label {
+    color: var(--wu-fg-faint, #8B919C);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    margin: 16px 10px 6px;
+}
+.sidebar-label:first-child { margin-top: 4px; }
+
+/* The groups are no longer cards: the one card around them is. */
 .app-sidebar .tabs,
 .app-sidebar .sidebar-nav {
     gap: 2px;
-    padding: 6px;
-    background: var(--wu-ink-800, #131419);
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    border-radius: var(--wu-r-panel, 14px);
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
     margin: 0;
 }
 
 .app-sidebar .tab {
-    gap: 11px;
+    position: relative;
+    gap: 12px;
     background: transparent;
     border: 0;
-    border-radius: var(--wu-r-control, 10px);
-    padding: 7px 9px;
-    font-size: 13.5px;
+    border-radius: var(--wu-r-control, 14px);
+    padding: 8px 10px;
+    font-size: 14px;
     font-weight: 550;
-    color: var(--wu-fg-on-ink-dim, #8E9199);
+    color: var(--wu-fg-dim, #5F6570);
     box-shadow: none;
     transition: background-color 180ms ease, color 180ms ease;
 }
@@ -4574,30 +4839,137 @@ body.wp-open { overflow: hidden; }
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-/* A soft pill, not a white slab. */
+/* A pale blue pill, and the icon square inside it fills with blue.
+   That pairing is the reference's whole active state. */
 .app-sidebar .tab.active {
-    background: rgba(47, 103, 167, 0.32);
+    background: var(--wc-blue-mist);
     border-color: transparent;
-    color: #ffffff;
+    color: var(--wc-blue-deep);
     font-weight: 650;
     box-shadow: none;
 }
+.app-sidebar .tab.active .wu-rail-icon { background: var(--wc-blue); color: #fff; }
 .app-sidebar .tab:active { transform: none; box-shadow: none; }
-.app-sidebar .tab-danger { color: #E9A9A2; }
-.app-sidebar .tab-danger.active { background: rgba(179, 57, 47, 0.34); color: #ffffff; }
+.app-sidebar .tab-danger { color: #9A3A30; }
+.app-sidebar .tab-danger.active { background: #FBECEA; color: #8E2F26; }
 .app-sidebar .tab-danger.active .wu-rail-icon { background: #B3392F; color: #fff; }
 
-/* Mode switcher, same card language. */
-.mode-card { border-radius: var(--wu-r-control, 10px); padding: 10px 12px; }
-.mode-card-active { box-shadow: none; }
-.mode-card-empty { animation: none; border-width: 1px; }
-.mode-dropdown { border-radius: var(--wu-r-panel, 14px); box-shadow: var(--wu-shadow-2); }
+/* Mode switcher, same card language.
+
+   It used to be a solid orange slab, which made it the loudest thing
+   on the screen — louder than the active nav item, louder than the
+   identity card, and about four times louder than anything in the
+   reference's rail. It is the active nav pill's shape in the mode's
+   own colour now: a tinted pill with a filled icon square. Orange
+   still means "which mode", it just stops shouting it. */
+.mode-card { border-radius: var(--wu-r-control, 14px); padding: 8px 10px; }
+.mode-card-active {
+    background: color-mix(in srgb, var(--wc-orange) 13%, transparent);
+    color: #8A4413;
+    box-shadow: none;
+}
+.mode-card-inner { gap: 11px; font-size: 14px; font-weight: 650; }
+.mode-card-icon {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    flex: none;
+    border-radius: 11px;
+    background: var(--wc-orange);
+    font-size: 14px;
+    line-height: 1;
+}
+.mode-card-chev { color: #8A4413; opacity: .7; }
+.mode-card-empty {
+    animation: none;
+    border-width: 1px;
+    border-color: var(--wc-orange);
+    background: color-mix(in srgb, var(--wc-orange) 9%, transparent);
+    color: #8A4413;
+}
+.mode-dropdown { border-radius: var(--wu-r-inner, 16px); box-shadow: var(--wu-shadow-2); }
+.mode-dd-item { border-radius: 10px; }
+
+/* ---- The banner slot at the foot of the rail ----
+   01 keeps a card here and calls it "seasonal banner space — for
+   announcements or school campaigns". The reference's own card is
+   an upsell; this is a school system and there is nothing to sell,
+   so the slot carries the one school-wide notice this app actually
+   owns: which cycle and week the school is in, and what happens at
+   the end of it.
+
+   It never invents one. With no cycle set it says so in the same
+   voice every other missing value uses. */
+.sidebar-banner {
+    position: relative;
+    overflow: hidden;
+    margin-top: 14px;
+    padding: 16px 16px 15px;
+    border-radius: var(--wu-r-panel, 22px);
+    background: linear-gradient(157deg, #3E77B8 0%, var(--wc-blue) 48%, var(--wc-blue-deep) 100%);
+    color: #fff;
+}
+.sidebar-banner::before {
+    content: "";
+    position: absolute;
+    inset: -40%;
+    pointer-events: none;
+    transform: rotate(-16deg);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='17'%3E%3Cpath d='M0 12 Q7.5 2 15 12 T30 12' fill='none' stroke='rgba(255,255,255,0.13)' stroke-width='2'/%3E%3C/svg%3E");
+    background-size: 30px 17px;
+}
+.sidebar-banner > * { position: relative; }
+.sidebar-banner-eyebrow {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.74);
+}
+.sidebar-banner-title {
+    margin: 7px 0 0;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    line-height: 1.2;
+}
+.sidebar-banner-body {
+    margin: 6px 0 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: rgba(255, 255, 255, 0.84);
+}
+.sidebar-banner .wu-absent { color: rgba(255, 255, 255, 0.72); font-size: 12.5px; }
+.sidebar-banner-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 13px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #fff;
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 650;
+    cursor: pointer;
+}
+.sidebar-banner-link span {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.2);
+    font-size: 12px;
+}
 
 /* Collapsed rail: the icon square is the whole item. */
 body.sidebar-collapsed .app-sidebar .tab .nav-label { display: none; }
-body.sidebar-collapsed .app-sidebar .tab { justify-content: center; padding: 7px 4px; }
-body.sidebar-collapsed .app-sidebar .tabs,
-body.sidebar-collapsed .app-sidebar .sidebar-nav { padding: 5px; }
+body.sidebar-collapsed .app-sidebar .tab { justify-content: center; padding: 8px 4px; }
+body.sidebar-collapsed .sidebar-card { padding: 7px; }
+body.sidebar-collapsed .sidebar-banner { display: none; }
 
 /* ------------------------------------------------------------
    3. PAGE HEADER — an icon square, not an emoji glued to a title
@@ -4634,24 +5006,24 @@ body.sidebar-collapsed .app-sidebar .sidebar-nav { padding: 5px; }
    4. CARDS, PANELS, CONTROLS
    ------------------------------------------------------------ */
 
-#mainApp.container { background: var(--wu-paper, #F7F8FA); }
+#mainApp.container { background: var(--wu-paper, #F2F6FB); }
 
 .wc-card {
-    border-color: var(--wu-hair, rgba(20, 22, 27, 0.10));
-    border-radius: var(--wu-r-panel, 14px);
+    border-color: var(--wu-hair, rgba(19, 34, 58, 0.09));
+    border-radius: var(--wu-r-panel, 22px);
     box-shadow: var(--wu-shadow-1);
-    padding: 17px 19px;
+    padding: 19px 21px;
 }
-.banner-card { border-radius: var(--wu-r-panel, 14px); }
-.panel-head h3 { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+.banner-card { border-radius: var(--wu-r-panel, 22px); }
+.panel-head h3 { font-size: 16px; font-weight: 700; letter-spacing: -0.015em; }
 .panel-icon,
 .panel-icon-sq {
     display: grid;
     place-items: center;
-    width: 30px;
-    height: 30px;
+    width: 34px;
+    height: 34px;
     flex: none;
-    border-radius: 9px;
+    border-radius: 12px;
     background: var(--wc-blue-mist);
     font-size: 15px;
     line-height: 1;
@@ -4796,8 +5168,12 @@ body.sidebar-collapsed .app-sidebar .sidebar-nav { padding: 5px; }
     padding: 0;
     overflow: auto;
     /* Topbar, page header, toolbar and the app's own padding come to
-       roughly 300px at 1280x800; the rest of the viewport is rows. */
-    max-height: calc(100vh - 300px);
+       roughly 300px at 1280x800; the rest of the viewport is rows.
+       The topbar grew 16px in the 2026-08-15 overhaul and the roster
+       is the one screen where that has to be paid back rather than
+       absorbed: density beats decoration here, and 13 rows above the
+       fold is the number this table was measured against. */
+    max-height: calc(100vh - 253px);
 }
 .wc-roster-table thead th {
     position: sticky;
@@ -4810,75 +5186,192 @@ body.sidebar-collapsed .app-sidebar .sidebar-nav { padding: 5px; }
    7. DASHBOARD
    ------------------------------------------------------------ */
 
-.wc-dash-main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+/* THREE COLUMNS, which is what 02 is.
+   Identity + tiles + gauge on the left, the events timeline in the
+   middle, the activity feed on the right. The app's own sidebar is
+   the reference's fourth column, so .wu-shell-inset drops the rail
+   and this re-splits what is left.
+
+   The middle column is the widest because it is the one with a list
+   in it. The feed has a floor of 290px: below that a category pill
+   and a timestamp stop fitting on one line with a name. */
+/* Two class names, because wildcat-ui.css loads after this file and
+   .wu-shell-inset would otherwise win the tie on source order and put
+   the feed on a second row. */
+.wu-shell-inset.wc-dash3 {
+    display: grid;
+    grid-template-columns: minmax(272px, 1fr) minmax(0, 1.08fr) minmax(296px, 1.02fr);
+    gap: var(--wu-s5, 20px);
+    align-items: start;
+}
+.wc-dash-main { display: flex; flex-direction: column; gap: var(--wu-s5, 20px); min-width: 0; }
+.wc-dash-mid  { display: flex; flex-direction: column; gap: var(--wu-s5, 20px); min-width: 0; }
+
+/* Two tiles across, as 02 and 05 both set them. A third wraps under
+   and spans, which is honest: it is one figure, not half a row. */
 .wc-dash-tiles {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-    gap: 14px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--wu-s3, 12px);
 }
-.wc-identity-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    flex-wrap: wrap;
-}
+.wc-dash-tiles > .wu-tile:nth-child(3):last-child { grid-column: 1 / -1; }
+
+/* The identity card's badge overlaps the corner, so the wrapper it
+   sits in must not clip. */
+.wc-identity-wrap { position: relative; padding-top: 8px; padding-left: 8px; }
+
 .wc-identity-cycle {
-    margin-top: var(--wu-s4, 16px);
+    margin-top: var(--wu-s3, 12px);
     font-size: 12.5px;
     font-variant-numeric: tabular-nums;
     color: rgba(255, 255, 255, 0.82);
 }
+
+/* WHITE, like every other card. Measured: the reference's card
+   surface is #FFFFFF with no tint anywhere, including the one this
+   gauge sits on. It was a sunk grey for one build, which is the
+   wrong fix for the right instinct — the gauge card does need to
+   read as an instrument rather than as another tile, and what does
+   that is the arc, the charcoal remainder and the two rings, not a
+   different colour of card. */
+.wu-panel.wc-dash-gauge { background: var(--wu-surface, #FFFFFF); }
+/* One per row here: the dashboard's left column is not wide enough
+   for two of them without truncating the grade they name. */
+.wc-dash-gauge .wu-subrings { grid-template-columns: 1fr; }
 .wc-gauge-body {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: space-between;
-    gap: 22px;
-    flex-wrap: wrap;
+    gap: 0;
 }
-.wc-gauge-legs { display: flex; flex-direction: column; gap: 12px; min-width: 150px; }
-.wc-leg {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 14px;
-}
-.wc-leg-name { margin: 2px 0 0; font-size: 14px; font-weight: 600; color: var(--wu-fg, #14161B); }
-.wc-leg .wu-eyebrow { margin: 0; }
+.wc-gauge-legs { width: 100%; }
+
+/* The circular action overlaps the top right corner of the gauge
+   card, the way 02 and 05 both draw it. */
+.wc-dash-gauge { position: relative; overflow: visible; }
+.wc-dash-gauge > .wu-panel-head { padding-right: 58px; }
+.wc-dash-gauge .wu-action { position: absolute; top: 12px; right: -10px; }
 
 /* Panel heads on the dashboard carry an eyebrow above the title. */
 .wc-dash-main .wu-panel-head,
+.wc-dash-mid .wu-panel-head,
 .wu-feed-col .wu-panel-head { align-items: center; }
 .wc-dash-main .wu-panel-head p,
-.wu-feed-col .wu-panel-head p { margin: 0 0 2px; }
+.wc-dash-mid .wu-panel-head p,
+.wu-feed-col .wu-panel-head p { margin: 0 0 3px; }
 
-.wu-feed-col { position: sticky; top: calc(var(--wc-topbar-h) + 18px); }
+.wu-feed-col { position: sticky; top: calc(var(--wc-topbar-h) + 12px); min-width: 0; }
+
+/* A bell schedule's name can be long enough to fold the panel title
+   onto a second line. The title is the heading; the chip is a note. */
+#dashScheduleChip {
+    max-width: 48%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-block;
+}
+.wc-dash-mid .wu-panel-title { white-space: nowrap; }
+
+/* The feed's chip row is ONE line that scrolls, as 04 draws it. Two
+   rows of chips push the first card below the fold, and the row is a
+   filter rather than a menu: it does not need to show everything at
+   once to be usable. */
+.wu-feed-col .wu-filters {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.wu-feed-col .wu-filters::-webkit-scrollbar { display: none; }
+
+/* The phone's own composition. Not the desktop one reflowed: a
+   teacher who opens this on a phone is standing in front of a class
+   and is going to award a ticket, so the award flow leads and
+   everything that is context follows it. Hidden at desk widths
+   because the sidebar is already on screen there.
+
+   Resting state is VISIBLE — this is markup that is always in the
+   page and is switched by a media query, never by script and never
+   by an animation. */
+.wc-dash-quick { display: none; }
+@media (max-width: 900px) {
+    .wc-dash-quick {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: var(--wu-s3, 12px);
+    }
+    .wc-dash-quick .wc-quick-btn {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        padding: 14px 15px;
+        border: 1px solid var(--wu-hair-strong, rgba(19, 34, 58, .14));
+        border-radius: var(--wu-r-panel, 22px);
+        background: var(--wu-surface, #fff);
+        box-shadow: var(--wu-shadow-1);
+        font: inherit;
+        font-size: 14px;
+        font-weight: 650;
+        color: var(--wu-fg, #14161B);
+        text-align: left;
+        cursor: pointer;
+        min-width: 0;
+    }
+    .wc-dash-quick .wc-quick-btn:first-child {
+        background: var(--wc-blue);
+        border-color: var(--wc-blue);
+        color: #fff;
+    }
+    .wc-dash-quick .wc-quick-btn:first-child .wu-rail-icon { background: rgba(255,255,255,.22); color: #fff; }
+    .wc-dash-quick .wc-quick-btn span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .wc-dash-quick .wu-rail-icon { width: 28px; height: 28px; border-radius: 9px; font-size: 13px; }
+    /* Press feedback only. This is the award path. */
+    .wc-dash-quick .wc-quick-btn:active { transform: scale(0.98); }
+}
+
+/* Two columns before one: at tablet width the feed is context and
+   goes under the work, but the identity and the day are still worth
+   seeing side by side. */
+@media (max-width: 1240px) {
+    .wu-shell-inset.wc-dash3 { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); }
+    .wc-dash3 > .wu-feed-col { grid-column: 1 / -1; position: static; }
+}
+@media (max-width: 900px) {
+    /* One column, and the order is the PHONE's order rather than the
+       desk's flow: who you are and what you came to do, then the day,
+       then the numbers, then what happened.
+
+       display:contents dissolves the left column so its four cards
+       become grid items in their own right and can be interleaved
+       with the timeline. Without it the phone would get the desktop
+       column order with the timeline stranded at the bottom. */
+    .wu-shell-inset.wc-dash3 { grid-template-columns: 1fr; gap: var(--wu-s4, 16px); }
+    .wc-dash-main { display: contents; }
+    .wc-dash-mid { gap: var(--wu-s4, 16px); }
+    .wc-identity-wrap { order: 1; }
+    .wc-dash-quick     { order: 2; }
+    .wc-dash-mid       { order: 3; }
+    .wc-dash-tiles     { order: 4; }
+    .wc-dash-gauge     { order: 5; }
+    .wc-dash3 > .wu-feed-col { order: 6; }
+}
 
 /* ------------------------------------------------------------
    8. STUDENT DETAIL MODAL
    ------------------------------------------------------------
-   The header was the last purple gradient in the app. It is now
-   the reference's identity card, doing the job it does there.
+   05-student-detail-staff-view is the spec: an identity header, two
+   stat tiles, and a gauge with two ringed sub-figures. Ours is that,
+   with initials where the reference has a photograph of a child.
+
+   The header no longer runs edge to edge across the top of the
+   modal. In 05 the identity card is a rounded card INSET on the
+   sheet, with a circular badge overlapping its top-left corner, and
+   that inset is most of why the reference reads as generous.
    ------------------------------------------------------------ */
 
-.sp-header { border-radius: 20px 20px 0 0; padding: 30px 34px; }
-.sp-head-row { display: flex; align-items: center; gap: 18px; }
-.sp-head-avatar {
-    display: grid;
-    place-items: center;
-    width: 68px;
-    height: 68px;
-    flex: none;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.28);
-    font-size: 24px;
-    font-weight: 700;
-    letter-spacing: 0.01em;
-    color: #ffffff;
-}
-.sp-head-text { min-width: 0; }
-.sp-head-text .wu-identity-title { font-size: clamp(22px, 2.6vw, 28px); }
+#studentProfileModal > div { padding-top: 18px; }
+.sp-headwrap { position: relative; padding: 4px 20px 0 26px; }
+.sp-header { border-radius: var(--wu-r-card, 28px); padding: 26px 26px 22px; }
+.sp-header .wu-identity-title { font-size: clamp(26px, 3vw, 34px); }
 .sp-head-meta {
     margin: 6px 0 0;
     font-size: 13.5px;
@@ -4887,14 +5380,40 @@ body.sidebar-collapsed .app-sidebar .sidebar-nav { padding: 5px; }
 }
 .sp-head-badge {
     display: inline-block;
-    margin-top: 16px;
+    margin-top: 14px;
     padding: 6px 14px;
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.18);
     font-size: 12.5px;
     font-weight: 650;
 }
-#studentProfileModal .sp-tabs { border-radius: 0; }
+/* Two tiles across, then the gauge, exactly as 05 stacks them. */
+.sp-figures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.wu-panel.sp-gauge-card { position: relative; overflow: visible; background: var(--wu-surface, #FFFFFF); margin-bottom: 22px; }
+.sp-gauge-card .wu-action { position: absolute; top: 12px; right: -10px; }
+.sp-gauge-body { display: flex; flex-direction: column; align-items: center; }
+#studentProfileModal .sp-tabs { border-radius: 0; margin-top: 18px; }
+
+/* The desk composition. 05 is a phone panel; run across 900px it
+   becomes a column of very wide, very empty cards, so the figures
+   take a fixed column on the left and the history — the thing with
+   rows in it — takes the rest. Folds to 05's own single column at
+   760px, which is where the two columns stop being readable. */
+.sp-points-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+    gap: 20px;
+    align-items: start;
+}
+.sp-col { min-width: 0; }
+@media (max-width: 760px) {
+    .sp-points-grid { grid-template-columns: 1fr; gap: 16px; }
+}
+@media (max-width: 460px) {
+    /* Two ringed sub-figures across a phone modal leave about 70px for
+       a label, which truncates the word it is naming. */
+    .sp-gauge-card .wu-subrings { grid-template-columns: 1fr; }
+}
 
 /* ------------------------------------------------------------
    9. HOVER — gated, no exceptions
@@ -4902,15 +5421,21 @@ body.sidebar-collapsed .app-sidebar .sidebar-nav { padding: 5px; }
 
 @media (hover: hover) and (pointer: fine) {
     .sidebar-toggle:hover,
-    .btn-topbar:hover { background: rgba(255, 255, 255, 0.13); }
-    .btn-topbar-logout:hover { background: var(--wc-blue-dark); }
+    .btn-topbar:hover {
+        background: var(--wc-blue-mist);
+        border-color: var(--wc-blue-pale);
+        color: var(--wc-blue-deep);
+    }
+    .btn-topbar-logout:hover { background: var(--wc-blue-dark); border-color: var(--wc-blue-dark); color: #fff; }
 
     .app-sidebar .tab:hover {
-        background: var(--wu-ink-600, #24262E);
-        color: var(--wu-fg-on-ink, #F6F4EF);
+        background: var(--wu-surface-sunk, #F4F7FA);
+        color: var(--wu-fg, #14161B);
         box-shadow: none;
     }
-    .app-sidebar .tab.active:hover { background: rgba(47, 103, 167, 0.44); color: #fff; }
+    .app-sidebar .tab.active:hover { background: var(--wc-blue-mist); color: var(--wc-blue-deep); }
+    .mode-card-active:hover { background: color-mix(in srgb, var(--wc-orange) 20%, transparent); }
+    .sidebar-banner-link:hover span { background: rgba(255, 255, 255, 0.32); }
 
     .subtab-button:hover,
     .settings-subtab-button:hover {
@@ -4944,9 +5469,8 @@ body.sidebar-collapsed .app-sidebar .sidebar-nav { padding: 5px; }
     .wc-btn-word { display: none; }
     .wc-roster-table { max-height: none; }
     .wc-roster-table thead th { position: static; }
-    .sp-header { padding: 22px 20px; }
-    .sp-head-row { gap: 14px; }
-    .sp-head-avatar { width: 54px; height: 54px; font-size: 19px; }
+    .sp-headwrap { padding: 4px 12px 0 18px; }
+    .sp-header { padding: 22px 20px 18px; }
     .wc-gauge-body { justify-content: center; }
     .wc-gauge-legs { min-width: 0; width: 100%; }
 }
@@ -4970,11 +5494,13 @@ body.sidebar-collapsed .app-sidebar .sidebar-nav { padding: 5px; }
    padding since the first version of this app. With the shell
    filling the window that gradient was only ever visible as a
    purple picture frame around the console — and body.raffle-mode
-   re-declared it, so the ink rule further up never won.
+   re-declared it, so the rule further up never won.
 
-   The frame is ink now. The padding is dropped only while the app
-   shell is on screen: the login card still floats on the field and
-   still wants its inset.
+   The frame was ink for one morning. It is the pale field now, the
+   same one the whole app sits on, which is what makes the topbar
+   read as part of the page rather than as a lid on it. The padding
+   is dropped only while the app shell is on screen: the login card
+   still floats on the field and still wants its inset.
    ------------------------------------------------------------ */
 
 body,
@@ -4982,9 +5508,16 @@ body.raffle-mode,
 body.cash-mode,
 body.hallpass-mode,
 body.discipline-mode {
-    background: var(--wu-ink-900, #0B0B0E);
+    background: var(--wu-paper, #F2F6FB);
 }
-body:has(#mainApp:not(.hidden)) { padding: 0; }
+body:has(#mainApp:not(.hidden)) { padding: 0; margin: 0; }
+/* The margin, as well as the padding. styles.css:44 is a dead
+   selector — a stray escape makes it "n*" — so the app has always
+   carried the user agent's 8px body margin, which drew a pale gutter
+   around the console and cost the roster 8px of the one thing that
+   screen is short of. This does NOT repair line 44: it is scoped to
+   the shell being on screen, so the login card keeps its inset and
+   nothing outside #mainApp reflows. */
 
 /* ------------------------------------------------------------
    13. ROSTER ROWS
@@ -5081,9 +5614,9 @@ body:has(#mainApp:not(.hidden)) { padding: 0; }
 .wc-badge-locked { background: color-mix(in srgb, var(--wu-good, #1F7A4D) 14%, transparent); color: var(--wu-good, #1F7A4D); }
 .wc-badge-track  { background: color-mix(in srgb, var(--wc-orange) 15%, transparent); color: #8A4413; }
 
-/* Student detail modal: close control, top right of the header. */
-.sp-close { position: absolute; top: 18px; right: 18px; z-index: 10; font-size: 20px; }
-#studentProfileModal > div { border-radius: 20px; }
+/* Student detail modal: close control, top right of the sheet. */
+.sp-close { position: absolute; top: 20px; right: 20px; z-index: 10; font-size: 20px; }
+#studentProfileModal > div { border-radius: var(--wu-r-card, 28px); }
 
 /* The badges row's empty state. */
 #profileBadges:empty { display: none; }
@@ -5097,6 +5630,26 @@ body:has(#mainApp:not(.hidden)) { padding: 0; }
     #ticketsTable .student-link:hover { color: var(--wc-blue-deep); }
 }
 
+/* ------------------------------------------------------------
+   ROSTER DENSITY — the rule that outranks the reference
+   ------------------------------------------------------------
+   The reference's air is the aesthetic everywhere except here. 623
+   rows is what this screen is for, and 13 of them above the fold at
+   1280x800 is the number it was measured against. The 2026-08-15
+   overhaul added a taller topbar and larger radii and cost two of
+   them, so everything between the topbar and the first row is
+   compressed back on this screen only. Nothing about a ROW changed:
+   the density is bought above the table, not inside it.
+   ------------------------------------------------------------ */
+@media (min-width: 901px) {
+    #students.tab-content { margin-top: -4px; }
+    #students .page-header { margin-bottom: 6px; }
+    #students .page-subtitle { display: none; }
+    #students .wc-roster-bar { padding: 7px 12px; margin-bottom: 6px; }
+    #students .wc-roster-bar .wu-btn { padding: 7px 11px; }
+    #students .wc-roster-search { padding: 7px 11px; }
+}
+
 /* The roster figures now live in the page header. */
 .page-header .wc-roster-figs { align-items: center; gap: 20px; }
 .page-header .wc-roster-fig-num { font-size: 22px; }
@@ -5104,17 +5657,13 @@ body:has(#mainApp:not(.hidden)) { padding: 0; }
 .wc-roster-bar { gap: 12px; }
 .wc-roster-search { width: 190px; }
 
-/* The sidebar is sticky and one viewport tall, so on any page longer
-   than the window its ink ran out partway down and the page showed a
-   white notch under the nav. The ink belongs to the row, not to the
-   sticky element inside it. */
-.app-body { background: var(--wu-ink-900, #0B0B0E); }
-.app-content { background: var(--wu-paper, #F7F8FA); }
-@media (max-width: 900px) {
-    /* The sidebar is a fixed drawer here, so the row must not paint ink
-       behind the content. */
-    .app-body { background: var(--wu-paper, #F7F8FA); }
-}
+/* One field, all the way across. The sidebar is sticky and one
+   viewport tall, so on any page longer than the window its own
+   background ran out partway down; the field belongs to the row, not
+   to the sticky element inside it. Now that the rail is a white card
+   on the same pale field as the content, both are simply the field. */
+.app-body { background: var(--wu-paper, #F2F6FB); }
+.app-content { background: transparent; padding: 6px 22px 28px; }
 
 /* Money columns on the Cash tables. Right aligned and tabular so a
    column of dollars can be compared by eye, which is the only reason
@@ -5142,6 +5691,13 @@ body:has(#mainApp:not(.hidden)) { padding: 0; }
    dashboard identity card, and the cycle and week are on both the
    identity card and the week tracker.
    ------------------------------------------------------------ */
+
+@media (max-width: 460px) {
+    /* "Award Tickets" has to fit on a 390pt phone without an ellipsis:
+       it is the one control on this screen a teacher came for. */
+    .wc-dash-quick .wc-quick-btn { gap: 8px; padding: 13px 11px; font-size: 13px; }
+    .wc-dash-quick .wu-rail-icon { width: 26px; height: 26px; font-size: 12px; }
+}
 
 @media (max-width: 700px) {
     .app-topbar { gap: 8px; padding: 0 10px; }

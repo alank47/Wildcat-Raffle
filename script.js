@@ -13700,19 +13700,27 @@
             // leans on student avatars; we have no student photos, and putting
             // a child's face on a screen that gets projected in a classroom is
             // a decision nobody at this school has made.
+            // The pill this lands in is white now, so an absent grade uses the
+            // ordinary faint colour rather than a white-on-blue override.
             const gradeText = (student.grade === undefined || student.grade === null || student.grade === '')
-                ? '<span class="wu-absent" style="color:rgba(255,255,255,.66);font-size:inherit;">grade not on file</span>'
+                ? '<span class="wu-absent" style="font-size:inherit;">grade not on file</span>'
                 : `Grade ${student.grade}`;
 
+            // 05-student-detail-staff-view: the school is the display title,
+            // the person is the white pill under it. The pill's chevron goes
+            // to the Profile tab, which is a real destination — a chevron on
+            // a control that does nothing is worse than no chevron.
             document.getElementById('profileHeader').innerHTML = `
-                <div class="sp-head-row">
-                    <div class="sp-head-avatar">${initials}</div>
-                    <div class="sp-head-text">
-                        <p class="wu-eyebrow" style="color: rgba(255,255,255,.72);">Student</p>
-                        <h2 class="wu-identity-title">${student.firstName} ${student.lastName}</h2>
-                        <p class="sp-head-meta">ID ${student.id} &middot; ${gradeText}</p>
-                    </div>
-                </div>
+                <h2 class="wu-identity-title"><span class="wu-line">Westbrook</span><span class="wu-line">Academy</span></h2>
+                <button type="button" class="wu-person" onclick="switchStudentProfileTab('profile')"
+                        aria-label="Open this student's profile">
+                    <span class="wu-avatar" aria-hidden="true">${initials}</span>
+                    <span class="wu-person-main">
+                        <span class="wu-person-name">${student.firstName} ${student.lastName}</span>
+                        <span class="wu-person-sub">${gradeText} &middot; ID ${student.id}</span>
+                    </span>
+                    <span class="wu-person-chev" aria-hidden="true">&#8250;</span>
+                </button>
                 ${isQualifiedForJackpot(student)
                     ? '<span class="sp-head-badge">&#127942; Qualified for Wildcat Jackpot</span>'
                     : ''}
@@ -13732,7 +13740,7 @@
             
             if (badges.length > 0) {
                 document.getElementById('profileBadges').innerHTML = `
-                    <h3 style="margin: 0 0 15px 0; color: #333; font-size: 18px;">🏅 Achievements</h3>
+                    <p class="wu-eyebrow" style="margin: 0 0 10px;">Achievements</p>
                     <div style="display: flex; gap: 12px; flex-wrap: wrap;">
                         ${badges.map(badge => `
                             <div style="background: ${badge.color}; color: white; padding: 12px 20px; border-radius: 25px; font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
@@ -13743,7 +13751,12 @@
                     </div>
                 `;
             } else {
-                document.getElementById('profileBadges').innerHTML = '<div style="text-align: center; padding: 20px; color: #999; font-style: italic;">Keep earning tickets to unlock achievements! 🌟</div>';
+                // Quiet. It was a centred italic sentence with 20px of padding
+                // sitting between the identity card and the figures, which is
+                // the loudest position on the screen for the one thing on it
+                // that is not a fact about this student.
+                document.getElementById('profileBadges').innerHTML =
+                    '<p class="wu-absent" style="margin:0;">No achievements unlocked yet.</p>';
             }
             
             // Every open is a different student, so every open is genuinely
@@ -13758,6 +13771,39 @@
             wcCount('profileTotalTickets', totalTickets);
             wcCount('profileWeeksQualified', weeksQualified);
             wcCount('profileLifetimeTickets', lifetimeTickets);
+
+            // ---- The hero gauge, as 05 sets it -----------------------
+            // Weeks this student has kept, against the length of the cycle.
+            // bigRaffleQualified is the array the app actually stores, so both
+            // rings come off one fact rather than two guesses.
+            //
+            // A cycle length nobody has configured is not a cycle length of
+            // zero: with no duration there is nothing to be a fraction OF, and
+            // the arc stays empty rather than reading as a perfect score.
+            const spDuration = (typeof cycleDuration === 'number' && cycleDuration > 0) ? cycleDuration : null;
+            const spWeekNow = (typeof currentWeek === 'number') ? currentWeek : null;
+            const spKept = Array.isArray(student.bigRaffleQualified)
+                ? student.bigRaffleQualified.length
+                : (student.bigRaffleQualified === true ? 1 : 0);
+            const spSoFar = (spWeekNow === null || spDuration === null)
+                ? null : Math.max(0, Math.min(spWeekNow, spDuration));
+            const spMissed = (spSoFar === null) ? null : Math.max(0, spSoFar - spKept);
+
+            wcSetGauge(document.getElementById('profileGauge'),
+                spDuration === null ? null : Math.min(1, spKept / spDuration),
+                spDuration === null
+                    ? 'Weeks qualified this cycle: no cycle length set'
+                    : `Qualified in ${spKept} of ${spDuration} weeks this cycle`);
+
+            const spLegs = document.getElementById('profileGaugeLegs');
+            if (spLegs) {
+                spLegs.innerHTML = spDuration === null
+                    ? '<p class="wu-absent">No cycle length has been set, so weeks cannot be counted against one.</p>'
+                    : '<div class="wu-subrings">' +
+                        wcSubring('Weeks kept', 'of ' + spDuration, spKept, 'good') +
+                        wcSubring('Weeks missed', spSoFar === null ? 'no week set' : 'of ' + spSoFar, spMissed, 'bad') +
+                      '</div>';
+            }
             
             // Add behavior referral count if superadmin
             const studentReferrals = behaviorReferrals.filter(r => r.studentId === studentId);
@@ -16831,7 +16877,69 @@
                 stack.classList.remove('wp-noanim');
             }
 
+            // Every number above has already been written. wpSyncWide only
+            // moves a body between two containers and paints a panel; it
+            // reads no geometry and changes none.
+            wpSyncWide();
             wpMeasureFit();
+        }
+
+        /**
+         * The desk composition.
+         *
+         * On a phone the portal IS the card stack: a student holds one card
+         * up at a scanner and the rest are strips above it. That geometry was
+         * measured against Apple Wallet and it stays exactly as it is.
+         *
+         * On a desk the same stack centred in a 414px column on a 1440px
+         * screen is a phone in a picture frame. So from 1000px the open
+         * card's BODY moves out of the card and into a panel beside it: the
+         * cards sit next to their own detail instead of underneath it.
+         *
+         * MOVED, NOT COPIED, and that is the whole design:
+         *   - there is only ever one barcode element in the document, so it
+         *     is never redrawn and never rescaled by being rebuilt;
+         *   - nothing about the stack's geometry depends on it. wpLayout
+         *     writes each card's height, clip and transform explicitly, so a
+         *     card with its body elsewhere is the same box it always was.
+         *
+         * Idempotent, and safe to call after every layout: it only touches a
+         * node whose parent is already wrong.
+         */
+        function wpSyncWide() {
+            const view = wpById('studentPassView');
+            const panel = wpById('wpDetail');
+            const stack = wpById('wpStack');
+            if (!view || !panel || !stack) return;
+
+            // The view's own width, not the window's: this surface is fixed
+            // to the viewport, and asking the element is one fewer thing that
+            // can disagree with the media query in styles.css.
+            const wide = view.clientWidth >= 1000;
+            view.classList.toggle('wp-wide', wide);
+
+            const cards = stack.querySelectorAll('.wp-card');
+            for (let i = 0; i < cards.length; i++) {
+                const card = cards[i];
+                const idx = card.dataset.i;
+                let body = card.querySelector(':scope > .wp-body');
+                if (!body) body = panel.querySelector(':scope > .wp-body[data-i="' + idx + '"]');
+                if (!body) continue;
+                const wantsPanel = wide && card.classList.contains('is-open');
+                if (wantsPanel && body.parentElement !== panel) panel.appendChild(body);
+                else if (!wantsPanel && body.parentElement !== card) card.appendChild(body);
+            }
+
+            const open = stack.querySelector('.wp-card.is-open');
+            const label = wpById('wpDetailLabel');
+            const lead = wpById('wpDetailLead');
+            if (open) {
+                // The panel wears the open card's own face, so the card and
+                // its detail read as one object rather than two.
+                panel.setAttribute('style', open.dataset.face || '');
+                if (label) label.textContent = open.dataset.label || '';
+                if (lead) lead.textContent = open.dataset.lead || '';
+            }
         }
 
         /**
@@ -16980,16 +17088,28 @@
             const stack = wpById('wpStack');
             if (!stack) return;
 
+            // A body parked in the wide layout's detail panel belongs to a
+            // card that is about to stop existing. It goes first, or the
+            // next wpSyncWide finds an orphan with no card to go home to.
+            const parked = document.querySelectorAll('#wpDetail > .wp-body');
+            for (let i = 0; i < parked.length; i++) parked[i].remove();
+
             stack.innerHTML = cards.map(function (c, i) {
                 return '<article class="wp-card' + (c.cls ? ' ' + c.cls : '') + '"' +
                     ' role="tab" tabindex="0" data-i="' + i + '"' +
+                    // The face is kept as data as well as inline style, so the
+                    // wide layout's detail panel can wear the same one without
+                    // inheriting the transform and clip wpLayout writes.
+                    ' data-face="' + wpEsc(c.face) + '"' +
+                    ' data-label="' + wpEsc(c.label) + '"' +
+                    ' data-lead="' + wpEsc(c.lead) + '"' +
                     ' aria-label="' + wpEsc(c.label + '. ' + c.lead) + '"' +
                     ' style="' + c.face + '">' +
                     '<div class="wp-head">' +
                       '<span class="wp-label">' + wpEsc(c.label) + '</span>' +
                       '<span class="wp-lead' + (c.quiet ? ' is-quiet' : '') + '">' + wpEsc(c.lead) + '</span>' +
                     '</div>' +
-                    '<div class="wp-body">' + c.body + '</div>' +
+                    '<div class="wp-body" data-i="' + i + '">' + c.body + '</div>' +
                     '</article>';
             }).join('');
 
@@ -17533,7 +17653,15 @@
             wpSelected = 0;
             const stack = wpById('wpStack');
             if (stack) { stack.innerHTML = ''; stack.style.height = ''; }
-            ['wpName', 'wpMeta', 'wpAsOf'].forEach(function (id) {
+            // A body parked in the wide layout's panel outlives the stack
+            // that owned it, so it is cleared here too.
+            const panel = wpById('wpDetail');
+            if (panel) {
+                const parked = panel.querySelectorAll(':scope > .wp-body');
+                for (let i = 0; i < parked.length; i++) parked[i].remove();
+                panel.removeAttribute('style');
+            }
+            ['wpName', 'wpMeta', 'wpAsOf', 'wpAvatar', 'wpDetailLabel', 'wpDetailLead'].forEach(function (id) {
                 const el = wpById(id);
                 if (el) el.textContent = '';
             });
@@ -17597,7 +17725,15 @@
             const s = pass.student || {};
             const nameEl = wpById('wpName');
             const metaEl = wpById('wpMeta');
-            if (nameEl) nameEl.textContent = ((s.firstName || '') + ' ' + (s.lastName || '')).trim();
+            const fullName = ((s.firstName || '') + ' ' + (s.lastName || '')).trim();
+            if (nameEl) nameEl.textContent = fullName;
+            const avEl = wpById('wpAvatar');
+            if (avEl) {
+                const parts = fullName.split(/\s+/).filter(Boolean);
+                avEl.textContent = parts.length
+                    ? parts.slice(0, 2).map(function (x) { return x.charAt(0).toUpperCase(); }).join('')
+                    : '';
+            }
             if (metaEl) {
                 metaEl.textContent = [
                     s.grade ? 'Grade ' + s.grade : '',
@@ -24027,11 +24163,21 @@
                 wcSplitLeadingEmoji(h, 'page-ico', 'page-word');
             });
 
+            // The topbar avatar. Initials of the name the app has already
+            // written beside it, never a photograph. Recomputed each time
+            // rather than cached, because establishTeacherSession writes the
+            // name after this may first have run.
+            const av = document.getElementById('topbarAvatar');
+            const nameEl = document.getElementById('currentUserName');
+            if (av && nameEl) av.textContent = wcInitials(nameEl.textContent);
+
+            try { wcRenderSidebarBanner(); } catch (e) { /* cosmetic only */ }
+            try { wcRenderRailDots(); } catch (e) { /* cosmetic only */ }
+
             // A nav group whose every item is hidden by the current mode still
-            // drew its card and its heading: an empty ink bar with the word
-            // "Insights" above it. The items are hidden by CSS rules
-            // (body.cash-mode #dataTab and friends), not by inline styles, so
-            // only a computed style can tell.
+            // drew its heading: the word "Insights" over nothing. The items are
+            // hidden by CSS rules (body.cash-mode #dataTab and friends), not by
+            // inline styles, so only a computed style can tell.
             //
             // This hides the GROUP, never an item. Nothing here decides who
             // may see what: .admin-only, .super-admin-only and the mode rules
@@ -24053,12 +24199,109 @@
             });
         }
 
+        /** Up to two initials, or an em dash when there is no name to read. */
+        function wcInitials(name) {
+            const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+            if (!parts.length) return '—';
+            return parts.slice(0, 2).map(p => p.charAt(0).toUpperCase()).join('');
+        }
+
+        /**
+         * The unread dot.
+         *
+         * 01-side-nav-layout puts a small red dot on one nav item, and the
+         * only honest thing in this app to put one on is a hall pass REQUEST
+         * that is waiting on somebody: it is addressed to a person, it has not
+         * been answered, and answering it is a thing they came here to do.
+         *
+         * The dot is REMOVED as well as added on every pass. An indicator that
+         * is always lit is not an indicator, and one that is left behind after
+         * the last request is answered is worse than none.
+         */
+        function wcRenderRailDots() {
+            const passes = Array.isArray(hallPasses) ? hallPasses : [];
+            const mine = passes.filter(p => {
+                if (!p) return false;
+                const state = String(p.status || '').toLowerCase();
+                if (state !== 'requested' && state !== 'pending') return false;
+                // A teacher only sees the ones routed to them. Anybody with a
+                // wider role sees the school's.
+                if (currentUser && currentUser.role === 'teacher') {
+                    return String(p.teacherId || '') === String(currentUser.id || '');
+                }
+                return true;
+            }).length;
+
+            // The place a request is answered is Claw Pass -> My Class. When
+            // that mode is not open, the mode card is the way to it.
+            wcRailDot(document.getElementById('sideSub_hallpass_myClass'), mine > 0);
+            const modeCard = document.getElementById('modeCard');
+            const inHallPass = document.body.classList.contains('hallpass-mode');
+            wcRailDot(modeCard, mine > 0 && !inHallPass);
+        }
+
+        function wcRailDot(el, on) {
+            if (!el) return;
+            const had = el.querySelector(':scope > .wu-rail-dot');
+            if (on && !had) {
+                const dot = document.createElement('span');
+                dot.className = 'wu-rail-dot';
+                dot.setAttribute('aria-hidden', 'true');
+                el.appendChild(dot);
+            } else if (!on && had) {
+                had.remove();
+            }
+        }
+
+        /**
+         * The banner slot at the foot of the rail.
+         *
+         * 01 calls it "seasonal banner space — for announcements or school
+         * campaigns". The reference fills it with an upsell; there is nothing
+         * to sell in a school system, so it carries the one school-wide notice
+         * this app actually owns — which cycle and week the school is in, and
+         * what happens at the end of the week.
+         *
+         * It never invents one. With no cycle set it says so, in the same
+         * voice every other missing value in this app uses.
+         */
+        function wcRenderSidebarBanner() {
+            const el = document.getElementById('sidebarBanner');
+            if (!el) return;
+            const cyc = (typeof currentCycle === 'object' && currentCycle) ? currentCycle.cycleNumber : null;
+            const wk = (typeof currentWeek === 'number') ? currentWeek : null;
+            const dur = (typeof cycleDuration === 'number' && cycleDuration) ? cycleDuration : null;
+            const isAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin');
+
+            if (cyc === null || cyc === undefined || wk === null || dur === null) {
+                el.innerHTML =
+                    '<p class="sidebar-banner-eyebrow">Westbrook Academy</p>' +
+                    '<p class="sidebar-banner-title">School notices</p>' +
+                    '<p class="wu-absent">No cycle has been set, so there is nothing to announce here yet.</p>';
+                return;
+            }
+
+            el.innerHTML =
+                '<p class="sidebar-banner-eyebrow">Westbrook Academy</p>' +
+                '<p class="sidebar-banner-title">Cycle ' + escapeHtml(String(cyc)) +
+                    ' &middot; Week ' + escapeHtml(String(wk)) + ' of ' + escapeHtml(String(dur)) + '</p>' +
+                '<p class="sidebar-banner-body">Every ticket count resets when the week is ended.</p>' +
+                (isAdmin
+                    ? '<button type="button" class="sidebar-banner-link admin-only" onclick="switchTab(\'settings\')">' +
+                      'Cycle settings <span aria-hidden="true">&#8594;</span></button>'
+                    : '');
+        }
+
         // ------------------------------------------------------------
         // DASHBOARD
         // ------------------------------------------------------------
 
         // Which day the feed is scoped to. An ISO date, or null for today.
         let wcDashDay = null;
+        // Which category of activity the feed is showing. 'all' or a key from
+        // wcFeedCat(). Reset on nothing: a filter the user chose survives a
+        // re-render, which is the whole point of a filter.
+        let wcFeedFilter = 'all';
 
         function wcIsoDay(d) {
             const dt = (d instanceof Date) ? d : new Date(d);
@@ -24112,6 +24355,51 @@
             return `<div class="wu-tile">${arrow}<div class="wu-tile-label">${escapeHtml(label)}</div>${body}</div>`;
         }
 
+        /**
+         * Drive an arc gauge.
+         *
+         * `rate` is 0..1, or null when there is nothing measured. Null is not
+         * zero: a gauge sitting at the far left with a rounded yellow cap on
+         * it would read as "measured, and none", which is a different fact
+         * from "not measured". .wu-gauge-empty takes the caps away.
+         */
+        function wcSetGauge(el, rate, label) {
+            if (!el) return;
+            const known = (rate !== null && rate !== undefined && !isNaN(rate));
+            const v = known ? Math.max(0, Math.min(1, rate)) : 0;
+            el.style.setProperty('--wu-gauge', v.toFixed(3));
+            el.classList.toggle('wu-gauge-empty', !known || v <= 0);
+            if (label) el.setAttribute('aria-label', label);
+        }
+
+        /** One of the two ringed sub-figures that sit under a gauge. */
+        function wcSubring(kicker, name, value, tone) {
+            const fig = (value === null || value === undefined)
+                ? `<span class="wu-ring"><span class="wu-absent" style="font-size:11px;">&mdash;</span></span>`
+                : `<span class="wu-ring ${tone ? 'wu-ring-' + tone : ''}">${escapeHtml(String(value))}</span>`;
+            return `<div class="wu-subring">
+                        <span class="wu-subring-label">${escapeHtml(kicker)}<b>${escapeHtml(name)}</b></span>
+                        ${fig}
+                    </div>`;
+        }
+
+        /**
+         * Which category an audit entry belongs to.
+         *
+         * The feed's chips and its coloured tags both come from here, so a
+         * chip can never select a category no card can be in. Order matters:
+         * "UNDID Award" is a reversal before it is an award.
+         */
+        function wcFeedCat(entry) {
+            const a = String((entry && entry.action) || '');
+            if (/undid|undo|revers|removed|deduct/i.test(a)) return { key: 'undo', label: 'Reversed', tag: 'wu-tag-undo', icon: '&#8630;' };
+            if (/winner|jackpot|raffle/i.test(a))            return { key: 'win',  label: 'Winner',   tag: 'wu-tag-win',  icon: '&#127942;' };
+            if (/cash|balance|redeem|purchase|store/i.test(a)) return { key: 'cash', label: 'Wildcat Cash', tag: 'wu-tag-cash', icon: '&#128176;' };
+            if (/hall pass|claw pass/i.test(a))              return { key: 'pass', label: 'Claw Pass', tag: 'wu-tag-pass', icon: '&#127915;' };
+            if (/referral|discipline|detention/i.test(a))    return { key: 'flag', label: 'Discipline', tag: 'wu-tag-flag', icon: '&#128681;' };
+            return { key: 'award', label: 'Tickets', tag: 'wu-tag-award', icon: '&#127903;' };
+        }
+
         function renderTeacherDashboard() {
             const host = document.getElementById('dashboard');
             if (!host) return;
@@ -24121,29 +24409,39 @@
             const sections = (currentUser && Array.isArray(currentUser.sections)) ? currentUser.sections : [];
 
             // ---- Identity card -------------------------------------
+            // The reference's identity card carries the SCHOOL as its display
+            // title and the person being viewed in a white pill under it. Ours
+            // is the same: Westbrook Academy on two lines, and the signed-in
+            // member of staff in the pill.
             const name = (currentUser && currentUser.name) ? currentUser.name : 'Signed in';
-            const roleLabel = (currentUser && currentUser.role) ? currentUser.role : '';
-            const initials = name.split(/\s+/).filter(Boolean).slice(0, 2)
-                .map(p => p.charAt(0).toUpperCase()).join('') || '—';
+            const roleLabel = (currentUser && currentUser.role)
+                ? ((typeof getFriendlyRoleName === 'function') ? getFriendlyRoleName(currentUser.role) : currentUser.role)
+                : '';
+            const initials = wcInitials(name);
             const cyc = (typeof currentCycle === 'object' && currentCycle) ? currentCycle.cycleNumber : null;
             const wk = (typeof currentWeek === 'number') ? currentWeek : null;
             const dur = (typeof cycleDuration === 'number' && cycleDuration) ? cycleDuration : 5;
 
             const idEl = document.getElementById('dashIdentity');
             if (idEl) {
+                // The chevron is on a pill that GOES somewhere — My Activity,
+                // which every role has. A chevron on a control that does
+                // nothing is worse than no chevron.
                 idEl.innerHTML = `
-                    <p class="wu-eyebrow" style="color: rgba(255,255,255,.72);">Westbrook Academy</p>
-                    <h3 class="wu-identity-title">${escapeHtml(name)}</h3>
-                    <div class="wc-identity-row">
-                        <span class="wu-person" role="note">
-                            <span class="wu-avatar">${escapeHtml(initials)}</span>
-                            ${escapeHtml(roleLabel || 'staff')}
-                            ${sections.length
-                                ? ` &middot; ${sections.length} section${sections.length === 1 ? '' : 's'}`
-                                : ' &middot; <span style="opacity:.72">no sections assigned</span>'}
+                    <h3 class="wu-identity-title"><span class="wu-line">Westbrook</span><span class="wu-line">Academy</span></h3>
+                    <button type="button" class="wu-person" onclick="switchTab('myActivity')"
+                            aria-label="Open My Activity">
+                        <span class="wu-avatar" aria-hidden="true">${escapeHtml(initials)}</span>
+                        <span class="wu-person-main">
+                            <span class="wu-person-name">${escapeHtml(name)}</span>
+                            <span class="wu-person-sub">${escapeHtml(roleLabel || 'staff')}${sections.length
+                                ? ' &middot; ' + sections.length + ' section' + (sections.length === 1 ? '' : 's')
+                                : (currentUser && currentUser.role === 'teacher'
+                                    ? ' &middot; <span class="wu-absent" style="font-size:inherit;">no sections assigned</span>'
+                                    : '')}</span>
                         </span>
-                        <span class="wc-identity-cycle">Cycle ${cyc ?? '&mdash;'} &middot; Week ${wk ?? '&mdash;'} of ${dur}</span>
-                    </div>`;
+                        <span class="wu-person-chev" aria-hidden="true">&#8250;</span>
+                    </button>`;
             }
 
             // ---- Stat tiles ----------------------------------------
@@ -24159,12 +24457,13 @@
             const tiles = document.getElementById('dashTiles');
             if (tiles) {
                 tiles.innerHTML = [
-                    wcTile('Students you can award',
+                    wcTile('Your students',
                         roster === null ? null : roster.length,
                         { absent: 'no sections assigned',
+                          tone: 'brand',
                           onclick: isAdmin ? "switchTab('students')" : null,
                           arrowLabel: 'Open the student roster' }),
-                    wcTile('Qualified for the Jackpot',
+                    wcTile('Jackpot qualified',
                         all.length ? qualified : null,
                         { absent: 'roster not loaded',
                           onclick: isAdmin ? "switchTab('bigRaffle')" : null,
@@ -24172,7 +24471,7 @@
                     // A measured zero here is a real fact: this teacher has
                     // awarded nothing yet this week. It is only absent when
                     // there is no week to count against.
-                    wcTile('Tickets you awarded this week',
+                    wcTile('Your tickets this week',
                         wk === null ? null : myTickets,
                         { absent: 'no week set',
                           onclick: "switchTab('myActivity')",
@@ -24186,11 +24485,10 @@
             const legs = document.getElementById('dashGaugeLegs');
             const rate = all.length ? qualified / all.length : null;
 
-            if (gauge && gaugeVal) {
-                gauge.style.setProperty('--wu-gauge', rate === null ? 0 : rate.toFixed(3));
-                gauge.setAttribute('aria-label', rate === null
-                    ? 'Jackpot qualification rate: no roster loaded'
-                    : `Jackpot qualification rate ${Math.round(rate * 100)} percent`);
+            wcSetGauge(gauge, rate, rate === null
+                ? 'Jackpot qualification rate: no roster loaded'
+                : `Jackpot qualification rate ${Math.round(rate * 100)} percent`);
+            if (gaugeVal) {
                 gaugeVal.innerHTML = rate === null
                     ? '<span class="wu-absent">no roster</span>'
                     : `${Math.round(rate * 100)}%`;
@@ -24218,34 +24516,55 @@
                     } else {
                         const best = ranked[0];
                         const worst = ranked[ranked.length - 1];
-                        legs.innerHTML = `
-                            <div class="wc-leg"><div><p class="wu-eyebrow">Highest</p>
-                                <p class="wc-leg-name">Grade ${escapeHtml(best.g)}</p></div>
-                                <span class="wu-ring wu-ring-good">${best.pct}</span></div>
-                            <div class="wc-leg"><div><p class="wu-eyebrow">Lowest</p>
-                                <p class="wc-leg-name">Grade ${escapeHtml(worst.g)}</p></div>
-                                <span class="wu-ring wu-ring-bad">${worst.pct}</span></div>`;
+                        legs.innerHTML = '<div class="wu-subrings">' +
+                            wcSubring('Highest', 'Grade ' + best.g, best.pct, 'good') +
+                            wcSubring('Lowest', 'Grade ' + worst.g, worst.pct, 'bad') +
+                            '</div>';
                     }
                 }
             }
 
             // ---- Day strip -----------------------------------------
+            // Today first, then backwards. The reference's strip runs forward
+            // from today because its events are lessons still to come; ours
+            // looks back because what is recorded on a day is what happened on
+            // it. Reading order is recency order either way.
             const days = document.getElementById('dashDays');
+            const months = document.getElementById('dashDayMonths');
             const todayIso = wcIsoDay(new Date());
             const selected = wcDashDay || todayIso;
             if (days) {
-                let html = '';
-                for (let i = 6; i >= 0; i--) {
+                const cells = [];
+                for (let i = 0; i < 7; i++) {
                     const d = new Date();
                     d.setDate(d.getDate() - i);
+                    cells.push(d);
+                }
+                days.innerHTML = cells.map((d, i) => {
                     const iso = wcIsoDay(d);
-                    html += `<button type="button" class="wu-day" aria-pressed="${iso === selected}"
-                                     onclick="wcDashPickDay('${iso}')">
+                    const word = i === 0 ? 'Today' : (i === 1 ? 'Yesterday' : '');
+                    return `<button type="button" class="wu-day" aria-pressed="${iso === selected}"
+                                    onclick="wcDashPickDay('${iso}')">
+                                ${word ? `<span class="wu-day-word">${word}</span>` : ''}
                                 <span class="wu-day-dow">${d.toLocaleDateString(undefined, { weekday: 'short' })}</span>
                                 <span class="wu-day-num">${d.getDate()}</span>
                              </button>`;
+                }).join('');
+
+                // The month runs above the strip and only where it changes,
+                // as 03 sets it. A cell is 58px wide with an 8px gap.
+                if (months) {
+                    const runs = [];
+                    cells.forEach(d => {
+                        const label = d.toLocaleDateString(undefined, { month: 'long' });
+                        const last = runs[runs.length - 1];
+                        if (last && last.label === label) last.n += 1;
+                        else runs.push({ label, n: 1 });
+                    });
+                    months.innerHTML = runs.map(r =>
+                        `<span class="wu-days-month" style="min-width:${(r.n * 66) - 8}px;">${escapeHtml(r.label)}</span>`
+                    ).join('');
                 }
-                days.innerHTML = html;
             }
 
             // ---- Timeline: today's periods, and open hall passes ----
@@ -24295,27 +24614,49 @@
 
                 const rows = [];
                 periods.forEach(p => {
-                    // A period this user teaches reads as an event. Every other
-                    // period is still on the strip — a teacher needs to see the
-                    // shape of the day — but it stays quiet, which is the
-                    // reference's rule for a break.
+                    // A period this user teaches reads as an event: a card with
+                    // an icon square, a title and a subtitle. Every other
+                    // period is still on the strip — a teacher needs the shape
+                    // of the day — but it is one quiet outlined line, which is
+                    // exactly how 03 draws a break.
                     const mySection = mySections.get(String(p.period));
                     const start = toMin(p.start);
                     const end = toMin(p.end);
                     const isNow = selected === todayIso && start !== null && end !== null &&
                                   nowMin >= start && nowMin < end;
+                    const span = `${escapeHtml(wcClock(p.start))} &ndash; ${escapeHtml(wcClock(p.end))}`;
+
+                    if (!mySection) {
+                        rows.push({
+                            sort: start === null ? 9999 : start,
+                            html: `
+                            <div class="wu-tl-row wu-tl-break ${isNow ? 'wu-tl-now' : ''}">
+                                <span class="wu-tl-dot" aria-hidden="true"></span>
+                                <div class="wu-tl-card">
+                                    <span class="wu-tl-time">${span}</span>
+                                    <span class="wu-tl-title">Period ${escapeHtml(String(p.period))}</span>
+                                </div>
+                            </div>`
+                        });
+                        return;
+                    }
+
                     rows.push({
                         sort: start === null ? 9999 : start,
                         html: `
-                        <div class="wu-tl-row ${mySection ? '' : 'wu-tl-quiet'} ${isNow ? 'wu-tl-now' : ''}">
-                            <div class="wu-tl-time">${escapeHtml(wcClock(p.start))}</div>
+                        <div class="wu-tl-row ${isNow ? 'wu-tl-now' : ''}">
+                            <span class="wu-tl-dot" aria-hidden="true"></span>
                             <div class="wu-tl-card">
-                                <span class="wu-tl-icon" aria-hidden="true">${mySection ? '&#128218;' : '&#8226;'}</span>
-                                <div class="wu-tl-body">
-                                    <div class="wu-tl-title">${mySection ? escapeHtml(mySection.courseName || 'Your class') : escapeHtml('Period ' + p.period)}</div>
-                                    <div class="wu-tl-sub">${mySection
-                                        ? `Period ${escapeHtml(p.period)} &middot; ${(mySection.students || []).length} students`
-                                        : `${escapeHtml(wcClock(p.start))} &ndash; ${escapeHtml(wcClock(p.end))}`}</div>
+                                <div class="wu-tl-head">
+                                    <span class="wu-tl-time">${span}</span>
+                                    ${isNow ? '<span class="wu-chip wu-chip-good">Now</span>' : ''}
+                                </div>
+                                <div class="wu-tl-main">
+                                    <span class="wu-tl-icon" aria-hidden="true">&#128218;</span>
+                                    <div class="wu-tl-body">
+                                        <div class="wu-tl-title">${escapeHtml(mySection.courseName || 'Your class')}</div>
+                                        <div class="wu-tl-sub">Period ${escapeHtml(String(p.period))} &middot; ${(mySection.students || []).length} students</div>
+                                    </div>
                                 </div>
                             </div>
                         </div>`
@@ -24335,15 +24676,21 @@
                         sort: isNaN(created) ? 9999 : created.getHours() * 60 + created.getMinutes(),
                         html: `
                         <div class="wu-tl-row">
-                            <div class="wu-tl-time">${escapeHtml(created.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))}</div>
+                            <span class="wu-tl-dot" aria-hidden="true"></span>
                             <div class="wu-tl-card">
-                                <span class="wu-tl-icon ${overdue ? 'wu-tl-icon-bad' : 'wu-tl-icon-warn'}" aria-hidden="true">&#127915;</span>
-                                <div class="wu-tl-body">
-                                    <div class="wu-tl-title">${escapeHtml(p.studentName || 'Student')}</div>
-                                    <div class="wu-tl-sub">Out to ${escapeHtml(p.destination || 'unknown')} &middot; ${
-                                        left === null ? '<span class="wu-absent">no return time recorded</span>'
-                                        : overdue ? `${Math.abs(left)} min overdue`
-                                        : `${left} min left`}</div>
+                                <div class="wu-tl-head">
+                                    <span class="wu-tl-time">${escapeHtml(created.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))}</span>
+                                    ${overdue ? '<span class="wu-chip wu-chip-bad">Overdue</span>' : '<span class="wu-chip">Out</span>'}
+                                </div>
+                                <div class="wu-tl-main">
+                                    <span class="wu-tl-icon ${overdue ? 'wu-tl-icon-bad' : 'wu-tl-icon-warn'}" aria-hidden="true">&#127915;</span>
+                                    <div class="wu-tl-body">
+                                        <div class="wu-tl-title">${escapeHtml(p.studentName || 'Student')}</div>
+                                        <div class="wu-tl-sub">Out to ${escapeHtml(p.destination || 'unknown')} &middot; ${
+                                            left === null ? '<span class="wu-absent">no return time recorded</span>'
+                                            : overdue ? `${Math.abs(left)} min overdue`
+                                            : `${left} min left`}</div>
+                                    </div>
                                 </div>
                             </div>
                         </div>`
@@ -24364,6 +24711,7 @@
 
             // ---- Activity feed -------------------------------------
             const feed = document.getElementById('dashFeed');
+            const filterRow = document.getElementById('dashFeedFilters');
             if (feed) {
                 const log = Array.isArray(auditLog) ? auditLog : [];
                 // On today, the feed is what the reference's feed is: the most
@@ -24375,25 +24723,66 @@
                 const scoped = (selected === todayIso)
                     ? log
                     : log.filter(e => e && wcIsoDay(e.timestamp) === selected);
-                const items = scoped.slice(-8).reverse();
+
+                // The chips are built from what is actually in the window, so
+                // a chip can never select an empty result. A filter that can
+                // only ever return nothing is a dead control.
+                const window20 = scoped.slice(-20).reverse();
+                const present = [];
+                window20.forEach(e => {
+                    const c = wcFeedCat(e);
+                    if (!present.some(p => p.key === c.key)) present.push(c);
+                });
+                if (present.length && !present.some(p => p.key === wcFeedFilter)) wcFeedFilter = 'all';
+
+                if (filterRow) {
+                    filterRow.innerHTML = present.length > 1
+                        ? [`<button type="button" class="wu-filter wu-filter-all" aria-pressed="${wcFeedFilter === 'all'}"
+                                    onclick="wcDashPickFilter('all')">All</button>`]
+                            .concat(present.map(c =>
+                                `<button type="button" class="wu-filter" aria-pressed="${wcFeedFilter === c.key}"
+                                         onclick="wcDashPickFilter('${c.key}')">${c.label}</button>`))
+                            .join('')
+                        : '';
+                }
+
+                const items = window20
+                    .filter(e => wcFeedFilter === 'all' || wcFeedCat(e).key === wcFeedFilter)
+                    .slice(0, 8);
+
                 feed.innerHTML = items.length
                     ? items.map(e => {
-                        const action = String(e.action || 'Activity');
-                        const bad = /Removed|UNDID|Deduct/i.test(action);
-                        const win = /Winner/i.test(action);
-                        const icon = win ? '&#127942;' : bad ? '&#8630;' : '&#127915;';
-                        const tone = win ? 'wu-tl-icon-good' : bad ? 'wu-tl-icon-bad' : '';
+                        const cat = wcFeedCat(e);
                         const count = (e.ticketCount === undefined || e.ticketCount === null)
                             ? '' : ` &middot; ${escapeHtml(String(e.ticketCount))}`;
+                        const detail = [
+                            escapeHtml(String(e.reason || e.action || 'Activity')),
+                            e.teacher ? escapeHtml(e.teacher) : ''
+                        ].filter(Boolean).join(' &middot; ') + count;
+
+                        // The quick action exists only where there is somewhere
+                        // to go. "Multiple" is what a bulk reversal writes into
+                        // studentId, and it is not a student.
+                        const sid = String(e.studentId || '');
+                        const known = sid && sid !== 'Multiple' &&
+                            Array.isArray(students) && students.some(s => String(s.id) === sid);
+                        const action = known
+                            ? `<div class="wu-feed-foot"><button type="button" class="wu-quick"
+                                   onclick="openStudentProfile('${escapeHtml(sid)}')">Open student</button></div>`
+                            : '';
+
                         return `
                         <div class="wu-feed-item">
-                            <span class="wu-tl-icon ${tone}" aria-hidden="true">${icon}</span>
-                            <div class="wu-feed-main">
-                                <div class="wu-feed-title">${escapeHtml(e.studentName || action)}</div>
+                            <div class="wu-feed-head">
+                                <span class="wu-feed-ico" aria-hidden="true">${cat.icon}</span>
+                                <div class="wu-feed-main">
+                                    <div class="wu-feed-title">${escapeHtml(e.studentName || e.action || 'Activity')}</div>
+                                    <span class="wu-tag ${cat.tag}">${cat.label}</span>
+                                </div>
+                                <span class="wu-feed-when">${escapeHtml(wcWhen(e.timestamp))}</span>
                             </div>
-                            <span class="wu-feed-when">${escapeHtml(wcWhen(e.timestamp))}</span>
-                            <div class="wu-feed-body">${escapeHtml(action)}${count}${
-                                e.teacher ? ' &middot; ' + escapeHtml(e.teacher) : ''}</div>
+                            <p class="wu-feed-body">${detail}</p>
+                            ${action}
                         </div>`;
                     }).join('')
                     : (log.length
@@ -24404,6 +24793,11 @@
 
         function wcDashPickDay(iso) {
             wcDashDay = iso;
+            renderTeacherDashboard();
+        }
+
+        function wcDashPickFilter(key) {
+            wcFeedFilter = key;
             renderTeacherDashboard();
         }
 
