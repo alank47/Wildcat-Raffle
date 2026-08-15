@@ -615,7 +615,22 @@
       return;
     }
     if (errorEl) errorEl.textContent = '';
-    establishStudentSession(student);
+
+    // Opens the student PORTAL. This used to call establishStudentSession(),
+    // which revealed the legacy #studentDashboard and hid #loginScreen. The
+    // pass cards were a child of #loginScreen, so this line was what blanked
+    // them and put a white card that looks like a login screen in their place.
+    // It only bit once the Convex roster refresh had landed and given the
+    // students array real email addresses, which is why it presented as an
+    // intermittent "dropped back to login" rather than a plain bug.
+    //
+    // openStudentPortal is defined in script.js, which loads after this file
+    // but always before a person can click a sign in button.
+    if (typeof window.openStudentPortal === 'function') {
+      window.openStudentPortal(student);
+    } else if (typeof establishStudentSession === 'function') {
+      establishStudentSession(student);
+    }
   });
 
   window.addEventListener('wildcat-auth-error', function (ev) {

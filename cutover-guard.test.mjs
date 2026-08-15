@@ -362,10 +362,99 @@ console.log("\nNFC tags");
     /addEventListener\('wildcat-auth-signin', \(\) => \{ handleTapArrival/.test(script),
     "a tag opens the app before the student has a session; the slug must survive the redirect",
   );
+  /**
+   * Pull the argument object out of every call to the named mutations,
+   * whatever the whitespace or line breaks look like.
+   *
+   * This used to be one regex matching the whole call on a single line, which
+   * meant a reformat that wrapped the arguments turned the guard off silently
+   * and the suite went red for a reason that had nothing to do with the
+   * property. Brace matching instead of a line shape, so it survives the next
+   * reformat and keeps checking the thing it is here for.
+   *
+   * Anything that is not a plain object literal is reported as such and FAILS,
+   * because a variable or a spread could carry a student identifier in and
+   * this file could not tell.
+   */
+  const mutationArgs = (source, names) => {
+    const out = [];
+    const re = new RegExp(
+      "convexMutation\\(\\s*['\"](?:" + names.join("|") + ")['\"]\\s*,",
+      "g",
+    );
+    let m;
+    while ((m = re.exec(source)) !== null) {
+      let i = re.lastIndex;
+      while (i < source.length && /\s/.test(source[i])) i++;
+      if (source[i] !== "{") { out.push("NOT_AN_OBJECT_LITERAL"); continue; }
+      let depth = 0;
+      const start = i;
+      for (; i < source.length; i++) {
+        if (source[i] === "{") depth++;
+        else if (source[i] === "}") { depth--; if (depth === 0) { i++; break; } }
+      }
+      out.push(source.slice(start, i).replace(/\s+/g, " "));
+    }
+    return out;
+  };
+
+  const tapCalls = mutationArgs(script, ["hallPasses:tap", "hallPasses:beginTap"]);
+
   check(
-    "the tap mutation takes NO studentId",
-    /convexMutation\('hallPasses:tap', \{ locationSlug: slug \}/.test(script),
-    "an id argument would let any session close any student's pass",
+    "the tap mutations are actually called",
+    tapCalls.length >= 2,
+    "the guard below proves nothing if it found nothing: " + JSON.stringify(tapCalls),
+  );
+
+  // A tap must never be attributable to a student the CALLER names. The only
+  // student a tap can belong to is the one the verified token says it is.
+  const namesAStudent = tapCalls.filter((args) =>
+    args === "NOT_AN_OBJECT_LITERAL" ||
+    /\bstudent\w*\s*:/i.test(args) ||
+    /\bemail\s*:/i.test(args) ||
+    /\bpersonId\s*:/i.test(args) ||
+    /\bid\s*:/i.test(args) ||
+    /\.\.\./.test(args),
+  );
+
+  check(
+    "the tap mutations take NO student identifier",
+    tapCalls.length >= 2 && namesAStudent.length === 0,
+    "an id argument would let any session close any student's pass: " +
+      JSON.stringify(namesAStudent),
+  );
+
+  check(
+    "and the redeeming call carries an intent token",
+    tapCalls.some((a) => /intentToken\s*:/.test(a)),
+    "a bare slug is not proof of presence; a forged link supplies one just as easily",
+  );
+
+  /**
+   * The gesture rule, which is the half that lives in this file.
+   *
+   * beginTap mints proof that a person pressed something. If the page mints it
+   * on arrival, it proves only that the page loaded, which is precisely what a
+   * link sent by somebody else causes. So the arrival handler must not call a
+   * mutation at all.
+   */
+  const arrival = (() => {
+    const at = script.indexOf("async function handleTapArrival()");
+    if (at < 0) return null;
+    let depth = 0;
+    let i = script.indexOf("{", at);
+    const start = i;
+    for (; i < script.length; i++) {
+      if (script[i] === "{") depth++;
+      else if (script[i] === "}") { depth--; if (depth === 0) { i++; break; } }
+    }
+    return script.slice(start, i);
+  })();
+
+  check(
+    "arriving with ?tap= writes NOTHING",
+    arrival !== null && !/convexMutation/.test(arrival),
+    "a tap performed by a page load is a tap performed by whoever sent the link",
   );
   check("staff tapping a tag registers it", /openTagRegistration/.test(script));
   check("there is a tag manager", /id="tagManagerBody"/.test(html) && /function renderTagManager/.test(script));

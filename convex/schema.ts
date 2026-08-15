@@ -327,7 +327,24 @@ export default defineSchema({
     ),
     active: v.boolean(), // a peeled-off or retired tag stops working without deletion
     createdAt: v.string(),
-  }).index("by_slug", ["slug"]),
+
+    // Denormalized "when did anybody last tap this", updated by hallPasses.tap.
+    //
+    // Replaces deriving it by scanning the newest 2,000 tapEvents. That window
+    // was a correctness bug with a flood attached: any student could write 2,000
+    // events at one slug and push every other tag out of it, at which point the
+    // tag-health screen reported every sticker in the building as never tapped,
+    // which reads as the app being broken and gets the feature switched off. A
+    // column on the row cannot be crowded out by another row.
+    lastTapAt: v.optional(v.string()),
+  })
+    .index("by_slug", ["slug"])
+    // Exists so the student-facing picker (tapLocations.listForStudents) can be
+    // an indexed, bounded read. A signed-in child can call that in a loop, and
+    // the staff `list` above collects the whole table plus 2,000 tap events,
+    // which is fine for a teacher opening a screen and not fine as something
+    // anyone with a Chromebook can spin.
+    .index("by_active", ["active"]),
 
   hallPasses: defineTable({
     studentId: v.id("students"),
@@ -351,10 +368,61 @@ export default defineSchema({
     approvedByEmail: v.optional(v.string()),
     outAt: v.optional(v.string()),
     returnedAt: v.optional(v.string()),
+
+    // Closed WITHOUT a return tap, by a staff member or by the expiry sweep.
+    //
+    // A separate field from returnedAt, deliberately. returnedAt means a tag was
+    // tapped in the room of origin, and that tap is the only thing this record
+    // is evidence of. Writing it on a human's say-so would mix a measurement
+    // with an assertion in one column, permanently and undetectably.
+    //
+    // closedByEmail is absent when the nightly sweep did it, present when a
+    // person did, so "who ended this" is always answerable.
+    closedAt: v.optional(v.string()),
+    closedByEmail: v.optional(v.string()),
+    closedReason: v.optional(v.string()),
+
     expiresAfterMinutes: v.number(),
   })
     .index("by_student", ["studentId"])
     .index("by_state", ["state"]),
+
+  /**
+   * A student's declared intent to tap ONE tag, minted on a user gesture and
+   * redeemable once, within two minutes, by that student, at that slug.
+   *
+   * WHY IT EXISTS. The page fires a tap straight from `?tap=<slug>` in the URL,
+   * so a slug on its own was being treated as proof that a body was in a room.
+   * That let any student send a classmate a link, or hand them an NFC sticker
+   * they encoded themselves, and cause a tap ATTRIBUTED TO THE VICTIM: closing
+   * a trip the victim was still on by writing returnedAt, forging their
+   * destination, or filing a refused-tap row under their name at a location of
+   * the attacker's choosing.
+   *
+   * The server cannot see a user gesture, so this does not prove one happened.
+   * What it proves is that the tap came from a separate authenticated call made
+   * by that student's own session moments earlier, for that specific tag. That
+   * is what a forwarded link, a replayed link and a reused token cannot supply.
+   *
+   * Rows are kept after use rather than deleted on redemption: `usedAt` is what
+   * makes a second attempt with the same token detectable rather than merely
+   * ineffective, and a redeemed intent records which check-in produced which
+   * tap. They are purged after a week by hallPasses.expireAbandoned, because one
+   * row is minted per press and nothing else would ever remove them; the
+   * tapEvents row is the durable record and is untouched.
+   */
+  tapIntents: defineTable({
+    studentId: v.id("students"),
+    locationSlug: v.string(),
+    // Unguessable, minted server-side. Never derived from anything the client
+    // sends, or the client could mint its own.
+    token: v.string(),
+    createdAt: v.string(),
+    expiresAt: v.string(),
+    usedAt: v.optional(v.string()),
+  })
+    .index("by_token", ["token"])
+    .index("by_student", ["studentId"]),
 
   // Every tap, including the ones that were REFUSED.
   //

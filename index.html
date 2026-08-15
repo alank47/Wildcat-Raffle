@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Wildcat Hub</title>
-    <link rel="stylesheet" href="styles.css?v=20260814d">
+    <link rel="stylesheet" href="styles.css?v=20260815n">
 </head>
 <body>
     <!-- Login Screen -->
@@ -66,29 +66,12 @@
             </div>
         </div>
         
-        <!-- Where a tag tap lands. Full screen because a student is holding a
-             phone at a doorway, not reading a dashboard. -->
-        <div id="tapResultView" class="hidden" style="position:fixed; inset:0; background:#0f172a; z-index:9500; overflow-y:auto;"></div>
-
-        <!-- Student pass cards. Shown after a Google sign-in, replacing the
-             login screen. Swipeable horizontally: one card per code, because a
-             single surface cannot show four scannable codes at once and asking
-             a student to pick from a menu at a scanner is slower than a swipe. -->
-        <div id="studentPassView" class="hidden" style="position:fixed; inset:0; background:#0f172a; z-index:9000; overflow-y:auto;">
-            <div style="max-width:520px; margin:0 auto; padding:20px 16px 40px; color:#e7e4dc;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-                    <div>
-                        <div id="passStudentName" style="font-size:20px; font-weight:700;"></div>
-                        <div id="passStudentMeta" style="font-size:13px; color:#94a3b8;"></div>
-                    </div>
-                    <button onclick="studentPassSignOut()" style="background:none;border:1px solid #334155;color:#94a3b8;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13px;">Sign out</button>
-                </div>
-
-                <div id="passCards" style="display:flex; gap:14px; overflow-x:auto; scroll-snap-type:x mandatory; padding:16px 0 8px; -webkit-overflow-scrolling:touch;"></div>
-                <div id="passDots" style="display:flex; gap:6px; justify-content:center; padding:4px 0 12px;"></div>
-                <div id="passError" style="color:#fca5a5; font-size:14px; text-align:center;"></div>
-            </div>
-        </div>
+        <!-- The student portal and the tap result screen USED TO LIVE HERE, as
+             children of #loginScreen. Both are position:fixed, which does not
+             rescue a subtree from an ancestor with display:none, and .hidden is
+             display:none !important. So the moment anything hid the login
+             screen the student portal went blank. They are now top level
+             surfaces, below, next to #loginScreen rather than inside it. -->
 
         <!-- Student Login Form -->
         <div id="studentLoginForm" class="hidden">
@@ -125,7 +108,85 @@
         </div>
     </div>
 
-    <!-- Student Dashboard Screen -->
+    <!-- ============================================================
+         STUDENT PORTAL. A top level surface, a SIBLING of #loginScreen.
+         Never a child of it: .hidden is display:none !important, and a
+         display:none ancestor blanks the whole subtree no matter how many
+         position:fixed rules are inside it.
+
+         The stack is built by renderPassStack() in script.js. It is empty
+         markup on purpose: the cards are data, and half of them can only be
+         drawn once Convex says what the student actually has.
+
+         Ids are prefixed wp so they cannot collide with the staff kiosk,
+         which already owns #passStudentName further down this file.
+         ============================================================ -->
+    <div id="studentPassView" class="wp-root hidden">
+        <div class="wp-shell">
+            <header class="wp-top">
+                <div class="wp-who">
+                    <h1 class="wp-name" id="wpName"></h1>
+                    <p class="wp-meta" id="wpMeta"></p>
+                </div>
+                <button type="button" class="wp-round" id="wpSignOut" onclick="studentPassSignOut()" aria-label="Sign out" title="Sign out">
+                    <svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true" focusable="false">
+                        <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                        <path d="M10 8l-4 4 4 4M6 12h9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+            </header>
+
+            <div class="wp-stage">
+                <!-- The layout maths needs the strip and card heights in real
+                     pixels. They are declared in CSS as clamp() against the
+                     viewport, and getPropertyValue on a custom property hands
+                     back the literal "clamp(...)" string rather than a
+                     resolved length, so the only honest way to read them is to
+                     measure something the browser has already sized. These two
+                     are that something. -->
+                <div class="wp-metric wp-metric-strip" id="wpMetricStrip" aria-hidden="true"></div>
+                <div class="wp-metric wp-metric-card" id="wpMetricCard" aria-hidden="true"></div>
+                <div class="wp-stack" id="wpStack" role="tablist" aria-label="Your passes"></div>
+            </div>
+
+            <p class="wp-asof" id="wpAsOf"></p>
+            <div class="wp-note" id="wpError" role="status" aria-live="polite"></div>
+        </div>
+
+        <!-- Hall pass request. A sheet rather than a screen, because the
+             student is answering one question and then going back to the
+             card they were already looking at. -->
+        <div class="wp-scrim" id="wpScrim" onclick="closeHallPassSheet()"></div>
+        <section class="wp-sheet" id="wpSheet" role="dialog" aria-modal="true"
+                 aria-labelledby="wpSheetTitle" aria-hidden="true">
+            <div class="wp-grip"></div>
+            <h2 id="wpSheetTitle">Request a hall pass</h2>
+            <p class="wp-sheet-sub">Pick the room you are leaving from. Your teacher has to approve it before you go.</p>
+            <div class="wp-picklist" id="wpPickList" role="radiogroup" aria-label="Room you are leaving from"></div>
+            <label class="wp-field">
+                <span>Reason, if you want to say</span>
+                <input type="text" id="wpReason" maxlength="60" autocomplete="off"
+                       placeholder="Restroom, locker, nurse">
+            </label>
+            <p class="wp-sheet-error" id="wpSheetError" role="status" aria-live="polite"></p>
+            <div class="wp-sheet-actions">
+                <button type="button" class="wp-btn wp-btn-ghost" onclick="closeHallPassSheet()">Not now</button>
+                <button type="button" class="wp-btn wp-btn-solid" id="wpSheetGo" onclick="submitHallPassRequest()">Request pass</button>
+            </div>
+        </section>
+    </div>
+
+    <!-- Where a tag tap lands. Full screen because a student is holding a
+         phone at a doorway, not reading a dashboard. Top level for the same
+         reason the portal is. -->
+    <div id="tapResultView" class="wp-root hidden"></div>
+
+    <!-- Student Dashboard Screen.
+         DEAD as of the portal rebuild. Nothing shows this any more:
+         establishStudentSession() now opens #studentPassView, and it was the
+         only caller. Left in place rather than deleted because the surrounding
+         file is 4800 lines of shared markup and a blind deletion is a worse
+         risk than a dead div. Do not wire anything new to it. -->
     <div id="studentDashboard" class="login-container hidden" style="max-width: 600px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
             <h1 style="margin: 0;">My Wildcat Hub</h1>
@@ -4516,7 +4577,11 @@
         </div>
     </div>
 
-    <!-- Student View -->
+    <!-- Student View.
+         DEAD as of the portal rebuild. The boot sequence used to show this
+         when a legacy student session was restored from sessionStorage; it
+         now opens #studentPassView instead. Left in place for the same reason
+         #studentDashboard is. Do not wire anything new to it. -->
     <div id="studentApp" class="container hidden">
         <div class="header">
             <h1>🎟️ Wildcat Hub</h1>
@@ -4804,7 +4869,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260815a"></script>
-    <script src="script.js?v=20260815a"></script>
+    <script src="wildcat-auth.js?v=20260815n"></script>
+    <script src="script.js?v=20260815n"></script>
 </body>
 </html>

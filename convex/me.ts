@@ -1,5 +1,7 @@
 import { query } from "./_generated/server";
+import { ConvexError } from "convex/values";
 import { requireIdentity } from "./identity";
+import { studentRecordVerdict } from "./identityRules";
 import { studentView, staffRosterView } from "./views";
 
 /**
@@ -59,15 +61,26 @@ export const get = query({
     }
 
     // Student. Resolves only to themselves; there is no argument to abuse.
-    const rows = await ctx.db
-      .query("psRoster")
-      .withIndex("by_studentEmail", (q) => q.eq("studentEmail", id.email))
-      .collect();
-
     const student = await ctx.db
       .query("students")
       .withIndex("by_email", (q) => q.eq("email", id.email))
       .unique();
+
+    // THE SECOND STUDENT BOUNDARY. This function does not go through
+    // requireStudentSelf, so it did not inherit the archived check and an
+    // archived student still got their full schedule and ticket totals here
+    // while every other endpoint refused them. Two boundaries, one of them
+    // enforcing less, is the drift this codebase argues against everywhere else;
+    // it is routed through the same verdict rather than re-deciding.
+    if (student) {
+      const verdict = studentRecordVerdict(student);
+      if (!verdict.ok) throw new ConvexError(verdict.reason);
+    }
+
+    const rows = await ctx.db
+      .query("psRoster")
+      .withIndex("by_studentEmail", (q) => q.eq("studentEmail", id.email))
+      .collect();
 
     return {
       kind: "student" as const,

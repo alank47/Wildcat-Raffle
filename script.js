@@ -1209,13 +1209,18 @@
          */
         function establishStudentSession(student) {
             currentStudent = student;
-            
-            // Hide login, show dashboard
-            document.getElementById('loginScreen').classList.add('hidden');
-            document.getElementById('studentDashboard').classList.remove('hidden');
-            
-            // Populate dashboard
-            updateStudentDashboard();
+            if (typeof saveSession === 'function') saveSession();
+
+            // Opens the PORTAL, not the legacy #studentDashboard.
+            //
+            // This used to reveal #studentDashboard, a white card that looked
+            // enough like the login screen to read as "you got signed out". It
+            // also hid #loginScreen, and the pass cards were a CHILD of the
+            // login screen at the time, so the same line that showed the old
+            // dashboard blanked the new one. Both halves of that are fixed:
+            // the portal is a top level surface, and this function points at
+            // it. #studentDashboard and #studentApp are now dead markup.
+            if (typeof openStudentPortal === 'function') openStudentPortal(student);
         }
         
         function updateStudentDashboard() {
@@ -6296,8 +6301,12 @@
             const tbody = document.getElementById('programDataTable');
             if (!tbody) return;
 
-            const currentQualified = students.filter(s => isQualifiedForJackpot(s)).length;
-            const currentTotal = students.length;
+            // Enrolled only. A qualification RATE over the raw array divides by
+            // 738 instead of 623 and reports the programme as less effective
+            // than it is, which is the kind of number that gets a programme cut.
+            const roster = enrolledStudents();
+            const currentQualified = roster.filter(s => isQualifiedForJackpot(s)).length;
+            const currentTotal = roster.length;
             const currentRate = currentTotal > 0 ? Math.round(currentQualified/currentTotal*100) : 0;
 
             // Placeholder for previous cycle data - would be stored in database
@@ -6387,8 +6396,13 @@
             // Summary Stats
             const summaryData = [];
             summaryData.push(['Metric', 'Value']);
-            summaryData.push(['Total Students', students.length]);
-            summaryData.push(['Qualified for Wildcat Jackpot', students.filter(s => isQualifiedForJackpot(s)).length]);
+            // Enrolled only, to match the tiles this report is exported from.
+            // The ticket totals below stay over the raw array on purpose: those
+            // tickets were really awarded, including to students who have since
+            // left, and keeping their history is the whole reason those rows
+            // are still here.
+            summaryData.push(['Total Students', enrolledStudents().length]);
+            summaryData.push(['Qualified for Wildcat Jackpot', enrolledStudents().filter(s => isQualifiedForJackpot(s)).length]);
             summaryData.push(['Current Week', currentWeek]);
             summaryData.push(['Total PBIS Tickets', students.reduce((sum, s) => sum + (s.pbisTickets || 0), 0)]);
             summaryData.push(['Total Attendance Tickets', students.reduce((sum, s) => sum + (s.attendanceTickets || 0), 0)]);
@@ -14341,15 +14355,35 @@
         }
 
         function updateStats() {
-            document.getElementById('totalStudents').textContent = students.length;
-            const qualified = students.filter(s => isQualifiedForJackpot(s)).length;
+            // ENROLLED ONLY, on both lines.
+            //
+            // `students` carries every row, enrolled and former, and it has to:
+            // saveData stitches nonEnrolledStudents back on, so a filtered
+            // array anywhere near the save path deletes 115 children's ticket
+            // histories out of the stored document. The filtering belongs at
+            // the READ, which is here.
+            //
+            // Counting the raw array put 738 on a tile that a teacher reads as
+            // "how many students are at this school". 623 are. The other 115
+            // left, and they are kept so their balances and histories survive,
+            // not so they can be counted twice.
+            //
+            // The jackpot tile had the same denominator problem, which is worse
+            // than a wrong number: it is a wrong number that looks like a
+            // participation rate.
+            const roster = enrolledStudents();
+            document.getElementById('totalStudents').textContent = roster.length;
+            const qualified = roster.filter(s => isQualifiedForJackpot(s)).length;
             document.getElementById('qualifiedStudents').textContent = qualified;
             document.getElementById('bigRaffleQualified').textContent = qualified;
         }
 
         function updateBigRaffleTable() {
             const tbody = document.getElementById('bigRaffleTable');
-            const qualified = students.filter(s => isQualifiedForJackpot(s));
+            // Same pool as the #bigRaffleQualified tile above it, which
+            // updateStats writes. A table that lists more rows than the number
+            // printed over it is the version of this bug somebody notices.
+            const qualified = enrolledStudents().filter(s => isQualifiedForJackpot(s));
             
             if (qualified.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="5" class="rank-empty">No students qualified yet</td></tr>';
@@ -16045,118 +16079,1011 @@
             }, 1000);
         })();
 
-        // ---------------------------------------------------------------
-        // Student pass cards.
+        // ===============================================================
+        // STUDENT PORTAL
         //
-        // Shown after a Google sign-in. Deliberately a separate full-screen
-        // surface rather than a tab inside the teacher app: a student and a
-        // teacher want completely different things from this product, and
-        // sharing a shell means every teacher-only control needs a role check
-        // that somebody eventually forgets.
+        // A vertical stack of cards, overlapped so only a header strip of
+        // each shows, with one card revealed. Apple Wallet geometry, and
+        // for the same reason Wallet uses it: a student at a scanner needs
+        // to see EVERYTHING they carry at once and then reveal one thing,
+        // which a horizontal carousel cannot do. The previous version was a
+        // scroll-snap strip with dead dots underneath, so the only way to
+        // learn what you had was to swipe through it.
         //
-        // One card per code. A single surface cannot show four scannable codes
-        // at once, and a menu at a scanner is slower than a swipe.
-        // ---------------------------------------------------------------
-        async function showStudentPassCards() {
-            const view = document.getElementById('studentPassView');
-            const cards = document.getElementById('passCards');
-            const dots = document.getElementById('passDots');
-            const err = document.getElementById('passError');
-            if (!view || !cards) return;
+        // The surface is a top level sibling of #loginScreen, not a child.
+        // As a child it went blank every time anything hid the login screen,
+        // because .hidden is display:none !important and position:fixed does
+        // not rescue a subtree from a display:none ancestor.
+        //
+        // All markup lives in index.html; all styling is in styles.css under
+        // "STUDENT PORTAL". Nothing here writes an inline colour.
+        // ===============================================================
 
-            view.classList.remove('hidden');
-            err.textContent = '';
-            cards.innerHTML = '<div style="color:#94a3b8;padding:20px;">Loading your cards...</div>';
+        /** The cards on screen, in stack order, top to bottom. */
+        let wpCards = [];
+        /** Which one is revealed. */
+        let wpSelected = 0;
+        /** Set while a pointer drag is in flight, so it does not fire a click. */
+        let wpDragged = false;
+        /** True when the portal was opened by the boot path rather than a sign-in. */
+        let wpFromBoot = false;
+        let wpWired = false;
+        let wpFitObserver = null;
+        /** The slug a student arrived with, held in memory rather than acted on. */
+        let wpTapSlug = null;
+        /** Hall pass request state. */
+        let wpLocations = null;
+        let wpPickedSlug = null;
+        let wpLastOrigin = '';
+        let wpBusy = false;
 
-            try {
-                const auth = window.WildcatAuth;
-                const session = auth && auth.getSession();
-                if (!session) throw new Error('Not signed in.');
+        function wpEsc(value) {
+            return String(value === null || value === undefined ? '' : value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
 
-                const data = await auth.convexQuery('passCard:mine', {}, session.idToken);
+        function wpById(id) { return document.getElementById(id); }
 
-                document.getElementById('passStudentName').textContent =
-                    `${data.student.firstName} ${data.student.lastName}`.trim();
-                document.getElementById('passStudentMeta').textContent =
-                    [data.student.grade ? `Grade ${data.student.grade}` : '', data.student.studentNumber]
-                        .filter(Boolean).join('  \u00b7  ');
+        /**
+         * Card geometry comes from CSS, never from a number in here.
+         *
+         * MEASURED, not read. The heights are clamp() expressions against the
+         * viewport, and getComputedStyle().getPropertyValue on a custom
+         * property returns the literal string "clamp(46px, 7.4svh, 66px)".
+         * parseFloat of that is NaN, which fell through to a hardcoded
+         * fallback and quietly laid the stack out at the wrong size on every
+         * screen. So two zero width rulers in the markup carry the heights and
+         * the browser resolves them.
+         */
+        function wpMetrics() {
+            const stripEl = wpById('wpMetricStrip');
+            const cardEl = wpById('wpMetricCard');
+            const strip = stripEl ? stripEl.getBoundingClientRect().height : 0;
+            const cardH = cardEl ? cardEl.getBoundingClientRect().height : 0;
+            return {
+                strip: strip > 0 ? strip : 56,
+                cardH: cardH > 0 ? cardH : 240,
+            };
+        }
 
-                const card = (title, body, footer) =>
-                    `<div style="flex:0 0 88%; scroll-snap-align:center; background:#fff; color:#1b2330;
-                                 border-radius:16px; padding:20px; min-height:260px; display:flex;
-                                 flex-direction:column; justify-content:space-between;">
-                       <div style="font-weight:700; font-size:15px;">${title}</div>
-                       <div style="flex:1; display:flex; align-items:center; justify-content:center;">${body}</div>
-                       <div style="font-size:12px; color:#6b7280; text-align:center;">${footer}</div>
-                     </div>`;
+        /**
+         * Place every card.
+         *
+         * Cards at or above the selected one collapse upward into strips.
+         * Cards below it stack from the bottom of the revealed card. Total
+         * height is (n - 1) strips plus one card, whatever is selected, so
+         * choosing a different card never moves the page under your thumb.
+         */
+        function wpLayout(animate) {
+            const stack = wpById('wpStack');
+            if (!stack) return;
+            const cards = Array.prototype.slice.call(stack.querySelectorAll('.wp-card'));
+            if (!cards.length) return;
 
-                // Anything not available says WHY. A blank barcode looks broken;
-                // a sentence tells the student what to ask the office for.
-                const pending = (reason) =>
-                    `<div style="text-align:center; color:#9ca3af; font-size:13px; padding:0 10px;">${reason}</div>`;
+            const m = wpMetrics();
+            const k = Math.max(0, Math.min(wpSelected, cards.length - 1));
+            wpSelected = k;
 
-                const html = [];
+            if (animate === false) stack.classList.add('wp-noanim');
 
-                html.push(card(
-                    'Student ID',
-                    data.studentId.available
-                        ? `<svg id="bc-student"></svg>`
-                        : pending('No student number on your record.'),
-                    data.studentId.value || '',
-                ));
+            cards.forEach(function (el, i) {
+                const top = i <= k
+                    ? i * m.strip
+                    : (k * m.strip) + m.cardH + ((i - k - 1) * m.strip);
+                el.style.transform = 'translate3d(0,' + Math.round(top) + 'px,0)';
+                el.style.height = (i === k ? m.cardH : m.strip) + 'px';
+                el.style.zIndex = String(i + 1);
+                el.setAttribute('aria-selected', i === k ? 'true' : 'false');
+                el.classList.toggle('is-open', i === k);
+            });
 
-                html.push(card(
-                    'Lunch',
-                    data.lunchId.available ? `<svg id="bc-lunch"></svg>` : pending(data.lunchId.reason),
-                    data.lunchId.value || 'Not available yet',
-                ));
+            stack.style.height = (((cards.length - 1) * m.strip) + m.cardH) + 'px';
 
-                html.push(card(
-                    'Clever sign in',
-                    data.cleverBadge.available ? `<div id="qr-clever"></div>` : pending(data.cleverBadge.reason),
-                    'Scan on a classroom computer',
-                ));
+            if (animate === false) {
+                void stack.offsetHeight;          // flush, then let motion back in
+                stack.classList.remove('wp-noanim');
+            }
 
-                const hp = data.hallPass;
-                html.push(card(
-                    'Hall Pass',
-                    hp.available
-                        ? `<div style="text-align:center;">
-                             <div style="font-size:42px;font-weight:700;${hp.overdue ? 'color:#b3392f;' : ''}">${hp.elapsedMinutes ?? 0}<span style="font-size:16px;"> min</span></div>
-                             <div style="color:#6b7280;font-size:13px;text-transform:uppercase;letter-spacing:.08em;">${hp.state}</div>
-                           </div>`
-                        : pending('No pass right now. Ask your teacher, then tap the tag where you are going.'),
-                    hp.available && hp.overdue ? 'You are past your time. Head back.' : 'Tap the wall tag to check in',
-                ));
+            wpMeasureFit();
+        }
 
-                cards.innerHTML = html.join('');
+        /**
+         * Whether the whole portal fits without scrolling.
+         *
+         * This decides whether the revealed card may take over vertical touch
+         * gestures for drag-to-select. On a short phone the page has to
+         * scroll, and a card that swallows the scroll gesture would trap the
+         * student at the top of the screen. Selection by tap always works.
+         */
+        function wpMeasureFit() {
+            const view = wpById('studentPassView');
+            if (!view) return;
+            // Synchronous. wpLayout has already written every style this
+            // depends on, so the read is against the finished thing. Deferring
+            // it to a frame that may not come while the surface is still being
+            // set up is how this ended up permanently wrong.
+            const fits = view.clientHeight > 0 &&
+                view.scrollHeight <= view.clientHeight + 2;
+            view.classList.toggle('wp-fits', fits);
+        }
 
-                if (data.studentId.available && window.JsBarcode) {
-                    JsBarcode('#bc-student', String(data.studentId.value), {
-                        format: 'CODE128', displayValue: false, height: 90, margin: 0,
-                    });
+        /**
+         * Keep asking.
+         *
+         * One measurement after render is always too early: a barcode is still
+         * being drawn, a webfont is still swapping, and the page is a few
+         * pixels taller for one frame than it will be for the rest of the
+         * visit. Measured once, the portal concluded it did not fit and turned
+         * off drag to select on a screen where it fitted perfectly well.
+         */
+        function wpWatchFit() {
+            if (wpFitObserver || typeof ResizeObserver === 'undefined') return;
+            const view = wpById('studentPassView');
+            const shell = document.querySelector('#studentPassView .wp-shell');
+            if (!view || !shell) return;
+            wpFitObserver = new ResizeObserver(function () { wpMeasureFit(); });
+            // BOTH. The shell changes when the content settles; the view
+            // changes when the window does, and also on the first paint, when
+            // it briefly has no height at all and every measurement taken
+            // against it is a measurement against zero.
+            wpFitObserver.observe(view);
+            wpFitObserver.observe(shell);
+        }
+
+        function wpSelect(index, animate) {
+            if (!wpCards.length) return;
+            wpSelected = Math.max(0, Math.min(index, wpCards.length - 1));
+            wpLayout(animate);
+        }
+
+        /**
+         * Drag to select, from the revealed card only.
+         *
+         * Pulling the open card down reveals the card above it, pushing it up
+         * reveals the one below. The cards below the open one travel with it,
+         * because they are physically attached to its bottom edge. Release
+         * hands off to the spring in CSS.
+         */
+        function wpWireStack() {
+            if (wpWired) return;
+            const stack = wpById('wpStack');
+            if (!stack) return;
+            wpWired = true;
+            wpWatchFit();
+
+            stack.addEventListener('click', function (ev) {
+                if (wpDragged) { wpDragged = false; return; }
+                // A button on a card does its own job. Selecting the card it
+                // sits on as well would be harmless but it is still wrong.
+                if (ev.target.closest && ev.target.closest('button, input, a')) return;
+                const card = ev.target.closest && ev.target.closest('.wp-card');
+                if (!card) return;
+                wpSelect(Number(card.dataset.i));
+            });
+
+            stack.addEventListener('keydown', function (ev) {
+                const key = ev.key;
+                if (key === 'ArrowDown' || key === 'ArrowRight') { wpSelect(wpSelected + 1); }
+                else if (key === 'ArrowUp' || key === 'ArrowLeft') { wpSelect(wpSelected - 1); }
+                else if (key === 'Home') { wpSelect(0); }
+                else if (key === 'End') { wpSelect(wpCards.length - 1); }
+                else if (key === 'Enter' || key === ' ') {
+                    const card = ev.target.closest && ev.target.closest('.wp-card');
+                    if (!card) return;
+                    wpSelect(Number(card.dataset.i));
+                } else { return; }
+                ev.preventDefault();
+                const open = stack.querySelector('.wp-card.is-open');
+                if (open) open.focus({ preventScroll: true });
+            });
+
+            let dragging = false;
+            let startY = 0;
+            let moved = 0;
+
+            stack.addEventListener('pointerdown', function (ev) {
+                // Never capture a pointer that landed on a control, or the
+                // capture eats the press and the button never fires.
+                if (ev.target.closest && ev.target.closest('button, input, a')) return;
+                const card = ev.target.closest && ev.target.closest('.wp-card.is-open');
+                if (!card) return;
+                dragging = true;
+                wpDragged = false;
+                startY = ev.clientY;
+                moved = 0;
+                stack.classList.add('wp-noanim');
+                try { stack.setPointerCapture(ev.pointerId); } catch (e) { /* not fatal */ }
+            });
+
+            stack.addEventListener('pointermove', function (ev) {
+                if (!dragging) return;
+                moved = ev.clientY - startY;
+                if (Math.abs(moved) > 6) wpDragged = true;
+                // Rubber band, so the stack resists rather than flying off.
+                const limit = wpMetrics().strip * 1.6;
+                const dy = limit * Math.tanh(moved / limit);
+                const cards = stack.querySelectorAll('.wp-card');
+                for (let i = wpSelected; i < cards.length; i++) {
+                    cards[i].style.translate = '0 ' + dy.toFixed(1) + 'px';
                 }
+            });
 
-                dots.innerHTML = html.map((_, i) =>
-                    `<span style="width:7px;height:7px;border-radius:50%;background:${i === 0 ? '#e7e4dc' : '#475569'};"></span>`
-                ).join('');
-            } catch (e) {
-                cards.innerHTML = '';
-                err.textContent = e.message;
+            function endDrag() {
+                if (!dragging) return;
+                dragging = false;
+                stack.classList.remove('wp-noanim');
+                const cards = stack.querySelectorAll('.wp-card');
+                for (let i = 0; i < cards.length; i++) cards[i].style.translate = '';
+                if (moved > 44) wpSelect(wpSelected - 1);
+                else if (moved < -44) wpSelect(wpSelected + 1);
+            }
+
+            stack.addEventListener('pointerup', endDrag);
+            stack.addEventListener('pointercancel', endDrag);
+
+            window.addEventListener('resize', function () {
+                if (!wpCards.length) return;
+                wpLayout(false);
+            });
+        }
+
+        /** Paint the stack. Data in, cards out. */
+        function wpRender(cards, selectIndex) {
+            wpCards = cards;
+            const stack = wpById('wpStack');
+            if (!stack) return;
+
+            stack.innerHTML = cards.map(function (c, i) {
+                return '<article class="wp-card" role="tab" tabindex="0" data-i="' + i + '"' +
+                    ' aria-label="' + wpEsc(c.label + '. ' + c.lead) + '"' +
+                    ' style="' + c.face + '">' +
+                    '<div class="wp-head">' +
+                      '<span class="wp-label">' + wpEsc(c.label) + '</span>' +
+                      '<span class="wp-lead' + (c.quiet ? ' is-quiet' : '') + '">' + wpEsc(c.lead) + '</span>' +
+                    '</div>' +
+                    '<div class="wp-body">' + c.body + '</div>' +
+                    '</article>';
+            }).join('');
+
+            wpWireStack();
+            wpSelected = Math.max(0, Math.min(selectIndex || 0, cards.length - 1));
+            wpLayout(false);
+        }
+
+        function wpGhosts() {
+            const stack = wpById('wpStack');
+            if (!stack) return;
+            const m = wpMetrics();
+            let html = '';
+            for (let i = 0; i < 6; i++) {
+                const top = i < 5 ? i * m.strip : 5 * m.strip;
+                const h = i < 5 ? m.strip : m.cardH;
+                html += '<div class="wp-ghost" style="top:' + top + 'px;height:' + h +
+                    'px;opacity:' + (0.35 + i * 0.09).toFixed(2) + ';"></div>';
+            }
+            stack.innerHTML = html;
+            stack.style.height = ((5 * m.strip) + m.cardH) + 'px';
+        }
+
+        // ---------------------------------------------------------------
+        // Card faces.
+        //
+        // School palette, one surface per card, so a student recognises a
+        // card by its colour before they read the label. The values are the
+        // same blues and orange the staff app uses; the dark ground is local
+        // to this screen because the rest of the app has no dark theme.
+        // ---------------------------------------------------------------
+        const WP_FACE = {
+            schedule: '--wp-face:linear-gradient(158deg,#242832 0%,#15171C 100%);--wp-ink:#F6F4EF;' +
+                      '--wp-rule:rgba(255,255,255,.10);--wp-pill:rgba(255,255,255,.13)',
+            grades:   '--wp-face:linear-gradient(158deg,#F5F2E9 0%,#DFD8C6 100%);--wp-ink:#14171C;' +
+                      '--wp-rule:rgba(20,23,28,.13);--wp-pill:rgba(20,23,28,.08)',
+            lunch:    '--wp-face:linear-gradient(158deg,#E28C3E 0%,#B4571B 100%);--wp-ink:#FFFFFF',
+            clever:   '--wp-face:linear-gradient(158deg,#4C74F8 0%,#2A2F9E 100%);--wp-ink:#FFFFFF',
+            passOn:   '--wp-face:linear-gradient(158deg,#2F8C63 0%,#125236 100%);--wp-ink:#FFFFFF',
+            passLate: '--wp-face:linear-gradient(158deg,#C85942 0%,#7E2519 100%);--wp-ink:#FFFFFF',
+            passOff:  '--wp-face:linear-gradient(158deg,#22252C 0%,#131519 100%);--wp-ink:#F6F4EF',
+            id:       '--wp-face:linear-gradient(158deg,#3B79BC 0%,#0C447C 52%,#05294F 100%);--wp-ink:#FFFFFF',
+        };
+
+        function wpEmpty(text) {
+            return '<p class="wp-empty">' + wpEsc(text) + '</p>';
+        }
+
+        function wpFoot(text) {
+            return '<p class="wp-foot">' + wpEsc(text) + '</p>';
+        }
+
+        /** Period 3 sorts before Period 11, and a lettered period sorts last. */
+        function wpPeriodRank(period) {
+            const n = parseInt(String(period === null || period === undefined ? '' : period), 10);
+            return isNaN(n) ? 999 : n;
+        }
+
+        /**
+         * views_app:myStudentView returns a section either as a bare array or
+         * as { available, reason, <rows> }. Both shapes are in play while the
+         * backend is being rewritten underneath this screen, and a card that
+         * throws because a field grew an envelope is not acceptable on a
+         * surface a student is holding at a scanner. So it reads both, and a
+         * `reason` is treated as content rather than as an error.
+         */
+        function wpSection(node, rowsKey) {
+            if (!node) return { rows: [], available: false, reason: null };
+            if (Array.isArray(node)) return { rows: node, available: true, reason: null };
+            const rows = Array.isArray(node[rowsKey]) ? node[rowsKey] : [];
+            return {
+                rows: rows,
+                available: node.available !== false,
+                reason: node.reason || null,
+            };
+        }
+
+        function wpScheduleCard(section) {
+            const rows = section.rows;
+            if (!section.available || !rows.length) {
+                return {
+                    label: 'Schedule',
+                    lead: 'Not connected',
+                    quiet: true,
+                    face: WP_FACE.schedule,
+                    // The server's own sentence, whenever it sent one. That is
+                    // the whole point of the available/reason envelope: a
+                    // student whose schedule is genuinely missing gets told
+                    // why, instead of a blank panel that looks identical to a
+                    // broken one.
+                    body: wpEmpty(section.reason ||
+                        'Your classes are not linked to your account yet. The office has to ' +
+                        'send your school email address to PowerSchool before your schedule ' +
+                        'can find you.'),
+                };
+            }
+            const sorted = rows.slice().sort(function (a, b) {
+                return wpPeriodRank(a.period) - wpPeriodRank(b.period);
+            });
+            const body = '<div class="wp-rows">' + sorted.map(function (r) {
+                const sub = [r.teacher || 'Teacher not listed', r.term].filter(Boolean).join('  ·  ');
+                return '<div class="wp-row">' +
+                    '<span class="wp-pill">' + wpEsc(r.period || '-') + '</span>' +
+                    '<span class="wp-rowmain">' +
+                      '<span class="wp-rowtitle">' + wpEsc(r.courseName || 'Course') + '</span>' +
+                      '<span class="wp-rowsub">' + wpEsc(sub) + '</span>' +
+                    '</span>' +
+                    '</div>';
+            }).join('') + '</div>';
+
+            return {
+                label: 'Schedule',
+                lead: sorted.length === 1 ? '1 class' : sorted.length + ' classes',
+                face: WP_FACE.schedule,
+                body: body,
+            };
+        }
+
+        function wpGradesCard(section, failed) {
+            const grades = section.rows;
+            if (failed || !section.available) {
+                return {
+                    label: 'Grades', lead: 'Unavailable', quiet: true, face: WP_FACE.grades,
+                    body: wpEmpty(section.reason ||
+                        'Grades could not be loaded just now. Reload the page to try again.'),
+                };
+            }
+            if (!grades.length) {
+                return {
+                    label: 'Grades', lead: 'None yet', quiet: true, face: WP_FACE.grades,
+                    body: wpEmpty(section.reason ||
+                        'No gradebook entries have reached your account yet. An empty grade ' +
+                        'is not a zero, and nothing here is counting against you.'),
+                };
+            }
+
+            // A grade that is absent is absent. It is never shown as 0 and never
+            // shown as an F: a student with no gradebook entry must not read as
+            // failing. That is the one rule this card exists to keep.
+            const posted = grades.filter(function (g) {
+                return g.currentGrade !== null && g.currentGrade !== undefined
+                    || g.currentPercent !== null && g.currentPercent !== undefined;
+            }).length;
+
+            const body = '<div class="wp-rows">' + grades.slice().sort(function (a, b) {
+                return String(a.courseName || '').localeCompare(String(b.courseName || ''));
+            }).map(function (g) {
+                const letter = g.currentGrade === null || g.currentGrade === undefined ? '' : String(g.currentGrade);
+                const pct = g.currentPercent === null || g.currentPercent === undefined
+                    ? null : Math.round(g.currentPercent);
+                const has = letter !== '' || pct !== null;
+                const end = has
+                    ? '<span class="wp-rowend">' + wpEsc(letter || (pct + '%')) + '</span>' +
+                      (letter && pct !== null ? '<span class="wp-rowpct">' + pct + '%</span>' : '')
+                    : '<span class="wp-rowend is-none">Not posted</span>';
+                return '<div class="wp-row">' +
+                    '<span class="wp-rowmain">' +
+                      '<span class="wp-rowtitle">' + wpEsc(g.courseName || 'Course') + '</span>' +
+                      (g.courseNumber ? '<span class="wp-rowsub">' + wpEsc(g.courseNumber) + '</span>' : '') +
+                    '</span>' +
+                    '<span class="wp-rowmain" style="flex:0 0 auto;text-align:right;">' + end + '</span>' +
+                    '</div>';
+            }).join('') + '</div>';
+
+            return {
+                label: 'Grades',
+                lead: posted === 0 ? 'None posted' : posted + ' of ' + grades.length + ' posted',
+                quiet: posted === 0,
+                face: WP_FACE.grades,
+                // Said out loud when there is nothing yet, because a column of
+                // "Not posted" is exactly what a broken screen would look like
+                // too. This is the sentence that separates the two.
+                body: body + (posted === 0
+                    ? wpFoot('Nothing has been posted yet. An empty grade is not a zero.')
+                    : ''),
+            };
+        }
+
+        /**
+         * The hall pass card has three faces, and which one a student sees is
+         * the difference between knowing where they stand and guessing.
+         *
+         *   nothing      ask for one
+         *   requested    waiting on a teacher, and CANCEL is a first class
+         *                control here rather than a hidden one: while a
+         *                request is pending the student cannot make another,
+         *                so a teacher who never answers strands them until
+         *                they take it back themselves
+         *   out          the running timer
+         */
+        function wpHallPassCard(hp) {
+            const live = hp && hp.available;
+            const state = String((hp && hp.state) || 'none').toLowerCase();
+
+            if (!live || state === 'none') {
+                return {
+                    label: 'Hall Pass', lead: 'None active', quiet: true, face: WP_FACE.passOff,
+                    body: wpEmpty('No pass right now. Ask for one, then tap the tag at the place you are going.') +
+                          '<div class="wp-actions"><button type="button" class="wp-btn wp-btn-solid" ' +
+                          'onclick="openHallPassSheet()">Request a pass</button></div>' +
+                          wpFoot('Your teacher has to approve it'),
+                };
+            }
+
+            if (state === 'requested' || state === 'pending') {
+                const origin = wpOriginLabel(hp.origin || hp.originName);
+                return {
+                    label: 'Hall Pass', lead: 'Waiting', face: WP_FACE.passOff,
+                    body: wpEmpty(
+                            'Sent to your teacher' + (origin ? ' from ' + origin : '') + '. ' +
+                            'You cannot ask for another pass while this one is waiting, so cancel it ' +
+                            'if you have changed your mind.') +
+                          '<div class="wp-actions"><button type="button" class="wp-btn wp-btn-ghost" ' +
+                          'onclick="cancelHallPassRequest(\'' + wpEsc(hp.id || '') + '\')">Cancel this request</button></div>' +
+                          wpFoot('Waiting for approval'),
+                };
+            }
+
+            // NULL IS NOT ZERO. The server returns elapsedMinutes: null when a
+            // pass has no running clock, and turning that into 0 puts "0 min
+            // out" on the card, which reads as a pass that is being timed. An
+            // unanswered request rendered as a timer at zero is how a student
+            // who did nothing wrong ends up looking like they walked out.
+            const mins = (hp.elapsedMinutes === null || hp.elapsedMinutes === undefined)
+                ? null
+                : hp.elapsedMinutes;
+
+            if (mins === null) {
+                return {
+                    label: 'Hall Pass',
+                    lead: wpTitleCase(state),
+                    face: WP_FACE.passOn,
+                    body: wpEmpty('Your pass is ' + state + '. The clock starts when you tap the tag ' +
+                                  'at the place you are going.') +
+                          wpFoot('Not being timed yet'),
+                };
+            }
+
+            return {
+                label: 'Hall Pass',
+                lead: mins + ' min',
+                face: hp.overdue ? WP_FACE.passLate : WP_FACE.passOn,
+                body: '<p class="wp-big">' + wpEsc(mins) + '<span>min out</span></p>' +
+                      wpFoot(hp.overdue
+                          ? 'You are past your time. Head back and tap the tag.'
+                          : 'Tap the wall tag when you get there, and again when you are back.'),
+            };
+        }
+
+        function wpTitleCase(text) {
+            return String(text || '').replace(/^./, function (c) { return c.toUpperCase(); });
+        }
+
+        /**
+         * "Room 16", not "rm-16".
+         *
+         * A slug is a database key. Printing one at a student is the same
+         * mistake as printing a row id: it is technically the right value and
+         * it means nothing to the person reading it. The room list is the only
+         * thing that knows the human name, so it does the translating, and
+         * anything it does not recognise is passed through unchanged rather
+         * than hidden.
+         */
+        function wpOriginLabel(raw) {
+            if (!raw) return wpLastOrigin || '';
+            if (wpLocations && wpLocations.rows) {
+                for (let i = 0; i < wpLocations.rows.length; i++) {
+                    if (wpLocations.rows[i].slug === raw) return wpLocations.rows[i].name;
+                }
+            }
+            return raw;
+        }
+
+        function wpStudentIdCard(studentId) {
+            if (!studentId || !studentId.available) {
+                return {
+                    label: 'Student ID', lead: 'Not issued', quiet: true, face: WP_FACE.id,
+                    body: wpEmpty('There is no student number on your record. The front office can add one.'),
+                };
+            }
+            return {
+                label: 'Student ID',
+                lead: String(studentId.value),
+                face: WP_FACE.id,
+                body: '<p class="wp-wordmark">Westbrook Academy</p>' +
+                      '<div class="wp-plate"><svg id="wpBarcode"></svg>' +
+                      '<p class="wp-digits">' + wpEsc(studentId.value) + '</p></div>',
+            };
+        }
+
+        function wpReasonCard(label, source, face) {
+            const ok = source && source.available;
+            return {
+                label: label,
+                lead: ok ? String(source.value) : 'Not available',
+                quiet: !ok,
+                face: face,
+                body: ok
+                    ? '<div class="wp-plate"><svg></svg></div>'
+                    : wpEmpty(source && source.reason ? source.reason : 'Not connected yet.'),
+            };
+        }
+
+        function wpWhen(iso) {
+            if (!iso) return '';
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return '';
+            return d.toLocaleString([], {
+                month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+            });
+        }
+
+        /**
+         * A session can arrive after the surface does.
+         *
+         * On a sign-in the token is already there. On a page that restores a
+         * student, wildcat-auth resolves asynchronously and may land after the
+         * boot sequence. Waiting beats showing an error that fixes itself two
+         * seconds later.
+         */
+        function wpWaitForSession(timeoutMs) {
+            return new Promise(function (resolve) {
+                const started = Date.now();
+                (function poll() {
+                    const auth = window.WildcatAuth;
+                    const s = auth && auth.getSession && auth.getSession();
+                    if (s) return resolve(s);
+                    if (Date.now() - started > timeoutMs) return resolve(null);
+                    setTimeout(poll, 150);
+                })();
+            });
+        }
+
+        /** Show the portal and hide every other top level surface. */
+        function openStudentPortal(seed, options) {
+            const view = wpById('studentPassView');
+            if (!view) return;
+            wpFromBoot = Boolean(options && options.fromBoot);
+
+            ['loginScreen', 'mainApp', 'studentDashboard', 'studentApp'].forEach(function (id) {
+                const el = wpById(id);
+                if (el) el.classList.add('hidden');
+            });
+            view.classList.remove('hidden');
+            document.body.classList.add('wp-open');
+
+            if (seed) {
+                const name = wpById('wpName');
+                const meta = wpById('wpMeta');
+                if (name) name.textContent = (seed.firstName || '') + ' ' + (seed.lastName || '');
+                if (meta && seed.grade) meta.textContent = 'Grade ' + seed.grade;
+            }
+            return loadStudentPortal();
+        }
+
+        function exitStudentPortal() {
+            const view = wpById('studentPassView');
+            if (view) { view.classList.add('hidden'); view.scrollTop = 0; }
+            const tap = wpById('tapResultView');
+            if (tap) tap.classList.add('hidden');
+            document.body.classList.remove('wp-open');
+
+            currentStudent = null;
+            if (typeof clearSession === 'function') clearSession();
+
+            wpCards = [];
+            wpSelected = 0;
+            const stack = wpById('wpStack');
+            if (stack) { stack.innerHTML = ''; stack.style.height = ''; }
+            ['wpName', 'wpMeta', 'wpAsOf'].forEach(function (id) {
+                const el = wpById(id);
+                if (el) el.textContent = '';
+            });
+            const err = wpById('wpError');
+            if (err) err.innerHTML = '';
+
+            const login = wpById('loginScreen');
+            if (login) login.classList.remove('hidden');
+            if (typeof showStudentLogin === 'function') showStudentLogin();
+            window.scrollTo(0, 0);
+        }
+
+        /**
+         * Fetch and draw.
+         *
+         * passCard:mine is required, because it carries the identity and the
+         * only barcode that exists today. The schedule and grades come from
+         * views_app:myStudentView, and me:get is the fallback for the schedule
+         * when the roster is matched by email rather than by student number.
+         * Every one is settled separately: a grades outage must not blank the
+         * ID card a student is standing at a scanner holding.
+         */
+        async function loadStudentPortal(preferIndex) {
+            const err = wpById('wpError');
+            const asOf = wpById('wpAsOf');
+            if (err) err.innerHTML = '';
+            if (asOf) asOf.textContent = '';
+            wpGhosts();
+
+            const auth = window.WildcatAuth;
+            const session = await wpWaitForSession(7000);
+            if (!session) {
+                if (wpFromBoot) { exitStudentPortal(); return; }
+                const stack = wpById('wpStack');
+                if (stack) { stack.innerHTML = ''; stack.style.height = '0px'; }
+                if (err) {
+                    err.innerHTML = 'Your sign-in has expired. Sign in again to load your cards.' +
+                        '<br><button type="button" onclick="studentPassSignOut()">Back to sign in</button>';
+                }
+                return;
+            }
+
+            const token = session.idToken;
+            const results = await Promise.allSettled([
+                auth.convexQuery('passCard:mine', {}, token),
+                auth.convexQuery('views_app:myStudentView', {}, token),
+                auth.convexQuery('me:get', {}, token),
+            ]);
+            const pass = results[0].status === 'fulfilled' ? results[0].value : null;
+            const mine = results[1].status === 'fulfilled' ? results[1].value : null;
+            const me = results[2].status === 'fulfilled' ? results[2].value : null;
+
+            if (!pass) {
+                const stack = wpById('wpStack');
+                if (stack) { stack.innerHTML = ''; stack.style.height = '0px'; }
+                if (err) err.textContent = (results[0].reason && results[0].reason.message) ||
+                    'Your cards could not be loaded.';
+                return;
+            }
+
+            const s = pass.student || {};
+            const nameEl = wpById('wpName');
+            const metaEl = wpById('wpMeta');
+            if (nameEl) nameEl.textContent = ((s.firstName || '') + ' ' + (s.lastName || '')).trim();
+            if (metaEl) {
+                metaEl.textContent = [
+                    s.grade ? 'Grade ' + s.grade : '',
+                    s.studentNumber || '',
+                ].filter(Boolean).join('  \u00b7  ');
+            }
+
+            // schedule is { available, reason, classes } and grades is
+            // { available, reason, courses }. Reading them as plain arrays is
+            // silent: `.length` on an object is undefined, so every student
+            // including one with a full report card falls through to the empty
+            // state and is told there is nothing there. wpSection reads the
+            // envelope and the bare array, because both shapes are in the wild.
+            // A pass waiting on a teacher names the room it was requested from,
+            // and only the room list can turn that slug into a name. Fetched
+            // once, here, so a student who reloads the page still reads
+            // "Room 16" rather than "rm-16".
+            const hpState = String((pass.hallPass && pass.hallPass.state) || '').toLowerCase();
+            if ((hpState === 'requested' || hpState === 'pending') && !wpLocations) {
+                await wpLoadLocations();
+            }
+
+            const sched = wpSection(mine && mine.schedule, 'classes');
+            const grades = wpSection(mine && mine.grades, 'courses');
+            if (!sched.rows.length && me && me.schedule && me.schedule.length) {
+                sched.rows = me.schedule;
+                sched.available = true;
+            } else if (sched.rows.length && me && me.schedule && me.schedule.length) {
+                // me:get carries the term and the course number; the student
+                // view does not. Same rows, two sources, so the richer one
+                // fills in what the other left out.
+                const byName = {};
+                me.schedule.forEach(function (r) {
+                    if (r.courseName) byName[r.courseName] = r;
+                });
+                sched.rows = sched.rows.map(function (r) {
+                    const extra = byName[r.courseName];
+                    if (!extra) return r;
+                    return {
+                        courseName: r.courseName,
+                        period: r.period || extra.period,
+                        teacher: r.teacher || extra.teacher,
+                        term: r.term || extra.term,
+                    };
+                });
+            }
+
+            const cards = [
+                wpScheduleCard(sched),
+                wpGradesCard(grades, !mine),
+                wpReasonCard('Lunch', pass.lunchId, WP_FACE.lunch),
+                wpReasonCard('Clever', pass.cleverBadge, WP_FACE.clever),
+                wpHallPassCard(pass.hallPass),
+                wpStudentIdCard(pass.studentId),
+            ];
+
+            // A live pass is the thing you are holding the phone for. Otherwise
+            // the ID barcode is, and it sits at the bottom of the stack where
+            // Wallet keeps the card you reach for. preferIndex wins over both,
+            // so cancelling a request leaves you looking at the card you just
+            // acted on rather than somewhere else.
+            const open = (preferIndex === 0 || preferIndex)
+                ? preferIndex
+                : ((pass.hallPass && pass.hallPass.available) ? 4 : 5);
+            wpRender(cards, open);
+
+            if (pass.studentId && pass.studentId.available && window.JsBarcode) {
+                try {
+                    JsBarcode('#wpBarcode', String(pass.studentId.value), {
+                        format: 'CODE128', displayValue: false, height: 90, margin: 0,
+                        background: '#ffffff', lineColor: '#0B0B0E',
+                    });
+                    const svg = wpById('wpBarcode');
+                    // JsBarcode writes its own width and height. Let CSS own the
+                    // size instead, so the plate is the same on every screen.
+                    if (svg) {
+                        svg.removeAttribute('width');
+                        svg.removeAttribute('height');
+                        svg.setAttribute('preserveAspectRatio', 'none');
+                    }
+                } catch (e) {
+                    console.warn('[portal] barcode failed:', e && e.message);
+                }
+            }
+
+            // Measured again now that the barcode has been drawn and the last
+            // of the content has landed. The measurement taken during layout is
+            // one frame too early: the page was still growing, so the portal
+            // decided it did not fit and gave up drag to select on a screen
+            // where it would have worked.
+            wpMeasureFit();
+            setTimeout(wpMeasureFit, 400);
+
+            // Where the data came from and when. A stale schedule that says so
+            // is usable; a stale schedule that does not is a lie.
+            if (asOf) {
+                const when = wpWhen(mine && mine.dataAsOf);
+                asOf.textContent = when
+                    ? 'PowerSchool data as of ' + when
+                    : (s.email || '');
             }
         }
 
-        function studentPassSignOut() {
-            const view = document.getElementById('studentPassView');
-            if (view) view.classList.add('hidden');
-            if (window.WildcatAuth && window.WildcatAuth.signOut) window.WildcatAuth.signOut();
+        // ---------------------------------------------------------------
+        // Hall pass request.
+        //
+        // A sheet, not a screen. The student is answering one question, "which
+        // room are you leaving", and then going straight back to the card they
+        // were already looking at. A full page for that loses their place.
+        //
+        //   tapLocations:listForStudents  {}                    -> { locations, truncated }
+        //   hallPasses:requestMine        { originSlug, reason } -> { id, state, origin, requestedAt }
+        //   hallPasses:cancelMine         { passId }             -> { state }
+        //
+        // A refusal comes back as a ConvexError whose message is written for a
+        // fourteen year old and says what to do about it. It is printed exactly
+        // as the server wrote it. Never reworded, never swapped for a generic
+        // apology, because the generic apology is the version that leaves a
+        // student standing in a doorway with no idea what went wrong.
+        // ---------------------------------------------------------------
+
+        function wpSheetError(message) {
+            const el = wpById('wpSheetError');
+            if (el) el.textContent = message || '';
         }
 
-        // A student signing in gets the cards, not the teacher app.
+        function openHallPassSheet() {
+            const sheet = wpById('wpSheet');
+            const scrim = wpById('wpScrim');
+            if (!sheet || !scrim) return;
+
+            wpPickedSlug = null;
+            wpSheetError('');
+            const reason = wpById('wpReason');
+            if (reason) reason.value = '';
+
+            sheet.classList.add('is-open');
+            sheet.setAttribute('aria-hidden', 'false');
+            scrim.classList.add('is-open');
+
+            wpRenderPickList();
+            wpLoadLocations();
+        }
+
+        function closeHallPassSheet() {
+            const sheet = wpById('wpSheet');
+            const scrim = wpById('wpScrim');
+            if (sheet) { sheet.classList.remove('is-open'); sheet.setAttribute('aria-hidden', 'true'); }
+            if (scrim) scrim.classList.remove('is-open');
+        }
+
+        async function wpLoadLocations() {
+            if (wpLocations) return;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!session) { wpSheetError('You are not signed in any more. Sign in again.'); return; }
+            try {
+                const data = await auth.convexQuery('tapLocations:listForStudents', {}, session.idToken);
+                wpLocations = {
+                    rows: (data && data.locations) || [],
+                    truncated: Boolean(data && data.truncated),
+                };
+            } catch (e) {
+                wpLocations = null;
+                wpSheetError(e.message);
+            }
+            wpRenderPickList();
+        }
+
+        function wpRenderPickList() {
+            const host = wpById('wpPickList');
+            if (!host) return;
+
+            if (!wpLocations) {
+                host.innerHTML = '<p class="wp-sheet-sub" style="margin:0;padding:16px 15px;">Loading rooms...</p>';
+                return;
+            }
+            if (!wpLocations.rows.length) {
+                host.innerHTML = '<p class="wp-sheet-sub" style="margin:0;padding:16px 15px;">' +
+                    'No rooms are registered yet. An adult has to tap the wall tags once before ' +
+                    'you can pick one here.</p>';
+                return;
+            }
+
+            host.innerHTML = wpLocations.rows.map(function (l) {
+                const on = l.slug === wpPickedSlug;
+                return '<button type="button" class="wp-pick" role="radio" aria-checked="' + on + '"' +
+                    ' data-slug="' + wpEsc(l.slug) + '" data-name="' + wpEsc(l.name) + '"' +
+                    ' onclick="wpPickLocation(this)">' +
+                    '<span class="wp-pick-name">' + wpEsc(l.name) + '</span>' +
+                    '<span class="wp-pick-kind">' + wpEsc(l.kind || '') + '</span>' +
+                    '<span class="wp-pick-tick" aria-hidden="true"></span>' +
+                    '</button>';
+            }).join('');
+        }
+
+        function wpPickLocation(button) {
+            wpPickedSlug = button.getAttribute('data-slug');
+            wpLastOrigin = button.getAttribute('data-name') || '';
+            wpSheetError('');
+            const all = wpById('wpPickList').querySelectorAll('.wp-pick');
+            for (let i = 0; i < all.length; i++) {
+                all[i].setAttribute('aria-checked',
+                    all[i].getAttribute('data-slug') === wpPickedSlug ? 'true' : 'false');
+            }
+        }
+
+        async function submitHallPassRequest() {
+            if (wpBusy) return;
+            if (!wpPickedSlug) {
+                wpSheetError('Pick the room you are leaving from first.');
+                return;
+            }
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!session) { wpSheetError('You are not signed in any more. Sign in again.'); return; }
+
+            const go = wpById('wpSheetGo');
+            const reasonEl = wpById('wpReason');
+            const reason = reasonEl ? reasonEl.value.trim() : '';
+            const args = { originSlug: wpPickedSlug };
+            if (reason) args.reason = reason;
+
+            wpBusy = true;
+            if (go) { go.disabled = true; go.textContent = 'Sending...'; }
+            wpSheetError('');
+            try {
+                const result = await auth.convexMutation('hallPasses:requestMine', args, session.idToken);
+                // Keep the room NAME the student just tapped unless the server
+                // sent back something friendlier. If it echoes the slug, the
+                // name we already have is the better label.
+                if (result && result.origin && result.origin !== wpPickedSlug) {
+                    wpLastOrigin = result.origin;
+                }
+                closeHallPassSheet();
+                await loadStudentPortal(4);
+            } catch (e) {
+                wpSheetError(e.message);
+            } finally {
+                wpBusy = false;
+                if (go) { go.disabled = false; go.textContent = 'Request pass'; }
+            }
+        }
+
+        async function cancelHallPassRequest(passId) {
+            if (wpBusy) return;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!session) return;
+
+            const err = wpById('wpError');
+            wpBusy = true;
+            try {
+                await auth.convexMutation('hallPasses:cancelMine', { passId: passId }, session.idToken);
+                if (err) err.textContent = '';
+                // Stay on the hall pass card. The student just acted on it and
+                // needs to see that it went back to nothing.
+                await loadStudentPortal(4);
+            } catch (e) {
+                if (err) err.textContent = e.message;
+            } finally {
+                wpBusy = false;
+            }
+        }
+
+        /** Kept as the old name because a tap result screen calls it. */
+        function showStudentPassCards() {
+            return openStudentPortal(null);
+        }
+
+        function studentPassSignOut() {
+            if (window.WildcatAuth && window.WildcatAuth.signOut) {
+                try { window.WildcatAuth.signOut(); } catch (e) { /* still leave */ }
+            }
+            exitStudentPortal();
+        }
+
+        // wildcat-auth emits this on signOut() and NOTHING listened for it, so
+        // a sign-out from anywhere else left the student staring at a dark
+        // screen with their cards still on it.
+        window.addEventListener('wildcat-auth-signout', function () {
+            const view = wpById('studentPassView');
+            if (view && !view.classList.contains('hidden')) exitStudentPortal();
+        });
+
+        // A student signing in gets the portal, not the teacher app.
         window.addEventListener('wildcat-auth-signin', (event) => {
             const me = event.detail || {};
-            if (me.kind === 'student') showStudentPassCards();
+            if (me.kind === 'student') openStudentPortal(null);
         });
+
+        // Explicit, because wildcat-auth.js reaches for window.openStudentPortal
+        // by name and a top level declaration landing on the global object is a
+        // property of the current script setup rather than a promise.
+        window.openStudentPortal = openStudentPortal;
+        window.exitStudentPortal = exitStudentPortal;
+        window.showStudentPassCards = showStudentPassCards;
+        window.studentPassSignOut = studentPassSignOut;
+        window.closeTapResult = closeTapResult;
+        window.confirmTapCheckIn = confirmTapCheckIn;
+        window.openHallPassSheet = openHallPassSheet;
+        window.closeHallPassSheet = closeHallPassSheet;
+        window.submitHallPassRequest = submitHallPassRequest;
+        window.cancelHallPassRequest = cancelHallPassRequest;
+        window.wpPickLocation = wpPickLocation;
 
         // ---------------------------------------------------------------
         // NFC tags.
@@ -16190,6 +17117,28 @@
             window.history.replaceState({}, '', url.toString());
         }
 
+        /**
+         * A TAP IS NEVER PERFORMED BY A PAGE LOAD.
+         *
+         * This function used to call hallPasses:tap the moment the page opened
+         * with ?tap= in the address bar. No gesture, no confirmation. Which
+         * meant the tap was performed by whoever sent the link, not by the
+         * student it got recorded against:
+         *
+         *   - send a classmate https://wildcatraffle.com/?tap=<slug> in a chat
+         *   - or encode a blank NTAG and hold it near their phone, since iOS
+         *     reads tags in the background with no app installed
+         *
+         * If that student had a live pass and the slug was their origin room,
+         * the pass closed and returnedAt was written while the child was still
+         * standing in a corridor. The schema comment on that column is explicit
+         * that writing it on a human's say so mixes a measurement with an
+         * assertion, permanently and undetectably. A third party could do that
+         * to somebody else's record.
+         *
+         * So arriving with ?tap= now only ever SHOWS something. The mutation
+         * lives behind confirmTapCheckIn(), which nothing but a press reaches.
+         */
         async function handleTapArrival() {
             const slug = pendingTapSlug();
             if (!slug) return;
@@ -16202,39 +17151,191 @@
             if (!session) return;
 
             if (session.me && session.me.kind === 'student') {
-                try {
-                    const result = await auth.convexMutation('hallPasses:tap', { locationSlug: slug }, session.idToken);
-                    clearTapFromUrl();
-                    showTapResult(result);
-                } catch (e) {
-                    clearTapFromUrl();
-                    showTapResult({ ok: false, reason: e.message });
-                }
+                // Cleared as soon as it has been taken into memory, so a reload
+                // cannot re-arm the screen and a shared URL is spent once.
+                clearTapFromUrl();
+                wpTapSlug = slug;
+                showTapConfirm(slug, session);
                 return;
             }
 
             // Staff tapped a tag. That is how a tag gets registered: an admin
-            // walks the building with the stickers and taps each one.
+            // walks the building with the stickers and taps each one. Already
+            // behind its own prompts, and it writes a tag record rather than a
+            // child's whereabouts.
             clearTapFromUrl();
             openTagRegistration(slug);
+        }
+
+        /**
+         * What a student sees when they tap a tag.
+         *
+         * One press, because tapping a sticker on a wall is the normal case and
+         * it should not feel like an interrogation. But it has to be THEIR
+         * press, and before it happens they get told the room by name and what
+         * it will do to the pass they are holding.
+         *
+         * The two things it needs are read only: the tag's name, and their own
+         * current pass. Neither writes anything, so an unknown slug or a
+         * student with no pass ends here, with a sentence, rather than at a
+         * mutation.
+         */
+        async function showTapConfirm(slug, session) {
+            const view = wpById('tapResultView');
+            if (!view) return;
+            document.body.classList.add('wp-open');
+            view.classList.remove('hidden');
+            view.innerHTML = '<div class="wp-tap"><p class="wp-tap-kicker">Reading the tag</p></div>';
+
+            const auth = window.WildcatAuth;
+            // tapLocations:lookup is staff only, by design. The student scoped
+            // list is the one a student is allowed to read, so the name comes
+            // from there.
+            const settled = await Promise.allSettled([
+                wpLoadLocations(),
+                auth.convexQuery('passCard:mine', {}, session.idToken),
+            ]);
+            const pass = settled[1].status === 'fulfilled' ? settled[1].value : null;
+
+            let known = true;
+            let name = slug;
+            let unsure = false;
+            if (wpLocations && wpLocations.rows.length) {
+                const hit = wpLocations.rows.filter(function (l) { return l.slug === slug; })[0];
+                known = Boolean(hit);
+                if (hit) name = hit.name;
+            } else {
+                // The room list did not load. Do not accuse a real tag of not
+                // existing on the strength of an outage: show what is known,
+                // say it is unconfirmed, and let the server be the one to
+                // refuse a slug it does not recognise. The press is still
+                // theirs either way, which is the part that matters.
+                unsure = true;
+            }
+
+            const hp = pass && pass.hallPass;
+            const live = Boolean(hp && hp.available);
+            const state = String((hp && hp.state) || '').toLowerCase();
+            const out = live && state !== 'requested' && state !== 'pending';
+
+            let kicker = 'You tapped';
+            let title = unsure ? 'Check in here' : name;
+            let line;
+            let action = '';
+
+            if (!known) {
+                kicker = 'Unknown tag';
+                title = 'Not registered';
+                line = 'This tag is not set up yet, so there is nothing to check in to. ' +
+                       'Nothing has been recorded. Tell the front office the tag says "' + slug + '".';
+            } else if (!live) {
+                line = 'You do not have a pass right now, so there is nothing to check in. ' +
+                       'Nothing has been recorded. Ask your teacher for a pass first.';
+            } else if (!out) {
+                line = 'Your pass is still waiting for your teacher. Once it is approved, ' +
+                       'tap this tag again to check in at ' + name + '.';
+            } else {
+                line = 'This records you at ' + name + '. If this is where your pass started, ' +
+                       'it ends the pass and stops your timer.';
+                if (unsure) {
+                    line = 'This records you at the place this tag is for. We could not ' +
+                           'check the room name just now, and the tag says "' + slug + '". ' +
+                           'If this is where your pass started, checking in ends the pass.';
+                }
+                action = '<button type="button" class="wp-btn wp-btn-solid" id="wpTapGo" ' +
+                         'onclick="confirmTapCheckIn()">Check in' +
+                         (unsure ? '' : ' at ' + wpEsc(name)) + '</button>';
+            }
+
+            view.innerHTML =
+              '<div class="wp-tap">' +
+                '<p class="wp-tap-kicker">' + wpEsc(kicker) + '</p>' +
+                '<h2>' + wpEsc(title) + '</h2>' +
+                '<p>' + wpEsc(line) + '</p>' +
+                // Only alongside the offer. On an unregistered tag the state of
+                // their pass is not the point and printing it reads as though
+                // something is about to happen to it.
+                (action ? '<p class="wp-tap-meta">' +
+                    (hp.elapsedMinutes === null || hp.elapsedMinutes === undefined
+                        ? 'Your pass is not being timed yet.'
+                        : 'Out for ' + hp.elapsedMinutes + ' min.') + '</p>' : '') +
+                '<div class="wp-tap-actions">' +
+                  '<button type="button" class="wp-btn wp-btn-ghost" onclick="closeTapResult()">' +
+                    (action ? 'Not me' : 'My cards') + '</button>' +
+                  action +
+                '</div>' +
+              '</div>';
+        }
+
+        /**
+         * The only path to hallPasses:beginTap and hallPasses:tap, and it is a
+         * click handler. Nothing else in this file calls either one.
+         *
+         * Two calls, because a bare slug is not proof that anybody was there:
+         *
+         *   beginTap  mints a single use token, bound to this student and this
+         *             one slug, good for 120 seconds
+         *   tap       burns that token before it does anything
+         *
+         * THE GESTURE IS THE WHOLE POINT. If the page called beginTap on
+         * arrival and redeemed it a line later, the token would prove only that
+         * the page had loaded, which is exactly what a forged link makes happen.
+         * The server work would be void. So beginTap is minted HERE, inside the
+         * press, and nowhere earlier.
+         *
+         * No retry loop either: minting is rate limited to 12 per 5 minutes per
+         * student, and a loop would spend a student's whole allowance on one
+         * corridor.
+         */
+        async function confirmTapCheckIn() {
+            if (!wpTapSlug || wpBusy) return;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+            if (!session) return;
+
+            const btn = wpById('wpTapGo');
+            wpBusy = true;
+            if (btn) { btn.disabled = true; btn.textContent = 'Checking in...'; }
+            const slug = wpTapSlug;
+            wpTapSlug = null;
+            try {
+                const intent = await auth.convexMutation(
+                    'hallPasses:beginTap', { locationSlug: slug }, session.idToken);
+                const result = await auth.convexMutation(
+                    'hallPasses:tap', { locationSlug: slug, intentToken: intent.token }, session.idToken);
+                showTapResult(result);
+            } catch (e) {
+                // Verbatim. A refusal here is written for a student and says
+                // what to do next.
+                showTapResult({ ok: false, reason: e.message });
+            } finally {
+                wpBusy = false;
+            }
         }
 
         function showTapResult(result) {
             const view = document.getElementById('tapResultView');
             if (!view) return;
+            document.body.classList.add('wp-open');
             view.classList.remove('hidden');
-            view.innerHTML = `
-              <div style="max-width:420px;margin:0 auto;padding:40px 20px;text-align:center;color:#e7e4dc;">
-                <div style="font-size:56px;margin-bottom:8px;">${result.ok ? '&#9989;' : '&#9888;'}</div>
-                <div style="font-size:20px;font-weight:700;margin-bottom:6px;">
-                  ${result.ok ? (result.location || 'Checked in') : 'Not checked in'}
-                </div>
-                <div style="color:#94a3b8;font-size:15px;line-height:1.5;">${result.reason || ''}</div>
-                <button onclick="document.getElementById('tapResultView').classList.add('hidden'); showStudentPassCards();"
-                        style="margin-top:24px;padding:12px 22px;border:none;border-radius:8px;background:#2a4b8d;color:#fff;font-size:15px;cursor:pointer;">
-                  My cards
-                </button>
-              </div>`;
+            view.innerHTML =
+              '<div class="wp-tap">' +
+                '<div class="wp-tap-mark' + (result.ok ? '' : ' is-bad') + '">' +
+                  (result.ok ? '&#10003;' : '&#33;') +
+                '</div>' +
+                '<h2>' + wpEsc(result.ok ? (result.location || 'Checked in') : 'Not checked in') + '</h2>' +
+                '<p>' + wpEsc(result.reason || '') + '</p>' +
+                '<div class="wp-tap-actions">' +
+                  '<button type="button" class="wp-btn wp-btn-solid" onclick="closeTapResult()">My cards</button>' +
+                '</div>' +
+              '</div>';
+        }
+
+        function closeTapResult() {
+            const view = document.getElementById('tapResultView');
+            if (view) view.classList.add('hidden');
+            wpTapSlug = null;
+            showStudentPassCards();
         }
 
         /** An admin tapped an unregistered tag. Offer to name it. */
@@ -16429,9 +17530,12 @@
                         updateSuperAdminList();
                     }
                 } else if (currentStudent) {
-                    document.getElementById('loginScreen').classList.add('hidden');
-                    document.getElementById('studentApp').classList.remove('hidden');
-                    updateStudentView();
+                    // The portal, not the legacy #studentApp. fromBoot tells it
+                    // to fall back to the login screen rather than shout if the
+                    // auth session never turns up: a Google student session does
+                    // not survive a reload, so "no token" is the ordinary
+                    // outcome here, not a failure worth a red message.
+                    openStudentPortal(currentStudent, { fromBoot: true });
                 }
             } else {
                 // No active session, show login screen

@@ -45,4 +45,33 @@ crons.cron(
   { reason: "nightly" },
 );
 
+/**
+ * Close hall passes nobody is coming back to.
+ *
+ * WHY THIS HAS TO EXIST. `hasLivePass` counts any non-terminal pass as live, so
+ * an approved pass that the student never taps back blocks that child from every
+ * future hall pass, and before this nothing in the codebase ever wrote `expired`.
+ * A pass approved at 2:50pm on the last day of term would otherwise still be open
+ * when that student graduated. hallPasses.forceClose gives a teacher a manual
+ * exit; this is the one that catches the passes nobody remembers.
+ *
+ * HOURLY, not every few minutes, and that is a deliberate pairing with
+ * EXPIRY_GRACE_MINUTES. The sweep only touches passes already an hour past their
+ * window, so a student who is a few minutes late still gets to tap back in and
+ * close their own trip properly. Overdue stays a display state for the teacher's
+ * board; this only reaps the abandoned ones.
+ *
+ * Runs around the clock rather than only in school hours: the passes that need
+ * reaping are exactly the ones left open at the end of a day, and a bounded
+ * indexed read over three states costs nothing on an empty table.
+ *
+ * :40 is a minute none of the other jobs use.
+ */
+crons.cron(
+  "expire abandoned hall passes",
+  "40 * * * *",
+  internal.hallPasses.expireAbandoned,
+  { reason: "Closed automatically: never returned." },
+);
+
 export default crons;

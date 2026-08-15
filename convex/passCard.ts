@@ -1,6 +1,6 @@
 import { query } from "./_generated/server";
 import { requireStudentSelf } from "./identity";
-import { elapsedMinutes, isOverdue } from "./hallPassRules";
+import { elapsedMinutes, isOverdue, isTerminal } from "./hallPassRules";
 
 /**
  * Everything the student pass cards need, for the signed-in student only.
@@ -15,20 +15,35 @@ import { elapsedMinutes, isOverdue } from "./hallPassRules";
  * available yet" is a fact a student can act on, and it tells the office what
  * to fix.
  */
+/**
+ * How many of the student's most recent passes this card reads. Only the live
+ * one is wanted, and a live pass blocks every later request, so it is always the
+ * newest row; this window is slack, not a requirement.
+ */
+const PASS_LOOKBACK = 20;
+
 export const mine = query({
   args: {},
   handler: async (ctx) => {
     const student = await requireStudentSelf(ctx);
     const now = new Date().toISOString();
 
+    // The newest few, never the whole history. This card is polled by every
+    // signed-in student's browser, and an unbounded collect() here reads a
+    // student's entire record on every poll, growing for as long as they attend
+    // the school, until it crosses Convex's 4,096-read ceiling and the card stops
+    // rendering. Only the live pass is wanted, and a live pass blocks every later
+    // request, so it is always among the newest rows.
     const passes = await ctx.db
       .query("hallPasses")
       .withIndex("by_student", (q) => q.eq("studentId", student._id))
-      .collect();
+      .order("desc")
+      .take(PASS_LOOKBACK);
 
-    const live = passes.find(
-      (p) => !["returned", "denied", "cancelled", "expired"].includes(p.state),
-    );
+    // isTerminal owns the list of states a pass stops at. Inlining it here made
+    // this the third copy, and a copy is a state the machine knows about and
+    // this screen does not.
+    const live = passes.find((p) => !isTerminal(p.state));
 
     return {
       student: {

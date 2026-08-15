@@ -3266,3 +3266,862 @@ body {
 .reward-cost { font-size: 22px; font-weight: 700; color: var(--wc-blue); margin: 6px 0 10px; }
 
 /* Leaderboard rows reuse the shared rank styles; nothing extra needed. */
+
+/* ============================================================
+   STUDENT PORTAL  (#studentPassView)
+   A vertical card stack, Apple Wallet geometry: every card is its
+   own brand surface, overlapped so only a header strip shows, with
+   one card revealed. Near black ground, generous radii, spring
+   selection.
+
+   Two things about this file that shaped the rules below:
+
+   1. There is NO global reset. styles.css line 44 reads "\n* {",
+      which silently kills the box-sizing and margin reset for the
+      whole app. So this block resets its own subtree and never
+      assumes a margin is 0.
+   2. There is no dark theme anywhere else. The dark ground is local
+      to this surface and declared as tokens here rather than as
+      loose hex values sprinkled through a template literal, which
+      is what the first version of this screen did.
+
+   Card FACES use the school palette (--wc-blue-deep, --wc-orange)
+   so the portal is part of the same product as the staff app.
+   ============================================================ */
+
+/* Every full screen student surface sits on the same ground. Two use it:
+   the portal and the NFC tap result. */
+.wp-root {
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    background: #0B0B0E;
+    color: #F6F4EF;
+    font-family: var(--font-main);
+    -webkit-font-smoothing: antialiased;
+}
+#tapResultView.wp-root { z-index: 9500; }
+
+/* The page behind the portal must not scroll with it. Removed on exit. */
+body.wp-open { overflow: hidden; }
+
+#studentPassView {
+    /* Ground and type */
+    --wp-ground: #0B0B0E;
+    --wp-fg: #F6F4EF;
+    --wp-dim: #8E9199;
+    --wp-hair: rgba(255, 255, 255, 0.10);
+
+    /* Geometry. Phone first, and measured off the reference rather than
+       guessed: on a 393pt screen Wallet runs its cards near the edges,
+       card height about 0.65 of card width, and a collapsed strip about
+       0.15 of card width. These are those ratios.
+
+       Both are tied to viewport height so the whole stack fits without
+       scrolling on a short phone and on a Chromebook alike. A wallet you
+       have to scroll to reach the bottom of is not a wallet, and the card
+       at the bottom is the one a student reaches for. The clamps hold the
+       Wallet proportions at the ends of the range.
+
+       svh, not vh: on a phone vh is the TALL viewport, the one you only
+       get once the address bar has scrolled away, so a vh-sized stack
+       overflows on arrival and settles afterwards. The vh line above is
+       the fallback for anything that does not know svh. */
+    --wp-strip: clamp(48px, 7.4vh, 60px);
+    --wp-strip: clamp(48px, 7.4svh, 60px);
+    --wp-card-h: clamp(196px, 32vh, 262px);
+    --wp-card-h: clamp(196px, 32svh, 262px);
+    --wp-radius: 17px;
+    --wp-gutter: 13px;
+    --wp-col: 414px;
+
+    /* One damped spring, sampled. zeta 0.66, wn 15.5, 620ms, about
+       6% overshoot. The cubic-bezier above it is the fallback for a
+       browser without linear(); it is deliberately close, not equal. */
+    --wp-ease: cubic-bezier(.22, 1.2, .36, 1);
+    --wp-ease: linear(0 0%, 0.0669 4.2%, 0.2209 8.3%, 0.4075 12.5%, 0.5903 16.7%, 0.7484 20.8%, 0.8725 25%, 0.9613 29.2%, 1.0184 33.3%, 1.0498 37.5%, 1.0622 41.7%, 1.0619 45.8%, 1.0541 50%, 1.0428 54.2%, 1.0309 58.3%, 1.0201 62.5%, 1.0113 66.7%, 1.0047 70.8%, 1.0002 75%, 0.9976 79.2%, 0.9963 83.3%, 0.996 87.5%, 0.9963 91.7%, 0.997 95.8%, 1 100%);
+    --wp-dur: 620ms;
+
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    background: var(--wp-ground);
+    color: var(--wp-fg);
+    font-family: var(--font-main);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+/* Local reset. See note 1 above. */
+#studentPassView,
+#studentPassView *,
+#studentPassView *::before,
+#studentPassView *::after {
+    box-sizing: border-box;
+}
+#studentPassView h1,
+#studentPassView h2,
+#studentPassView h3,
+#studentPassView p,
+#studentPassView ul,
+#studentPassView li,
+#studentPassView figure {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+/* A soft lift behind the title, so the black is not flat black. */
+#studentPassView::before {
+    content: "";
+    position: fixed;
+    inset: 0 0 auto 0;
+    height: 340px;
+    pointer-events: none;
+    background: radial-gradient(120% 100% at 50% 0%, rgba(47, 103, 167, 0.13) 0%, rgba(11, 11, 14, 0) 68%);
+}
+
+.wp-shell {
+    position: relative;
+    width: 100%;
+    max-width: var(--wp-col);
+    margin: 0 auto;
+    padding:
+        calc(env(safe-area-inset-top, 0px) + 18px)
+        var(--wp-gutter)
+        calc(env(safe-area-inset-bottom, 0px) + 32px);
+}
+
+/* ---- Header ------------------------------------------------ */
+
+.wp-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 6px 2px 20px;
+}
+
+.wp-name {
+    font-size: 30px;
+    line-height: 1.08;
+    font-weight: 700;
+    letter-spacing: -0.022em;
+    color: var(--wp-fg);
+}
+
+.wp-meta {
+    margin-top: 5px;
+    font-size: 13.5px;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    color: var(--wp-dim);
+    font-variant-numeric: tabular-nums;
+}
+
+.wp-round {
+    flex: 0 0 auto;
+    width: 38px;
+    height: 38px;
+    margin-top: 2px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.09);
+    color: var(--wp-fg);
+    cursor: pointer;
+    transition: background .18s ease, transform .18s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+.wp-round:hover { background: rgba(255, 255, 255, 0.16); }
+.wp-round:active { transform: scale(.92); }
+
+/* ---- The stack --------------------------------------------- */
+
+.wp-stage {
+    /* The stack is absolutely positioned inside this, so the shadow
+       of the top card has somewhere to fall without clipping. */
+    position: relative;
+    padding-top: 6px;
+}
+
+/* Two rulers. JS measures these to learn what the clamps above resolved
+   to on this screen, because a custom property cannot be read back as a
+   number. Zero width, no paint, no hit testing, but a real height. */
+.wp-metric {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+.wp-metric-strip { height: var(--wp-strip); }
+.wp-metric-card { height: var(--wp-card-h); }
+
+.wp-stack {
+    position: relative;
+    width: 100%;
+    height: var(--wp-card-h);           /* JS overwrites this */
+    transition: height var(--wp-dur) var(--wp-ease);
+    touch-action: pan-y;
+}
+
+.wp-card {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: var(--wp-card-h);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: var(--wp-radius);
+    background: var(--wp-face, #1a1c22);
+    color: var(--wp-ink, #ffffff);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    will-change: transform, height;
+    /* The shadow is thrown UPWARD, onto the card above. That is what
+       makes a stack read as physical rather than as a list. */
+    box-shadow:
+        0 -0.5px 0 rgba(255, 255, 255, 0.14) inset,
+        0 -10px 26px rgba(0, 0, 0, 0.55),
+        0 2px 3px rgba(0, 0, 0, 0.30);
+    transition:
+        transform var(--wp-dur) var(--wp-ease),
+        height var(--wp-dur) var(--wp-ease);
+}
+
+.wp-card:focus-visible {
+    outline: 2px solid #ffffff;
+    outline-offset: 3px;
+}
+
+/* While a finger or a cursor is on the stack, the stack follows it
+   exactly. The spring only runs on release. */
+.wp-stack.wp-noanim,
+.wp-stack.wp-noanim .wp-card {
+    transition: none !important;
+}
+
+/* Drag to select is only allowed to take over vertical touch gestures
+   when the whole portal already fits on screen, and only from the card
+   that is open. Otherwise a student who needs to scroll would put a
+   thumb on the biggest thing on the page and find it does nothing.
+   JS adds .wp-fits after each layout. */
+.wp-fits .wp-card.is-open { touch-action: none; }
+
+/* Collapsed strips are a hair lighter on hover, so a mouse can tell
+   they are live. Touch gets nothing, which is correct. */
+@media (hover: hover) {
+    .wp-card[aria-selected="false"]::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: #ffffff;
+        opacity: 0;
+        transition: opacity .18s ease;
+        pointer-events: none;
+    }
+    .wp-card[aria-selected="false"]:hover::after { opacity: .07; }
+}
+
+/* Collapsed cards sit back a fraction so the revealed one is the
+   thing your eye lands on. Kept very small: Wallet does not dim its
+   stack, it just overlaps it. */
+.wp-card[aria-selected="false"] .wp-body { opacity: 0; }
+.wp-card .wp-body { transition: opacity 240ms ease; }
+
+/* ---- Card header strip ------------------------------------- */
+
+.wp-head {
+    flex: 0 0 var(--wp-strip);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 0 18px;
+}
+
+/* Wallet puts a card's NAME on the strip at reading size, next to one
+   value, and nothing else. Not a micro-caps category label: that reads
+   as a boarding pass. "Student ID   12217" is the same shape as
+   "Apple Cash   $226.78". */
+.wp-label {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.014em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.wp-lead {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.014em;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    opacity: .88;
+}
+.wp-lead.is-quiet { font-weight: 400; font-size: 14px; opacity: .55; }
+
+/* ---- Card body --------------------------------------------- */
+
+.wp-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 4px 18px 18px;
+    display: flex;
+    flex-direction: column;
+}
+
+/* A short sentence explaining why a card has nothing on it. Never a
+   blank card and never a zero: the reason is the content. */
+.wp-empty {
+    margin: auto 0;
+    font-size: 13.5px;
+    line-height: 1.5;
+    font-weight: 400;
+    opacity: .70;
+    max-width: 30ch;
+}
+
+/* Scannable plate. White, because a scanner needs white. */
+.wp-plate {
+    margin-top: auto;
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 12px 14px 10px;
+    text-align: center;
+}
+.wp-plate svg {
+    display: block;
+    width: 100%;
+    height: 72px;
+}
+.wp-digits {
+    margin-top: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.34em;
+    text-indent: 0.34em;
+    color: #14171C;
+    font-variant-numeric: tabular-nums;
+}
+
+.wp-wordmark {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    opacity: .62;
+    padding-bottom: 10px;
+}
+
+/* Rows: schedule and grades share one rhythm. */
+.wp-rows {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+    margin: 0 -4px;
+    padding: 0 4px;
+}
+.wp-rows::-webkit-scrollbar { width: 0; height: 0; }
+
+.wp-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 0;
+    border-top: 1px solid var(--wp-rule, rgba(255, 255, 255, 0.10));
+}
+.wp-row:first-child { border-top: 0; }
+
+.wp-pill {
+    flex: 0 0 auto;
+    min-width: 30px;
+    height: 24px;
+    padding: 0 7px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 7px;
+    background: var(--wp-pill, rgba(255, 255, 255, 0.13));
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+}
+
+.wp-rowmain { flex: 1 1 auto; min-width: 0; }
+
+/* These are spans, and there is no global reset in this file, so they
+   have to be told to stack. Without this the course name and the teacher
+   run together on one line. */
+.wp-rowtitle,
+.wp-rowsub,
+.wp-rowend,
+.wp-rowpct { display: block; }
+
+.wp-rowtitle {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: -0.008em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.wp-rowsub {
+    margin-top: 1px;
+    font-size: 12px;
+    font-weight: 400;
+    opacity: .62;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.wp-rowend {
+    flex: 0 0 auto;
+    text-align: right;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
+}
+/* "Not posted" is a fact, not a grade. It never renders as 0 and it
+   never renders in the same weight as a real grade. */
+.wp-rowend.is-none {
+    font-size: 12px;
+    font-weight: 400;
+    opacity: .52;
+    letter-spacing: 0;
+}
+.wp-rowpct {
+    font-size: 11.5px;
+    font-weight: 400;
+    opacity: .58;
+    margin-top: 1px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* The big timer on a live hall pass. ExtraLight, because a number
+   this size at bold is a shout. */
+.wp-big {
+    margin: auto 0 0;
+    font-size: 64px;
+    line-height: 1;
+    font-weight: 200;
+    letter-spacing: -0.04em;
+    font-variant-numeric: tabular-nums;
+}
+.wp-big span {
+    font-size: 18px;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    opacity: .66;
+    margin-left: 4px;
+}
+
+.wp-foot {
+    padding-top: 14px;
+    font-size: 11.5px;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    opacity: .60;
+}
+
+/* ---- Under the stack --------------------------------------- */
+
+.wp-asof {
+    padding: 22px 4px 0;
+    text-align: center;
+    font-size: 11.5px;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    color: var(--wp-dim);
+}
+
+.wp-note {
+    padding: 14px 4px 0;
+    text-align: center;
+    font-size: 13.5px;
+    line-height: 1.5;
+    font-weight: 400;
+    color: #E9A9A0;
+}
+.wp-note:empty { display: none; }
+
+.wp-note button {
+    display: inline-block;
+    margin-top: 12px;
+    padding: 10px 18px;
+    border: 0;
+    border-radius: 10px;
+    background: var(--wc-blue, #2F67A7);
+    color: #fff;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+/* Skeleton while the first fetch is in flight. Shaped like the stack
+   it is about to become, so nothing jumps when the data lands. */
+.wp-ghost {
+    position: absolute;
+    left: 0;
+    right: 0;
+    border-radius: var(--wp-radius);
+    background: linear-gradient(100deg, #16181D 30%, #202329 50%, #16181D 70%);
+    background-size: 280% 100%;
+    animation: wp-shimmer 1.5s linear infinite;
+}
+@keyframes wp-shimmer {
+    from { background-position: 140% 0; }
+    to   { background-position: -140% 0; }
+}
+
+/* ---- Buttons on a card ------------------------------------- */
+
+.wp-actions {
+    display: flex;
+    gap: 8px;
+    padding-top: 12px;
+}
+
+.wp-btn {
+    flex: 1 1 auto;
+    padding: 11px 14px;
+    border: 0;
+    border-radius: 11px;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: -0.005em;
+    cursor: pointer;
+    color: inherit;
+    background: rgba(255, 255, 255, 0.16);
+    transition: background .16s ease, transform .16s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+.wp-btn:hover { background: rgba(255, 255, 255, 0.24); }
+.wp-btn:active { transform: scale(.98); }
+.wp-btn[disabled] { opacity: .5; cursor: default; }
+
+.wp-btn-solid {
+    background: #FFFFFF;
+    color: #14171C;
+}
+.wp-btn-solid:hover { background: #FFFFFF; filter: brightness(.94); }
+
+.wp-btn-ghost {
+    background: transparent;
+    box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.26) inset;
+}
+.wp-btn-ghost:hover { background: rgba(255, 255, 255, 0.10); }
+
+/* ---- Request sheet ----------------------------------------- */
+/* Not using .hidden here: it is display:none !important, which
+   cancels the slide. Visibility plus a transform keeps the motion
+   and still takes the sheet out of the tab order. */
+
+.wp-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 9100;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity .28s ease, visibility .28s;
+}
+.wp-scrim.is-open { opacity: 1; visibility: visible; }
+
+.wp-sheet {
+    position: fixed;
+    left: 50%;
+    bottom: 0;
+    z-index: 9200;
+    width: min(100%, 480px);
+    max-height: 88vh;
+    overflow-y: auto;
+    padding: 10px 20px calc(env(safe-area-inset-bottom, 0px) + 22px);
+    border-radius: 22px 22px 0 0;
+    background: #17191F;
+    color: #F6F4EF;
+    box-shadow: 0 -18px 50px rgba(0, 0, 0, 0.6);
+    visibility: hidden;
+    transform: translate(-50%, 102%);
+    transition: transform 520ms var(--wp-ease, cubic-bezier(.22, 1.2, .36, 1)), visibility 520ms;
+}
+.wp-sheet.is-open {
+    visibility: visible;
+    transform: translate(-50%, 0);
+}
+@media (min-width: 700px) {
+    .wp-sheet {
+        bottom: 50%;
+        border-radius: 22px;
+        transform: translate(-50%, 60%) scale(.96);
+    }
+    .wp-sheet.is-open { transform: translate(-50%, 50%) scale(1); }
+}
+
+.wp-grip {
+    width: 38px;
+    height: 4px;
+    margin: 0 auto 14px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.24);
+}
+
+.wp-sheet h2 {
+    margin: 0;
+    font-size: 21px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+.wp-sheet-sub {
+    margin: 6px 0 16px;
+    font-size: 13.5px;
+    line-height: 1.5;
+    font-weight: 400;
+    color: #8E9199;
+}
+
+.wp-picklist {
+    border-radius: 14px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.wp-pick {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 13px 15px;
+    border: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    background: transparent;
+    color: inherit;
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 400;
+    text-align: left;
+    cursor: pointer;
+}
+.wp-pick:first-child { border-top: 0; }
+.wp-pick:hover { background: rgba(255, 255, 255, 0.06); }
+.wp-pick-name { flex: 1 1 auto; font-weight: 700; letter-spacing: -0.008em; }
+.wp-pick-kind {
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #8E9199;
+}
+.wp-pick-tick {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.28) inset;
+}
+.wp-pick[aria-checked="true"] .wp-pick-tick {
+    background: var(--wc-blue, #2F67A7);
+    box-shadow: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M5.5 10.4l3 3 6-6.6' fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-size: 100% 100%;
+}
+.wp-pick[aria-checked="true"] { background: rgba(47, 103, 167, 0.16); }
+
+.wp-field {
+    display: block;
+    margin-top: 16px;
+}
+.wp-field span {
+    display: block;
+    margin-bottom: 7px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: #8E9199;
+}
+.wp-field input {
+    display: block;
+    width: 100%;
+    padding: 12px 14px;
+    border: 0;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.07);
+    color: #F6F4EF;
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 400;
+}
+.wp-field input::placeholder { color: #6A6E77; }
+.wp-field input:focus {
+    outline: 0;
+    box-shadow: 0 0 0 2px var(--wc-blue, #2F67A7) inset;
+}
+
+/* A refusal from the server, printed exactly as it was written. It is
+   addressed to a fourteen year old and it says what to do next, so it
+   is never reworded or replaced with a generic apology. */
+.wp-sheet-error {
+    margin: 14px 0 0;
+    font-size: 13.5px;
+    line-height: 1.5;
+    font-weight: 400;
+    color: #E9A9A0;
+}
+.wp-sheet-error:empty { display: none; }
+
+.wp-sheet-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 18px;
+}
+.wp-sheet-actions .wp-btn { padding: 14px; font-size: 15px; }
+.wp-sheet-actions .wp-btn-solid { flex: 2 1 auto; }
+
+/* ---- The tap result screen --------------------------------- */
+
+.wp-tap {
+    max-width: 400px;
+    margin: 0 auto;
+    padding: 18vh 24px 40px;
+    text-align: center;
+}
+
+.wp-tap-kicker {
+    margin: 0 0 8px;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #8E9199;
+}
+
+.wp-tap-meta {
+    margin-top: 10px;
+    font-size: 13px;
+    font-weight: 400;
+    color: #8E9199;
+    font-variant-numeric: tabular-nums;
+}
+
+.wp-tap-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 30px;
+}
+.wp-tap-actions .wp-btn { padding: 14px 16px; font-size: 15px; }
+.wp-tap-actions .wp-btn-solid { flex: 2 1 auto; }
+.wp-tap-mark {
+    width: 66px;
+    height: 66px;
+    margin: 0 auto 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    font-size: 30px;
+    background: rgba(47, 140, 99, .22);
+}
+.wp-tap-mark.is-bad { background: rgba(200, 89, 66, .22); }
+.wp-tap h2 {
+    margin: 0;
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+.wp-tap p {
+    margin: 8px 0 0;
+    font-size: 15px;
+    line-height: 1.5;
+    font-weight: 400;
+    color: #8E9199;
+}
+/* The tap screen sits on the dark ground, so its buttons need the same
+   surface treatment the cards use rather than the app's blue. */
+.wp-tap .wp-btn-solid { background: #FFFFFF; color: #14171C; }
+
+/* ---- Short phones ------------------------------------------ */
+/* An iPhone SE is 667 tall. Six cards at full size push the last one
+   under the fold, and the card you most want is the last one. */
+
+@media (max-height: 730px) and (max-width: 699px) {
+    #studentPassView { --wp-radius: 15px; }
+    .wp-shell { padding-top: calc(env(safe-area-inset-top, 0px) + 12px); }
+    .wp-name { font-size: 26px; }
+    .wp-top { padding-bottom: 14px; }
+    .wp-label, .wp-lead { font-size: 15px; }
+    .wp-plate svg { height: 56px; }
+    .wp-big { font-size: 52px; }
+    .wp-asof { padding-top: 16px; }
+}
+
+/* ---- Bigger screens ---------------------------------------- */
+/* A Chromebook is the other half of the audience. The column stays a
+   column, because a wallet is a wallet, but everything grows: the
+   cards get taller, the strips deeper, the type larger. */
+
+/* A Chromebook is 1366 by 768, which is WIDE and SHORT. The column stays
+   a column, because a wallet is a wallet, but the whole stack still has
+   to land above the fold: the card a student reaches for is the one at
+   the bottom, and below the fold is the same as not being there. So the
+   height clamps stay tied to the viewport here too, and only the type and
+   the gutters grow. */
+@media (min-width: 700px) {
+    #studentPassView {
+        --wp-strip: clamp(46px, 8.4vh, 68px);
+        --wp-strip: clamp(46px, 8.4svh, 68px);
+        --wp-card-h: clamp(196px, 36vh, 300px);
+        --wp-card-h: clamp(196px, 36svh, 300px);
+        --wp-radius: 20px;
+        --wp-col: 468px;
+        --wp-gutter: 24px;
+    }
+    .wp-shell { padding: 30px var(--wp-gutter) 28px; }
+    .wp-name { font-size: 33px; }
+    .wp-meta { font-size: 14.5px; }
+    .wp-top { padding-bottom: 16px; }
+    .wp-head { padding: 0 22px; }
+    .wp-label, .wp-lead { font-size: 17px; }
+    .wp-body { padding: 6px 22px 22px; }
+    .wp-plate svg { height: clamp(56px, 9vh, 84px); }
+    .wp-rowtitle { font-size: 15px; }
+    .wp-big { font-size: clamp(52px, 9vh, 76px); }
+    .wp-asof { padding-top: 18px; }
+}
+
+/* ---- Motion ------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+    .wp-card,
+    .wp-stack,
+    .wp-card .wp-body {
+        transition-duration: 1ms;
+    }
+    .wp-ghost { animation: none; }
+}
