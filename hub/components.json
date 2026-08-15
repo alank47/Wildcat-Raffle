@@ -17,6 +17,12 @@
     "hooks": "@/hooks"
   },
   "registries": {
-    "@react-bits": "https://reactbits.dev/r/{name}.json"
+    "@react-bits": "https://reactbits.dev/r/{name}.json",
+    "@reactbits-pro": {
+      "url": "${REACTBITS_PRO_REGISTRY}/{name}.json",
+      "headers": {
+        "Authorization": "Bearer ${REACTBITS_PRO_TOKEN}"
+      }
+    }
   }
 }

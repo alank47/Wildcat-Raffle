@@ -99,3 +99,35 @@ durations, so the two surfaces move the same way.
 
 MIT + Commons Clause. Free for personal and commercial use; you cannot sell the
 components themselves.
+
+## Pro components (`@reactbits-pro`)
+
+Pro is a separate, token-gated registry. It is configured in `components.json`,
+but **both** the base URL and the token are read from the environment:
+
+```json
+"@reactbits-pro": {
+  "url": "${REACTBITS_PRO_REGISTRY}/{name}.json",
+  "headers": { "Authorization": "Bearer ${REACTBITS_PRO_TOKEN}" }
+}
+```
+
+To use it, copy `env.local.example` to `.env.local` and fill in both values from
+your React Bits Pro dashboard. Then:
+
+```bash
+npm run rb -- @reactbits-pro/auth-5
+```
+
+**This repository is public.** A Pro token in `components.json` is a Pro token
+published to the internet, which is why nothing is hardcoded there — `.env.local`
+is covered by the `*.local` rule in `.gitignore` and must stay that way.
+
+The base URL lives in the environment too, rather than being hardcoded, so a
+stale or wrong URL fails on the machine that has it rather than 404ing quietly
+for everyone who clones the repo. `https://pro.reactbits.dev/r` was tried and
+returns "not found" for `auth-5`, so the real base path has to come from the
+dashboard.
+
+Note the example file is `env.local.example`, with no leading dot: `.gitignore`
+line 7 is `.env.*`, which silently swallows anything named `.env.local.example`.
