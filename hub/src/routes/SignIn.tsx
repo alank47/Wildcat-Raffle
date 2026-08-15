@@ -14,6 +14,9 @@ import {
 } from "@/lib/session";
 import { useReducedMotion } from "@/lib/motion";
 import { WILDCAT_MARK } from "@/ui/mark";
+/* The reference chip and the sentence it replaces are shared with the hall pass
+   screen, which has the same redacted-refusal case to render. See primitives. */
+import { Reference, trimReferenceSentence } from "@/ui/primitives";
 
 /**
  * THE WAY IN.
@@ -117,54 +120,6 @@ const COPY: Record<AuthProblemKind, { title: string; fix: string }> = {
     fix: "The page could not reach Google. That is the network, not you or your account.",
   },
 };
-
-/** Convex's request id, big enough to copy onto a piece of paper. */
-function Reference({ id }: { id: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const copy = useCallback(() => {
-    void (async () => {
-      try {
-        await navigator.clipboard.writeText(id);
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1800);
-      } catch {
-        /* No clipboard permission. The text is select-all, so it is still
-           gettable by hand, and it is on screen to write down either way. */
-      }
-    })();
-  }, [id]);
-
-  return (
-    <div className="mt-3 flex flex-wrap items-center gap-2">
-      <code className="wc-scroll max-w-full overflow-x-auto rounded-[8px] border border-[var(--wp-hair)] bg-black/35 px-2.5 py-1.5 font-mono text-[13.5px] tracking-[0.04em] text-wp-fg select-all">
-        {id}
-      </code>
-      <button
-        type="button"
-        onClick={copy}
-        className="wc-press rounded-full border border-[var(--wp-hair)] px-3 py-1.5 text-[12px] font-bold text-wp-dim"
-      >
-        {copied ? "Copied" : "Copy"}
-      </button>
-    </div>
-  );
-}
-
-/**
- * The redacted message ends by telling the student to show the office a
- * reference, and the reference is then rendered underneath as a chip with a
- * copy button. Left alone that is the same instruction three times in six
- * lines. The chip is the better carrier — it can be copied — so the sentence
- * comes off the end of the prose whenever the chip is going to appear. When
- * there is NO id, the sentence is the only thing standing and it stays.
- */
-function trimReferenceSentence(message: string, hasChip: boolean): string {
-  if (!hasChip) return message;
-  return message
-    .replace(/\s*Show the office this reference:[^.]*\.\s*$/i, "")
-    .trim();
-}
 
 function ProblemNote({
   problem,

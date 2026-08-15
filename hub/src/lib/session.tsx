@@ -12,6 +12,7 @@ import {
   ConvexCallError,
   convexQuery,
   convexMutation,
+  errorRef,
   errorText,
   isAuthError,
 } from "./convex";
@@ -19,10 +20,12 @@ import { googleSignOut, tokenExpiry } from "./google";
 import { resetArrivals } from "./arrive";
 import {
   demoMode,
+  fixtureCurrentClass,
   fixtureMe,
   fixturePassCard,
   fixtureStudentView,
-  fixtureTapLocations,
+  passScenario,
+  FIXTURE_REDACTED,
   type DemoMode,
 } from "./fixture";
 
@@ -30,20 +33,36 @@ import {
  * Session and data for the whole student surface.
  *
  * FOUR INDEPENDENT READS, NEVER ONE. me:get, passCard:mine,
- * views_app:myStudentView and tapLocations:listForStudents are separate
- * functions with separate failure modes: passCard.mine goes through
- * requireStudentSelf and throws for an archived student, myStudentView can
- * refuse for a missing student number, tapLocations can be empty. Awaiting them
- * together and catching once would let one refusal blank four screens, and the
- * student would have no idea which fact was missing. Each keeps its own
- * loading / ok / error state and each renders its own reason.
+ * views_app:myStudentView and hallPasses:myCurrentClass are separate functions
+ * with separate failure modes: passCard.mine goes through requireStudentSelf
+ * and throws for an archived student, myStudentView can refuse for a missing
+ * student number, and myCurrentClass answers "no class right now" in twenty
+ * different ways that are all normal. Awaiting them together and catching once
+ * would let one refusal blank four screens, and the student would have no idea
+ * which fact was missing. Each keeps its own loading / ok / error state and
+ * each renders its own reason.
+ *
+ * `tapLocations:listForStudents` USED TO BE THE FOURTH READ and is not called
+ * from anywhere now. It fed the room picker on the hall pass screen, and the
+ * picker is gone: a pass originates from the class the timetable says the
+ * student is sitting in, which the server works out, so there is nothing for a
+ * list of rooms to attach a request to. The endpoint still exists for staff
+ * screens in the main app; polling it here would be every student's browser
+ * fetching a list nothing renders.
  */
 
 export type Async<T> =
   | { state: "idle" }
   | { state: "loading" }
   | { state: "ok"; data: T }
-  | { state: "error"; message: string };
+  /**
+   * `requestId` is Convex's handle on a REDACTED refusal, carried alongside the
+   * sentence rather than only inside it. The screen puts it on a chip with a
+   * copy button, because a fifteen-year-old reading a hex string off a phone to
+   * an adult gets it wrong, and it is the only thing the office can look up.
+   * Absent on every other kind of failure. See errorRef in convex.ts.
+   */
+  | { state: "error"; message: string; requestId?: string | null };
 
 /**
  * WHY THIS IS A SHAPE AND NOT A STRING.
@@ -120,7 +139,8 @@ type SessionValue = {
   me: Async<Me>;
   passCard: Async<Record<string, unknown>>;
   studentView: Async<Record<string, unknown>>;
-  tapLocations: Async<Record<string, unknown>>;
+  /** hallPasses:myCurrentClass — the class this student is scheduled into NOW. */
+  currentClass: Async<Record<string, unknown>>;
   acceptCredential: (jwt: string) => Promise<void>;
   signOut: () => void;
   refresh: () => void;
@@ -151,6 +171,16 @@ function readStoredToken(): string | null {
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const demo = useMemo(() => demoMode(window.location.search), []);
+  /**
+   * `?pass=<code>` picks which sample hall-pass state the fixture returns.
+   *
+   * Sixteen-odd ways of having no class to send a request to, and every one of
+   * them is a real sentence a student can be looking at. They cannot be reached
+   * by waiting — several need a Saturday, a holiday or a broken time zone — so
+   * the only way to review the screen that renders them is to ask for it.
+   * Display only, demo only, and the sample banner is on screen throughout.
+   */
+  const scenario = useMemo(() => passScenario(window.location.search), []);
   const [idToken, setIdToken] = useState<string | null>(() =>
     demo ? null : readStoredToken(),
   );
@@ -168,7 +198,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [studentView, setStudentView] = useState<
     Async<Record<string, unknown>>
   >({ state: "idle" });
-  const [tapLocations, setTapLocations] = useState<
+  const [currentClass, setCurrentClass] = useState<
     Async<Record<string, unknown>>
   >({ state: "idle" });
 
@@ -178,9 +208,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (demo) {
       setMe({ state: "ok", data: fixtureMe() });
-      setPassCard({ state: "ok", data: fixturePassCard() });
+      setPassCard({ state: "ok", data: fixturePassCard(scenario) });
       setStudentView({ state: "ok", data: fixtureStudentView(demo) });
-      setTapLocations({ state: "ok", data: fixtureTapLocations() });
+      // The one sample state that is a FAILED read rather than a returned
+      // refusal, because on the deployed backend today it is the likely one.
+      setCurrentClass(
+        scenario === "redacted"
+          ? { state: "error", ...FIXTURE_REDACTED }
+          : { state: "ok", data: fixtureCurrentClass(scenario) },
+      );
       return;
     }
 
@@ -188,7 +224,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setMe({ state: "idle" });
       setPassCard({ state: "idle" });
       setStudentView({ state: "idle" });
-      setTapLocations({ state: "idle" });
+      setCurrentClass({ state: "idle" });
       return;
     }
 
@@ -209,7 +245,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         (err) => {
           if (!fresh()) return;
           if (isAuthError(err)) onAuthFailure?.();
-          set({ state: "error", message: errorText(err) });
+          set({
+            state: "error",
+            message: errorText(err),
+            requestId: errorRef(err),
+          });
         },
       );
     };
@@ -240,8 +280,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     });
     load("passCard:mine", setPassCard);
     load("views_app:myStudentView", setStudentView);
-    load("tapLocations:listForStudents", setTapLocations);
-  }, [idToken, demo, nonce]);
+    load("hallPasses:myCurrentClass", setCurrentClass);
+  }, [idToken, demo, nonce, scenario]);
 
   const acceptCredential = useCallback(async (jwt: string) => {
     setAuthBusy(true);
@@ -348,7 +388,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       me,
       passCard,
       studentView,
-      tapLocations,
+      currentClass,
       acceptCredential,
       signOut,
       refresh,
@@ -364,7 +404,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       me,
       passCard,
       studentView,
-      tapLocations,
+      currentClass,
       acceptCredential,
       signOut,
       refresh,

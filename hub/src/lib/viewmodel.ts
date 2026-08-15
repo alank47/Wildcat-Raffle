@@ -537,6 +537,28 @@ export function useGradesModel(): Async<GradesModel> {
    Hall pass
    ------------------------------------------------------------------ */
 
+/**
+ * WHERE A PASS IS GOING, OR WHO IT WENT TO. One shape, two sources.
+ *
+ * `myCurrentClass` answers it before the request exists and `passCard:mine`
+ * answers it afterwards, off the pass rather than off the timetable — the class
+ * a student is in changes every hour and the record has to keep naming the
+ * teacher who was actually asked. Both fill this, so the panel that says "going
+ * to Ms Vega, period 3, Room 12" is the same panel either way and there is one
+ * place that decides what a missing teacher name reads as.
+ *
+ * EVERY FIELD IS NULLABLE AND NULL MEANS MISSING. `teacherName` is "" on the
+ * wire for a section whose roster row has no first or last name, `courseName`
+ * is genuinely absent on some sections, and neither may be printed as anything
+ * other than the words for not knowing. See Routing in routes/HallPass.tsx.
+ */
+export type PassRouting = {
+  teacherName: string | null;
+  courseName: string | null;
+  period: string | null;
+  room: string | null;
+};
+
 export type LivePassModel = {
   id: string | null;
   state: string;
@@ -546,22 +568,36 @@ export type LivePassModel = {
   /** The server allows a cancel only while the pass is still `requested`. */
   cancellable: boolean;
   waiting: boolean;
+  routing: PassRouting;
+  /**
+   * Where a TEACHER sent this student, when a teacher opened the pass. Null on
+   * a student's own request, which has no assigned destination. When it is set
+   * it is the tag that must be tapped FIRST, and the screen has to say so:
+   * applyTap refuses the classroom tag until that one has been reached.
+   */
+  sentTo: string | null;
+  /** true when a teacher opened this pass rather than the student asking. */
+  openedByTeacher: boolean;
 };
 
-export type PassLocation = { slug: string | null; name: string; kind: string };
-
-export type RequestModel = {
-  locations: PassLocation[];
-  /** Why the timetable could not supply classrooms, in the server's words. */
-  scheduleNote: string | null;
-  truncated: boolean;
-};
+/**
+ * The class the student is scheduled into right now, or the server's refusal.
+ *
+ * THE REFUSAL IS DATA, NOT AN ERROR. Lunch, a passing period, a Saturday and a
+ * holiday are all normal states for a child holding a phone, and there are
+ * around twenty of them. `code` is carried through unread by this file: the
+ * screen uses it only to choose a HEADING, and prints `reason` whatever it is,
+ * so a code added to the server tomorrow renders correctly today.
+ */
+export type CurrentClassModel =
+  | { available: true; routing: PassRouting }
+  | { available: false; code: string; reason: string | null };
 
 export function useHallPassModel(): {
   live: LivePassModel | null;
-  request: Async<RequestModel>;
+  current: Async<CurrentClassModel>;
 } {
-  const { passCard, tapLocations } = useSession();
+  const { passCard, currentClass } = useSession();
 
   return useMemo(() => {
     const hp =
@@ -582,36 +618,44 @@ export function useHallPassModel(): {
               limit: count(hp.expiresAfterMinutes),
               cancellable: state === "requested" && id !== null,
               waiting: state === "requested",
+              routing: {
+                teacherName: str(hp.teacherName),
+                courseName: str(hp.courseName),
+                period: str(hp.period),
+                room: str(hp.origin),
+              },
+              sentTo: str(hp.sentTo),
+              openedByTeacher: str(hp.requestedVia) === "teacher",
             };
           })()
         : null;
 
-    const request: Async<RequestModel> =
-      tapLocations.state === "ok"
+    const current: Async<CurrentClassModel> =
+      currentClass.state === "ok"
         ? {
             state: "ok",
-            data: {
-              locations: (Array.isArray(tapLocations.data.locations)
-                ? (tapLocations.data.locations as Array<Record<string, unknown>>)
-                : []
-              ).map((loc) => ({
-                slug: str(loc.slug),
-                name: str(loc.name) ?? str(loc.slug) ?? "Unnamed",
-                kind: str(loc.kind) ?? "location",
-              })),
-              scheduleNote: str(
-                (
-                  (tapLocations.data.classroomsFromSchedule ?? {}) as Record<
-                    string,
-                    unknown
-                  >
-                ).reason,
-              ),
-              truncated: tapLocations.data.truncated === true,
-            },
+            data:
+              currentClass.data.available === true
+                ? {
+                    available: true,
+                    routing: {
+                      teacherName: str(currentClass.data.teacherName),
+                      courseName: str(currentClass.data.courseName),
+                      period: str(currentClass.data.period),
+                      room: str(currentClass.data.room),
+                    },
+                  }
+                : {
+                    available: false,
+                    // "" rather than a guess. An unknown code still renders,
+                    // because the heading falls back and the reason is printed
+                    // whatever it says.
+                    code: str(currentClass.data.code) ?? "",
+                    reason: str(currentClass.data.reason),
+                  },
           }
-        : tapLocations;
+        : currentClass;
 
-    return { live, request };
-  }, [passCard, tapLocations]);
+    return { live, current };
+  }, [passCard, currentClass]);
 }

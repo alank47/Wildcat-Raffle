@@ -89,7 +89,13 @@ fix them in place. Four found while building this app, all fixed and marked
 - **Stepper** had its slide direction inverted, so pressing "Next" moved the
   form backwards; it animated its content box from `height: 0` on every visit;
   its progress connector animated `width`; and its default indicator variants
-  are React Bits violet with a green submit button.
+  are React Bits violet with a green submit button. All four were fixed, and
+  then the component was DELETED — not because of the defects, but because the
+  three-step hall pass request it held was the wrong model. A pass originates
+  from the class the timetable says the student is in, the server works that
+  out, and the student chooses nothing, so there were no steps left to step
+  through. It is the one component here removed for a reason that was never
+  about React Bits.
 - **AnimatedContent, AnimatedList and BlurText** all made a JavaScript library
   load-bearing for whether something was VISIBLE — the same defect that lost the
   sign-in button. AnimatedContent renders `className="invisible"` and restores

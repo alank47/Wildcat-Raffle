@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import SpotlightCard from "@/components/SpotlightCard";
 import CountUp from "@/components/CountUp";
 import { useArrival } from "@/lib/arrive";
@@ -93,20 +93,93 @@ export function SectionLabel({ children }: { children: ReactNode }) {
    ------------------------------------------------------------------ */
 
 /**
+ * Convex's request id, big enough to copy onto a piece of paper.
+ *
+ * IT LIVES HERE RATHER THAN ON THE SIGN-IN SCREEN because it is needed in two
+ * places now: a redacted refusal from `hallPasses:myCurrentClass` leaves a
+ * signed-in student with exactly as little to go on as a redacted refusal from
+ * `me:get` leaves a student who never got in, and both hand the office the same
+ * single handle. Two copies of a chip whose whole job is to be transcribed
+ * correctly is two chips that can disagree about what they are transcribing.
+ */
+export function Reference({ id }: { id: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = useCallback(() => {
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(id);
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1800);
+      } catch {
+        /* No clipboard permission. The text is select-all, so it is still
+           gettable by hand, and it is on screen to write down either way. */
+      }
+    })();
+  }, [id]);
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      <code className="wc-scroll max-w-full overflow-x-auto rounded-[8px] border border-[var(--wp-hair)] bg-black/35 px-2.5 py-1.5 font-mono text-[13.5px] tracking-[0.04em] text-wp-fg select-all">
+        {id}
+      </code>
+      <button
+        type="button"
+        onClick={copy}
+        className="wc-press rounded-full border border-[var(--wp-hair)] px-3 py-1.5 text-[12px] font-bold text-wp-dim"
+      >
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The redacted message ends by telling the student to show the office a
+ * reference, and the reference is then rendered underneath as a chip with a
+ * copy button. Left alone that is the same instruction twice in three lines.
+ * The chip is the better carrier — it can be copied — so the sentence comes off
+ * the end of the prose whenever the chip is going to appear. When there is NO
+ * id, the sentence is the only thing standing and it stays.
+ */
+export function trimReferenceSentence(
+  message: string,
+  hasChip: boolean,
+): string {
+  if (!hasChip) return message;
+  return message
+    .replace(/\s*Show the office this reference:[^.]*\.\s*$/i, "")
+    .trim();
+}
+
+/**
  * THE MOST IMPORTANT COMPONENT IN THIS APP.
  *
  * Everything the backend cannot answer comes back as {available:false, reason}
  * and lands here. Never a 0, never an F, never a blank box, never "$0.00".
  * The reason is the server's own sentence — written for a student, and usually
  * naming who can fix it — so it is printed rather than paraphrased.
+ *
+ * `reference` is Convex's request id on a REDACTED refusal, where the server
+ * wrote no sentence of its own and this box would otherwise be the app
+ * apologising with nothing attached. It is the only thing the office can look
+ * up, so it is rendered as something copyable rather than left inside the
+ * prose. Null on every other kind of failure; see errorRef in lib/convex.ts.
  */
 export function Unavailable({
   reason,
   tone = "neutral",
+  reference = null,
 }: {
   reason: string | null;
   tone?: "neutral" | "warn";
+  reference?: string | null;
 }) {
+  const text =
+    reason ??
+    "This is not available yet, and the server did not say why. Ask the " +
+      "front office to check your record in PowerSchool.";
+
   return (
     <div
       className={`rounded-[12px] border px-4 py-3 text-[13.5px] leading-[1.45] ${
@@ -115,9 +188,8 @@ export function Unavailable({
           : "border-[var(--wp-hair)] bg-white/[0.03] text-wp-dim"
       }`}
     >
-      {reason ??
-        "This is not available yet, and the server did not say why. Ask the " +
-          "front office to check your record in PowerSchool."}
+      {trimReferenceSentence(text, Boolean(reference))}
+      {reference && <Reference id={reference} />}
     </div>
   );
 }
@@ -335,6 +407,12 @@ export function Skeleton({ rows = 3 }: { rows?: number }) {
  * shows the server's sentence, because a Convex refusal here is written for the
  * student ("Your student number is not on your account yet...") and turning that
  * into "Something went wrong" throws away the only actionable thing on the page.
+ *
+ * And when the server wrote NO sentence — a redacted refusal, which is also
+ * what a function that is not deployed looks like from out here — the request id
+ * carried on the error state goes on screen as a copyable chip. That is the one
+ * failure where the app has nothing useful to say, so it must at least hand over
+ * the handle somebody else can act on.
  */
 export function Loaded<T>({
   from,
@@ -348,7 +426,13 @@ export function Loaded<T>({
   if (from.state === "idle" || from.state === "loading")
     return <Skeleton rows={rows} />;
   if (from.state === "error")
-    return <Unavailable reason={from.message} tone="warn" />;
+    return (
+      <Unavailable
+        reason={from.message}
+        tone="warn"
+        reference={from.requestId ?? null}
+      />
+    );
   return <>{children(from.data)}</>;
 }
 

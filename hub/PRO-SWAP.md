@@ -236,61 +236,90 @@ they are failing a class nobody has marked yet.
 
 ---
 
-## 5. Hall Pass — the stepper
+## 5. Hall Pass — one screen, one action
 
 **File** `src/routes/HallPass.tsx` · **Model** `useHallPassModel()`
 
+**THE STEPPER IS GONE, AND SO IS THE ROOM PICKER IT EXISTED FOR.** A pass now
+originates from the class the student is scheduled into at the moment they ask:
+`hallPasses:myCurrentClass` answers with the teacher, course, period and wall
+tag, and `hallPasses:requestMine` takes an optional reason and nothing else —
+`originSlug` was removed server-side. The student picks nothing, so there is no
+first step to gate, no confirm step to review a choice they never made, and no
+wizard. `src/components/Stepper.tsx` was deleted with it, and
+`tapLocations:listForStudents` is no longer read by this app at all.
+
+**Do not reintroduce a picker as a Pro block.** A list of rooms on this screen
+is a way to route a request to a teacher who cannot see the student, which is
+the failure the server rewrite exists to prevent.
+
 | Section | Component today | What a Pro block would be |
 | --- | --- | --- |
-| The three-step request | `<RequestFlow model={RequestModel}>` (free `Stepper`) | a multi-step form / wizard / onboarding block |
-| The open-pass panel | `<LivePass pass={LivePassModel}>` | a status / alert block |
+| Where it is going | `<RequestPass routing={PassRouting}>` | a summary / confirmation panel |
+| The open-pass panel | `<OpenPass pass={LivePassModel}>` | a status / alert block |
+| No class right now | `<NotRightNow model={…}>` | an empty-state / notice block |
 
 ### What it must accept
 
 ```ts
-RequestModel = {
-  locations: { slug: string | null; name: string; kind: string }[]
-  scheduleNote: string | null   // why the timetable could not supply classrooms
-  truncated: boolean            // the server cut the list short — say so
+PassRouting = {
+  teacherName: string | null   // "" on the wire for a section with no name on it
+  courseName: string | null
+  period: string | null
+  room: string | null          // the wall tag the pass is closed at
 }
 
 LivePassModel = {
   id, state, overdue, elapsed: number | null, limit: number | null,
   cancellable: boolean,   // the server refuses a cancel once approved
-  waiting: boolean
+  waiting: boolean,
+  routing: PassRouting,
+  sentTo: string | null,      // where a TEACHER sent them; tap that tag FIRST
+  openedByTeacher: boolean
 }
+
+CurrentClassModel =
+  | { available: true; routing: PassRouting }
+  | { available: false; code: string; reason: string | null }
 ```
 
 Requirements:
 
-1. **Three steps, in order, with step 1 gated.** "Next" is disabled until a
-   room is chosen. The room is what the whole tap-back-in flow depends on, and
-   a one-screen form is how a student sends a request with the wrong room on
-   it.
-2. **The submit is a mutation with a server round trip.** Keep the busy state,
+1. **`available: false` disables the request and offers nothing else.** Around
+   twenty codes reach this branch — lunch, a passing period, a Saturday, a
+   holiday, an unset cycle day, two sections in one period, no wall tag. Print
+   `reason` verbatim, keep the button visibly disabled, and never fall back to
+   a picker, a default room or a "send anyway".
+2. **An unknown code must still render.** The heading falls back; the reason is
+   printed whatever it says. Nothing in the client may decide whether a request
+   is allowed.
+3. **The routing panel is on screen BEFORE the button is pressed.** It is the
+   whole reassurance that the app knows which room the student is in.
+4. **The submit is a mutation with a server round trip.** Keep the busy state,
    keep the disabled state, and keep the error rendered as the server's own
-   sentence.
-3. **`elapsed: null` is not `0`.** An unapproved pass has no elapsed time. It
-   renders "—" and "minutes not reported".
-4. **`cancellable: false` shows no cancel button.** Offering a button the
-   server will refuse is worse than offering nothing.
+   sentence — with the request-id chip on a redacted one.
+5. **`elapsed: null` is not `0`.** An unapproved pass has no elapsed time, so
+   the waiting panel leads with the teacher's name and prints no figure at all.
+6. **`cancellable: false` shows no cancel button, and `true` must always show
+   one.** A request nobody answers blocks every later pass until it is
+   cancelled, so cancel is never a hidden or secondary control.
+7. **A missing name is words, never a blank or a guess.** No teacher name on
+   the section reads "your period 3 teacher"; no course name reads "Not named
+   on your timetable".
 
 ### Verify after the swap
 
 - Weight, hover gating, reduced motion, resting visibility: as §2.
-- **Direction.** Press Next: the new step must come in from the RIGHT and the
-  old one leave to the LEFT. The free `Stepper` shipped these inverted, so
-  going forward looked like going back; on a three-step form the slide is the
-  only thing telling a student which way they just moved.
-- **No open-from-zero.** The free `Stepper` animated its content box from
-  `height: 0` on every visit, which is both a layout-animating property and a
-  visible unfold on first paint. Watch the first frame after a hard reload.
-- **The palette.** React Bits ships this component with `#5227FF` circles, a
-  `#5227FF` connector and a green submit button. Every one of those is replaced
-  here. After any reinstall: `grep -rn "5227FF\|green-500\|green-600" src/`
-  must come back empty.
+- **The palette.** React Bits ships steppers and forms with `#5227FF` and green
+  submit buttons. After any install: `grep -rn "5227FF\|green-500\|green-600"
+  src/` must come back empty.
 - **`?demo=panel#/pass`** — the "Sample mode: this button will refuse" line and
-  the classrooms-not-listed note must both survive.
+  the "Sending to" panel must both survive.
+- **`?pass=<code>`** — every refusal in `lib/fixture.ts` (`between-periods`,
+  `no-school-today`, `bad-timezone`, `unknown-cycle-day`, `no-classroom-tag`, …)
+  must render its sentence and a disabled button, and `?pass=waiting`,
+  `?pass=teacher` and `?pass=redacted` must render the open-pass panel with its
+  cancel button, the destination instruction, and the copyable reference.
 
 ---
 

@@ -29,8 +29,8 @@ export const CONVEX_URL =
  *              production with "Server Error" and a request id. Nothing is
  *              known about the cause. THIS IS ALSO WHAT A FUNCTION THAT IS NOT
  *              DEPLOYED LOOKS LIKE, which is not hypothetical here: as of this
- *              build, `tapLocations:listForStudents` and
- *              `hallPasses:requestMine` return exactly this shape on
+ *              build, `hallPasses:myCurrentClass`, `hallPasses:requestMine` and
+ *              `tapLocations:listForStudents` return exactly this shape on
  *              quick-cassowary-644 while `me:get`, `passCard:mine` and
  *              `views_app:myStudentView` all answer with a real reason. So the
  *              student hall-pass path is not on the deployed backend yet.
@@ -199,6 +199,23 @@ export function errorText(err: unknown): string {
   if (err instanceof ConvexCallError) return err.message;
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+/**
+ * The request id to put ON SCREEN, and null for every failure where there is
+ * nothing an adult could look up.
+ *
+ * Only `redacted` qualifies. A `function` refusal already carries the server's
+ * own sentence naming what is missing, so a hex string beside it is noise; a
+ * redacted one carries nothing else at all, and the id is the only handle the
+ * office has. Same test SignIn has always made before drawing its chip — it is
+ * here now because the hall pass screen has to make it too, and two copies of
+ * "when is a reference worth showing" is how they drift apart.
+ */
+export function errorRef(err: unknown): string | null {
+  return err instanceof ConvexCallError && err.kind === "redacted"
+    ? err.requestId
+    : null;
 }
 
 /** True when the token, not the request, is the problem. */
