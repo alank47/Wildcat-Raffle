@@ -3,5 +3,13 @@
   "references": [
     { "path": "./tsconfig.app.json" },
     { "path": "./tsconfig.node.json" }
-  ]
+  ],
+  // The shadcn CLI resolves the "@/components" alias in components.json by
+  // reading paths from THIS file, not from tsconfig.app.json. Without it the
+  // CLI cannot resolve the alias, gives up, and writes a literal "@" directory
+  // at the project root — which then shadows nothing, imports from nowhere,
+  // and silently duplicates every component you install.
+  "compilerOptions": {
+    "paths": { "@/*": ["./src/*"] }
+  }
 }
