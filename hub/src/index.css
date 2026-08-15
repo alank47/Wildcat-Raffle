@@ -129,19 +129,37 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-h1,
-h2,
-h3,
-h4,
-p,
-ul,
-li,
-figure {
-  margin: 0;
-  padding: 0;
-}
-ul {
-  list-style: none;
+/* ------------------------------------------------------------
+   THIS RESET MUST STAY IN @layer base.
+
+   Unlayered CSS beats EVERY @layer, whatever the specificity. This
+   block was unlayered, Tailwind's utilities live in `@layer
+   utilities`, and so `p { margin: 0 }` was quietly winning against
+   every `mt-*` written on a p, h1-h4, ul, li or figure anywhere in
+   this app — `.mt-7` on a <ul> computed to 0px. Not "overridden
+   sometimes": always, app-wide, silently, in a way that looks like
+   the class was never written.
+
+   Inside `@layer base` the same rules sit in the layer Tailwind
+   reserves for exactly this, utilities come later, and a margin
+   utility does what it says. If you ever pull these rules back out
+   of the layer, every vertical rhythm in hub/ collapses at once.
+   ------------------------------------------------------------ */
+@layer base {
+  h1,
+  h2,
+  h3,
+  h4,
+  p,
+  ul,
+  li,
+  figure {
+    margin: 0;
+    padding: 0;
+  }
+  ul {
+    list-style: none;
+  }
 }
 
 /* The soft blue lift behind the header, so the black is not flat black.
@@ -226,6 +244,15 @@ ul {
   animation: wc-spin 700ms linear infinite;
 }
 
+/* Disclosure marker. CSS rather than state, so the <details> keeps
+   working with no JavaScript at all. */
+.wc-disclosure::after {
+  content: "+";
+}
+details[open] .wc-disclosure::after {
+  content: "−";
+}
+
 /* The sign-in panel. A flat raised face with a single top highlight —
    no pointer-driven wash, because this card holds a third-party iframe
    and a React state update per mousemove is not worth a gradient. */
@@ -280,6 +307,11 @@ ul {
   *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+    /* Delays go too. A zero-duration animation with a 120ms delay still holds
+       the element at its backwards fill for 120ms, which on a staggered
+       entrance means the sign-in button blinks in late for exactly the person
+       who asked for less movement. */
+    animation-delay: 0ms !important;
     transition-duration: 0.15s !important;
     scroll-behavior: auto !important;
   }

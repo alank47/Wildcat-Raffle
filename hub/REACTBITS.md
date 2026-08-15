@@ -72,6 +72,16 @@ fix them in place. Four found while building this app, all fixed and marked
   from every other element on the page.
 - **AnimatedList** re-fired on every scroll and revealed at 0.5 visibility, so
   the row you scrolled toward was the blank one.
+- **ShinyText** runs `useAnimationFrame` for the life of the page, and its
+  `delay` prop is a trailing hold rather than a start delay — so "one slow pass"
+  is not expressible as published, and the sheen loops forever. It was doing
+  that on the sign-in screen, the one screen every student opens every morning.
+  Now takes `cycles` / `startDelay`, with the frame loop in a child that
+  UNMOUNTS when finished: an early `return` inside the hook would not help,
+  because motion keeps calling the frame callback regardless.
+
+Two of those five are the same defect — a `requestAnimationFrame` loop with no
+end condition. Check for it first in anything new.
 
 Worth checking on anything new: does it run a rAF loop forever, does it attach
 window-level key handlers, does it hardcode a colour (React Bits violet is
