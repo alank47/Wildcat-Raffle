@@ -176,6 +176,69 @@ ul {
   transform: scale(var(--wcm-scale-press));
 }
 
+/* ------------------------------------------------------------
+   ENTRANCE — the sign-in screen only.
+
+   CSS, not GSAP, and deliberately so. FadeContent (the React Bits
+   component this replaced) sets the element to autoAlpha:0 on mount
+   and restores it from a GSAP timeline behind a ScrollTrigger. That
+   makes a JavaScript animation library load-bearing for whether the
+   sign-in button is VISIBLE: if gsap is slow, throws, or the trigger
+   never fires, a student is looking at an empty card with no way in.
+   Here the resting state is visible and the animation only ever takes
+   things away from it, so the worst case of a failed animation is no
+   animation. `both` fills backwards so the delay is honoured.
+
+   First paint only. Nothing here replays, and nothing here is in
+   front of the button for longer than 260ms.
+   ------------------------------------------------------------ */
+@keyframes wc-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--wcm-rise));
+  }
+}
+
+.wc-enter {
+  animation: wc-rise-in var(--wcm-dur-enter) var(--wcm-ease-out) both;
+  animation-delay: var(--wc-enter-delay, 0ms);
+}
+
+/* ------------------------------------------------------------
+   The one spinner. Constant motion, so linear per the easing table,
+   and fast — a quicker spinner makes the same wait feel shorter.
+   Only transform is animated.
+   ------------------------------------------------------------ */
+@keyframes wc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.wc-spin {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  border-top-color: var(--color-wc-blue-pale);
+  animation: wc-spin 700ms linear infinite;
+}
+
+/* The sign-in panel. A flat raised face with a single top highlight —
+   no pointer-driven wash, because this card holds a third-party iframe
+   and a React state update per mousemove is not worth a gradient. */
+.wc-panel {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.055) 0%,
+      rgba(255, 255, 255, 0) 92px
+    ),
+    var(--color-wp-raise);
+}
+
 /* Hover is gated. A touch device fires a false hover on tap and the
    effect then sticks to the element the finger left behind. */
 @media (hover: hover) and (pointer: fine) {

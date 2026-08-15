@@ -8,7 +8,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { convexQuery, convexMutation, errorText, isAuthError } from "./convex";
+import {
+  ConvexCallError,
+  convexQuery,
+  convexMutation,
+  errorText,
+  isAuthError,
+} from "./convex";
 import { googleSignOut, tokenExpiry } from "./google";
 import {
   demoMode,
@@ -38,6 +44,53 @@ export type Async<T> =
   | { state: "ok"; data: T }
   | { state: "error"; message: string };
 
+/**
+ * WHY THIS IS A SHAPE AND NOT A STRING.
+ *
+ * A sign-in can fail in five materially different ways, and the only useful
+ * screen is one that tells them apart. A single `string` cannot: it flattens
+ * "the office has to add you to a group", "your session ran out, press the
+ * button again" and "here is a reference number, carry it to the office" into
+ * one grey box, and a student is left with no idea which adult to find or
+ * whether pressing the button again would even help.
+ *
+ *   function     the server refused ON PURPOSE and wrote the sentence itself.
+ *                Print it verbatim; it usually names who can fix it.
+ *   redacted     the server threw a plain Error and Convex hid the reason
+ *                behind a request id. The id is the only handle anyone has, so
+ *                it goes on screen big enough to copy down.
+ *   auth         HTTP 401 — a DIFFERENT envelope from a function error, and the
+ *                one that means "press the button again" is the whole fix.
+ *   transport    the network, or a reply this app could not read. Retryable.
+ *   not-student  Google is happy, the token is valid, and the account is simply
+ *                not a student. Never an error box with no way forward.
+ *   google       Google Identity Services never loaded or never started.
+ */
+export type AuthProblemKind =
+  | "function"
+  | "redacted"
+  | "transport"
+  | "auth"
+  | "not-student"
+  | "google";
+
+export type AuthProblem = {
+  kind: AuthProblemKind;
+  /** The server's own words when it wrote any. Shown verbatim. */
+  message: string;
+  /** Convex's request id on a redacted refusal. The office's only handle. */
+  requestId: string | null;
+  /** The address that signed in, when THAT is the useful fact. */
+  who?: string | null;
+};
+
+function problemFrom(err: unknown): AuthProblem {
+  if (err instanceof ConvexCallError) {
+    return { kind: err.kind, message: err.message, requestId: err.requestId };
+  }
+  return { kind: "transport", message: errorText(err), requestId: null };
+}
+
 type Me = {
   kind?: string;
   email?: string;
@@ -55,7 +108,14 @@ type SessionValue = {
   signedIn: boolean;
   /** Sign-in is in flight (token received, me:get running). */
   authBusy: boolean;
-  authError: string | null;
+  authError: AuthProblem | null;
+  /**
+   * True when a credential from this page load is still in hand, so "try again"
+   * can re-post it instead of sending a student back through the account
+   * picker for what was a flaky network.
+   */
+  canRetry: boolean;
+  retrySignIn: () => void;
   me: Async<Me>;
   passCard: Async<Record<string, unknown>>;
   studentView: Async<Record<string, unknown>>;
@@ -94,8 +154,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     demo ? null : readStoredToken(),
   );
   const [authBusy, setAuthBusy] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<AuthProblem | null>(null);
+  const [canRetry, setCanRetry] = useState(false);
   const [nonce, setNonce] = useState(0);
+  /** The last credential Google handed over, for a retry that skips the picker. */
+  const lastCredential = useRef<string | null>(null);
 
   const [me, setMe] = useState<Async<Me>>({ state: "idle" });
   const [passCard, setPassCard] = useState<Async<Record<string, unknown>>>({
@@ -158,6 +221,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       } catch {
         /* private mode */
       }
+      // AND SAY SO. Dropping the token alone bounced a student back to a
+      // sign-in screen that looked exactly like a fresh one, with no hint that
+      // anything had happened or that they had been signed in a second ago.
+      // The 401 envelope is the one failure a student can clear themselves, so
+      // it is the one that must never arrive silently.
+      setCanRetry(false);
+      lastCredential.current = null;
+      setAuthError({
+        kind: "auth",
+        message:
+          "You were signed in, and the school server has stopped accepting " +
+          "that sign-in.",
+        requestId: null,
+      });
       setIdToken(null);
     });
     load("passCard:mine", setPassCard);
@@ -168,6 +245,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const acceptCredential = useCallback(async (jwt: string) => {
     setAuthBusy(true);
     setAuthError(null);
+    lastCredential.current = jwt;
+    setCanRetry(true);
     try {
       // The token is handed to Convex FIRST and Convex says who this is. The
       // browser never decides. `me:get` is the only endpoint that answers for
@@ -175,10 +254,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const who = (await convexQuery("me:get", {}, jwt)) as Me;
 
       if (who?.kind !== "student") {
-        throw new Error(
-          `This is the student hub, and that account signed in as ` +
-            `${who?.kind ?? "an unknown kind of user"}. Staff use the main app.`,
-        );
+        // NOT a throw. This is not a malfunction: Google is happy, the token is
+        // valid, and the account is simply the wrong kind. It gets its own kind
+        // so the screen can offer the two things that actually help — pick a
+        // different account, or go to the app that staff sign in on — instead
+        // of a red box.
+        setAuthError({
+          kind: "not-student",
+          message:
+            `That account signed in as ` +
+            `${who?.kind ?? "a kind of user this app does not recognise"}.`,
+          requestId: null,
+          who: who?.email ?? null,
+        });
+        return;
       }
 
       try {
@@ -197,11 +286,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setIdToken(jwt);
       setMe({ state: "ok", data: who });
     } catch (err) {
-      setAuthError(errorText(err));
+      setAuthError(problemFrom(err));
     } finally {
       setAuthBusy(false);
     }
   }, []);
+
+  const retrySignIn = useCallback(() => {
+    const jwt = lastCredential.current;
+    if (!jwt) return;
+    void acceptCredential(jwt);
+  }, [acceptCredential]);
 
   const signOut = useCallback(() => {
     try {
@@ -211,7 +306,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
     googleSignOut();
     runIdRef.current++;
+    lastCredential.current = null;
+    setCanRetry(false);
     setIdToken(null);
+    // Signing out lands on the STUDENT entrance with nothing red on it. A
+    // student who left on purpose has not hit an error.
     setAuthError(null);
   }, []);
 
@@ -239,6 +338,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       signedIn: Boolean(idToken) || Boolean(demo),
       authBusy,
       authError,
+      canRetry,
+      retrySignIn,
       me,
       passCard,
       studentView,
@@ -253,6 +354,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       demo,
       authBusy,
       authError,
+      canRetry,
+      retrySignIn,
       me,
       passCard,
       studentView,

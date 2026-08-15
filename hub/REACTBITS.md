@@ -131,3 +131,30 @@ dashboard.
 
 Note the example file is `env.local.example`, with no leading dot: `.gitignore`
 line 7 is `.env.*`, which silently swallows anything named `.env.local.example`.
+
+### Two Pro namespaces, one key
+
+Per pro.reactbits.dev/docs/installation:
+
+- `@reactbits-starter` — components and the setup skill. All plans.
+- `@reactbits-pro` — blocks, Application UI and the Agent Kit. Pro and Ultimate only.
+
+`auth-5` is a block, so it needs the Pro namespace. Both are configured and both
+read the same two environment variables.
+
+### Check the key before you debug anything else
+
+```bash
+npm run rb:check            # checks auth-5
+npm run rb:check -- hero-3  # checks something else
+```
+
+Every Pro failure looks identical coming out of the shadcn CLI — "not found" —
+whether the base URL is wrong, the key is missing, the licence has lapsed, or
+the item simply is not in your plan. `rb:check` separates them by reading the
+status and the content type before anything interprets the body, and it prints
+only the last four characters of the key.
+
+Note it checks HTML **before** status: pro.reactbits.dev is a single-page app
+that answers unknown paths with a styled 404, so a wrong base URL arrives as
+`404` and sends you hunting for a component name that was never the problem.

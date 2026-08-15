@@ -89,10 +89,27 @@ export function loadGis(): Promise<void> {
 
 let initialized = false;
 
+/**
+ * Google's button is an IFRAME, and `width` is the only handle on its size —
+ * there is no CSS reaching inside it. Google clamps to 200–400 and silently
+ * ignores anything outside, so the clamp happens here where it can be seen.
+ *
+ * The published default of a hardcoded 280px is a button that is narrower than
+ * its card on a laptop and wider than the screen on the narrowest phone the
+ * school hands out. The caller measures its own slot and passes the answer.
+ */
+export const GIS_MIN_WIDTH = 200;
+export const GIS_MAX_WIDTH = 400;
+
+export function clampButtonWidth(px: number): number {
+  return Math.round(Math.min(GIS_MAX_WIDTH, Math.max(GIS_MIN_WIDTH, px)));
+}
+
 /** Renders Google's own button into `el`. `onCredential` gets the JWT. */
 export async function mountGoogleButton(
   el: HTMLElement,
   onCredential: (credential: string) => void,
+  width = 280,
 ): Promise<void> {
   await loadGis();
   const id = window.google?.accounts?.id;
@@ -120,7 +137,7 @@ export async function mountGoogleButton(
     shape: "pill",
     text: "signin_with",
     logo_alignment: "left",
-    width: 280,
+    width: clampButtonWidth(width),
   });
 }
 
