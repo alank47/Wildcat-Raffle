@@ -10,7 +10,7 @@
 // The test therefore feeds rows carrying fields that must never reach a caller
 // and asserts on what comes OUT, rather than trusting the implementation.
 
-import { studentView, staffRosterView } from "./views.ts";
+import { studentView, staffRosterView, staffAttendanceView } from "./views.ts";
 
 let pass = 0;
 let fail = 0;
@@ -89,6 +89,52 @@ check(
   "a brand-new upstream column does not reach staff",
   !JSON.stringify(staffRosterView(FUTURE)).includes("SECRET-VALUE-42"),
 );
+
+console.log("\nStaff attendance view: absent is not zero");
+{
+  // A psAttendance row as the SIS sync writes it, plus the columns an upstream
+  // aggregate could grow and a restricted one to prove the allowlist holds.
+  const AV = staffAttendanceView({
+    studentNumber: "123456",
+    daysAbsentTerm: 2,
+    daysAbsentYtd: 7,
+    daysTardyTerm: 0,
+    attendanceRowsYtd: 44,
+    termFirstDay: "2026-01-12",
+    termLastDay: "2026-03-20",
+    termId: "2600",
+    syncedAt: "2026-08-15T06:00:00.000Z",
+    fedEthnicity: "H",
+    someNewSensitiveColumn: "SECRET-VALUE-42",
+  });
+  check("returns days absent this term", AV.daysAbsentTerm === 2);
+  check("returns days absent year to date", AV.daysAbsentYtd === 7);
+  check("a MEASURED zero is reported as 0, not hidden", AV.daysTardyTerm === 0);
+  check("returns the term window", AV.termFirstDay === "2026-01-12" && AV.termLastDay === "2026-03-20");
+  check("returns when it synced", AV.lastSyncedAt === "2026-08-15T06:00:00.000Z");
+  check("does NOT repeat the student number", !("studentNumber" in AV));
+  check("does NOT leak a restricted column", !("fedEthnicity" in AV));
+  check(
+    "a brand-new upstream column does not reach staff",
+    !JSON.stringify(AV).includes("SECRET-VALUE-42"),
+  );
+  check(
+    "attendanceRowsYtd is left out, it is a row count and not a day count",
+    !("attendanceRowsYtd" in AV),
+  );
+
+  // The mistake the schema comment beside psAttendance exists to prevent.
+  const sparse = staffAttendanceView({ syncedAt: "2026-08-15T06:00:00.000Z" });
+  check("an absent day count is null, NEVER 0", sparse.daysAbsentTerm === null);
+  check("  and so is the year to date figure", sparse.daysAbsentYtd === null);
+  check("  and so are tardies", sparse.daysTardyTerm === null);
+  check("nulls survive JSON", JSON.stringify(sparse).includes('"daysAbsentTerm":null'));
+
+  const broken = staffAttendanceView({ daysAbsentTerm: NaN, daysAbsentYtd: -3, daysTardyTerm: "4" });
+  check("NaN does not become a count", broken.daysAbsentTerm === null);
+  check("a negative day count does not become a count", broken.daysAbsentYtd === null);
+  check("a numeric string is not coerced into a count", broken.daysTardyTerm === null);
+}
 
 console.log("\nMissing data degrades to null, never to undefined-in-JSON");
 const sparse = studentView({ courseName: "Art" });

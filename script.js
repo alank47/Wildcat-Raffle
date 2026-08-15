@@ -13537,17 +13537,33 @@
         // STUDENT PROFILE MODAL
         // ============================================
         
+        // The student the modal is currently open on, and a monotonic counter so
+        // a slow Profile fetch for student A can never paint into student B's
+        // modal. A teacher clicking down a class list is exactly the pattern
+        // that produces that race, and the wrong child's absences under the
+        // right child's name is not a bug anybody would report as one.
+        let spStudent = null;
+        let spRequestSeq = 0;
+        let spLoadedFor = null;
+
         function openStudentProfile(studentId) {
             const student = students.find(s => s.id === studentId);
             if (!student) {
                 alert('Student not found!');
                 return;
             }
-            
+
+            spStudent = student;
+            spRequestSeq += 1;
+            spLoadedFor = null;
+            switchStudentProfileTab('points');
+            const body = document.getElementById('spProfileBody');
+            if (body) body.innerHTML = '';
+
             // Show modal
             document.getElementById('studentProfileModal').style.display = 'block';
             document.body.style.overflow = 'hidden';
-            
+
             // Populate header
             const totalTickets = (student.pbisTickets || 0) + (student.attendanceTickets || 0) + (student.academicTickets || 0);
             const initials = `${student.firstName.charAt(0)}${student.lastName.charAt(0)}`;
@@ -13643,12 +13659,356 @@
         function closeStudentProfile() {
             document.getElementById('studentProfileModal').style.display = 'none';
             document.body.style.overflow = 'auto';
+            // Bumped so a fetch still in flight cannot paint into the next
+            // student's modal after this one is dismissed.
+            spRequestSeq += 1;
+            spStudent = null;
+            spLoadedFor = null;
         }
-        
+
         document.addEventListener('click', function(event) {
             const modal = document.getElementById('studentProfileModal');
             if (event.target === modal) closeStudentProfile();
         });
+
+        // ============================================
+        // STUDENT PROFILE MODAL: TABS
+        //
+        // Two tabs. "Points" is what this student earned and is the modal
+        // exactly as it was. "Profile" is who this student is, and every number
+        // on it comes from studentDetail:get, which is staff gated on the
+        // server. Nothing on the Profile tab is computed from the local
+        // `students` array: that array is a cache the browser can hold after a
+        // legacy password login, and a teacher standing over a desk reading a
+        // stale absence count out loud is the failure this avoids.
+        // ============================================
+
+        function switchStudentProfileTab(which) {
+            const isProfile = which === 'profile';
+            const pane = {
+                points: document.getElementById('spPanePoints'),
+                profile: document.getElementById('spPaneProfile'),
+            };
+            const tab = {
+                points: document.getElementById('spTabPoints'),
+                profile: document.getElementById('spTabProfile'),
+            };
+            if (!pane.points || !pane.profile) return;
+
+            pane.points.style.display = isProfile ? 'none' : 'block';
+            pane.profile.style.display = isProfile ? 'block' : 'none';
+
+            [['points', !isProfile], ['profile', isProfile]].forEach(([k, on]) => {
+                if (!tab[k]) return;
+                tab[k].classList.toggle('sp-tab-active', on);
+                tab[k].setAttribute('aria-selected', on ? 'true' : 'false');
+            });
+
+            // Fetched when the tab is first opened rather than when the modal
+            // opens, so clicking down a class list does not fire a staff-gated
+            // query per student nobody looked at.
+            if (isProfile) loadStudentProfileTab();
+        }
+
+        /** `{available:false, reason}` rendered as a reason, never as a blank. */
+        function spMissing(reason) {
+            return '<p class="sp-missing">' + escapeHtml(reason ||
+                'This is not available and no reason was given, which is itself ' +
+                'worth reporting.') + '</p>';
+        }
+
+        /** One big number a teacher can find without reading a paragraph. */
+        function spStat(label, value, foot, extraClass) {
+            const known = value !== null && value !== undefined;
+            return '' +
+                '<div class="wc-card wc-stat sp-stat' + (extraClass ? ' ' + extraClass : '') + '">' +
+                    '<div class="stat-label">' + escapeHtml(label) + '</div>' +
+                    '<div class="stat-num' + (known ? '' : ' sp-num-unknown') + '">' +
+                        (known ? escapeHtml(String(value)) : 'Not on file') +
+                    '</div>' +
+                    (foot ? '<div class="stat-foot">' + escapeHtml(foot) + '</div>' : '') +
+                '</div>';
+        }
+
+        function spRow(label, value, missingReason, wide) {
+            const known = value !== null && value !== undefined && value !== '';
+            return '' +
+                '<div class="sp-field' + (wide ? ' sp-field-wide' : '') + '">' +
+                    '<div class="sp-field-label">' + escapeHtml(label) + '</div>' +
+                    '<div class="sp-field-value' + (known ? '' : ' sp-field-unknown') + '">' +
+                        (known ? escapeHtml(String(value))
+                               : escapeHtml(missingReason || 'Not on file')) +
+                    '</div>' +
+                '</div>';
+        }
+
+        function spWhen(iso) {
+            if (!iso) return null;
+            try {
+                return new Date(iso).toLocaleString();
+            } catch (e) {
+                return String(iso);
+            }
+        }
+
+        async function loadStudentProfileTab() {
+            const body = document.getElementById('spProfileBody');
+            const student = spStudent;
+            if (!body || !student) return;
+
+            // Already painted for this student. Re-fetching on every tab click
+            // would hammer a staff-gated query for a screen that has not
+            // changed.
+            if (spLoadedFor === student.id) return;
+
+            const number = String(student.studentNumber || '').trim();
+
+            // NO KEY, NO QUERY. An empty student number is a real index bucket
+            // in Convex, not a no-op, and looking one up returns whichever
+            // records an import wrote without a number. Roughly a third of the
+            // roster has incomplete SIS identity today, so this path is the
+            // common one, not the edge case.
+            if (!number) {
+                body.innerHTML = '<div class="wc-card sp-card">' +
+                    '<div class="panel-head"><span class="panel-icon">🪪</span><h3>Profile</h3></div>' +
+                    spMissing('This student has no PowerSchool student number on ' +
+                        'their record, so their schedule, attendance and behavior ' +
+                        'cannot be looked up. The office can add it in PowerSchool.') +
+                    '</div>';
+                spLoadedFor = student.id;
+                return;
+            }
+
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!session) {
+                body.innerHTML = '<div class="wc-card sp-card">' +
+                    '<div class="panel-head"><span class="panel-icon">🔐</span><h3>Profile</h3></div>' +
+                    spMissing('Sign in with your school Microsoft account to read ' +
+                        'this student\'s PowerSchool record. The Profile tab reads ' +
+                        'live SIS data and is gated on the server, so the legacy ' +
+                        'password login cannot open it.') +
+                    '</div>';
+                return; // NOT cached: signing in should be enough to retry.
+            }
+
+            const seq = ++spRequestSeq;
+            body.innerHTML = '<div class="wc-card sp-card sp-loading">Loading this student\'s record...</div>';
+
+            let detail;
+            try {
+                detail = await auth.convexQuery('studentDetail:get', { studentNumber: number }, session.idToken);
+            } catch (err) {
+                if (seq !== spRequestSeq) return;
+                body.innerHTML = '<div class="wc-card sp-card">' +
+                    '<div class="panel-head"><span class="panel-icon">⚠️</span><h3>Profile</h3></div>' +
+                    spMissing((err && err.message) || 'This student could not be loaded.') +
+                    '</div>';
+                return;
+            }
+
+            // A newer click won. Painting now would put this student's record
+            // under another student's name.
+            if (seq !== spRequestSeq) return;
+
+            body.innerHTML = renderStudentProfileTab(detail);
+            spLoadedFor = student.id;
+        }
+
+        /**
+         * studentDetail:get -> the Profile tab.
+         *
+         * Pure string building from the response, so what renders is exactly
+         * what the server was willing to say. Every panel carries its own
+         * `available` flag and its own reason, and a false one prints the reason
+         * instead of a number. There is deliberately no `|| 0` and no `|| '--'`
+         * anywhere below: an invented zero reads as a measurement.
+         */
+        function renderStudentProfileTab(d) {
+            const id = (d && d.identity) || {};
+            const out = [];
+
+            // ---- Identity -------------------------------------------------
+            const email = id.email || {};
+            out.push(
+                '<div class="wc-card sp-card">' +
+                    '<div class="panel-head"><span class="panel-icon">🪪</span><h3>Identity</h3></div>' +
+                    '<div class="sp-fields">' +
+                        spRow('Full name', [id.firstName, id.lastName].filter(Boolean).join(' ')) +
+                        spRow('Student number', id.studentNumber) +
+                        spRow('Grade level', id.grade) +
+                        spRow('School email',
+                            email.available ? email.address : null,
+                            email.reason, true) +
+                    '</div>' +
+                    (id.archivedAt
+                        ? '<p class="sp-flag">Archived on ' + escapeHtml(spWhen(id.archivedAt) || id.archivedAt) +
+                          '. This student is no longer on the synced roster.</p>'
+                        : '') +
+                '</div>');
+
+            // ---- Promise Time ---------------------------------------------
+            // Its own card, above the timetable, because it is the section a
+            // teacher opens this tab to find. One row among seven is a row a
+            // teacher has to search for.
+            const pt = (d && d.sis && d.sis.promiseTime) || { available: false, reason: null };
+            out.push(
+                '<div class="wc-card sp-card sp-promise">' +
+                    '<div class="panel-head"><span class="panel-icon">⭐</span><h3>Promise Time</h3></div>' +
+                    (pt.available
+                        ? pt.sections.map(function (s) {
+                            return '<div class="sp-promise-row">' +
+                                '<div class="sp-promise-teacher">' +
+                                    escapeHtml(s.teacher || 'Teacher not on the synced row') +
+                                '</div>' +
+                                '<div class="sp-promise-meta">' +
+                                    escapeHtml(s.courseName || 'Course name not on the synced row') +
+                                    (s.period ? ' &middot; Period ' + escapeHtml(s.period) : '') +
+                                    (s.term ? ' &middot; ' + escapeHtml(s.term) : '') +
+                                '</div>' +
+                            '</div>';
+                        }).join('')
+                        : spMissing(pt.reason)) +
+                '</div>');
+
+            // ---- Attendance -------------------------------------------------
+            const att = (d && d.attendance) || { available: false, reason: null };
+            out.push(
+                '<div class="wc-card sp-card">' +
+                    '<div class="panel-head"><span class="panel-icon">📅</span><h3>Attendance</h3></div>' +
+                    (att.available
+                        ? '<div class="stat-grid sp-stat-grid">' +
+                              spStat('Days absent, this term', att.daysAbsentTerm) +
+                              spStat('Days absent, year to date', att.daysAbsentYtd) +
+                              spStat('Days tardy, this term', att.daysTardyTerm) +
+                          '</div>' +
+                          (att.lastSyncedAt
+                            ? '<p class="panel-hint">From PowerSchool, synced ' +
+                              escapeHtml(spWhen(att.lastSyncedAt)) + '.</p>'
+                            : '')
+                        : spMissing(att.reason)) +
+                '</div>');
+
+            // ---- Behavior ---------------------------------------------------
+            // THREE states from the server, and only "covered" may be rendered
+            // as a number. A student with no behavior record must not read as a
+            // clean one, so "unknown" and "denied" print their reason and no
+            // count at all.
+            const beh = (d && d.behavior) || { status: 'unknown', reason: null };
+            let behBody;
+            if (beh.status === 'covered') {
+                // NOT named `window`. A `const window` here shadows the global
+                // inside this block, and every browser API on it with it.
+                const behWindow = beh.window
+                    ? 'Log entries between ' + escapeHtml(beh.window.start) + ' and ' + escapeHtml(beh.window.end) + '.'
+                    : null;
+                behBody =
+                    '<div class="stat-grid sp-stat-grid">' +
+                        spStat('Log entries in the synced window', beh.totalEntries,
+                               beh.totalEntries === 0 ? 'None on file for this window' : null,
+                               beh.totalEntries === 0 ? '' : 'sp-stat-flag') +
+                    '</div>' +
+                    (beh.byType && beh.byType.length
+                        ? '<table class="wc-table sp-table"><thead><tr>' +
+                            '<th>Type</th><th class="th-center">Entries</th><th>Most recent</th>' +
+                          '</tr></thead><tbody>' +
+                          beh.byType.map(function (t) {
+                              return '<tr class="wc-row">' +
+                                  '<td class="cell-strong">' + escapeHtml(t.logTypeName) + '</td>' +
+                                  '<td class="cell-center">' + escapeHtml(String(t.count)) + '</td>' +
+                                  '<td class="cell-muted">' +
+                                      (t.lastEntryDate ? escapeHtml(t.lastEntryDate) : 'No date on the entry') +
+                                  '</td>' +
+                              '</tr>';
+                          }).join('') +
+                          '</tbody></table>'
+                        : '<p class="panel-hint">No log entries for this student in the synced window.</p>') +
+                    (beh.unmappedTypes && beh.unmappedTypes.length
+                        ? '<p class="sp-flag">' + escapeHtml(beh.unmappedTypes.length) +
+                          ' entry type(s) could not be resolved to a PowerSchool name and are ' +
+                          'shown by their raw code.</p>'
+                        : '') +
+                    (behWindow ? '<p class="panel-hint">' + behWindow +
+                        (beh.syncedAt ? ' Synced ' + escapeHtml(spWhen(beh.syncedAt)) + '.' : '') +
+                        '</p>' : '');
+            } else {
+                behBody = spMissing(beh.reason ||
+                    'No behavior sync has covered a window yet, so nothing is known ' +
+                    'about this student\'s log entries. This is not a clean record.');
+            }
+            out.push(
+                '<div class="wc-card sp-card">' +
+                    '<div class="panel-head"><span class="panel-icon">📓</span><h3>Behavior</h3>' +
+                        '<span class="sp-badge sp-badge-' + escapeHtml(beh.status) + '">' +
+                            escapeHtml(beh.status === 'covered' ? 'From PowerSchool'
+                                     : beh.status === 'denied' ? 'Not permitted' : 'Not synced') +
+                        '</span>' +
+                    '</div>' +
+                    behBody +
+                '</div>');
+
+            // ---- Wildcat Cash -----------------------------------------------
+            const cash = (d && d.cash) || { available: false, reason: null };
+            out.push(
+                '<div class="wc-card sp-card">' +
+                    '<div class="panel-head"><span class="panel-icon">💵</span><h3>Wildcat Cash</h3></div>' +
+                    (cash.available
+                        ? '<div class="stat-grid sp-stat-grid">' +
+                              spStat('Balance', '$' + cash.balance) +
+                              spStat('Earned, lifetime', cash.earned === null ? null : '$' + cash.earned) +
+                              spStat('Spent, lifetime', cash.spent === null ? null : '$' + cash.spent) +
+                          '</div>'
+                        : spMissing(cash.reason)) +
+                '</div>');
+
+            // ---- Schedule ----------------------------------------------------
+            const sched = (d && d.sis && d.sis.schedule) || { available: false, reason: null };
+            out.push(
+                '<div class="wc-card sp-card table-card sp-card-table">' +
+                    '<div class="panel-head sp-table-head">' +
+                        '<span class="panel-icon">🗓️</span><h3>Schedule</h3>' +
+                        (sched.available
+                            ? '<span class="sp-count">' + escapeHtml(String(sched.count)) + ' sections</span>'
+                            : '') +
+                    '</div>' +
+                    (sched.available
+                        ? '<table class="wc-table sp-table"><thead><tr>' +
+                              '<th class="th-center">Period</th><th>Course</th><th>Teacher</th><th>Term</th>' +
+                          '</tr></thead><tbody>' +
+                          sched.rows.map(function (r) {
+                              const isPT = /\bpromise\s*time\b/i.test(String(r.courseName || ''));
+                              return '<tr class="wc-row' + (isPT ? ' sp-row-promise' : '') + '">' +
+                                  '<td class="cell-center cell-strong">' +
+                                      (r.period ? escapeHtml(r.period) : '<span class="cell-empty">n/a</span>') +
+                                  '</td>' +
+                                  '<td class="cell-strong">' +
+                                      (r.courseName ? escapeHtml(r.courseName) : '<span class="cell-empty">Not named on the synced row</span>') +
+                                  '</td>' +
+                                  '<td class="cell-muted">' +
+                                      (r.teacher ? escapeHtml(r.teacher) : '<span class="cell-empty">Not on the synced row</span>') +
+                                  '</td>' +
+                                  '<td class="cell-muted">' +
+                                      (r.term ? escapeHtml(r.term) : '<span class="cell-empty">n/a</span>') +
+                                  '</td>' +
+                              '</tr>';
+                          }).join('') +
+                          '</tbody></table>'
+                        : '<div class="sp-card-pad">' + spMissing(sched.reason) + '</div>') +
+                '</div>');
+
+            // Brief Phase 6 point 2: every screen says where the data came from
+            // and when. `viewedAs` is here too, so a teacher can tell whether
+            // they are reading this as the teacher of record or as an admin.
+            const asOf = spWhen(d && d.sis && d.sis.lastSyncedAt);
+            const seen = (d && d.viewedAs) || {};
+            out.push('<p class="sp-foot">' +
+                (asOf ? 'PowerSchool schedule synced ' + escapeHtml(asOf) + '. ' : 'No schedule sync on record. ') +
+                (seen.scope ? 'You are seeing this as ' + escapeHtml(seen.role || 'staff') +
+                    ' (' + escapeHtml(seen.scope) + ').' : '') +
+                '</p>');
+
+            return out.join('');
+        }
         
         // ============================================
         // SCHOOL BRANDING FUNCTIONS

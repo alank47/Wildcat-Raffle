@@ -4125,3 +4125,214 @@ body.wp-open { overflow: hidden; }
     }
     .wp-ghost { animation: none; }
 }
+
+
+/* ============================================================
+   STUDENT DETAIL MODAL: tabs, and the Profile tab inside them
+   
+   Joins the app shell palette (--wc-blue / --wc-ink / --wc-border,
+   --font-main) and reuses .wc-card, .panel-head, .stat-grid and
+   .wc-table rather than inventing a third look. The modal itself
+   still carries its original inline purple header, which is
+   deliberate: the Points tab had to keep looking exactly as it did.
+
+   The screen is read STANDING OVER A DESK with the student watching.
+   So: one number per tile, the tile label above it in small caps
+   weight, and nothing a teacher has to read a paragraph to find.
+   ============================================================ */
+
+.sp-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 0 30px;
+    margin-top: -1px;
+    border-bottom: 1px solid var(--wc-border);
+    background: #ffffff;
+}
+.sp-tab {
+    appearance: none;
+    border: none;
+    background: none;
+    font-family: var(--font-main);
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--wc-gray-text);
+    padding: 15px 18px 13px;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    /* Reserving the bold width up front so the label does not shift the
+       tab strip sideways when it becomes active. */
+    transition: color 0.15s, border-color 0.15s;
+}
+.sp-tab:hover { color: var(--wc-blue-deep); }
+.sp-tab:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 3px rgba(47, 103, 167, 0.22);
+    border-radius: 8px 8px 0 0;
+}
+.sp-tab-active {
+    color: var(--wc-blue-deep);
+    border-bottom-color: var(--wc-blue);
+}
+
+/* ---- Profile tab panels ---- */
+
+.sp-card { margin-bottom: 16px; }
+.sp-card .panel-head { margin-bottom: 12px; }
+.sp-card-table { padding: 0; overflow: hidden; }
+.sp-card-table .panel-head { padding: 18px 20px 0; }
+.sp-card-pad { padding: 0 20px 18px; }
+.sp-table-head { justify-content: flex-start; }
+.sp-count {
+    margin-left: auto;
+    color: var(--wc-gray-text);
+    font-size: 12.5px;
+    font-weight: 700;
+}
+.sp-loading { color: var(--wc-gray-text); font-size: 14px; }
+
+/* MISSING IS MISSING. This is the style a panel wears when it has
+   nothing true to say, and it is deliberately not styled as an error:
+   an unsynced attendance row is not a fault, it is a fact, and the
+   sentence beside it names who fixes it. */
+.sp-missing {
+    margin: 0;
+    padding: 12px 14px;
+    background: #fbfcfe;
+    border: 1px dashed #cdd6e2;
+    border-radius: 9px;
+    color: var(--wc-gray-text);
+    font-size: 13.5px;
+    line-height: 1.5;
+}
+
+.sp-flag {
+    margin: 12px 0 0;
+    color: #96631A;
+    font-size: 12.5px;
+    font-weight: 700;
+}
+.sp-foot {
+    margin: 2px 0 4px;
+    color: #8a94a3;
+    font-size: 12px;
+}
+
+/* ---- Identity rows ---- */
+
+.sp-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px 22px;
+}
+.sp-field-label {
+    color: var(--wc-gray-text);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+.sp-field-value {
+    color: var(--wc-ink);
+    font-size: 16px;
+    font-weight: 700;
+    margin-top: 3px;
+}
+/* A school address is the one value here longer than a grid column, and broken
+   across two lines mid-domain it is unreadable and untypeable. Given the full
+   row instead, with a break as the last resort on a narrow window. */
+.sp-field-wide {
+    grid-column: 1 / -1;
+}
+.sp-field-wide .sp-field-value { overflow-wrap: break-word; }
+/* Not on file reads as a sentence, not as a value, so it cannot be
+   mistaken for the data at a glance. */
+.sp-field-unknown {
+    color: #8a94a3;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.45;
+}
+
+/* ---- Stat tiles ---- */
+
+.sp-stat-grid { margin-bottom: 0; }
+.sp-stat-grid .wc-card { box-shadow: none; }
+.sp-stat .stat-num { font-size: 38px; }
+/* Absent is not zero, and it must not LOOK like a zero either. */
+.sp-num-unknown {
+    color: #8a94a3;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.6;
+}
+.sp-stat-flag { border-left: 3px solid var(--wc-orange); }
+.sp-stat-flag .stat-num { color: #96631A; }
+
+/* ---- Promise Time ----
+   The school's advisory period. A teacher opens this tab to find it,
+   so it is a card of its own above the timetable rather than row four
+   of seven, and the TEACHER is the headline because that is the answer
+   to the question being asked ("who has them for Promise Time"). */
+
+.sp-promise {
+    border-left: 4px solid var(--wc-blue);
+    background: linear-gradient(180deg, var(--wc-blue-mist) 0%, #ffffff 62%);
+}
+.sp-promise-row + .sp-promise-row {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--wc-border);
+}
+.sp-promise-teacher {
+    color: var(--wc-blue-deep);
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1.15;
+}
+.sp-promise-meta {
+    color: var(--wc-gray-text);
+    font-size: 13.5px;
+    margin-top: 4px;
+}
+
+/* ---- Tables inside the modal ---- */
+
+.sp-table { margin-top: 4px; }
+.sp-card .sp-table { margin-top: 12px; }
+/* The bare `th { background: #f7f7f7 }` at styles.css:508 paints OVER the blue
+   set on `.wc-table thead tr`, because the tr's background sits behind the th's.
+   Everywhere else in the app that is corrected by `.app-content table th`, and
+   this modal is a sibling of #mainApp rather than a child of it, so its header
+   row came out white on near-white and the column names were unreadable. Scoped
+   to .sp-table so nothing outside this modal moves. */
+.sp-table thead tr th {
+    background: var(--wc-blue);
+    color: #ffffff;
+}
+.sp-row-promise { background: var(--wc-blue-mist) !important; }
+.sp-row-promise td { font-weight: 700; }
+
+/* ---- Provenance badge on the Behavior panel ----
+   Three states, and they must not look alike: a record nobody has
+   synced and a record this role may not read are different facts, and
+   neither one is a clean record. */
+
+.sp-badge {
+    margin-left: auto;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+.sp-badge-covered { background: var(--wc-blue-mist); color: var(--wc-blue-deep); }
+.sp-badge-unknown { background: #f4f5f7; color: #6b7280; }
+.sp-badge-denied  { background: #fdf0ee; color: #B3392F; }
+
+@media (max-width: 640px) {
+    .sp-tabs { padding: 0 16px; }
+    .sp-tab { padding: 13px 14px 11px; font-size: 14.5px; }
+    .sp-promise-teacher { font-size: 22px; }
+    .sp-stat .stat-num { font-size: 30px; }
+}
