@@ -158,3 +158,43 @@ export function classify(
 
   throw new ConvexError("Unrecognized token issuer.");
 }
+
+/**
+ * studentNumber -> the ONE address that student signs in with.
+ *
+ * Lives here, beside STUDENT_DOMAINS and REFUSED_DOMAINS, because choosing
+ * which address becomes a join key is the same decision as choosing which
+ * address may authenticate. Splitting them is how the two drift apart and a
+ * roster row ends up keyed to an address `classifyIdentity` would reject.
+ *
+ * FIRST ROW PER STUDENT WINS. The student_email PowerQuery orders by
+ * IsPrimaryEmailAddress, so first means primary, and `setStudentEmails` uses
+ * the same rule. Both must agree, or a student with two addresses gets their
+ * `students` row keyed to one and their schedule keyed to the other.
+ *
+ * REFUSES what could never sign in: a retired domain (rwwnms.org), a
+ * misspelling (westrbookacademy.org), anything that merely ends with our name.
+ * Exact equality on the domain, never a suffix match.
+ */
+export function primaryEmailByStudentNumber(
+  rows: readonly {
+    studentNumber: string;
+    email: string;
+    isPrimary?: string | number | null;
+  }[],
+): Map<string, string> {
+  const byNumber = new Map<string, string>();
+
+  for (const row of rows) {
+    const number = String(row.studentNumber ?? "").trim();
+    if (!number || byNumber.has(number)) continue;
+
+    const email = normalizeEmail(row.email);
+    if (!email.includes("@")) continue;
+    if (!STUDENT_DOMAINS.some((d) => d === emailDomain(email))) continue;
+
+    byNumber.set(number, email);
+  }
+
+  return byNumber;
+}
