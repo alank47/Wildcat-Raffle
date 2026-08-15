@@ -1576,8 +1576,14 @@
             currentStudent = null;
             document.getElementById('studentDashboard').classList.add('hidden');
             document.getElementById('loginScreen').classList.remove('hidden');
-            document.getElementById('studentLoginId').value = '';
-            document.getElementById('studentLoginError').textContent = '';
+            // #studentLoginId went away with the name lookup on 2026-08-14.
+            // Reading .value off the null it now returns threw a TypeError
+            // here, which aborted the rest of the function.
+            const err = document.getElementById('studentLoginError');
+            if (err) err.textContent = '';
+            // A student leaving lands on the Student tab, never on the Teacher
+            // tab with its "Sign in with Microsoft" button.
+            if (typeof showStudentLogin === 'function') showStudentLogin();
         }
 
         function updateStudentView() {
@@ -4209,9 +4215,30 @@
             if (selectedContent) {
                 selectedContent.style.display = 'block';
             }
-            
+
+            // The NFC tag list is remote, so it is fetched when its tab is
+            // opened rather than held stale in the DOM. Same trigger the
+            // Teachers tab used to own, moved with the surface.
+            if (subtab === 'nfc' && typeof renderTagManager === 'function') {
+                renderTagManager();
+            }
+
             console.log('Switched to settings subtab:', subtab);
         }
+
+        /**
+         * Open Settings and land on the NFC tab.
+         *
+         * The one canonical way in, because there is no hash routing in this
+         * app: the Teachers-tab redirect calls it, and so does the staff
+         * tap-to-register flow once a tag has been named, so whoever just
+         * registered a sticker sees it appear in the table.
+         */
+        function openNfcSettings() {
+            if (typeof switchTab === 'function') switchTab('settings');
+            switchSettingsSubtab('nfc');
+        }
+        window.openNfcSettings = openNfcSettings;
 
         function toggleDataView(view) {
             currentDataView = view; // Store current view
@@ -7113,14 +7140,26 @@
                 _sidebarModeApplied = false; // next login re-runs mode-first logic
                 document.body.classList.remove('sidebar-open', 'sidebar-collapsed');
                 
+                // Drop the federated session too. Without this a teacher could
+                // "log out", leave the Chromebook, and leave a Microsoft
+                // account cached in storage for whoever sat down next.
+                if (window.WildcatAuth && window.WildcatAuth.signOut) {
+                    try { window.WildcatAuth.signOut(); } catch (e) { /* still log out locally */ }
+                }
+
                 document.getElementById('mainApp').classList.add('hidden');
                 document.getElementById('studentApp').classList.add('hidden');
                 document.getElementById('loginScreen').classList.remove('hidden');
                 document.getElementById('loginUsername').value = '';
                 document.getElementById('loginPassword').value = '';
-                document.getElementById('studentLoginId').value = '';
+                // #studentLoginId was removed with the name lookup on
+                // 2026-08-14. Reading .value off null threw here, which meant
+                // the two lines below and showTeacherLogin() never ran: a
+                // teacher logging out was left on whatever tab was last
+                // selected, with stale error text still on it.
                 document.getElementById('loginError').textContent = '';
-                document.getElementById('studentLoginError').textContent = '';
+                const studentErr = document.getElementById('studentLoginError');
+                if (studentErr) studentErr.textContent = '';
                 showTeacherLogin(); // Default to teacher login
             }
         }
@@ -16268,8 +16307,15 @@
                     if (cashSubtab) cashSubtab.style.display = 'none';
                 }
                 
-                // Default to auto-week subtab
-                switchSettingsSubtab('autoweek');
+                // Default to the first subtab.
+                //
+                // This said 'autoweek', and there is no autoweekSettingsSubtab
+                // button and no autoweekSettingsContent pane anywhere in the
+                // app. So every time Settings opened, the switcher hid all
+                // seven panes, found nothing to show, and left Settings blank
+                // until somebody clicked a subtab. Found while adding the NFC
+                // tab, which would have inherited the same blank screen.
+                switchSettingsSubtab('raffle');
             }
             
             // Handle Raffle Mode data tab
@@ -16319,10 +16365,11 @@
                 return;
             }
 
-            // The tag manager lives on the teachers tab.
-            if (tabName === 'teachers' && typeof renderTagManager === 'function') {
-                renderTagManager();
-            }
+            // The tag manager USED to live on the teachers tab and was
+            // rendered from here. It is now Settings -> NFC Tags, and it is
+            // rendered by switchSettingsSubtab('nfc') instead. Fetching the
+            // tag list every time somebody opened Teachers was a query for a
+            // table that is no longer on that screen.
 
             // Handle Wildcat Cash tab-specific updates (data population)
             if (tabName === 'awardCash' && currentUser && currentUser.role === 'superadmin') {
@@ -17588,9 +17635,33 @@
         // wildcat-auth emits this on signOut() and NOTHING listened for it, so
         // a sign-out from anywhere else left the student staring at a dark
         // screen with their cards still on it.
-        window.addEventListener('wildcat-auth-signout', function () {
+        //
+        // It used to act ONLY when the portal happened to be visible, which
+        // left a second hole: a student whose sign-in expired on the login
+        // screen got a sign-out with nothing restored, and the login screen
+        // they eventually saw was whatever tab was last selected. That is the
+        // Teacher tab by default, so the last thing a signed-out student was
+        // shown was a "Sign in with Microsoft" button. Restore the surface
+        // unconditionally, and send a student back to the entrance a student
+        // came in through.
+        window.addEventListener('wildcat-auth-signout', function (event) {
+            const kind = (event && event.detail && event.detail.kind) || null;
             const view = wpById('studentPassView');
-            if (view && !view.classList.contains('hidden')) exitStudentPortal();
+            const portalOpen = Boolean(view) && !view.classList.contains('hidden');
+
+            if (portalOpen) { exitStudentPortal(); return; }
+
+            const login = wpById('loginScreen');
+            if (login) login.classList.remove('hidden');
+            const tap = wpById('tapResultView');
+            if (tap) tap.classList.add('hidden');
+            document.body.classList.remove('wp-open');
+
+            // Only a student is put back on the Student tab. A staff sign-out
+            // leaves the tab alone, because logout() has its own opinion about
+            // where staff land and two functions fighting over one tab bar is
+            // its own bug.
+            if (kind === 'student' && typeof showStudentLogin === 'function') showStudentLogin();
         });
 
         // A student signing in gets the portal, not the teacher app.
@@ -17894,13 +17965,27 @@
                 const res = await auth.convexMutation('tapLocations:upsert',
                     { slug, name, kind: kind.trim().toLowerCase() }, session.idToken);
                 alert(`Tag "${slug}" ${res.outcome}.`);
-                if (typeof renderTagManager === 'function') renderTagManager();
+                // Land on the tag table so the thing that was just registered
+                // is visible. Before the move this only re-rendered a table
+                // that happened to be on whatever screen you were on; now the
+                // table has one home and this is how you get to it.
+                if (typeof openNfcSettings === 'function') openNfcSettings();
+                else if (typeof renderTagManager === 'function') renderTagManager();
             } catch (e) {
                 alert('Could not register the tag: ' + e.message);
             }
         }
 
-        /** The admin list of tags. */
+        /**
+         * The admin list of tags. Lives in Settings -> NFC Tags.
+         *
+         * The Encode URL column is not decoration. tapLocations:list has
+         * always returned a ready-made `url` per row, and this table dropped
+         * it on the floor while the page above printed a HARDCODED sample
+         * (?tap=restroom-2) for people to edit by hand. Somebody encoding a
+         * sticker was retyping a URL that the server already knew, which is
+         * exactly the kind of step that puts a typo on a locked read-only tag.
+         */
         async function renderTagManager() {
             const host = document.getElementById('tagManagerBody');
             if (!host) return;
@@ -17911,22 +17996,44 @@
                 const data = await auth.convexQuery('tapLocations:list', {}, session.idToken);
 
                 if (!data.locations.length) {
-                    host.innerHTML = '<tr><td colspan="5" style="padding:30px;text-align:center;color:#999;">' +
-                        'No tags yet. Encode a sticker with the URL below, tap it with your phone, and it will offer to register itself.</td></tr>';
+                    host.innerHTML = '<tr><td colspan="6" style="padding:30px;text-align:center;color:#999;">' +
+                        'No tags yet. Encode a sticker with the URL shown above, tap it with your phone, and it will offer to register itself.</td></tr>';
                     return;
                 }
-                host.innerHTML = data.locations.map(l => `
+                host.innerHTML = data.locations.map(l => {
+                    const url = l.url || `https://wildcatraffle.com/?tap=${l.slug}`;
+                    return `
                   <tr style="${l.active ? '' : 'opacity:.5;'}">
                     <td style="font-family:monospace;">${l.slug}</td>
                     <td>${l.name}</td>
                     <td>${l.kind}</td>
+                    <td style="font-size:12px;">
+                      <code style="background:var(--wc-blue-mist);color:var(--wc-blue-deep);padding:2px 6px;border-radius:4px;">${url}</code>
+                      <button onclick="copyTagUrl(this, '${url}')" style="margin-left:6px;padding:3px 9px;font-size:11.5px;border:1px solid var(--wc-border);border-radius:5px;background:#fff;cursor:pointer;">Copy</button>
+                    </td>
                     <td style="font-size:12px;color:#666;">${l.lastTapAt ? new Date(l.lastTapAt).toLocaleString() : 'never tapped'}</td>
                     <td>${l.active
                         ? `<button onclick="retireTag('${l.id}','${l.slug}')" style="padding:4px 10px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Retire</button>`
                         : '<span style="font-size:12px;color:#999;">retired</span>'}</td>
-                  </tr>`).join('');
+                  </tr>`;
+                }).join('');
             } catch (e) {
-                host.innerHTML = `<tr><td colspan="5" style="padding:20px;color:#b3392f;">${e.message}</td></tr>`;
+                host.innerHTML = `<tr><td colspan="6" style="padding:20px;color:#b3392f;">${e.message}</td></tr>`;
+            }
+        }
+
+        /** Copy an encode URL, with the button itself as the confirmation. */
+        function copyTagUrl(btn, url) {
+            const done = () => {
+                if (!btn) return;
+                const was = btn.textContent;
+                btn.textContent = 'Copied';
+                setTimeout(() => { btn.textContent = was; }, 1400);
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(url).then(done, () => prompt('Copy this URL:', url));
+            } else {
+                prompt('Copy this URL:', url);
             }
         }
 
@@ -17944,6 +18051,18 @@
             if (!slug) return;
             openTagRegistration(slug.trim().toLowerCase());
         }
+
+        // The NFC surface is driven entirely by inline onclick attributes, so
+        // every handler has to be a real property of window. They were relying
+        // on top-level declarations in a classic script becoming implicit
+        // globals, which is true today and silently false the moment this file
+        // is ever wrapped or made a module. Named here for the same reason the
+        // student portal names its own, a few hundred lines up.
+        window.renderTagManager = renderTagManager;
+        window.retireTag = retireTag;
+        window.addTagByHand = addTagByHand;
+        window.copyTagUrl = copyTagUrl;
+        window.openTagRegistration = openTagRegistration;
 
         // A tap can arrive before OR after sign-in, so both paths handle it.
         window.addEventListener('wildcat-auth-signin', () => { handleTapArrival(); });

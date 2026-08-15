@@ -275,10 +275,42 @@ console.log("\nThe session survives a reload");
     "without it the session existed for exactly ONE page load, the redirect return",
   );
   check("it uses the cached MSAL account", /acquireTokenSilent/.test(auth));
+
+  // THIS CHECK USED TO ASSERT THE OPPOSITE, and it was wrong.
+  //
+  // It required `resumeSession().catch` to appear so that a resume ran on
+  // every page load. That did fix the reload problem it was written for, and
+  // it opened a worse one: these are shared Chromebooks, MSAL caches the
+  // teacher's account, and a resume on load meant the next person to open the
+  // app was silently signed in AS that teacher with no click anywhere. It also
+  // pulled 270KB of Microsoft SDK into every student's browser, on a student
+  // entrance the owner has said must never touch Microsoft.
+  //
+  // The session still survives a reload. It is now recovered by the staff
+  // sign-in button, one click, instead of by the page load.
   check(
-    "it runs on load, not only on a redirect return",
-    /resumeSession\(\)\.catch/.test(auth),
-    "completeRedirectSignIn returns early when the URL has no auth hash",
+    "it does NOT run from onReady: a page load is not a person",
+    !/resumeSession\(\)\.catch/.test(auth),
+    "on a shared Chromebook that silently hands the next student the last teacher's session",
+  );
+  check(
+    "silent resume is gated on an explicit staff gesture",
+    /if \(!staffSignInRequested\)/.test(auth) && /staffSignInRequested = true;/.test(auth),
+  );
+  check(
+    "and refuses while the student entrance is on screen",
+    /function staffEntranceActive/.test(auth) && /if \(!staffEntranceActive\(\)\)/.test(auth),
+  );
+  check(
+    "the staff button is what recovers the session",
+    /const resumed = await resumeSession\(\);/.test(auth),
+    "otherwise a returning teacher pays a full redirect on every reload",
+  );
+  check(
+    "a student signing in wipes the cached Microsoft account",
+    /function forgetCachedStaffAccount/.test(auth) &&
+      /k\.startsWith\('msal\.'\)\) doomed\.push\(k\)/.test(auth),
+    "and does it with storage keys, because loading MSAL to forget MSAL is the bug",
   );
   check(
     "a failed resume is NOT an error",

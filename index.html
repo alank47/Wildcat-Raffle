@@ -7,10 +7,10 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Wildcat Hub</title>
-    <link rel="stylesheet" href="styles.css?v=20260815q">
+    <link rel="stylesheet" href="styles.css?v=20260815r">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260815q">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260815r">
 </head>
 <body>
     <!-- Login Screen -->
@@ -1946,6 +1946,15 @@
                     <button class="settings-subtab-button" onclick="switchSettingsSubtab('corrections'); initCorrectionsPanel();" id="correctionsSettingsSubtab">
                         🔧 Corrections
                     </button>
+                    <!-- No role class. The gate is #settingsTab, which is
+                         admin-only, exactly as #teachersTab was when this
+                         surface hung off it, so moving it here widens nothing.
+                         The real gate is still Convex: tapLocations.upsert and
+                         .retire are requireAdmin, .list and .lookup are
+                         requireStaff. -->
+                    <button class="settings-subtab-button" onclick="switchSettingsSubtab('nfc')" id="nfcSettingsSubtab">
+                        📡 NFC Tags
+                    </button>
                 </div>
 
                 <!-- RAFFLE CATEGORIES SUBTAB -->
@@ -2357,6 +2366,70 @@
                         </p>
                         <div id="correctionWinnerList"></div>
                         <div id="correctionRedrawPanel" style="margin-top: 18px;"></div>
+                    </div>
+                </div>
+
+                <!-- NFC TAGS SUBTAB
+                     Moved here from the bottom of the Teachers tab, where it
+                     had been bolted on. Everything that was reachable there is
+                     reachable here: Refresh, Add tag, the tag table and its
+                     per-row Retire. Built on .wc-card / .panel-head / .wc-table
+                     and the --wc-* palette rather than the loose inline styles
+                     it arrived with, so it reads as part of Settings.
+
+                     The permissions are unchanged. tapLocations.list and
+                     .lookup are requireStaff, .upsert and .retire are
+                     requireAdmin, and this pane widens none of it: the buttons
+                     that mutate simply fail server side for anyone who is not
+                     an admin, exactly as they did before the move. -->
+                <div id="nfcSettingsContent" class="settings-subtab-content" style="display: none;">
+                    <div class="wc-card panel-card">
+                        <div style="display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+                            <div>
+                                <div class="panel-head" style="margin-bottom:4px;">
+                                    <span class="panel-icon">&#128225;</span>
+                                    <h3>NFC Tags</h3>
+                                </div>
+                                <p class="panel-hint" style="margin:0;">
+                                    Places students can tap to check in. Encode a sticker with its URL,
+                                    then tap it with your phone to register it.
+                                </p>
+                            </div>
+                            <div style="display:flex; gap:8px;">
+                                <button class="btn btn-secondary" onclick="renderTagManager()" style="font-size:13px;padding:8px 14px;">Refresh</button>
+                                <button class="btn" onclick="addTagByHand()" style="font-size:13px;padding:8px 14px;">&#43; Add tag</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="wc-card panel-card">
+                        <div class="panel-head">
+                            <span class="panel-icon">&#9998;</span>
+                            <h3>Encoding a sticker</h3>
+                        </div>
+                        <p style="margin:0 0 10px; font-size:13.5px; color:var(--wc-gray-text); line-height:1.55;">
+                            Write the tag's own URL to an NTAG213 sticker. Every registered tag shows its
+                            exact URL in the table below, with a Copy button, so there is nothing to type
+                            by hand. A tag that does not exist yet uses the same shape:
+                        </p>
+                        <code style="display:inline-block; background:var(--wc-blue-mist); color:var(--wc-blue-deep); padding:5px 9px; border-radius:6px; font-size:13px;">https://wildcatraffle.com/?tap=restroom-2</code>
+                        <p style="margin:10px 0 0; font-size:13px; color:#B3392F; line-height:1.5;">
+                            <b>Lock the tag read-only afterwards</b>, or any phone that touches it can
+                            rewrite where it points.
+                        </p>
+                    </div>
+
+                    <div class="wc-card panel-card" style="padding:0; overflow:hidden;">
+                        <div style="overflow-x:auto;">
+                            <table class="wc-table">
+                                <thead>
+                                    <tr><th>Slug</th><th>Name</th><th>Type</th><th>Encode URL</th><th>Last tap</th><th></th></tr>
+                                </thead>
+                                <tbody id="tagManagerBody">
+                                    <tr><td colspan="6" style="padding:20px;color:#999;">Loading&hellip;</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -3041,40 +3114,24 @@
                     </div>
                 </div>
 
-                <!-- NFC tag manager. Admin only in practice: the mutations
-                     behind it require admin, so a teacher sees the list and
-                     cannot change it. -->
-                <div style="margin-top:34px; padding-top:24px; border-top:1px solid #e5e7eb;">
-                    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
-                        <div>
-                            <h3 style="margin:0;">&#128225; NFC Tags</h3>
-                            <p style="color:#6b7280; font-size:13px; margin:4px 0 0;">
-                                Places students can tap to check in. Encode a sticker with its URL,
-                                then tap it with your phone to register it.
-                            </p>
+                <!-- The NFC tag manager USED TO LIVE HERE, bolted onto the
+                     bottom of the Teachers tab because that was the nearest
+                     admin screen when it was written. It is now Settings ->
+                     NFC Tags. This is a redirect rather than a deletion: staff
+                     who learned where it was would otherwise find the section
+                     simply gone, and there is no hash routing in this app to
+                     redirect them with. See openNfcSettings() in script.js. -->
+                <div class="wc-card" style="margin-top:34px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+                    <div>
+                        <div class="panel-head" style="margin-bottom:4px;">
+                            <span class="panel-icon">&#128225;</span>
+                            <h3>NFC Tags have moved</h3>
                         </div>
-                        <div style="display:flex; gap:8px;">
-                            <button class="btn btn-secondary" onclick="renderTagManager()" style="font-size:13px;padding:8px 14px;">Refresh</button>
-                            <button class="btn" onclick="addTagByHand()" style="font-size:13px;padding:8px 14px;">&#43; Add tag</button>
-                        </div>
+                        <p class="panel-hint" style="margin:0;">
+                            Tag management now lives in Settings, on its own tab.
+                        </p>
                     </div>
-
-                    <div style="margin-top:14px; padding:12px; background:#f7f7f7; border-radius:6px; font-size:13px; color:#555;">
-                        <b>Encoding a sticker:</b> write this URL to an NTAG213 tag, replacing the slug:
-                        <code style="background:#fff;padding:2px 6px;border-radius:4px;">https://wildcatraffle.com/?tap=restroom-2</code>
-                        <br><b>Lock the tag read-only afterwards</b>, or any phone that touches it can rewrite where it points.
-                    </div>
-
-                    <div style="overflow-x:auto; margin-top:14px;">
-                        <table class="wc-table">
-                            <thead>
-                                <tr><th>Slug</th><th>Name</th><th>Type</th><th>Last tap</th><th></th></tr>
-                            </thead>
-                            <tbody id="tagManagerBody">
-                                <tr><td colspan="5" style="padding:20px;color:#999;">Loading...</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
+                    <button class="btn" onclick="openNfcSettings()" style="font-size:13px;padding:8px 14px;">Open Settings &rarr; NFC Tags</button>
                 </div>
 
                 <h3>Current Teachers</h3>
@@ -4899,10 +4956,10 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260815q"></script>
+    <script src="wildcat-auth.js?v=20260815r"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
-    <script src="wildcat-motion.js?v=20260815q"></script>
-    <script src="script.js?v=20260815q"></script>
+    <script src="wildcat-motion.js?v=20260815r"></script>
+    <script src="script.js?v=20260815r"></script>
 </body>
 </html>
