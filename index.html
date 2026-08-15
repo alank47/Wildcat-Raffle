@@ -7,10 +7,16 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Wildcat Hub</title>
-    <link rel="stylesheet" href="styles.css?v=20260815t">
+    <link rel="stylesheet" href="styles.css?v=20260815u">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260815t">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260815u">
+    <!-- The shared language between the teacher app and the student portal.
+         LAST, and it has to be last: its tokens read the app palette from
+         styles.css and its motion tokens from wildcat-motion.css, and its
+         primitives are the ones that must win where both files style the
+         same element. Everything here is opt-in `.wu-*`. -->
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260815u">
 </head>
 <body>
     <!-- Login Screen -->
@@ -471,7 +477,18 @@
 
         <div class="app-body">
             <!-- ============ APP SHELL: SIDEBAR ============ -->
-            <aside class="app-sidebar" id="appSidebar">
+            <aside class="app-sidebar wu-ink" id="appSidebar">
+                <!-- Overview sits above the mode switcher because it is the one
+                     screen that is true in every mode. It is NOT the landing
+                     screen: switchSystemMode() still opens Award Tickets, which
+                     is the screen a teacher came here to use. Putting a summary
+                     in front of it would add a click to the most repeated
+                     action in the app. -->
+                <div class="sidebar-label">Overview</div>
+                <nav class="sidebar-nav">
+                    <button class="tab" id="dashboardTab" onclick="switchTab('dashboard')">🏫 Dashboard</button>
+                </nav>
+
                 <div class="sidebar-label">Active mode</div>
                 <div class="mode-switcher">
                     <button class="mode-card" id="modeCard" type="button" onclick="toggleModeDropdown()">
@@ -519,6 +536,92 @@
                 </div>
 
         <div class="content">
+            <!-- ============================================================
+                 DASHBOARD
+                 The reference's three-column dashboard, minus the column the
+                 app already has: its own sidebar is the nav rail, so this
+                 uses .wu-shell-inset (main + feed) rather than the full
+                 .wu-shell. Everything below is filled by
+                 renderTeacherDashboard() in script.js.
+
+                 Every placeholder here is a sentence, not a zero. A screen
+                 that has not loaded yet and a screen with nothing in it are
+                 different facts, and the resting state must not claim the
+                 second one.
+                 ============================================================ -->
+            <div id="dashboard" class="tab-content">
+                <div class="page-header">
+                    <div>
+                        <h2 class="page-title">🏫 Dashboard</h2>
+                        <p class="page-subtitle">Today at Westbrook Academy</p>
+                    </div>
+                    <span class="mode-pill"></span>
+                </div>
+
+                <div class="wu-shell wu-shell-inset">
+                    <div class="wc-dash-main">
+
+                        <section class="wu-identity" id="dashIdentity">
+                            <p class="wu-eyebrow" style="color: rgba(255,255,255,.72);">Westbrook Academy</p>
+                            <h3 class="wu-identity-title">Wildcat Hub</h3>
+                        </section>
+
+                        <div class="wc-dash-tiles" id="dashTiles"></div>
+
+                        <section class="wu-panel wc-dash-gauge">
+                            <div class="wu-panel-head">
+                                <div>
+                                    <p class="wu-eyebrow">This cycle</p>
+                                    <h3 class="wu-panel-title">Wildcat Jackpot qualification</h3>
+                                </div>
+                                <button type="button" class="wu-action admin-only" aria-label="Open Wildcat Jackpot"
+                                        onclick="switchTab('bigRaffle')">&#8599;</button>
+                            </div>
+                            <div class="wu-panel-body wc-gauge-body">
+                                <div class="wu-gauge" id="dashGauge" role="img" aria-label="Jackpot qualification rate">
+                                    <div class="wu-gauge-value" id="dashGaugeValue">&mdash;</div>
+                                </div>
+                                <div class="wc-gauge-legs" id="dashGaugeLegs"></div>
+                            </div>
+                        </section>
+
+                        <section class="wu-panel">
+                            <div class="wu-panel-head">
+                                <div>
+                                    <p class="wu-eyebrow">Today</p>
+                                    <h3 class="wu-panel-title" id="dashTimelineTitle">Your day</h3>
+                                </div>
+                                <span class="wu-chip" id="dashScheduleChip"></span>
+                            </div>
+                            <div class="wu-panel-body">
+                                <div class="wu-days" id="dashDays" role="group" aria-label="Pick a day"></div>
+                                <div class="wu-timeline" id="dashTimeline" style="margin-top: 16px;">
+                                    <p class="wu-absent">Loading today&rsquo;s schedule&hellip;</p>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+
+                    <aside class="wu-feed-col">
+                        <section class="wu-panel">
+                            <div class="wu-panel-head">
+                                <div>
+                                    <p class="wu-eyebrow">Recently</p>
+                                    <h3 class="wu-panel-title">Activity</h3>
+                                </div>
+                                <button type="button" class="wu-action admin-only" aria-label="Open the audit log"
+                                        onclick="switchTab('audit')">&#8599;</button>
+                            </div>
+                            <div class="wu-panel-body">
+                                <div class="wu-feed" id="dashFeed">
+                                    <p class="wu-absent">Loading recent activity&hellip;</p>
+                                </div>
+                            </div>
+                        </section>
+                    </aside>
+                </div>
+            </div>
+
             <!-- Students Tab -->
             <div id="students" class="tab-content">
                 <div class="page-header">
@@ -526,7 +629,21 @@
                         <h2 class="page-title">👥 Students</h2>
                         <p class="page-subtitle">Import rosters and manage student records</p>
                     </div>
-                    <span class="mode-pill"></span>
+                    <!-- The two figures sit with the heading rather than in the
+                         toolbar. In the toolbar they cost 230px of the one row
+                         that has to hold eight grade chips, a search field and
+                         two actions, and pushed all of it onto a second line. -->
+                    <div class="wc-roster-figs">
+                        <div class="wc-roster-fig">
+                            <span class="wc-roster-fig-num" id="totalStudents">0</span>
+                            <span class="wc-roster-fig-label">enrolled</span>
+                        </div>
+                        <div class="wc-roster-fig">
+                            <span class="wc-roster-fig-num" id="qualifiedStudents">0</span>
+                            <span class="wc-roster-fig-label">qualified</span>
+                        </div>
+                        <span class="mode-pill"></span>
+                    </div>
                 </div>
                 <!-- Import Students from PowerSchool: REMOVED 2026-08-12.
                      The SIS is the roster now. It syncs 646 enrolled students
@@ -535,11 +652,11 @@
                      it. uploadFile() in script.js is left in place but is no
                      longer reachable from the UI. -->
 
-                <!-- Perfect Attendance Upload (admin-only) -->
-                <button class="btn admin-only" onclick="openAttendanceUploadModal()"
-                        style="background: #10b981; margin-top: 20px;">
-                    &#128197; Perfect Attendance Upload
-                </button>
+                <!-- Perfect Attendance Upload (admin-only).
+                     Moved into the toolbar below, beside Export. It was a
+                     full-width green bar above the stat cards, which is three
+                     rows of vertical space spent on something used once a
+                     week. -->
 
                 <!-- Collapsed into a modal 2026-08-12. Same ids, same
                      previewPerfectAttendance() handler. It is used once a week
@@ -595,74 +712,67 @@
                     </div>
                 </div>
 
-                <div class="stat-grid">
-                    <div class="wc-card wc-stat">
-                        <div class="stat-label">Total Students</div>
-                        <div class="stat-num" id="totalStudents">0</div>
-                    </div>
-                    <div class="wc-card wc-stat">
-                        <div class="stat-label">Qualified for Wildcat Jackpot</div>
-                        <div class="stat-num" id="qualifiedStudents">0</div>
-                    </div>
-                </div>
+                <!-- ROSTER TOOLBAR.
+                     DENSITY BEATS DECORATION HERE. 623 rows is the real test
+                     of this screen, and the previous layout spent roughly 330
+                     vertical pixels before the first student appeared: two
+                     stat cards on their own row, then a card holding three
+                     stacked label + control pairs at 250px minimum each, then
+                     the table. At 1280x800 that put row one below the fold.
 
-                <!-- Grade Filter and Search -->
-                <div class="wc-card panel-card">
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; align-items: end;">
-                        <div>
-                            <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #333; font-size: 16px;">📊 Filter by Grade:</label>
-                            <select id="gradeFilterDropdown" onchange="filterByGrade()" style="width: 100%; padding: 12px; border: 2px solid #667eea; border-radius: 8px; font-size: 15px; background: white; cursor: pointer;">
-                                <option value="all">All Students</option>
-                                <option value="6">Grade 6</option>
-                                <option value="7">Grade 7</option>
-                                <option value="8">Grade 8</option>
-                                <option value="9">Grade 9</option>
-                                <option value="10">Grade 10</option>
-                                <option value="11">Grade 11</option>
-                                <option value="12">Grade 12</option>
-                            </select>
-                        </div>
-                        
-                        <div>
-                            <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #333; font-size: 16px;">🔍 Search Students:</label>
-                            <input type="text" id="studentSearchBox" placeholder="Search by name or ID..." 
-                                   oninput="searchStudents()" 
-                                   style="width: 100%; padding: 12px; border: 2px solid #667eea; border-radius: 8px; font-size: 15px;">
-                        </div>
-                        
-                        <div>
-                            <button onclick="exportToExcel()" class="btn-gradient" style="width: 100%; padding: 12px; display: flex; align-items: center; justify-content: center; gap: 8px;">
-                                📥 Export to Excel
-                            </button>
-                        </div>
+                     Everything above the table is now one row: the two figures
+                     as inline stat readouts, the grade filter as a chip row,
+                     and search + the two actions on the right. Same ids, same
+                     handlers, same admin gate on the attendance upload. -->
+                <div class="wc-roster-bar">
+                    <div class="wu-filters" id="studentGradeChips" role="group" aria-label="Filter by grade">
+                        <button type="button" class="wu-filter" data-grade="all" aria-pressed="true"
+                                onclick="filterByGrade('all')">All</button>
+                        <button type="button" class="wu-filter" data-grade="6" aria-pressed="false" onclick="filterByGrade('6')">6</button>
+                        <button type="button" class="wu-filter" data-grade="7" aria-pressed="false" onclick="filterByGrade('7')">7</button>
+                        <button type="button" class="wu-filter" data-grade="8" aria-pressed="false" onclick="filterByGrade('8')">8</button>
+                        <button type="button" class="wu-filter" data-grade="9" aria-pressed="false" onclick="filterByGrade('9')">9</button>
+                        <button type="button" class="wu-filter" data-grade="10" aria-pressed="false" onclick="filterByGrade('10')">10</button>
+                        <button type="button" class="wu-filter" data-grade="11" aria-pressed="false" onclick="filterByGrade('11')">11</button>
+                        <button type="button" class="wu-filter" data-grade="12" aria-pressed="false" onclick="filterByGrade('12')">12</button>
+                    </div>
+
+                    <div class="wc-roster-actions">
+                        <label class="wc-visually-hidden" for="studentSearchBox">Search students by name or ID</label>
+                        <input type="text" id="studentSearchBox" class="wu-field wc-roster-search"
+                               placeholder="Search name or ID&hellip;" oninput="searchStudents()">
+                        <button type="button" class="wu-btn admin-only" onclick="openAttendanceUploadModal()"
+                                title="Perfect Attendance Upload">&#128197;<span class="wc-btn-word">Attendance</span></button>
+                        <button type="button" class="wu-btn" onclick="exportToExcel()"
+                                title="Export the current view to Excel">&#128229;<span class="wc-btn-word">Export</span></button>
                     </div>
                 </div>
 
                 <!-- Student Table with Progress Rings -->
-                <div style="overflow-x: auto; position: relative;">
+                <div class="wu-panel wu-scroll-x wc-roster-table">
                     <table id="studentsTable" class="enhanced-table sortable-table">
                         <thead style="position: sticky; top: 0; z-index: 10;">
                             <tr>
                                 <th onclick="sortTable('id')" style="cursor: pointer; user-select: none;">
-                                    Student ID <span id="sort-id" class="sort-arrow">↕️</span>
+                                    Student ID <span id="sort-id" class="sort-arrow">↕</span>
                                 </th>
                                 <th onclick="sortTable('name')" style="cursor: pointer; user-select: none;">
-                                    Name <span id="sort-name" class="sort-arrow">↕️</span>
+                                    Name <span id="sort-name" class="sort-arrow">↕</span>
                                 </th>
                                 <th onclick="sortTable('grade')" style="cursor: pointer; user-select: none;">
-                                    Grade <span id="sort-grade" class="sort-arrow">↕️</span>
+                                    Grade <span id="sort-grade" class="sort-arrow">↕</span>
                                 </th>
                                 <th onclick="sortTable('pbis')" style="cursor: pointer; user-select: none;">
-                                    PBIS Tickets <span id="sort-pbis" class="sort-arrow">↕️</span>
+                                    PBIS Tickets <span id="sort-pbis" class="sort-arrow">↕</span>
                                 </th>
                                 <th onclick="sortTable('attendance')" style="cursor: pointer; user-select: none;">
-                                    Attendance <span id="sort-attendance" class="sort-arrow">↕️</span>
+                                    Attendance <span id="sort-attendance" class="sort-arrow">↕</span>
                                 </th>
                                 <th onclick="sortTable('academic')" style="cursor: pointer; user-select: none;">
-                                    Academic <span id="sort-academic" class="sort-arrow">↕️</span>
+                                    Academic <span id="sort-academic" class="sort-arrow">↕</span>
                                 </th>
                                 <th onclick="sortTable('total')" style="cursor: pointer; user-select: none;">
-                                    Progress <span id="sort-total" class="sort-arrow">↕️</span>
+                                    Progress <span id="sort-total" class="sort-arrow">↕</span>
                                 </th>
                             </tr>
                         </thead>
@@ -1055,7 +1165,7 @@
                 </div>
 
                 <!-- Subtab Navigation -->
-                <div style="display: flex; gap: 10px; margin-bottom: 25px; border-bottom: 2px solid #e5e7eb;">
+                <div class="subtab-bar">
                     <button class="subtab-button" onclick="switchAuditSubtab('all')" id="allAuditSubtab">
                         🏫 All Students
                     </button>
@@ -1067,68 +1177,63 @@
                     </button>
                 </div>
 
-                <!-- Legend -->
-                <div style="background: #2F67A7; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                    <h3 style="color: white; margin: 0 0 15px 0; font-size: 16px;">📖 Action Legend</h3>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
-                        <div style="background: rgba(255,255,255,0.95); padding: 10px; border-radius: 8px; display: flex; align-items: center; gap: 8px;">
-                            <span style="font-size: 20px;">🎟️</span>
-                            <div>
-                                <div style="font-weight: 600; font-size: 13px; color: #2F67A7;">Awarded Tickets</div>
-                                <div style="font-size: 11px; color: #666;">Tickets given to students</div>
-                            </div>
+                <!-- Legend.
+                     Was a solid blue slab holding seven white cards, each with
+                     its own label colour: blue, amber, pink, gold, another
+                     pink, cyan, grey. Seven colours for seven rows in a table
+                     that only needs three states, and gold on white is not
+                     readable at 13px. Same seven entries, in the app's chip
+                     language, on a card like every other panel. -->
+                <details class="wc-card wc-legend">
+                    <summary>
+                        <span class="panel-icon">&#128214;</span>
+                        <span>Action legend</span>
+                    </summary>
+                    <div class="wc-legend-grid">
+                        <div class="wc-legend-item">
+                            <span class="wu-tl-icon" aria-hidden="true">&#127915;</span>
+                            <div><div class="wc-legend-name">Awarded Tickets</div>
+                                 <div class="wc-legend-sub">Tickets given to students</div></div>
                         </div>
-                        <div style="background: rgba(255,255,255,0.95); padding: 10px; border-radius: 8px; display: flex; align-items: center; gap: 8px;">
-                            <span style="font-size: 20px;">↩️</span>
-                            <div>
-                                <div style="font-weight: 600; font-size: 13px; color: #f59e0b;">Undid Award</div>
-                                <div style="font-size: 11px; color: #666;">Reversed ticket award</div>
-                            </div>
+                        <div class="wc-legend-item">
+                            <span class="wu-tl-icon wu-tl-icon-warn" aria-hidden="true">&#8630;</span>
+                            <div><div class="wc-legend-name">Undid Award</div>
+                                 <div class="wc-legend-sub">Reversed ticket award</div></div>
                         </div>
-                        <div style="background: rgba(255,255,255,0.95); padding: 10px; border-radius: 8px; display: flex; align-items: center; gap: 8px;">
-                            <span style="font-size: 20px;">❌</span>
-                            <div>
-                                <div style="font-weight: 600; font-size: 13px; color: #f5576c;">Removed Tickets</div>
-                                <div style="font-size: 11px; color: #666;">Tickets deleted/removed</div>
-                            </div>
+                        <div class="wc-legend-item">
+                            <span class="wu-tl-icon wu-tl-icon-bad" aria-hidden="true">&#10005;</span>
+                            <div><div class="wc-legend-name">Removed Tickets</div>
+                                 <div class="wc-legend-sub">Tickets deleted or removed</div></div>
                         </div>
-                        <div style="background: rgba(255,255,255,0.95); padding: 10px; border-radius: 8px; display: flex; align-items: center; gap: 8px;">
-                            <span style="font-size: 20px;">🏆</span>
-                            <div>
-                                <div style="font-weight: 600; font-size: 13px; color: #ffd700;">Raffle Winner</div>
-                                <div style="font-size: 11px; color: #666;">Weekly raffle results</div>
-                            </div>
+                        <div class="wc-legend-item">
+                            <span class="wu-tl-icon wu-tl-icon-good" aria-hidden="true">&#127942;</span>
+                            <div><div class="wc-legend-name">Raffle Winner</div>
+                                 <div class="wc-legend-sub">Weekly raffle results</div></div>
                         </div>
-                        <div style="background: rgba(255,255,255,0.95); padding: 10px; border-radius: 8px; display: flex; align-items: center; gap: 8px;">
-                            <span style="font-size: 20px;">🎊</span>
-                            <div>
-                                <div style="font-weight: 600; font-size: 13px; color: #f093fb;">Jackpot Winner</div>
-                                <div style="font-size: 11px; color: #666;">Wildcat Jackpot winner</div>
-                            </div>
+                        <div class="wc-legend-item">
+                            <span class="wu-tl-icon wu-tl-icon-good" aria-hidden="true">&#127942;</span>
+                            <div><div class="wc-legend-name">Jackpot Winner</div>
+                                 <div class="wc-legend-sub">Wildcat Jackpot winner</div></div>
                         </div>
-                        <div style="background: rgba(255,255,255,0.95); padding: 10px; border-radius: 8px; display: flex; align-items: center; gap: 8px;">
-                            <span style="font-size: 20px;">🔄</span>
-                            <div>
-                                <div style="font-weight: 600; font-size: 13px; color: #4facfe;">Cycle Reset</div>
-                                <div style="font-size: 11px; color: #666;">Jackpot cycle reset</div>
-                            </div>
+                        <div class="wc-legend-item">
+                            <span class="wu-tl-icon" aria-hidden="true">&#128260;</span>
+                            <div><div class="wc-legend-name">Cycle Reset</div>
+                                 <div class="wc-legend-sub">Jackpot cycle reset</div></div>
                         </div>
-                        <div style="background: rgba(255,255,255,0.95); padding: 10px; border-radius: 8px; display: flex; align-items: center; gap: 8px;">
-                            <span style="font-size: 20px;">📝</span>
-                            <div>
-                                <div style="font-weight: 600; font-size: 13px; color: #666;">Other Actions</div>
-                                <div style="font-size: 11px; color: #666;">System activities</div>
-                            </div>
+                        <div class="wc-legend-item">
+                            <span class="wu-tl-icon" aria-hidden="true">&#128221;</span>
+                            <div><div class="wc-legend-name">Other Actions</div>
+                                 <div class="wc-legend-sub">System activities</div></div>
                         </div>
                     </div>
-                </div>
+                </details>
 
                 <div class="search-bar">
                     <input type="text" id="searchAudit" placeholder="🔍 Search by student, teacher, or category..." onkeyup="searchAuditLog()">
                 </div>
 
-                <div style="overflow-x: auto;">
-                    <table class="log-table">
+                <div class="wc-card table-card wu-scroll-x">
+                    <table class="log-table wc-table">
                         <thead>
                             <tr>
                                 <th>Date/Time</th>
@@ -1979,9 +2084,13 @@
 
                 <!-- RAFFLE CATEGORIES SUBTAB -->
                 <div id="raffleSettingsContent" class="settings-subtab-content active">
-                    <!-- PBIS Subcategories -->
-                    <div style="margin: 0 0 30px 0; padding: 20px; background: #f7f7f7; border-radius: 8px;">
-                        <h3 style="color: #9c27b0;">🎯 PBIS Subcategories</h3>
+                    <!-- PBIS Subcategories.
+                         The heading was #9c27b0 and the one below it #ffc107 —
+                         a purple and an amber that mean nothing here and match
+                         nothing else in the app. Same headings, in the same
+                         icon-square treatment every other panel uses. -->
+                    <div class="wc-card" style="margin: 0 0 20px 0;">
+                        <div class="panel-head"><span class="panel-icon">🎯</span><h3>PBIS Subcategories</h3></div>
                         <p style="color: #666; font-size: 14px; margin-bottom: 15px;">Teachers select from these when awarding PBIS tickets</p>
                         
                         <div id="pbisSubcategoriesList" style="margin-bottom: 15px;">
@@ -1994,8 +2103,8 @@
                     </div>
 
                     <!-- Academic Subcategories -->
-                    <div style="margin: 0; padding: 20px; background: #f7f7f7; border-radius: 8px;">
-                        <h3 style="color: #ffc107;">📚 Academic Subcategories</h3>
+                    <div class="wc-card" style="margin: 0;">
+                        <div class="panel-head"><span class="panel-icon">📚</span><h3>Academic Subcategories</h3></div>
                         <p style="color: #666; font-size: 14px; margin-bottom: 15px;">Teachers select from these when awarding Academic tickets</p>
                         
                         <div id="academicSubcategoriesList" style="margin-bottom: 15px;">
@@ -3187,8 +3296,11 @@
                     <button class="btn" onclick="openNfcSettings()" style="font-size:13px;padding:8px 14px;">Open Settings &rarr; NFC Tags</button>
                 </div>
 
-                <h3>Current Teachers</h3>
-                <div style="overflow-x: auto; margin-top: 15px;">
+                <div class="panel-head" style="margin-top: 26px;">
+                    <span class="panel-icon">&#128101;</span>
+                    <h3>Current Teachers</h3>
+                </div>
+                <div class="wc-card table-card wu-scroll-x">
                     <table class="wc-table">
                         <thead>
                             <tr>
@@ -3223,7 +3335,7 @@
                 <!-- Grade Level Filter (above the three-card grid) -->
                 <div class="wc-card banner-card">
                     <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
-                        <div style="font-size: 28px;">🎓</div>
+                        <div class="panel-icon-sq">🎓</div>
                         <div style="flex: 1;">
                             <h3 class="chart-title">Filter by Grade Level</h3>
                             <select id="cashGradeFilter" onchange="updateCashTable()" class="wc-select">
@@ -3240,19 +3352,21 @@
                     </div>
                 </div>
                 
-                <!-- Three Section Grid -->
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 30px;">
-                    
+                <!-- Three Section Grid. Same three panels as Award Tickets and
+                     the same .award-grid, so the two flows a teacher moves
+                     between all day are literally the same layout rather than
+                     two shapes that happen to do the same job. -->
+                <div class="award-grid">
+
                     <!-- Section 1: Period Filter -->
-                    <div class="wc-card banner-card">
-                        <div style="font-size: 28px; margin-bottom: 10px;">📚</div>
-                        <h3 class="chart-title">Class Period</h3>
+                    <div class="wc-card award-panel">
+                        <div class="panel-head"><span class="panel-icon">📚</span><h3>Class Period</h3></div>
                         <select id="cashPeriodFilter" onchange="updateCashTable()" class="wc-select">
                             <option value="">All Students</option>
                         </select>
                         <p class="panel-hint">Select a class period to filter students</p>
                     </div>
-                    
+
                     <!-- Section 2: Behavior Category -->
                     <div class="wc-card award-panel">
                         <div class="panel-head"><span class="panel-icon">🎯</span><h3>Behavior</h3></div>
@@ -3276,34 +3390,36 @@
                     </div>
                 </div>
                 
-                <!-- Award Button -->
-                <div style="text-align: center; margin-bottom: 30px;">
-                    <button class="btn" onclick="awardCashToSelected()" style="padding: 15px 40px; font-size: 16px; background: #2F67A7; border: none; box-shadow: 0 4px 15px rgba(47, 103, 167, 0.3);">
+                <!-- Award Button. Same .award-actions row as Award Tickets. -->
+                <div class="award-actions">
+                    <button class="btn btn-award" onclick="awardCashToSelected()">
                         💰 Award Cash to Selected Students
                     </button>
                 </div>
-                
-                <!-- Dynamic Class Header -->
-                <div id="cashClassHeader" style="display: none; background: #2F67A7; padding: 20px; border-radius: 12px 12px 0 0; margin-bottom: 0; box-shadow: 0 4px 15px rgba(47, 103, 167, 0.3);">
-                    <div style="display: flex; align-items: center; justify-content: space-between;">
-                        <div style="display: flex; align-items: center; gap: 15px;">
-                            <div style="font-size: 36px;">👥</div>
-                            <div>
-                                <h2 style="margin: 0; font-size: 24px;" id="cashClassTitle">All Students</h2>
-                                <p style="margin: 5px 0 0 0; font-size: 14px;" id="cashClassSubtitle">Select period to filter</p>
-                            </div>
-                        </div>
-                        <div style="background: rgba(255,255,255,0.2); backdrop-filter: blur(10px); padding: 15px 25px; border-radius: 10px;">
-                            <div style="font-size: 28px; font-weight: 700;" id="cashStudentCount">0</div>
-                            <div style="font-size: 13px;">students</div>
+
+                <!-- Dynamic Class Header. Was a solid blue slab with a 24px
+                     heading in white; it is now the same .class-header card
+                     the Award Tickets screen uses, so the count sits in the
+                     same place in both flows. -->
+                <div id="cashClassHeader" class="wc-card class-header" style="display: none;">
+                    <div class="class-header-left">
+                        <span class="class-header-icon">👥</span>
+                        <div>
+                            <h3 id="cashClassTitle">All Students</h3>
+                            <p id="cashClassSubtitle">Select period to filter</p>
                         </div>
                     </div>
+                    <div class="class-header-count">
+                        <p class="count-label">Total Students</p>
+                        <p id="cashStudentCount" class="count-num">0</p>
+                    </div>
                 </div>
-                
+
                 <!-- Student Table -->
-                <div style="background: white; border-radius: 0 0 12px 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); overflow: hidden;">
-                    <table class="student-table">
-                        <thead style="background: #2F67A7;">
+                <div class="wc-card table-card">
+                    <div class="wu-scroll-x">
+                    <table class="student-table wc-table">
+                        <thead>
                             <tr>
                                 <th><input type="checkbox" id="cashSelectAll" onchange="toggleCashSelectAll()" style="width: 18px; height: 18px; cursor: pointer;"></th>
                                 <th>Student ID</th>
@@ -3317,6 +3433,7 @@
                             <tr><td colspan="6" style="text-align: center; padding: 40px; color: #999;">No students to display</td></tr>
                         </tbody>
                     </table>
+                    </div>
                 </div>
             </div>
 
@@ -3689,8 +3806,8 @@
                     <input type="text" id="searchCashAudit" placeholder="🔍 Search by student, teacher, or behavior..." onkeyup="searchCashAuditLog()">
                 </div>
 
-                <div style="overflow-x: auto;">
-                    <table class="log-table">
+                <div class="wc-card table-card wu-scroll-x">
+                    <table class="log-table wc-table">
                         <thead>
                             <tr>
                                 <th>Date/Time</th>
@@ -4940,15 +5057,19 @@
     <div id="studentProfileModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 10000; overflow-y: auto; padding: 20px;">
         <div style="max-width: 900px; margin: 40px auto; background: white; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); position: relative; animation: slideInUp 0.4s ease;">
             
-            <!-- Close Button -->
-            <button onclick="closeStudentProfile()" style="position: absolute; top: 20px; right: 20px; background: #ef4444; color: white; border: none; width: 40px; height: 40px; border-radius: 50%; font-size: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.3s; z-index: 10;"
-                    onmouseover="this.style.transform='rotate(90deg)'; this.style.background='#dc2626'"
-                    onmouseout="this.style.transform='rotate(0deg)'; this.style.background='#ef4444'">
+            <!-- Close Button. Was a red circle that rotated 90 degrees on a
+                 JS mouseover — a hover with no (hover: hover) gate, so on a
+                 tablet it stuck at 45 degrees until the next tap, and red for
+                 "close this" reads as "delete this". It is the reference's
+                 circular card action now. -->
+            <button onclick="closeStudentProfile()" class="wu-action sp-close" aria-label="Close">
                 ×
             </button>
             
-            <!-- Profile Header -->
-            <div id="profileHeader" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px; border-radius: 20px 20px 0 0; color: white; text-align: center;">
+            <!-- Profile Header. The reference's identity card, doing the job it
+                 does there: this is who the screen is about. It was the app's
+                 last purple gradient. -->
+            <div id="profileHeader" class="wu-identity sp-header">
                 <!-- Will be populated by JS -->
             </div>
             
@@ -4977,27 +5098,32 @@
                         <!-- Will be populated by JS -->
                     </div>
 
-                    <!-- Stats Grid -->
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px;">
-                        <div style="background: #f9fafb; padding: 20px; border-radius: 12px; text-align: center;">
-                            <div style="font-size: 36px; font-weight: 700; color: #667eea;" id="profileTotalTickets">0</div>
-                            <div style="color: #666; font-size: 14px; margin-top: 5px;">Total Tickets This Week</div>
+                    <!-- Stats Grid. Three figures in three different arbitrary
+                         colours (indigo, green, amber) said nothing: none of
+                         them is good or bad, they are just counts. They are
+                         the reference's stat tiles now — the tile is quiet and
+                         the figure carries the weight. -->
+                    <div class="wc-dash-tiles" style="margin-bottom: 26px;">
+                        <div class="wu-tile">
+                            <div class="wu-tile-label">Total tickets this week</div>
+                            <div class="wu-tile-figure" id="profileTotalTickets">0</div>
                         </div>
-                        <div style="background: #f9fafb; padding: 20px; border-radius: 12px; text-align: center;">
-                            <div style="font-size: 36px; font-weight: 700; color: #10b981;" id="profileWeeksQualified">0</div>
-                            <div style="color: #666; font-size: 14px; margin-top: 5px;">Weeks Qualified</div>
+                        <div class="wu-tile">
+                            <div class="wu-tile-label">Weeks qualified</div>
+                            <div class="wu-tile-figure" id="profileWeeksQualified">0</div>
                         </div>
-                        <div style="background: #f9fafb; padding: 20px; border-radius: 12px; text-align: center;">
-                            <div style="font-size: 36px; font-weight: 700; color: #f59e0b;" id="profileLifetimeTickets">0</div>
-                            <div style="color: #666; font-size: 14px; margin-top: 5px;">Lifetime Tickets</div>
+                        <div class="wu-tile">
+                            <div class="wu-tile-label">Lifetime tickets</div>
+                            <div class="wu-tile-figure" id="profileLifetimeTickets">0</div>
                         </div>
                     </div>
 
                     <!-- Ticket History Timeline -->
-                    <div style="background: white; border: 2px solid #e5e7eb; border-radius: 12px; padding: 25px; margin-bottom: 30px;">
-                        <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px; display: flex; align-items: center; gap: 10px;">
-                            📋 Ticket History
-                        </h3>
+                    <div class="wu-panel" style="padding: 20px 22px; margin-bottom: 26px;">
+                        <div class="panel-head" style="margin-bottom: 14px;">
+                            <span class="panel-icon">📋</span>
+                            <h3>Ticket History</h3>
+                        </div>
                         <div id="profileTicketHistory" style="max-height: 300px; overflow-y: auto;">
                             <!-- Will be populated by JS -->
                         </div>
@@ -5027,10 +5153,10 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260815t"></script>
+    <script src="wildcat-auth.js?v=20260815u"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
-    <script src="wildcat-motion.js?v=20260815t"></script>
-    <script src="script.js?v=20260815t"></script>
+    <script src="wildcat-motion.js?v=20260815u"></script>
+    <script src="script.js?v=20260815u"></script>
 </body>
 </html>

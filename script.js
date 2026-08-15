@@ -6595,9 +6595,9 @@
             const pbisContainer = document.getElementById('pbisSubcategoriesList');
             if (pbisContainer) {
                 pbisContainer.innerHTML = pbisSubcategories.map((sub, index) => `
-                    <div style="display: flex; align-items: center; padding: 10px; background: white; border-radius: 4px; margin-bottom: 8px;">
-                        <span style="flex: 1; font-weight: 500;">${sub}</span>
-                        <button class="btn btn-danger" style="padding: 6px 12px; font-size: 14px;" onclick="removePbisSubcategory(${index})">Remove</button>
+                    <div class="wc-listrow">
+                        <span class="wc-listrow-name">${escapeHtml(sub)}</span>
+                        <button class="wu-btn wc-btn-sm wc-btn-risk" onclick="removePbisSubcategory(${index})">Remove</button>
                     </div>
                 `).join('');
             }
@@ -6606,9 +6606,9 @@
             const academicContainer = document.getElementById('academicSubcategoriesList');
             if (academicContainer) {
                 academicContainer.innerHTML = academicSubcategories.map((sub, index) => `
-                    <div style="display: flex; align-items: center; padding: 10px; background: white; border-radius: 4px; margin-bottom: 8px;">
-                        <span style="flex: 1; font-weight: 500;">${sub}</span>
-                        <button class="btn btn-danger" style="padding: 6px 12px; font-size: 14px;" onclick="removeAcademicSubcategory(${index})">Remove</button>
+                    <div class="wc-listrow">
+                        <span class="wc-listrow-name">${escapeHtml(sub)}</span>
+                        <button class="wu-btn wc-btn-sm wc-btn-risk" onclick="removeAcademicSubcategory(${index})">Remove</button>
                     </div>
                 `).join('');
             }
@@ -7291,77 +7291,79 @@
                     e.category === log.category
                 );
                 
-                // Determine action styling
-                let actionBadge = '';
-                let rowStyle = '';
+                // Action styling.
+                //
+                // Seven actions, seven multi-stop gradients: indigo-to-violet,
+                // amber, pink-to-red, gold-to-navy, a three-stop pink, cyan,
+                // and a mint-to-blush with dark text on it. Plus a gradient
+                // wash down each row and a pink gradient on Delete. The colour
+                // was doing the categorising, and there were more colours than
+                // categories are worth.
+                //
+                // Three states is what the log actually has: something was
+                // given, something was taken away, and something the system
+                // did. The icon square carries the category; the chip carries
+                // the word; the row stays quiet.
+                let chipClass = '';
+                let iconClass = '';
+                let rowClass = 'wc-row';
                 let actionIcon = '';
-                
+
                 if (log.action === 'Awarded Tickets') {
-                    actionBadge = 'background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);';
-                    rowStyle = 'background: linear-gradient(to right, rgba(102, 126, 234, 0.08), transparent); border-left: 4px solid #667eea;';
-                    actionIcon = '🎟️';
+                    chipClass = ''; iconClass = ''; actionIcon = '&#127915;';
                 } else if (log.action === '↩️ UNDID Award') {
-                    actionBadge = 'background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(245, 158, 11, 0.3);';
-                    rowStyle = 'background: linear-gradient(to right, rgba(245, 158, 11, 0.08), transparent); border-left: 4px solid #f59e0b;';
-                    actionIcon = '↩️';
+                    chipClass = 'wu-chip-warn'; iconClass = 'wu-tl-icon-warn'; actionIcon = '&#8630;';
+                    rowClass = 'wc-row wc-row-flag';
                 } else if (log.action === 'Removed Tickets') {
-                    actionBadge = 'background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(245, 87, 108, 0.3);';
-                    rowStyle = 'background: linear-gradient(to right, rgba(245, 87, 108, 0.08), transparent); border-left: 4px solid #f5576c;';
-                    actionIcon = '❌';
-                } else if (log.action === 'Raffle Winner' || log.action === 'Weekly Raffle Winner') {
-                    actionBadge = 'background: linear-gradient(135deg, #ffd89b 0%, #19547b 100%); color: white; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(255, 215, 0, 0.4);';
-                    rowStyle = 'background: linear-gradient(to right, rgba(255, 215, 0, 0.12), transparent); border-left: 4px solid #ffd700;';
-                    actionIcon = '🏆';
-                } else if (log.action === 'Wildcat Jackpot Winner') {
-                    actionBadge = 'background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%, #ffd89b 100%); color: white; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(240, 147, 251, 0.4); animation: pulse 2s infinite;';
-                    rowStyle = 'background: linear-gradient(to right, rgba(240, 147, 251, 0.15), transparent); border-left: 4px solid #f093fb;';
-                    actionIcon = '🎊';
+                    chipClass = 'wu-chip-bad'; iconClass = 'wu-tl-icon-bad'; actionIcon = '&#10005;';
+                    rowClass = 'wc-row wc-row-flag';
+                } else if (log.action === 'Raffle Winner' || log.action === 'Weekly Raffle Winner'
+                        || log.action === 'Wildcat Jackpot Winner') {
+                    chipClass = 'wu-chip-good'; iconClass = 'wu-tl-icon-good'; actionIcon = '&#127942;';
                 } else if (log.action === 'Reset Wildcat Jackpot Cycle') {
-                    actionBadge = 'background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(79, 172, 254, 0.3);';
-                    rowStyle = 'background: linear-gradient(to right, rgba(79, 172, 254, 0.08), transparent); border-left: 4px solid #4facfe;';
-                    actionIcon = '🔄';
+                    chipClass = ''; iconClass = ''; actionIcon = '&#128260;';
                 } else {
-                    actionBadge = 'background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); color: #333; padding: 6px 12px; border-radius: 20px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(168, 237, 234, 0.3);';
-                    rowStyle = 'background: linear-gradient(to right, rgba(168, 237, 234, 0.08), transparent); border-left: 4px solid #a8edea;';
-                    actionIcon = '📝';
+                    chipClass = ''; iconClass = ''; actionIcon = '&#128221;';
                 }
-                
+
+                // A dash is not a fact. An award with no category recorded and
+                // an award of zero tickets are different things from an award
+                // whose category simply is not applicable, and the log cannot
+                // tell them apart — so it says "not recorded" rather than
+                // printing a hyphen that reads as data.
+                const absent = (what) => `<span class="wu-absent">${what}</span>`;
+
                 return `
-                    <tr style="${rowStyle}">
-                        <td style="padding: 12px 8px;">
-                            <span style="font-size: 13px; color: #666;">${formattedDate}</span>
-                        </td>
-                        <td style="padding: 12px 8px;">
-                            <span class="teacher-badge" style="background: #e3f2fd; color: #1976d2; padding: 4px 10px; border-radius: 12px; font-size: 13px; font-weight: 500;">${log.teacher}</span>
-                        </td>
-                        <td style="padding: 12px 8px;">
-                            <span style="${actionBadge}">
-                                ${actionIcon} ${log.action}
+                    <tr class="${rowClass}">
+                        <td class="cell-muted wc-audit-when">${formattedDate}</td>
+                        <td class="cell-muted">${escapeHtml(log.teacher || '')}</td>
+                        <td>
+                            <span class="wc-audit-action">
+                                <span class="wu-tl-icon ${iconClass}" aria-hidden="true">${actionIcon}</span>
+                                <span class="wu-chip ${chipClass}">${escapeHtml(
+                                    // The stored action for an undo is literally
+                                    // "↩️ UNDID Award". The icon square already
+                                    // carries that arrow, so the chip drops it
+                                    // rather than showing it twice. The stored
+                                    // value is untouched.
+                                    String(log.action || '').replace(WC_LEAD_EMOJI, ''))}</span>
                             </span>
                         </td>
-                        <td style="padding: 12px 8px; font-weight: 500;">${log.studentName}</td>
-                        <td style="padding: 12px 8px;">
-                            ${log.category ? `<span style="background: #f5f5f5; padding: 4px 8px; border-radius: 8px; font-size: 12px;">${log.category}</span>` : '<span style="color: #999;">-</span>'}
-                        </td>
-                        <td style="padding: 12px 8px; text-align: center;">
-                            ${log.ticketCount ? `<span style="font-weight: 700; font-size: 16px; color: #667eea;">${log.ticketCount}</span>` : '<span style="color: #999;">-</span>'}
-                        </td>
-                        <td style="padding: 12px 8px; max-width: 200px;">
-                            ${log.reason ? `<span style="font-size: 13px; color: #555;">${log.reason}</span>` : '<span style="color: #999;">-</span>'}
-                        </td>
-                        <td style="padding: 12px 8px; text-align: center;">
-                            ${isAdmin && log.action === 'Awarded Tickets' ? 
-                                `<button class="btn btn-danger audit-delete-btn" 
+                        <td class="wc-name">${escapeHtml(log.studentName || '')}</td>
+                        <td>${log.category ? `<span class="wu-chip">${escapeHtml(log.category)}</span>` : absent('none')}</td>
+                        <td class="wc-money">${(log.ticketCount === null || log.ticketCount === undefined || log.ticketCount === '')
+                            ? absent('n/a') : escapeHtml(String(log.ticketCount))}</td>
+                        <td class="cell-muted wc-audit-reason">${log.reason ? escapeHtml(log.reason) : absent('none given')}</td>
+                        <td>
+                            ${isAdmin && log.action === 'Awarded Tickets'
+                                ? `<button class="wu-btn wc-btn-sm wc-btn-risk audit-delete-btn"
                                          data-timestamp="${log.timestamp}"
                                          data-student-id="${log.studentId}"
                                          data-ticket-count="${log.ticketCount}"
-                                         data-teacher="${log.teacher}"
-                                         data-action="${log.action}"
-                                         data-category="${log.category}"
-                                         style="padding: 6px 12px; font-size: 12px; background: linear-gradient(135deg, #f5576c 0%, #f093fb 100%); border: none; border-radius: 8px; box-shadow: 0 2px 4px rgba(245, 87, 108, 0.3);">
-                                    🗑️ Delete
-                                </button>` 
-                                : '<span style="color: #999;">-</span>'}
+                                         data-teacher="${escapeHtml(log.teacher || '')}"
+                                         data-action="${escapeHtml(log.action)}"
+                                         data-category="${escapeHtml(log.category || '')}">Delete</button>`
+                                : ''}
                         </td>
                     </tr>
                 `;
@@ -8485,7 +8487,7 @@
                         }
                         displayName += `</div>`;
                     } else {
-                        displayName += `<div style="background: #f0f9ff; color: #1976d2; padding: 15px; border-radius: 8px; margin-top: 10px; border-left: 4px solid #667eea;">`;
+                        displayName += `<div style="background: #f0f9ff; color: #1976d2; padding: 15px; border-radius: 8px; margin-top: 10px; border-left: 3px solid var(--wc-blue);">`;
                         displayName += `<div style="font-size: 16px; font-weight: 600;">Outside Class Time</div>`;
                         displayName += `<div style="font-size: 14px; margin-top: 5px;">Not currently in a scheduled period</div>`;
                         displayName += `</div>`;
@@ -9722,9 +9724,21 @@
         function getActiveSchedule() {
             ensureBellSchedulesExist();
             
-            // If manual override is set (not 'auto'), use it
+            // If manual override is set (not 'auto'), use it — but only if it
+            // still names a schedule that exists.
+            //
+            // Production is currently holding `activeSchedule: "normal"`, and
+            // ensureBellSchedulesExist() deletes the legacy `normal` schedule
+            // when it migrates a tenant to the hs_/ms_ split. So this returned
+            // `undefined` on every call, and undefined has no valid consumer:
+            // every caller either reads .periods off it or hands it to the
+            // period detector. Falling through to auto-detection is what the
+            // function already does for an unset override, and it is the only
+            // answer here that is not "no schedule at all".
             if (passSettings.activeSchedule && passSettings.activeSchedule !== 'auto') {
-                return passSettings.bellSchedules[passSettings.activeSchedule];
+                const chosen = passSettings.bellSchedules[passSettings.activeSchedule];
+                if (chosen) return chosen;
+                console.warn(`[bells] activeSchedule "${passSettings.activeSchedule}" no longer exists; falling back to auto-detect`);
             }
             
             // Auto-detect based on day of week (0=Sunday, 1=Monday, ..., 6=Saturday)
@@ -11914,37 +11928,50 @@
             try {
                 const view = paginate('teachers', teachers, true);
                 renderPager('teachers', 'teachersTable', view);
+                // Roles used to be solid pills in five unrelated colours —
+                // crimson, indigo, green, another green — each with an emoji
+                // inside it. The emoji forced the label to wrap out of the
+                // pill and the row to grow to roughly 200px, so four staff
+                // filled a screen. Roles are a category, not a severity: one
+                // quiet chip, and the one that actually carries more power is
+                // the only one that is tinted.
+                const ROLE_CHIP = {
+                    superadmin: ['Super Admin', 'wu-chip-warn'],
+                    admin: ['Admin', ''],
+                    campusaide: ['Campus Aide', ''],
+                    teacher: ['Teacher', '']
+                };
+
                 tbody.innerHTML = view.slice.map(t => {
-                    let roleDisplay = t.role;
-                    let roleColor = '#6c757d';
-                    
-                    if (t.role === 'superadmin') {
-                        roleDisplay = '👑 Super Admin';
-                        roleColor = '#B3392F';
-                    } else if (t.role === 'admin') {
-                        roleDisplay = '⭐ Admin';
-                        roleColor = '#667eea';
-                    } else if (t.role === 'campusaide') {
-                        roleDisplay = '👁️ Campus Aide';
-                        roleColor = '#2E7D52';
-                    } else {
-                        roleDisplay = '👤 Teacher';
-                        roleColor = '#28a745';
-                    }
-                    
+                    const [roleLabel, roleClass] = ROLE_CHIP[t.role] || [String(t.role || 'unknown'), ''];
+                    // "N/A" and "0" are answers. A missing username and an
+                    // untallied award count are not, and they must not read
+                    // like ones.
+                    const username = t.username
+                        ? escapeHtml(t.username)
+                        : '<span class="wu-absent">no username</span>';
+                    const email = t.email
+                        ? escapeHtml(t.email)
+                        : '<span class="wu-absent">no email on file</span>';
+                    const awarded = (typeof t.ticketsAwarded === 'number')
+                        ? String(t.ticketsAwarded)
+                        : '<span class="wu-absent">not counted</span>';
+
                     return `
                     <tr>
-                        <td>${t.name || 'Unknown'}</td>
-                        <td>${t.username || 'N/A'}</td>
-                        <td>${t.email || '<span style="color: #dc3545;">No email</span>'}</td>
-                        <td><span class="teacher-badge" style="background: ${roleColor};">${roleDisplay}</span></td>
-                        <td>${t.ticketsAwarded || 0}</td>
+                        <td class="wc-name">${escapeHtml(t.name || 'Unknown')}</td>
+                        <td class="cell-muted">${username}</td>
+                        <td class="cell-muted">${email}</td>
+                        <td><span class="wu-chip ${roleClass}">${escapeHtml(roleLabel)}</span></td>
+                        <td class="wc-money">${awarded}</td>
                         <td>
-                            <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 14px; margin-right: 5px;" onclick="editTeacher('${t.id}')">✏️ Edit</button>
+                            <div class="wc-row-actions">
+                            <button class="wu-btn wc-btn-sm" onclick="editTeacher('${t.id}')">Edit</button>
                             ${t.id !== currentUser.id ? `
-                                <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 14px; margin-right: 5px;" onclick="resetTeacherPassword('${t.id}')">Reset Password</button>
-                                <button class="btn btn-danger" style="padding: 6px 12px; font-size: 14px;" onclick="deleteTeacher('${t.id}')">Delete</button>
-                            ` : '<span style="color: #999; display: block; margin-top: 5px;">Current User</span>'}
+                                <button class="wu-btn wc-btn-sm" onclick="resetTeacherPassword('${t.id}')" title="Send this person a password reset">Reset</button>
+                                <button class="wu-btn wc-btn-sm wc-btn-risk" onclick="deleteTeacher('${t.id}')">Delete</button>
+                            ` : '<span class="wu-absent">this is you</span>'}
+                            </div>
                         </td>
                     </tr>
                 `}).join('');
@@ -13031,7 +13058,7 @@
             
             // Reset sort arrows
             document.querySelectorAll('.sort-arrow').forEach(arrow => {
-                arrow.textContent = '↕️';
+                arrow.textContent = '↕';
                 arrow.style.opacity = '0.3';
             });
             
@@ -13074,10 +13101,26 @@
         let currentStudentView = 'grade'; // 'grade' or 'all'
         let currentGradeFilter = 'all'; // Track which grade is selected
         
-        function filterByGrade() {
-            const dropdown = document.getElementById('gradeFilterDropdown');
-            currentGradeFilter = dropdown.value;
-            
+        // The grade filter is a row of chips now, not a <select>. Same state,
+        // same single call site: the chips pass their value in, and the old
+        // no-argument call still works if anything anywhere still makes it.
+        //
+        // A chip row rather than a styled dropdown because a teacher scanning
+        // 623 rows wants grade 9 in one click, and because a keyboard reaches
+        // every grade without opening a menu first.
+        function filterByGrade(value) {
+            if (typeof value === 'string') {
+                currentGradeFilter = value;
+            } else {
+                const dropdown = document.getElementById('gradeFilterDropdown');
+                currentGradeFilter = dropdown ? dropdown.value : 'all';
+            }
+
+            document.querySelectorAll('#studentGradeChips .wu-filter').forEach(chip => {
+                chip.setAttribute('aria-pressed',
+                    String(chip.dataset.grade === currentGradeFilter));
+            });
+
             // Always use table view
             updateStudentsTable();
         }
@@ -13149,7 +13192,7 @@
             
             // Update sort arrows
             document.querySelectorAll('.sort-arrow').forEach(arrow => {
-                arrow.textContent = '↕️';
+                arrow.textContent = '↕';
                 arrow.style.opacity = '0.3';
             });
             const arrow = document.getElementById(`sort-${column}`);
@@ -13323,6 +13366,10 @@
             if (studentsToRender.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px; color: #999;">No students found matching your criteria.</td></tr>';
                 renderPager('students', 'studentsTableBody', { pages: 1 });
+                const t0 = document.getElementById('totalStudents');
+                const q0 = document.getElementById('qualifiedStudents');
+                if (t0) t0.textContent = '0';
+                if (q0) q0.textContent = '0';
                 return;
             }
 
@@ -13338,45 +13385,57 @@
                 const attendanceColor = s.attendanceTickets > 0 ? '#2E7D52' : '#e5e7eb';  // Green if has tickets, gray if not
                 const academicColor = s.academicTickets > 0 ? '#3b82f6' : '#e5e7eb';  // Blue if has tickets, gray if not
                 
-                // Determine status display
+                // Determine status display.
+                //
+                // The three states used to be a green gradient pill that
+                // pulsed, a blue pill, and an amber gradient pill that also
+                // pulsed — plus three 16px shadowed dots for everyone else.
+                // On 623 rows that is 623 animations and five different
+                // colours competing with the data. The states are the same;
+                // they just stopped shouting.
+                const dots = (on) => `<span class="qual-dot${on ? ' qual-dot-on' : ''}"></span>`;
                 let statusHTML = '';
                 if (isQualifiedForJackpot(s) && hasAllThreeTickets) {
-                    // Officially qualified AND currently has all tickets
-                    statusHTML = '<span class="qualified-badge pulse-animation" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">🏆 Locked In</span>';
+                    statusHTML = '<span class="qualified-badge wc-badge-locked">&#127942; Locked in</span>';
                 } else if (isQualifiedForJackpot(s)) {
-                    // Officially qualified but doesn't have current tickets (from previous week)
-                    statusHTML = '<span class="qualified-badge" style="background: #3b82f6;">🔵 Qualified</span>';
+                    statusHTML = '<span class="qualified-badge">Qualified</span>';
                 } else if (hasAllThreeTickets) {
-                    // Currently has all tickets but not officially qualified yet
-                    statusHTML = '<span class="qualified-badge pulse-animation" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">🟢 On Track</span>';
+                    statusHTML = '<span class="qualified-badge wc-badge-track">On track</span>';
                 } else {
-                    // Not qualified - show colored dots for progress
-                    statusHTML = `<div style="display: inline-flex; align-items: center; gap: 6px; justify-content: center;">
-                        <div style="width: 16px; height: 16px; border-radius: 50%; background: ${pbisColor}; transition: all 0.3s; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="PBIS"></div>
-                        <div style="width: 16px; height: 16px; border-radius: 50%; background: ${attendanceColor}; transition: all 0.3s; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="Attendance"></div>
-                        <div style="width: 16px; height: 16px; border-radius: 50%; background: ${academicColor}; transition: all 0.3s; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="Academic"></div>
-                    </div>`;
+                    statusHTML = `<span class="qual-dots" title="PBIS · Attendance · Academic">${
+                        dots(s.pbisTickets > 0)}${dots(s.attendanceTickets > 0)}${dots(s.academicTickets > 0)}</span>`;
                 }
-                
+
+                const cnt = (n, label) =>
+                    `<span class="ticket-badge${(Number(n) || 0) > 0 ? ' wc-has' : ''}" title="${label}">${Number(n) || 0}</span>`;
+
                 return `
                 <tr>
                     <td>${s.id}</td>
                     <td>
-                        <a href="javascript:void(0)" onclick="openStudentProfile('${s.id}')" 
-                           style="color: #667eea; text-decoration: none; font-weight: 600; cursor: pointer; transition: color 0.2s;"
-                           onmouseover="this.style.color='#764ba2'" 
-                           onmouseout="this.style.color='#667eea'">
-                            ${s.firstName} ${s.lastName}
-                        </a>
+                        <a href="javascript:void(0)" class="student-link"
+                           onclick="openStudentProfile('${s.id}')">${escapeHtml(s.firstName)} ${escapeHtml(s.lastName)}</a>
                     </td>
-                    <td>${s.grade}</td>
-                    <td><span class="ticket-badge pbis">${s.pbisTickets}</span></td>
-                    <td><span class="ticket-badge attendance">${s.attendanceTickets}</span></td>
-                    <td><span class="ticket-badge academic">${s.academicTickets}</span></td>
+                    <td>${(s.grade === undefined || s.grade === null || s.grade === '')
+                            ? '<span class="wu-absent">not on file</span>' : escapeHtml(String(s.grade))}</td>
+                    <td>${cnt(s.pbisTickets, 'PBIS')}</td>
+                    <td>${cnt(s.attendanceTickets, 'Attendance')}</td>
+                    <td>${cnt(s.academicTickets, 'Academic')}</td>
                     <td>${statusHTML}</td>
                 </tr>
             `;
             }).join('');
+
+            // The two figures above the table. They are markup-only elements
+            // that no code has ever written to, so they have been reading a
+            // hard-coded "0" on every roster this app has ever shown — the
+            // exact failure the app-wide rule forbids: a missing value
+            // rendering as a real one. They count the rows actually on
+            // screen, so they answer the filter the teacher just applied.
+            const totalEl = document.getElementById('totalStudents');
+            const qualEl = document.getElementById('qualifiedStudents');
+            if (totalEl) totalEl.textContent = String(studentsToRender.length);
+            if (qualEl) qualEl.textContent = String(studentsToRender.filter(isQualifiedForJackpot).length);
 
             // First paint of the roster only. This function also runs on
             // every keystroke of the search box and on every ticket award;
@@ -13637,14 +13696,25 @@
             const totalTickets = (student.pbisTickets || 0) + (student.attendanceTickets || 0) + (student.academicTickets || 0);
             const initials = `${student.firstName.charAt(0)}${student.lastName.charAt(0)}`;
             
+            // Initials in a tinted circle, never a photograph. The reference
+            // leans on student avatars; we have no student photos, and putting
+            // a child's face on a screen that gets projected in a classroom is
+            // a decision nobody at this school has made.
+            const gradeText = (student.grade === undefined || student.grade === null || student.grade === '')
+                ? '<span class="wu-absent" style="color:rgba(255,255,255,.66);font-size:inherit;">grade not on file</span>'
+                : `Grade ${student.grade}`;
+
             document.getElementById('profileHeader').innerHTML = `
-                <div style="width: 100px; height: 100px; background: white; color: #667eea; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 42px; font-weight: 700; margin: 0 auto 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
-                    ${initials}
+                <div class="sp-head-row">
+                    <div class="sp-head-avatar">${initials}</div>
+                    <div class="sp-head-text">
+                        <p class="wu-eyebrow" style="color: rgba(255,255,255,.72);">Student</p>
+                        <h2 class="wu-identity-title">${student.firstName} ${student.lastName}</h2>
+                        <p class="sp-head-meta">ID ${student.id} &middot; ${gradeText}</p>
+                    </div>
                 </div>
-                <h2 style="margin: 0 0 10px 0; font-size: 32px;">${student.firstName} ${student.lastName}</h2>
-                <div style="opacity: 0.9; font-size: 16px;">Student ID: ${student.id} • Grade ${student.grade}</div>
-                ${isQualifiedForJackpot(student) ? 
-                    '<div style="margin-top: 15px; background: rgba(255,255,255,0.2); padding: 10px 20px; border-radius: 20px; display: inline-block; font-weight: 600;">🏆 Qualified for Wildcat Jackpot</div>' 
+                ${isQualifiedForJackpot(student)
+                    ? '<span class="sp-head-badge">&#127942; Qualified for Wildcat Jackpot</span>'
                     : ''}
             `;
             
@@ -13658,7 +13728,7 @@
             const weeksQualified = (student.ticketHistory || []).filter(entry => entry.reason && entry.reason.includes('Qualified')).length;
             if (weeksQualified >= 5) badges.push({ emoji: '🔥', label: '5-Week Streak', color: '#B3392F' });
             if ((student.attendanceTickets || 0) >= 5) badges.push({ emoji: '📅', label: 'Perfect Attendance', color: '#2E7D52' });
-            if (totalTickets >= 5) badges.push({ emoji: '🎯', label: 'Weekly Goal Achieved', color: '#667eea' });
+            if (totalTickets >= 5) badges.push({ emoji: '🎯', label: 'Weekly Goal Achieved', color: 'var(--wc-blue)' });
             
             if (badges.length > 0) {
                 document.getElementById('profileBadges').innerHTML = `
@@ -13715,7 +13785,7 @@
                     else if (entry.category === 'academics') { icon = '📚'; bgColor = 'rgba(59, 130, 246, 0.1)'; }
                     
                     return `
-                        <div style="background: ${bgColor}; padding: 15px; border-radius: 8px; margin-bottom: 12px; border-left: 4px solid #667eea;">
+                        <div style="background: ${bgColor}; padding: 15px; border-radius: 8px; margin-bottom: 12px; border-left: 3px solid var(--wc-blue);">
                             <div style="display: flex; justify-content: space-between; align-items: start;">
                                 <div style="display: flex; align-items: center; gap: 10px;">
                                     <span style="font-size: 24px;">${icon}</span>
@@ -13724,7 +13794,7 @@
                                         <div style="font-size: 13px; color: #666; margin-top: 3px;">${date} at ${time} • by ${entry.teacher || 'Teacher'}</div>
                                     </div>
                                 </div>
-                                <div style="background: #667eea; color: white; padding: 4px 12px; border-radius: 12px; font-weight: 600; font-size: 14px;">+${entry.amount || 1}</div>
+                                <div style="background: var(--wc-blue-mist); color: var(--wc-blue-deep); padding: 4px 12px; border-radius: 999px; font-weight: 650; font-size: 13px; font-variant-numeric: tabular-nums;">+${entry.amount || 1}</div>
                             </div>
                         </div>
                     `;
@@ -14321,15 +14391,19 @@
                 }
             });
             
-            // Update enhanced table header
-            document.querySelectorAll('.enhanced-table thead').forEach(thead => {
-                thead.style.background = `linear-gradient(135deg, ${branding.colors.primary} 0%, ${branding.colors.secondary} 100%)`;
-            });
-            
-            // Update ticket badges colors
-            document.querySelectorAll('.ticket-badge.pbis').forEach(badge => {
-                badge.style.background = `linear-gradient(135deg, ${branding.colors.primary} 0%, ${branding.colors.secondary} 100%)`;
-            });
+            // The roster's table header and its ticket counts USED to be
+            // repainted here with a two-colour gradient built from the
+            // branding colours, as inline styles — which outrank every
+            // stylesheet in the app.
+            //
+            // A table header is chrome, not a brand surface. Painting it a
+            // gradient is what made the roster unreadable enough to be worth
+            // redesigning, and doing it inline meant no stylesheet could
+            // undo it. Branding still owns what branding is: the school name,
+            // the logo, the terminology, and the accent on controls above.
+            //
+            // (.ticket-badge.pbis no longer exists either: the counts are
+            // figures now, and a count is not a place for a brand colour.)
             
             // Update school name in header (if exists)
             const headerTitle = document.querySelector('h1');
@@ -16273,7 +16347,14 @@
                     tab.classList.add('active');
                 }
             });
-            
+
+            // Give any sidebar button that has just appeared the rail's icon
+            // square, and keep aria-current in step with .active. Idempotent
+            // and cheap: it skips anything it has already split. It runs here
+            // rather than once at boot because #modeNav and #modeSubNav are
+            // rebuilt at runtime whenever the mode changes.
+            try { wcDecorateShell(); } catch (e) { /* cosmetic only, never block a tab switch */ }
+
             // Map friendly names to actual tab content IDs
             const tabIdMap = {
                 'awardCash': 'awardCashTab',
@@ -16304,6 +16385,12 @@
             // Storage Health renders when System Admin opens
             if (tabName === 'system' && typeof renderStorageHealth === 'function') {
                 renderStorageHealth();
+            }
+
+            // The dashboard reads the same in-memory data everything else
+            // does, so it is rendered on open rather than kept in sync.
+            if (tabName === 'dashboard') {
+                try { renderTeacherDashboard(); } catch (e) { console.warn('[dashboard]', e); }
             }
 
             // Populate settings when Settings tab is opened
@@ -20021,7 +20108,15 @@
             const cyc = (typeof currentCycle === 'object' && currentCycle) ? currentCycle.cycleNumber : null;
             const wk = (typeof currentWeek === 'number') ? currentWeek : null;
             const dur = (typeof cycleDuration === 'number' && cycleDuration) ? cycleDuration : 5;
-            badge.textContent = `Cycle ${cyc ?? '—'} · Week ${wk ?? '—'} of ${dur}`;
+            // Two renderings of the same fact, not a truncation. At 390px the
+            // long form does not fit in the topbar, and "Cycle 2 · Wee…" is a
+            // fact with its end cut off. CSS picks one; both are complete.
+            const c = cyc ?? '—';
+            const w = wk ?? '—';
+            badge.innerHTML =
+                `<span class="cycle-long">Cycle ${c} &middot; Week ${w} of ${dur}</span>` +
+                `<span class="cycle-short">C${c} &middot; W${w}/${dur}</span>`;
+            badge.title = `Cycle ${c}, week ${w} of ${dur}`;
         }
 
         function toggleSidebar() {
@@ -20416,24 +20511,28 @@
                     student.wildcatCashDeducted = 0;
                 }
                 
-                const balanceColor = student.wildcatCashBalance >= 0 ? '#2E7D52' : '#B3392F';
-                const balanceStyle = `background: ${balanceColor}; padding: 6px 12px; border-radius: 20px; font-weight: 700; display: inline-block; min-width: 60px; text-align: center;`;
-                
+                // Was: three solid pills with no text colour set, so the
+                // figures rendered dark on dark green and dark on brand blue;
+                // inline zebra striping; and a JS mouseover that scaled the
+                // whole row by 1%. A scale on a table row nudges every cell in
+                // it by a subpixel, and a JS hover carries no
+                // (hover: hover) gate, so on a tablet it stuck to whichever
+                // row a teacher last touched.
+                //
+                // Money is a figure. It is set in the type, not in a badge.
+                const bal = Number(student.wildcatCashBalance) || 0;
+
                 const row = document.createElement('tr');
-                row.style.background = tbody.children.length % 2 === 0 ? '#f9f9f9' : 'white';
-                row.style.transition = 'all 0.2s';
-                row.onmouseover = () => { row.style.background = '#e8f4ff'; row.style.transform = 'scale(1.01)'; };
-                row.onmouseout = () => { row.style.background = tbody.children.length % 2 === 0 ? '#f9f9f9' : 'white'; row.style.transform = 'scale(1)'; };
-                
+                row.className = 'wc-row';
                 row.innerHTML = `
                     <td style="text-align: center;">
                         <input type="checkbox" data-student-id="${student.id}" style="width: 18px; height: 18px; cursor: pointer;">
                     </td>
-                    <td style="color: #666; font-size: 14px;">${student.id}</td>
-                    <td style="font-weight: 600; color: #333; font-size: 14px;">${student.lastName}, ${student.firstName}</td>
-                    <td style="text-align: center;"><span style="${balanceStyle}">$${student.wildcatCashBalance}</span></td>
-                    <td style="text-align: center;"><span style="background: #2E7D52; padding: 6px 12px; border-radius: 20px; font-weight: 700; display: inline-block; min-width: 60px;">$${student.wildcatCashEarned}</span></td>
-                    <td style="text-align: center;"><span style="background: var(--wc-blue); padding: 6px 12px; border-radius: 20px; font-weight: 700; display: inline-block; min-width: 60px;">$${student.wildcatCashSpent}</span></td>
+                    <td class="cell-muted">${escapeHtml(String(student.id))}</td>
+                    <td class="wc-name">${escapeHtml(student.lastName)}, ${escapeHtml(student.firstName)}</td>
+                    <td class="wc-money ${bal < 0 ? 'wc-money-neg' : ''}">$${bal}</td>
+                    <td class="wc-money">$${Number(student.wildcatCashEarned) || 0}</td>
+                    <td class="wc-money">$${Number(student.wildcatCashSpent) || 0}</td>
                 `;
                 
                 tbody.appendChild(row);
@@ -21016,7 +21115,7 @@
             
             // Show reward info
             document.getElementById('redeemRewardInfo').innerHTML = `
-                <div style="background: #f0f9ff; padding: 15px; border-radius: 8px; border-left: 4px solid #667eea;">
+                <div style="background: #f0f9ff; padding: 15px; border-radius: 8px; border-left: 3px solid var(--wc-blue);">
                     <div style="font-weight: 600; color: #333; margin-bottom: 5px;">${reward.name}</div>
                     <div style="font-size: 20px; font-weight: 700; color: #667eea;">Cost: $${reward.cost}</div>
                 </div>
@@ -23853,11 +23952,467 @@
             // the one thing that IS allowed on a hot control, because it is
             // the response to a press rather than an animation played at
             // the user.
-            m.press('.btn, .sp-tab, .subtab-button, .wp-btn');
+            m.press('.btn, .sp-tab, .subtab-button, .wp-btn, .wu-filter, .wu-day, .wu-tile-arrow');
         }
 
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', wcInitMotion);
         } else {
             wcInitMotion();
+        }
+
+
+        // ============================================================
+        // THE SHELL, AND THE DASHBOARD
+        // ------------------------------------------------------------
+        // Reference: docs/design-reference.md (the Notasnet school
+        // dashboard, chosen 2026-08-15). Two patterns from it live here
+        // because they need JS: the nav rail's icon squares, and the
+        // dashboard itself.
+        // ============================================================
+
+        // Leading emoji of a label, as one grapheme cluster including ZWJ
+        // sequences — 👨‍🏫 is three code points and must not be cut in half.
+        const WC_LEAD_EMOJI = /^\s*((?:\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?)*)+)\s*/u;
+
+        /**
+         * Split a label's leading emoji into its own element.
+         *
+         * The reference puts every nav item's icon in its own square, so the
+         * label is not doing the work of being findable. Every nav item in
+         * this app already carries an emoji at the front of its text — but as
+         * a text node, which CSS cannot reach. Rather than rewrite twenty
+         * buttons in the markup and every `innerHTML` that builds more of
+         * them at runtime, this splits them where they are.
+         *
+         * Idempotent: it marks what it has done and never runs twice on the
+         * same element, because it is called from switchTab().
+         */
+        function wcSplitLeadingEmoji(el, iconClass, labelClass) {
+            if (!el || el.dataset.wcSplit === '1') return;
+            const raw = el.textContent || '';
+            const m = raw.match(WC_LEAD_EMOJI);
+            el.dataset.wcSplit = '1';
+            if (!m) return;
+            const rest = raw.slice(m[0].length).trim();
+            if (!rest) return;
+            el.textContent = '';
+            const icon = document.createElement('span');
+            icon.className = iconClass;
+            icon.setAttribute('aria-hidden', 'true');
+            icon.textContent = m[1];
+            const label = document.createElement('span');
+            label.className = labelClass;
+            label.textContent = rest;
+            el.appendChild(icon);
+            el.appendChild(label);
+        }
+
+        /**
+         * Give the sidebar the reference's rail shape, and keep aria-current
+         * in step with the .active class the rest of the app already sets.
+         *
+         * NOTHING here touches visibility or permissions. `.admin-only`,
+         * `.super-admin-only` and every display toggle are left exactly as
+         * they were; this only rearranges the inside of a button.
+         */
+        function wcDecorateShell() {
+            document.querySelectorAll('#appSidebar .tab').forEach(btn => {
+                wcSplitLeadingEmoji(btn, 'wu-rail-icon', 'nav-label');
+                btn.classList.add('wu-rail-item');
+                if (btn.classList.contains('active')) btn.setAttribute('aria-current', 'page');
+                else btn.removeAttribute('aria-current');
+            });
+            document.querySelectorAll('#mainApp .page-title').forEach(h => {
+                wcSplitLeadingEmoji(h, 'page-ico', 'page-word');
+            });
+
+            // A nav group whose every item is hidden by the current mode still
+            // drew its card and its heading: an empty ink bar with the word
+            // "Insights" above it. The items are hidden by CSS rules
+            // (body.cash-mode #dataTab and friends), not by inline styles, so
+            // only a computed style can tell.
+            //
+            // This hides the GROUP, never an item. Nothing here decides who
+            // may see what: .admin-only, .super-admin-only and the mode rules
+            // are still the only things that gate a nav item, and this reads
+            // their result rather than adding to it.
+            //
+            // #modeNav and #modeSubNav are excluded on purpose: their
+            // visibility is owned by updateSidebarModeUI(), which hides them
+            // when no mode is chosen even though their buttons are perfectly
+            // visible. Touching them here would put the mode nav back.
+            document.querySelectorAll('#appSidebar .sidebar-nav:not(#modeNav):not(#modeSubNav)').forEach(nav => {
+                const anyVisible = [...nav.querySelectorAll(':scope > .tab')]
+                    .some(t => getComputedStyle(t).display !== 'none');
+                nav.style.display = anyVisible ? '' : 'none';
+                const label = nav.previousElementSibling;
+                if (label && label.classList.contains('sidebar-label')) {
+                    label.style.display = anyVisible ? '' : 'none';
+                }
+            });
+        }
+
+        // ------------------------------------------------------------
+        // DASHBOARD
+        // ------------------------------------------------------------
+
+        // Which day the feed is scoped to. An ISO date, or null for today.
+        let wcDashDay = null;
+
+        function wcIsoDay(d) {
+            const dt = (d instanceof Date) ? d : new Date(d);
+            if (isNaN(dt)) return '';
+            return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+        }
+
+        function wcClock(hhmm) {
+            if (!hhmm || typeof hhmm !== 'string') return '';
+            const [h, m] = hhmm.split(':').map(Number);
+            if (isNaN(h)) return hhmm;
+            const suffix = h >= 12 ? 'PM' : 'AM';
+            const hour = h % 12 === 0 ? 12 : h % 12;
+            return `${hour}:${String(m || 0).padStart(2, '0')} ${suffix}`;
+        }
+
+        function wcWhen(iso) {
+            const then = new Date(iso);
+            if (isNaN(then)) return '';
+            const mins = Math.round((Date.now() - then.getTime()) / 60000);
+            if (mins < 1) return 'just now';
+            if (mins < 60) return `${mins}m ago`;
+            const hrs = Math.round(mins / 60);
+            if (hrs < 24) return `${hrs}h ago`;
+            return then.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        }
+
+        /** The students this user may award to, or null if that is unknowable. */
+        function wcMyRoster() {
+            const all = (typeof enrolledStudents === 'function') ? enrolledStudents() : [];
+            if (!currentUser) return null;
+            if (currentUser.role !== 'teacher') return all;
+            const sections = Array.isArray(currentUser.sections) ? currentUser.sections : [];
+            // A teacher with no sections is not a teacher with zero students.
+            // It means the SIS has not matched them yet, and "0" would be a
+            // lie that reads as "your classes are empty".
+            if (sections.length === 0) return null;
+            const ids = new Set();
+            sections.forEach(s => (s.students || []).forEach(id => ids.add(String(id))));
+            return all.filter(s => ids.has(String(s.id)));
+        }
+
+        function wcTile(label, value, opts) {
+            const o = opts || {};
+            const arrow = o.onclick
+                ? `<button type="button" class="wu-tile-arrow" aria-label="${escapeHtml(o.arrowLabel || label)}" onclick="${o.onclick}">&#8599;</button>`
+                : '';
+            const body = (value === null || value === undefined)
+                ? `<div class="wu-tile-figure"><span class="wu-absent">${escapeHtml(o.absent || 'no data')}</span></div>`
+                : `<div class="wu-tile-figure ${o.tone ? 'wu-tile-' + o.tone : ''}">${escapeHtml(String(value))}</div>`;
+            return `<div class="wu-tile">${arrow}<div class="wu-tile-label">${escapeHtml(label)}</div>${body}</div>`;
+        }
+
+        function renderTeacherDashboard() {
+            const host = document.getElementById('dashboard');
+            if (!host) return;
+
+            const roster = wcMyRoster();
+            const all = (typeof enrolledStudents === 'function') ? enrolledStudents() : [];
+            const sections = (currentUser && Array.isArray(currentUser.sections)) ? currentUser.sections : [];
+
+            // ---- Identity card -------------------------------------
+            const name = (currentUser && currentUser.name) ? currentUser.name : 'Signed in';
+            const roleLabel = (currentUser && currentUser.role) ? currentUser.role : '';
+            const initials = name.split(/\s+/).filter(Boolean).slice(0, 2)
+                .map(p => p.charAt(0).toUpperCase()).join('') || '—';
+            const cyc = (typeof currentCycle === 'object' && currentCycle) ? currentCycle.cycleNumber : null;
+            const wk = (typeof currentWeek === 'number') ? currentWeek : null;
+            const dur = (typeof cycleDuration === 'number' && cycleDuration) ? cycleDuration : 5;
+
+            const idEl = document.getElementById('dashIdentity');
+            if (idEl) {
+                idEl.innerHTML = `
+                    <p class="wu-eyebrow" style="color: rgba(255,255,255,.72);">Westbrook Academy</p>
+                    <h3 class="wu-identity-title">${escapeHtml(name)}</h3>
+                    <div class="wc-identity-row">
+                        <span class="wu-person" role="note">
+                            <span class="wu-avatar">${escapeHtml(initials)}</span>
+                            ${escapeHtml(roleLabel || 'staff')}
+                            ${sections.length
+                                ? ` &middot; ${sections.length} section${sections.length === 1 ? '' : 's'}`
+                                : ' &middot; <span style="opacity:.72">no sections assigned</span>'}
+                        </span>
+                        <span class="wc-identity-cycle">Cycle ${cyc ?? '&mdash;'} &middot; Week ${wk ?? '&mdash;'} of ${dur}</span>
+                    </div>`;
+            }
+
+            // ---- Stat tiles ----------------------------------------
+            const isAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin');
+            const qualified = all.filter(isQualifiedForJackpot).length;
+
+            const mine = (Array.isArray(auditLog) ? auditLog : []).filter(e =>
+                e && e.action === 'Awarded Tickets' &&
+                currentUser && e.teacherId === currentUser.id &&
+                e.week === wk && entryBelongsToCurrentCycle(e));
+            const myTickets = mine.reduce((sum, e) => sum + (Number(e.ticketCount) || 0), 0);
+
+            const tiles = document.getElementById('dashTiles');
+            if (tiles) {
+                tiles.innerHTML = [
+                    wcTile('Students you can award',
+                        roster === null ? null : roster.length,
+                        { absent: 'no sections assigned',
+                          onclick: isAdmin ? "switchTab('students')" : null,
+                          arrowLabel: 'Open the student roster' }),
+                    wcTile('Qualified for the Jackpot',
+                        all.length ? qualified : null,
+                        { absent: 'roster not loaded',
+                          onclick: isAdmin ? "switchTab('bigRaffle')" : null,
+                          arrowLabel: 'Open Wildcat Jackpot' }),
+                    // A measured zero here is a real fact: this teacher has
+                    // awarded nothing yet this week. It is only absent when
+                    // there is no week to count against.
+                    wcTile('Tickets you awarded this week',
+                        wk === null ? null : myTickets,
+                        { absent: 'no week set',
+                          onclick: "switchTab('myActivity')",
+                          arrowLabel: 'Open My Activity' })
+                ].join('');
+            }
+
+            // ---- Arc gauge: jackpot qualification -------------------
+            const gauge = document.getElementById('dashGauge');
+            const gaugeVal = document.getElementById('dashGaugeValue');
+            const legs = document.getElementById('dashGaugeLegs');
+            const rate = all.length ? qualified / all.length : null;
+
+            if (gauge && gaugeVal) {
+                gauge.style.setProperty('--wu-gauge', rate === null ? 0 : rate.toFixed(3));
+                gauge.setAttribute('aria-label', rate === null
+                    ? 'Jackpot qualification rate: no roster loaded'
+                    : `Jackpot qualification rate ${Math.round(rate * 100)} percent`);
+                gaugeVal.innerHTML = rate === null
+                    ? '<span class="wu-absent">no roster</span>'
+                    : `${Math.round(rate * 100)}%`;
+            }
+
+            if (legs) {
+                if (!all.length) {
+                    legs.innerHTML = '<p class="wu-absent">Qualification needs a roster. Nothing has loaded yet.</p>';
+                } else {
+                    const byGrade = new Map();
+                    all.forEach(s => {
+                        const g = (s.grade === undefined || s.grade === null || s.grade === '') ? null : String(s.grade);
+                        if (g === null) return;
+                        if (!byGrade.has(g)) byGrade.set(g, { n: 0, q: 0 });
+                        const row = byGrade.get(g);
+                        row.n += 1;
+                        if (isQualifiedForJackpot(s)) row.q += 1;
+                    });
+                    const ranked = [...byGrade.entries()]
+                        .filter(([, r]) => r.n >= 5)
+                        .map(([g, r]) => ({ g, pct: Math.round((r.q / r.n) * 100) }))
+                        .sort((a, b) => b.pct - a.pct);
+                    if (ranked.length < 2) {
+                        legs.innerHTML = '<p class="wu-absent">Not enough graded groups to rank.</p>';
+                    } else {
+                        const best = ranked[0];
+                        const worst = ranked[ranked.length - 1];
+                        legs.innerHTML = `
+                            <div class="wc-leg"><div><p class="wu-eyebrow">Highest</p>
+                                <p class="wc-leg-name">Grade ${escapeHtml(best.g)}</p></div>
+                                <span class="wu-ring wu-ring-good">${best.pct}</span></div>
+                            <div class="wc-leg"><div><p class="wu-eyebrow">Lowest</p>
+                                <p class="wc-leg-name">Grade ${escapeHtml(worst.g)}</p></div>
+                                <span class="wu-ring wu-ring-bad">${worst.pct}</span></div>`;
+                    }
+                }
+            }
+
+            // ---- Day strip -----------------------------------------
+            const days = document.getElementById('dashDays');
+            const todayIso = wcIsoDay(new Date());
+            const selected = wcDashDay || todayIso;
+            if (days) {
+                let html = '';
+                for (let i = 6; i >= 0; i--) {
+                    const d = new Date();
+                    d.setDate(d.getDate() - i);
+                    const iso = wcIsoDay(d);
+                    html += `<button type="button" class="wu-day" aria-pressed="${iso === selected}"
+                                     onclick="wcDashPickDay('${iso}')">
+                                <span class="wu-day-dow">${d.toLocaleDateString(undefined, { weekday: 'short' })}</span>
+                                <span class="wu-day-num">${d.getDate()}</span>
+                             </button>`;
+                }
+                days.innerHTML = html;
+            }
+
+            // ---- Timeline: today's periods, and open hall passes ----
+            const tl = document.getElementById('dashTimeline');
+            const chip = document.getElementById('dashScheduleChip');
+            const tlTitle = document.getElementById('dashTimelineTitle');
+            let schedule = null;
+            try { schedule = (typeof getActiveSchedule === 'function') ? getActiveSchedule() : null; } catch (e) { schedule = null; }
+
+            // getActiveSchedule() auto-detects from the day of the week and
+            // falls back to the all-periods schedule when the lookup misses,
+            // which on a Saturday means it hands back Wednesday's bells. Laying
+            // Wednesday out under the word "Today" would be a fabricated day.
+            const dow = new Date(selected + 'T12:00:00').getDay();
+            const isToday = selected === todayIso;
+            // getActiveSchedule() answers for NOW — it reads today's day of the
+            // week and has no way to be asked about another date. So periods
+            // are laid out for today only. On any other day the strip shows
+            // what is actually recorded for that day (the passes and, in the
+            // feed, the awards) rather than a bell schedule reconstructed from
+            // the wrong weekday.
+            const schoolDay = isToday && dow >= 1 && dow <= 5;
+
+            if (chip) {
+                let label = '';
+                if (!isToday) label = 'Recorded';
+                else if (dow === 0 || dow === 6) label = 'No classes';
+                else if (schedule && schedule.name) label = schedule.name;
+                chip.textContent = label;
+                chip.style.display = label ? '' : 'none';
+            }
+            if (tlTitle) {
+                tlTitle.textContent = selected === todayIso ? 'Your day' : 'That day';
+            }
+
+            if (tl) {
+                const periods = (schoolDay && schedule && Array.isArray(schedule.periods)) ? schedule.periods : [];
+                const mySections = new Map();
+                sections.forEach(s => { if (s && s.period) mySections.set(String(s.period), s); });
+
+                const nowMin = (() => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); })();
+                const toMin = hhmm => {
+                    if (!hhmm) return null;
+                    const [h, m] = String(hhmm).split(':').map(Number);
+                    return isNaN(h) ? null : h * 60 + (m || 0);
+                };
+
+                const rows = [];
+                periods.forEach(p => {
+                    // A period this user teaches reads as an event. Every other
+                    // period is still on the strip — a teacher needs to see the
+                    // shape of the day — but it stays quiet, which is the
+                    // reference's rule for a break.
+                    const mySection = mySections.get(String(p.period));
+                    const start = toMin(p.start);
+                    const end = toMin(p.end);
+                    const isNow = selected === todayIso && start !== null && end !== null &&
+                                  nowMin >= start && nowMin < end;
+                    rows.push({
+                        sort: start === null ? 9999 : start,
+                        html: `
+                        <div class="wu-tl-row ${mySection ? '' : 'wu-tl-quiet'} ${isNow ? 'wu-tl-now' : ''}">
+                            <div class="wu-tl-time">${escapeHtml(wcClock(p.start))}</div>
+                            <div class="wu-tl-card">
+                                <span class="wu-tl-icon" aria-hidden="true">${mySection ? '&#128218;' : '&#8226;'}</span>
+                                <div class="wu-tl-body">
+                                    <div class="wu-tl-title">${mySection ? escapeHtml(mySection.courseName || 'Your class') : escapeHtml('Period ' + p.period)}</div>
+                                    <div class="wu-tl-sub">${mySection
+                                        ? `Period ${escapeHtml(p.period)} &middot; ${(mySection.students || []).length} students`
+                                        : `${escapeHtml(wcClock(p.start))} &ndash; ${escapeHtml(wcClock(p.end))}`}</div>
+                                </div>
+                            </div>
+                        </div>`
+                    });
+                });
+
+                // Open hall passes. A pass is an event with a start, a duration
+                // and a state, which is exactly the shape of a timeline card.
+                const open = (Array.isArray(hallPasses) ? hallPasses : [])
+                    .filter(p => p && p.status === 'active' && wcIsoDay(p.createdAt) === selected);
+                open.forEach(p => {
+                    const created = new Date(p.createdAt);
+                    const expires = new Date(p.expiresAt);
+                    const overdue = !isNaN(expires) && expires.getTime() < Date.now();
+                    const left = isNaN(expires) ? null : Math.round((expires.getTime() - Date.now()) / 60000);
+                    rows.push({
+                        sort: isNaN(created) ? 9999 : created.getHours() * 60 + created.getMinutes(),
+                        html: `
+                        <div class="wu-tl-row">
+                            <div class="wu-tl-time">${escapeHtml(created.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))}</div>
+                            <div class="wu-tl-card">
+                                <span class="wu-tl-icon ${overdue ? 'wu-tl-icon-bad' : 'wu-tl-icon-warn'}" aria-hidden="true">&#127915;</span>
+                                <div class="wu-tl-body">
+                                    <div class="wu-tl-title">${escapeHtml(p.studentName || 'Student')}</div>
+                                    <div class="wu-tl-sub">Out to ${escapeHtml(p.destination || 'unknown')} &middot; ${
+                                        left === null ? '<span class="wu-absent">no return time recorded</span>'
+                                        : overdue ? `${Math.abs(left)} min overdue`
+                                        : `${left} min left`}</div>
+                                </div>
+                            </div>
+                        </div>`
+                    });
+                });
+
+                rows.sort((a, b) => a.sort - b.sort);
+                tl.innerHTML = rows.length
+                    ? rows.map(r => r.html).join('')
+                    : (!isToday
+                        ? '<p class="wu-absent">No passes were open on this day.</p>'
+                        : (dow === 0 || dow === 6)
+                            ? '<p class="wu-absent">Not a school day. Nothing was scheduled and no passes were open.</p>'
+                            : schedule
+                                ? '<p class="wu-absent">Nothing scheduled and no passes open.</p>'
+                                : '<p class="wu-absent">No bell schedule has been set, so the day cannot be laid out.</p>');
+            }
+
+            // ---- Activity feed -------------------------------------
+            const feed = document.getElementById('dashFeed');
+            if (feed) {
+                const log = Array.isArray(auditLog) ? auditLog : [];
+                // On today, the feed is what the reference's feed is: the most
+                // recent things that happened, each carrying its own date.
+                // Scoping it strictly to today made a busy school with six
+                // thousand log entries read "nothing recorded" every morning
+                // before the first bell, which is true and useless.
+                // Picking any other day on the strip does scope it to that day.
+                const scoped = (selected === todayIso)
+                    ? log
+                    : log.filter(e => e && wcIsoDay(e.timestamp) === selected);
+                const items = scoped.slice(-8).reverse();
+                feed.innerHTML = items.length
+                    ? items.map(e => {
+                        const action = String(e.action || 'Activity');
+                        const bad = /Removed|UNDID|Deduct/i.test(action);
+                        const win = /Winner/i.test(action);
+                        const icon = win ? '&#127942;' : bad ? '&#8630;' : '&#127915;';
+                        const tone = win ? 'wu-tl-icon-good' : bad ? 'wu-tl-icon-bad' : '';
+                        const count = (e.ticketCount === undefined || e.ticketCount === null)
+                            ? '' : ` &middot; ${escapeHtml(String(e.ticketCount))}`;
+                        return `
+                        <div class="wu-feed-item">
+                            <span class="wu-tl-icon ${tone}" aria-hidden="true">${icon}</span>
+                            <div class="wu-feed-main">
+                                <div class="wu-feed-title">${escapeHtml(e.studentName || action)}</div>
+                            </div>
+                            <span class="wu-feed-when">${escapeHtml(wcWhen(e.timestamp))}</span>
+                            <div class="wu-feed-body">${escapeHtml(action)}${count}${
+                                e.teacher ? ' &middot; ' + escapeHtml(e.teacher) : ''}</div>
+                        </div>`;
+                    }).join('')
+                    : (log.length
+                        ? '<p class="wu-absent">Nothing was recorded on this day.</p>'
+                        : '<p class="wu-absent">The audit log has not loaded.</p>');
+            }
+        }
+
+        function wcDashPickDay(iso) {
+            wcDashDay = iso;
+            renderTeacherDashboard();
+        }
+
+        // Decorate once at boot as well, so the sidebar is a rail on the first
+        // paint rather than after the first tab switch.
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function () {
+                try { wcDecorateShell(); } catch (e) { /* cosmetic only */ }
+            });
+        } else {
+            try { wcDecorateShell(); } catch (e) { /* cosmetic only */ }
         }
