@@ -4223,6 +4223,14 @@
                 renderTagManager();
             }
 
+            // Same reasoning for the bells: it is the configuration the hall
+            // pass routing reads, it lives on the server, and a stale copy of it
+            // in the DOM is a screen that says the school day starts at a time
+            // it no longer does.
+            if (subtab === 'bell' && typeof renderBellSettings === 'function') {
+                renderBellSettings();
+            }
+
             console.log('Switched to settings subtab:', subtab);
         }
 
@@ -8335,18 +8343,26 @@
                 tabElement.style.display = 'block';
             }
             
-            const btnId = tabName === 'kiosk' ? 'kioskTabBtn' : 
+            const btnId = tabName === 'kiosk' ? 'kioskTabBtn' :
+                          tabName === 'myClass' ? 'myClassTabBtn' :
                           tabName === 'hallMonitor' ? 'hallMonitorTabBtn' :
                           tabName === 'snapshot' ? 'snapshotTabBtn' :
                           tabName === 'encounterPrevention' ? 'encounterPreventionTabBtn' :
                           tabName === 'history' ? 'historyTabBtn' : 'passSettingsTabBtn';
             const btn = document.getElementById(btnId);
-            
+
             if (btn) {
                 btn.style.background = '#667eea';
                 btn.style.color = 'white';
             }
-            
+
+            // Fetched on open, never cached. This board is the answer to "which
+            // of my students is out of the room right now", and a stale one is
+            // the single thing it must never be.
+            if (tabName === 'myClass' && typeof renderMyClassBoard === 'function') {
+                renderMyClassBoard();
+            }
+
             // Load data for the tab
             if (tabName === 'hallMonitor') {
                 // Set school selector cards based on current school
@@ -16574,9 +16590,16 @@
         let wpFitObserver = null;
         /** The slug a student arrived with, held in memory rather than acted on. */
         let wpTapSlug = null;
-        /** Hall pass request state. */
+        /**
+         * Hall pass request state.
+         *
+         * wpLocations is now ONLY the tap-confirm screen's slug-to-name lookup.
+         * It used to back the origin picker as well, and the picker is gone: a
+         * pass originates from the class the student is timetabled into, not
+         * from a room they choose, so there is nothing left for a student to
+         * pick. wpPickedSlug went with it.
+         */
         let wpLocations = null;
-        let wpPickedSlug = null;
         let wpLastOrigin = '';
         let wpBusy = false;
 
@@ -16613,13 +16636,26 @@
             // butt-jointed layout rather than breaking anything.
             const view = wpById('studentPassView');
             let tuck = 0;
+            // The card's corner radius and the reach of its shadow, for the
+            // same reason and by the same trick: both are plain px lengths
+            // in styles.css, so unlike the two clamps above they survive
+            // being read back. They are needed here because the clip that
+            // reveals a card is written from JS, and a clip has to know
+            // where the rounded corners are and how far the shadow throws.
+            let radius = 0;
+            let lift = 0;
             if (view && window.getComputedStyle) {
-                tuck = parseFloat(window.getComputedStyle(view).getPropertyValue('--wp-tuck')) || 0;
+                const cs = window.getComputedStyle(view);
+                tuck = parseFloat(cs.getPropertyValue('--wp-tuck')) || 0;
+                radius = parseFloat(cs.getPropertyValue('--wp-radius')) || 0;
+                lift = parseFloat(cs.getPropertyValue('--wp-lift')) || 0;
             }
             return {
                 strip: strip > 0 ? strip : 56,
                 cardH: cardH > 0 ? cardH : 240,
                 tuck: tuck > 0 ? tuck : 0,
+                radius: radius > 0 ? radius : 17,
+                lift: lift > 0 ? lift : 48,
             };
         }
 
@@ -16642,6 +16678,29 @@
          * The last card is left at its natural height, so the total is
          * still (n - 1) strips plus one card and nothing below the stack
          * moves.
+         *
+         * WHAT THE CARD DOES NOT DO IS CHANGE SIZE.
+         * Every card is written at its full open height, once, and then
+         * left alone; `clip-path` hides the part of it that is not
+         * currently exposed. Opening a card therefore animates a clip and
+         * a translate, and neither can trigger layout. Where the previous
+         * version transitioned `height` and re-ran layout for six card
+         * subtrees on every frame for 620ms. See the long note on
+         * `.wp-card` in styles.css.
+         *
+         * Three numbers per card, and they are the same four states this
+         * function always had:
+         *
+         *   box    cardH + tuck, or cardH for the last card, which has no
+         *          neighbour to tuck under. Constant.
+         *   clip   how much of the box bottom is hidden by the clip:
+         *          nothing for the open card, cardH - strip for the rest.
+         *   hide   what the card is holding back in total, clip plus its
+         *          own tuck. CSS uses it to keep the decorative effect
+         *          layers and the focus ring inside the exposed band.
+         *
+         * box - clip is exactly the height this function used to write, in
+         * all four states, which is why nothing on screen moves.
          */
         function wpLayout(animate) {
             const stack = wpById('wpStack');
@@ -16656,14 +16715,23 @@
             if (animate === false) stack.classList.add('wp-noanim');
 
             const last = cards.length - 1;
+            const folded = Math.max(0, m.cardH - m.strip);
 
             cards.forEach(function (el, i) {
                 const top = i <= k
                     ? i * m.strip
                     : (k * m.strip) + m.cardH + ((i - k - 1) * m.strip);
-                const band = (i === k ? m.cardH : m.strip);
+                const box = (i === last ? m.cardH : m.cardH + m.tuck);
+                const clip = (i === k ? 0 : folded);
                 el.style.transform = 'translate3d(0,' + Math.round(top) + 'px,0)';
-                el.style.height = (i === last ? band : band + m.tuck) + 'px';
+                el.style.height = box + 'px';
+                // Opened out at the top by --wp-lift so the clip does not
+                // eat the shadow this card throws onto the one above it,
+                // and rounded so the bottom card's exposed edge, the only
+                // clipped edge anyone ever sees, keeps its corners.
+                el.style.clipPath = 'inset(' + (-m.lift) + 'px 0px ' + clip +
+                    'px 0px round ' + m.radius + 'px)';
+                el.style.setProperty('--wp-hide', (clip + (i === last ? 0 : m.tuck)) + 'px');
                 el.style.zIndex = String(i + 1);
                 el.setAttribute('aria-selected', i === k ? 'true' : 'false');
                 el.classList.toggle('is-open', i === k);
@@ -17119,16 +17187,28 @@
             }
 
             if (state === 'requested' || state === 'pending') {
+                // WHO IT WENT TO, by name. A request now goes to one teacher,
+                // the one whose lesson the student was timetabled into, and a
+                // student who cannot see which teacher that is cannot tell a
+                // request that reached the right person from one that did not.
+                // Null rather than a guess on passes written before routing
+                // existed, and the sentence reads without it.
                 const origin = wpOriginLabel(hp.origin || hp.originName);
+                const who = hp.teacherName ? wpEsc(hp.teacherName) : 'your teacher';
+                const where = [
+                    hp.courseName ? wpEsc(hp.courseName) : '',
+                    hp.period ? 'period ' + wpEsc(hp.period) : '',
+                    origin ? wpEsc(origin) : '',
+                ].filter(Boolean).join(', ');
                 return {
                     label: 'Hall Pass', lead: 'Waiting', face: WP_FACE.passOff,
                     body: wpEmpty(
-                            'Sent to your teacher' + (origin ? ' from ' + origin : '') + '. ' +
+                            'Sent to ' + who + (where ? ' (' + where + ')' : '') + '. ' +
                             'You cannot ask for another pass while this one is waiting, so cancel it ' +
                             'if you have changed your mind.') +
                           '<div class="wp-actions"><button type="button" class="wp-btn wp-btn-ghost" ' +
                           'onclick="cancelHallPassRequest(\'' + wpEsc(hp.id || '') + '\')">Cancel this request</button></div>' +
-                          wpFoot('Waiting for approval'),
+                          wpFoot('Waiting for ' + (hp.teacherName ? wpEsc(hp.teacherName) : 'approval')),
                 };
             }
 
@@ -17141,13 +17221,19 @@
                 ? null
                 : hp.elapsedMinutes;
 
+            // WHERE THEY WERE SENT, when a teacher opened the pass. This is the
+            // tag that validates it and no other tag will, so naming it is the
+            // difference between an instruction a child can follow and one they
+            // cannot: "tap the tag at the Nurse" against "tap the tag".
+            const sentTo = hp.sentTo ? wpEsc(hp.sentTo) : '';
+
             if (mins === null) {
                 return {
                     label: 'Hall Pass',
                     lead: wpTitleCase(state),
                     face: WP_FACE.passOn,
                     body: wpEmpty('Your pass is ' + state + '. The clock starts when you tap the tag ' +
-                                  'at the place you are going.') +
+                                  (sentTo ? 'at ' + sentTo + '.' : 'at the place you are going.')) +
                           wpFoot('Not being timed yet'),
                 };
             }
@@ -17157,9 +17243,14 @@
                 lead: mins + ' min',
                 face: hp.overdue ? WP_FACE.passLate : WP_FACE.passOn,
                 body: '<p class="wp-big">' + wpEsc(mins) + '<span>min out</span></p>' +
+                      (state === 'active' && sentTo
+                          ? wpEmpty('You were sent to ' + sentTo + '. Tap the tag there to start your pass.')
+                          : '') +
                       wpFoot(hp.overdue
                           ? 'You are past your time. Head back and tap the tag.'
-                          : 'Tap the wall tag when you get there, and again when you are back.'),
+                          : (state === 'active' && sentTo
+                              ? 'Tap the tag at ' + sentTo + ', then back in class'
+                              : 'Tap the wall tag when you get there, and again when you are back.')),
             };
         }
 
@@ -17171,19 +17262,18 @@
          * "Room 16", not "rm-16".
          *
          * A slug is a database key. Printing one at a student is the same
-         * mistake as printing a row id: it is technically the right value and
-         * it means nothing to the person reading it. The room list is the only
-         * thing that knows the human name, so it does the translating, and
-         * anything it does not recognise is passed through unchanged rather
-         * than hidden.
+         * mistake as printing a row id: it is technically the right value and it
+         * means nothing to the person reading it.
+         *
+         * THE TRANSLATION NOW HAPPENS ON THE SERVER. passCard:mine resolves the
+         * origin to its room name before sending it, because it holds the row
+         * anyway, so this no longer has to hold a copy of the whole room list to
+         * do a lookup. What survives is the fallback to the name the student saw
+         * a moment ago, which is what keeps the card readable in the gap between
+         * requesting and the next poll.
          */
         function wpOriginLabel(raw) {
             if (!raw) return wpLastOrigin || '';
-            if (wpLocations && wpLocations.rows) {
-                for (let i = 0; i < wpLocations.rows.length; i++) {
-                    if (wpLocations.rows[i].slug === raw) return wpLocations.rows[i].name;
-                }
-            }
             return raw;
         }
 
@@ -17273,10 +17363,76 @@
                 if (name) name.textContent = (seed.firstName || '') + ' ' + (seed.lastName || '');
                 if (meta && seed.grade) meta.textContent = 'Grade ' + seed.grade;
             }
+            wpStartPassWatch();
             return loadStudentPortal();
         }
 
+        /**
+         * WATCH FOR A PASS THAT CHANGED UNDER THE STUDENT.
+         *
+         * A pass no longer only changes when the student touches the screen. A
+         * teacher approves the request, or opens one outright and picks where
+         * they are going, and the child is looking at a phone that has no idea.
+         * Without this the model's second half does not reach them: they are
+         * standing in a classroom holding a pass that exists and is not on their
+         * screen until they think to reload.
+         *
+         * IT REDRAWS ONLY WHEN THE PASS ACTUALLY CHANGED, and that restraint is
+         * deliberate. wpRender re-deals the card stack and closes whatever card
+         * was open; doing that every fifteen seconds would yank the screen out
+         * from under a student mid-read, and it would fight the stack's own
+         * animation for no reason. The signature below is id + state + where
+         * they were sent, so a steady pass costs one cheap query and touches no
+         * DOM at all, and a transition redraws exactly once.
+         *
+         * Stopped when the portal closes and while the tab is hidden, because a
+         * timer that runs forever is how a page ends up polling all afternoon in
+         * a pocket.
+         */
+        let wpWatchTimer = null;
+        let wpWatchSignature = null;
+        const WP_WATCH_MS = 15000;
+
+        function wpPassSignature(hp) {
+            if (!hp || !hp.available) return 'none';
+            return [hp.id, hp.state, hp.sentTo || ''].join('|');
+        }
+
+        function wpStartPassWatch() {
+            wpStopPassWatch();
+            wpWatchTimer = setInterval(async function () {
+                const view = wpById('studentPassView');
+                if (!view || view.classList.contains('hidden')) { wpStopPassWatch(); return; }
+                if (document.hidden) return;
+                const auth = window.WildcatAuth;
+                const session = auth && auth.getSession && auth.getSession();
+                if (!session) return;
+                try {
+                    const card = await auth.convexQuery('passCard:mine', {}, session.idToken);
+                    const next = wpPassSignature(card && card.hallPass);
+                    if (wpWatchSignature === null) { wpWatchSignature = next; return; }
+                    if (next !== wpWatchSignature) {
+                        wpWatchSignature = next;
+                        // Land on the hall pass card, because it is the thing
+                        // that changed and the reason the phone is in their hand.
+                        await loadStudentPortal(4);
+                    }
+                } catch (e) {
+                    // Silent. A dropped poll is not worth a message on a screen a
+                    // student is holding at a doorway; the next one will either
+                    // work or the session check above will stop the timer.
+                }
+            }, WP_WATCH_MS);
+        }
+
+        function wpStopPassWatch() {
+            if (wpWatchTimer) clearInterval(wpWatchTimer);
+            wpWatchTimer = null;
+            wpWatchSignature = null;
+        }
+
         function exitStudentPortal() {
+            wpStopPassWatch();
             const view = wpById('studentPassView');
             if (view) { view.classList.add('hidden'); view.scrollTop = 0; }
             const tap = wpById('tapResultView');
@@ -17368,14 +17524,13 @@
             // including one with a full report card falls through to the empty
             // state and is told there is nothing there. wpSection reads the
             // envelope and the bare array, because both shapes are in the wild.
-            // A pass waiting on a teacher names the room it was requested from,
-            // and only the room list can turn that slug into a name. Fetched
-            // once, here, so a student who reloads the page still reads
-            // "Room 16" rather than "rm-16".
-            const hpState = String((pass.hallPass && pass.hallPass.state) || '').toLowerCase();
-            if ((hpState === 'requested' || hpState === 'pending') && !wpLocations) {
-                await wpLoadLocations();
-            }
+            //
+            // THE ROOM LIST FETCH IS GONE FROM HERE. A waiting pass used to name
+            // its origin as a slug, so this had to load every room a student may
+            // see just to turn "rm-16" into "Room 16". passCard:mine now returns
+            // the room name and the teacher's name on the pass itself, because
+            // the server already resolved both when it derived them, so a
+            // reloading student reads the same words with one fewer round trip.
 
             const sched = wpSection(mine && mine.schedule, 'classes');
             const grades = wpSection(mine && mine.grades, 'courses');
@@ -17461,13 +17616,28 @@
         // ---------------------------------------------------------------
         // Hall pass request.
         //
-        // A sheet, not a screen. The student is answering one question, "which
-        // room are you leaving", and then going straight back to the card they
-        // were already looking at. A full page for that loses their place.
+        // A sheet, not a screen. The student is answering one question, "do you
+        // want to ask", and then going straight back to the card they were
+        // already looking at. A full page for that loses their place.
         //
-        //   tapLocations:listForStudents  {}                    -> { locations, truncated }
-        //   hallPasses:requestMine        { originSlug, reason } -> { id, state, origin, requestedAt }
-        //   hallPasses:cancelMine         { passId }             -> { state }
+        //   hallPasses:myCurrentClass  {}          -> { available, reason, teacherName, courseName, period, room }
+        //   hallPasses:requestMine     { reason? }  -> { id, state, origin, teacherName, period }
+        //   hallPasses:cancelMine      { passId }   -> { state }
+        //
+        // THE ROOM PICKER IS GONE. The student used to choose which room they
+        // were leaving, which meant the record said where a fourteen year old
+        // typed rather than where they were, and the request went to every
+        // teacher's board rather than to the one who could see them. The class
+        // is derived server side from their timetable and the clock, and there
+        // is no longer an argument on requestMine that could point it anywhere.
+        //
+        // WHICH MAKES "WE CANNOT TELL" A FIRST CLASS STATE. Lunch, a passing
+        // period, before school, after school, a weekend, an assembly nobody
+        // marked, a class that only meets on B days, a classroom whose tag was
+        // never registered: the sheet shows the server's own sentence for
+        // whichever it is, disables the button, and points at the way round,
+        // which is a teacher opening the pass instead. Guessing would put a
+        // child's name on a trip out of a room they were never in.
         //
         // A refusal comes back as a ConvexError whose message is written for a
         // fourteen year old and says what to do about it. It is printed exactly
@@ -17475,6 +17645,9 @@
         // apology, because the generic apology is the version that leaves a
         // student standing in a doorway with no idea what went wrong.
         // ---------------------------------------------------------------
+
+        /** The class the server says this student is in, or the reason it cannot say. */
+        let wpCurrentClass = null;
 
         function wpSheetError(message) {
             const el = wpById('wpSheetError');
@@ -17486,7 +17659,6 @@
             const scrim = wpById('wpScrim');
             if (!sheet || !scrim) return;
 
-            wpPickedSlug = null;
             wpSheetError('');
             const reason = wpById('wpReason');
             if (reason) reason.value = '';
@@ -17495,8 +17667,13 @@
             sheet.setAttribute('aria-hidden', 'false');
             scrim.classList.add('is-open');
 
-            wpRenderPickList();
-            wpLoadLocations();
+            // ASKED EVERY TIME THE SHEET OPENS, never cached. The answer changes
+            // at every bell, and a cached one is the difference between the
+            // teacher a student is sitting with and the teacher they were with
+            // forty minutes ago.
+            wpCurrentClass = null;
+            wpRenderClassPanel();
+            wpLoadCurrentClass();
         }
 
         function closeHallPassSheet() {
@@ -17506,11 +17683,20 @@
             if (scrim) scrim.classList.remove('is-open');
         }
 
+        /**
+         * The rooms a student may be told about, for turning a scanned slug into
+         * a room name on the tap-confirm screen.
+         *
+         * NOT A PICKER ANY MORE. This used to fill the origin list; its only
+         * remaining reader is showTapConfirm, which has a slug off a wall tag and
+         * needs the words that go with it, because "check in at rm-16" is a
+         * database key held up to a fourteen year old.
+         */
         async function wpLoadLocations() {
             if (wpLocations) return;
             const auth = window.WildcatAuth;
             const session = auth && auth.getSession && auth.getSession();
-            if (!session) { wpSheetError('You are not signed in any more. Sign in again.'); return; }
+            if (!session) return;
             try {
                 const data = await auth.convexQuery('tapLocations:listForStudents', {}, session.idToken);
                 wpLocations = {
@@ -17518,54 +17704,93 @@
                     truncated: Boolean(data && data.truncated),
                 };
             } catch (e) {
+                // Left null on purpose. showTapConfirm reads that as "the list
+                // did not load" and says the room is unconfirmed rather than
+                // accusing a real tag of not existing.
                 wpLocations = null;
+            }
+        }
+
+        async function wpLoadCurrentClass() {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!session) { wpSheetError('You are not signed in any more. Sign in again.'); return; }
+            try {
+                wpCurrentClass = await auth.convexQuery('hallPasses:myCurrentClass', {}, session.idToken);
+            } catch (e) {
+                // A thrown error here is the sign-in or the student record, not
+                // the timetable: myCurrentClass returns its refusals as data on
+                // purpose, so a panel can render them.
+                wpCurrentClass = null;
                 wpSheetError(e.message);
             }
-            wpRenderPickList();
+            wpRenderClassPanel();
         }
 
-        function wpRenderPickList() {
-            const host = wpById('wpPickList');
+        /**
+         * The panel where the room picker used to be.
+         *
+         * Three states, and the third is the one that matters: loading, the
+         * class we are sending to, and the honest refusal. The refusal is the
+         * server's sentence verbatim, and the button goes with it rather than
+         * staying live over a message that says it cannot work.
+         */
+        function wpRenderClassPanel() {
+            const host = wpById('wpClassPanel');
+            const go = wpById('wpSheetGo');
             if (!host) return;
 
-            if (!wpLocations) {
-                host.innerHTML = '<p class="wp-sheet-sub" style="margin:0;padding:16px 15px;">Loading rooms...</p>';
-                return;
-            }
-            if (!wpLocations.rows.length) {
-                host.innerHTML = '<p class="wp-sheet-sub" style="margin:0;padding:16px 15px;">' +
-                    'No rooms are registered yet. An adult has to tap the wall tags once before ' +
-                    'you can pick one here.</p>';
+            const setGo = function (enabled) {
+                if (!go) return;
+                go.disabled = !enabled;
+                go.style.opacity = enabled ? '' : '.45';
+            };
+
+            if (!wpCurrentClass) {
+                host.innerHTML = '<p class="wp-sheet-sub" style="margin:0;padding:14px 2px;">' +
+                    'Working out which class you are in...</p>';
+                setGo(false);
                 return;
             }
 
-            host.innerHTML = wpLocations.rows.map(function (l) {
-                const on = l.slug === wpPickedSlug;
-                return '<button type="button" class="wp-pick" role="radio" aria-checked="' + on + '"' +
-                    ' data-slug="' + wpEsc(l.slug) + '" data-name="' + wpEsc(l.name) + '"' +
-                    ' onclick="wpPickLocation(this)">' +
-                    '<span class="wp-pick-name">' + wpEsc(l.name) + '</span>' +
-                    '<span class="wp-pick-kind">' + wpEsc(l.kind || '') + '</span>' +
-                    '<span class="wp-pick-tick" aria-hidden="true"></span>' +
-                    '</button>';
-            }).join('');
-        }
-
-        function wpPickLocation(button) {
-            wpPickedSlug = button.getAttribute('data-slug');
-            wpLastOrigin = button.getAttribute('data-name') || '';
-            wpSheetError('');
-            const all = wpById('wpPickList').querySelectorAll('.wp-pick');
-            for (let i = 0; i < all.length; i++) {
-                all[i].setAttribute('aria-checked',
-                    all[i].getAttribute('data-slug') === wpPickedSlug ? 'true' : 'false');
+            if (!wpCurrentClass.available) {
+                // No button, no picker, no way to send it anyway. The sentence
+                // already names the fallback, so nothing here rewords it.
+                host.innerHTML =
+                    '<div style="margin:2px 0 4px;padding:14px;border-radius:12px;' +
+                    'background:rgba(179,57,47,.10);border:1px solid rgba(179,57,47,.28);">' +
+                    '<p style="margin:0;font-size:14px;line-height:1.5;">' +
+                    wpEsc(wpCurrentClass.reason || 'The app cannot tell which class you are in.') +
+                    '</p></div>';
+                setGo(false);
+                return;
             }
+
+            const bits = [];
+            if (wpCurrentClass.period) bits.push('Period ' + wpCurrentClass.period);
+            if (wpCurrentClass.room) bits.push(wpCurrentClass.room);
+
+            host.innerHTML =
+                '<div style="margin:2px 0 4px;padding:14px;border-radius:12px;' +
+                'background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);">' +
+                '<p style="margin:0 0 3px;font-size:12px;letter-spacing:.06em;' +
+                'text-transform:uppercase;opacity:.62;">Sending to</p>' +
+                '<p style="margin:0;font-size:17px;font-weight:600;">' +
+                wpEsc(wpCurrentClass.teacherName || 'your teacher') + '</p>' +
+                '<p style="margin:3px 0 0;font-size:13.5px;opacity:.72;">' +
+                wpEsc([wpCurrentClass.courseName, bits.join('  ·  ')].filter(Boolean).join('  ·  ')) +
+                '</p></div>';
+            setGo(true);
         }
 
         async function submitHallPassRequest() {
             if (wpBusy) return;
-            if (!wpPickedSlug) {
-                wpSheetError('Pick the room you are leaving from first.');
+            // The server decides this too, and refuses with the same sentence.
+            // The check here only stops a pointless round trip.
+            if (!wpCurrentClass || !wpCurrentClass.available) {
+                wpSheetError(
+                    (wpCurrentClass && wpCurrentClass.reason) ||
+                    'The app cannot tell which class you are in yet. Ask a teacher to start the pass.');
                 return;
             }
             const auth = window.WildcatAuth;
@@ -17575,7 +17800,10 @@
             const go = wpById('wpSheetGo');
             const reasonEl = wpById('wpReason');
             const reason = reasonEl ? reasonEl.value.trim() : '';
-            const args = { originSlug: wpPickedSlug };
+            // NO ROOM ARGUMENT. There is nothing here that names a place or a
+            // person: the student comes from the token and the room from their
+            // timetable.
+            const args = {};
             if (reason) args.reason = reason;
 
             wpBusy = true;
@@ -17583,12 +17811,10 @@
             wpSheetError('');
             try {
                 const result = await auth.convexMutation('hallPasses:requestMine', args, session.idToken);
-                // Keep the room NAME the student just tapped unless the server
-                // sent back something friendlier. If it echoes the slug, the
-                // name we already have is the better label.
-                if (result && result.origin && result.origin !== wpPickedSlug) {
-                    wpLastOrigin = result.origin;
-                }
+                // The room the server derived, kept for the card that renders
+                // next. It is a human name, not a slug, because the server
+                // resolved it before sending it.
+                if (result && result.origin) wpLastOrigin = result.origin;
                 closeHallPassSheet();
                 await loadStudentPortal(4);
             } catch (e) {
@@ -17683,7 +17909,9 @@
         window.closeHallPassSheet = closeHallPassSheet;
         window.submitHallPassRequest = submitHallPassRequest;
         window.cancelHallPassRequest = cancelHallPassRequest;
-        window.wpPickLocation = wpPickLocation;
+        // wpPickLocation is gone with the room picker. Nothing generates a
+        // .wp-pick button any more, so an export of it would be a global
+        // pointing at a function no markup can reach.
 
         // ---------------------------------------------------------------
         // NFC tags.
@@ -17996,30 +18224,164 @@
                 const data = await auth.convexQuery('tapLocations:list', {}, session.idToken);
 
                 if (!data.locations.length) {
-                    host.innerHTML = '<tr><td colspan="6" style="padding:30px;text-align:center;color:#999;">' +
+                    host.innerHTML = '<tr><td colspan="7" style="padding:30px;text-align:center;color:#999;">' +
                         'No tags yet. Encode a sticker with the URL shown above, tap it with your phone, and it will offer to register itself.</td></tr>';
                     return;
                 }
+                // Held so the assign panel can read a row without a second fetch.
+                wcTagRows = data.locations;
                 host.innerHTML = data.locations.map(l => {
                     const url = l.url || `https://wildcatraffle.com/?tap=${l.slug}`;
+                    // NOT ASSIGNED is said in words, not left blank. A blank cell
+                    // in a column called Classroom reads as a screen that failed
+                    // to load, and the whole point of the column is that somebody
+                    // notices the rooms nobody has tied a teacher to yet.
+                    const assigned = l.teacherEmail
+                        ? `<span style="font-size:12px;">${wpEsc(l.teacherEmail)}</span>` +
+                          (l.sectionId ? `<br><span style="font-size:11px;color:#666;">section ${wpEsc(l.sectionId)}</span>` : '')
+                        : (l.kind === 'classroom'
+                            ? '<span style="font-size:12px;color:#B3392F;">not assigned</span>'
+                            : '<span style="font-size:12px;color:#999;">&mdash;</span>');
                     return `
                   <tr style="${l.active ? '' : 'opacity:.5;'}">
                     <td style="font-family:monospace;">${l.slug}</td>
                     <td>${l.name}</td>
                     <td>${l.kind}</td>
+                    <td>${assigned}</td>
                     <td style="font-size:12px;">
                       <code style="background:var(--wc-blue-mist);color:var(--wc-blue-deep);padding:2px 6px;border-radius:4px;">${url}</code>
                       <button onclick="copyTagUrl(this, '${url}')" style="margin-left:6px;padding:3px 9px;font-size:11.5px;border:1px solid var(--wc-border);border-radius:5px;background:#fff;cursor:pointer;">Copy</button>
                     </td>
                     <td style="font-size:12px;color:#666;">${l.lastTapAt ? new Date(l.lastTapAt).toLocaleString() : 'never tapped'}</td>
-                    <td>${l.active
-                        ? `<button onclick="retireTag('${l.id}','${l.slug}')" style="padding:4px 10px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Retire</button>`
+                    <td style="white-space:nowrap;">${l.active
+                        ? `<button onclick="assignTagClassroom('${l.slug}')" style="padding:4px 10px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Assign</button>
+                           <button onclick="retireTag('${l.id}','${l.slug}')" style="margin-left:5px;padding:4px 10px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Retire</button>`
                         : '<span style="font-size:12px;color:#999;">retired</span>'}</td>
                   </tr>`;
                 }).join('');
             } catch (e) {
-                host.innerHTML = `<tr><td colspan="6" style="padding:20px;color:#b3392f;">${e.message}</td></tr>`;
+                host.innerHTML = `<tr><td colspan="7" style="padding:20px;color:#b3392f;">${e.message}</td></tr>`;
             }
+        }
+
+        /** The tag rows the table last drew, and the staff/section lists for the picker. */
+        let wcTagRows = [];
+        let wcAssignable = null;
+
+        /**
+         * Tie a wall tag to a classroom: a teacher, and optionally one section.
+         *
+         * A PICKER, NOT A TEXT BOX, and that is the whole design. teacherEmail is
+         * an index key: one typo and the tag belongs to nobody, the lookup
+         * silently returns nothing, and a student is told their classroom has no
+         * tag while standing in front of one. A list of real addresses cannot be
+         * mistyped, and tapLocations.upsert refuses an address with no staff
+         * record behind it as a second line.
+         *
+         * Built here rather than in the page because it is a form that exists for
+         * a few seconds; the surrounding file is already 4,900 lines of markup
+         * and another permanent dialog in it is a thing to maintain forever.
+         */
+        async function assignTagClassroom(slug) {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!session) { alert('Sign in with Microsoft to manage tags.'); return; }
+
+            const tag = wcTagRows.filter(function (t) { return t.slug === slug; })[0];
+            if (!tag) { alert('That tag is not on this screen any more. Refresh.'); return; }
+
+            if (!wcAssignable) {
+                try {
+                    wcAssignable = await auth.convexQuery(
+                        'tapLocations:assignableClassrooms', {}, session.idToken);
+                } catch (e) { alert('Could not load the staff list: ' + e.message); return; }
+            }
+
+            const esc = wpEsc;
+            const teacherOptions = ['<option value="">Not assigned</option>'].concat(
+                wcAssignable.teachers.map(function (t) {
+                    return '<option value="' + esc(t.email) + '"' +
+                        (t.email === tag.teacherEmail ? ' selected' : '') + '>' +
+                        esc(t.name) + '  (' + esc(t.email) + ')</option>';
+                })).join('');
+
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.45);' +
+                'display:flex;align-items:center;justify-content:center;padding:20px;';
+            overlay.innerHTML =
+                '<div style="background:#fff;border-radius:14px;max-width:560px;width:100%;' +
+                'padding:22px;box-shadow:0 24px 60px rgba(0,0,0,.3);max-height:90vh;overflow:auto;">' +
+                  '<h3 style="margin:0 0 4px;">Classroom for &ldquo;' + esc(tag.name) + '&rdquo;</h3>' +
+                  '<p style="margin:0 0 16px;font-size:13px;color:#666;line-height:1.5;">' +
+                    'A student\'s pass starts from the class they are timetabled into, and closes when ' +
+                    'they tap the tag in that room. This is what ties the two together. Leave it ' +
+                    'unassigned for a restroom, an office or the nurse.</p>' +
+                  '<label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Teacher</label>' +
+                  '<select id="wcAssignTeacher" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;margin-bottom:14px;">' +
+                    teacherOptions +
+                  '</select>' +
+                  '<label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Section, if this teacher uses more than one room</label>' +
+                  '<select id="wcAssignSection" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;margin-bottom:6px;"></select>' +
+                  '<p style="margin:0 0 16px;font-size:12px;color:#666;">Optional. With no section the tag covers every class this teacher runs in this room.</p>' +
+                  '<p id="wcAssignError" style="margin:0 0 12px;color:#b3392f;font-size:13px;"></p>' +
+                  '<div style="display:flex;gap:10px;justify-content:flex-end;">' +
+                    '<button id="wcAssignCancel" class="btn btn-secondary" style="font-size:13px;padding:9px 16px;">Cancel</button>' +
+                    '<button id="wcAssignSave" class="btn" style="font-size:13px;padding:9px 16px;">Save</button>' +
+                  '</div>' +
+                '</div>';
+            document.body.appendChild(overlay);
+
+            const teacherEl = overlay.querySelector('#wcAssignTeacher');
+            const sectionEl = overlay.querySelector('#wcAssignSection');
+            const errEl = overlay.querySelector('#wcAssignError');
+
+            const fillSections = function () {
+                const email = teacherEl.value;
+                // Only the chosen teacher's sections. The whole list would be
+                // thousands of rows, and a section belonging to somebody else is
+                // never the right answer here.
+                const mine = wcAssignable.sections.filter(function (s) {
+                    return email && s.teacherEmail === email;
+                });
+                sectionEl.innerHTML = ['<option value="">Every class in this room</option>'].concat(
+                    mine.map(function (s) {
+                        return '<option value="' + esc(s.sectionId) + '"' +
+                            (s.sectionId === tag.sectionId ? ' selected' : '') + '>' +
+                            esc([s.courseName, s.period ? 'period ' + s.period : ''].filter(Boolean).join('  ')) +
+                            '</option>';
+                    })).join('');
+                sectionEl.disabled = !email;
+            };
+            teacherEl.addEventListener('change', fillSections);
+            fillSections();
+
+            const close = function () { overlay.remove(); };
+            overlay.querySelector('#wcAssignCancel').addEventListener('click', close);
+            overlay.addEventListener('click', function (ev) { if (ev.target === overlay) close(); });
+
+            overlay.querySelector('#wcAssignSave').addEventListener('click', async function (ev) {
+                const btn = ev.currentTarget;
+                btn.disabled = true;
+                errEl.textContent = '';
+                try {
+                    await auth.convexMutation('tapLocations:upsert', {
+                        slug: tag.slug,
+                        name: tag.name,
+                        kind: tag.kind,
+                        // Sent even when empty, because clearing an assignment
+                        // has to be possible: upsert writes the field every time
+                        // rather than only when it is set, so a mistake can be
+                        // corrected instead of sticking forever.
+                        teacherEmail: teacherEl.value || '',
+                        sectionId: sectionEl.value || '',
+                    }, session.idToken);
+                    close();
+                    renderTagManager();
+                } catch (e) {
+                    errEl.textContent = e.message;
+                    btn.disabled = false;
+                }
+            });
         }
 
         /** Copy an encode URL, with the button itself as the confirmation. */
@@ -18052,6 +18414,670 @@
             openTagRegistration(slug.trim().toLowerCase());
         }
 
+        // ---------------------------------------------------------------
+        // MY CLASS. Claw Pass -> My Class.
+        //
+        // The teacher's half of the model, and both directions of it:
+        //
+        //   a student asked        -> it arrived HERE, because the app worked out
+        //                             which lesson they were sitting in and routed
+        //                             it to that teacher. Approve or deny.
+        //   a teacher starts one   -> pick the child in front of you and where they
+        //                             are going. It appears on their phone, and they
+        //                             still have to tap the destination tag to
+        //                             validate it and the classroom tag to close it.
+        //
+        // THE PHYSICAL PROOF IS THE SAME EITHER WAY. A pass a teacher opened does
+        // not skip the walking: applyTap still refuses a first tap at the room
+        // they started in, and when a destination was assigned it refuses a first
+        // tap anywhere except there.
+        //
+        //   hallPasses:myClassBoard   {}                                   -> my live passes
+        //   hallPasses:approve        { passId, minutes? }
+        //   hallPasses:deny           { passId }
+        //   hallPasses:forceClose     { passId, reason }
+        //   hallPasses:openForStudent { studentId, destinationSlug, ... }
+        // ---------------------------------------------------------------
+
+        let wcClassBoard = null;
+        let wcClassRoster = null;
+        let wcClassTags = null;
+
+        async function renderMyClassBoard() {
+            const host = document.getElementById('myClassHost');
+            if (!host) return;
+            const ctx = wcBellSession();
+            if (!ctx) {
+                host.innerHTML = '<div class="wc-card panel-card"><p style="margin:0;color:#b3392f;">' +
+                    'Sign in with Microsoft to see your class.</p></div>';
+                return;
+            }
+            try {
+                const results = await Promise.all([
+                    ctx.auth.convexQuery('hallPasses:myClassBoard', {}, ctx.session.idToken),
+                    ctx.auth.convexQuery('views_app:teacherRoster', {}, ctx.session.idToken),
+                    ctx.auth.convexQuery('tapLocations:list', {}, ctx.session.idToken),
+                ]);
+                wcClassBoard = results[0];
+                wcClassRoster = results[1];
+                wcClassTags = results[2];
+            } catch (e) {
+                host.innerHTML = '<div class="wc-card panel-card"><p style="margin:0;color:#b3392f;">' +
+                    wpEsc(e.message) + '</p></div>';
+                return;
+            }
+            wcDrawClassBoard();
+        }
+
+        function wcDrawClassBoard() {
+            const host = document.getElementById('myClassHost');
+            if (!host || !wcClassBoard) return;
+            const esc = wpEsc;
+
+            const rows = wcClassBoard.passes.map(function (p) {
+                const state = String(p.state || '').toLowerCase();
+                // NULL IS NOT ZERO, on this screen too. elapsedMinutes is null
+                // until a pass is approved, and printing 0 there shows an
+                // unanswered request as a timer that has started.
+                const mins = (p.elapsedMinutes === null || p.elapsedMinutes === undefined)
+                    ? null : p.elapsedMinutes;
+                const where = [
+                    p.courseName || '',
+                    p.period ? 'period ' + p.period : '',
+                    p.assignedDestination ? '→ ' + p.assignedDestination : '',
+                ].filter(Boolean).join('  ·  ');
+
+                const actions = state === 'requested'
+                    ? '<button onclick="approveClassPass(\'' + esc(p.id) + '\')" class="btn" style="font-size:12px;padding:6px 12px;">Approve</button>' +
+                      ' <button onclick="denyClassPass(\'' + esc(p.id) + '\')" style="margin-left:6px;padding:6px 12px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Deny</button>'
+                    : '<button onclick="closeClassPass(\'' + esc(p.id) + '\')" style="padding:6px 12px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Close</button>';
+
+                return '<tr style="' + (p.overdue ? 'background:rgba(179,57,47,.07);' : '') + '">' +
+                  '<td><b>' + esc(p.studentName) + '</b>' +
+                    (p.reason ? '<div style="font-size:12px;color:#666;">' + esc(p.reason) + '</div>' : '') + '</td>' +
+                  '<td style="font-size:12.5px;">' + esc(where || '—') + '</td>' +
+                  '<td>' + esc(state) + (p.overdue ? ' <b style="color:#B3392F;">overdue</b>' : '') + '</td>' +
+                  '<td>' + (mins === null ? '<span style="color:#999;">not started</span>' : esc(mins) + ' min') + '</td>' +
+                  '<td style="white-space:nowrap;">' + actions + '</td>' +
+                '</tr>';
+            }).join('');
+
+            const board =
+                '<div class="wc-card panel-card" style="padding:0;overflow:hidden;">' +
+                  '<div style="padding:18px 20px 0;">' +
+                    '<div class="panel-head"><span class="panel-icon">&#128100;</span><h3>Waiting on you, and out of your room</h3></div>' +
+                    '<p class="panel-hint" style="margin:0 0 12px;">' +
+                      'These arrived here because the app worked out which of your lessons the ' +
+                      'student was in when they asked. Passes opened before requests carried a ' +
+                      'teacher are on the Hall Monitor screen, not here, and no teacher has been ' +
+                      'invented for them.' +
+                    '</p>' +
+                  '</div>' +
+                  '<div style="overflow-x:auto;">' +
+                    '<table class="wc-table"><thead><tr><th>Student</th><th>From</th><th>State</th><th>Out for</th><th></th></tr></thead>' +
+                    '<tbody>' + (rows || '<tr><td colspan="5" style="padding:24px;color:#999;">' +
+                      'Nothing right now. Requests from your own lessons land here.</td></tr>') + '</tbody></table>' +
+                  '</div>' +
+                  (wcClassBoard.truncated
+                    ? '<p style="margin:0;padding:12px 20px;color:#B3392F;font-size:12.5px;">' +
+                      'This list hit its limit, so some of your passes are not shown.</p>'
+                    : '') +
+                '</div>';
+
+            // ---- start one for a student ----
+            const students = [];
+            const seen = {};
+            ((wcClassRoster && wcClassRoster.sections) || []).forEach(function (s) {
+                (s.students || []).forEach(function (st) {
+                    const key = st.studentNumber;
+                    if (!key || seen[key]) return;
+                    seen[key] = true;
+                    students.push({
+                        number: key,
+                        name: (st.firstName || '') + ' ' + (st.lastName || ''),
+                        course: s.courseName || '',
+                    });
+                });
+            });
+            students.sort(function (a, b) { return a.name.localeCompare(b.name); });
+
+            // Only ACTIVE tags, and classrooms are excluded from the destination
+            // list: sending a child to somebody else's lesson is not a hall pass.
+            const destinations = ((wcClassTags && wcClassTags.locations) || [])
+                .filter(function (t) { return t.active && t.kind !== 'classroom'; });
+
+            const opener =
+                '<div class="wc-card panel-card">' +
+                  '<div class="panel-head"><span class="panel-icon">&#9995;</span><h3>Start a pass for a student</h3></div>' +
+                  '<p class="panel-hint" style="margin:0 0 14px;">' +
+                    'Pick the child and where they are going. It appears on their phone straight ' +
+                    'away, and they still have to tap the tag at that place to start it and the ' +
+                    'tag in this room to end it. Only the place you pick will start it.' +
+                  '</p>' +
+                  '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;align-items:end;">' +
+                    '<div><label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Student</label>' +
+                      '<select id="wcPassStudent" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;">' +
+                      (students.length
+                        ? students.map(function (s) {
+                            return '<option value="' + esc(s.number) + '">' + esc(s.name.trim()) +
+                              (s.course ? '  (' + esc(s.course) + ')' : '') + '</option>';
+                          }).join('')
+                        : '<option value="">No students on your roster</option>') +
+                      '</select></div>' +
+                    '<div><label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Going to</label>' +
+                      '<select id="wcPassDest" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;">' +
+                      (destinations.length
+                        ? destinations.map(function (t) {
+                            return '<option value="' + esc(t.slug) + '">' + esc(t.name) + '</option>';
+                          }).join('')
+                        : '<option value="">No tags registered yet</option>') +
+                      '</select></div>' +
+                    '<div><label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Minutes</label>' +
+                      '<input type="number" id="wcPassMinutes" min="1" max="240" value="10" ' +
+                      'style="width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;"></div>' +
+                    '<div><label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Reason</label>' +
+                      '<input type="text" id="wcPassReason" maxlength="120" ' +
+                      'style="width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;"></div>' +
+                  '</div>' +
+                  '<p id="wcPassError" style="margin:12px 0 0;color:#b3392f;font-size:13px;"></p>' +
+                  '<button class="btn" onclick="openPassForStudent()" style="margin-top:12px;">Start the pass</button>' +
+                '</div>';
+
+            host.innerHTML = board + opener;
+        }
+
+        /**
+         * The student comes off the roster the SERVER sent, never typed.
+         * openForStudent is staff-gated and names a child because that is what a
+         * teacher does; nothing a student can reach takes an argument naming a
+         * person, and requestMine now takes no argument but a reason.
+         */
+        async function openPassForStudent() {
+            const ctx = wcBellSession();
+            const err = document.getElementById('wcPassError');
+            if (!ctx) return;
+            const number = (document.getElementById('wcPassStudent') || {}).value || '';
+            const dest = (document.getElementById('wcPassDest') || {}).value || '';
+            const minutes = Number((document.getElementById('wcPassMinutes') || {}).value || 0);
+            const reason = (document.getElementById('wcPassReason') || {}).value || '';
+            if (!number || !dest) {
+                if (err) err.textContent = 'Pick a student and where they are going.';
+                return;
+            }
+            try {
+                // The SIS number straight off the roster the server sent. The
+                // mutation resolves it, and refuses rather than guessing when no
+                // record or two records carry it.
+                await ctx.auth.convexMutation('hallPasses:openForStudent', {
+                    studentNumber: number,
+                    destinationSlug: dest,
+                    minutes: minutes || undefined,
+                    reason: reason || undefined,
+                }, ctx.session.idToken);
+                if (err) err.textContent = '';
+                await renderMyClassBoard();
+            } catch (e) {
+                if (err) err.textContent = e.message;
+            }
+        }
+
+        async function approveClassPass(passId) {
+            const ctx = wcBellSession();
+            if (!ctx) return;
+            const raw = prompt('How many minutes should this pass last?', '10');
+            if (raw === null) return;
+            try {
+                await ctx.auth.convexMutation('hallPasses:approve',
+                    { passId: passId, minutes: Number(raw) }, ctx.session.idToken);
+                await renderMyClassBoard();
+            } catch (e) { alert(e.message); }
+        }
+
+        async function denyClassPass(passId) {
+            const ctx = wcBellSession();
+            if (!ctx) return;
+            try {
+                await ctx.auth.convexMutation('hallPasses:deny', { passId: passId }, ctx.session.idToken);
+                await renderMyClassBoard();
+            } catch (e) { alert(e.message); }
+        }
+
+        async function closeClassPass(passId) {
+            const ctx = wcBellSession();
+            if (!ctx) return;
+            // The reason is REQUIRED by canForceClose, and it is stored with the
+            // pass as the only account of what happened: a forced close writes
+            // `expired`, never `returned`, so it can never be mistaken for a
+            // child actually tapping back in.
+            const reason = prompt('Why is this pass being closed? It is stored with the pass.');
+            if (!reason) return;
+            try {
+                await ctx.auth.convexMutation('hallPasses:forceClose',
+                    { passId: passId, reason: reason }, ctx.session.idToken);
+                await renderMyClassBoard();
+            } catch (e) { alert(e.message); }
+        }
+
+        window.renderMyClassBoard = renderMyClassBoard;
+        window.openPassForStudent = openPassForStudent;
+        window.approveClassPass = approveClassPass;
+        window.denyClassPass = denyClassPass;
+        window.closeClassPass = closeClassPass;
+
+        // ---------------------------------------------------------------
+        // BELL SCHEDULE. Settings -> Bell Schedule.
+        //
+        // WHY THIS SCREEN EXISTS AT ALL. A hall pass now originates from the
+        // class a student is timetabled into, so something has to turn a wall
+        // clock into a period number. PowerSchool cannot: the plugin manifest
+        // grants no Period table and no bell schedule, and Sections.Expression
+        // carries "1(A-E)" and never a clock time. So the bells are typed in
+        // here, beside the tap locations, and they are as much a part of the
+        // system as the stickers on the walls.
+        //
+        //   bellSchedules:settings    {}   -> schedules, marked days, and what the app believes now
+        //   bellSchedules:saveSettings     -> time zone, usual schedule, day cycle   (admin)
+        //   bellSchedules:saveSchedule     -> one named schedule and its periods     (admin)
+        //   bellSchedules:retireSchedule   -> never deleted, days point at it        (admin)
+        //   bellSchedules:setDay / clearDay-> today is a minimum day, or a holiday   (admin)
+        //
+        // THE CLOCK IS SHOWN BACK. A schedule that looks right and a time zone
+        // that is wrong produce an entirely plausible, entirely wrong screen,
+        // and the only way anybody notices is by seeing the time the app thinks
+        // it is next to the clock on the wall.
+        // ---------------------------------------------------------------
+
+        const WC_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+        /** The last settings payload, and the schedule currently being edited. */
+        let wcBell = null;
+        let wcBellDraft = null;
+
+        function wcBellSession() {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            return session ? { auth: auth, session: session } : null;
+        }
+
+        async function renderBellSettings() {
+            const host = document.getElementById('bellSettingsHost');
+            if (!host) return;
+            const ctx = wcBellSession();
+            if (!ctx) {
+                host.innerHTML = '<div class="wc-card panel-card"><p style="margin:0;color:#b3392f;">' +
+                    'Sign in with Microsoft to see the bell schedule.</p></div>';
+                return;
+            }
+            try {
+                wcBell = await ctx.auth.convexQuery('bellSchedules:settings', {}, ctx.session.idToken);
+            } catch (e) {
+                host.innerHTML = '<div class="wc-card panel-card"><p style="margin:0;color:#b3392f;">' +
+                    wpEsc(e.message) + '</p></div>';
+                return;
+            }
+            wcDrawBell();
+        }
+
+        function wcDrawBell() {
+            const host = document.getElementById('bellSettingsHost');
+            if (!host || !wcBell) return;
+            const esc = wpEsc;
+            const b = wcBell;
+
+            // ---- what the app believes right now ----
+            const nowOk = b.now && b.now.ok;
+            const nowBody = !b.configured
+                ? 'Nothing is set up yet, so no hall pass can be routed from a timetable. ' +
+                  'Set the time zone below, add a schedule, then choose which one is the usual one.'
+                : (nowOk
+                    ? 'It is <b>' + esc(b.now.clock) + '</b> on ' + esc(b.now.dateKey) +
+                      ', running the <b>' + esc(b.now.scheduleName) + '</b> schedule' +
+                      (b.now.scheduleSource === 'override' ? ' (set for today)' : ' (the usual one)') +
+                      ', and that is <b>period ' + esc(b.now.periodLabel) + '</b>' +
+                      (b.now.cycleDay ? ', cycle day ' + esc(b.now.cycleDay) : '') + '.'
+                    : (b.now.clock
+                        ? 'It is <b>' + esc(b.now.clock) + '</b> on ' + esc(b.now.dateKey) + '. ' + esc(b.now.reason)
+                        : esc(b.now.reason)));
+
+            const nowCard =
+                '<div class="wc-card panel-card" style="border-left:4px solid ' +
+                (nowOk ? '#2e7d32' : '#B3392F') + ';">' +
+                  '<div class="panel-head"><span class="panel-icon">&#128340;</span><h3>Right now</h3></div>' +
+                  '<p style="margin:0;font-size:14px;line-height:1.6;">' + nowBody + '</p>' +
+                  '<p class="panel-hint" style="margin:10px 0 0;">' +
+                    'A student asking at this moment would ' +
+                    (nowOk ? 'reach the teacher of that period.' :
+                      'be told exactly the sentence above, and offered a teacher-started pass instead. ' +
+                      'Nothing is guessed.') +
+                  '</p>' +
+                '</div>';
+
+            // ---- the school clock ----
+            const scheduleOptions = ['<option value="">No usual schedule</option>'].concat(
+                b.schedules.filter(function (s) { return s.active; }).map(function (s) {
+                    return '<option value="' + esc(s.id) + '"' +
+                        (String(b.defaultScheduleId) === String(s.id) ? ' selected' : '') + '>' +
+                        esc(s.name) + '</option>';
+                })).join('');
+
+            const clockCard =
+                '<div class="wc-card panel-card">' +
+                  '<div class="panel-head"><span class="panel-icon">&#127758;</span><h3>School clock</h3></div>' +
+                  '<p class="panel-hint" style="margin:0 0 14px;">' +
+                    'Times are stored in UTC, so the app has to be told where the school is. ' +
+                    'A zone name rather than an offset, because an offset is wrong for half the ' +
+                    'year and the wrong half routes every request one period out.' +
+                  '</p>' +
+                  '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;">' +
+                    '<div><label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Time zone</label>' +
+                      '<input type="text" id="wcBellTz" value="' + esc(b.timeZone || b.suggestedTimeZone) +
+                      '" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;"></div>' +
+                    '<div><label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Usual schedule</label>' +
+                      '<select id="wcBellDefault" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;">' +
+                      scheduleOptions + '</select></div>' +
+                    '<div><label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Day cycle, if the school has one</label>' +
+                      '<input type="text" id="wcBellCycle" value="' + esc((b.cycleDays || []).join(', ')) +
+                      '" placeholder="A, B, C, D, E" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;">' +
+                      '<small style="color:#666;">A class written 1(A-E) meets every one of these, so the letter stops mattering.</small></div>' +
+                  '</div>' +
+                  '<p id="wcBellClockError" style="margin:12px 0 0;color:#b3392f;font-size:13px;"></p>' +
+                  '<button class="btn" onclick="saveBellClock()" style="margin-top:12px;">Save</button>' +
+                '</div>';
+
+            // ---- the schedules ----
+            const scheduleRows = b.schedules.length
+                ? b.schedules.map(function (s) {
+                    const days = (s.weekdays || []).map(function (d) { return WC_WEEKDAYS[d] || d; }).join(' ');
+                    const periods = s.periods.map(function (p) {
+                        return '<span style="display:inline-block;margin:0 8px 6px 0;padding:3px 8px;' +
+                            'border:1px solid var(--wc-border);border-radius:6px;font-size:12px;">' +
+                            esc(p.label) + '  ' + esc(p.start) + '&ndash;' + esc(p.end) + '</span>';
+                    }).join('');
+                    return '<div style="padding:14px 0;border-top:1px solid var(--wc-border);">' +
+                        '<div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;">' +
+                          '<div><b>' + esc(s.name) + '</b>' +
+                            (s.isDefault ? ' <span style="font-size:11.5px;color:#2e7d32;">the usual one</span>' : '') +
+                            (s.active ? '' : ' <span style="font-size:11.5px;color:#999;">retired</span>') +
+                            '<div style="font-size:12px;color:#666;margin-top:2px;">' + esc(days || 'every day') + '</div></div>' +
+                          '<div style="white-space:nowrap;">' +
+                            '<button onclick="editBellSchedule(\'' + esc(s.id) + '\')" style="padding:4px 10px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Edit</button>' +
+                            (s.active && !s.isDefault
+                              ? ' <button onclick="retireBellSchedule(\'' + esc(s.id) + '\',\'' + esc(s.name) + '\')" style="padding:4px 10px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Retire</button>'
+                              : '') +
+                          '</div>' +
+                        '</div>' +
+                        '<div style="margin-top:8px;">' + (periods || '<span style="font-size:12px;color:#999;">no periods</span>') + '</div>' +
+                      '</div>';
+                }).join('')
+                : '<p style="margin:14px 0 0;color:#999;font-size:13.5px;">No schedules yet. ' +
+                  'Add the regular day first, then the minimum day, because every school has one and ' +
+                  'running an assembly on the regular bells sends every request to the wrong teacher.</p>';
+
+            const schedulesCard =
+                '<div class="wc-card panel-card">' +
+                  '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">' +
+                    '<div><div class="panel-head" style="margin-bottom:4px;"><span class="panel-icon">&#128276;</span><h3>Schedules</h3></div>' +
+                    '<p class="panel-hint" style="margin:0;">Period names must match what PowerSchool calls them: ' +
+                    'a section written <code>1(A-E)</code> is period <b>1</b>, not &ldquo;Period 1&rdquo;.</p></div>' +
+                    '<button class="btn" onclick="editBellSchedule(null)" style="font-size:13px;padding:8px 14px;">+ Add schedule</button>' +
+                  '</div>' +
+                  scheduleRows +
+                '</div>';
+
+            // ---- the day calendar ----
+            const dayOptions = ['<option value="">Use the usual schedule</option>'].concat(
+                b.schedules.filter(function (s) { return s.active; }).map(function (s) {
+                    return '<option value="' + esc(s.id) + '">' + esc(s.name) + '</option>';
+                })).join('');
+
+            const dayRows = b.days.length
+                ? b.days.map(function (d) {
+                    const named = b.schedules.filter(function (s) { return String(s.id) === String(d.scheduleId); })[0];
+                    return '<tr><td>' + esc(d.date) + '</td>' +
+                      '<td>' + (d.noSchool ? '<b>No school</b>' : esc(named ? named.name : 'the usual one')) + '</td>' +
+                      '<td>' + esc(d.cycleDay || '—') + '</td>' +
+                      '<td style="font-size:12px;color:#666;">' + esc(d.note || '') + '</td>' +
+                      '<td><button onclick="clearBellDay(\'' + esc(d.id) + '\',\'' + esc(d.date) + '\')" ' +
+                      'style="padding:4px 10px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Clear</button></td></tr>';
+                }).join('')
+                : '<tr><td colspan="5" style="padding:16px;color:#999;">No days marked. Every day runs the usual schedule.</td></tr>';
+
+            const daysCard =
+                '<div class="wc-card panel-card">' +
+                  '<div class="panel-head"><span class="panel-icon">&#128197;</span><h3>Days that are different</h3></div>' +
+                  '<p class="panel-hint" style="margin:0 0 14px;">' +
+                    'Minimum days, assemblies, holidays and which cycle day it is. Nothing anywhere ' +
+                    'can be asked what today is, so it is marked here or it is not known, and not ' +
+                    'known is an answer the app gives rather than a guess it makes.' +
+                  '</p>' +
+                  '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end;">' +
+                    '<div><label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Date</label>' +
+                      '<input type="date" id="wcDayDate" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;"></div>' +
+                    '<div><label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Schedule</label>' +
+                      '<select id="wcDaySchedule" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;">' + dayOptions + '</select></div>' +
+                    '<div><label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Cycle day</label>' +
+                      '<input type="text" id="wcDayCycle" maxlength="4" placeholder="A" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;"></div>' +
+                    '<div><label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Note</label>' +
+                      '<input type="text" id="wcDayNote" maxlength="120" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;"></div>' +
+                    '<div><label style="font-size:13px;display:flex;align-items:center;gap:7px;padding-bottom:10px;">' +
+                      '<input type="checkbox" id="wcDayNoSchool"> No school</label></div>' +
+                  '</div>' +
+                  '<p id="wcDayError" style="margin:12px 0 0;color:#b3392f;font-size:13px;"></p>' +
+                  '<button class="btn" onclick="saveBellDay()" style="margin-top:12px;">Mark this day</button>' +
+                  '<div style="overflow-x:auto;margin-top:16px;">' +
+                    '<table class="wc-table"><thead><tr><th>Date</th><th>Schedule</th><th>Cycle</th><th>Note</th><th></th></tr></thead>' +
+                    '<tbody>' + dayRows + '</tbody></table>' +
+                  '</div>' +
+                '</div>';
+
+            host.innerHTML = nowCard + clockCard + schedulesCard +
+                '<div id="wcBellEditor"></div>' + daysCard;
+
+            if (wcBellDraft) wcDrawScheduleEditor();
+        }
+
+        /**
+         * The period editor.
+         *
+         * Times are typed as HH:MM and parsed server side by parseClock, which
+         * answers null rather than zero for anything unusable: zero is midnight,
+         * a real start time, so a parser that defaulted would file a period at
+         * 00:00 and route every early request into it.
+         */
+        function editBellSchedule(id) {
+            const found = wcBell && wcBell.schedules.filter(function (s) { return String(s.id) === String(id); })[0];
+            wcBellDraft = found
+                ? {
+                    id: found.id,
+                    name: found.name,
+                    weekdays: (found.weekdays || []).slice(),
+                    periods: found.periods.map(function (p) { return { label: p.label, start: p.start, end: p.end }; }),
+                  }
+                : { id: null, name: '', weekdays: [1, 2, 3, 4, 5], periods: [{ label: '1', start: '08:00', end: '08:55' }] };
+            wcDrawScheduleEditor();
+            const host = document.getElementById('wcBellEditor');
+            if (host && host.scrollIntoView) host.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        function wcDrawScheduleEditor() {
+            const host = document.getElementById('wcBellEditor');
+            if (!host) return;
+            if (!wcBellDraft) { host.innerHTML = ''; return; }
+            const esc = wpEsc;
+            const d = wcBellDraft;
+
+            const dayBoxes = WC_WEEKDAYS.map(function (label, index) {
+                return '<label style="font-size:13px;display:inline-flex;align-items:center;gap:5px;margin-right:12px;">' +
+                    '<input type="checkbox" class="wcDayBox" value="' + index + '"' +
+                    (d.weekdays.indexOf(index) >= 0 ? ' checked' : '') + '> ' + label + '</label>';
+            }).join('');
+
+            const rows = d.periods.map(function (p, i) {
+                return '<tr>' +
+                  '<td><input type="text" class="wcPeriodLabel" value="' + esc(p.label) + '" maxlength="16" ' +
+                    'style="width:100%;padding:8px;border:1px solid #ddd;border-radius:5px;"></td>' +
+                  '<td><input type="time" class="wcPeriodStart" value="' + esc(p.start) + '" ' +
+                    'style="width:100%;padding:8px;border:1px solid #ddd;border-radius:5px;"></td>' +
+                  '<td><input type="time" class="wcPeriodEnd" value="' + esc(p.end) + '" ' +
+                    'style="width:100%;padding:8px;border:1px solid #ddd;border-radius:5px;"></td>' +
+                  '<td><button onclick="removeBellPeriod(' + i + ')" style="padding:4px 10px;font-size:12px;' +
+                    'border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Remove</button></td>' +
+                '</tr>';
+            }).join('');
+
+            host.innerHTML =
+                '<div class="wc-card panel-card" style="border:2px solid var(--wc-blue-deep);">' +
+                  '<div class="panel-head"><span class="panel-icon">&#9998;</span><h3>' +
+                    (d.id ? 'Edit schedule' : 'New schedule') + '</h3></div>' +
+                  '<label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Name</label>' +
+                  '<input type="text" id="wcSchedName" value="' + esc(d.name) + '" maxlength="40" ' +
+                    'placeholder="Regular, Minimum day, Assembly" ' +
+                    'style="width:100%;max-width:340px;padding:10px;border:1px solid #ddd;border-radius:6px;margin-bottom:14px;">' +
+                  '<div style="margin-bottom:6px;font-weight:500;font-size:13px;">Days this schedule is used on</div>' +
+                  '<div style="margin-bottom:16px;">' + dayBoxes + '</div>' +
+                  '<div style="overflow-x:auto;">' +
+                    '<table class="wc-table"><thead><tr><th>Period</th><th>Starts</th><th>Ends</th><th></th></tr></thead>' +
+                    '<tbody>' + rows + '</tbody></table>' +
+                  '</div>' +
+                  '<button onclick="addBellPeriod()" style="margin-top:10px;padding:6px 12px;font-size:12.5px;' +
+                    'border:1px solid #ddd;border-radius:6px;background:#fff;cursor:pointer;">+ Add period</button>' +
+                  '<p id="wcSchedError" style="margin:12px 0 0;color:#b3392f;font-size:13px;"></p>' +
+                  '<div style="display:flex;gap:10px;margin-top:12px;">' +
+                    '<button class="btn btn-secondary" onclick="cancelBellSchedule()">Cancel</button>' +
+                    '<button class="btn" onclick="saveBellSchedule()">Save schedule</button>' +
+                  '</div>' +
+                '</div>';
+        }
+
+        /** Read the editor back out of the DOM, so nothing typed is lost on a redraw. */
+        function wcReadScheduleEditor() {
+            const name = (document.getElementById('wcSchedName') || {}).value || '';
+            const weekdays = Array.prototype.slice.call(document.querySelectorAll('.wcDayBox'))
+                .filter(function (b) { return b.checked; })
+                .map(function (b) { return Number(b.value); });
+            const labels = document.querySelectorAll('.wcPeriodLabel');
+            const starts = document.querySelectorAll('.wcPeriodStart');
+            const ends = document.querySelectorAll('.wcPeriodEnd');
+            const periods = [];
+            for (let i = 0; i < labels.length; i++) {
+                periods.push({
+                    label: labels[i].value,
+                    start: starts[i] ? starts[i].value : '',
+                    end: ends[i] ? ends[i].value : '',
+                });
+            }
+            return { name: name, weekdays: weekdays, periods: periods };
+        }
+
+        function addBellPeriod() {
+            if (!wcBellDraft) return;
+            const current = wcReadScheduleEditor();
+            wcBellDraft.name = current.name;
+            wcBellDraft.weekdays = current.weekdays;
+            wcBellDraft.periods = current.periods.concat([{ label: '', start: '', end: '' }]);
+            wcDrawScheduleEditor();
+        }
+
+        function removeBellPeriod(index) {
+            if (!wcBellDraft) return;
+            const current = wcReadScheduleEditor();
+            wcBellDraft.name = current.name;
+            wcBellDraft.weekdays = current.weekdays;
+            wcBellDraft.periods = current.periods.filter(function (_, i) { return i !== index; });
+            wcDrawScheduleEditor();
+        }
+
+        function cancelBellSchedule() {
+            wcBellDraft = null;
+            wcDrawScheduleEditor();
+        }
+
+        async function saveBellSchedule() {
+            const ctx = wcBellSession();
+            const err = document.getElementById('wcSchedError');
+            if (!ctx || !wcBellDraft) return;
+            const draft = wcReadScheduleEditor();
+            try {
+                await ctx.auth.convexMutation('bellSchedules:saveSchedule', {
+                    id: wcBellDraft.id || undefined,
+                    name: draft.name,
+                    weekdays: draft.weekdays,
+                    periods: draft.periods,
+                }, ctx.session.idToken);
+                wcBellDraft = null;
+                await renderBellSettings();
+            } catch (e) {
+                // Verbatim. The server's refusals here name the two periods that
+                // overlap, or the period whose times could not be read, and a
+                // reworded version of that is a person hunting through a table.
+                if (err) err.textContent = e.message;
+            }
+        }
+
+        async function retireBellSchedule(id, name) {
+            if (!confirm('Retire "' + name + '"? Days already marked with it keep pointing at it, ' +
+                'and the app will say so rather than quietly running different bells.')) return;
+            const ctx = wcBellSession();
+            if (!ctx) return;
+            try {
+                await ctx.auth.convexMutation('bellSchedules:retireSchedule', { id: id }, ctx.session.idToken);
+                await renderBellSettings();
+            } catch (e) { alert(e.message); }
+        }
+
+        async function saveBellClock() {
+            const ctx = wcBellSession();
+            const err = document.getElementById('wcBellClockError');
+            if (!ctx) return;
+            const tz = (document.getElementById('wcBellTz') || {}).value || '';
+            const def = (document.getElementById('wcBellDefault') || {}).value || '';
+            const cycleRaw = (document.getElementById('wcBellCycle') || {}).value || '';
+            const cycleDays = cycleRaw.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+            try {
+                await ctx.auth.convexMutation('bellSchedules:saveSettings', {
+                    timeZone: tz,
+                    defaultScheduleId: def || undefined,
+                    cycleDays: cycleDays,
+                }, ctx.session.idToken);
+                await renderBellSettings();
+            } catch (e) {
+                if (err) err.textContent = e.message;
+            }
+        }
+
+        async function saveBellDay() {
+            const ctx = wcBellSession();
+            const err = document.getElementById('wcDayError');
+            if (!ctx) return;
+            const date = (document.getElementById('wcDayDate') || {}).value || '';
+            const sched = (document.getElementById('wcDaySchedule') || {}).value || '';
+            const cycle = (document.getElementById('wcDayCycle') || {}).value || '';
+            const note = (document.getElementById('wcDayNote') || {}).value || '';
+            const none = Boolean((document.getElementById('wcDayNoSchool') || {}).checked);
+            try {
+                await ctx.auth.convexMutation('bellSchedules:setDay', {
+                    date: date,
+                    scheduleId: sched || undefined,
+                    noSchool: none,
+                    cycleDay: cycle || undefined,
+                    note: note || undefined,
+                }, ctx.session.idToken);
+                await renderBellSettings();
+            } catch (e) {
+                if (err) err.textContent = e.message;
+            }
+        }
+
+        async function clearBellDay(id, date) {
+            if (!confirm('Stop marking ' + date + '? It goes back to the usual schedule.')) return;
+            const ctx = wcBellSession();
+            if (!ctx) return;
+            try {
+                await ctx.auth.convexMutation('bellSchedules:clearDay', { id: id }, ctx.session.idToken);
+                await renderBellSettings();
+            } catch (e) { alert(e.message); }
+        }
+
         // The NFC surface is driven entirely by inline onclick attributes, so
         // every handler has to be a real property of window. They were relying
         // on top-level declarations in a classic script becoming implicit
@@ -18063,6 +19089,19 @@
         window.addTagByHand = addTagByHand;
         window.copyTagUrl = copyTagUrl;
         window.openTagRegistration = openTagRegistration;
+        window.assignTagClassroom = assignTagClassroom;
+
+        // Same reason, for the bell schedule screen.
+        window.renderBellSettings = renderBellSettings;
+        window.editBellSchedule = editBellSchedule;
+        window.addBellPeriod = addBellPeriod;
+        window.removeBellPeriod = removeBellPeriod;
+        window.cancelBellSchedule = cancelBellSchedule;
+        window.saveBellSchedule = saveBellSchedule;
+        window.retireBellSchedule = retireBellSchedule;
+        window.saveBellClock = saveBellClock;
+        window.saveBellDay = saveBellDay;
+        window.clearBellDay = clearBellDay;
 
         // A tap can arrive before OR after sign-in, so both paths handle it.
         window.addEventListener('wildcat-auth-signin', () => { handleTapArrival(); });
@@ -18870,6 +19909,7 @@
 
         const MODE_SUBTABS = {
             hallpass: [
+                { id: 'myClass',              fn: 'switchHallPassTab',   label: '🧑‍🏫 My Class' },
                 { id: 'kiosk',                fn: 'switchHallPassTab',   label: '🖥️ Student Kiosk' },
                 { id: 'hallMonitor',          fn: 'switchHallPassTab',   label: '👁️ Hall Monitor' },
                 { id: 'snapshot',             fn: 'switchHallPassTab',   label: '📊 Student Snapshot' },

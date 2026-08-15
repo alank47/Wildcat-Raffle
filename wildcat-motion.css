@@ -655,11 +655,11 @@ canvas.wcm-spark {
    corners, not a stack", and they were right — that geometry
    cannot produce a stack, no matter what the shadows do.
 
-   THE FIX. A card that has another card below it is made
-   `--wp-tuck` pixels TALLER than its visible band. The tops do not
+   THE FIX. A card that has another card below it is drawn
+   `--wp-tuck` pixels PAST its visible band. The tops do not
    move, so the exposed strip of every card is still exactly
    `--wp-strip` and the header text stays centred in it; the extra
-   height slides underneath the next card, which already carries a
+   drops underneath the next card, which already carries a
    higher z-index and an upward-throwing shadow. The bottom card
    is left alone, so the total height of the stack is unchanged
    and nothing below it moves.
@@ -668,6 +668,17 @@ canvas.wcm-spark {
    `--wp-card-h` are clamp() expressions, and script.js already
    carries a comment about how reading those back returns the
    literal string. A flat px value can be read with parseFloat.
+
+   SINCE THEN: the tuck used to be extra HEIGHT on the card, and
+   the reveal used to be a height transition. Both are gone.
+   Every card is now laid out at its full height permanently and
+   `clip-path` decides how much of it shows, so the exposed band,
+   the tuck and the open card are all one clip rather than a
+   layout property animating six subtrees at 60fps. The
+   performance contract at the top of this file said transform,
+   opacity and blur only; the stack is now the one surface that
+   also animates a clip, which is a paint effect and is named in
+   rb-standards.md as a legitimate way to reveal something.
    ============================================================ */
 
 #studentPassView {
@@ -689,14 +700,20 @@ canvas.wcm-spark {
    overlap to fall across is the entire fix; a second shadow on
    top of it would only muddy the edge. */
 
-/* The effect layers must not paint over the tuck zone or the
-   sheen would appear to leak out from under the next card. */
-#studentPassView .wp-card > .wcm-fx {
-    bottom: var(--wp-tuck);
-}
+/* The effect layers must not paint over the part of the card that
+   is not exposed, or the sheen would appear to leak out from under
+   the next card.
 
-#studentPassView .wp-card:last-child > .wcm-fx {
-    bottom: 0;
+   `--wp-hide` is written by wpLayout and is everything the card is
+   currently holding back: the clip that keeps a collapsed card down
+   to its strip, plus its own tuck. One declaration now covers what
+   used to take two, because the last card, the one with no tuck,
+   simply has a smaller --wp-hide rather than a rule of its own.
+   Without this the StarBorder sweep on a collapsed Student ID card
+   would run along the bottom of the FULL card, a card-height below
+   the strip the student can see, and never appear at all. */
+#studentPassView .wp-card > .wcm-fx {
+    bottom: var(--wp-hide, 0px);
 }
 
 /* Spotlight tone. Every card in the stack is dark except Grades,

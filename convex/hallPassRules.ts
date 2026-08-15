@@ -40,6 +40,19 @@ export type Pass = {
   studentId: string;
   originLocationId: string;
   destinationLocationId?: string;
+  /**
+   * Where a TEACHER said to go, when a teacher opened this pass.
+   *
+   * Deliberately a different field from destinationLocationId, for the same
+   * reason closedAt is a different field from returnedAt: this one is an
+   * instruction and that one is a measurement. Written at approval, never by a
+   * tap, so "went where they were sent" and "went somewhere else" stay
+   * separable after the fact, and the second is the interesting one.
+   *
+   * When set, it is what the first tap has to match. Absent, any tag other than
+   * the origin is the destination, exactly as before it existed.
+   */
+  assignedDestinationLocationId?: string;
   requestedAt: string;
   approvedAt?: string;
   outAt?: string;
@@ -158,10 +171,32 @@ export function applyTap(pass: Pass, locationId: string, now: string): TapResult
   if (pass.state === "active") {
     // First tap. It must be somewhere other than the room they started in:
     // tapping the origin tag while still in the room is not an arrival.
+    //
+    // THIS CHECK STAYS FIRST. A student who taps their own classroom tag on the
+    // way out has to hear about that, not about the destination, because it is
+    // the thing that would otherwise close a pass they never took.
     if (locationId === pass.originLocationId) {
       return {
         ok: false,
         reason: "Tap the tag at where you are going first, then tap back here when you return.",
+      };
+    }
+    // A pass a TEACHER opened names where the student was sent, and validating
+    // it means tapping THAT tag. Without this the assigned destination is
+    // decoration: a student sent to the office could tap any tag in the building
+    // and the record would show a completed, validated trip.
+    //
+    // Only applies when a destination was assigned. A student-initiated pass has
+    // none, and behaves exactly as it did before this existed.
+    if (
+      pass.assignedDestinationLocationId &&
+      locationId !== pass.assignedDestinationLocationId
+    ) {
+      return {
+        ok: false,
+        reason:
+          "This is not where you were sent. Tap the tag at the place on your pass to " +
+          "start it, then tap back in your classroom when you return.",
       };
     }
     return {

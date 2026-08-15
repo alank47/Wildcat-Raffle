@@ -45,6 +45,31 @@ export const mine = query({
     // this screen does not.
     const live = passes.find((p) => !isTerminal(p.state));
 
+    // The two rooms this pass names, resolved to names a person can read. A
+    // slug is a database key, and printing one at a student is the same mistake
+    // as printing a row id. Two gets at most, only when there is a live pass, so
+    // the polling cost of this card is unchanged for the students who have none.
+    const originRoom = live ? await ctx.db.get(live.originLocationId) : null;
+    const sentTo = live?.assignedDestinationLocationId
+      ? await ctx.db.get(live.assignedDestinationLocationId)
+      : null;
+
+    // The teacher the request was ROUTED TO, resolved from the address stored on
+    // the pass rather than from the student's timetable. The timetable says who
+    // they are with now; the pass has to keep saying who was actually asked,
+    // which is a different question the moment the bell goes.
+    //
+    // .first() rather than .unique(): a duplicate staff row is a data fault, and
+    // .unique() answers a data fault by throwing a plain Error, which Convex
+    // redacts to "Server Error". That would take the student's whole card down,
+    // every panel, over two rows in the teachers table.
+    const routedTo = live?.originTeacherEmail
+      ? await ctx.db
+          .query("teachers")
+          .withIndex("by_email", (q) => q.eq("email", live.originTeacherEmail!))
+          .first()
+      : null;
+
     return {
       student: {
         firstName: student.firstName,
@@ -95,6 +120,28 @@ export const mine = query({
             elapsedMinutes: elapsedMinutes(live as any, now),
             overdue: isOverdue(live as any, now),
             expiresAfterMinutes: live.expiresAfterMinutes,
+
+            // WHERE IT STARTED AND WHO IT WENT TO, in words. The pass now
+            // originates from the class the student was timetabled into, so the
+            // card has to be able to say "waiting on Ms Vega, period 3" rather
+            // than "waiting". A student who cannot see who was asked cannot tell
+            // a request that went to the right teacher from one that did not.
+            //
+            // Read off the pass, never re-derived from the timetable: the class
+            // they are in changes every hour, and the card must keep naming the
+            // teacher who was actually asked.
+            origin: originRoom?.name ?? null,
+            // Null, never the raw address. A student does not need their
+            // teacher's email and should not be handed one by a card.
+            teacherName: routedTo?.name ?? null,
+            period: live.originPeriod ?? null,
+            courseName: live.originCourseName ?? null,
+
+            // Where a TEACHER sent them, when a teacher opened this pass. This
+            // is the tag that validates it, so the card has to name it: "tap the
+            // tag at the office" is actionable and "tap the tag" is not.
+            sentTo: sentTo?.name ?? null,
+            requestedVia: live.requestedVia ?? null,
           }
         : { available: false, state: "none" },
 

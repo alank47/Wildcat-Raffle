@@ -7,10 +7,10 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Wildcat Hub</title>
-    <link rel="stylesheet" href="styles.css?v=20260815r">
+    <link rel="stylesheet" href="styles.css?v=20260815t">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260815r">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260815t">
 </head>
 <body>
     <!-- Login Screen -->
@@ -158,14 +158,22 @@
 
         <!-- Hall pass request. A sheet rather than a screen, because the
              student is answering one question and then going back to the
-             card they were already looking at. -->
+             card they were already looking at.
+
+             THE ROOM PICKER IS GONE, and its absence is the feature. A student
+             used to choose which room they were leaving, so the record said
+             where a fourteen year old typed rather than where they were, and
+             the request landed on every teacher's board instead of on the one
+             teacher who could see them. The class is now worked out from their
+             timetable and the clock, and #wpClassPanel either names it or says
+             exactly why it cannot and offers the way round. -->
         <div class="wp-scrim" id="wpScrim" onclick="closeHallPassSheet()"></div>
         <section class="wp-sheet" id="wpSheet" role="dialog" aria-modal="true"
                  aria-labelledby="wpSheetTitle" aria-hidden="true">
             <div class="wp-grip"></div>
             <h2 id="wpSheetTitle">Request a hall pass</h2>
-            <p class="wp-sheet-sub">Pick the room you are leaving from. Your teacher has to approve it before you go.</p>
-            <div class="wp-picklist" id="wpPickList" role="radiogroup" aria-label="Room you are leaving from"></div>
+            <p class="wp-sheet-sub">This goes to the teacher whose class you are in right now.</p>
+            <div id="wpClassPanel" role="status" aria-live="polite"></div>
             <label class="wp-field">
                 <span>Reason, if you want to say</span>
                 <input type="text" id="wpReason" maxlength="60" autocomplete="off"
@@ -1955,6 +1963,18 @@
                     <button class="settings-subtab-button" onclick="switchSettingsSubtab('nfc')" id="nfcSettingsSubtab">
                         📡 NFC Tags
                     </button>
+                    <!-- WHEN THE BELLS RING. App-owned configuration, and it has
+                         to be: the PowerSchool plugin manifest grants no Period
+                         table and no bell schedule, and Sections.Expression
+                         carries "1(A-E)" and never a clock time. Without this
+                         the app cannot turn "now" into a period, and a hall pass
+                         cannot know which teacher to go to.
+
+                         Reads are staff (bellSchedules.settings, .currentPeriod);
+                         every write is requireAdmin, like the tag screen. -->
+                    <button class="settings-subtab-button" onclick="switchSettingsSubtab('bell')" id="bellSettingsSubtab">
+                        🔔 Bell Schedule
+                    </button>
                 </div>
 
                 <!-- RAFFLE CATEGORIES SUBTAB -->
@@ -2419,17 +2439,50 @@
                         </p>
                     </div>
 
+                    <!-- WHICH CLASSROOM A TAG IS. Optional on every tag, and an
+                         unassigned one behaves exactly as it always did: a
+                         restroom is a destination, not somebody's room.
+
+                         It matters because a hall pass now starts from the class
+                         a student is timetabled into, and the return tap has to
+                         land at THAT room. PowerSchool cannot say which room a
+                         section meets in (Sections.Room is not in the manifest),
+                         so the join is typed in here. -->
+                    <div class="wc-card panel-card">
+                        <div class="panel-head">
+                            <span class="panel-icon">&#127979;</span>
+                            <h3>Classrooms</h3>
+                        </div>
+                        <p class="panel-hint" style="margin:0;">
+                            A tag in a classroom can be tied to the teacher who works in it, and to a
+                            particular section if they teach in more than one room. That is what lets a
+                            student's pass find its way back to the right door. Use <b>Assign</b> on any
+                            row below. Restrooms, offices and the nurse need nothing here.
+                        </p>
+                    </div>
+
                     <div class="wc-card panel-card" style="padding:0; overflow:hidden;">
                         <div style="overflow-x:auto;">
                             <table class="wc-table">
                                 <thead>
-                                    <tr><th>Slug</th><th>Name</th><th>Type</th><th>Encode URL</th><th>Last tap</th><th></th></tr>
+                                    <tr><th>Slug</th><th>Name</th><th>Type</th><th>Classroom</th><th>Encode URL</th><th>Last tap</th><th></th></tr>
                                 </thead>
                                 <tbody id="tagManagerBody">
-                                    <tr><td colspan="6" style="padding:20px;color:#999;">Loading&hellip;</td></tr>
+                                    <tr><td colspan="7" style="padding:20px;color:#999;">Loading&hellip;</td></tr>
                                 </tbody>
                             </table>
                         </div>
+                    </div>
+                </div>
+
+                <!-- BELL SCHEDULE SUBTAB.
+                     Rendered entirely by renderBellSettings(), because every
+                     part of it is remote state: a schedule held stale in the DOM
+                     is a screen that says the day starts at a time it no longer
+                     does, and this is the configuration hall pass routing reads. -->
+                <div id="bellSettingsContent" class="settings-subtab-content" style="display: none;">
+                    <div id="bellSettingsHost">
+                        <div class="wc-card panel-card"><p style="margin:0;color:#999;">Loading&hellip;</p></div>
                     </div>
                 </div>
             </div>
@@ -3669,6 +3722,14 @@
 
                 <!-- Hall Pass Tabs -->
                 <div style="display: flex; gap: 10px; margin-bottom: 30px; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px; flex-wrap: wrap;">
+                    <!-- THE CONVEX-BACKED HALF. Every other tab here runs on the
+                         old Firestore hallPasses array; this one is the passes
+                         that come from a student's timetable and go to one
+                         teacher. Kept beside them rather than replacing them,
+                         because the old kiosk is still what the office uses. -->
+                    <button class="subtab-button" onclick="switchHallPassTab('myClass')" id="myClassTabBtn" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
+                        🧑‍🏫 My Class
+                    </button>
                     <button class="subtab-button active" onclick="switchHallPassTab('kiosk')" id="kioskTabBtn" style="padding: 12px 24px; background: #2F67A7; color: white; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
                         🖥️ Student Kiosk
                     </button>
@@ -3689,8 +3750,18 @@
                     </button>
                 </div>
 
+                <!-- MY CLASS. Rendered entirely by renderMyClassBoard(),
+                     because all of it is live server state: which of my
+                     students are asking, which are out, and who is overdue.
+                     A copy of that held in the DOM is a child unaccounted for. -->
+                <div id="myClassTab" class="hall-pass-tab" style="display: none;">
+                    <div id="myClassHost">
+                        <div class="wc-card panel-card"><p style="margin:0;color:#999;">Loading&hellip;</p></div>
+                    </div>
+                </div>
+
                 <!-- Student Kiosk Tab -->
-                <div id="kioskTab" class="hall-pass-tab">
+                <div id="kioskTab" class="hall-pass-tab"
                     <div style="max-width: 900px; margin: 0 auto;">
                         <div style="background: #2F67A7; padding: 40px; border-radius: 16px; box-shadow: 0 8px 24px rgba(47, 103, 167, 0.3); text-align: center; margin-bottom: 30px;">
                             <h1 style="color: white; font-size: 48px; margin: 0 0 10px 0;">🎫 Claw Pass</h1>
@@ -4956,10 +5027,10 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260815r"></script>
+    <script src="wildcat-auth.js?v=20260815t"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
-    <script src="wildcat-motion.js?v=20260815r"></script>
-    <script src="script.js?v=20260815r"></script>
+    <script src="wildcat-motion.js?v=20260815t"></script>
+    <script src="script.js?v=20260815t"></script>
 </body>
 </html>

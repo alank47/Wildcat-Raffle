@@ -1,6 +1,6 @@
 import { query, mutation } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
-import { requireStaff, requireAdmin, requireStudentSelf } from "./identity";
+import { requireStaff, requireAdmin, requireStudentSelf, normalizeEmail } from "./identity";
 import { normalizeSlug } from "./tapSlug";
 
 /**
@@ -48,9 +48,66 @@ export const list = query({
           active: r.active,
           createdAt: r.createdAt,
           lastTapAt: r.lastTapAt ?? null,
+          // Which classroom this is, when it is one. Null, never "", so the
+          // screen can tell "not assigned" from "assigned to an empty string",
+          // which is what an unchecked form field writes.
+          teacherEmail: r.teacherEmail ?? null,
+          sectionId: r.sectionId ?? null,
           url: `https://wildcatraffle.com/?tap=${r.slug}`,
         }))
         .sort((a, b) => a.slug.localeCompare(b.slug)),
+    };
+  },
+});
+
+/**
+ * The staff a tag can be assigned to, and the sections they teach.
+ *
+ * Exists so the tag screen is a PICKER rather than a box to type an address
+ * into. teacherEmail is a join key: one typo and the tag belongs to nobody, the
+ * lookup silently returns nothing, and a student is told their classroom has no
+ * tag while looking straight at one. A list of real addresses cannot be
+ * mistyped.
+ *
+ * Staff only, and it is the staff directory this app already shows on the
+ * teachers screen, so it discloses nothing new.
+ */
+export const assignableClassrooms = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireStaff(ctx);
+
+    const teachers = await ctx.db.query("teachers").take(600);
+
+    // One row per section, from the roster, so a tag can be tied to an exact
+    // section when a teacher has more than one room. Bounded: this is a picker,
+    // not a report.
+    const rosterRows = await ctx.db.query("psRoster").take(4000);
+    const sections = new Map<
+      string,
+      { sectionId: string; courseName: string | null; period: string | null; teacherEmail: string | null }
+    >();
+    for (const r of rosterRows) {
+      const id = String(r.sectionId ?? "").trim();
+      if (!id || sections.has(id)) continue;
+      sections.set(id, {
+        sectionId: id,
+        courseName: r.courseName ?? null,
+        period: r.period ?? r.sectionExpression ?? null,
+        teacherEmail: r.teacherEmail ?? null,
+      });
+    }
+
+    return {
+      teachers: teachers
+        .map((t) => ({ email: t.email, name: t.name }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      sections: [...sections.values()].sort((a, b) =>
+        String(a.courseName ?? "").localeCompare(String(b.courseName ?? "")),
+      ),
+      // Told rather than silently short, for the same reason every other capped
+      // read in this codebase says so.
+      truncated: rosterRows.length === 4000,
     };
   },
 });
@@ -91,15 +148,17 @@ const OWN_ORIGIN_LOOKBACK = 40;
  * destinations above, plus only the rooms this caller has themselves used as an
  * origin before, which is their own history and tells them nothing new.
  *
- * WHAT IS MISSING AND WHY, stated rather than quietly dropped: the intended
- * scoping was "the rooms on this student's own timetable", and IT CANNOT BE
- * BUILT FROM THE DATA THAT EXISTS. psRoster has sectionId, sectionNumber,
- * sectionExpression, period, course and teacher, and NO room or location column
- * at all, so there is nothing to join a tag to. PowerSchool's Sections.Room
- * would supply it and is not in the manifest, exactly like the lunch id in
- * passCard.ts. Until that field is approved this returns the honest subset and
- * says so in `classroomsFromSchedule`, rather than guessing a join or shipping
- * the whole building.
+ * NO LONGER THE ORIGIN PICKER. A student used to choose the room they were
+ * leaving from this list, and that was the wrong model: the record said where a
+ * fourteen year old typed rather than where they were. The origin is now derived
+ * from their timetable by hallPasses.resolveScheduledOrigin, and this list is
+ * only ever the places a student may be told about.
+ *
+ * PowerSchool still supplies no room per section. What closed the gap is not new
+ * SIS data but a column an admin fills in: tapLocations.sectionId and
+ * .teacherEmail tie a wall tag to a classroom, entered on the tag screen exactly
+ * as the slug is. `classroomsFromSchedule` says so rather than leaving a caller
+ * to infer it.
  *
  * NAME, SLUG AND KIND ONLY, built field by field. No id, no createdAt, no
  * lastTapAt, no URL. Retired tags are absent, because a picker offering a room
@@ -142,10 +201,10 @@ export const listForStudents = query({
       classroomsFromSchedule: {
         available: false,
         reason:
-          "Classrooms are not listed from your timetable yet. The PowerSchool " +
-          "roster does not include a room for each section, so there is nothing " +
-          "to match a tag against. Ask your teacher to start the pass if the room " +
-          "you are in is not here.",
+          "You do not pick the room you are leaving any more. A pass now starts from " +
+          "the class you are timetabled into at that moment, and goes to that teacher. " +
+          "If the app cannot work out which class that is, it says so and a teacher " +
+          "can start the pass instead.",
       },
 
       // Told rather than silently truncated. A picker that quietly stops at 500
@@ -171,12 +230,52 @@ export const upsert = mutation({
       v.literal("nurse"),
       v.literal("other"),
     ),
+    // WHOSE CLASSROOM THIS IS. Both optional, and both are how a return tap
+    // finds its way home now that a pass originates from a section rather than
+    // from a room somebody picked.
+    //
+    // OPTIONAL IS LOAD BEARING, not laziness. A restroom tag, an office tag and
+    // every tag registered before this existed have neither, and must go on
+    // working exactly as they did: they are destinations, not classrooms, and a
+    // required field here would have meant answering "which teacher owns the
+    // second floor restroom".
+    //
+    // An EMPTY STRING is stored as absent, never as "". teacherEmail is an index
+    // key, and eq("teacherEmail", "") is a real bucket lookup that would return
+    // every tag anybody left blank, which is how one teacher's classroom becomes
+    // several and pickClassroomTag starts refusing them all.
+    teacherEmail: v.optional(v.string()),
+    sectionId: v.optional(v.string()),
   },
-  handler: async (ctx, { slug, name, kind }) => {
+  handler: async (ctx, { slug, name, kind, teacherEmail, sectionId }) => {
     await requireAdmin(ctx);
     const clean = normalizeSlug(slug);
     if (!clean) throw new ConvexError("A tag needs a slug, for example restroom-2.");
     if (!name.trim()) throw new ConvexError("A tag needs a name people will recognise.");
+
+    // Normalized on the way in, like every other address in this schema. Entra
+    // and PowerSchool both hand back directory casing and an index lookup is
+    // byte-exact, so a tag stored as `A.Vega@school.org` joins to nothing and
+    // says nothing about why.
+    const owner = normalizeEmail(teacherEmail) || undefined;
+    const section = String(sectionId ?? "").trim() || undefined;
+
+    // A tag pointed at a teacher who is not in this app can never be resolved,
+    // and the failure is silent: the student is told their classroom has no tag
+    // while standing in front of one. Checked here, once, rather than discovered
+    // at a doorway.
+    if (owner) {
+      const teacher = await ctx.db
+        .query("teachers")
+        .withIndex("by_email", (q) => q.eq("email", owner))
+        .first();
+      if (!teacher) {
+        throw new ConvexError(
+          `No staff record has the address ${owner}, so a pass could never be routed ` +
+            `to this room. Pick a teacher from the list.`,
+        );
+      }
+    }
 
     const existing = await ctx.db
       .query("tapLocations")
@@ -186,7 +285,18 @@ export const upsert = mutation({
     if (existing) {
       // Re-registering a retired tag reactivates it, which is what somebody
       // means when they scan a sticker they just put back on a wall.
-      await ctx.db.patch(existing._id, { name: name.trim(), kind, active: true });
+      //
+      // The assignment is written EVERY TIME, including when it is being
+      // cleared. `...(owner ? {owner} : {})` would make unassigning a tag
+      // impossible: the field would stick to whatever it was last set to and an
+      // admin correcting a mistake would watch nothing happen.
+      await ctx.db.patch(existing._id, {
+        name: name.trim(),
+        kind,
+        active: true,
+        teacherEmail: owner,
+        sectionId: section,
+      });
       return { outcome: existing.active ? "updated" : "reactivated", slug: clean };
     }
 
@@ -196,6 +306,8 @@ export const upsert = mutation({
       kind,
       active: true,
       createdAt: new Date().toISOString(),
+      ...(owner ? { teacherEmail: owner } : {}),
+      ...(section ? { sectionId: section } : {}),
     });
     return { outcome: "created", slug: clean };
   },
@@ -235,6 +347,8 @@ export const lookup = query({
       active: row?.active ?? false,
       name: row?.name ?? null,
       kind: row?.kind ?? null,
+      teacherEmail: row?.teacherEmail ?? null,
+      sectionId: row?.sectionId ?? null,
     };
   },
 });

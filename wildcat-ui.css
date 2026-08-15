@@ -1,0 +1,693 @@
+/* ============================================================
+   WILDCAT UI  —  the shared language between the two portals
+   ============================================================
+
+   The student portal and the teacher app were built years apart and
+   look it: one is a near-black Apple Wallet card stack, the other is
+   a blue-chromed operations console with purple gradient tiles and
+   emoji section headers. This file is the layer that makes them one
+   product.
+
+   WHAT IS SHARED, and what deliberately is not.
+
+   Shared: palette, type scale, radii, spacing, elevation, motion,
+   the card, the chip, the field, the button, the table. A teacher
+   and a student should recognise the same hand.
+
+   NOT shared: the ground. The student portal is near-black because a
+   student looks at ONE card, held in a hand, for ten seconds. The
+   teacher app is a workspace where somebody reads a 623 row roster
+   and awards tickets a few hundred times a day, and a dense table on
+   near-black is fatiguing to scan and wrong when exported or
+   projected. So the teacher app takes the portal's INK CHROME —
+   sidebar and topbar — and keeps a light content field.
+
+   Same language, two jobs. Copying the wallet wholesale onto an
+   operations console would be a costume, not a redesign.
+
+   DEPENDS ON: wildcat-motion.css for the easing and duration tokens.
+   Every value here falls back to a literal if that file is missing,
+   because a stylesheet that fails to load must degrade to something
+   plain rather than to something broken.
+
+   DOES NOT TOUCH: the global reset at styles.css line 44, which has
+   been dead since it was written (a stray "\n" makes the selector
+   "n*"). Nothing here assumes a margin is zero.
+   ============================================================ */
+
+:root {
+    /* ---- Ink. The portal's ground, promoted to a shared scale so the
+       teacher chrome and the student portal are literally the same
+       colour rather than two dark greys that nearly match. ---- */
+    --wu-ink-900: #0B0B0E;   /* portal ground, sidebar */
+    --wu-ink-800: #131419;   /* topbar, raised chrome */
+    --wu-ink-700: #1A1C22;   /* card face on ink */
+    --wu-ink-600: #24262E;   /* hairline on ink, hover */
+
+    /* ---- Paper. The teacher app's working surface. Not pure white:
+       a table of 623 rows on #FFF glares under classroom fluorescents,
+       and the school's own palette is warm. ---- */
+    --wu-paper: #F7F8FA;
+    --wu-surface: #FFFFFF;
+    --wu-surface-sunk: #EFF2F6;
+
+    /* ---- Type. One scale, both portals. ---- */
+    --wu-fg: #14161B;
+    --wu-fg-dim: #5F6570;
+    --wu-fg-faint: #8B919C;
+    --wu-fg-on-ink: #F6F4EF;
+    --wu-fg-on-ink-dim: #8E9199;
+
+    /* ---- Brand, from the school palette already in styles.css. ---- */
+    --wu-blue: var(--wc-blue, #2F67A7);
+    --wu-blue-deep: var(--wc-blue-deep, #0C447C);
+    --wu-blue-pale: var(--wc-blue-pale, #B5D4F4);
+    --wu-blue-mist: var(--wc-blue-mist, #E6F1FB);
+    --wu-orange: var(--wc-orange, #D9742F);
+    --wu-yellow: var(--wc-yellow, #E6E280);
+
+    /* ---- Semantic. Separate from brand on purpose: a status colour
+       that doubles as an accent stops meaning anything. ---- */
+    --wu-good: #1F7A4D;
+    --wu-warn: #9A6B12;
+    --wu-bad: #A32F2F;
+
+    /* ---- Line and elevation ---- */
+    --wu-hair: rgba(20, 22, 27, 0.10);
+    --wu-hair-on-ink: rgba(255, 255, 255, 0.10);
+    --wu-shadow-1: 0 1px 2px rgba(16, 20, 30, .05), 0 1px 3px rgba(16, 20, 30, .06);
+    --wu-shadow-2: 0 2px 4px rgba(16, 20, 30, .05), 0 8px 20px rgba(16, 20, 30, .08);
+
+    /* ---- Radii. 17px is the portal card, measured off Wallet at a
+       393pt width. The smaller steps are that number stepped down, so
+       a chip inside a card looks like it belongs to the card. ---- */
+    --wu-r-card: 17px;
+    --wu-r-panel: 14px;
+    --wu-r-control: 10px;
+    --wu-r-chip: 7px;
+
+    /* ---- Space. A 4px base, because the existing app is full of 13px
+       and 14px gutters that came from nowhere. ---- */
+    --wu-s1: 4px; --wu-s2: 8px; --wu-s3: 12px;
+    --wu-s4: 16px; --wu-s5: 24px; --wu-s6: 32px;
+
+    /* ---- Motion, from wildcat-motion.css, which took them from React
+       Bits' published standard. Never ease-in on UI: it starts slow and
+       delays the exact moment the user is watching. ---- */
+    --wu-ease: var(--wcm-ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+    --wu-ease-move: var(--wcm-ease-in-out, cubic-bezier(0.77, 0, 0.175, 1));
+    --wu-dur-press: var(--wcm-dur-press, 160ms);
+    --wu-dur-ui: var(--wcm-dur-pane, 180ms);
+    --wu-dur-panel: var(--wcm-dur-modal, 260ms);
+}
+
+/* ============================================================
+   PRIMITIVES
+   Prefixed wu- so they can be adopted one screen at a time without
+   colliding with the two existing eras of styling in styles.css
+   (the id-based original and the later wc- layer).
+   ============================================================ */
+
+.wu-panel {
+    background: var(--wu-surface);
+    border: 1px solid var(--wu-hair);
+    border-radius: var(--wu-r-panel);
+    box-shadow: var(--wu-shadow-1);
+}
+
+.wu-panel-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--wu-s3);
+    padding: var(--wu-s4) var(--wu-s5);
+    border-bottom: 1px solid var(--wu-hair);
+}
+
+.wu-panel-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 650;
+    letter-spacing: -.012em;
+    color: var(--wu-fg);
+}
+
+/* The eyebrow the portal uses above every card, same treatment. */
+.wu-eyebrow {
+    font-size: 11px;
+    font-weight: 650;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--wu-fg-faint);
+}
+
+.wu-panel-body { padding: var(--wu-s5); }
+
+/* ---- Figures. Tabular by default: these sit in columns and a
+   proportional 1 makes a column of numbers look ragged. ---- */
+.wu-figure {
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(26px, 3.4vw, 34px);
+    font-weight: 700;
+    letter-spacing: -.02em;
+    line-height: 1.05;
+    color: var(--wu-blue-deep);
+}
+.wu-figure-label {
+    margin-top: var(--wu-s1);
+    font-size: 12.5px;
+    color: var(--wu-fg-dim);
+}
+
+/* A measured zero and an absent value must never look alike. This is
+   the app-wide rule the student portal already enforces; the teacher
+   app needs it too, because "0 absences" and "no attendance data" mean
+   opposite things to somebody deciding whether to call a parent. */
+.wu-absent {
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: 0;
+    color: var(--wu-fg-faint);
+    font-variant-numeric: normal;
+}
+
+/* ---- Chip ---- */
+.wu-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wu-s1);
+    padding: 3px 9px;
+    border-radius: var(--wu-r-chip);
+    font-size: 11.5px;
+    font-weight: 650;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    background: var(--wu-surface-sunk);
+    color: var(--wu-fg-dim);
+    border: 1px solid transparent;
+}
+.wu-chip-good { background: color-mix(in srgb, var(--wu-good) 12%, transparent); color: var(--wu-good); }
+.wu-chip-warn { background: color-mix(in srgb, var(--wu-warn) 14%, transparent); color: var(--wu-warn); }
+.wu-chip-bad  { background: color-mix(in srgb, var(--wu-bad) 12%, transparent);  color: var(--wu-bad); }
+
+/* ---- Controls ---- */
+.wu-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--wu-s2);
+    padding: 9px 16px;
+    border: 1px solid var(--wu-hair);
+    border-radius: var(--wu-r-control);
+    background: var(--wu-surface);
+    color: var(--wu-fg);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: transform var(--wu-dur-press) var(--wu-ease),
+                background-color var(--wu-dur-press) ease,
+                border-color var(--wu-dur-press) ease;
+}
+.wu-btn-primary {
+    background: var(--wu-blue);
+    border-color: var(--wu-blue);
+    color: #fff;
+}
+.wu-btn-quiet { background: transparent; border-color: transparent; color: var(--wu-fg-dim); }
+
+/* Press feedback is an acknowledgement, not an animation, which is why
+   it survives on controls used hundreds of times a day where every
+   other motion is removed. 0.97 and 160ms, per the standard. */
+.wu-btn:active { transform: scale(.97); }
+
+.wu-field {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1px solid var(--wu-hair);
+    border-radius: var(--wu-r-control);
+    background: var(--wu-surface);
+    color: var(--wu-fg);
+    font-family: inherit;
+    font-size: 14px;
+    transition: border-color var(--wu-dur-ui) ease, box-shadow var(--wu-dur-ui) ease;
+}
+.wu-field:focus {
+    outline: none;
+    border-color: var(--wu-blue);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--wu-blue) 18%, transparent);
+}
+
+/* Keyboard focus must always be visible. A teacher tabbing through an
+   award flow is a real user, and :focus-visible is not a hover. */
+.wu-btn:focus-visible,
+.wu-chip:focus-visible,
+.wu-field:focus-visible {
+    outline: 2px solid var(--wu-blue);
+    outline-offset: 2px;
+}
+
+/* ---- Table. The densest thing in the app and the least designed. ---- */
+.wu-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.wu-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    text-align: left;
+    padding: 10px 14px;
+    background: var(--wu-surface-sunk);
+    color: var(--wu-fg-dim);
+    font-size: 11px;
+    font-weight: 650;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--wu-hair);
+    white-space: nowrap;
+}
+.wu-table td {
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--wu-hair);
+    color: var(--wu-fg);
+    vertical-align: middle;
+}
+.wu-table td.wu-num { font-variant-numeric: tabular-nums; text-align: right; }
+.wu-table tbody tr { transition: background-color var(--wu-dur-ui) ease; }
+
+/* Wide content scrolls inside its own box. The page body never scrolls
+   sideways: a horizontal scrollbar under a roster is how a teacher
+   loses the name column. */
+.wu-scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* ---- Ink chrome: the shared surface between the two portals ---- */
+.wu-ink {
+    background: var(--wu-ink-900);
+    color: var(--wu-fg-on-ink);
+}
+.wu-ink-raised { background: var(--wu-ink-800); }
+.wu-ink .wu-panel {
+    background: var(--wu-ink-700);
+    border-color: var(--wu-hair-on-ink);
+    box-shadow: none;
+}
+.wu-ink .wu-panel-title { color: var(--wu-fg-on-ink); }
+.wu-ink .wu-eyebrow,
+.wu-ink .wu-figure-label { color: var(--wu-fg-on-ink-dim); }
+.wu-ink .wu-figure { color: var(--wu-fg-on-ink); }
+
+/* ============================================================
+   HOVER — gated, no exceptions
+   A touch device fires a false hover on tap and keeps it until the
+   next tap somewhere else, so an ungated hover state sticks to
+   whatever a student last touched.
+
+   EVERY hover rule in this file lives inside a gate. There are three
+   gates, one per section, rather than one for the whole file, because
+   a section's hover rules belong beside the section they style. The
+   invariant is not "one block", it is "no :hover outside a gate", and
+   that is what to check:
+
+       grep -n ":hover" wildcat-ui.css      # every hit indented in a gate
+       grep -c "@media (hover: hover)"      # currently 3
+
+   The count moves whenever a section is added. Do not "fix" it by
+   merging the gates; check the first grep instead.
+   ============================================================ */
+@media (hover: hover) and (pointer: fine) {
+    .wu-btn:hover { background: var(--wu-surface-sunk); }
+    .wu-btn-primary:hover { background: var(--wu-blue-deep); border-color: var(--wu-blue-deep); }
+    .wu-btn-quiet:hover { background: var(--wu-surface-sunk); color: var(--wu-fg); }
+    .wu-table tbody tr:hover { background: var(--wu-blue-mist); }
+    .wu-ink .wu-table tbody tr:hover { background: var(--wu-ink-600); }
+    .wu-panel-interactive:hover { box-shadow: var(--wu-shadow-2); }
+}
+
+/* Row emphasis must also reach a keyboard, and focus-within is not a
+   hover, so it lives outside the gate. */
+.wu-table tbody tr:focus-within { background: var(--wu-blue-mist); }
+
+/* ============================================================
+   MOTION — entrance only, and only where it is not repetitive
+   ============================================================ */
+.wu-enter {
+    animation: wu-enter var(--wu-dur-panel) var(--wu-ease) both;
+}
+@keyframes wu-enter {
+    from { opacity: 0; transform: translateY(8px) scale(.985); }
+    to   { opacity: 1; transform: none; }
+}
+
+/* Stagger for a group arriving together. 45ms, inside the standard's
+   30-80ms band, low because these are dense operational lists rather
+   than a marketing hero. Capped at 12: past that the last row waits
+   longer than anybody will tolerate, and the cost on a Chromebook is
+   real. */
+.wu-stagger > * { animation: wu-enter var(--wu-dur-panel) var(--wu-ease) both; }
+.wu-stagger > :nth-child(1)  { animation-delay: 0ms; }
+.wu-stagger > :nth-child(2)  { animation-delay: 45ms; }
+.wu-stagger > :nth-child(3)  { animation-delay: 90ms; }
+.wu-stagger > :nth-child(4)  { animation-delay: 135ms; }
+.wu-stagger > :nth-child(5)  { animation-delay: 180ms; }
+.wu-stagger > :nth-child(6)  { animation-delay: 225ms; }
+.wu-stagger > :nth-child(7)  { animation-delay: 270ms; }
+.wu-stagger > :nth-child(8)  { animation-delay: 315ms; }
+.wu-stagger > :nth-child(9)  { animation-delay: 360ms; }
+.wu-stagger > :nth-child(10) { animation-delay: 405ms; }
+.wu-stagger > :nth-child(11) { animation-delay: 450ms; }
+.wu-stagger > :nth-child(12) { animation-delay: 495ms; }
+.wu-stagger > :nth-child(n+13) { animation-delay: 0ms; }
+
+/* ============================================================
+   REDUCED MOTION
+   Fewer and gentler, not zero: transitions that aid comprehension
+   stay, movement goes. The resting state of every animation above is
+   the VISIBLE one, so removing the animation can never leave content
+   hidden — the failure that cost this project a sign-in button.
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+    .wu-enter,
+    .wu-stagger > * {
+        animation: none;
+        opacity: 1;
+        transform: none;
+    }
+    .wu-btn:active { transform: none; }
+    .wu-btn, .wu-field, .wu-table tbody tr {
+        transition-duration: 1ms;
+    }
+}
+
+/* ============================================================
+   REFERENCE PATTERNS
+   From the Notasnet school dashboard chosen as the reference on
+   2026-08-15. See docs/design-reference.md for the full extraction
+   and, more importantly, for what NOT to take from it.
+
+   The reference is blue + a lime accent + near-black on a light
+   field, which is structurally the palette Westbrook already has.
+   So these are its SHAPES with our colours, not a recolour of its.
+
+   One discipline note, because it is the difference between this
+   looking designed and looking loud: in the reference the accent
+   appears about twice per screen. It works because it is rare.
+   --wu-yellow is for the gauge arc and one other thing. Not for
+   buttons, not for chips, not for row highlights.
+   ============================================================ */
+
+/* ---- Nav rail. A card, not a coloured sidebar. The active item is
+   a soft pill; the icon sits in its own square so the label is not
+   doing the work of being findable. ---- */
+.wu-rail {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--wu-s3);
+    background: var(--wu-surface);
+    border-radius: var(--wu-r-panel);
+    box-shadow: var(--wu-shadow-1);
+}
+.wu-rail-item {
+    display: flex;
+    align-items: center;
+    gap: var(--wu-s3);
+    padding: 9px 11px;
+    border: 0;
+    border-radius: var(--wu-r-control);
+    background: transparent;
+    color: var(--wu-fg-dim);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 550;
+    text-align: left;
+    cursor: pointer;
+    width: 100%;
+    transition: background-color var(--wu-dur-ui) ease, color var(--wu-dur-ui) ease;
+}
+.wu-rail-icon {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    flex: none;
+    border-radius: 9px;
+    background: var(--wu-surface-sunk);
+    color: var(--wu-fg-dim);
+    font-size: 15px;
+    line-height: 1;
+    transition: background-color var(--wu-dur-ui) ease, color var(--wu-dur-ui) ease;
+}
+.wu-rail-item[aria-current="page"] {
+    background: var(--wu-blue-mist);
+    color: var(--wu-blue-deep);
+    font-weight: 650;
+}
+.wu-rail-item[aria-current="page"] .wu-rail-icon {
+    background: var(--wu-blue);
+    color: #fff;
+}
+
+/* ---- Identity card. The reference's big blue card: who this screen
+   is about. Ours carries the school and the person being viewed. ---- */
+.wu-identity {
+    position: relative;
+    overflow: hidden;
+    padding: var(--wu-s5);
+    border-radius: var(--wu-r-card);
+    background: linear-gradient(150deg, var(--wu-blue) 0%, var(--wu-blue-deep) 100%);
+    color: #fff;
+}
+/* The reference's card carries a woven texture. A 2px dot lattice at
+   low alpha reads the same at a glance and costs one gradient rather
+   than an image request on a Chromebook. */
+.wu-identity::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: radial-gradient(rgba(255,255,255,.13) 1px, transparent 1px);
+    background-size: 14px 14px;
+}
+.wu-identity > * { position: relative; }
+.wu-identity-title {
+    margin: 0;
+    font-size: clamp(24px, 3vw, 32px);
+    font-weight: 700;
+    line-height: 1.08;
+    letter-spacing: -.02em;
+    text-wrap: balance;
+}
+
+/* A person selector that sits on the identity card. */
+.wu-person {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wu-s2);
+    margin-top: var(--wu-s4);
+    padding: 7px 12px 7px 7px;
+    border: 0;
+    border-radius: 999px;
+    background: rgba(255,255,255,.16);
+    color: #fff;
+    font: inherit;
+    font-size: 13.5px;
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+}
+.wu-avatar {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.22);
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: .02em;
+}
+
+/* ---- Arc gauge. One hero figure per screen.
+   Drawn with conic-gradient rather than SVG: no markup, no library,
+   and it animates by changing one custom property.
+   --wu-gauge is 0..1. The arc is 180 degrees, so the sweep is
+   calc(var(--wu-gauge) * 180deg), rotated to start at nine o'clock. ---- */
+.wu-gauge {
+    --wu-gauge: 0;
+    position: relative;
+    width: min(232px, 62vw);
+    aspect-ratio: 2 / 1;
+    overflow: hidden;
+}
+.wu-gauge::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50% / 100% 100% 0 0;
+    background: conic-gradient(
+        from 270deg,
+        var(--wu-yellow) 0deg,
+        var(--wu-yellow) calc(var(--wu-gauge) * 180deg),
+        var(--wu-ink-900) calc(var(--wu-gauge) * 180deg),
+        var(--wu-ink-900) 180deg,
+        transparent 180deg
+    );
+    /* The hole. mask keeps this to two elements instead of four. */
+    -webkit-mask: radial-gradient(circle at 50% 100%, transparent 58%, #000 58.5%);
+    mask: radial-gradient(circle at 50% 100%, transparent 58%, #000 58.5%);
+    transition: --wu-gauge var(--wu-dur-panel) var(--wu-ease);
+}
+.wu-gauge-value {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 4%;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(28px, 6vw, 40px);
+    font-weight: 700;
+    letter-spacing: -.03em;
+    color: var(--wu-fg);
+}
+/* Registering the property is what makes the arc animate rather than
+   jump: an unregistered custom property is a string to the engine and
+   strings do not interpolate. */
+@property --wu-gauge {
+    syntax: "<number>";
+    inherits: true;
+    initial-value: 0;
+}
+
+/* Small ringed sub-figures under the gauge: best and worst. */
+.wu-ring {
+    display: inline-grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    border: 2px solid var(--wu-hair);
+    font-size: 12px;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+}
+.wu-ring-good { border-color: var(--wu-good); color: var(--wu-good); }
+.wu-ring-bad  { border-color: var(--wu-bad);  color: var(--wu-bad); }
+
+/* ---- Timeline. Time on the left as plain text, one card per entry.
+   A hall pass is exactly this shape: an event with a start, a
+   duration and a state. ---- */
+.wu-timeline { display: flex; flex-direction: column; gap: var(--wu-s3); }
+.wu-tl-row { display: grid; grid-template-columns: 84px 1fr; gap: var(--wu-s3); align-items: start; }
+.wu-tl-time {
+    padding-top: 11px;
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+    color: var(--wu-fg-faint);
+    white-space: nowrap;
+}
+.wu-tl-card {
+    display: flex;
+    align-items: center;
+    gap: var(--wu-s3);
+    padding: var(--wu-s3) var(--wu-s4);
+    background: var(--wu-surface);
+    border: 1px solid var(--wu-hair);
+    border-radius: var(--wu-r-panel);
+}
+.wu-tl-icon {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    flex: none;
+    border-radius: 10px;
+    background: var(--wu-blue-mist);
+    color: var(--wu-blue-deep);
+    font-size: 15px;
+}
+.wu-tl-title { font-size: 14px; font-weight: 600; color: var(--wu-fg); }
+.wu-tl-sub { font-size: 12.5px; color: var(--wu-fg-dim); }
+/* A break in the day is not an event. It stays quiet. */
+.wu-tl-quiet .wu-tl-card { background: transparent; border-style: dashed; }
+
+/* ---- Activity feed. The right column: what happened recently,
+   which is what an audit log is. ---- */
+.wu-feed { display: flex; flex-direction: column; gap: var(--wu-s3); }
+.wu-feed-item {
+    display: grid;
+    grid-template-columns: 34px 1fr auto;
+    gap: var(--wu-s3);
+    align-items: start;
+    padding: var(--wu-s3) var(--wu-s4);
+    background: var(--wu-surface);
+    border: 1px solid var(--wu-hair);
+    border-radius: var(--wu-r-panel);
+}
+.wu-feed-when { font-size: 11.5px; color: var(--wu-fg-faint); white-space: nowrap; }
+.wu-feed-body { font-size: 13px; color: var(--wu-fg-dim); grid-column: 2 / -1; }
+
+/* ---- Day strip ---- */
+.wu-days { display: flex; gap: var(--wu-s2); overflow-x: auto; padding-bottom: var(--wu-s1); }
+.wu-day {
+    display: grid;
+    place-items: center;
+    gap: 2px;
+    min-width: 52px;
+    padding: var(--wu-s2) var(--wu-s3);
+    border: 1px solid var(--wu-hair);
+    border-radius: var(--wu-r-control);
+    background: var(--wu-surface);
+    font: inherit;
+    cursor: pointer;
+    flex: none;
+}
+.wu-day-dow { font-size: 11px; color: var(--wu-fg-faint); text-transform: uppercase; letter-spacing: .06em; }
+.wu-day-num { font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--wu-fg); }
+.wu-day[aria-pressed="true"] { background: var(--wu-blue); border-color: var(--wu-blue); }
+.wu-day[aria-pressed="true"] .wu-day-dow,
+.wu-day[aria-pressed="true"] .wu-day-num { color: #fff; }
+
+/* ---- Circular card action, top right, as in the reference ---- */
+.wu-action {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--wu-ink-900);
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
+    transition: transform var(--wu-dur-press) var(--wu-ease), background-color var(--wu-dur-press) ease;
+}
+.wu-action:active { transform: scale(.94); }
+
+/* ---- The dashboard frame: rail, main, feed ---- */
+.wu-shell {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr) 320px;
+    gap: var(--wu-s5);
+    align-items: start;
+    padding: var(--wu-s5);
+    background: var(--wu-paper);
+    min-height: 100%;
+}
+/* The feed is the first thing to go: it is context, not the work.
+   Then the rail collapses to icons. The main column never drops
+   below a usable width, because that is where the roster lives. */
+@media (max-width: 1200px) { .wu-shell { grid-template-columns: 232px minmax(0, 1fr); } .wu-feed-col { display: none; } }
+@media (max-width: 860px)  { .wu-shell { grid-template-columns: 1fr; padding: var(--wu-s3); } }
+
+@media (hover: hover) and (pointer: fine) {
+    .wu-rail-item:hover { background: var(--wu-surface-sunk); color: var(--wu-fg); }
+    .wu-rail-item[aria-current="page"]:hover { background: var(--wu-blue-mist); }
+    .wu-day:hover { border-color: var(--wu-blue-pale); }
+    .wu-action:hover { background: var(--wu-blue-deep); }
+    .wu-feed-item:hover,
+    .wu-tl-card:hover { border-color: var(--wu-blue-pale); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .wu-gauge::before { transition: none; }
+    .wu-action:active { transform: none; }
+}

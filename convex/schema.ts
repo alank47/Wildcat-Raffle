@@ -337,8 +337,32 @@ export default defineSchema({
     // which reads as the app being broken and gets the feature switched off. A
     // column on the row cannot be crowded out by another row.
     lastTapAt: v.optional(v.string()),
+
+    // WHICH CLASSROOM THIS TAG IS, when it is one. Both OPTIONAL, and an
+    // unassigned tag behaves exactly as it did before they existed.
+    //
+    // WHY THEY ARE HERE. A hall pass now originates from the section a student
+    // is scheduled into, not from a room they picked off a list, so the return
+    // tap has to land at that section's own room. Nothing in PowerSchool can
+    // supply it: Sections.Room is not in the plugin manifest and psRoster has no
+    // location column at all, which is the gap tapLocations.listForStudents has
+    // been stating in `classroomsFromSchedule` since it was written. So the join
+    // is app-owned, typed in on the tag screen, exactly like the slug is.
+    //
+    // sectionId is the precise answer and teacherEmail the useful one: most
+    // teachers have one room and every section they teach meets in it. Both are
+    // consulted in that order by pickClassroomTag, and two tags claiming the
+    // same section or teacher are REFUSED rather than resolved, because
+    // "whichever came back first" is not a room.
+    sectionId: v.optional(v.string()),
+    teacherEmail: v.optional(v.string()), // normalized, joins to teachers.email
   })
     .index("by_slug", ["slug"])
+    // Both exist so resolving "the classroom tag for this section" is two
+    // bounded indexed reads rather than a scan of every tag in the building on
+    // every pass request.
+    .index("by_sectionId", ["sectionId"])
+    .index("by_teacherEmail", ["teacherEmail"])
     // Exists so the student-facing picker (tapLocations.listForStudents) can be
     // an indexed, bounded read. A signed-in child can call that in a loop, and
     // the staff `list` above collects the whole table plus 2,000 tap events,
@@ -382,10 +406,148 @@ export default defineSchema({
     closedByEmail: v.optional(v.string()),
     closedReason: v.optional(v.string()),
 
+    // WHERE THE REQUEST WAS ROUTED, and how that was decided.
+    //
+    // A pass used to know only a room. It now knows the SECTION the student was
+    // scheduled into at the moment they asked, which is what makes "that
+    // teacher receives the request" expressible at all. Every one of these is
+    // optional because passes written before this existed do not have them, and
+    // because a staff-opened pass legitimately has no section.
+    //
+    // originTeacherEmail is the routing key: hallPasses.myClassBoard reads it.
+    // It is stored on the pass rather than re-derived on every read, because the
+    // timetable changes and the record has to keep saying who was asked at the
+    // time. Re-deriving would silently rewrite history every time a schedule was
+    // edited.
+    originSectionId: v.optional(v.string()),
+    originTeacherEmail: v.optional(v.string()), // normalized
+    originPeriod: v.optional(v.string()),
+    originCourseName: v.optional(v.string()),
+
+    // How this pass came to exist. Kept because the three paths carry different
+    // weight as evidence: a pass the app routed from a timetable, a pass a
+    // teacher opened for a named student, and a pass a staff member opened by
+    // naming a room are not the same claim about what happened.
+    requestedVia: v.optional(
+      v.union(
+        v.literal("student-schedule"),
+        v.literal("teacher"),
+        v.literal("staff-manual"),
+      ),
+    ),
+
+    // WHERE THE TEACHER SAID TO GO, which is NOT where the student tapped.
+    //
+    // A separate field from destinationLocationId for the same reason closedAt
+    // is separate from returnedAt: one is somebody's instruction and the other
+    // is a measurement. Folding them together would make "went where they were
+    // sent" and "went somewhere else" indistinguishable after the fact, and the
+    // second one is the interesting one.
+    //
+    // When set, applyTap requires the first tap to be at THIS tag: that is what
+    // "tap the destination tag to validate the pass" means. Unset, any tag other
+    // than the origin is accepted, exactly as before.
+    assignedDestinationLocationId: v.optional(v.id("tapLocations")),
+
     expiresAfterMinutes: v.number(),
   })
     .index("by_student", ["studentId"])
-    .index("by_state", ["state"]),
+    .index("by_state", ["state"])
+    // The teacher's own board. Without it, showing one teacher their own
+    // requests means reading every live pass in the school and filtering in
+    // JavaScript, which is the exact shape liveBoard had to be rescued from.
+    .index("by_originTeacherEmail", ["originTeacherEmail"]),
+
+  /**
+   * WHEN THE BELLS RING. App-owned configuration, typed in by an admin.
+   *
+   * NOT SIS DATA, AND IT CANNOT BE. The PowerSchool plugin manifest grants
+   * Sections, CC, Courses, Teachers, Terms, Users, Students, Attendance and
+   * PGFinalGrades. There is no Period table, no BellSchedule table, and no
+   * Sections.Room. `Sections.Expression` carries the period number and the
+   * cycle days ("1(A-E)") and never a clock time. So the mapping from a wall
+   * clock to a period exists nowhere we can read it, and the only honest source
+   * is a person typing it in, exactly as the tap locations are.
+   *
+   * MORE THAN ONE, because every school has a minimum day and an assembly day,
+   * and running an assembly on the regular bells routes every request one period
+   * out with nothing on screen to show it.
+   *
+   * Times are minutes after LOCAL midnight, integers. Not "08:15" strings:
+   * every question asked of this table is arithmetic, and doing arithmetic on
+   * strings is how a schedule ends up an hour out. The string form exists only
+   * at the edges, in scheduleRules.parseClock and formatClock.
+   */
+  bellSchedules: defineTable({
+    name: v.string(), // "Regular", "Minimum day", "Assembly"
+    periods: v.array(
+      v.object({
+        label: v.string(), // matched against Sections.Expression, so "1" not "Period 1"
+        startMinute: v.number(),
+        endMinute: v.number(),
+      }),
+    ),
+    // 0 Sunday .. 6 Saturday. Empty means every day, which is only ever what
+    // somebody means for a schedule that is chosen explicitly per date.
+    weekdays: v.array(v.number()),
+    active: v.boolean(), // retired rather than deleted, like a tag
+    createdAt: v.string(),
+    updatedAt: v.string(),
+    updatedByEmail: v.optional(v.string()),
+  }).index("by_name", ["name"]),
+
+  /**
+   * WHICH SCHEDULE A PARTICULAR DAY RUNS ON. One row per marked date.
+   *
+   * AN EXPLICIT CHOICE, NEVER AN INFERENCE. Nothing in any table says today is
+   * an assembly day. Guessing produces a guessed period, a guessed teacher, and
+   * a hall pass in a child's record signed by somebody who never saw them.
+   *
+   * `noSchool` is a first class answer rather than the absence of a row: a
+   * holiday and a day nobody has got round to marking are different facts, and
+   * only one of them should stop a student asking.
+   *
+   * `cycleDay` lives here because it is the same kind of fact: `1(A-E)` is only
+   * ambiguous when a section does NOT meet on every day of the cycle, and then
+   * the only thing that resolves it is somebody saying which letter today is.
+   * Absent, resolveCurrentSection refuses rather than picking.
+   */
+  bellScheduleDays: defineTable({
+    date: v.string(), // YYYY-MM-DD in the school's own time zone
+    scheduleId: v.optional(v.id("bellSchedules")),
+    noSchool: v.boolean(),
+    cycleDay: v.optional(v.string()), // "A".."E", uppercased
+    note: v.optional(v.string()),
+    setByEmail: v.optional(v.string()),
+    setAt: v.string(),
+  }).index("by_date", ["date"]),
+
+  /**
+   * The one row of bell settings that is not a schedule: the school's time zone,
+   * which schedule is the usual one, and the school's own day cycle.
+   *
+   * THE TIME ZONE IS A SETTING AND HAS NO DEFAULT HERE. Timestamps are stored as
+   * UTC and the school is not in UTC, so without it every period boundary is out
+   * by seven or eight hours; with a hard-coded offset instead of a zone name it
+   * is out by an hour for half the year, which is the version that survives
+   * testing in September and starts routing to the wrong teacher in November.
+   * With no row at all the app says it cannot tell the time here, which is true.
+   *
+   * A singleton, keyed like appState so there is exactly one and it is fetched
+   * by index rather than by taking the first row of a table that could grow a
+   * second one.
+   */
+  bellSettings: defineTable({
+    key: v.string(), // always "bell"
+    timeZone: v.string(), // an IANA name, e.g. America/Los_Angeles
+    defaultScheduleId: v.optional(v.id("bellSchedules")),
+    // The school's full day cycle, e.g. ["A","B","C","D","E"]. Empty means the
+    // school has no cycle. This is what turns "(A-E)" from a constraint into no
+    // constraint: a section meeting every day of the cycle meets every day.
+    cycleDays: v.optional(v.array(v.string())),
+    updatedAt: v.string(),
+    updatedByEmail: v.optional(v.string()),
+  }).index("by_key", ["key"]),
 
   /**
    * A student's declared intent to tap ONE tag, minted on a user gesture and

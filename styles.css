@@ -3340,10 +3340,34 @@ body.wp-open { overflow: hidden; }
 
     /* One damped spring, sampled. zeta 0.66, wn 15.5, 620ms, about
        6% overshoot. The cubic-bezier above it is the fallback for a
-       browser without linear(); it is deliberately close, not equal. */
-    --wp-ease: cubic-bezier(.22, 1.2, .36, 1);
-    --wp-ease: linear(0 0%, 0.0669 4.2%, 0.2209 8.3%, 0.4075 12.5%, 0.5903 16.7%, 0.7484 20.8%, 0.8725 25%, 0.9613 29.2%, 1.0184 33.3%, 1.0498 37.5%, 1.0622 41.7%, 1.0619 45.8%, 1.0541 50%, 1.0428 54.2%, 1.0309 58.3%, 1.0201 62.5%, 1.0113 66.7%, 1.0047 70.8%, 1.0002 75%, 0.9976 79.2%, 0.9963 83.3%, 0.996 87.5%, 0.9963 91.7%, 0.997 95.8%, 1 100%);
-    --wp-dur: 620ms;
+       browser without linear(); it is deliberately close, not equal.
+
+       This is now the SHEET's curve only. It used to be the card
+       stack's as well, at its full 620ms, and that is the thing this
+       pass removed: 620ms is more than twice the 300ms ceiling
+       wildcat-motion.css sets for UI, and the stack is the primary
+       interaction on this screen. A hall pass sheet is a drawer that
+       appears once; a card tap happens every few seconds. */
+    --wp-ease-sheet: cubic-bezier(.22, 1.2, .36, 1);
+    --wp-ease-sheet: linear(0 0%, 0.0669 4.2%, 0.2209 8.3%, 0.4075 12.5%, 0.5903 16.7%, 0.7484 20.8%, 0.8725 25%, 0.9613 29.2%, 1.0184 33.3%, 1.0498 37.5%, 1.0622 41.7%, 1.0619 45.8%, 1.0541 50%, 1.0428 54.2%, 1.0309 58.3%, 1.0201 62.5%, 1.0113 66.7%, 1.0047 70.8%, 1.0002 75%, 0.9976 79.2%, 0.9963 83.3%, 0.996 87.5%, 0.9963 91.7%, 0.997 95.8%, 1 100%);
+
+    /* The card stack's own curve and duration, taken from the
+       standard rather than invented here: --wcm-ease-out is React
+       Bits' "entering / exiting" curve copied verbatim into
+       wildcat-motion.css, and 260ms sits inside the same band as the
+       modal and the drawer, under the hard 300ms rule. The literal
+       is the fallback for a page where wildcat-motion.css failed to
+       load. */
+    --wp-ease: var(--wcm-ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+    --wp-dur: 260ms;
+
+    /* How far a card's shadow reaches past its own edge: the upward
+       throw is 10px offset plus a 26px blur. The card clip is opened
+       out by this much at the top so that clipping the card does not
+       also clip the shadow it casts on the card above, which is the
+       one thing making the stack read as physical. Read back by
+       script.js, so it is a plain px length, not a clamp(). */
+    --wp-lift: 48px;
 
     position: fixed;
     inset: 0;
@@ -3471,8 +3495,22 @@ body.wp-open { overflow: hidden; }
     position: relative;
     width: 100%;
     height: var(--wp-card-h);           /* JS overwrites this */
-    transition: height var(--wp-dur) var(--wp-ease);
     touch-action: pan-y;
+
+    /* Every card is now drawn at its FULL height whatever it is
+       showing (see .wp-card below), so the cards below the open one
+       hang past the bottom of the stack by up to one card. They are
+       clipped so nothing paints there, but a clip is a paint effect,
+       and the boxes still counted toward the scrollable overflow of
+       #studentPassView, which turned a portal that fitted exactly
+       into one with 200px of empty scroll under it and switched off
+       drag-to-select with it. Layout containment stops the overflow
+       propagating and does NOT clip, so the cards can still overhang
+       while a finger is dragging them. Measured with the top card
+       open, where the five below it hang up to 173px past the stack:
+       774px of scrollable height without this line, 629px with it,
+       against a 627px viewport. */
+    contain: layout;
 }
 
 .wp-card {
@@ -3489,21 +3527,69 @@ body.wp-open { overflow: hidden; }
     color: var(--wp-ink, #ffffff);
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
-    will-change: transform, height;
+    will-change: transform;
     /* The shadow is thrown UPWARD, onto the card above. That is what
        makes a stack read as physical rather than as a list. */
     box-shadow:
         0 -0.5px 0 rgba(255, 255, 255, 0.14) inset,
         0 -10px 26px rgba(0, 0, 0, 0.55),
         0 2px 3px rgba(0, 0, 0, 0.30);
+
+    /* OPENING A CARD IS NOT A SIZE CHANGE.
+       -----------------------------------------------------------
+       It used to be: `height` was transitioned from the strip to the
+       full card and back, for six cards at once, for 620ms. Height
+       is a layout property, so every one of those ~37 frames re-ran
+       layout for six card subtrees (the flex column, the rows, the
+       barcode plate), then paint, then composite, on a Chromebook,
+       on the interaction a student performs more than any other.
+       wildcat-motion.css's performance contract says transform and
+       opacity only, precisely to avoid this.
+
+       So the box is now a CONSTANT. script.js gives every card its
+       full open height once per layout and never changes it again;
+       what changes is `clip-path`, which hides the part of the card
+       that is not currently exposed. Nothing about the card's
+       internal layout depends on which card is open, so the browser
+       lays each card out once, ever, and the transition is a clip
+       and a translate, neither of which can trigger layout.
+
+       `translate` is in the list because drag-to-select writes that
+       property directly (see wpWireStack), and without it the stack
+       used to snap back from the rubber band with no animation at
+       all the moment a finger came off the glass.
+
+       Both animated properties carry the SAME duration and the SAME
+       curve, which is what keeps the geometry honest mid-flight: a
+       card's exposed bottom edge is (top + height - clip), so if top
+       and clip are driven by one easing function the edge is pinned
+       for the whole transition rather than only at the two ends. */
     transition:
         transform var(--wp-dur) var(--wp-ease),
-        height var(--wp-dur) var(--wp-ease);
+        translate var(--wp-dur) var(--wp-ease),
+        clip-path var(--wp-dur) var(--wp-ease);
 }
 
-.wp-card:focus-visible {
-    outline: 2px solid #ffffff;
-    outline-offset: 3px;
+/* The focus ring is drawn INSIDE the exposed band, not as an outline
+   around the box. An outline would be wrong twice over now: the box
+   is taller than the band on every card that is not open, so the ring
+   would enclose an area the student cannot see, and clip-path clips
+   an outline along with everything else, so most of it would not be
+   drawn at all. --wp-hide is how much of the box bottom is currently
+   hidden; script.js writes it alongside the clip. */
+.wp-card:focus-visible { outline: none; }
+
+.wp-card:focus-visible::before {
+    content: "";
+    position: absolute;
+    z-index: 3;
+    top: 3px;
+    left: 3px;
+    right: 3px;
+    bottom: calc(var(--wp-hide, 0px) + 3px);
+    border: 2px solid #ffffff;
+    border-radius: calc(var(--wp-radius) - 3px);
+    pointer-events: none;
 }
 
 /* While a finger or a cursor is on the stack, the stack follows it
@@ -3868,7 +3954,7 @@ body.wp-open { overflow: hidden; }
     box-shadow: 0 -18px 50px rgba(0, 0, 0, 0.6);
     visibility: hidden;
     transform: translate(-50%, 102%);
-    transition: transform 520ms var(--wp-ease, cubic-bezier(.22, 1.2, .36, 1)), visibility 520ms;
+    transition: transform 520ms var(--wp-ease-sheet, cubic-bezier(.22, 1.2, .36, 1)), visibility 520ms;
 }
 .wp-sheet.is-open {
     visibility: visible;
@@ -4117,9 +4203,14 @@ body.wp-open { overflow: hidden; }
 
 /* ---- Motion ------------------------------------------------ */
 
+/* Reduced motion takes the TRAVEL away, not the states. Every card
+   still lands on exactly the transform, clip and opacity it would
+   have landed on; it just gets there in one frame. Selection by tap,
+   by arrow key and by drag all keep working, and the open card is
+   still the open card, which is the part a student depends on and
+   the part that "animation: none" on the wrong element would break. */
 @media (prefers-reduced-motion: reduce) {
     .wp-card,
-    .wp-stack,
     .wp-card .wp-body {
         transition-duration: 1ms;
     }

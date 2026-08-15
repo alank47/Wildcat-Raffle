@@ -1,7 +1,20 @@
-import { query, mutation, internalMutation, MutationCtx } from "./_generated/server";
-import { Id } from "./_generated/dataModel";
+import {
+  query,
+  mutation,
+  internalMutation,
+  MutationCtx,
+  QueryCtx,
+} from "./_generated/server";
+import { Doc, Id } from "./_generated/dataModel";
 import { v, ConvexError } from "convex/values";
 import { requireStaff, requireAdmin, requireStudentSelf } from "./identity";
+import { bellContext } from "./bellSchedules";
+import { sisEmailKey } from "./studentPortalRules";
+import {
+  pickClassroomTag,
+  resolveCurrentSection,
+  teacherLabel,
+} from "./scheduleRules";
 import {
   applyTap,
   canApprove,
@@ -76,6 +89,192 @@ const LIVE_STATES = ["requested", "active", "out"] as const;
 
 /** How long a spent tap intent is kept before the sweep deletes it. */
 const TAP_INTENT_RETENTION_DAYS = 7;
+
+/**
+ * How many of one student's roster rows are read to find the class they are in.
+ *
+ * BOUNDED, like every other read a signed-in child can cause in a loop. A real
+ * timetable is six to eight rows and this is a whole year's worth even if every
+ * term is carried; the alternative is `.collect()` on a table written by a sync
+ * from a system nobody here controls, which is fine until the day it is not.
+ */
+const ROSTER_WINDOW = 60;
+
+/** How many tags may claim one section or one teacher before it is a mistake. */
+const CLASSROOM_TAG_WINDOW = 8;
+
+/** Newest passes read for one teacher's own board. */
+const CLASS_BOARD_WINDOW = 200;
+
+export type OriginResult =
+  | {
+      ok: true;
+      tag: Doc<"tapLocations">;
+      sectionId: string | null;
+      teacherEmail: string;
+      teacherName: string;
+      courseName: string | null;
+      period: string;
+      scheduleName: string | null;
+    }
+  | { ok: false; code: string; reason: string };
+
+/**
+ * WHERE THIS STUDENT IS SUPPOSED TO BE, RIGHT NOW, AND WHOSE ROOM IT IS.
+ *
+ * This is the whole model. A hall pass originates from the class a student is
+ * scheduled into at the moment they ask, so the teacher who receives the request
+ * is the teacher standing in front of them. The student never names a room, and
+ * there is no argument here that could let them.
+ *
+ * THE CHAIN, and every link can break honestly:
+ *
+ *   the instant           -> the school's own wall clock   (bellSettings.timeZone)
+ *   the wall clock + date -> today's bell schedule         (bellScheduleDays, or the usual one)
+ *   the schedule + clock  -> a period                      (or lunch, or Saturday, or 15:40)
+ *   the period + timetable-> one section                   (psRoster, via their own email)
+ *   the section           -> a teacher and a classroom tag (tapLocations)
+ *
+ * NOTHING IS INVENTED WHEN A LINK BREAKS. Each step returns a refusal carrying
+ * the sentence for that specific break, and the caller shows it and offers the
+ * fallback, which is a teacher opening the pass instead. A pass attributed to
+ * the wrong teacher is worse than a pass that asks, and every default anywhere
+ * in this chain is a wrong attribution waiting for the first assembly.
+ *
+ * A PLAIN FUNCTION, not a query, because requestMine has to ask this inside a
+ * mutation and myCurrentClass has to ask it in a query. Two copies would be two
+ * answers, and the student would be shown one teacher and routed to another.
+ */
+export async function resolveScheduledOrigin(
+  ctx: QueryCtx,
+  student: Doc<"students">,
+  nowIso: string,
+): Promise<OriginResult> {
+  const bells = await bellContext(ctx, nowIso);
+  if (!bells.ok || !bells.period) {
+    return { ok: false, code: bells.code, reason: bells.reason };
+  }
+
+  // The SAME join key the rest of the portal uses: the address the token
+  // actually proves, never a number derived from the app's own record. See
+  // views_app.myStudentView for what the other key did.
+  const email = sisEmailKey(student);
+  if (!email.ok) {
+    return { ok: false, code: "no-student-email", reason: email.reason };
+  }
+
+  const rows = await ctx.db
+    .query("psRoster")
+    .withIndex("by_studentEmail", (q) => q.eq("studentEmail", email.value))
+    .take(ROSTER_WINDOW);
+
+  if (rows.length === 0) {
+    return {
+      ok: false,
+      code: "no-timetable",
+      reason:
+        "There is no class timetable on your account yet, so the app cannot tell whose " +
+        "room you are in. Ask a teacher to start the pass for you.",
+    };
+  }
+
+  const section = resolveCurrentSection(rows, {
+    period: bells.period.label,
+    cycleDay: bells.cycleDay,
+    schoolCycleDays: bells.schoolCycleDays,
+  });
+  if (!section.ok) return { ok: false, code: section.code, reason: section.reason };
+
+  const sectionId = String(section.section.sectionId ?? "").trim();
+
+  // Two bounded indexed reads rather than a scan of every tag in the building.
+  // Both are consulted because a tag may be tied to the exact section or, far
+  // more usually, to the teacher who has one room.
+  const bySection = sectionId
+    ? await ctx.db
+        .query("tapLocations")
+        .withIndex("by_sectionId", (q) => q.eq("sectionId", sectionId))
+        .take(CLASSROOM_TAG_WINDOW)
+    : [];
+  const byTeacher = await ctx.db
+    .query("tapLocations")
+    .withIndex("by_teacherEmail", (q) => q.eq("teacherEmail", section.teacherEmail))
+    .take(CLASSROOM_TAG_WINDOW);
+
+  const seen = new Set<string>();
+  const candidates = [...bySection, ...byTeacher].filter((t) => {
+    const key = String(t._id);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const tag = pickClassroomTag(candidates, {
+    sectionId: sectionId || null,
+    teacherEmail: section.teacherEmail,
+  });
+  if (!tag.ok) return { ok: false, code: tag.code, reason: tag.reason };
+
+  return {
+    ok: true,
+    tag: tag.tag as Doc<"tapLocations">,
+    sectionId: sectionId || null,
+    teacherEmail: section.teacherEmail,
+    teacherName: teacherLabel(section.section),
+    courseName: section.section.courseName ?? null,
+    period: section.period,
+    scheduleName: bells.scheduleName,
+  };
+}
+
+/**
+ * "Which class am I in, and who would this go to." For the signed-in student.
+ *
+ * NO ARGUMENTS, and there will never be any. The student is whoever the verified
+ * Google token says they are, and every fact below is derived from that. An
+ * argument naming a person here would be an endpoint for reading which room any
+ * child in the school is sitting in right now, which is a worse disclosure than
+ * their grades.
+ *
+ * The refusal is returned as data rather than thrown, because this is a screen
+ * being rendered, not an action being refused: the card has to say "you are
+ * between periods" and offer the way round it, and an exception would render as
+ * a broken panel.
+ */
+export const myCurrentClass = query({
+  args: {},
+  handler: async (ctx) => {
+    const student = await requireStudentSelf(ctx);
+    const now = new Date().toISOString();
+    const origin = await resolveScheduledOrigin(ctx, student, now);
+
+    if (!origin.ok) {
+      return {
+        available: false,
+        code: origin.code,
+        reason: origin.reason,
+        teacherName: null,
+        courseName: null,
+        period: null,
+        room: null,
+        serverTime: now,
+      };
+    }
+
+    // An allowlist, field by field. Never the tag row: it carries the encode URL
+    // and the last-tap time, which together describe which corridors are watched.
+    return {
+      available: true,
+      code: "ok",
+      reason: "",
+      teacherName: origin.teacherName || null,
+      courseName: origin.courseName,
+      period: origin.period,
+      room: origin.tag.name,
+      serverTime: now,
+    };
+  },
+});
 
 /** A student's own live pass, plus the running timer. */
 export const myPass = query({
@@ -219,7 +418,7 @@ export const deny = mutation({
 });
 
 /**
- * A student asking for a pass, FOR THEMSELVES.
+ * A student asking for a pass, FOR THEMSELVES, FROM THE CLASS THEY ARE IN.
  *
  * NO STUDENT ARGUMENT, and there will never be one. `request` above takes a
  * studentId and is staff-gated for exactly that reason: an endpoint that accepts
@@ -227,34 +426,33 @@ export const deny = mutation({
  * "who asked" is the only thing a hall pass record is evidence of. The caller is
  * whoever the verified Google token says they are.
  *
- * The arguments name a ROOM and a reason. A slug is a public fact printed on a
- * wall; it identifies a place, not a person, so it cannot be used to reach
- * somebody else's record.
+ * `originSlug` IS GONE, AND THAT IS THE POINT OF THIS REWRITE. The student used
+ * to name the room they were leaving off a list, which meant the record said
+ * where a fourteen year old typed rather than where they were, and the request
+ * went to every teacher's board rather than to the one teacher who could see
+ * them. The origin is now DERIVED from their timetable and the clock, so the
+ * request reaches the teacher whose lesson they are actually sitting in, and
+ * there is no argument left that could point it anywhere else.
  *
- * The decision itself is canRequest in hallPassRules.ts, not inline here, so the
- * cases that matter (a stuck request, a second concurrent one, a retired tag)
- * can be tested without a database.
+ * WHEN THE CLASS CANNOT BE WORKED OUT, THE REQUEST IS REFUSED WITH THE REASON.
+ * Lunch, a passing period, before school, after school, a weekend, a day marked
+ * as a holiday, an assembly nobody marked, a section that only meets on B days
+ * with no cycle day set, a classroom whose tag was never registered: all real,
+ * all distinct, all answered in their own words, and none of them papered over
+ * with a default teacher. The way round every one of them is the same and is
+ * named in the message: ask a teacher to open the pass instead.
+ *
+ * The decisions are canRequest in hallPassRules.ts and resolveScheduledOrigin
+ * above, not inline here, so the cases that matter can be tested without a
+ * database.
  */
 export const requestMine = mutation({
   args: {
-    originSlug: v.string(),
     reason: v.optional(v.string()),
   },
-  handler: async (ctx, { originSlug, reason }) => {
+  handler: async (ctx, { reason }) => {
     const student = await requireStudentSelf(ctx);
     const now = new Date().toISOString();
-
-    // The SHARED normalizer, the same one upsert writes through. An empty result
-    // means the input was unusable or over length, and it is never queried: slug
-    // is a required column, so eq("slug", "") is a real bucket lookup.
-    const slug = normalizeSlug(originSlug);
-
-    const origin = slug
-      ? await ctx.db
-          .query("tapLocations")
-          .withIndex("by_slug", (q) => q.eq("slug", slug))
-          .unique()
-      : null;
 
     // Indexed by this student AND bounded. A signed-in child can call this in a
     // loop; an unbounded collect() here reads their whole history every time,
@@ -265,26 +463,45 @@ export const requestMine = mutation({
       .order("desc")
       .take(PASS_HISTORY_WINDOW);
 
-    const verdict = canRequest(existing, origin, now);
-    if (!verdict.ok) throw new ConvexError(verdict.reason);
+    const origin = await resolveScheduledOrigin(ctx, student, now);
 
-    if (origin === null) {
-      // Unreachable: canRequest refuses a null origin above. TypeScript cannot
-      // follow that across the call, and the alternative is a `!` that would let
-      // a future edit to canRequest insert a pass with no real origin, which the
-      // tap rules then compare every tap against and always refuse.
-      throw new ConvexError("That room is not set up in the app yet. Tell your teacher.");
+    if (!origin.ok) {
+      // THE STUDENT-SIDE REFUSALS COME FIRST, exactly as canRequest orders them
+      // and for the reason it documents: a student holding a stuck request needs
+      // to hear about the stuck request, because it is still blocking them
+      // wherever they happen to be standing, and being told "it is lunchtime"
+      // three times before being told "you already have a pass open" is being
+      // sent on an errand. Asked with a present origin so that those two checks
+      // are what it answers.
+      const studentSide = canRequest(existing, { active: true }, now);
+      if (!studentSide.ok) throw new ConvexError(studentSide.reason);
+      throw new ConvexError(origin.reason);
     }
+
+    // The same rule again, now with the real tag, so a retired classroom tag or
+    // a future edit to canRequest cannot be skipped by this call site.
+    const verdict = canRequest(existing, origin.tag, now);
+    if (!verdict.ok) throw new ConvexError(verdict.reason);
 
     const clean = trimReason(reason);
     const id = await ctx.db.insert("hallPasses", {
       studentId: student._id,
       studentNumber: student.studentNumber,
-      originLocationId: origin._id,
+      originLocationId: origin.tag._id,
       state: "requested",
       ...(clean ? { reason: clean } : {}),
       requestedAt: now,
       expiresAfterMinutes: DEFAULT_MINUTES,
+
+      // WHO THIS WENT TO, recorded on the pass rather than re-derived on every
+      // read. The timetable changes, and a record that re-derived its own
+      // routing would silently rewrite who was asked every time a schedule was
+      // edited. This has to keep saying who was asked AT THE TIME.
+      originTeacherEmail: origin.teacherEmail,
+      ...(origin.sectionId ? { originSectionId: origin.sectionId } : {}),
+      originPeriod: origin.period,
+      ...(origin.courseName ? { originCourseName: origin.courseName } : {}),
+      requestedVia: "student-schedule" as const,
     });
 
     // An allowlist, field by field, like every other response here. Never the
@@ -293,8 +510,178 @@ export const requestMine = mutation({
     return {
       id,
       state: "requested" as const,
-      origin: origin.name,
+      origin: origin.tag.name,
+      teacherName: origin.teacherName || null,
+      courseName: origin.courseName,
+      period: origin.period,
       requestedAt: now,
+    };
+  },
+});
+
+/**
+ * A TEACHER opening a pass for a student they can see, with a destination.
+ *
+ * The second half of the model, and the fallback for every way the first half
+ * can honestly fail. The teacher picks the child in front of them and picks
+ * where they are going; the child's phone then shows the pass, and they still
+ * have to tap the destination tag to validate it and the classroom tag to close
+ * it. The physical proof is identical either way, which is the point: a pass a
+ * teacher opened is not a pass that skips the walking.
+ *
+ * OPENED ACTIVE, NOT REQUESTED. There is nobody left to approve it: the approval
+ * IS the teacher's action. Leaving it in `requested` would put the teacher's own
+ * pass in the teacher's own approval queue, and the timer, which starts at
+ * approval because a student approved and not yet gone is still out of class,
+ * would not be running while they walked.
+ *
+ * `assignedDestinationLocationId`, NOT `destinationLocationId`. The first is
+ * where the teacher SAID to go and the second is where the student actually
+ * tapped, and they are kept apart for the same reason closedAt is kept apart
+ * from returnedAt: one is an instruction and the other is a measurement, and
+ * "went somewhere else" is the interesting case that folding them would erase.
+ *
+ * The origin is the teacher's OWN classroom tag, derived the same way the
+ * student path derives it. `originSlug` is accepted as an override for the
+ * teacher who has no tag registered, or who is not in their own room.
+ */
+export const openForStudent = mutation({
+  args: {
+    // THE SIS NUMBER, not a row id, because that is what the teacher's own
+    // roster carries and a teacher picks a name off it. Staff-gated, so naming a
+    // child is exactly what this is for; nothing a student can reach takes an
+    // argument naming a person.
+    studentNumber: v.string(),
+    destinationSlug: v.string(),
+    originSlug: v.optional(v.string()),
+    minutes: v.optional(v.number()),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, { studentNumber, destinationSlug, originSlug, minutes, reason }) => {
+    const teacher = await requireStaff(ctx);
+    const now = new Date().toISOString();
+
+    const key = String(studentNumber ?? "").trim();
+    // NO KEY, NO QUERY. eq("studentNumber", "") is a real bucket lookup that
+    // returns whichever rows carry an empty number, and opening a pass against
+    // one of those puts a trip out of class on a child nobody named. See
+    // studentPortalRules.ts for the same trap on the read side.
+    if (!key) throw new ConvexError("Which student is this pass for?");
+
+    // .take(2), not .unique(): a duplicate student number is a real state in
+    // this data (the migration notes record former students carried alongside
+    // enrolled ones), and .unique() answers it by throwing a plain Error, which
+    // Convex redacts to "Server Error" with no way to tell what happened.
+    const matches = await ctx.db
+      .query("students")
+      .withIndex("by_studentNumber", (q) => q.eq("studentNumber", key))
+      .take(2);
+    if (matches.length === 0) {
+      throw new ConvexError(
+        `No student in this app has the number ${key}, so a pass cannot be opened for them.`,
+      );
+    }
+    if (matches.length > 1) {
+      throw new ConvexError(
+        `More than one student record has the number ${key}, so this pass has been ` +
+          `refused rather than opened against a guess. An admin must merge or archive ` +
+          `the duplicate.`,
+      );
+    }
+    const student = matches[0];
+    const studentId = student._id;
+
+    const existing = await ctx.db
+      .query("hallPasses")
+      .withIndex("by_student", (q) => q.eq("studentId", studentId))
+      .order("desc")
+      .take(PASS_HISTORY_WINDOW);
+    if (hasLivePass(existing as any)) {
+      throw new ConvexError("This student already has a pass open.");
+    }
+
+    // Validated before anything is written, for the reason validatePassMinutes
+    // exists: an unchecked value here makes a pass that is never overdue, never
+    // swept and permanently live, which blocks that child from every future pass.
+    let expiresAfterMinutes = DEFAULT_MINUTES;
+    if (minutes !== undefined) {
+      const checked = validatePassMinutes(minutes);
+      if (!checked.ok) throw new ConvexError(checked.reason);
+      expiresAfterMinutes = checked.minutes!;
+    }
+
+    const destSlug = normalizeSlug(destinationSlug);
+    const destination = destSlug
+      ? await ctx.db
+          .query("tapLocations")
+          .withIndex("by_slug", (q) => q.eq("slug", destSlug))
+          .unique()
+      : null;
+    if (!destination || !destination.active) {
+      throw new ConvexError(`No active tag for "${destSlug}". Register it in Settings > NFC Tags.`);
+    }
+
+    // The teacher's own room. Explicit slug wins, because a teacher covering
+    // somebody else's class knows where they are and the app does not.
+    let origin: Doc<"tapLocations"> | null = null;
+    if (originSlug !== undefined) {
+      const slug = normalizeSlug(originSlug);
+      origin = slug
+        ? await ctx.db
+            .query("tapLocations")
+            .withIndex("by_slug", (q) => q.eq("slug", slug))
+            .unique()
+        : null;
+      if (!origin || !origin.active) {
+        throw new ConvexError(`No active tag for "${slug}". Register it in Settings > NFC Tags.`);
+      }
+    } else {
+      const mine = await ctx.db
+        .query("tapLocations")
+        .withIndex("by_teacherEmail", (q) => q.eq("teacherEmail", teacher.email))
+        .take(CLASSROOM_TAG_WINDOW);
+      const picked = pickClassroomTag(mine, { teacherEmail: teacher.email });
+      if (!picked.ok) {
+        // Named rather than defaulted. A pass with no classroom to close at
+        // cannot be closed by a tap at all, and applyTap's ordering rule, which
+        // is the only thing stopping a student closing a pass on the way out,
+        // has nothing to compare against without it.
+        throw new ConvexError(
+          `${picked.reason} Or say which room this pass starts from.`,
+        );
+      }
+      origin = picked.tag as Doc<"tapLocations">;
+    }
+
+    if (origin._id === destination._id) {
+      throw new ConvexError(
+        "The destination is the same room the pass starts in, so there would be nowhere " +
+          "to tap. Pick somewhere else.",
+      );
+    }
+
+    const clean = trimReason(reason);
+    const id = await ctx.db.insert("hallPasses", {
+      studentId,
+      studentNumber: student.studentNumber,
+      originLocationId: origin._id,
+      assignedDestinationLocationId: destination._id,
+      state: "active",
+      ...(clean ? { reason: clean } : {}),
+      requestedAt: now,
+      approvedAt: now,
+      approvedByEmail: teacher.email,
+      originTeacherEmail: teacher.email,
+      requestedVia: "teacher" as const,
+      expiresAfterMinutes,
+    });
+
+    return {
+      id,
+      state: "active" as const,
+      origin: origin.name,
+      destination: destination.name,
+      expiresAfterMinutes,
     };
   },
 });
@@ -793,6 +1180,14 @@ export const liveBoard = query({
           elapsedMinutes: elapsedMinutes(p as any, now),
           overdue: isOverdue(p as any, now),
           requestedAt: p.requestedAt,
+          // Who it was routed to and from which lesson. Null on passes written
+          // before requests came from a timetable, and null is the honest answer
+          // for those: nobody recorded it, and back-filling a teacher onto an old
+          // record would be inventing the one fact the record is evidence of.
+          teacherEmail: p.originTeacherEmail ?? null,
+          period: p.originPeriod ?? null,
+          courseName: p.originCourseName ?? null,
+          requestedVia: p.requestedVia ?? null,
         };
       }),
     );
@@ -807,5 +1202,78 @@ export const liveBoard = query({
     // is missing a child who is out of the building, which is the one thing it
     // exists to never do.
     return { passes: sorted, generatedAt: now, truncatedStates };
+  },
+});
+
+/**
+ * MY OWN CLASSES' PASSES. The board a teacher actually acts on.
+ *
+ * The whole reason requests now carry a teacher: `liveBoard` shows every live
+ * pass in the school to every member of staff, which is right for the front
+ * office and useless in a classroom. A teacher with 34 children in front of them
+ * needs the three requests that are theirs, at the top, not one screen with the
+ * whole building on it.
+ *
+ * THROUGH by_originTeacherEmail, WHICH IS WHY THAT INDEX EXISTS. Filtering the
+ * school-wide board in JavaScript would read every live pass to show one
+ * teacher's three, which is the shape liveBoard itself had to be rescued from.
+ *
+ * Passes written before requests came from a timetable have no
+ * originTeacherEmail and therefore appear on NOBODY's class board. That is
+ * deliberate and it is not a gap: they are still on liveBoard, which is where
+ * they always were, and inventing a teacher for them would be inventing the one
+ * fact a hall pass record exists to hold.
+ */
+export const myClassBoard = query({
+  args: {},
+  handler: async (ctx) => {
+    const teacher = await requireStaff(ctx);
+    const now = new Date().toISOString();
+
+    // Newest first and bounded. A live pass blocks every later request for that
+    // student, so live rows are always among the newest; this window is a few
+    // days of one teacher's traffic even if every child asked every period.
+    const rows = await ctx.db
+      .query("hallPasses")
+      .withIndex("by_originTeacherEmail", (q) => q.eq("originTeacherEmail", teacher.email))
+      .order("desc")
+      .take(CLASS_BOARD_WINDOW);
+
+    const live = rows.filter((p) => !isTerminal(p.state));
+
+    const decorated = await Promise.all(
+      live.map(async (p) => {
+        const student = await ctx.db.get(p.studentId);
+        const destination = p.assignedDestinationLocationId
+          ? await ctx.db.get(p.assignedDestinationLocationId)
+          : null;
+        return {
+          id: p._id,
+          state: p.state,
+          studentName: student ? `${student.firstName} ${student.lastName}`.trim() : "(unknown)",
+          studentNumber: p.studentNumber ?? null,
+          reason: p.reason ?? null,
+          period: p.originPeriod ?? null,
+          courseName: p.originCourseName ?? null,
+          // Where they were SENT, when a teacher said. Null on a student-opened
+          // pass, where the destination is not known until they tap.
+          assignedDestination: destination?.name ?? null,
+          elapsedMinutes: elapsedMinutes(p as any, now),
+          overdue: isOverdue(p as any, now),
+          requestedAt: p.requestedAt,
+          expiresAfterMinutes: p.expiresAfterMinutes,
+        };
+      }),
+    );
+
+    return {
+      teacher: { name: teacher.name, email: teacher.email },
+      // Overdue first, then longest out. Same comparator as the school-wide
+      // board, because "which row does a human look at first" has one answer.
+      passes: sortLiveBoard(decorated),
+      // Told rather than hidden, for the same reason liveBoard reports its cap.
+      truncated: rows.length === CLASS_BOARD_WINDOW,
+      generatedAt: now,
+    };
   },
 });

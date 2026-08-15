@@ -92,6 +92,59 @@ console.log("\nThe tap order is enforced");
   check("and records outAt", arrive.field === "outAt");
 }
 
+console.log("\nA teacher-assigned destination is the tag that validates the pass");
+{
+  // A teacher picked the student and the place. "Tap the destination NFC tag in
+  // order to validate the pass" is only true if tapping a DIFFERENT tag does
+  // not: without this the assignment is decoration, and a student sent to the
+  // office could validate at any sticker in the building while the record shows
+  // a completed trip to the office.
+  const sent = {
+    ...base,
+    state: "active",
+    approvedAt: T(1),
+    assignedDestinationLocationId: OFFICE,
+  };
+
+  const elsewhere = applyTap(sent, BATHROOM, T(2));
+  check("tapping somewhere other than the assigned place is REFUSED", !elsewhere.ok);
+  check("and it says to tap the place on the pass", /place on your pass/i.test(elsewhere.reason));
+
+  const arrived = applyTap(sent, OFFICE, T(2));
+  check("tapping the assigned place validates it", arrived.ok && arrived.nextState === "out");
+
+  // ORDER STILL HOLDS. The origin refusal comes first, so a student tapping
+  // their own classroom on the way out hears about that rather than about the
+  // destination, which is the tap that would otherwise close an unused pass.
+  const onTheWayOut = applyTap(sent, ROOM, T(2));
+  check("and the origin is still refused before anything else", !onTheWayOut.ok);
+  check(
+    "with the origin message, not the destination one",
+    /where you are going/i.test(onTheWayOut.reason),
+  );
+
+  // A pass with no assignment is unchanged. This is the student-initiated path
+  // and the whole of the behaviour that existed before.
+  const free = { ...base, state: "active", approvedAt: T(1) };
+  check("an unassigned pass accepts any tag but the origin", applyTap(free, OFFICE, T(2)).ok);
+  check("and still refuses the origin", !applyTap(free, ROOM, T(2)).ok);
+
+  // The assignment constrains the FIRST tap only. Coming back is still the
+  // classroom, never the place they were sent.
+  const outThere = {
+    ...sent,
+    state: "out",
+    outAt: T(2),
+    destinationLocationId: OFFICE,
+  };
+  check(
+    "the assigned destination does not close the pass",
+    !applyTap(outThere, OFFICE, T(6)).ok,
+    "only the classroom of origin ends a trip",
+  );
+  check("the classroom does", applyTap(outThere, ROOM, T(6)).ok);
+}
+
 console.log("\nOnly the origin closes a pass");
 {
   const out = { ...base, state: "out", approvedAt: T(1), outAt: T(2), destinationLocationId: BATHROOM };
