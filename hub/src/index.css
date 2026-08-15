@@ -1,0 +1,226 @@
+@import "tailwindcss";
+
+/* ============================================================
+   WILDCAT HUB — student surface
+   ------------------------------------------------------------
+   The world this has to belong to is styles.css §"STUDENT PORTAL
+   (#studentPassView)": near-black ground, light cards, school
+   palette on the card faces. Those values are repeated here rather
+   than imported, because this bundle must not depend on the live
+   app's stylesheet and must not be able to change it.
+
+   Motion tokens are the same names and the same numbers as
+   wildcat-motion.css, which is itself the rb-standards table:
+   ease-out for entering, <300ms for UI, count-up allowed longer
+   because it is explanatory.
+   ============================================================ */
+
+@font-face {
+  font-family: "Visuelt";
+  src: url("/fonts/VisueltPro-Regular.woff") format("woff");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Visuelt";
+  src: url("/fonts/VisueltPro-Bold.woff") format("woff");
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Visuelt";
+  src: url("/fonts/VisueltPro-ExtraLight.woff") format("woff");
+  font-weight: 200;
+  font-display: swap;
+}
+
+@theme {
+  /* School palette. Exactly the values in styles.css:1518. */
+  --color-wc-blue: #2f67a7;
+  --color-wc-blue-dark: #24517f;
+  --color-wc-blue-deep: #0c447c;
+  --color-wc-blue-pale: #b5d4f4;
+  --color-wc-blue-mist: #e6f1fb;
+  --color-wc-ink: #0e0e0e;
+  --color-wc-orange: #d9742f;
+  --color-wc-yellow: #e6e280;
+  --color-wc-border: #e3e8ef;
+
+  /* The student surface's own ground, from styles.css:3313. */
+  --color-wp-ground: #0b0b0e;
+  --color-wp-raise: #14161b;
+  --color-wp-fg: #f6f4ef;
+  --color-wp-dim: #8e9199;
+
+  --radius-card: 17px;
+
+  --font-sans: "Visuelt", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+
+  /* StarBorder ships expecting these two in a tailwind.config.js that
+     Tailwind v4 does not have. Declared here so the component works as
+     published instead of silently losing its animation. */
+  --animate-star-movement-bottom: star-movement-bottom linear infinite alternate;
+  --animate-star-movement-top: star-movement-top linear infinite alternate;
+
+  @keyframes star-movement-bottom {
+    0% {
+      transform: translate(0%, 0%);
+      opacity: 1;
+    }
+    100% {
+      transform: translate(-100%, 0%);
+      opacity: 0;
+    }
+  }
+  @keyframes star-movement-top {
+    0% {
+      transform: translate(0%, 0%);
+      opacity: 1;
+    }
+    100% {
+      transform: translate(100%, 0%);
+      opacity: 0;
+    }
+  }
+}
+
+:root {
+  --wp-hair: rgba(255, 255, 255, 0.1);
+  --wp-hair-strong: rgba(255, 255, 255, 0.18);
+
+  /* rb-standards easing table. */
+  --wcm-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --wcm-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+
+  /* rb-standards duration table. Nothing in the UI band exceeds 300ms. */
+  --wcm-dur-press: 160ms;
+  --wcm-dur-tip: 160ms;
+  --wcm-dur-menu: 200ms;
+  --wcm-dur-pane: 180ms;
+  --wcm-dur-modal: 260ms;
+  --wcm-dur-enter: 260ms;
+  --wcm-dur-count: 700ms; /* explanatory, allowed longer */
+  --wcm-stagger: 45ms;
+
+  --wcm-rise: 10px;
+  --wcm-scale-press: 0.97;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-wp-ground);
+  color: var(--color-wp-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  -webkit-tap-highlight-color: transparent;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+ul,
+li,
+figure {
+  margin: 0;
+  padding: 0;
+}
+ul {
+  list-style: none;
+}
+
+/* The soft blue lift behind the header, so the black is not flat black.
+   Same gradient as styles.css:3387. */
+.wp-lift::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 340px;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(
+    120% 100% at 50% 0%,
+    rgba(47, 103, 167, 0.13) 0%,
+    rgba(11, 11, 14, 0) 68%
+  );
+}
+
+/* ------------------------------------------------------------
+   Press feedback. 160ms, scale 0.97, ease-out — the whole of the
+   rb-standards physicality rule, applied once here rather than per
+   component. A press happens hundreds of times a day, which is why
+   it is a transition and not an animation: interruptible, and it
+   never delays the tap.
+   ------------------------------------------------------------ */
+.wc-press {
+  transition: transform var(--wcm-dur-press) var(--wcm-ease-out),
+    background-color var(--wcm-dur-press) ease,
+    border-color var(--wcm-dur-press) ease;
+}
+.wc-press:active {
+  transform: scale(var(--wcm-scale-press));
+}
+
+/* Hover is gated. A touch device fires a false hover on tap and the
+   effect then sticks to the element the finger left behind. */
+@media (hover: hover) and (pointer: fine) {
+  .wc-hover-raise:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+    border-color: var(--wp-hair-strong);
+  }
+}
+
+/* Focus is never removed, only restyled. This is used on Chromebooks
+   with keyboards and by students who navigate by tab. */
+:focus-visible {
+  outline: 2px solid var(--color-wc-blue-pale);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+/* Scrollbars inside the dark panels. */
+.wc-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.wc-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.wc-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+}
+
+/* ------------------------------------------------------------
+   Reduced motion. Movement goes, opacity stays — "fewer and gentler,
+   not zero". The JS side reads the same query (useReducedMotion) and
+   stops handing distance/stagger to the React Bits components, because
+   a GSAP tween cannot be overridden from CSS.
+   ------------------------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.15s !important;
+    scroll-behavior: auto !important;
+  }
+  .wc-press:active {
+    transform: none;
+  }
+}
