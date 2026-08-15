@@ -2,8 +2,9 @@
 /**
  * Does the React Bits Pro registry actually answer for us?
  *
- *   npm run rb:check                 # checks auth-5
- *   npm run rb:check -- hero-3       # checks something else
+ *   npm run rb:check                    # checks auth-5 in the pro namespace
+ *   npm run rb:check -- hero-3          # a different block
+ *   npm run rb:check -- CountUp starter # the starter namespace
  *
  * Exists because every failure here looks the same from the shadcn CLI: "not
  * found". A wrong base URL, a missing key, an expired licence and a component
@@ -28,24 +29,27 @@ if (existsSync(envPath)) {
   }
 }
 
-const base = (env.REACTBITS_PRO_REGISTRY || '').replace(/\/+$/, '');
-const token = env.REACTBITS_PRO_TOKEN || '';
-const item = process.argv.slice(2).find((a) => !a.startsWith('-')) || 'auth-5';
+// Endpoints are public knowledge — the registry's own 401 body documents them.
+// Only the key is secret, so only the key comes from the environment.
+const NAMESPACE = {
+  pro: 'https://pro.reactbits.dev/api/r/pro',
+  starter: 'https://pro.reactbits.dev/api/r/starter',
+};
 
-const missing = [
-  !base && 'REACTBITS_PRO_REGISTRY',
-  !token && 'REACTBITS_PRO_TOKEN',
-].filter(Boolean);
+const token = env.REACTBITS_LICENSE_KEY || '';
+const args = process.argv.slice(2).filter((a) => !a.startsWith('-'));
+const item = args[0] || 'auth-5';
+const ns = args[1] === 'starter' ? 'starter' : 'pro';
 
-if (missing.length) {
-  console.error(`\nNot configured. Missing in hub/.env.local: ${missing.join(', ')}`);
-  console.error('\n  cp env.local.example .env.local');
-  console.error('  # then paste both values from https://pro.reactbits.dev dashboard\n');
-  console.error('Never put either value in components.json — this repo is public.\n');
+if (!token) {
+  console.error('\nNo licence key. Add it to hub/.env.local:\n');
+  console.error('  cp env.local.example .env.local');
+  console.error('  # REACTBITS_LICENSE_KEY=<your key from pro.reactbits.dev>\n');
+  console.error('Never put it in components.json — this repo is public.\n');
   process.exit(1);
 }
 
-const url = `${base}/${item}.json`;
+const url = `${NAMESPACE[ns]}/${item}.json`;
 console.log(`\nGET ${url}`);
 console.log(`Authorization: Bearer ${'*'.repeat(8)}${token.length > 4 ? token.slice(-4) : ''}  (${token.length} chars)\n`);
 
@@ -54,7 +58,7 @@ try {
   res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
 } catch (err) {
   console.error(`Could not reach the host at all: ${err.message}`);
-  console.error('Check REACTBITS_PRO_REGISTRY is a URL, with no trailing slash.\n');
+  console.error('That is a network problem, not a configuration one.\n');
   process.exit(1);
 }
 
@@ -66,7 +70,7 @@ if (res.ok && looksJson) {
   console.log(`OK — "${item_.title || item_.name}" is reachable.`);
   if (item_.dependencies?.length) console.log(`   pulls: ${item_.dependencies.join(', ')}`);
   console.log(`   files: ${(item_.files || []).map((f) => f.path).join(', ') || '(none listed)'}`);
-  console.log(`\nInstall it:\n  npm run rb -- @reactbits-pro/${item}\n`);
+  console.log(`\nInstall it:\n  npm run rb -- @reactbits-${ns}/${item}\n`);
   process.exit(0);
 }
 
@@ -84,9 +88,9 @@ if (!looksJson) {
   console.error('  @reactbits-starter = components + setup skill (all plans)');
   console.error('  @reactbits-pro     = blocks + Application UI + Agent Kit (Pro & Ultimate)\n');
 } else if (res.status === 404) {
-  console.error(`Reached the registry, but "${item}" is not there.`);
-  console.error('Either the base URL is wrong, or that item name does not exist in your plan.');
-  console.error('Check the exact name on the component page in the Pro dashboard.\n');
+  console.error(`The registry answered, but "${item}" is not in the ${ns} namespace.`);
+  console.error('Check the exact name in the dashboard catalogue, or try the other namespace:');
+  console.error(`  npm run rb:check -- ${item} ${ns === 'pro' ? 'starter' : 'pro'}\n`);
 }
 console.error(`First 200 chars of the response:\n${body.slice(0, 200)}\n`);
 process.exit(1);

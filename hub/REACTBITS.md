@@ -110,61 +110,60 @@ durations, so the two surfaces move the same way.
 MIT + Commons Clause. Free for personal and commercial use; you cannot sell the
 components themselves.
 
-## Pro components (`@reactbits-pro`)
+## Pro components
 
-Pro is a separate, token-gated registry. It is configured in `components.json`,
-but **both** the base URL and the token are read from the environment:
+Pro is a separate, licence-gated registry. Both namespaces are configured in
+`components.json` with their real endpoints — those are not secret, the
+registry's own 401 body documents them:
 
 ```json
-"@reactbits-pro": {
-  "url": "${REACTBITS_PRO_REGISTRY}/{name}.json",
-  "headers": { "Authorization": "Bearer ${REACTBITS_PRO_TOKEN}" }
-}
+"@reactbits-starter": { "url": "https://pro.reactbits.dev/api/r/starter/{name}.json", ... }
+"@reactbits-pro":     { "url": "https://pro.reactbits.dev/api/r/pro/{name}.json", ... }
 ```
 
-To use it, copy `env.local.example` to `.env.local` and fill in both values from
-your React Bits Pro dashboard. Then:
+- `@reactbits-starter` — components and the setup skill. All paid plans.
+- `@reactbits-pro` — blocks, Application UI and the Agent Kit. Pro and Ultimate.
+
+`auth-5` is a block, so it needs the Pro namespace.
+
+**One value is missing and it is the only secret:**
 
 ```bash
+cd hub
+cp env.local.example .env.local     # paste REACTBITS_LICENSE_KEY
+npm run rb:check                    # confirms the key before you install anything
 npm run rb -- @reactbits-pro/auth-5
 ```
 
-**This repository is public.** A Pro token in `components.json` is a Pro token
-published to the internet, which is why nothing is hardcoded there — `.env.local`
-is covered by the `*.local` rule in `.gitignore` and must stay that way.
-
-The base URL lives in the environment too, rather than being hardcoded, so a
-stale or wrong URL fails on the machine that has it rather than 404ing quietly
-for everyone who clones the repo. `https://pro.reactbits.dev/r` was tried and
-returns "not found" for `auth-5`, so the real base path has to come from the
-dashboard.
-
-Note the example file is `env.local.example`, with no leading dot: `.gitignore`
-line 7 is `.env.*`, which silently swallows anything named `.env.local.example`.
-
-### Two Pro namespaces, one key
-
-Per pro.reactbits.dev/docs/installation:
-
-- `@reactbits-starter` — components and the setup skill. All plans.
-- `@reactbits-pro` — blocks, Application UI and the Agent Kit. Pro and Ultimate only.
-
-`auth-5` is a block, so it needs the Pro namespace. Both are configured and both
-read the same two environment variables.
+`.env.local` is covered by the `*.local` rule in `.gitignore` and must stay
+that way: this repository is public, so a key committed here is a key published.
 
 ### Check the key before you debug anything else
 
 ```bash
-npm run rb:check            # checks auth-5
-npm run rb:check -- hero-3  # checks something else
+npm run rb:check                     # auth-5, pro namespace
+npm run rb:check -- hero-3           # a different block
+npm run rb:check -- CountUp starter  # the starter namespace
 ```
 
 Every Pro failure looks identical coming out of the shadcn CLI — "not found" —
-whether the base URL is wrong, the key is missing, the licence has lapsed, or
-the item simply is not in your plan. `rb:check` separates them by reading the
-status and the content type before anything interprets the body, and it prints
-only the last four characters of the key.
+whether the key is missing, the licence has lapsed, the item is not in your
+plan, or you asked the wrong namespace. `rb:check` separates them by reading
+status and content type before anything interprets the body, and prints only
+the last four characters of the key.
 
-Note it checks HTML **before** status: pro.reactbits.dev is a single-page app
-that answers unknown paths with a styled 404, so a wrong base URL arrives as
-`404` and sends you hunting for a component name that was never the problem.
+It checks for HTML **before** status, because a website answering a wrong path
+with a styled 404 sends you hunting for a component name that was never the
+problem. That is exactly how the free registry fails too: directory URLs there
+return marketing HTML with a `200`.
+
+### How the endpoints were found
+
+Not from the docs — the docs page is a single-page app and the snippet is
+rendered client-side. `https://pro.reactbits.dev/llms.txt` is the
+agent-readable version of the site, and it names the skill endpoint in passing,
+which reveals the `/api/r/<namespace>/<name>` shape. Requesting that path
+unauthenticated returns a JSON 401 whose message contains the complete
+`components.json` snippet and the exact environment variable name. Worth
+remembering: when a docs site hides its config behind client-side rendering,
+try `/llms.txt`, then read the error body of the endpoint itself.

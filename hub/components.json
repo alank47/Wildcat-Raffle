@@ -19,15 +19,15 @@
   "registries": {
     "@react-bits": "https://reactbits.dev/r/{name}.json",
     "@reactbits-starter": {
-      "url": "${REACTBITS_PRO_REGISTRY}/{name}.json",
+      "url": "https://pro.reactbits.dev/api/r/starter/{name}.json",
       "headers": {
-        "Authorization": "Bearer ${REACTBITS_PRO_TOKEN}"
+        "Authorization": "Bearer ${REACTBITS_LICENSE_KEY}"
       }
     },
     "@reactbits-pro": {
-      "url": "${REACTBITS_PRO_REGISTRY}/{name}.json",
+      "url": "https://pro.reactbits.dev/api/r/pro/{name}.json",
       "headers": {
-        "Authorization": "Bearer ${REACTBITS_PRO_TOKEN}"
+        "Authorization": "Bearer ${REACTBITS_LICENSE_KEY}"
       }
     }
   }
