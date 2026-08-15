@@ -1,6 +1,8 @@
 import { internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
+import { primaryEmailByStudentNumber } from "./identityRules";
+import { attachStudentEmail } from "./rosterEmail";
 
 /**
  * Scheduled PowerSchool sync, run by Convex rather than by a laptop.
@@ -115,9 +117,26 @@ export const syncFromPowerSchool = internalAction({
 
     const tok = await token(host, need("PS_CLIENT_ID"), need("PS_CLIENT_SECRET"));
 
+    // ---- student email: the sign in join key ----
+    // FETCHED FIRST, because the roster rows below have to carry it. The
+    // roster PowerQuery does not return student email, and me:get looks up a
+    // student's classes BY that address, so a roster written before the
+    // addresses are known is a roster no student can ever match. It used to be
+    // fetched at the end, purely for the students table, and every student's
+    // schedule was empty as a result.
+    const emailQuery = await namedQuery(host, tok, `${prefix}.student_email`, { schoolid });
+    const emailRows = emailQuery.rows
+      .map((r) => ({
+        studentNumber: s(r.student_number) ?? "",
+        email: s(r.email_address) ?? "",
+        isPrimary: r.is_primary ?? null,
+      }))
+      .filter((r) => r.studentNumber && r.email);
+    const emailByNumber = primaryEmailByStudentNumber(emailRows);
+
     // ---- enrollment ----
     const roster = await namedQuery(host, tok, `${prefix}.roster`, { schoolid, termid });
-    const rosterRows = roster.rows
+    const rosterRowsWithoutEmail = roster.rows
       .map((r) => ({
         studentNumber: s(r.student_number) ?? "",
         firstName: s(r.first_name) ?? "",
@@ -139,6 +158,10 @@ export const syncFromPowerSchool = internalAction({
       }))
       .filter((r) => r.studentNumber);
 
+    // Stamp each row with its student's address. This is what makes
+    // psRoster.by_studentEmail answer anything.
+    const rosterRows = attachStudentEmail(rosterRowsWithoutEmail, emailByNumber);
+
     // Loop: one call deletes a batch, because the whole table no longer fits
     // in a single execution's read budget. Bounded so a bug here cannot spin.
     for (let pass = 0; pass < 20; pass++) {
@@ -146,10 +169,17 @@ export const syncFromPowerSchool = internalAction({
         await ctx.runMutation(internal.psSync.clearRoster, {});
       if (cleared.remaining === "none") break;
     }
+    // upsertRoster already counted the rows it could not key, and the count was
+    // thrown away. That is how "no student has a schedule" stayed invisible:
+    // the signal existed and nothing carried it out to where anyone looks.
+    // rosterMissingStudentEmail equal to rosterRows means the join is dead.
+    let rosterMissingStudentEmail = 0;
     for (let i = 0; i < rosterRows.length; i += 200) {
-      await ctx.runMutation(internal.psSync.upsertRoster, {
-        syncedAt, rows: rosterRows.slice(i, i + 200),
-      });
+      const res: { missingStudentEmail: number } = await ctx.runMutation(
+        internal.psSync.upsertRoster,
+        { syncedAt, rows: rosterRows.slice(i, i + 200) },
+      );
+      rosterMissingStudentEmail += res.missingStudentEmail;
     }
 
     // ---- students: identity and enrollment ONLY, never balances ----
@@ -229,19 +259,13 @@ export const syncFromPowerSchool = internalAction({
       });
     }
 
-    // ---- student email: the sign-in join key ----
-    // Runs here, on the cron, rather than only in the local script. It is the
-    // one field student sign in cannot work without, so making it depend on a
+    // ---- student email onto the students table ----
+    // The addresses were fetched at the top of this run, because the roster
+    // needed them. This writes the same rows onto the student records, which
+    // is what a signed in student's identity and balances are looked up by.
+    // Runs on the cron rather than only in the local script: it is the one
+    // field student sign in cannot work without, so making it depend on a
     // laptop being awake was the wrong call.
-    const emailQuery = await namedQuery(host, tok, `${prefix}.student_email`, { schoolid });
-    const emailRows = emailQuery.rows
-      .map((r) => ({
-        studentNumber: s(r.student_number) ?? "",
-        email: s(r.email_address) ?? "",
-        isPrimary: r.is_primary ?? null,
-      }))
-      .filter((r) => r.studentNumber && r.email);
-
     let emailResult: any = { studentsWithEmail: 0, totalStudents: 0 };
     for (let i = 0; i < emailRows.length; i += 200) {
       emailResult = await ctx.runMutation(internal.studentEmail.setStudentEmails, {
@@ -253,6 +277,10 @@ export const syncFromPowerSchool = internalAction({
       reason: reason ?? "scheduled",
       syncedAt,
       rosterRows: rosterRows.length,
+      // Roster rows nobody can look up by email. Equal to rosterRows means no
+      // student can see a schedule at all; a small number is students whose
+      // PowerSchool record has no address yet.
+      rosterMissingStudentEmail,
       students: students.length,
       studentsCreated: created,
       studentsUpdated: updated,
