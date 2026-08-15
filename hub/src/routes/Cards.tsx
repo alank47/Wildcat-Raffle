@@ -2,18 +2,24 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import Stack from "@/components/Stack";
 import Counter from "@/components/Counter";
-import BlurText from "@/components/BlurText";
 import GlareHover from "@/components/GlareHover";
 import StarBorder from "@/components/StarBorder";
-import { useSession } from "@/lib/session";
+import { useArrival } from "@/lib/arrive";
 import { useFinePointer, useReducedMotion } from "@/lib/motion";
-import { count, money, str, toSlot } from "@/lib/shapes";
+import {
+  useCardsModel,
+  type CardsModel,
+  type LivePassSummary,
+  type WalletCard,
+  type WalletModel,
+} from "@/lib/viewmodel";
 import { Barcode } from "@/ui/Barcode";
 import {
   Loaded,
+  PageTitle,
   Provenance,
   SectionLabel,
-  Stat,
+  StatRow,
   Surface,
   Unavailable,
   friendlyTime,
@@ -23,11 +29,17 @@ import {
 /**
  * THE CARD HOME.
  *
- * React Bits' `Stack` is the component for this and it is the right one: the
- * existing student portal (styles.css §"STUDENT PORTAL") is already a Wallet-
- * geometry stack, so this is the same idea rendered by a component instead of by
- * 400 lines of hand-written transform maths, and a student who has used one
- * knows how to use the other.
+ * TWO HALVES, DELIBERATELY. `useCardsModel()` reads the session, normalises the
+ * two wire shapes, and decides what is missing and what the words for that are.
+ * Everything below it draws a model and reads nothing else. That is what makes
+ * the wallet swappable for a React Bits Pro block without the swap touching a
+ * single line that decides whether a balance exists — see PRO-SWAP.md.
+ *
+ * React Bits' `Stack` is the right component for the deck: the existing student
+ * portal (styles.css §"STUDENT PORTAL") is already a Wallet-geometry stack, so
+ * this is the same idea rendered by a component instead of by 400 lines of
+ * hand-written transform maths, and a student who has used one knows how to use
+ * the other.
  *
  * TWO THINGS I CHANGED ABOUT HOW IT IS USED, both because a wallet is a tool:
  *
@@ -43,63 +55,89 @@ import {
  *      thing they were reading.
  */
 export default function Cards() {
-  const { me, passCard, studentView } = useSession();
-  const reduced = useReducedMotion();
-
-  const firstName =
-    (me.state === "ok" ? str(me.data.firstName) : null) ?? "Wildcat";
-
-  return (
-    <div className="space-y-5">
-      <header>
-        {/* BlurText, words, once. The greeting is the one place on this screen
-            where a slower reveal is right: it is the moment the page stops being
-            a loading state and becomes yours. */}
-        <BlurText
-          text={`Hi, ${firstName}`}
-          animateBy="words"
-          direction="top"
-          delay={reduced ? 0 : 90}
-          stepDuration={reduced ? 0.12 : 0.26}
-          threshold={0}
-          className="text-[30px] font-bold leading-[1.06] tracking-[-0.022em] text-wp-fg"
-        />
-        <MetaLine />
-      </header>
-
-      <LivePassBanner />
-
-      <Loaded from={passCard} rows={1}>
-        {(pass) => <Wallet pass={pass} />}
-      </Loaded>
-
-      <Loaded from={studentView} rows={2}>
-        {(view) => <Totals view={view} />}
-      </Loaded>
-    </div>
-  );
+  const model = useCardsModel();
+  return <CardsView model={model} />;
 }
 
-/* ------------------------------------------------------------------ */
+/* ==================================================================
+   Presentation
+   ================================================================== */
 
-function MetaLine() {
-  const { me, passCard } = useSession();
-  const grade =
-    me.state === "ok" ? str(me.data.gradeLevel) : null;
-  const number =
-    passCard.state === "ok"
-      ? str((passCard.data.student as Record<string, unknown> | undefined)?.studentNumber)
-      : null;
-
-  const bits = [
-    grade ? `Grade ${grade}` : null,
-    number ? `Student ${number}` : null,
-  ].filter(Boolean);
+function CardsView({ model }: { model: CardsModel }) {
 
   return (
-    <p className="mt-1.5 text-[13.5px] tabular-nums text-wp-dim">
-      {bits.length ? bits.join("  ·  ") : "Westbrook Academy"}
-    </p>
+    /* The entrance is a CSS stagger on the direct children — header, banner,
+       wallet, totals — at 45ms apart. It is decorative, so nothing here waits
+       for it: only opacity and transform move, every element is hit-testable
+       from the first frame, and if the animation never runs the screen is
+       already correct. */
+    <div className="wc-stagger space-y-5">
+      <header>
+        <PageTitle size="text-[30px]">{model.greeting}</PageTitle>
+        <p className="mt-1.5 text-[13.5px] tabular-nums text-wp-dim">
+          {model.meta}
+        </p>
+      </header>
+
+      {model.livePass && <LivePassBanner pass={model.livePass} />}
+
+      <Loaded from={model.wallet} rows={1}>
+        {(wallet) => <Wallet model={wallet} />}
+      </Loaded>
+
+      <Loaded from={model.totals} rows={2}>
+        {(totals) => (
+          /* A fragment, so these land as separate children of the page's
+             wc-stagger and continue its beat instead of arriving as one block.
+             It also means they animate on the frame the query RESOLVES: the
+             skeleton is a different element, so the reveal lands on the data
+             rather than on the placeholder. */
+          <>
+            <Surface>
+              <SectionLabel>Raffle tickets</SectionLabel>
+              <div className="mt-4">
+                <StatRow
+                  stats={totals.tickets}
+                  columns="grid-cols-2 sm:grid-cols-4"
+                  accentFirst
+                />
+              </div>
+              <p className="mt-5 border-t border-[var(--wp-hair)] pt-4 text-[13px] leading-[1.5] text-wp-dim">
+                {totals.ticketsNote}
+              </p>
+              <Provenance {...totals.provenance} />
+            </Surface>
+
+            {/* Wildcat Cash is NOT repeated here. It has a card of its own with
+                the balance, earned and spent on it; a second copy on the same
+                screen is two places to keep right and one more thing to scroll
+                past. */}
+            <Surface>
+              <SectionLabel>Attendance</SectionLabel>
+              {totals.attendance.available ? (
+                <div className="mt-4">
+                  <StatRow
+                    stats={totals.attendance.stats}
+                    columns="grid-cols-2"
+                  />
+                </div>
+              ) : (
+                <div className="mt-3">
+                  <Unavailable reason={totals.attendance.reason} />
+                </div>
+              )}
+            </Surface>
+
+            {model.checkedAt && (
+              <p className="px-1 text-[11.5px] text-wp-dim/80">
+                Cards checked with the school server at{" "}
+                {friendlyTime(model.checkedAt)}.
+              </p>
+            )}
+          </>
+        )}
+      </Loaded>
+    </div>
   );
 }
 
@@ -109,47 +147,37 @@ function MetaLine() {
  * continuously animating element in the signed-in app, it appears only while a
  * pass is actually open, and it goes away the moment the pass closes.
  */
-function LivePassBanner() {
-  const { passCard } = useSession();
-  if (passCard.state !== "ok") return null;
-
-  const hp = passCard.data.hallPass as Record<string, unknown> | undefined;
-  if (!hp || hp.available !== true) return null;
-
-  const overdue = hp.overdue === true;
-  const elapsed = count(hp.elapsedMinutes);
-  const limit = count(hp.expiresAfterMinutes);
-
+function LivePassBanner({ pass }: { pass: LivePassSummary }) {
   return (
     <StarBorder
       as="div"
       className="block w-full"
-      color={overdue ? "#D9742F" : "#B5D4F4"}
+      color={pass.overdue ? "#D9742F" : "#B5D4F4"}
       speed="7s"
       thickness={1}
       innerClassName={`relative z-1 rounded-[19px] border px-5 py-4 ${
-        overdue
+        pass.overdue
           ? "border-wc-orange/50 bg-[#2A1A10]"
           : "border-wc-blue/50 bg-[#0E1B2C]"
       }`}
     >
       <div className="flex items-center justify-between gap-4 text-left">
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.09em] text-wc-blue-pale">
-            {overdue ? "Hall pass overdue" : "Hall pass open"}
+          <p className="text-[11px] font-bold tracking-[0.09em] text-wc-blue-pale uppercase">
+            {pass.overdue ? "Hall pass overdue" : "Hall pass open"}
           </p>
           <p className="mt-1 text-[15px] font-bold text-wp-fg">
-            {elapsed === null
+            {pass.elapsed === null
               ? "Out of class"
-              : `Out for ${elapsed} minute${elapsed === 1 ? "" : "s"}`}
-            {limit !== null && (
-              <span className="font-normal text-wp-dim"> of {limit}</span>
+              : `Out for ${pass.elapsed} minute${pass.elapsed === 1 ? "" : "s"}`}
+            {pass.limit !== null && (
+              <span className="font-normal text-wp-dim"> of {pass.limit}</span>
             )}
           </p>
         </div>
         <Link
           to="/pass"
-          className="wc-press shrink-0 rounded-full bg-white/10 px-4 py-2 text-[13px] font-bold text-wp-fg"
+          className="wc-press wc-hover-raise shrink-0 rounded-full border border-transparent bg-white/10 px-4 py-2 text-[13px] font-bold text-wp-fg"
         >
           Open
         </Link>
@@ -158,172 +186,37 @@ function LivePassBanner() {
   );
 }
 
-/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+   The deck
+   ------------------------------------------------------------------ */
 
-type CardDef = { key: string; chip: string; face: ReactNode };
+function Wallet({ model }: { model: WalletModel }) {
+  const [topKey, setTopKey] = useState(model.initialTop);
 
-function Wallet({ pass }: { pass: Record<string, unknown> }) {
-  const { studentView } = useSession();
-  const fine = useFinePointer();
-
-  const student = (pass.student ?? {}) as Record<string, unknown>;
-  const studentId = toSlot(pass.studentId, "student number");
-  const lunchId = toSlot(pass.lunchId, "lunch number");
-  const clever = toSlot(pass.cleverBadge, "Clever badge");
-  const hp = (pass.hallPass ?? {}) as Record<string, unknown>;
-  const cash =
-    studentView.state === "ok"
-      ? (studentView.data.wildcatCash as Record<string, unknown> | undefined)
-      : undefined;
-
-  const name = [str(student.firstName), str(student.lastName)]
-    .filter(Boolean)
-    .join(" ");
-
-  // Hoisted out of the dependency array: a JSON.stringify() written inline in
-  // deps cannot be checked statically, and these two objects are new references
-  // on every render, so comparing them by identity would rebuild every card face
-  // each time anything on the page changed.
-  const hpKey = JSON.stringify(hp);
-  const cashKey = JSON.stringify(cash ?? null);
-
-  const defs: CardDef[] = useMemo(() => {
-    const list: CardDef[] = [
-      {
-        key: "clever",
-        chip: "Clever",
-        face: (
-          <Face tint="#1B1D24" label="Clever badge">
-            <Missing reason={clever.reason} />
-          </Face>
-        ),
-      },
-      {
-        key: "lunch",
-        chip: "Lunch",
-        face: (
-          <Face tint="#1B1D24" label="Lunch number">
-            {lunchId.available && lunchId.value ? (
-              <Barcode value={lunchId.value} />
-            ) : (
-              <Missing reason={lunchId.reason} />
-            )}
-          </Face>
-        ),
-      },
-      {
-        key: "pass",
-        chip: "Hall pass",
-        face: (
-          <Face tint="#24517F" label="Hall pass">
-            <HallPassFace hp={hp} />
-          </Face>
-        ),
-      },
-      {
-        key: "cash",
-        chip: "Cash",
-        face: (
-          <Face tint="#1A2E1F" label="Wildcat Cash">
-            <CashFace cash={cash} />
-          </Face>
-        ),
-      },
-      {
-        key: "id",
-        chip: "Student ID",
-        face: (
-          <Face
-            tint="#0C447C"
-            label="Student ID"
-            name={name}
-            meta={
-              <div className="flex items-end gap-8">
-                <div>
-                  <p className="text-[10.5px] font-bold uppercase tracking-[0.09em] text-white/55">
-                    School
-                  </p>
-                  <p className="mt-1 text-[14px] font-bold text-white">
-                    Westbrook Academy
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[10.5px] font-bold uppercase tracking-[0.09em] text-white/55">
-                    Grade
-                  </p>
-                  {/* `students.grade` is a number on some records and a string
-                      on others, depending on which sync wrote it. Both are
-                      accepted; neither is coerced into a made-up value. */}
-                  <p className="mt-1 text-[14px] font-bold text-white">
-                    {count(student.grade) !== null
-                      ? String(count(student.grade))
-                      : (str(student.grade) ?? "—")}
-                  </p>
-                </div>
-              </div>
-            }
-          >
-            {studentId.available && studentId.value ? (
-              <GlareHover
-                width="100%"
-                height="auto"
-                background="transparent"
-                borderRadius="10px"
-                borderColor="transparent"
-                glareColor="#ffffff"
-                glareOpacity={fine ? 0.28 : 0}
-                glareAngle={-38}
-                glareSize={200}
-                /* 260ms, the app's modal band. React Bits ships 650ms, which on
-                   a laminated-card sweep reads as a slow wipe rather than light
-                   catching an edge. */
-                transitionDuration={260}
-                className="!cursor-default !border-0"
-                style={{ display: "block" }}
-              >
-                <Barcode value={studentId.value} />
-              </GlareHover>
-            ) : (
-              <Missing reason={studentId.reason} />
-            )}
-          </Face>
-        ),
-      },
-    ];
-    return list;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    name,
-    fine,
-    student.grade,
-    studentId.available,
-    studentId.value,
-    studentId.reason,
-    lunchId.available,
-    lunchId.value,
-    lunchId.reason,
-    clever.reason,
-    hpKey,
-    cashKey,
-  ]);
-
-  // The ID starts on top: Stack draws the LAST entry frontmost.
-  const [topKey, setTopKey] = useState("id");
+  const faces = useMemo(
+    () => model.cards.map((card) => ({ key: card.key, node: <Face card={card} /> })),
+    [model.cards],
+  );
 
   const ordered = useMemo(() => {
-    const rest = defs.filter((d) => d.key !== topKey);
-    const top = defs.find((d) => d.key === topKey);
-    return top ? [...rest, top] : defs;
-  }, [defs, topKey]);
+    const rest = faces.filter((f) => f.key !== topKey);
+    const top = faces.find((f) => f.key === topKey);
+    // Stack draws the LAST entry frontmost.
+    return top ? [...rest, top] : faces;
+  }, [faces, topKey]);
 
   /* MUST be memoized. Stack re-syncs its internal deck from `cards` in an effect
      keyed on the array's identity, so a fresh array every render is an infinite
      setState loop. */
-  const cards = useMemo(() => ordered.map((d) => d.face), [ordered]);
+  const cards = useMemo(() => ordered.map((f) => f.node), [ordered]);
 
   return (
     <section aria-label="Your cards">
-      <div className="h-[292px] w-full sm:h-[318px]">
+      {/* The lift is on the deck, gated to a fine pointer in CSS. It says the
+          object can be picked up, which on a pointer device it can: the top
+          card drags. On a touch screen the same gesture exists and no hover
+          rule ever fires. */}
+      <div className="wc-hover-deck h-[292px] w-full sm:h-[318px]">
         <Stack
           cards={cards}
           randomRotation={false}
@@ -335,22 +228,22 @@ function Wallet({ pass }: { pass: Record<string, unknown> }) {
       </div>
 
       <div className="mt-5 flex flex-wrap gap-2">
-        {defs
+        {model.cards
           .slice()
           .reverse()
-          .map((d) => (
+          .map((card) => (
             <button
-              key={d.key}
+              key={card.key}
               type="button"
-              onClick={() => setTopKey(d.key)}
-              aria-pressed={topKey === d.key}
+              onClick={() => setTopKey(card.key)}
+              aria-pressed={topKey === card.key}
               className={`wc-press wc-hover-raise rounded-full border px-3.5 py-1.5 text-[12.5px] font-bold ${
-                topKey === d.key
+                topKey === card.key
                   ? "border-wc-blue-pale/60 bg-wc-blue-pale/15 text-wc-blue-pale"
                   : "border-[var(--wp-hair)] bg-white/[0.03] text-wp-dim"
               }`}
             >
-              {d.chip}
+              {card.chip}
             </button>
           ))}
       </div>
@@ -358,28 +251,56 @@ function Wallet({ pass }: { pass: Record<string, unknown> }) {
   );
 }
 
-function Face({
-  tint,
-  label,
-  name,
-  meta,
-  children,
-}: {
-  tint: string;
-  label: string;
-  name?: string;
-  meta?: ReactNode;
-  children: ReactNode;
-}) {
+function Face({ card }: { card: WalletCard }) {
+  const fine = useFinePointer();
+  const body = card.body;
+
+  const payload: ReactNode =
+    body.kind === "missing" ? (
+      <Missing reason={body.reason} />
+    ) : body.kind === "barcode" && body.glare ? (
+      <GlareHover
+        width="100%"
+        height="auto"
+        background="transparent"
+        borderRadius="10px"
+        borderColor="transparent"
+        glareColor="#ffffff"
+        /* The one hover effect in this app that is driven by JavaScript rather
+           than by a media query, so it is gated in JavaScript instead: a touch
+           device fires a synthetic mouseenter on tap and would leave a wipe
+           halfway across a barcode somebody is holding up at a till. */
+        glareOpacity={fine ? 0.28 : 0}
+        glareAngle={-38}
+        glareSize={200}
+        /* 260ms, the app's modal band. React Bits ships 650ms, which on a
+           laminated-card sweep reads as a slow wipe rather than light catching
+           an edge. */
+        transitionDuration={260}
+        className="!cursor-default !border-0"
+        style={{ display: "block" }}
+      >
+        <Barcode value={body.value} />
+      </GlareHover>
+    ) : body.kind === "barcode" ? (
+      <Barcode value={body.value} />
+    ) : body.kind === "cash" ? (
+      <CashFace body={body} />
+    ) : (
+      <HallPassFace body={body} />
+    );
+
   return (
     <div
       /* Only the ID card pushes its payload to the bottom, because a barcode
          belongs where a hand holds the phone. A card whose whole content is a
          sentence reads better with the sentence at the top and the space below
          it, not floating at the bottom of an empty rectangle. */
-      className={`flex h-full w-full flex-col p-5 ${meta ? "justify-between" : ""}`}
+      className={`flex h-full w-full flex-col p-5 ${
+        card.identity ? "justify-between" : ""
+      }`}
       style={{
-        background: tint,
+        background: card.tint,
         // The shadow is thrown upward onto the card above, which is what makes a
         // stack read as physical rather than as a list. Same values as
         // styles.css:3495.
@@ -388,15 +309,43 @@ function Face({
       }}
     >
       <div className="flex items-start justify-between gap-3">
-        <p className="text-[11px] font-bold uppercase tracking-[0.09em] text-white/65">
-          {label}
+        <p className="text-[11px] font-bold tracking-[0.09em] text-white/65 uppercase">
+          {card.label}
         </p>
-        {name && (
-          <p className="text-right text-[13px] font-bold text-white">{name}</p>
+        {card.identity?.name && (
+          <p className="text-right text-[13px] font-bold text-white">
+            {card.identity.name}
+          </p>
         )}
       </div>
-      {meta && <div className="mt-4 flex-1">{meta}</div>}
-      <div className={meta ? "mt-3" : "mt-4"}>{children}</div>
+
+      {card.identity && (
+        <div className="mt-4 flex-1">
+          <div className="flex items-end gap-8">
+            <Printed label="School" value={card.identity.school} />
+            <Printed label="Grade" value={card.identity.grade} />
+          </div>
+        </div>
+      )}
+
+      {/* `flex-1` on a card WITHOUT a printed identity block, so a face whose
+          payload is a two-part layout — the Cash card's balance at the top and
+          its earned/spent footer — can push the footer to the bottom edge
+          instead of stacking everything under the heading and leaving two
+          thirds of a green rectangle empty. The ID card is excluded because its
+          identity block already owns that space. */}
+      <div className={card.identity ? "mt-3" : "mt-4 flex-1"}>{payload}</div>
+    </div>
+  );
+}
+
+function Printed({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[10.5px] font-bold tracking-[0.09em] text-white/55 uppercase">
+        {label}
+      </p>
+      <p className="mt-1 text-[14px] font-bold text-white">{value}</p>
     </div>
   );
 }
@@ -411,30 +360,33 @@ function Missing({ reason }: { reason: string | null }) {
   );
 }
 
-function HallPassFace({ hp }: { hp: Record<string, unknown> }) {
-  if (hp.available === true) {
-    const elapsed = count(hp.elapsedMinutes);
+function HallPassFace({
+  body,
+}: {
+  body: Extract<WalletCard["body"], { kind: "pass" }>;
+}) {
+  if (body.open) {
     return (
       <div>
-        <p className="text-[26px] font-bold leading-none text-white">
-          {hp.overdue === true ? "Overdue" : "Open"}
+        <p className="text-[26px] leading-none font-bold text-white">
+          {body.overdue ? "Overdue" : "Open"}
         </p>
         <p className="mt-2 text-[12.5px] text-white/70">
-          {elapsed === null
+          {body.elapsed === null
             ? "Out of class now."
-            : `Out for ${elapsed} minute${elapsed === 1 ? "" : "s"}.`}
+            : `Out for ${body.elapsed} minute${body.elapsed === 1 ? "" : "s"}.`}
         </p>
       </div>
     );
   }
   return (
     <div>
-      <p className="text-[22px] font-bold leading-none text-white">
+      <p className="text-[22px] leading-none font-bold text-white">
         No pass open
       </p>
       <Link
         to="/pass"
-        className="wc-press mt-3 inline-block rounded-full bg-white/15 px-4 py-2 text-[13px] font-bold text-white"
+        className="wc-press wc-hover-raise mt-3 inline-block rounded-full border border-transparent bg-white/15 px-4 py-2 text-[13px] font-bold text-white"
       >
         Ask for one
       </Link>
@@ -449,36 +401,32 @@ function HallPassFace({ hp }: { hp: Record<string, unknown> }) {
  * lot of motion for a figure you glance at, so it gets exactly one home — the
  * balance, which is money, which is the number a student most wants to watch
  * change. Everything else counts up flatly with CountUp.
+ *
+ * AND IT ROLLS ONLY WHEN THE BALANCE HAS CHANGED. The odometer starts from zero
+ * and the roll is nearly a second, so a wallet that re-rolls on every visit
+ * shows "$0" to a student several times an hour. `useArrival` is what keeps it
+ * to the one moment the figure is genuinely new.
  */
-function CashFace({ cash }: { cash: Record<string, unknown> | undefined }) {
+function CashFace({
+  body,
+}: {
+  body: Extract<WalletCard["body"], { kind: "cash" }>;
+}) {
   const reduced = useReducedMotion();
-  const balance = money(cash?.balance);
-
-  if (balance === null) {
-    return (
-      <p className="text-[12.5px] leading-[1.5] text-white/70">
-        Your Wildcat Cash balance is not on your record yet. It is not zero —
-        nobody has told the app what it is. The front office can check.
-      </p>
-    );
-  }
-
-  const whole = Math.max(0, Math.round(balance));
-  const earned = money(cash?.earned);
-  const spent = money(cash?.spent);
+  const arriving = useArrival("cards.balance", body.balance);
 
   return (
     <div className="flex h-full flex-col justify-between">
       <div>
         <div className="flex items-end gap-1 text-wc-yellow">
-          <span className="pb-1 text-[22px] font-bold leading-none">$</span>
-          {reduced ? (
-            <span className="text-[46px] font-bold leading-none tabular-nums">
-              {whole}
+          <span className="pb-1 text-[22px] leading-none font-bold">$</span>
+          {reduced || !arriving ? (
+            <span className="text-[46px] leading-none font-bold tabular-nums">
+              {body.balance}
             </span>
           ) : (
             <Counter
-              value={whole}
+              value={body.balance}
               fontSize={46}
               gap={0}
               horizontalPadding={0}
@@ -500,125 +448,15 @@ function CashFace({ cash }: { cash: Record<string, unknown> | undefined }) {
         {/* Earned and spent are shown as words when the sync has not sent them.
             A card that prints "$0 spent" at a child who has spent money is the
             same class of lie as a missing grade rendered as an F. */}
-        <div>
-          <p className="text-[10.5px] font-bold uppercase tracking-[0.09em] text-white/55">
-            Earned
-          </p>
-          <p className="mt-1 text-[15px] font-bold text-white">
-            {earned === null ? "Not synced" : `$${formatNumber(earned)}`}
-          </p>
-        </div>
-        <div>
-          <p className="text-[10.5px] font-bold uppercase tracking-[0.09em] text-white/55">
-            Spent
-          </p>
-          <p className="mt-1 text-[15px] font-bold text-white">
-            {spent === null ? "Not synced" : `$${formatNumber(spent)}`}
-          </p>
-        </div>
+        <Printed
+          label="Earned"
+          value={body.earned === null ? "Not synced" : `$${formatNumber(body.earned)}`}
+        />
+        <Printed
+          label="Spent"
+          value={body.spent === null ? "Not synced" : `$${formatNumber(body.spent)}`}
+        />
       </div>
     </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-
-function Totals({ view }: { view: Record<string, unknown> }) {
-  const points = (view.points ?? {}) as Record<string, unknown>;
-  const attendance = (view.attendance ?? {}) as Record<string, unknown>;
-
-  const weeks = count(points.weeksQualified);
-  const entries = count(points.bigRaffleEntries);
-
-  return (
-    <div className="space-y-4">
-      <Surface>
-        <SectionLabel>Raffle tickets</SectionLabel>
-        <div className="mt-4 grid grid-cols-2 gap-y-6 sm:grid-cols-4">
-          <Stat
-            value={count(points.total)}
-            label="Total"
-            missing="No record"
-            accent="text-wc-blue-pale"
-            delay={0.05}
-          />
-          <Stat
-            value={count(points.pbis)}
-            label="PBIS"
-            missing="No record"
-            size="text-[24px]"
-            delay={0.12}
-          />
-          <Stat
-            value={count(points.attendance)}
-            label="Attendance"
-            missing="No record"
-            size="text-[24px]"
-            delay={0.19}
-          />
-          <Stat
-            value={count(points.academic)}
-            label="Academic"
-            missing="No record"
-            size="text-[24px]"
-            delay={0.26}
-          />
-        </div>
-
-        <p className="mt-5 border-t border-[var(--wp-hair)] pt-4 text-[13px] leading-[1.5] text-wp-dim">
-          {weeks === null
-            ? "Weeks qualified is not on your record yet — that is not the same as zero."
-            : `Qualified ${weeks} week${weeks === 1 ? "" : "s"} so far.`}
-          {entries !== null &&
-            ` ${entries} big raffle ${entries === 1 ? "entry" : "entries"}.`}
-        </p>
-        <Provenance dataAsOf={str(view.dataAsOf)} />
-      </Surface>
-
-      {/* Wildcat Cash is NOT repeated here. It has a card of its own with the
-          balance, earned and spent on it; a second copy on the same screen is
-          two places to keep right and one more thing to scroll past. */}
-      <div className="grid gap-4">
-        <Surface>
-          <SectionLabel>Attendance</SectionLabel>
-          {attendance.available === false ? (
-            <div className="mt-3">
-              <Unavailable reason={str(attendance.reason)} />
-            </div>
-          ) : (
-            <div className="mt-4 flex gap-8">
-              <Stat
-                value={count(attendance.daysAbsentTerm)}
-                label="Absent, term"
-                missing="Not on file"
-                size="text-[24px]"
-                delay={0.05}
-              />
-              <Stat
-                value={count(attendance.daysTardyTerm)}
-                label="Tardy, term"
-                missing="Not on file"
-                size="text-[24px]"
-                delay={0.12}
-              />
-            </div>
-          )}
-        </Surface>
-      </div>
-
-      <ServerTime />
-    </div>
-  );
-}
-
-function ServerTime() {
-  const { passCard } = useSession();
-  if (passCard.state !== "ok") return null;
-  const t = str(passCard.data.serverTime);
-  if (!t) return null;
-  return (
-    <p className="px-1 text-[11.5px] text-wp-dim/80">
-      Cards checked with the school server at {friendlyTime(t)}.
-    </p>
   );
 }

@@ -62,9 +62,9 @@ export default function App() {
       <main className="relative z-1 mx-auto w-full max-w-[560px] px-4 pb-16">
         {demo && <DemoBanner mode={demo} />}
 
-        {/* Keyed on the path: AnimatedContent runs its entrance on mount, so a
-            new key per route is what makes it a route transition rather than a
-            one-off on first paint. */}
+        {/* Keyed on the path: the entrance is a CSS animation and a CSS
+            animation only plays on a NEW element, so a fresh key per route is
+            what turns a one-off on first paint into a route transition. */}
         <RouteFrame routeKey={location.pathname}>
           <Routes location={location}>
             <Route path="/" element={<Navigate to="/cards" replace />} />

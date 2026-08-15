@@ -79,9 +79,33 @@ fix them in place. Four found while building this app, all fixed and marked
   Now takes `cycles` / `startDelay`, with the frame loop in a child that
   UNMOUNTS when finished: an early `return` inside the hook would not help,
   because motion keeps calling the frame callback regardless.
+- **CountUp** rendered `0` and stayed there until motion's `useInView` reported
+  the span on screen — so every figure below the fold was a hard zero. On the
+  Grades screen a student with five absences was shown "Absent, year: 0",
+  indefinitely, in the one app whose whole premise is that a missing figure is
+  never printed as a real one. The observer is gone; a backstop timer now writes
+  the true value outright and latches, which also fixed a second wrong number
+  (the overdamped spring came to rest at 90.9% for an average of 91.6%).
+- **Stepper** had its slide direction inverted, so pressing "Next" moved the
+  form backwards; it animated its content box from `height: 0` on every visit;
+  its progress connector animated `width`; and its default indicator variants
+  are React Bits violet with a green submit button.
+- **AnimatedContent, AnimatedList and BlurText** all made a JavaScript library
+  load-bearing for whether something was VISIBLE — the same defect that lost the
+  sign-in button. AnimatedContent renders `className="invisible"` and restores
+  it from a GSAP timeline behind a ScrollTrigger; it wrapped every signed-in
+  screen. AnimatedList rests each row at `opacity: 0` behind a Framer
+  `useInView`; it held the timetable and the gradebook. BlurText rests every
+  word at `opacity: 0` behind an IntersectionObserver; it held all four page
+  headings. All three are deleted, replaced by the `wc-enter` / `wc-stagger` CSS
+  in `index.css`, whose resting state is visible and whose worst failure is no
+  animation.
 
-Two of those five are the same defect — a `requestAnimationFrame` loop with no
-end condition. Check for it first in anything new.
+Two of the first five are the same defect — a `requestAnimationFrame` loop with
+no end condition. Four more are the second defect: an invisible resting state
+that only a JS library can undo. **Check for both first in anything new.** The
+rule is that animation decorates a correct screen; it never decides whether the
+screen is correct.
 
 Worth checking on anything new: does it run a rAF loop forever, does it attach
 window-level key handlers, does it hardcode a colour (React Bits violet is
@@ -89,10 +113,17 @@ window-level key handlers, does it hardcode a colour (React Bits violet is
 
 ## Weight
 
-The sixteen components here, plus gsap and motion, come to **541 KB of
-JavaScript, 182 KB gzipped, in one chunk**. These are school Chromebooks. Prefer
+The eleven components here, plus gsap and motion, come to **546 KB of
+JavaScript, 183 KB gzipped, in one chunk**. These are school Chromebooks. Prefer
 the dependency-free four, check `dependencies` before adding another animation
 library, and split routes before this grows.
+
+Five components have been deleted since that figure was first written
+(FadeContent, MagicBento, AnimatedContent, AnimatedList, BlurText) and it barely
+moved, because gsap and motion are the weight and both are still pulled — gsap
+by `SplitText` and `PillNav`, motion by six others. **The one change that would
+actually matter is dropping gsap**, which means replacing those two components;
+it is not done, and it is the largest outstanding item on this bundle.
 
 ## Motion standard
 
@@ -125,6 +156,12 @@ registry's own 401 body documents them:
 - `@reactbits-pro` — blocks, Application UI and the Agent Kit. Pro and Ultimate.
 
 `auth-5` is a block, so it needs the Pro namespace.
+
+**The swap procedure is written up in [PRO-SWAP.md](./PRO-SWAP.md)** — which
+section of each route a Pro block replaces, the exact model shape it has to
+accept, and the six checks to run afterwards. The four routes were restructured
+around that seam (`lib/viewmodel.ts` derives, `routes/*.tsx` draws) so the swap
+does not touch the code that decides what a student's record says.
 
 **One value is missing and it is the only secret:**
 

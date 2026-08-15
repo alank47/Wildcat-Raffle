@@ -16,6 +16,7 @@ import {
   isAuthError,
 } from "./convex";
 import { googleSignOut, tokenExpiry } from "./google";
+import { resetArrivals } from "./arrive";
 import {
   demoMode,
   fixtureMe,
@@ -305,6 +306,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       /* ignore */
     }
     googleSignOut();
+    // Shared Chromebook. The next student's balance and tickets are new
+    // figures and have to be allowed to count; without this they would be
+    // compared against the last student's and sit still. See lib/arrive.ts.
+    resetArrivals();
     runIdRef.current++;
     lastCredential.current = null;
     setCanRetry(false);

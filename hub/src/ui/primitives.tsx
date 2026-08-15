@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
 import SpotlightCard from "@/components/SpotlightCard";
 import CountUp from "@/components/CountUp";
-import AnimatedContent from "@/components/AnimatedContent";
+import { useArrival } from "@/lib/arrive";
 import { useFinePointer, useReducedMotion } from "@/lib/motion";
 import type { Panel as PanelShape } from "@/lib/shapes";
+import type { StatModel } from "@/lib/viewmodel";
 import type { Async } from "@/lib/session";
 
 /* ------------------------------------------------------------------
@@ -14,6 +15,11 @@ import type { Async } from "@/lib/session";
  * The one card surface for the whole app. SpotlightCard does the work — a
  * pointer-following wash of school blue, which is cheap (one radial gradient,
  * no per-frame layout) and only ever runs on a device that has a pointer.
+ *
+ * NO LIFT ON THE PANEL ITSELF. Every one of these holds something that already
+ * answers to a pointer — a row, a tile, a chip — and two things moving under
+ * one cursor makes the smaller one, which is the one carrying the information,
+ * harder to read. The panel's hover response is the wash and nothing else.
  */
 export function Surface({
   children,
@@ -35,6 +41,42 @@ export function Surface({
     >
       {children}
     </SpotlightCard>
+  );
+}
+
+/**
+ * The heading at the top of a route. A plain <h1>.
+ *
+ * IT USED TO BE React Bits' `BlurText`, AND THAT WAS THE SAME BUG A FOURTH
+ * TIME. BlurText splits the string into words, renders each as a `motion.span`
+ * whose `initial` is `{opacity: 0, filter: 'blur(10px)', y: -50}`, and only
+ * animates toward opacity 1 once an IntersectionObserver reports the paragraph
+ * on screen. So "Hi, Jordan", "Schedule", "Grades" and "Hall pass" all rested
+ * at invisible and needed both an observer and a Framer tween to appear. It
+ * also animated `filter`, which is neither transform nor opacity, and left
+ * `will-change: transform, filter, opacity` on every word for the life of the
+ * page.
+ *
+ * AND IT SHOULD NOT HAVE BEEN ANIMATED SEPARATELY AT ALL. rb-standards'
+ * frequency table: something seen tens of times a day gets its animation
+ * "removed or drastically reduced". The sign-in screen is opened once a morning
+ * and earns its per-character reveal; these four are opened all day. The
+ * heading now rides the page's own `wc-stagger` as part of its <header>, which
+ * is one 260ms rise it shares with everything else on the screen.
+ */
+export function PageTitle({
+  children,
+  size = "text-[28px]",
+}: {
+  children: ReactNode;
+  size?: string;
+}) {
+  return (
+    <h1
+      className={`${size} leading-[1.06] font-bold tracking-[-0.022em] text-wp-fg`}
+    >
+      {children}
+    </h1>
   );
 }
 
@@ -94,14 +136,27 @@ export function NotOnFile({ what }: { what: string }) {
    ------------------------------------------------------------------ */
 
 /**
- * Every number that arrives from the server counts up on arrival. This is the
- * one place motion is spent generously: it is reveal-on-load, it happens once
- * per screen visit, and it is explanatory — the count is what tells a student
- * the figure is theirs and freshly fetched rather than a placeholder.
+ * A number ARRIVING from the server counts up. A number that was already there
+ * does not.
  *
- * `value === null` NEVER renders 0. It renders what is missing, in words.
+ * The count is explanatory motion — it is what tells a student the figure is
+ * theirs and freshly fetched rather than a placeholder. That meaning survives
+ * exactly as long as the count is rare. Every count-up in React Bits starts on
+ * MOUNT, and a mount is not an arrival: the route frame is keyed on the path so
+ * the whole screen re-mounts on every navigation, `refresh()` re-renders all
+ * four panels after a hall-pass mutation, and StrictMode mounts twice. Tapping
+ * Cards, Grades, Cards used to roll the same four figures up from zero three
+ * times, and by the third the motion means nothing except that the app is
+ * fidgeting.
+ *
+ * `useArrival` decides, per named figure, whether this value is new to the page.
+ * When it is not, the number is simply printed. See lib/arrive.ts.
+ *
+ * `value === null` NEVER renders 0 and never counts. It renders what is
+ * missing, in words.
  */
 export function Stat({
+  id,
   value,
   label,
   suffix = "",
@@ -111,6 +166,8 @@ export function Stat({
   duration = 0.7,
   delay = 0,
 }: {
+  /** Unique app-wide. Two Stats sharing an id would silence each other. */
+  id: string;
   value: number | null;
   label: string;
   suffix?: string;
@@ -121,33 +178,91 @@ export function Stat({
   delay?: number;
 }) {
   const reduced = useReducedMotion();
+  const arriving = useArrival(id, value);
+
   return (
-    <div>
-      {/* Deliberately NOT tabular-nums. Tabular figures give the thousands
-          comma a full digit cell, so "1,040" renders as "1 , 040". The count-up
-          changes width for half a second either way; a readable number for the
-          rest of the time is the better trade. */}
-      <div
-        className={`${size} font-bold leading-none ${accent}`}
-        aria-label={value === null ? missing : `${value}${suffix}`}
-      >
-        {value === null ? (
-          <span className="text-[15px] font-normal text-wp-dim">{missing}</span>
-        ) : reduced ? (
-          <>
-            {formatNumber(value)}
-            {suffix}
-          </>
-        ) : (
-          <>
-            <CountUp to={value} duration={duration} delay={delay} separator="," />
-            {suffix}
-          </>
-        )}
+    <div className="wc-hover-tile">
+      {/* THE WHOLE TILE IS HIDDEN FROM ASSISTIVE TECH and replaced by one
+          sentence below.
+
+          Not fussiness: CountUp animates by writing `textContent` every frame,
+          so a screen reader pointed at the visible element reads whatever
+          number happens to be passing — a student on a screen reader was being
+          told their ticket total was 11, then 43, then 68. The one sentence is
+          the final value, printed once, and it carries the label with it so
+          "74" is heard as "Total, 74" rather than as a loose number. */}
+      <div aria-hidden="true">
+        {/* Deliberately NOT tabular-nums. Tabular figures give the thousands
+            comma a full digit cell, so "1,040" renders as "1 , 040". The
+            count-up changes width for half a second either way; a readable
+            number for the rest of the time is the better trade. */}
+        <div className={`${size} font-bold leading-none ${accent}`}>
+          {value === null ? (
+            <span className="text-[15px] font-normal text-wp-dim">
+              {missing}
+            </span>
+          ) : reduced || !arriving ? (
+            <>
+              {formatNumber(value)}
+              {suffix}
+            </>
+          ) : (
+            <>
+              <CountUp
+                to={value}
+                duration={duration}
+                delay={delay}
+                separator=","
+              />
+              {suffix}
+            </>
+          )}
+        </div>
+        <p className="wc-tile-label mt-1.5 text-[12px] font-medium tracking-[0.02em] text-wp-dim transition-colors duration-[160ms]">
+          {label}
+        </p>
       </div>
-      <p className="mt-1.5 text-[12px] font-medium tracking-[0.02em] text-wp-dim">
-        {label}
-      </p>
+      <span className="sr-only">
+        {label}:{" "}
+        {value === null ? missing : `${formatNumber(value)}${suffix}`}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * A row of figures from a model. The only thing it adds over mapping Stat by
+ * hand is the stagger: 70ms apart, so a row of four reads left to right instead
+ * of arriving as one block. Capped, because the last one still has to land
+ * inside the count.
+ */
+export function StatRow({
+  stats,
+  columns,
+  size,
+  accentFirst = false,
+}: {
+  stats: StatModel[];
+  columns: string;
+  size?: string;
+  /** The headline figure of the group, in school blue. */
+  accentFirst?: boolean;
+}) {
+  return (
+    <div className={`grid ${columns} gap-y-6 gap-x-4`}>
+      {stats.map((stat, i) => (
+        <Stat
+          key={stat.id}
+          id={stat.id}
+          value={stat.value}
+          label={stat.label}
+          suffix={stat.suffix}
+          missing={stat.missing}
+          accent={accentFirst && i === 0 ? "text-wc-blue-pale" : "text-wp-fg"}
+          size={accentFirst && i === 0 ? undefined : (size ?? "text-[24px]")}
+          delay={Math.min(i * 0.07, 0.28)}
+        />
+      ))}
     </div>
   );
 }
@@ -163,11 +278,25 @@ export function formatNumber(n: number): string {
    ------------------------------------------------------------------ */
 
 /**
- * The route transition. AnimatedContent, keyed on the path so it replays on
- * navigation, and deliberately restrained: 10px of rise (the --wcm-rise token)
- * over 260ms, which is the app's existing pane-swap band. React Bits' default is
- * 100px over 800ms, which on a nav a student uses all day would feel like the
- * page is being winched into place.
+ * The route transition. 10px of rise over 260ms, keyed on the path so it
+ * replays on navigation.
+ *
+ * IT USED TO BE `AnimatedContent`, AND THAT WAS THE SIGN-IN BUTTON BUG WITH THE
+ * WHOLE APP INSIDE IT.
+ *
+ * AnimatedContent renders its wrapper as `<div className="invisible ...">` —
+ * Tailwind's `visibility: hidden` — and the ONLY thing that ever restores it is
+ * `gsap.set(el, { visibility: 'visible' })` inside a useEffect, behind a
+ * ScrollTrigger that has to fire `onEnter` before the timeline plays. So the
+ * resting state of every signed-in screen was invisible, and three separate
+ * things had to go right — gsap parses and registers, the effect runs, the
+ * trigger fires — before a student saw their timetable. A backgrounded tab on a
+ * cold Chromebook is exactly the case that broke the sign-in button, and this
+ * was the same wager for four screens instead of one.
+ *
+ * It is now a CSS keyframe that only ever takes opacity and position AWAY from
+ * a visible resting state. The worst case of a failed animation here is no
+ * animation. Nothing has to load for the schedule to be on screen.
  */
 export function RouteFrame({
   routeKey,
@@ -176,19 +305,10 @@ export function RouteFrame({
   routeKey: string;
   children: ReactNode;
 }) {
-  const reduced = useReducedMotion();
   return (
-    <AnimatedContent
-      key={routeKey}
-      distance={reduced ? 0 : 10}
-      duration={reduced ? 0.15 : 0.26}
-      ease="power2.out"
-      threshold={0}
-      initialOpacity={0}
-      scale={1}
-    >
+    <div key={routeKey} className="wc-enter">
       {children}
-    </AnimatedContent>
+    </div>
   );
 }
 

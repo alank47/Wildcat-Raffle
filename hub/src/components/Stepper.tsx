@@ -128,12 +128,26 @@ export default function Stepper({
           <div className={`px-8 pb-8 ${footerClassName}`}>
             <div className={`mt-10 flex ${currentStep !== 1 ? 'justify-between' : 'justify-end'}`}>
               {currentStep !== 1 && (
+                /* WILDCAT CHANGE: the `hover:` variants are gone from both
+                   default buttons, along with React Bits' green.
+
+                   Both are overridden by backButtonProps / nextButtonProps at
+                   the only call site, so nothing on screen changes. What
+                   changes is the compiled stylesheet: Tailwind emitted
+                   `.hover\:bg-green-600:hover` and `.hover\:text-neutral-700:hover`
+                   into a bare `@media (hover: hover)` block, which is one test,
+                   not two. `hover: hover` is true of a stylus and of a hybrid
+                   laptop with a touchscreen; `pointer: fine` is what separates
+                   a trackpad from a fingertip. Every hover rule in this app now
+                   lives behind BOTH tests in index.css and there are no others
+                   left in the bundle — which is a property you can grep for,
+                   and a defaulted-in green hover would have quietly broken it. */
                 <button
                   onClick={handleBack}
                   className={`duration-350 rounded px-2 py-1 transition ${
                     currentStep === 1
                       ? 'pointer-events-none opacity-50 text-neutral-400'
-                      : 'text-neutral-400 hover:text-neutral-700'
+                      : 'text-neutral-400'
                   }`}
                   {...backButtonProps}
                 >
@@ -142,7 +156,7 @@ export default function Stepper({
               )}
               <button
                 onClick={isLastStep ? handleComplete : handleNext}
-                className="duration-350 flex items-center justify-center rounded-full bg-green-500 py-1.5 px-3.5 font-medium tracking-tight text-white transition hover:bg-green-600 active:bg-green-700"
+                className="duration-350 flex items-center justify-center rounded-full bg-wc-blue py-1.5 px-3.5 font-medium tracking-tight text-white transition"
                 {...nextButtonProps}
               >
                 {isLastStep ? 'Complete' : nextButtonText}
@@ -172,10 +186,27 @@ function StepContentWrapper({
 }: StepContentWrapperProps) {
   const [parentHeight, setParentHeight] = useState<number>(0);
 
+  /**
+   * WILDCAT CHANGE: `auto` until the first measurement.
+   *
+   * As published this starts at `height: 0` and springs open to the height
+   * measured in a layout effect — so the first paint of the hall-pass form is a
+   * collapsed strip that then unfolds, every single time the screen is opened.
+   * It is also the one animation in the app that animates HEIGHT, which
+   * rb-standards puts on the never list because it costs layout, and it was
+   * paying that cost to produce a flash.
+   *
+   * With `auto` on the first render there is nothing to animate to: the layout
+   * effect measures before paint and the number it writes is the height the box
+   * already has. Every LATER change — step two being taller than step one — is
+   * still a real measured transition, which is what the spring was for.
+   */
+  const height = isCompleted ? 0 : parentHeight === 0 ? 'auto' : parentHeight;
+
   return (
     <motion.div
       style={{ position: 'relative', overflow: 'hidden' }}
-      animate={{ height: isCompleted ? 0 : parentHeight }}
+      animate={{ height }}
       transition={{ type: 'spring', duration: 0.4 }}
       className={className}
     >
@@ -224,9 +255,21 @@ function SlideTransition({ children, direction, onHeightReady }: SlideTransition
   );
 }
 
+/**
+ * WILDCAT CHANGE: the direction was inverted.
+ *
+ * As published, going FORWARD (dir = 1) brought the new step in from `-100%`,
+ * i.e. from the left, while the old step left to `+50%`, i.e. to the right — so
+ * pressing "Next" moved the form backwards and the two panels crossed through
+ * each other. rb-standards calls this spatial consistency, and it is the one
+ * thing a slide transition is for: on a three-step form the animation is the
+ * only thing telling a student whether they just advanced or just went back.
+ *
+ * Forward: the new step arrives from the right, the old one leaves to the left.
+ */
 const stepVariants: Variants = {
   enter: (dir: number) => ({
-    x: dir >= 0 ? '-100%' : '100%',
+    x: dir >= 0 ? '100%' : '-100%',
     opacity: 0
   }),
   center: {
@@ -234,7 +277,7 @@ const stepVariants: Variants = {
     opacity: 1
   },
   exit: (dir: number) => ({
-    x: dir >= 0 ? '50%' : '-50%',
+    x: dir >= 0 ? '-50%' : '50%',
     opacity: 0
   })
 };
@@ -283,10 +326,16 @@ function StepIndicator({ step, currentStep, onClickStep, disableStepIndicators =
       initial={false}
     >
       <motion.div
+        /* WILDCAT CHANGE: #5227FF is React Bits' violet. This branch of the
+           component is only reached when a caller does NOT pass
+           renderStepIndicator — the hall pass screen does — but a default that
+           paints a purple circle into a school app is a trap left lying in the
+           source for whoever adds the second Stepper. School blue, and the
+           complete state stops being a different blue from the active one. */
         variants={{
           inactive: { scale: 1, backgroundColor: '#222', color: '#a3a3a3' },
-          active: { scale: 1, backgroundColor: '#5227FF', color: '#5227FF' },
-          complete: { scale: 1, backgroundColor: '#5227FF', color: '#3b82f6' }
+          active: { scale: 1, backgroundColor: '#2F67A7', color: '#2F67A7' },
+          complete: { scale: 1, backgroundColor: '#2F67A7', color: '#B5D4F4' }
         }}
         transition={{ duration: 0.3 }}
         className="flex h-8 w-8 items-center justify-center rounded-full font-semibold"
@@ -308,23 +357,28 @@ interface StepConnectorProps {
 }
 
 function StepConnector({ isComplete }: StepConnectorProps) {
-  /* WILDCAT CHANGE: #5227FF is React Bits' violet and neutral-600 is its grey.
-     renderStepIndicator lets a caller replace the circles but not this line, so
-     the one unthemeable part of the component would have shipped a purple bar
-     into a blue school app. School blue on a hairline track. */
+  /* WILDCAT CHANGE, twice over.
+     1. #5227FF is React Bits' violet and neutral-600 is its grey.
+        renderStepIndicator lets a caller replace the circles but not this line,
+        so the one unthemeable part of the component would have shipped a purple
+        bar into a blue school app. School blue on a hairline track.
+     2. It animated `width`, which is the one property rb-standards names
+        outright: width triggers layout, paint and composite on every frame, and
+        it does it inside a flex row whose siblings then reflow with it. A
+        scaleX from a left origin is the same picture on the compositor alone. */
   const lineVariants: Variants = {
-    incomplete: { width: 0, backgroundColor: 'transparent' },
-    complete: { width: '100%', backgroundColor: '#2F67A7' }
+    incomplete: { scaleX: 0 },
+    complete: { scaleX: 1 }
   };
 
   return (
     <div className="relative mx-2 h-0.5 flex-1 overflow-hidden rounded bg-white/10">
       <motion.div
-        className="absolute left-0 top-0 h-full"
+        className="absolute left-0 top-0 h-full w-full origin-left bg-wc-blue"
         variants={lineVariants}
         initial={false}
         animate={isComplete ? 'complete' : 'incomplete'}
-        transition={{ duration: 0.4 }}
+        transition={{ duration: 0.28, ease: [0.23, 1, 0.32, 1] }}
       />
     </div>
   );

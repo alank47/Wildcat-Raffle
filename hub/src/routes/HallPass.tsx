@@ -1,14 +1,20 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import Stepper, { Step } from "@/components/Stepper";
 import ClickSpark from "@/components/ClickSpark";
-import BlurText from "@/components/BlurText";
 import StarBorder from "@/components/StarBorder";
 import { useSession } from "@/lib/session";
+import { useArrival } from "@/lib/arrive";
 import { useReducedMotion } from "@/lib/motion";
-import { count, str } from "@/lib/shapes";
 import { errorText } from "@/lib/convex";
+import { str } from "@/lib/shapes";
+import {
+  useHallPassModel,
+  type LivePassModel,
+  type RequestModel,
+} from "@/lib/viewmodel";
 import {
   Loaded,
+  PageTitle,
   SectionLabel,
   Surface,
   Unavailable,
@@ -32,38 +38,30 @@ import {
  * app gets the 160ms press scale and nothing else. The canvas is mounted only on
  * the confirm step and the loop is off unless a spark is alive (see the change
  * note in ClickSpark.tsx), so it costs nothing on the other screens.
+ *
+ * THE STEPPER ITSELF NEEDED THREE FIXES before it could be trusted with this,
+ * all marked in Stepper.tsx: its slide direction was inverted so "Next" moved
+ * the form backwards, its content box opened from height 0 on every visit, and
+ * its progress connector animated `width`. See the notes there.
  */
 
 const REASON_CHIPS = ["Restroom", "Water", "Nurse", "Front office", "Locker"];
 
 export default function HallPass() {
-  const { passCard, tapLocations, mutate, refresh, demo } = useSession();
-  const reduced = useReducedMotion();
-
-  const live = useMemo(() => {
-    if (passCard.state !== "ok") return null;
-    const hp = passCard.data.hallPass as Record<string, unknown> | undefined;
-    return hp && hp.available === true ? hp : null;
-  }, [passCard]);
+  const { mutate, refresh, demo, tapLocations } = useSession();
+  const { live, request } = useHallPassModel();
 
   return (
-    <div className="space-y-5">
+    <div className="wc-stagger space-y-5">
       <header>
-        <BlurText
-          text="Hall pass"
-          animateBy="words"
-          delay={0}
-          stepDuration={reduced ? 0.12 : 0.22}
-          threshold={0}
-          className="text-[28px] font-bold leading-tight tracking-[-0.02em] text-wp-fg"
-        />
+        <PageTitle>Hall pass</PageTitle>
         <p className="mt-1.5 text-[13.5px] text-wp-dim">
           Ask your teacher for permission to leave the room.
         </p>
       </header>
 
       {live ? (
-        <LivePass hp={live} onChanged={refresh} mutate={mutate} />
+        <LivePass pass={live} onChanged={refresh} mutate={mutate} />
       ) : tapLocations.state === "error" ? (
         /* Handled here rather than by <Loaded>, because THIS endpoint is the one
            that is missing from the deployed backend. Probed against
@@ -85,10 +83,10 @@ export default function HallPass() {
           </div>
         </Surface>
       ) : (
-        <Loaded from={tapLocations} rows={3}>
+        <Loaded from={request} rows={3}>
           {(data) => (
             <RequestFlow
-              data={data}
+              model={data}
               mutate={mutate}
               onSent={refresh}
               demo={Boolean(demo)}
@@ -100,38 +98,34 @@ export default function HallPass() {
   );
 }
 
-/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+   Open pass
+   ------------------------------------------------------------------ */
 
 function LivePass({
-  hp,
+  pass,
   onChanged,
   mutate,
 }: {
-  hp: Record<string, unknown>;
+  pass: LivePassModel;
   onChanged: () => void;
   mutate: (path: string, args: Record<string, unknown>) => Promise<unknown>;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const state = str(hp.state) ?? "open";
-  const elapsed = count(hp.elapsedMinutes);
-  const limit = count(hp.expiresAfterMinutes);
-  const overdue = hp.overdue === true;
-  const id = str(hp.id);
-
-  // The server allows a cancel only while the pass is still `requested`. Once a
-  // teacher has approved it the way back is a tap on the tag in the room you
-  // left, and offering a button that will be refused is worse than offering
-  // nothing.
-  const cancellable = state === "requested" && id !== null;
+  /* The minutes are the one number on this screen that genuinely changes while
+     you watch, so they are the one that should move when they do — and should
+     sit still when a re-render arrives carrying the same figure. */
+  const reduced = useReducedMotion();
+  const ticking = useArrival("pass.elapsed", pass.elapsed);
 
   const cancel = async () => {
-    if (!id) return;
+    if (!pass.id) return;
     setBusy(true);
     setError(null);
     try {
-      await mutate("hallPasses:cancelMine", { passId: id });
+      await mutate("hallPasses:cancelMine", { passId: pass.id });
       onChanged();
     } catch (err) {
       setError(errorText(err));
@@ -145,35 +139,49 @@ function LivePass({
       <StarBorder
         as="div"
         className="block w-full"
-        color={overdue ? "#D9742F" : "#B5D4F4"}
+        color={pass.overdue ? "#D9742F" : "#B5D4F4"}
         speed="7s"
         innerClassName={`relative z-1 rounded-[19px] border p-6 ${
-          overdue
+          pass.overdue
             ? "border-wc-orange/50 bg-[#2A1A10]"
             : "border-wc-blue/50 bg-[#0E1B2C]"
         }`}
       >
         <div className="text-left">
-          <p className="text-[11px] font-bold uppercase tracking-[0.09em] text-wc-blue-pale">
-            {overdue ? "Overdue" : `Pass ${state}`}
+          <p className="text-[11px] font-bold tracking-[0.09em] text-wc-blue-pale uppercase">
+            {pass.overdue ? "Overdue" : `Pass ${pass.state}`}
           </p>
-          <p className="mt-2 text-[34px] font-bold leading-none tabular-nums text-wp-fg">
-            {elapsed === null ? "—" : elapsed}
+          <p
+            /* Keyed on the figure so the entrance actually RESTARTS when the
+               minute ticks over — a CSS animation only replays on a new
+               element, and re-adding a class React never removed does nothing.
+               `ticking` then decides whether the class is there at all, so
+               coming back to this screen with the same number on it is silent. */
+            key={`elapsed-${pass.elapsed}`}
+            className={`mt-2 text-[34px] leading-none font-bold tabular-nums text-wp-fg ${
+              ticking && !reduced ? "wc-enter" : ""
+            }`}
+          >
+            {pass.elapsed === null ? "—" : pass.elapsed}
             <span className="ml-2 text-[15px] font-normal text-wp-dim">
-              {elapsed === null
+              {pass.elapsed === null
                 ? "minutes not reported"
-                : `min out${limit !== null ? ` of ${limit}` : ""}`}
+                : `min out${pass.limit !== null ? ` of ${pass.limit}` : ""}`}
             </span>
           </p>
           <p className="mt-3 text-[13.5px] leading-[1.5] text-wp-dim">
-            {state === "requested"
+            {pass.waiting
               ? "Waiting for your teacher to approve it."
               : "Tap the tag in the room you left to close this pass."}
           </p>
         </div>
       </StarBorder>
 
-      {cancellable && (
+      {/* The server allows a cancel only while the pass is still `requested`.
+          Once a teacher has approved it the way back is a tap on the tag in the
+          room you left, and offering a button that will be refused is worse than
+          offering nothing. */}
+      {pass.cancellable && (
         <Surface>
           <SectionLabel>Changed your mind?</SectionLabel>
           <p className="mt-2 text-[13.5px] leading-[1.5] text-wp-dim">
@@ -199,27 +207,22 @@ function LivePass({
   );
 }
 
-/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+   Request
+   ------------------------------------------------------------------ */
 
 function RequestFlow({
-  data,
+  model,
   mutate,
   onSent,
   demo,
 }: {
-  data: Record<string, unknown>;
+  model: RequestModel;
   mutate: (path: string, args: Record<string, unknown>) => Promise<unknown>;
   onSent: () => void;
   demo: boolean;
 }) {
   const reduced = useReducedMotion();
-  const locations = Array.isArray(data.locations)
-    ? (data.locations as Array<Record<string, unknown>>)
-    : [];
-  const fromSchedule = (data.classroomsFromSchedule ?? {}) as Record<
-    string,
-    unknown
-  >;
 
   const [step, setStep] = useState(1);
   const [slug, setSlug] = useState<string | null>(null);
@@ -228,7 +231,7 @@ function RequestFlow({
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState<Record<string, unknown> | null>(null);
 
-  const chosen = locations.find((l) => str(l.slug) === slug);
+  const chosen = model.locations.find((l) => l.slug === slug);
 
   const submit = async () => {
     if (!slug) return;
@@ -266,7 +269,7 @@ function RequestFlow({
     );
   }
 
-  if (locations.length === 0) {
+  if (model.locations.length === 0) {
     return (
       <Surface>
         <SectionLabel>Nowhere to ask from</SectionLabel>
@@ -279,9 +282,9 @@ function RequestFlow({
             }
           />
         </div>
-        {str(fromSchedule.reason) && (
+        {model.scheduleNote && (
           <p className="mt-3 text-[11.5px] leading-[1.5] text-wp-dim/85">
-            {str(fromSchedule.reason)}
+            {model.scheduleNote}
           </p>
         )}
       </Surface>
@@ -309,17 +312,17 @@ function RequestFlow({
         className="!p-0 !aspect-auto sm:!aspect-auto md:!aspect-auto"
         backButtonProps={{
           className:
-            "wc-press rounded-full px-4 py-2 text-[13.5px] font-bold text-wp-dim",
+            "wc-press wc-hover-raise rounded-full border border-transparent px-4 py-2 text-[13.5px] font-bold text-wp-dim",
         }}
         nextButtonProps={{
           className: isLast
             ? "hidden"
-            : "wc-press rounded-full bg-wc-blue px-5 py-2.5 text-[13.5px] font-bold text-white disabled:opacity-40",
+            : "wc-press wc-hover-next rounded-full bg-wc-blue px-5 py-2.5 text-[13.5px] font-bold text-white disabled:opacity-40",
           disabled: step === 1 && !slug,
         }}
         renderStepIndicator={({ step: n, currentStep }) => (
           <div
-            className={`flex h-8 w-8 items-center justify-center rounded-full text-[13px] font-bold tabular-nums ${
+            className={`flex h-8 w-8 items-center justify-center rounded-full text-[13px] font-bold tabular-nums transition-colors duration-[200ms] ${
               n === currentStep
                 ? "bg-wc-blue text-white"
                 : n < currentStep
@@ -339,16 +342,18 @@ function RequestFlow({
           <p className="mt-1.5 text-[13px] leading-[1.5] text-wp-dim">
             This is the room you are leaving, not where you are going.
           </p>
-          <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            {locations.map((loc) => {
-              const s = str(loc.slug);
-              const name = str(loc.name) ?? s ?? "Unnamed";
-              const active = s !== null && s === slug;
+          {/* The rooms are the one grid in the app that stagger in: this is the
+              first thing a student has to read on the screen, there are five to
+              nine of them, and 45ms apart makes it a list to scan rather than a
+              wall that appeared. */}
+          <div className="wc-stagger mt-4 grid gap-2 sm:grid-cols-2">
+            {model.locations.map((loc) => {
+              const active = loc.slug !== null && loc.slug === slug;
               return (
                 <button
-                  key={s ?? name}
+                  key={loc.slug ?? loc.name}
                   type="button"
-                  onClick={() => setSlug(s)}
+                  onClick={() => setSlug(loc.slug)}
                   aria-pressed={active}
                   className={`wc-press wc-hover-raise rounded-[12px] border px-4 py-3 text-left text-[14px] font-bold ${
                     active
@@ -356,20 +361,20 @@ function RequestFlow({
                       : "border-[var(--wp-hair)] bg-white/[0.03] text-wp-fg"
                   }`}
                 >
-                  {name}
-                  <span className="mt-0.5 block text-[11.5px] font-normal capitalize text-wp-dim">
-                    {str(loc.kind) ?? "location"}
+                  {loc.name}
+                  <span className="mt-0.5 block text-[11.5px] font-normal text-wp-dim capitalize">
+                    {loc.kind}
                   </span>
                 </button>
               );
             })}
           </div>
-          {str(fromSchedule.reason) && (
+          {model.scheduleNote && (
             <p className="mt-4 text-[11.5px] leading-[1.5] text-wp-dim/85">
-              {str(fromSchedule.reason)}
+              {model.scheduleNote}
             </p>
           )}
-          {data.truncated === true && (
+          {model.truncated && (
             <p className="mt-2 text-[11.5px] leading-[1.5] text-wc-orange">
               This list was cut short by the server, so a room you are looking
               for may be missing.
@@ -405,7 +410,7 @@ function RequestFlow({
               value={reason}
               onChange={(e) => setReason(e.target.value.slice(0, 120))}
               placeholder="Or type it"
-              className="w-full rounded-[12px] border border-[var(--wp-hair)] bg-white/[0.03] px-4 py-3 text-[14px] text-wp-fg placeholder:text-wp-dim/70"
+              className="wc-field w-full rounded-[12px] border border-[var(--wp-hair)] bg-white/[0.03] px-4 py-3 text-[14px] text-wp-fg placeholder:text-wp-dim/70"
             />
           </label>
         </Step>
@@ -416,7 +421,7 @@ function RequestFlow({
             <div className="flex justify-between gap-4">
               <dt className="text-wp-dim">Leaving from</dt>
               <dd className="text-right font-bold text-wp-fg">
-                {str(chosen?.name) ?? "Not chosen"}
+                {chosen?.name ?? "Not chosen"}
               </dd>
             </div>
             <div className="flex justify-between gap-4">
@@ -448,7 +453,7 @@ function RequestFlow({
                 type="button"
                 onClick={submit}
                 disabled={busy || !slug}
-                className="wc-press w-full rounded-full bg-wc-blue px-5 py-3.5 text-[15px] font-bold text-white disabled:opacity-40"
+                className="wc-press wc-hover-next w-full rounded-full bg-wc-blue px-5 py-3.5 text-[15px] font-bold text-white disabled:opacity-40"
               >
                 {busy ? "Sending…" : "Ask my teacher"}
               </button>
