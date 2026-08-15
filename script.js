@@ -2764,7 +2764,7 @@
             });
             
             report += `GRAND TOTAL: ${grandTotalTickets} raffle tickets = $${grandTotalKickboard.toLocaleString()} Kickboard points\n\n`;
-            report += `Please log into Kickboard and award these points to each student.\n\nThank you!\n- Wildcat Rewards System`;
+            report += `Please log into Kickboard and award these points to each student.\n\nThank you!\n- Wildcat Hub`;
             
             console.log('Report generated:', report);
             

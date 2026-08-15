@@ -26,6 +26,7 @@ import type * as passCard from "../passCard.js";
 import type * as psBehavior from "../psBehavior.js";
 import type * as psSync from "../psSync.js";
 import type * as restrictedPolicy from "../restrictedPolicy.js";
+import type * as rosterEmail from "../rosterEmail.js";
 import type * as seed from "../seed.js";
 import type * as sisAction from "../sisAction.js";
 import type * as sisMerge from "../sisMerge.js";
@@ -65,6 +66,7 @@ declare const fullApi: ApiFromModules<{
   psBehavior: typeof psBehavior;
   psSync: typeof psSync;
   restrictedPolicy: typeof restrictedPolicy;
+  rosterEmail: typeof rosterEmail;
   seed: typeof seed;
   sisAction: typeof sisAction;
   sisMerge: typeof sisMerge;
