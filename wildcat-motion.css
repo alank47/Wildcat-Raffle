@@ -1,0 +1,752 @@
+/* ============================================================
+   WILDCAT MOTION — the design + motion foundation
+   ------------------------------------------------------------
+   Ported from React Bits (ClickSpark, GlareHover, SpotlightCard,
+   StarBorder, CountUp/Counter, AnimatedList, AnimatedContent,
+   FadeContent, BlurText, ScrollReveal) into plain CSS. No React,
+   no gsap, no motion, no build step. Loads standalone.
+
+   Every value below is taken from React Bits' own published
+   animation standard (rb-standards.md). Where two rules in that
+   document disagree, the note says which one won and why.
+
+   NAMESPACE: everything is `wcm-` / `--wcm-` so it can never
+   collide with the app's existing `.wc-*`, `.wp-*` or `.sp-*`
+   classes. This file only ever styles elements that explicitly
+   opt in. Nothing here restyles the app by itself.
+
+   PERFORMANCE CONTRACT (rb-standards.md "Performance"):
+   only `transform`, `opacity` and `filter: blur()` are animated.
+   No height/width/margin/padding/top/left is ever transitioned,
+   so nothing here can trigger layout on a Chromebook.
+   ============================================================ */
+
+
+/* ------------------------------------------------------------
+   1. TOKENS
+   ------------------------------------------------------------
+   The three easing curves are copied VERBATIM from
+   rb-standards.md "Easing". Built-in CSS easings are explicitly
+   called "too weak" there; these are the replacements it ships.
+
+   Duration tokens sit inside rb-standards.md "Duration" bands.
+   Two bands overlap with the hard rule "UI animations stay under
+   300ms" — the hard rule wins, so modal/drawer land at the low
+   end of their 200-500ms band rather than the middle.
+   ------------------------------------------------------------ */
+
+:root {
+    /* rb-standards.md, verbatim */
+    --wcm-ease-out: cubic-bezier(0.23, 1, 0.32, 1);      /* entering / exiting — the default */
+    --wcm-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);  /* moving / morphing on screen */
+    --wcm-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);   /* iOS-like drawer curve */
+    /* `ease` for hover/colour, `linear` for constant motion, per the
+       same decision list. `ease-in` is never used anywhere in this
+       file — the doc forbids it on UI. */
+
+    /* Duration bands */
+    --wcm-dur-press: 160ms;    /* button press feedback 100-160ms */
+    --wcm-dur-tip: 160ms;      /* tooltips / small popovers 125-200ms */
+    --wcm-dur-menu: 200ms;     /* dropdowns / selects 150-250ms */
+    --wcm-dur-pane: 180ms;     /* tab + pane swap, same band as a dropdown */
+    --wcm-dur-modal: 260ms;    /* modals 200-500ms, capped by the <300ms rule */
+    --wcm-dur-drawer: 280ms;   /* drawers, same cap */
+    --wcm-dur-enter: 260ms;    /* first-paint entrance of data */
+    --wcm-dur-count: 700ms;    /* number count-up — "explanatory", allowed longer */
+
+    /* Stagger. rb-standards.md "Stagger": 30-80ms between items,
+       "longer delays feel slow". 45ms sits low in the band because
+       these are dense operational tables, not a marketing hero. */
+    --wcm-stagger: 45ms;
+
+    /* Travel distances. Deliberately tiny: rb-standards.md
+       "Physicality" — never scale(0), start from 0.9-0.97. */
+    --wcm-rise: 10px;
+    --wcm-rise-sm: 6px;
+    --wcm-scale-in: 0.97;
+    --wcm-scale-press: 0.97;
+
+    /* Palette bridge. These read the app's own tokens
+       (styles.css :root, "APP SHELL v2") so React Bits' purple /
+       #111 / #fff never appears. Fallbacks are the same hexes in
+       case this file is ever loaded before styles.css. */
+    --wcm-blue: var(--wc-blue, #2F67A7);
+    --wcm-blue-deep: var(--wc-blue-deep, #0C447C);
+    --wcm-ink: var(--wc-ink, #0E0E0E);
+    --wcm-orange: var(--wc-orange, #D9742F);
+    --wcm-yellow: var(--wc-yellow, #E6E280);
+    --wcm-border: var(--wc-border, #e3e8ef);
+}
+
+
+/* ------------------------------------------------------------
+   2. ENTRANCE UTILITIES  (AnimatedContent / FadeContent / BlurText)
+   ------------------------------------------------------------
+   SAFETY RULE, and it is the most important rule in this file:
+   the *resting* state of every element is VISIBLE. An element is
+   only hidden while it carries `.wcm-pending`, and only JS ever
+   adds that class. If this stylesheet loads and the script does
+   not, or an observer never fires, the app still shows all of its
+   data. A school app must never be able to hide a student's
+   points behind a broken animation.
+   ------------------------------------------------------------ */
+
+.wcm-pending {
+    opacity: 0;
+}
+
+/* Fade — the FadeContent port. Opacity only, no movement.
+   Used where movement would be noise. */
+.wcm-fade.wcm-in {
+    animation: wcm-fade var(--wcm-dur-enter) var(--wcm-ease-out) both;
+}
+
+/* Rise — the AnimatedContent port (vertical, distance reduced from
+   its 100px default to 10px; 100px of travel on a dashboard row
+   reads as a page reflow, not an entrance). */
+.wcm-rise.wcm-in {
+    animation: wcm-rise var(--wcm-dur-enter) var(--wcm-ease-out) both;
+}
+
+/* Blur-in — the BlurText port, minus the per-character split.
+   Splitting a student's name into 14 animated spans breaks copy,
+   search-in-page and screen readers, so the blur is applied to the
+   whole block. rb-standards.md "Masking imperfect crossfades" caps
+   blur below 20px; 6px is well inside that and cheap. */
+.wcm-blur.wcm-in {
+    animation: wcm-blur var(--wcm-dur-enter) var(--wcm-ease-out) both;
+}
+
+/* Scale-in — for surfaces that arrive as objects (cards, modals).
+   Starts at 0.97, never 0. */
+.wcm-pop.wcm-in {
+    animation: wcm-pop var(--wcm-dur-enter) var(--wcm-ease-out) both;
+}
+
+@keyframes wcm-fade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+@keyframes wcm-rise {
+    from { opacity: 0; transform: translate3d(0, var(--wcm-rise), 0); }
+    to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes wcm-blur {
+    from { opacity: 0; filter: blur(6px); transform: translate3d(0, var(--wcm-rise-sm), 0); }
+    /* the middle step is BlurText's own two-stage curve, kept */
+    50%  { opacity: 0.5; filter: blur(3px); }
+    to   { opacity: 1; filter: blur(0); transform: translate3d(0, 0, 0); }
+}
+
+@keyframes wcm-pop {
+    from { opacity: 0; transform: scale(var(--wcm-scale-in)); }
+    to   { opacity: 1; transform: scale(1); }
+}
+
+
+/* ------------------------------------------------------------
+   3. STAGGER  (AnimatedList port)
+   ------------------------------------------------------------
+   AnimatedList animates every item on every scroll and starts at
+   scale(0.7). Both are wrong here: scale(0.7) is close to the
+   "never scale(0)" failure it warns about, and re-animating on
+   scroll turns a 600-row roster into a strobe. This port runs
+   ONCE, on first paint, and only for the first
+   `--wcm-stagger-count` rows.
+
+   Delay is carried on a custom property set by JS
+   (`--wcm-i`), not a chain of :nth-child rules, so it works on a
+   table body of any length. The property is set on the animating
+   element itself — rb-standards.md "Performance" warns only about
+   driving *child* transforms from a parent variable.
+   ------------------------------------------------------------ */
+
+.wcm-stagger.wcm-in {
+    animation-delay: calc(var(--wcm-i, 0) * var(--wcm-stagger));
+}
+
+/* Rows get the smaller travel — a table row that slides 10px reads
+   as the table resizing. */
+.wcm-row.wcm-in {
+    animation: wcm-row var(--wcm-dur-enter) var(--wcm-ease-out) both;
+}
+
+@keyframes wcm-row {
+    from { opacity: 0; transform: translate3d(0, var(--wcm-rise-sm), 0); }
+    to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+
+/* ------------------------------------------------------------
+   4. PRESS FEEDBACK
+   ------------------------------------------------------------
+   rb-standards.md "Physicality", verbatim: transform scale(0.97)
+   on :active, transition transform 160ms ease-out.
+
+   This is the ONE effect that is allowed on a high-frequency
+   control. The frequency table says 100+/day gets no animation —
+   but a press response is not an animation the user waits on, it
+   is the acknowledgement rb-apple.md calls "respond on
+   pointer-down, not on release". Removing it makes the button
+   feel dead. Nothing else in this file touches a hot control.
+   ------------------------------------------------------------ */
+
+.wcm-press {
+    transition: transform var(--wcm-dur-press) var(--wcm-ease-out);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.wcm-press:active {
+    transform: scale(var(--wcm-scale-press));
+}
+
+/* Keyboard parity: a focused control pressed with Space/Enter gets
+   the same acknowledgement, without a hover requirement. */
+.wcm-press:focus-visible {
+    outline: 2px solid var(--wcm-blue);
+    outline-offset: 2px;
+}
+
+
+/* ------------------------------------------------------------
+   5. CARD TREATMENTS
+   ------------------------------------------------------------
+   SpotlightCard, StarBorder and GlareHover, re-expressed in
+   Westbrook Academy's palette. React Bits' #111 / #222 / #8400ff
+   purple / white-on-black appear nowhere.
+   ------------------------------------------------------------ */
+
+/* --- 5.0 The effect layer -----------------------------------
+   All three treatments paint onto an injected, childless
+   `<i class="wcm-fx">` rather than onto the card or its ::before
+   / ::after. Two reasons, and both are load-bearing here:
+
+   1. The cards these land on (.wp-card in the student portal)
+      already own their own ::after for a hover overlay. A port
+      that claimed the same pseudo-element would silently break it.
+   2. rb-standards.md "Performance" warns against driving values
+      through a CSS variable on a parent, because it invalidates
+      style for every child. SpotlightCard does exactly that. The
+      mouse position is written to this leaf instead, so one
+      childless node recalculates per mousemove rather than the
+      whole card.
+
+   Injected, and re-injected after an innerHTML re-render, by
+   wcMotion.fx().
+   ------------------------------------------------------------ */
+
+/* `wcm-fx-host` is a hover hook and NOTHING else — it must not
+   touch layout. The cards it lands on in the student portal are
+   `position: absolute`, and a host class that declared
+   `position: relative` would win the cascade (this file loads
+   after styles.css) and collapse the entire stack into a column.
+   Positioning is a separate, opt-in class that the JS only adds
+   after checking the element is actually static. */
+.wcm-fx-relative {
+    position: relative;
+}
+
+.wcm-fx {
+    position: absolute;
+    inset: 0;
+    display: block;
+    pointer-events: none;
+    border-radius: inherit;
+    overflow: hidden;
+    z-index: 1;
+}
+
+/* --- 5a. SpotlightCard ---------------------------------------
+   A soft pool of light following the cursor. React Bits ships it
+   as white-on-#111; here it is the school blue over a light
+   surface and white over a saturated one, and it is opacity-only
+   so it costs a composite and nothing else.
+   ------------------------------------------------------------ */
+
+.wcm-fx-spot {
+    opacity: 0;
+    transition: opacity var(--wcm-dur-menu) ease; /* hover -> `ease`, per the easing decision list */
+    background: radial-gradient(
+        circle at var(--wcm-x, 50%) var(--wcm-y, 50%),
+        var(--wcm-spot-color, rgba(47, 103, 167, 0.16)),
+        transparent 72%
+    );
+}
+
+/* Over a saturated or dark card the blue wash disappears, so the
+   pool turns white instead. */
+.wcm-fx-host[data-wcm-tone="deep"] .wcm-fx-spot {
+    --wcm-spot-color: rgba(255, 255, 255, 0.13);
+}
+
+/* --- 5b. StarBorder ------------------------------------------
+   The original runs `animation: star-movement linear infinite` at
+   6s. A 6s loop is 0.17Hz, which is exactly the "slow looping
+   oscillation near one cycle per 5s" that rb-apple.md tells you to
+   avoid, and an infinite loop on a screen a student holds up at a
+   scanner fails the frequency table outright.
+
+   So this port keeps the geometry, the 300%-wide arcs and the
+   radial gradient, and DROPS the loop: it sweeps ONCE as the card
+   deals in, then stops. Delight on arrival, silence afterwards.
+   The colour is the school yellow, not React Bits' white.
+   ------------------------------------------------------------ */
+
+.wcm-fx-star::before,
+.wcm-fx-star::after {
+    content: '';
+    position: absolute;
+    width: 300%;
+    height: 50%;
+    border-radius: 50%;
+    opacity: 0;
+}
+
+.wcm-fx-star::before {
+    top: -12px;
+    left: -250%;
+    background: radial-gradient(circle, var(--wcm-star-color, var(--wcm-yellow)), transparent 10%);
+}
+
+.wcm-fx-star::after {
+    bottom: -12px;
+    right: -250%;
+    background: radial-gradient(circle, var(--wcm-star-color, var(--wcm-yellow)), transparent 10%);
+}
+
+.wcm-fx-star.wcm-in::before {
+    animation: wcm-star-top 1400ms linear 1 both;
+}
+
+.wcm-fx-star.wcm-in::after {
+    animation: wcm-star-bottom 1400ms linear 1 both;
+}
+
+@keyframes wcm-star-top {
+    0%   { transform: translate3d(0, 0, 0); opacity: 0; }
+    18%  { opacity: 0.65; }
+    100% { transform: translate3d(100%, 0, 0); opacity: 0; }
+}
+
+@keyframes wcm-star-bottom {
+    0%   { transform: translate3d(0, 0, 0); opacity: 0; }
+    18%  { opacity: 0.65; }
+    100% { transform: translate3d(-100%, 0, 0); opacity: 0; }
+}
+
+/* --- 5c. GlareHover ------------------------------------------
+   A diagonal sheen crossing the surface. The original geometry is
+   kept (-45deg, a 250% band travelling corner to corner) but the
+   glare is white at 0.18 alpha over the school blue instead of
+   0.5 alpha over black, and the 650ms default is pulled in to
+   420ms so it finishes inside a glance.
+
+   Hover-gated AND opt-in. This lands on the one card a student is
+   already looking at, not on anything a teacher's cursor crosses
+   during a shift.
+   ------------------------------------------------------------ */
+
+.wcm-fx-glare {
+    background: linear-gradient(
+        -45deg,
+        rgba(255, 255, 255, 0) 60%,
+        var(--wcm-glare-color, rgba(255, 255, 255, 0.18)) 70%,
+        rgba(255, 255, 255, 0) 78%,
+        rgba(255, 255, 255, 0) 100%
+    );
+    background-size: 250% 250%;
+    background-repeat: no-repeat;
+    background-position: -100% -100%;
+}
+
+
+/* ------------------------------------------------------------
+   6. MODALS + DRAWERS
+   ------------------------------------------------------------
+   rb-standards.md: modals sit in the 200-500ms band, capped here
+   at 260ms by the <300ms rule. Origin stays `center` — the doc
+   explicitly exempts modals from origin-awareness because they
+   appear centred in the viewport.
+
+   Enter and exit run the same path in reverse (rb-apple.md
+   "Spatial consistency"), with the exit slightly faster: the user
+   has already decided, so the system should get out of the way.
+   Transitions, not keyframes, so a double-click that reopens a
+   closing dialog retargets instead of restarting.
+
+   HOW THIS IS DRIVEN: `@starting-style` plus
+   `transition-behavior: allow-discrete`, which rb-standards.md
+   recommends by name for "entry without JS".
+
+   That choice matters more here than it looks. This app has FIVE
+   different ways of showing a modal — a `.hidden` class, an
+   inline `style.display`, and three hybrids of the two. A
+   JS-driven open/close animation would have to be threaded
+   through every one of them, and a close path that forgets to
+   wait for the transition leaves a modal on screen forever.
+   Transitioning `display` itself means the existing show/hide
+   code is not touched at all: whatever sets `display`, the
+   browser animates around it, in both directions, with no timers
+   to get wrong.
+
+   Opt-in via `.wcm-modal` on the overlay, so this cannot reach a
+   dialog nobody has looked at.
+   ------------------------------------------------------------ */
+
+.wcm-modal {
+    opacity: 1;
+    transition:
+        opacity var(--wcm-dur-modal) var(--wcm-ease-out),
+        display var(--wcm-dur-modal) var(--wcm-ease-out) allow-discrete;
+}
+
+@starting-style {
+    .wcm-modal {
+        opacity: 0;
+    }
+}
+
+/* The closed state. Both hide mechanisms are named because the
+   app uses both, sometimes on the same element. */
+.wcm-modal.hidden,
+.wcm-modal[style*="display: none"],
+.wcm-modal[style*="display:none"] {
+    opacity: 0;
+}
+
+/* The card inside the overlay arrives as an object: 0.97 to 1,
+   never from nothing. transform-origin stays `center` — the doc
+   explicitly exempts modals from origin-awareness, because they
+   appear centred in the viewport rather than out of a trigger. */
+.wcm-modal > .wcm-modal-card {
+    transform: scale(1) translate3d(0, 0, 0);
+    transform-origin: center;
+    transition:
+        transform var(--wcm-dur-modal) var(--wcm-ease-out),
+        opacity var(--wcm-dur-modal) var(--wcm-ease-out);
+}
+
+/* The travel is declared only when motion is welcome. A starting
+   style cannot be overridden from a later reduced-motion block —
+   it has already been used by the time that block is read — so
+   the guard has to sit here, on the declaration itself. */
+@starting-style {
+    .wcm-modal > .wcm-modal-card {
+        opacity: 0;
+    }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    @starting-style {
+        .wcm-modal > .wcm-modal-card {
+            transform: scale(var(--wcm-scale-in)) translate3d(0, var(--wcm-rise-sm), 0);
+        }
+    }
+}
+
+/* Drawer — slides from its own edge and dismisses to the same
+   edge. translateY(100%) is relative to the drawer's own height
+   (rb-standards.md "Transforms"), so it works at any size. */
+.wcm-drawer {
+    transform: translate3d(0, 100%, 0);
+    transition: transform var(--wcm-dur-drawer) var(--wcm-ease-drawer);
+    will-change: transform;
+}
+
+.wcm-drawer.wcm-open {
+    transform: translate3d(0, 0, 0);
+}
+
+
+/* ------------------------------------------------------------
+   7. TABS + PANES
+   ------------------------------------------------------------
+   180ms, the dropdown band. A pane swap is a system response to a
+   click the user already committed to, so it must not be
+   dwelt on. Crossfade plus 6px of travel and nothing else.
+
+   Deliberately NOT blurred during the crossfade: rb-standards.md
+   offers blur to mask an imperfect crossfade, but a blur filter on
+   a full pane of table rows is the most expensive thing you can
+   ask a Chromebook GPU to composite, and these panes fade cleanly
+   without it.
+   ------------------------------------------------------------ */
+
+.wcm-pane.wcm-in {
+    animation: wcm-pane var(--wcm-dur-pane) var(--wcm-ease-out) both;
+}
+
+@keyframes wcm-pane {
+    from { opacity: 0; transform: translate3d(0, var(--wcm-rise-sm), 0); }
+    to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+/* The moving underline on a tab strip. `ease-in-out` because the
+   indicator is moving ON screen rather than entering it — the
+   easing decision list, second row. */
+.wcm-tab-indicator {
+    transition:
+        transform var(--wcm-dur-pane) var(--wcm-ease-in-out),
+        width var(--wcm-dur-pane) var(--wcm-ease-in-out);
+}
+
+
+/* ------------------------------------------------------------
+   8. NUMBERS  (Counter port)
+   ------------------------------------------------------------
+   Counter's real contribution is not the odometer roll, it is
+   `font-variant-numeric: tabular-nums` — without it a counting
+   number changes width every frame and shoves the layout beside
+   it. The roll itself is dropped: it needs ten stacked copies of
+   every digit, and animating layout-affecting content is exactly
+   what the performance rule forbids.
+   ------------------------------------------------------------ */
+
+.wcm-num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+}
+
+
+/* ------------------------------------------------------------
+   9. CLICK SPARK
+   ------------------------------------------------------------
+   The canvas is a sibling overlay, sized to its host. It never
+   receives pointer events and is removed when the host goes away.
+   ------------------------------------------------------------ */
+
+.wcm-spark-host {
+    position: relative;
+}
+
+canvas.wcm-spark {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    pointer-events: none;
+    user-select: none;
+    z-index: 3;
+}
+
+
+/* ------------------------------------------------------------
+   10. HOVER GATE
+   ------------------------------------------------------------
+   rb-standards.md "Accessibility": every hover effect is gated on
+   `(hover: hover) and (pointer: fine)`, because a touch device
+   fires a false hover on tap and then keeps it stuck. Chromebooks
+   have both a trackpad and a touchscreen, so this matters here in
+   practice, not just in theory.
+
+   Everything hover-driven in this file lives inside this block and
+   nowhere else.
+   ------------------------------------------------------------ */
+
+@media (hover: hover) and (pointer: fine) {
+
+    .wcm-fx-host:hover > .wcm-fx-spot,
+    .wcm-fx-host:focus-within > .wcm-fx-spot {
+        opacity: 1;
+    }
+
+    .wcm-fx-host > .wcm-fx-glare {
+        transition: background-position 420ms ease;
+    }
+
+    .wcm-fx-host:hover > .wcm-fx-glare {
+        background-position: 100% 100%;
+    }
+
+    /* Lift. 2px, and only on cards that opted in. */
+    .wcm-lift {
+        transition:
+            transform var(--wcm-dur-menu) ease,
+            box-shadow var(--wcm-dur-menu) ease;
+    }
+
+    .wcm-lift:hover {
+        transform: translate3d(0, -2px, 0);
+    }
+}
+
+
+/* ------------------------------------------------------------
+   11. REDUCED MOTION
+   ------------------------------------------------------------
+   rb-standards.md: "Reduced motion means fewer and gentler
+   animations, not zero — keep transitions that aid comprehension,
+   remove movement/position changes."
+
+   So opacity survives everywhere and every transform is dropped.
+   The count-up is disabled in JS (it snaps to the final value).
+   The one-shot StarBorder sweep is removed entirely: it is pure
+   decoration and carries no information.
+   ------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+
+    .wcm-rise.wcm-in,
+    .wcm-blur.wcm-in,
+    .wcm-pop.wcm-in,
+    .wcm-row.wcm-in,
+    .wcm-pane.wcm-in {
+        animation-name: wcm-fade;
+    }
+
+    .wcm-press,
+    .wcm-lift,
+    .wcm-lift:hover,
+    .wcm-press:active {
+        transform: none;
+    }
+
+    .wcm-modal > .wcm-modal-card {
+        transform: none;
+    }
+
+    .wcm-drawer {
+        transform: none;
+        opacity: 0;
+        transition: opacity var(--wcm-dur-menu) var(--wcm-ease-out);
+    }
+
+    .wcm-drawer.wcm-open {
+        opacity: 1;
+    }
+
+    .wcm-fx-star.wcm-in::before,
+    .wcm-fx-star.wcm-in::after {
+        animation: none;
+        opacity: 0;
+    }
+
+    .wcm-fx-glare {
+        display: none;
+    }
+
+    /* Stagger is decorative pacing; collapse it so a list arrives
+       at once rather than marching. */
+    .wcm-stagger.wcm-in {
+        animation-delay: 0ms;
+    }
+
+    .wcm-tab-indicator {
+        transition: none;
+    }
+}
+
+
+/* ============================================================
+   12. APPLIED — the student portal card stack
+   ------------------------------------------------------------
+   Everything above is the foundation. This last section is the
+   only place it is bound to a specific surface, and it is here
+   rather than in styles.css so that adding motion cannot disturb
+   a 4,300-line stylesheet the whole school depends on.
+
+   THE PROBLEM BEING FIXED. wpLayout() placed collapsed card `i`
+   at `i * strip` and gave it a height of exactly `strip`. Every
+   card therefore ended precisely where the next one began. Nothing
+   overlapped anything. A reviewer called it "a list with rounded
+   corners, not a stack", and they were right — that geometry
+   cannot produce a stack, no matter what the shadows do.
+
+   THE FIX. A card that has another card below it is made
+   `--wp-tuck` pixels TALLER than its visible band. The tops do not
+   move, so the exposed strip of every card is still exactly
+   `--wp-strip` and the header text stays centred in it; the extra
+   height slides underneath the next card, which already carries a
+   higher z-index and an upward-throwing shadow. The bottom card
+   is left alone, so the total height of the stack is unchanged
+   and nothing below it moves.
+
+   The value is a plain px length on purpose. `--wp-strip` and
+   `--wp-card-h` are clamp() expressions, and script.js already
+   carries a comment about how reading those back returns the
+   literal string. A flat px value can be read with parseFloat.
+   ============================================================ */
+
+#studentPassView {
+    /* Roughly the corner radius, so the tuck reads as one card
+       resting on another rather than as a gap. */
+    --wp-tuck: 14px;
+}
+
+@media (min-width: 700px) {
+    #studentPassView {
+        --wp-tuck: 18px;
+    }
+}
+
+/* No extra shadow is added for the overlap. .wp-card already
+   carries `0 -10px 26px rgba(0,0,0,.55)`, a shadow thrown upward
+   onto the card above — which until now had almost nothing to
+   land on, because the cards merely touched. Giving it real
+   overlap to fall across is the entire fix; a second shadow on
+   top of it would only muddy the edge. */
+
+/* The effect layers must not paint over the tuck zone or the
+   sheen would appear to leak out from under the next card. */
+#studentPassView .wp-card > .wcm-fx {
+    bottom: var(--wp-tuck);
+}
+
+#studentPassView .wp-card:last-child > .wcm-fx {
+    bottom: 0;
+}
+
+/* Spotlight tone. Every card in the stack is dark except Grades,
+   which is cream — a white pool of light is invisible on it, so
+   that one card gets the school blue instead. */
+#studentPassView .wp-card > .wcm-fx-spot {
+    --wcm-spot-color: rgba(255, 255, 255, 0.13);
+}
+
+#studentPassView .wp-card-light > .wcm-fx-spot {
+    --wcm-spot-color: rgba(47, 103, 167, 0.20);
+}
+
+/* The glare reads as light catching a physical card, so it only
+   plays on the one the student has actually opened. On the five
+   collapsed strips it would be five sheens chasing a cursor. */
+#studentPassView .wp-card:not(.is-open) > .wcm-fx-glare {
+    display: none;
+}
+
+/* The stack deals in on first load, opacity only.
+   --------------------------------------------------------------
+   Deliberately NOT a transform. wpLayout writes an inline
+   `transform: translate3d(...)` onto every card to position it,
+   and an entrance keyframe that also animated transform would
+   fight that inline value and pile the whole stack at the top of
+   the screen mid-animation. rb-standards.md's transform-and-
+   opacity rule is about what is cheap to animate; when the
+   transform channel is already carrying layout, opacity is the
+   whole budget. */
+#studentPassView .wp-card.wcm-fade.wcm-in {
+    animation-duration: var(--wcm-dur-enter);
+}
+
+
+/* ============================================================
+   13. APPLIED — staff surfaces
+   ============================================================ */
+
+/* Table rows. `both` fill holds them at opacity 0 through their
+   stagger delay, so no row is ever visible before its turn, and a
+   row that never gets the class is simply painted normally. */
+tbody tr.wcm-row.wcm-in {
+    will-change: opacity;
+}
+
+/* The pane a sidebar click reveals. The sidebar BUTTON gets no
+   motion of its own — see the note in the report — but the pane
+   is what actually changed, so it is the thing that fades. */
+.tab-content.wcm-pane.wcm-in {
+    will-change: opacity;
+}
+

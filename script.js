@@ -6678,11 +6678,16 @@
                         <tr>
                             <td class="rank-medal">${medal}</td>
                             <td class="rank-name">${s.firstName} ${s.lastName}</td>
-                            <td class="rank-right"><span class="rank-total">${s.totalTickets}</span></td>
+                            <td class="rank-right"><span class="rank-total" data-wcm-count>${s.totalTickets}</span></td>
                         </tr>
                     `;
                 }).join('');
             }
+            // First paint of this board only. updateLeaderboard is inside
+            // updateAllDisplays, so it also fires on every award; the guard
+            // lives on the tbody, which survives the innerHTML swap.
+            wcRows(msOverallTable, 10);
+            wcNums(msOverallTable);
             
             // Get top student for each category (simplified view)
             const msPbisTop = [...msStudents]
@@ -6744,12 +6749,14 @@
                         <tr>
                             <td class="rank-medal">${medal}</td>
                             <td class="rank-name">${s.firstName} ${s.lastName}</td>
-                            <td class="rank-right"><span class="rank-total">${s.totalTickets}</span></td>
+                            <td class="rank-right"><span class="rank-total" data-wcm-count>${s.totalTickets}</span></td>
                         </tr>
                     `;
                 }).join('');
             }
-            
+            wcRows(hsOverallTable, 10);
+            wcNums(hsOverallTable);
+
             // Get top student for each category
             const hsPbisTop = [...hsStudents]
                 .filter(s => (s.pbisTickets || 0) > 0)
@@ -13315,6 +13322,13 @@
                 </tr>
             `;
             }).join('');
+
+            // First paint of the roster only. This function also runs on
+            // every keystroke of the search box and on every ticket award;
+            // a stagger there would make the table flash under a teacher's
+            // hands. The guard is keyed on the tbody, which is not
+            // replaced by the innerHTML above.
+            wcRows(tbody, 12);
         }
         
         // Export to Excel
@@ -13607,9 +13621,18 @@
                 document.getElementById('profileBadges').innerHTML = '<div style="text-align: center; padding: 20px; color: #999; font-style: italic;">Keep earning tickets to unlock achievements! 🌟</div>';
             }
             
-            document.getElementById('profileTotalTickets').textContent = totalTickets;
-            document.getElementById('profileWeeksQualified').textContent = weeksQualified;
-            document.getElementById('profileLifetimeTickets').textContent = lifetimeTickets;
+            // Every open is a different student, so every open is genuinely
+            // a first arrival for these three tiles even though the
+            // elements themselves persist. Clearing the marker is what
+            // says so; without it only the first student of the session
+            // would count up.
+            if (window.wcMotion) {
+                window.wcMotion.resetCount(
+                    '#profileTotalTickets, #profileWeeksQualified, #profileLifetimeTickets');
+            }
+            wcCount('profileTotalTickets', totalTickets);
+            wcCount('profileWeeksQualified', weeksQualified);
+            wcCount('profileLifetimeTickets', lifetimeTickets);
             
             // Add behavior referral count if superadmin
             const studentReferrals = behaviorReferrals.filter(r => r.studentId === studentId);
@@ -13703,6 +13726,10 @@
                 tab[k].classList.toggle('sp-tab-active', on);
                 tab[k].setAttribute('aria-selected', on ? 'true' : 'false');
             });
+
+            // A tab strip inside a modal is a pane swap, same as the
+            // sidebar: 180ms, on the pane, not on the button.
+            wcPane(isProfile ? pane.profile : pane.points);
 
             // Fetched when the tab is first opened rather than when the modal
             // opens, so clicking down a class list does not fire a staff-gated
@@ -13813,6 +13840,22 @@
 
             body.innerHTML = renderStudentProfileTab(detail);
             spLoadedFor = student.id;
+
+            // Data arriving on screen for the first time, after a network
+            // round trip — the one case the standard actually asks for an
+            // entrance. The cards stagger in.
+            //
+            // The NUMBERS on this tab deliberately do not count up. These
+            // are absence counts and behaviour counts, and this screen is
+            // read standing over a desk with the student watching, often
+            // out loud. "Days absent: three... seven... eleven" is a
+            // sentence no one should be able to say because of an
+            // animation. The Points tab counts; this one states.
+            if (window.wcMotion) {
+                window.wcMotion.enter(body.querySelectorAll('.sp-card'), {
+                    type: 'rise', max: 6
+                });
+            }
         }
 
         /**
@@ -14732,10 +14775,16 @@
             // than a wrong number: it is a wrong number that looks like a
             // participation rate.
             const roster = enrolledStudents();
-            document.getElementById('totalStudents').textContent = roster.length;
             const qualified = roster.filter(s => isQualifiedForJackpot(s)).length;
-            document.getElementById('qualifiedStudents').textContent = qualified;
-            document.getElementById('bigRaffleQualified').textContent = qualified;
+            // Counts up the first time the roster lands, snaps every time
+            // after. updateStats is inside updateAllDisplays, which runs on
+            // every single ticket award — a tile that re-counted on each of
+            // those would be showing a teacher a wrong number hundreds of
+            // times a day. See the MOTION BRIDGE note at the end of this
+            // file.
+            wcCount('totalStudents', roster.length);
+            wcCount('qualifiedStudents', qualified);
+            wcCount('bigRaffleQualified', qualified);
         }
 
         function updateBigRaffleTable() {
@@ -16188,6 +16237,13 @@
             const content = document.getElementById(contentId);
             if (content) {
                 content.classList.add('active');
+                // 180ms crossfade on the pane, and nothing at all on the
+                // sidebar button that was clicked. A teacher moves between
+                // these tabs dozens of times a shift, which is the "reduce
+                // it drastically" row of the frequency table — so the
+                // control stays instant and only the thing that actually
+                // changed, the pane, is allowed to move.
+                wcPane(content);
             }
             
             // Storage Health renders when System Admin opens
@@ -16503,9 +16559,20 @@
             const cardEl = wpById('wpMetricCard');
             const strip = stripEl ? stripEl.getBoundingClientRect().height : 0;
             const cardH = cardEl ? cardEl.getBoundingClientRect().height : 0;
+            // How far each card slides UNDER the one below it. Unlike the
+            // two heights above, --wp-tuck is a plain px length rather than
+            // a clamp(), so it survives being read back. It is declared in
+            // wildcat-motion.css; a zero here just restores the old
+            // butt-jointed layout rather than breaking anything.
+            const view = wpById('studentPassView');
+            let tuck = 0;
+            if (view && window.getComputedStyle) {
+                tuck = parseFloat(window.getComputedStyle(view).getPropertyValue('--wp-tuck')) || 0;
+            }
             return {
                 strip: strip > 0 ? strip : 56,
                 cardH: cardH > 0 ? cardH : 240,
+                tuck: tuck > 0 ? tuck : 0,
             };
         }
 
@@ -16516,6 +16583,18 @@
          * Cards below it stack from the bottom of the revealed card. Total
          * height is (n - 1) strips plus one card, whatever is selected, so
          * choosing a different card never moves the page under your thumb.
+         *
+         * THE TUCK. Tops are unchanged, but any card that has another card
+         * below it is drawn `tuck` pixels taller than the band it shows.
+         * That surplus slides underneath its neighbour, which already sits
+         * on a higher z-index and already throws a shadow upward. Before
+         * this, every card ended exactly where the next one began: the
+         * stack was six rectangles in a column, which is why it read as a
+         * list rather than as cards resting on each other.
+         *
+         * The last card is left at its natural height, so the total is
+         * still (n - 1) strips plus one card and nothing below the stack
+         * moves.
          */
         function wpLayout(animate) {
             const stack = wpById('wpStack');
@@ -16529,12 +16608,15 @@
 
             if (animate === false) stack.classList.add('wp-noanim');
 
+            const last = cards.length - 1;
+
             cards.forEach(function (el, i) {
                 const top = i <= k
                     ? i * m.strip
                     : (k * m.strip) + m.cardH + ((i - k - 1) * m.strip);
+                const band = (i === k ? m.cardH : m.strip);
                 el.style.transform = 'translate3d(0,' + Math.round(top) + 'px,0)';
-                el.style.height = (i === k ? m.cardH : m.strip) + 'px';
+                el.style.height = (i === last ? band : band + m.tuck) + 'px';
                 el.style.zIndex = String(i + 1);
                 el.setAttribute('aria-selected', i === k ? 'true' : 'false');
                 el.classList.toggle('is-open', i === k);
@@ -16697,7 +16779,8 @@
             if (!stack) return;
 
             stack.innerHTML = cards.map(function (c, i) {
-                return '<article class="wp-card" role="tab" tabindex="0" data-i="' + i + '"' +
+                return '<article class="wp-card' + (c.cls ? ' ' + c.cls : '') + '"' +
+                    ' role="tab" tabindex="0" data-i="' + i + '"' +
                     ' aria-label="' + wpEsc(c.label + '. ' + c.lead) + '"' +
                     ' style="' + c.face + '">' +
                     '<div class="wp-head">' +
@@ -16711,6 +16794,59 @@
             wpWireStack();
             wpSelected = Math.max(0, Math.min(selectIndex || 0, cards.length - 1));
             wpLayout(false);
+            wpDecorate();
+        }
+
+        /**
+         * Hang the card treatments on the freshly written stack.
+         *
+         * Called after every wpRender, because wpRender replaces the whole
+         * innerHTML and takes the injected effect layers with it. Every
+         * call is idempotent: wcMotion.fx only creates a layer that is
+         * missing, the delegated spotlight listener attaches once per
+         * container, and the deal-in is keyed on the container's first
+         * paint so re-rendering after a hall-pass request does not replay
+         * it.
+         *
+         * The whole thing is behind a capability check. If
+         * wildcat-motion.js did not load, the portal is exactly the portal
+         * it was.
+         */
+        function wpDecorate() {
+            const m = window.wcMotion;
+            if (!m) return;
+            const stack = wpById('wpStack');
+            if (!stack) return;
+
+            // Deal in. Opacity only, never transform: wpLayout owns the
+            // transform channel on these cards, and an entrance keyframe
+            // that also wrote transform would stack every card at the top
+            // of the screen for the length of the animation.
+            m.stagger(stack, { selector: '.wp-card', type: 'fade', max: 8 });
+
+            const cards = stack.querySelectorAll('.wp-card');
+            for (let i = 0; i < cards.length; i++) {
+                const card = cards[i];
+                // Spotlight + glare on every card. Both are decorative and
+                // hover-only, so wcMotion.fx declines to build either one on
+                // a touch pointer or under prefers-reduced-motion.
+                m.fx(card, 'spot glare');
+
+                // One card gets the StarBorder sweep, once, on arrival.
+                if (card.classList.contains('wp-card-star')) {
+                    const made = m.fx(card, 'star')[0];
+                    if (made && made.star) made.star.classList.add('wcm-in');
+                }
+            }
+
+            // One delegated pointermove for the whole stack. It stands down
+            // while a drag is in flight — the stack sets wp-noanim for the
+            // duration — so the spotlight can never compete with the
+            // gesture the student is actually making.
+            m.spotlight(stack, {
+                selector: '.wp-card',
+                skip: function () { return stack.classList.contains('wp-noanim'); }
+            });
         }
 
         function wpGhosts() {
@@ -16735,6 +16871,22 @@
         // card by its colour before they read the label. The values are the
         // same blues and orange the staff app uses; the dark ground is local
         // to this screen because the rest of the app has no dark theme.
+        //
+        // COLOUR IS EARNED, NOT ASSIGNED.
+        //
+        // Every card used to keep its full-strength face whether or not it
+        // had anything on it, so on a typical account the two loudest
+        // surfaces in the stack — the orange Lunch card and the electric
+        // indigo Clever card — both read "Not available". The stack was
+        // pointing hardest at the two things a student cannot use, and the
+        // one card that always works, their ID barcode, was quieter than
+        // both.
+        //
+        // So each card that can come back empty now has a second face:
+        // the same HUE, so the card is still recognisable at a glance and
+        // still sits where the student expects it, with the chroma and
+        // lightness taken out. Saturation now means "there is something
+        // here". A student can read the stack without reading a word of it.
         // ---------------------------------------------------------------
         const WP_FACE = {
             schedule: '--wp-face:linear-gradient(158deg,#242832 0%,#15171C 100%);--wp-ink:#F6F4EF;' +
@@ -16747,6 +16899,13 @@
             passLate: '--wp-face:linear-gradient(158deg,#C85942 0%,#7E2519 100%);--wp-ink:#FFFFFF',
             passOff:  '--wp-face:linear-gradient(158deg,#22252C 0%,#131519 100%);--wp-ink:#F6F4EF',
             id:       '--wp-face:linear-gradient(158deg,#3B79BC 0%,#0C447C 52%,#05294F 100%);--wp-ink:#FFFFFF',
+
+            // Dormant faces. Same hue family, no chroma.
+            lunchOff:  '--wp-face:linear-gradient(158deg,#2B2219 0%,#191410 100%);--wp-ink:#F6F4EF',
+            cleverOff: '--wp-face:linear-gradient(158deg,#20242F 0%,#14161F 100%);--wp-ink:#F6F4EF',
+            idOff:     '--wp-face:linear-gradient(158deg,#1D2733 0%,#121820 100%);--wp-ink:#F6F4EF',
+            gradesOff: '--wp-face:linear-gradient(158deg,#26251F 0%,#171613 100%);--wp-ink:#F6F4EF;' +
+                       '--wp-rule:rgba(255,255,255,.10);--wp-pill:rgba(255,255,255,.13)',
         };
 
         function wpEmpty(text) {
@@ -16827,14 +16986,14 @@
             const grades = section.rows;
             if (failed || !section.available) {
                 return {
-                    label: 'Grades', lead: 'Unavailable', quiet: true, face: WP_FACE.grades,
+                    label: 'Grades', lead: 'Unavailable', quiet: true, face: WP_FACE.gradesOff,
                     body: wpEmpty(section.reason ||
                         'Grades could not be loaded just now. Reload the page to try again.'),
                 };
             }
             if (!grades.length) {
                 return {
-                    label: 'Grades', lead: 'None yet', quiet: true, face: WP_FACE.grades,
+                    label: 'Grades', lead: 'None yet', quiet: true, face: WP_FACE.gradesOff,
                     body: wpEmpty(section.reason ||
                         'No gradebook entries have reached your account yet. An empty grade ' +
                         'is not a zero, and nothing here is counting against you.'),
@@ -16874,6 +17033,9 @@
                 lead: posted === 0 ? 'None posted' : posted + ' of ' + grades.length + ' posted',
                 quiet: posted === 0,
                 face: WP_FACE.grades,
+                // The only light surface in the stack, so its spotlight
+                // pool has to be blue rather than white to be visible.
+                cls: 'wp-card-light',
                 // Said out loud when there is nothing yet, because a column of
                 // "Not posted" is exactly what a broken screen would look like
                 // too. This is the sentence that separates the two.
@@ -16981,7 +17143,7 @@
         function wpStudentIdCard(studentId) {
             if (!studentId || !studentId.available) {
                 return {
-                    label: 'Student ID', lead: 'Not issued', quiet: true, face: WP_FACE.id,
+                    label: 'Student ID', lead: 'Not issued', quiet: true, face: WP_FACE.idOff,
                     body: wpEmpty('There is no student number on your record. The front office can add one.'),
                 };
             }
@@ -16989,19 +17151,26 @@
                 label: 'Student ID',
                 lead: String(studentId.value),
                 face: WP_FACE.id,
+                // The one card in the stack that always works and is the
+                // reason the screen exists — it is the barcode a scanner
+                // reads. `wp-card-star` is what earns it the single
+                // StarBorder sweep as the stack deals in.
+                cls: 'wp-card-star',
                 body: '<p class="wp-wordmark">Westbrook Academy</p>' +
                       '<div class="wp-plate"><svg id="wpBarcode"></svg>' +
                       '<p class="wp-digits">' + wpEsc(studentId.value) + '</p></div>',
             };
         }
 
-        function wpReasonCard(label, source, face) {
+        function wpReasonCard(label, source, face, faceOff) {
             const ok = source && source.available;
             return {
                 label: label,
                 lead: ok ? String(source.value) : 'Not available',
                 quiet: !ok,
-                face: face,
+                // A card with nothing on it does not get to be the
+                // brightest thing on the screen.
+                face: ok ? face : (faceOff || face),
                 body: ok
                     ? '<div class="wp-plate"><svg></svg></div>'
                     : wpEmpty(source && source.reason ? source.reason : 'Not connected yet.'),
@@ -17189,8 +17358,8 @@
             const cards = [
                 wpScheduleCard(sched),
                 wpGradesCard(grades, !mine),
-                wpReasonCard('Lunch', pass.lunchId, WP_FACE.lunch),
-                wpReasonCard('Clever', pass.cleverBadge, WP_FACE.clever),
+                wpReasonCard('Lunch', pass.lunchId, WP_FACE.lunch, WP_FACE.lunchOff),
+                wpReasonCard('Clever', pass.cleverBadge, WP_FACE.clever, WP_FACE.cleverOff),
                 wpHallPassCard(pass.hallPass),
                 wpStudentIdCard(pass.studentId),
             ];
@@ -22412,4 +22581,124 @@
             XLSX.writeFile(wb, filename);
             
             alert('✅ Referral report exported successfully!');
+        }
+
+
+        // ============================================================
+        // MOTION BRIDGE
+        //
+        // The only place script.js talks to wildcat-motion.js. Every
+        // helper below no-ops if that file did not load, so motion is
+        // strictly additive: pull the <script> tag and the app is the app.
+        //
+        // WHERE MOTION IS *NOT* APPLIED, AND WHY.
+        // rb-standards.md opens with a frequency table: 100+ times a day
+        // gets no animation ever, tens of times a day gets it drastically
+        // reduced, occasional gets standard animation, rare gets delight.
+        // This is an operations app. A teacher awards tickets in bursts all
+        // day, searches the roster constantly, and switches tabs
+        // constantly. So:
+        //
+        //   · Award Tickets, Award Cash, the student checkbox grid and
+        //     every button in the award path get NO entrance, NO spark and
+        //     NO reveal. They are the 100+/day column. They keep only the
+        //     :active press response, which is an acknowledgement rather
+        //     than an animation.
+        //   · The stat tiles and the leaderboard count UP the first time
+        //     their numbers arrive and SNAP for every award after that. A
+        //     count-up on the 200th ticket of the day would be a wrong
+        //     number on screen, twice a minute, for no reason.
+        //   · Search results never animate. renderStudentTable runs on
+        //     every keystroke; the row stagger is keyed to the table's
+        //     first paint and stays off for the rest of the session.
+        //   · The sidebar buttons themselves get nothing. What changed is
+        //     the pane, so the pane is what moves.
+        // ============================================================
+
+        /** Set a number, counting it up only if this is its first arrival. */
+        function wcCount(id, value) {
+            const el = typeof id === 'string' ? document.getElementById(id) : id;
+            if (!el) return;
+            if (window.wcMotion) window.wcMotion.count(el, value);
+            else el.textContent = value;
+        }
+
+        /** Stagger a table body's rows, on its first paint only. */
+        function wcRows(id, max) {
+            if (!window.wcMotion) return;
+            const el = typeof id === 'string' ? document.getElementById(id) : id;
+            if (!el) return;
+            window.wcMotion.stagger(el, {
+                selector: ':scope > tr',
+                type: 'row',
+                max: typeof max === 'number' ? max : 12
+            });
+        }
+
+        /** Count every [data-wcm-count] inside a container, first paint only. */
+        function wcNums(id) {
+            if (!window.wcMotion) return;
+            const el = typeof id === 'string' ? document.getElementById(id) : id;
+            if (el) window.wcMotion.countAll(el);
+        }
+
+        /** Crossfade a pane that has just been revealed. */
+        function wcPane(el) {
+            if (window.wcMotion && el) window.wcMotion.pane(el);
+        }
+
+        function wcInitMotion() {
+            const m = window.wcMotion;
+            if (!m) return;
+
+            // --- Modals -------------------------------------------------
+            // Marked, not rewired. The open/close code is untouched: the
+            // CSS transitions `display` itself with @starting-style and
+            // allow-discrete, which rb-standards.md recommends by name for
+            // "entry without JS". This app has five different ways of
+            // showing a modal, and threading a JS timing dance through all
+            // of them is how a dialog ends up stuck on screen.
+            document.querySelectorAll('.modal, .ref-modal').forEach(function (overlay) {
+                overlay.classList.add('wcm-modal');
+                const card = overlay.querySelector(':scope > .modal-content, :scope > .ref-modal-card');
+                if (card) card.classList.add('wcm-modal-card');
+            });
+
+            const profile = document.getElementById('studentProfileModal');
+            if (profile) {
+                profile.classList.add('wcm-modal');
+                const card = profile.firstElementChild;
+                if (card) {
+                    card.classList.add('wcm-modal-card');
+                    // Replaces an inline `animation: slideInUp 0.4s ease`:
+                    // 400ms is over the doc's 300ms ceiling for UI, `ease`
+                    // is the wrong curve for something entering, and 30px
+                    // of travel on a 900px card reads as a jump. The class
+                    // above lands it at 260ms on the strong ease-out from
+                    // 0.97 and 6px.
+                    card.style.animation = 'none';
+                }
+            }
+
+            // --- Click spark --------------------------------------------
+            // The raffle draw, and only the raffle draw. It happens once a
+            // week, it is the one moment in this app that is a celebration
+            // rather than a task, and it is the exact "rare / first-time"
+            // row of the frequency table. Sparks on the award button — a
+            // control pressed hundreds of times a day — would be the same
+            // component used as a defect.
+            m.clickSpark('.btn-draw', { sparkColor: '#E6E280' });
+
+            // --- Press feedback -----------------------------------------
+            // scale(0.97) / 160ms, straight out of rb-standards.md. This is
+            // the one thing that IS allowed on a hot control, because it is
+            // the response to a press rather than an animation played at
+            // the user.
+            m.press('.btn, .sp-tab, .subtab-button, .wp-btn');
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', wcInitMotion);
+        } else {
+            wcInitMotion();
         }
