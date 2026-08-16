@@ -19705,6 +19705,18 @@
         }
 
         function showStorageBannerIfNeeded(worst) {
+            // RETIRED as a visible banner 2026-08-15. It warned that the single
+            // 1MB Firestore document was filling — a real ceiling only while
+            // Firestore is the write target. The app now reads from Convex,
+            // which has no such limit, and Convex is where this data is headed.
+            // While DATA_WRITE is still 'both' the Firestore doc is written too,
+            // so the risk is not fully gone: the console warning below and
+            // Settings -> System Admin -> Storage Health still report it. The
+            // clean end of this is flipping DATA_WRITE to 'convex'; until then
+            // the signal stays available without nagging every admin on load.
+            return;
+
+            // eslint-disable-next-line no-unreachable
             if (!worst || worst.pct < STORAGE_ALERT_AT) return;
             if (!currentUser || (currentUser.role !== 'admin' && currentUser.role !== 'superadmin')) return;
             if (document.getElementById('storageTopBanner')) return; // already shown this session
