@@ -1,0 +1,24 @@
+# This is a hand-authored static site, not a Jekyll site. Pages runs the
+# jekyll-build-pages action anyway (it ignores .nojekyll), and Jekyll renders
+# every .md file through its Liquid engine — which dies on the {{ }} template
+# literals in the hub/ React source and in these docs. None of the paths below
+# are part of the published site (the site is index.html + the wildcat-*.{js,css}
+# + fonts/ + app/), so excluding them from Jekyll fixes the build without
+# dropping anything a browser fetches.
+exclude:
+  - hub
+  - convex
+  - powerschool
+  - scripts
+  - docs
+  - node_modules
+  - "*.md"
+  - "*.mjs"
+  - "*.test.mjs"
+  - package.json
+  - package-lock.json
+  - firebase.json
+  - firestore.rules
+# app/ is the built React hub served at /app/ — keep it. It contains no .md,
+# and its .js/.css are copied verbatim (Jekyll only Liquid-renders front-matter
+# files and .md), so it is safe to leave in.
