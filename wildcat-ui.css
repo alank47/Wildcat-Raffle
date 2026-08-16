@@ -1265,3 +1265,104 @@
     .wu-action:active, .wu-quick:active, .wu-person:active { transform: none; }
     .wu-tile-arrow, .wu-filter, .wu-rail-item, .wu-quick { transition-duration: 1ms; }
 }
+
+/* ============================================================
+   STANDARD LOADER
+   One full-screen overlay for every page-level wait (sign-in,
+   roster load, portal boot). The ground is the portal's own ink
+   (--wu-ink-900), so the transparent running-wildcat gif reads
+   cleanly with nothing behind it. Sits above the portal (9500)
+   and every dialog, and never blocks pointer events unless it is
+   actually on (script.js lifts it on error and on a hard timeout,
+   so it can never seal the app off).
+   ============================================================ */
+.wildcat-loader {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--wu-ink-900);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    /* Delay the visibility flip to the end of the fade-out so the mascot does
+       not vanish before the ground has faded. */
+    transition: opacity var(--wu-dur-panel) var(--wu-ease), visibility 0s linear var(--wu-dur-panel);
+}
+.wildcat-loader.is-on {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition: opacity var(--wu-dur-panel) var(--wu-ease);
+}
+.wildcat-loader__inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--wu-s4);
+    padding: var(--wu-s5);
+    text-align: center;
+}
+.wildcat-loader__mascot {
+    width: min(46vw, 220px);
+    height: auto;
+    /* A transparent gif needs no card behind it; the ink ground is the frame. */
+}
+.wildcat-loader__msg {
+    margin: 0;
+    color: var(--wu-fg-on-ink-dim);
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: .01em;
+}
+/* Lock the page behind the overlay while it is up. */
+body.wc-loading { overflow: hidden; }
+
+/* Reduced motion: the running gif is allowed to keep running (it is the
+   loader), but no fade is layered on top of it — the overlay snaps in and out. */
+@media (prefers-reduced-motion: reduce) {
+    .wildcat-loader,
+    .wildcat-loader.is-on { transition: none; }
+}
+
+/* ============================================================
+   PAGER
+   Compact controls drawn under a long table by renderPager() in
+   script.js. Buttons reuse .wu-btn (its hover already lives in a
+   gate), so nothing new leaks a hover onto a touch device. The
+   whole bar is hidden by script when a table fits on one page.
+   ============================================================ */
+.wu-pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--wu-s3);
+    flex-wrap: wrap;
+    padding: var(--wu-s3) var(--wu-s1) var(--wu-s1);
+}
+.wu-pager__count {
+    color: var(--wu-fg-dim);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+.wu-pager__nav {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wu-s2);
+}
+.wu-pager__page {
+    color: var(--wu-fg-dim);
+    font-size: 13px;
+    padding: 0 var(--wu-s1);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+.wu-pager .wu-btn[disabled] {
+    opacity: .45;
+    cursor: default;
+}
+/* On an ink surface the muted text would go dark-on-dark. */
+.wu-ink .wu-pager__count,
+.wu-ink .wu-pager__page { color: var(--wu-fg-on-ink-dim); }

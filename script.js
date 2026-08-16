@@ -6998,8 +6998,24 @@
          * Extracted from login() so Entra sign-in and the legacy password
          * form share one session path instead of two that drift apart.
          * Callers must have already proven identity.
+         *
+         * Wrapped so the full-screen loader covers the whole handoff: the core
+         * awaits saveData() BEFORE it hides the login screen, and that gap is
+         * exactly the "login screen flashes back with a Saving… pill" the owner
+         * reported. The overlay sits over it and lifts in the finally, when
+         * mainApp is on screen and drawn — success or error, the loader always
+         * comes down.
          */
         async function establishTeacherSession(teacher) {
+            if (typeof showLoader === 'function') showLoader('Signing you in…');
+            try {
+                return await establishTeacherSessionCore(teacher);
+            } finally {
+                if (typeof hideLoader === 'function') hideLoader();
+            }
+        }
+
+        async function establishTeacherSessionCore(teacher) {
             currentUser = teacher;
             
             // Track login activity
@@ -7236,7 +7252,7 @@
             updateAuditLogTable();
         }
 
-        function updateAuditLogTable() {
+        function updateAuditLogTable(keepPage) {
             const tbody = document.getElementById('auditLogTable');
             
             // Filter to only show RAFFLE MODE transactions
@@ -7267,18 +7283,35 @@
                 });
             }
             
+            // Search narrows the DATA before the empty check and the paging, so
+            // it searches every entry, not the rows currently on screen. Matches
+            // student, teacher, category and action, the way the old row-text
+            // filter did, minus the fight with pagination.
+            const auditSearch = (document.getElementById('searchAudit')?.value || '').toLowerCase().trim();
+            if (auditSearch) {
+                raffleAuditLog = raffleAuditLog.filter(log => {
+                    const hay = [log.studentName, log.teacher, log.category, log.action, log.reason, log.studentId]
+                        .map(v => String(v || '').toLowerCase()).join(' ');
+                    return hay.includes(auditSearch);
+                });
+            }
+
             if (raffleAuditLog.length === 0) {
-                const schoolText = currentAuditSubtab === 'middleschool' ? 'Middle School' : 
+                const schoolText = currentAuditSubtab === 'middleschool' ? 'Middle School' :
                                   currentAuditSubtab === 'highschool' ? 'High School' : '';
-                tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; padding: 40px; color: #999;">No ${schoolText} activity logged yet</td></tr>`;
+                const msg = auditSearch ? 'No activity matches your search' : `No ${schoolText} activity logged yet`;
+                tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; padding: 40px; color: #999;">${msg}</td></tr>`;
+                renderPager('audit', 'auditLogTable', { pages: 1 });
                 return;
             }
 
-            // Show most recent first
+            // Show most recent first, then page the sorted, searched set.
             const sorted = [...raffleAuditLog].reverse();
             const isAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin');
-            
-            tbody.innerHTML = sorted.map((log, index) => {
+            const auditView = paginate('audit', sorted, keepPage);
+            renderPager('audit', 'auditLogTable', auditView);
+
+            tbody.innerHTML = auditView.slice.map((log, index) => {
                 const date = new Date(log.timestamp);
                 const formattedDate = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
                 // Find the actual index in the full auditLog array by matching multiple fields for uniqueness
@@ -7401,7 +7434,7 @@
         }
         
         // Login Activity Functions
-        function updateLoginActivityTable() {
+        function updateLoginActivityTable(keepPage) {
             const tbody = document.getElementById('loginActivityTableBody');
             const searchUser = document.getElementById('loginSearchUser')?.value.toLowerCase() || '';
             const filterRole = document.getElementById('loginFilterRole')?.value || '';
@@ -7445,10 +7478,15 @@
             // Render table
             if (filteredLogins.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="5" style="padding: 40px; text-align: center; color: #999;">No login activity found</td></tr>';
+                renderPager('login', 'loginActivityTableBody', { pages: 1 });
                 return;
             }
-            
-            tbody.innerHTML = filteredLogins.map(login => {
+
+            // Stats above use the full filtered set; only the rows are paged.
+            const loginView = paginate('login', filteredLogins, keepPage);
+            renderPager('login', 'loginActivityTableBody', loginView);
+
+            tbody.innerHTML = loginView.slice.map(login => {
                 const date = new Date(login.timestamp);
                 const formattedDate = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                 const formattedTime = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
@@ -7684,34 +7722,44 @@
         }
 
         function searchAuditLog() {
-            const search = document.getElementById('searchAudit').value.toLowerCase();
-            const rows = document.querySelectorAll('#auditLogTable tr');
-            
-            rows.forEach(row => {
-                const text = row.textContent.toLowerCase();
-                row.style.display = text.includes(search) ? '' : 'none';
-            });
+            // Data-path re-render: search the whole log (all pages), reset to
+            // page 1. updateAuditLogTable reads #searchAudit itself.
+            updateAuditLogTable();
         }
 
-        function updateCashAuditLogTable() {
+        function updateCashAuditLogTable(keepPage) {
             const tbody = document.getElementById('cashAuditLogTable');
-            
+
             // Filter to only show CASH MODE transactions from auditLog
-            const cashAuditLog = auditLog.filter(log => {
+            let cashAuditLog = auditLog.filter(log => {
                 // Only include cash-related actions
                 const cashActions = ['cash_award', 'cash_deduct', 'reward_redemption', 'reset_all_student_cash'];
                 return cashActions.includes(log.action);
             });
-            
+
+            // Search the whole log (all pages), not the rendered rows.
+            const cashAuditSearch = (document.getElementById('searchCashAudit')?.value || '').toLowerCase().trim();
+            if (cashAuditSearch) {
+                cashAuditLog = cashAuditLog.filter(log => {
+                    const hay = [log.details, log.teacher, log.studentId, log.action]
+                        .map(v => String(v || '').toLowerCase()).join(' ');
+                    return hay.includes(cashAuditSearch);
+                });
+            }
+
             if (cashAuditLog.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px; color: #999;">No cash activity logged yet</td></tr>';
+                const msg = cashAuditSearch ? 'No cash activity matches your search' : 'No cash activity logged yet';
+                tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; padding: 40px; color: #999;">${msg}</td></tr>`;
+                renderPager('cashAudit', 'cashAuditLogTable', { pages: 1 });
                 return;
             }
 
-            // Show most recent first
+            // Show most recent first, then page the sorted, searched set.
             const sorted = [...cashAuditLog].reverse();
-            
-            tbody.innerHTML = sorted.map(log => {
+            const cashAuditView = paginate('cashAudit', sorted, keepPage);
+            renderPager('cashAudit', 'cashAuditLogTable', cashAuditView);
+
+            tbody.innerHTML = cashAuditView.slice.map(log => {
                 const date = new Date(log.timestamp);
                 const formattedDate = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
                 
@@ -7807,13 +7855,8 @@
         }
 
         function searchCashAuditLog() {
-            const search = document.getElementById('searchCashAudit').value.toLowerCase();
-            const rows = document.querySelectorAll('#cashAuditLogTable tr');
-            
-            rows.forEach(row => {
-                const text = row.textContent.toLowerCase();
-                row.style.display = text.includes(search) ? '' : 'none';
-            });
+            // Data-path re-render: search all pages, reset to page 1.
+            updateCashAuditLogTable();
         }
 
         function addTeacher() {
@@ -8966,7 +9009,7 @@
             await saveData();
         }
 
-        function updatePassHistory() {
+        function updatePassHistory(keepPage) {
             const searchTerm = document.getElementById('passHistorySearch').value.toLowerCase();
             const filterDest = document.getElementById('passHistoryFilter').value;
             
@@ -8985,13 +9028,19 @@
             
             const tbody = document.getElementById('passHistoryTable');
             tbody.innerHTML = '';
-            
+
             if (filtered.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 40px; color: #999;">No passes found</td></tr>';
+                renderPager('passHistory', 'passHistoryTable', { pages: 1 });
                 return;
             }
-            
-            filtered.forEach(pass => {
+
+            // Detail list: fewer, taller rows read better at 25 a page. Search
+            // and destination filter narrowed `filtered` above; this pages it.
+            const passView = paginate('passHistory', filtered, keepPage);
+            renderPager('passHistory', 'passHistoryTable', passView);
+
+            passView.slice.forEach(pass => {
                 const row = document.createElement('tr');
                 const statusColor = pass.status === 'returned' ? '#2E7D52' : 
                                    pass.status === 'overtime' ? '#B3392F' : 
@@ -13275,6 +13324,11 @@
         // same reason.
         // ---------------------------------------------------------------
         const PAGE_SIZE = 50;
+        // Per-table overrides. A dense roster reads fine at 50; a detail list
+        // (the hall-pass history) wants fewer, taller rows, so it takes 25.
+        // Anything not listed uses PAGE_SIZE.
+        const PAGE_SIZES = { passHistory: 25 };
+        const pageSizeFor = (key) => PAGE_SIZES[key] || PAGE_SIZE;
         const pagerState = {};
 
         /**
@@ -13288,41 +13342,64 @@
          * expects after typing in a search box. Paging itself passes keepPage.
          */
         function paginate(key, rows, keepPage) {
+            const size = pageSizeFor(key);
             const state = pagerState[key] || (pagerState[key] = { page: 1 });
-            const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+            const pages = Math.max(1, Math.ceil(rows.length / size));
             if (!keepPage) state.page = 1;
             // Deleting the last student on the last page must not strand the
             // view on a page that no longer exists.
             if (state.page > pages) state.page = pages;
-            const start = (state.page - 1) * PAGE_SIZE;
+            const start = (state.page - 1) * size;
             return {
-                slice: rows.slice(start, start + PAGE_SIZE),
+                slice: rows.slice(start, start + size),
                 page: state.page,
                 pages,
                 total: rows.length,
                 from: rows.length === 0 ? 0 : start + 1,
-                to: Math.min(start + PAGE_SIZE, rows.length),
+                to: Math.min(start + size, rows.length),
             };
         }
 
-        /** Move one table to a page and redraw it through its own renderer. */
+        /**
+         * Move one table to a page and redraw it through its own renderer.
+         *
+         * Every paginated renderer takes a keepPage flag and, when it is true,
+         * re-reads its own search/filter inputs and rebuilds the SAME filtered
+         * set before slicing — so paging never fights the filters, it just moves
+         * the window over whatever they narrowed to.
+         */
         function goToPage(key, page) {
             const state = pagerState[key];
             if (!state) return;
             state.page = page;
-            if (key === 'students') renderStudentTable(lastStudentRows, true);
-            else if (key === 'teachers') updateTeachersTable();
+            switch (key) {
+                case 'students':    renderStudentTable(lastStudentRows, true); break;
+                case 'teachers':    updateTeachersTable(); break;
+                case 'cash':        updateCashTable(true); break;
+                case 'tickets':     updateTicketsTable(true); break;
+                case 'audit':       updateAuditLogTable(true); break;
+                case 'cashAudit':   updateCashAuditLogTable(true); break;
+                case 'login':       updateLoginActivityTable(true); break;
+                case 'bigRaffle':   updateBigRaffleTable(true); break;
+                case 'passHistory': updatePassHistory(true); break;
+                default: break;
+            }
         }
 
         /**
          * Controls drawn under a table, into a container created on demand.
          *
-         * Created rather than required in index.html so this works for both
-         * tables without touching markup, and so a table that has not been
+         * Created rather than required in index.html so this works for every
+         * table without touching markup, and so a table that has not been
          * paginated yet simply has no controls instead of a broken layout.
          *
+         * Styled with the shared wu- primitives: the buttons are .wu-btn (whose
+         * hover already lives in a (hover: hover) gate, so nothing sticks on a
+         * tablet), the bar is .wu-pager in wildcat-ui.css. Compact on purpose —
+         * one line, no tall control bar eating the rows above the fold.
+         *
          * Hidden entirely on a single page: a pager that always says "Page 1 of
-         * 1" is noise, and on the teachers table with 40 rows that is every time.
+         * 1" is noise, and a table that already fits shows none.
          */
         function renderPager(key, containerAfterId, info) {
             const table = document.getElementById(containerAfterId);
@@ -13333,25 +13410,24 @@
             if (!bar) {
                 bar = document.createElement('div');
                 bar.id = id;
-                bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 4px;flex-wrap:wrap;';
+                bar.className = 'wu-pager';
                 host.parentNode.insertBefore(bar, host.nextSibling);
             }
-            if (info.pages <= 1) {
+            if (!info || info.pages <= 1) {
                 bar.innerHTML = '';
                 bar.style.display = 'none';
                 return;
             }
             bar.style.display = 'flex';
-            const btn = (label, page, disabled) =>
-                `<button onclick="goToPage('${key}', ${page})" ${disabled ? 'disabled' : ''} ` +
-                `style="padding:6px 12px;border:1px solid #d1d5db;border-radius:6px;background:${disabled ? '#f3f4f6' : '#fff'};` +
-                `color:${disabled ? '#9ca3af' : '#374151'};cursor:${disabled ? 'default' : 'pointer'};">${label}</button>`;
+            const btn = (label, page, disabled, aria) =>
+                `<button type="button" class="wu-btn wc-btn-sm" onclick="goToPage('${key}', ${page})"` +
+                `${disabled ? ' disabled' : ''} aria-label="${aria}">${label}</button>`;
             bar.innerHTML =
-                `<span style="color:#6b7280;font-size:14px;">Showing ${info.from} to ${info.to} of ${info.total}</span>` +
-                `<span style="display:flex;gap:6px;align-items:center;">` +
-                btn('&laquo; Prev', info.page - 1, info.page === 1) +
-                `<span style="color:#374151;font-size:14px;padding:0 4px;">Page ${info.page} of ${info.pages}</span>` +
-                btn('Next &raquo;', info.page + 1, info.page === info.pages) +
+                `<span class="wu-pager__count">${info.from}–${info.to} of ${info.total}</span>` +
+                `<span class="wu-pager__nav">` +
+                btn('‹ Prev', info.page - 1, info.page === 1, 'Previous page') +
+                `<span class="wu-pager__page">Page ${info.page} of ${info.pages}</span>` +
+                btn('Next ›', info.page + 1, info.page === info.pages, 'Next page') +
                 `</span>`;
         }
 
@@ -14764,7 +14840,7 @@
             container.innerHTML = html;
         }
 
-        function updateTicketsTable() {
+        function updateTicketsTable(keepPage) {
             const tbody = document.getElementById('ticketsTableBody');
             const periodFilter = document.getElementById('periodFilter');
             const gradeFilter = document.getElementById('gradeFilter');
@@ -14813,7 +14889,19 @@
             }
             
             console.log('Displaying', displayStudents.length, 'students');
-            
+
+            // Search cooperates with the period/grade filter above and with
+            // paging below: it narrows the SET here (so the header count and the
+            // page math both see the searched list), rather than hiding already
+            // rendered rows, which would only ever search the visible page.
+            const ticketSearch = (document.getElementById('searchTickets')?.value || '').toLowerCase().trim();
+            if (ticketSearch) {
+                displayStudents = displayStudents.filter(s =>
+                    `${s.firstName} ${s.lastName}`.toLowerCase().includes(ticketSearch) ||
+                    String(s.id).toLowerCase().includes(ticketSearch)
+                );
+            }
+
             // Show/update header
             if (classHeader) {
                 classHeader.style.display = 'block';
@@ -14821,10 +14909,14 @@
                 if (classHeaderSubtitle) classHeaderSubtitle.textContent = headerSubtitle;
                 if (classHeaderCount) classHeaderCount.textContent = displayStudents.length;
             }
-            
+
+            // Page the filtered, searched set.
+            const ticketView = paginate('tickets', displayStudents, keepPage);
+            renderPager('tickets', 'ticketsTableBody', ticketView);
+
             // Render table — calm palette: blue is the single accent,
             // count pills are quiet (mist when >0, gray when 0), row styling via CSS.
-            tbody.innerHTML = displayStudents.map((s) => {
+            tbody.innerHTML = ticketView.slice.map((s) => {
                 const pill = (n) => `<span class="count-pill ${n > 0 ? 'count-pill-on' : ''}">${n}</span>`;
                 const dot = (n, label) => `<span class="qual-dot ${n > 0 ? 'qual-dot-on' : ''}" title="${label}"></span>`;
                 return `
@@ -14962,15 +15054,16 @@
             wcCount('bigRaffleQualified', qualified);
         }
 
-        function updateBigRaffleTable() {
+        function updateBigRaffleTable(keepPage) {
             const tbody = document.getElementById('bigRaffleTable');
             // Same pool as the #bigRaffleQualified tile above it, which
             // updateStats writes. A table that lists more rows than the number
             // printed over it is the version of this bug somebody notices.
             const qualified = enrolledStudents().filter(s => isQualifiedForJackpot(s));
-            
+
             if (qualified.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="5" class="rank-empty">No students qualified yet</td></tr>';
+                renderPager('bigRaffle', 'bigRaffleTable', { pages: 1 });
                 return;
             }
             
@@ -14999,7 +15092,11 @@
                 return currentDirection === 'asc' ? comparison : -comparison;
             });
 
-            tbody.innerHTML = qualified.map(s => {
+            // Sort the whole qualified pool above, then page it here.
+            const raffleView = paginate('bigRaffle', qualified, keepPage);
+            renderPager('bigRaffle', 'bigRaffleTable', raffleView);
+
+            tbody.innerHTML = raffleView.slice.map(s => {
                 const grade = parseInt(s.grade);
                 
                 // Check audit log for bonus entries for THIS student
@@ -15065,13 +15162,10 @@
 
 
         function searchTicketsTable() {
-            const search = document.getElementById('searchTickets').value.toLowerCase();
-            const rows = document.querySelectorAll('#ticketsTableBody tr');
-            
-            rows.forEach(row => {
-                const text = row.textContent.toLowerCase();
-                row.style.display = text.includes(search) ? '' : 'none';
-            });
+            // Re-render through the data path so search narrows the FULL roster
+            // (all pages), not just the rows currently on screen. updateTicketsTable
+            // reads #searchTickets itself and resets to page 1.
+            updateTicketsTable();
         }
 
         function toggleSelectAll() {
@@ -17555,6 +17649,13 @@
         function openStudentPortal(seed, options) {
             const view = wpById('studentPassView');
             if (!view) return;
+            // Cover the sign-in handoff and the first data load. The portal
+            // scaffold is revealed synchronously below and fills in from
+            // loadStudentPortal(); the loader lifts when that settles, so the
+            // student sees the running wildcat, then a ready portal — never the
+            // blank card stack mid-fetch. Hidden in the finally so a failed load
+            // still shows its error rather than spinning forever.
+            if (typeof showLoader === 'function') showLoader('Loading your pass…');
             wpFromBoot = Boolean(options && options.fromBoot);
 
             ['loginScreen', 'mainApp', 'studentDashboard', 'studentApp'].forEach(function (id) {
@@ -17571,7 +17672,9 @@
                 if (meta && seed.grade) meta.textContent = 'Grade ' + seed.grade;
             }
             wpStartPassWatch();
-            return loadStudentPortal();
+            return Promise.resolve(loadStudentPortal()).finally(function () {
+                if (typeof hideLoader === 'function') hideLoader();
+            });
         }
 
         /**
@@ -19331,6 +19434,10 @@
 
         // Initialize
         (async function() {
+            // If Microsoft just redirected back with an auth code, a sign-in is
+            // already in flight. Cover the login screen for it BEFORE the data
+            // load below, so it never flashes while MSAL settles.
+            maybeCoverRedirectSignIn();
             // Load data first so teachers array is populated
             await loadData();
             
@@ -20539,7 +20646,7 @@
         }
 
         // Update Cash Table
-        function updateCashTable() {
+        function updateCashTable(keepPage) {
             const periodFilter = document.getElementById('cashPeriodFilter').value;
             const gradeFilter = document.getElementById('cashGradeFilter').value;
             const tbody = document.getElementById('cashStudentTableBody');
@@ -20647,10 +20754,18 @@
                     '<div style="font-weight:600;margin-bottom:6px;">No students to display</div>' +
                     '<div style="font-size:13px;max-width:520px;margin:0 auto;">' + why + '</div>' +
                     '</td></tr>';
+                renderPager('cash', 'cashStudentTableBody', { pages: 1 });
                 return;
             }
-            
-            filteredStudents.forEach(student => {
+
+            // Page the sorted, filtered set. The header count above stays the
+            // TOTAL; only the rows are windowed. Select-all and Award then act
+            // on the visible page, which is the safer reading of "select all"
+            // on a 623-row roster anyway.
+            const view = paginate('cash', filteredStudents, keepPage);
+            renderPager('cash', 'cashStudentTableBody', view);
+
+            view.slice.forEach(student => {
                 // Initialize if needed
                 if (student.wildcatCashBalance === undefined) {
                     student.wildcatCashBalance = STARTING_BALANCE;
@@ -22506,6 +22621,86 @@
                 // Brief minimum on-screen time so it doesn't flicker on fast saves.
                 el._hide = setTimeout(() => el.classList.remove('wc-saving-show'), 220);
             }
+        }
+
+        // ============================================================
+        // STANDARD LOADER
+        //
+        // The one full-screen loader for the whole app. Any page-level wait
+        // routes through showLoader()/hideLoader(): signing in (the moment the
+        // owner called out, where the login screen used to flash back with a
+        // "Saving…" pill), booting the roster, opening the student portal.
+        //
+        // NOT for the tiny inline "Saving…" pill above — that is an
+        // acknowledgement on a control a teacher is standing over, and a
+        // full-screen takeover there would be worse, not better. The pill
+        // stays; this covers whole-screen transitions.
+        //
+        // The overlay markup lives in index.html so it is in the DOM before this
+        // file runs. The gif's src is set on first show, so a visitor who never
+        // signs in never pays 1.9MB for it.
+        //
+        // Idempotent by construction: show twice is one overlay, hide twice is a
+        // no-op. A hard failsafe lifts it after 20s so a caller that forgets to
+        // hide (or a data load that never returns) can never trap the user
+        // behind it.
+        // ============================================================
+        function showLoader(message) {
+            const el = document.getElementById('wildcatLoader');
+            if (!el) return;
+            const img = document.getElementById('wildcatLoaderMascot');
+            if (img && !img.getAttribute('src')) img.setAttribute('src', 'assets/wildcat-loader.gif');
+            const msg = document.getElementById('wildcatLoaderMsg');
+            if (msg) msg.textContent = (message == null || message === '') ? 'Loading…' : String(message);
+            el.classList.add('is-on');
+            el.setAttribute('aria-hidden', 'false');
+            el.setAttribute('aria-busy', 'true');
+            document.body.classList.add('wc-loading');
+            clearTimeout(showLoader._failsafe);
+            showLoader._failsafe = setTimeout(function () {
+                console.warn('[loader] auto-hid after 20s; a caller never called hideLoader()');
+                hideLoader();
+            }, 20000);
+        }
+        function hideLoader() {
+            clearTimeout(showLoader._failsafe);
+            const el = document.getElementById('wildcatLoader');
+            if (!el) return;
+            el.classList.remove('is-on');
+            el.setAttribute('aria-hidden', 'true');
+            el.removeAttribute('aria-busy');
+            document.body.classList.remove('wc-loading');
+        }
+        window.showLoader = showLoader;
+        window.hideLoader = hideLoader;
+
+        /**
+         * On a staff redirect return, Microsoft sends the browser back to this
+         * page carrying an auth code in the hash, and wildcat-auth.js processes
+         * it asynchronously before establishTeacherSession() swaps in the app.
+         * Cover the login screen for that whole window so it never flashes.
+         *
+         * establishTeacherSession() hides the loader on success. A FAILED
+         * redirect finishes inside wildcat-auth.js, which cannot reach
+         * hideLoader(), so this also watches for the staff error text (or the
+         * app appearing, or a 15s cap) and lifts the overlay itself — a failed
+         * sign-in must be readable, never sealed behind the wildcat.
+         */
+        function maybeCoverRedirectSignIn() {
+            const hash = String(window.location.hash || '');
+            if (!/[#&](code|error|id_token|access_token)=/.test(hash)) return;
+            showLoader('Signing you in…');
+            const started = Date.now();
+            const watch = setInterval(function () {
+                const main = document.getElementById('mainApp');
+                const appUp = main && !main.classList.contains('hidden');
+                const errEl = document.getElementById('entraSignInError');
+                const errShown = errEl && errEl.textContent.trim() !== '';
+                if (appUp || errShown || Date.now() - started > 15000) {
+                    clearInterval(watch);
+                    if (!appUp) hideLoader();
+                }
+            }, 200);
         }
 
         function _wcDialogHost() {
