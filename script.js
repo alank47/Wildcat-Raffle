@@ -22606,6 +22606,18 @@
         // looks like nothing happened.
         // ============================================================
         function showSavingIndicator(on) {
+            // Never over the login screen. The app dual-writes on boot and on a
+            // roster refresh, and that fired this pill while nobody was signed
+            // in — so the first thing a visitor saw was the login screen wearing
+            // a "Saving…" tag, which is the exact noise the owner called out.
+            // The pill is an acknowledgement for a signed-in user standing over
+            // a control; logged out, there is nothing to acknowledge. The full
+            // screen sign-in wait is the loader's job, not this.
+            const signedIn = (typeof currentUser !== 'undefined' && currentUser)
+                || (typeof currentStudent !== 'undefined' && currentStudent);
+            const onLogin = !document.getElementById('loginScreen')?.classList.contains('hidden');
+            if (on && (!signedIn || onLogin)) return;
+
             let el = document.getElementById('wcSaving');
             if (!el) {
                 el = document.createElement('div');
