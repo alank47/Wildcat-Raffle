@@ -1,6 +1,6 @@
 import { QueryCtx, MutationCtx } from "./_generated/server";
 import { ConvexError } from "convex/values";
-import { classify, normalizeEmail, Identity } from "./identityRules";
+import { classify, normalizeEmail, studentRecordVerdict, Identity } from "./identityRules";
 
 /**
  * Server-side identity. This is the whole security boundary of the app.
@@ -31,6 +31,38 @@ function staffOpts() {
   };
 }
 
+/**
+ * `.unique()` that explains itself instead of being redacted.
+ *
+ * `.unique()` throws a PLAIN Error when a second row matches, and Convex redacts
+ * a plain Error in production: the caller sees "Server Error" and a request id.
+ * Two student records sharing one email therefore locked both children out of
+ * every screen in the app with no readable cause anywhere, inside the very
+ * boundary whose file header says ConvexError on every throw for exactly this
+ * reason.
+ *
+ * A duplicate here is a real and reachable state: `students.email` has no
+ * uniqueness constraint, the SIS writes it, and the migration notes record
+ * former students being carried alongside enrolled ones. So this names the
+ * table, the address and the fix.
+ */
+async function uniqueOrExplain<T>(
+  q: { unique: () => Promise<T | null> },
+  table: string,
+  email: string,
+): Promise<T | null> {
+  try {
+    return await q.unique();
+  } catch {
+    // The only thing .unique() throws is "more than one matching document".
+    throw new ConvexError(
+      `More than one ${table} record has the address ${email}, so this account ` +
+        `cannot be resolved to one person and has been refused rather than ` +
+        `guessed at. An admin must merge or archive the duplicate in ${table}.`,
+    );
+  }
+}
+
 export async function requireIdentity(ctx: QueryCtx | MutationCtx): Promise<Identity> {
   const identity = await ctx.auth.getUserIdentity();
   if (identity === null) throw new ConvexError("Not authenticated.");
@@ -49,10 +81,11 @@ export async function requireStaff(ctx: QueryCtx | MutationCtx) {
   const id = await requireIdentity(ctx);
   if (id.kind !== "staff") throw new ConvexError("Staff only.");
 
-  const teacher = await ctx.db
-    .query("teachers")
-    .withIndex("by_email", (q) => q.eq("email", id.email))
-    .unique();
+  const teacher = await uniqueOrExplain(
+    ctx.db.query("teachers").withIndex("by_email", (q) => q.eq("email", id.email)),
+    "teachers",
+    id.email,
+  );
 
   if (!teacher) {
     throw new ConvexError(
@@ -75,15 +108,23 @@ export async function requireAdmin(ctx: QueryCtx | MutationCtx) {
 /**
  * Students resolve ONLY to themselves. There is no argument for which student to
  * fetch, on purpose: if the caller could name one, they could name any of them.
+ *
+ * A valid token is authentication, not enrolment. The archived check below is
+ * the same principle requireStaff states above, applied to the side of the app
+ * that can now WRITE: a student who left the roster keeps a working Google
+ * account, and without this they keep opening hall passes. See
+ * studentRecordVerdict in identityRules.ts for why the refusal is worded the way
+ * it is.
  */
 export async function requireStudentSelf(ctx: QueryCtx | MutationCtx) {
   const id = await requireIdentity(ctx);
   if (id.kind !== "student") throw new ConvexError("Students only.");
 
-  const student = await ctx.db
-    .query("students")
-    .withIndex("by_email", (q) => q.eq("email", id.email))
-    .unique();
+  const student = await uniqueOrExplain(
+    ctx.db.query("students").withIndex("by_email", (q) => q.eq("email", id.email)),
+    "students",
+    id.email,
+  );
 
   if (!student) {
     throw new ConvexError(
@@ -93,5 +134,9 @@ export async function requireStudentSelf(ctx: QueryCtx | MutationCtx) {
         `different address on file. The office can check Student Profile > Email.`,
     );
   }
+
+  const verdict = studentRecordVerdict(student);
+  if (!verdict.ok) throw new ConvexError(verdict.reason);
+
   return student;
 }

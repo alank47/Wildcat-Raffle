@@ -296,16 +296,94 @@
     }
   }
 
+  // ---------------------------------------------------------------------
+  // The shared Chromebook guard.
+  //
+  // THE FAILURE THIS PREVENTS. These machines are shared: a teacher signs in
+  // during first period and a student picks the same one up at lunch. MSAL
+  // caches the teacher's account, so ANY call to acquireTokenSilent on that
+  // machine hands back a valid staff token with nobody having clicked
+  // anything. resumeSession() used to run from onReady(), on every page load,
+  // for everyone. So the student who opened the app after the teacher was
+  // silently signed in AS that teacher, holding the teacher's roster and the
+  // teacher's power to award tickets and Wildcat Cash. No prompt, no click,
+  // nothing on screen to notice, and it is Microsoft running on the student
+  // path, which the owner has said must never happen.
+  //
+  // Two conditions now have to hold before anything silent is attempted, and
+  // both are about the PERSON standing there rather than what the browser
+  // remembers:
+  //
+  //   1. staffSignInRequested -- a member of staff pressed the staff sign-in
+  //      button in this page view. Page load cannot set it. This is what
+  //      makes the old bug structurally unreachable rather than merely
+  //      removed: re-adding a resumeSession() call to onReady() would still
+  //      resume nothing.
+  //   2. staffEntranceActive() -- the student portal is not on screen and the
+  //      login screen is not showing its Student tab.
+  //
+  // The cost of being wrong in the safe direction is a teacher pressing "Sign
+  // in with Microsoft" once more than before. The cost of being wrong in the
+  // other direction is a fourteen year old holding an award button. Every
+  // ambiguous case resolves toward the first one.
+  // ---------------------------------------------------------------------
+
+  let staffSignInRequested = false;
+
+  function staffEntranceActive() {
+    const onScreen = (id) => {
+      const el = document.getElementById(id);
+      if (!el) return false;
+      const cl = el.classList;
+      return !(cl && cl.contains && cl.contains('hidden'));
+    };
+
+    // Somebody is using the app AS a student, right now.
+    if (onScreen('studentPassView')) return false;
+    const body = document.body;
+    if (body && body.classList && body.classList.contains &&
+        body.classList.contains('wp-open')) return false;
+
+    // The login screen is showing its Student tab. Whoever is standing here
+    // walked up to the student entrance, whatever this browser remembers
+    // about the last person who used it.
+    if (onScreen('studentLoginForm')) return false;
+
+    return true;
+  }
+
   /**
-   * Runs on page load. If we came back from Microsoft carrying a code, finish
-   * the sign-in; otherwise do nothing at all.
+   * Drop the cached Microsoft account, WITHOUT loading MSAL to do it.
    *
-   * Guarded on the fragment so a normal visit never pays for loading MSAL:
-   * every teacher who signs in with a password, and every student, would
-   * otherwise download ~270KB of SDK for nothing.
+   * Called the moment a student successfully signs in. After that point this
+   * device has demonstrably passed to a student, and leaving the previous
+   * teacher's account sitting in storage is the whole shared-Chromebook
+   * problem in one object: it is what acquireTokenSilent reads, and it is what
+   * would let one stray press of the Microsoft button restore a session that
+   * belongs to somebody else.
+   *
+   * Deliberately implemented as key removal rather than msalApp.logout(): the
+   * student path must not load, initialise or run the Microsoft SDK, and
+   * calling into MSAL to forget Microsoft would do exactly that. MSAL's cache
+   * is plain, namespaced storage keys, so this needs no library.
    */
+  function forgetCachedStaffAccount() {
+    for (const store of [window.sessionStorage, window.localStorage]) {
+      if (!store) continue;
+      const doomed = [];
+      for (let i = 0; i < store.length; i++) {
+        const k = store.key(i);
+        if (k && k.startsWith('msal.')) doomed.push(k);
+      }
+      doomed.forEach((k) => { try { store.removeItem(k); } catch (_) {} });
+    }
+    msalApp = null;
+    msalAppPromise = null;
+    staffSignInRequested = false;
+  }
+
   /**
-   * Re-establish the session on a normal page load, without asking the user.
+   * Re-establish the session without asking the user for credentials again.
    *
    * THE BUG THIS FIXES. completeRedirectSignIn() returns immediately unless the
    * URL hash carries a redirect response, so the session existed for exactly
@@ -324,10 +402,28 @@
    *
    * finishSignIn emits `wildcat-auth-signin`, so the app's roster refresh
    * happens through exactly the same path as an interactive sign-in.
+   *
+   * NO LONGER RUNS ON PAGE LOAD. It is now the first step of
+   * signInWithMicrosoft(), so it only ever runs because a member of staff
+   * pressed the staff button. See the shared Chromebook guard above for why
+   * that move matters more than anything else in this file.
    */
   async function resumeSession() {
     if (session) return session;
     if (!configured.entra()) return null;
+
+    // The shared Chromebook guard. Both conditions are documented above; the
+    // short version is that a page load is not a person and the student
+    // entrance is not the staff entrance.
+    if (!staffSignInRequested) {
+      console.debug('[wildcat-auth] not resuming: no staff sign-in was requested');
+      return null;
+    }
+    if (!staffEntranceActive()) {
+      console.debug('[wildcat-auth] not resuming: the student entrance is on screen');
+      return null;
+    }
+
     try {
       const app = await entraClient();
       const accounts = app.getAllAccounts ? app.getAllAccounts() : [];
@@ -351,6 +447,16 @@
     }
   }
 
+  /**
+   * Runs on page load. If we came back from Microsoft carrying a code, finish
+   * the sign-in; otherwise do nothing at all.
+   *
+   * Guarded on the fragment BEFORE entraClient() is touched, so a normal visit
+   * never pays for loading MSAL and, more to the point, never runs a line of
+   * Microsoft code. A fragment only exists here because somebody pressed the
+   * staff button a moment ago and Microsoft sent them back, which is the one
+   * page load that genuinely is a staff action in flight.
+   */
   async function completeRedirectSignIn() {
     const hash = String(window.location.hash || '');
     if (!/[#&](code|error|id_token|access_token)=/.test(hash)) return;
@@ -518,6 +624,12 @@
   }
 
   function signOut() {
+    // Captured before it is cleared, so the app can put the login screen back
+    // on the tab the person actually came in through. A student who signs out
+    // and is handed the Teacher tab is looking at a "Sign in with Microsoft"
+    // button, which is the screen the owner saw and reported.
+    const kind = (session && session.me && session.me.kind) || null;
+
     session = null;
     if (window.google && window.google.accounts && window.google.accounts.id) {
       window.google.accounts.id.disableAutoSelect();
@@ -526,7 +638,43 @@
       const account = msalApp.getAllAccounts()[0];
       if (account) msalApp.logoutPopup({ account }).catch(() => {});
     }
-    emit('wildcat-auth-signout', {});
+    // Whether or not MSAL was ever loaded in this page view, leave nothing
+    // behind that acquireTokenSilent could pick up. A sign-out that leaves a
+    // resumable staff account in storage is the shared Chromebook problem
+    // wearing a different hat.
+    forgetCachedStaffAccount();
+
+    emit('wildcat-auth-signout', { kind });
+  }
+
+  /**
+   * Everything that happens once Convex has said "this token is staff".
+   *
+   * Match the app's own record by normalized email. Convex has already
+   * confirmed the identity; this is only finding the local row that holds
+   * role, sections and ticket counts.
+   *
+   * Hands off to establishTeacherSession(), the same function the password
+   * form calls once it has checked a password. One session path, so the two
+   * cannot drift apart. Shared by the resumed and the interactive routes for
+   * the same reason.
+   */
+  async function adoptStaffRecord(me) {
+    const target = (me.email || '').trim().toLowerCase();
+    const teacher =
+      typeof teachers !== 'undefined' &&
+      teachers.find((t) => (t.email || '').trim().toLowerCase() === target);
+
+    if (!teacher) {
+      // Expected for most staff right now: 39 of 40 records have no email,
+      // so there is nothing to match even though the sign-in itself worked.
+      throw new Error(
+        `Signed in as ${target}, but no local staff record carries that ` +
+        `email address. An admin needs to add it to your profile.`,
+      );
+    }
+
+    await establishTeacherSession(teacher);
   }
 
   /**
@@ -537,9 +685,11 @@
    * round, matching a record before the token is verified, would let anyone who
    * knows a teacher's address in as that teacher.
    *
-   * Hands off to establishTeacherSession(), the same function the password form
-   * calls once it has checked a password. One session path, so the two cannot
-   * drift apart.
+   * This is also the ONLY place that unlocks silent resumption, and it is
+   * where the convenience that used to run on page load now lives: a teacher
+   * coming back to a tab that still holds their cached account presses this
+   * once and is in, with no round trip to login.microsoftonline.com. A student
+   * who never presses it never loads a byte of Microsoft SDK.
    */
   async function signInWithMicrosoft() {
     const errorEl = document.getElementById('entraSignInError');
@@ -549,27 +699,21 @@
     setError('');
     if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
 
+    // A person pressed the staff button. Nothing else in this file may set
+    // this, and page load in particular cannot.
+    staffSignInRequested = true;
+
     try {
-      const me = await signInStaff();          // throws unless Convex says staff
-
-      // Match the app's own record by normalized email. Convex has already
-      // confirmed the identity; this is only finding the local row that holds
-      // role, sections and ticket counts.
-      const target = (me.email || '').trim().toLowerCase();
-      const teacher =
-        typeof teachers !== 'undefined' &&
-        teachers.find((t) => (t.email || '').trim().toLowerCase() === target);
-
-      if (!teacher) {
-        // Expected for most staff right now: 39 of 40 records have no email,
-        // so there is nothing to match even though the sign-in itself worked.
-        throw new Error(
-          `Signed in as ${target}, but no local staff record carries that ` +
-          `email address. An admin needs to add it to your profile.`,
-        );
+      // The cached account first. resumeSession() re-checks the guard itself,
+      // so this is a no-op on a device that has passed to a student.
+      const resumed = await resumeSession();
+      if (resumed) {
+        await adoptStaffRecord(resumed.me);
+        return;
       }
 
-      await establishTeacherSession(teacher);
+      const me = await signInStaff();          // throws unless Convex says staff
+      await adoptStaffRecord(me);
     } catch (err) {
       // Popup dismissal is a normal thing a person does, not an error worth
       // shouting about.
@@ -600,6 +744,14 @@
     const me = ev.detail;
     if (!me || me.kind !== 'student') return;
 
+    // This device has demonstrably passed to a student. Drop whatever
+    // Microsoft account the last teacher left cached on it, so there is
+    // nothing here for a later silent resume, or a stray press of the
+    // Microsoft button, to restore. Done with storage keys rather than an
+    // MSAL call: the student path must not load the Microsoft SDK, and
+    // calling into MSAL to forget Microsoft would load it.
+    forgetCachedStaffAccount();
+
     const errorEl = document.getElementById('googleSignInError');
     const target = (me.email || '').trim().toLowerCase();
     const student =
@@ -607,6 +759,13 @@
       students.find((s) => (s.email || '').trim().toLowerCase() === target);
 
     if (!student) {
+      // A failed student sign-in must land back on the Student tab, for the
+      // same reason as the error handler below: the login screen defaults to
+      // Teacher, and a student should never be handed a Microsoft button.
+      const login = document.getElementById('loginScreen');
+      if (login && login.classList) login.classList.remove('hidden');
+      if (typeof window.showStudentLogin === 'function') window.showStudentLogin();
+
       if (errorEl) {
         errorEl.textContent =
           `Signed in as ${target}, but no student record is linked to that ` +
@@ -615,12 +774,38 @@
       return;
     }
     if (errorEl) errorEl.textContent = '';
-    establishStudentSession(student);
+
+    // Opens the student PORTAL. This used to call establishStudentSession(),
+    // which revealed the legacy #studentDashboard and hid #loginScreen. The
+    // pass cards were a child of #loginScreen, so this line was what blanked
+    // them and put a white card that looks like a login screen in their place.
+    // It only bit once the Convex roster refresh had landed and given the
+    // students array real email addresses, which is why it presented as an
+    // intermittent "dropped back to login" rather than a plain bug.
+    //
+    // openStudentPortal is defined in script.js, which loads after this file
+    // but always before a person can click a sign in button.
+    if (typeof window.openStudentPortal === 'function') {
+      window.openStudentPortal(student);
+    } else if (typeof establishStudentSession === 'function') {
+      establishStudentSession(student);
+    }
   });
 
   window.addEventListener('wildcat-auth-error', function (ev) {
     const d = ev.detail || {};
     if (d.kind !== 'student') return;
+
+    // Put the student back at the STUDENT entrance to read the message. The
+    // login screen defaults to the Teacher tab, so a failure that only wrote
+    // an error string could leave a student looking at a screen whose main
+    // button says "Sign in with Microsoft", with their own error hidden on the
+    // tab behind it. The message and the button it belongs to have to be on
+    // screen together.
+    const login = document.getElementById('loginScreen');
+    if (login && login.classList) login.classList.remove('hidden');
+    if (typeof window.showStudentLogin === 'function') window.showStudentLogin();
+
     const el = document.getElementById('googleSignInError');
     if (el) el.textContent = d.message || 'Sign-in failed.';
   });
@@ -651,12 +836,18 @@
     // loads AFTER this file. Defer to the end of the task queue so both exist
     // by the time the redirect is processed.
     setTimeout(function () {
-      // Resume first: on a normal load there is no redirect hash and this is
-      // the only thing that re-establishes the session. On a redirect return it
-      // is a cheap no-op, because completeRedirectSignIn sets `session` and
-      // resumeSession returns early when one already exists.
-      resumeSession().catch(function () { /* silent by design */ });
-
+      // resumeSession() USED TO RUN HERE, on every page load, for everyone.
+      // That single line is what loaded 270KB of Microsoft SDK into every
+      // student's browser and, far worse, handed a student the previous
+      // teacher's session on a shared Chromebook without a click. It is gone
+      // on purpose. Silent resumption now happens inside signInWithMicrosoft(),
+      // where a member of staff has actually asked for it, and the guard on
+      // resumeSession() refuses even if this call ever comes back.
+      //
+      // completeRedirectSignIn stays, and still touches nothing unless the URL
+      // carries a redirect response. That fragment only exists because
+      // somebody pressed the Microsoft button moments ago, so it is the one
+      // page load that genuinely is a staff action already in flight.
       completeRedirectSignIn().catch(function (err) {
         console.error('[wildcat-auth] redirect completion error:', err);
       });
@@ -677,6 +868,8 @@
     signInStaff,
     initStudentButton,
     signOut,
+    staffEntranceActive,
+    forgetCachedStaffAccount,
     convexQuery,
     convexMutation,
     getSession: () => session,
@@ -686,6 +879,12 @@
       entraConfigured: configured.entra(),
       googleConfigured: configured.google(),
       signedInAs: session ? session.me.kind : null,
+      // The acceptance check for the student entrance. `msalLoaded` must be
+      // false on any page where only the Student tab has been opened: it is
+      // the observable form of "Microsoft does not exist on the student path".
+      msalLoaded: typeof window.msal === 'object' && window.msal !== null,
+      staffSignInRequested,
+      staffEntranceActive: staffEntranceActive(),
     }),
   };
 })();

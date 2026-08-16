@@ -1,0 +1,531 @@
+@import "tailwindcss";
+
+/* ============================================================
+   WILDCAT HUB — student surface
+   ------------------------------------------------------------
+   The world this has to belong to is styles.css §"STUDENT PORTAL
+   (#studentPassView)": near-black ground, light cards, school
+   palette on the card faces. Those values are repeated here rather
+   than imported, because this bundle must not depend on the live
+   app's stylesheet and must not be able to change it.
+
+   Motion tokens are the same names and the same numbers as
+   wildcat-motion.css, which is itself the rb-standards table:
+   ease-out for entering, <300ms for UI, count-up allowed longer
+   because it is explanatory.
+   ============================================================ */
+
+@font-face {
+  font-family: "Visuelt";
+  src: url("/fonts/VisueltPro-Regular.woff") format("woff");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Visuelt";
+  src: url("/fonts/VisueltPro-Bold.woff") format("woff");
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Visuelt";
+  src: url("/fonts/VisueltPro-ExtraLight.woff") format("woff");
+  font-weight: 200;
+  font-display: swap;
+}
+
+@theme {
+  /* School palette. Exactly the values in styles.css:1518. */
+  --color-wc-blue: #2f67a7;
+  --color-wc-blue-dark: #24517f;
+  --color-wc-blue-deep: #0c447c;
+  --color-wc-blue-pale: #b5d4f4;
+  --color-wc-blue-mist: #e6f1fb;
+  --color-wc-ink: #0e0e0e;
+  --color-wc-orange: #d9742f;
+  --color-wc-yellow: #e6e280;
+  --color-wc-border: #e3e8ef;
+
+  /* The student surface's own ground, from styles.css:3313. */
+  --color-wp-ground: #0b0b0e;
+  --color-wp-raise: #14161b;
+  --color-wp-fg: #f6f4ef;
+  --color-wp-dim: #8e9199;
+
+  --radius-card: 17px;
+
+  --font-sans: "Visuelt", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+
+  /* StarBorder ships expecting these two in a tailwind.config.js that
+     Tailwind v4 does not have. Declared here so the component works as
+     published instead of silently losing its animation. */
+  --animate-star-movement-bottom: star-movement-bottom linear infinite alternate;
+  --animate-star-movement-top: star-movement-top linear infinite alternate;
+
+  @keyframes star-movement-bottom {
+    0% {
+      transform: translate(0%, 0%);
+      opacity: 1;
+    }
+    100% {
+      transform: translate(-100%, 0%);
+      opacity: 0;
+    }
+  }
+  @keyframes star-movement-top {
+    0% {
+      transform: translate(0%, 0%);
+      opacity: 1;
+    }
+    100% {
+      transform: translate(100%, 0%);
+      opacity: 0;
+    }
+  }
+}
+
+:root {
+  --wp-hair: rgba(255, 255, 255, 0.1);
+  --wp-hair-strong: rgba(255, 255, 255, 0.18);
+
+  /* rb-standards easing table. */
+  --wcm-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --wcm-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+
+  /* rb-standards duration table. Nothing in the UI band exceeds 300ms. */
+  --wcm-dur-press: 160ms;
+  --wcm-dur-tip: 160ms;
+  --wcm-dur-menu: 200ms;
+  --wcm-dur-pane: 180ms;
+  --wcm-dur-modal: 260ms;
+  --wcm-dur-enter: 260ms;
+  --wcm-dur-count: 700ms; /* explanatory, allowed longer */
+  --wcm-stagger: 45ms;
+
+  --wcm-rise: 10px;
+  --wcm-scale-press: 0.97;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-wp-ground);
+  color: var(--color-wp-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ------------------------------------------------------------
+   THIS RESET MUST STAY IN @layer base.
+
+   Unlayered CSS beats EVERY @layer, whatever the specificity. This
+   block was unlayered, Tailwind's utilities live in `@layer
+   utilities`, and so `p { margin: 0 }` was quietly winning against
+   every `mt-*` written on a p, h1-h4, ul, li or figure anywhere in
+   this app — `.mt-7` on a <ul> computed to 0px. Not "overridden
+   sometimes": always, app-wide, silently, in a way that looks like
+   the class was never written.
+
+   Inside `@layer base` the same rules sit in the layer Tailwind
+   reserves for exactly this, utilities come later, and a margin
+   utility does what it says. If you ever pull these rules back out
+   of the layer, every vertical rhythm in hub/ collapses at once.
+   ------------------------------------------------------------ */
+@layer base {
+  h1,
+  h2,
+  h3,
+  h4,
+  p,
+  ul,
+  li,
+  figure {
+    margin: 0;
+    padding: 0;
+  }
+  ul {
+    list-style: none;
+  }
+}
+
+/* The soft blue lift behind the header, so the black is not flat black.
+   Same gradient as styles.css:3387. */
+.wp-lift::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 340px;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(
+    120% 100% at 50% 0%,
+    rgba(47, 103, 167, 0.13) 0%,
+    rgba(11, 11, 14, 0) 68%
+  );
+}
+
+/* ------------------------------------------------------------
+   Press feedback. 160ms, scale 0.97, ease-out — the whole of the
+   rb-standards physicality rule, applied once here rather than per
+   component. A press happens hundreds of times a day, which is why
+   it is a transition and not an animation: interruptible, and it
+   never delays the tap.
+   ------------------------------------------------------------ */
+.wc-press {
+  transition: transform var(--wcm-dur-press) var(--wcm-ease-out),
+    background-color var(--wcm-dur-press) ease,
+    border-color var(--wcm-dur-press) ease;
+}
+.wc-press:active {
+  transform: scale(var(--wcm-scale-press));
+}
+
+/* ------------------------------------------------------------
+   ENTRANCE — every screen in the app.
+
+   CSS, not GSAP, and deliberately so. FadeContent (the React Bits
+   component this replaced) sets the element to autoAlpha:0 on mount
+   and restores it from a GSAP timeline behind a ScrollTrigger. That
+   makes a JavaScript animation library load-bearing for whether the
+   sign-in button is VISIBLE: if gsap is slow, throws, or the trigger
+   never fires, a student is looking at an empty card with no way in.
+   Here the resting state is visible and the animation only ever takes
+   things away from it, so the worst case of a failed animation is no
+   animation. `both` fills backwards so the delay is honoured.
+
+   AnimatedContent — the React Bits route transition that used to wrap
+   every signed-in screen — was the SAME defect one level higher. It
+   renders its wrapper with Tailwind's `invisible`, i.e.
+   `visibility:hidden`, and only ever restores it from inside a GSAP
+   effect gated on a ScrollTrigger. The whole app, not one button. It
+   is gone; RouteFrame is now this class.
+
+   First paint only. Nothing here replays, and nothing here is in
+   front of anything for longer than 260ms.
+   ------------------------------------------------------------ */
+@keyframes wc-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--wcm-rise));
+  }
+}
+
+.wc-enter {
+  animation: wc-rise-in var(--wcm-dur-enter) var(--wcm-ease-out) both;
+  animation-delay: var(--wc-enter-delay, 0ms);
+}
+
+/* ------------------------------------------------------------
+   STAGGER. rb-standards: 30-80ms between items, and it is decorative,
+   so it must never gate interaction — these elements are hit-testable
+   and focusable throughout, because only opacity and transform move.
+
+   Capped at eight children on purpose. The ninth and later arrive
+   with the eighth: past ~315ms a "choreographed" entrance is just a
+   page that loads slowly, and a row far enough down a timetable to be
+   ninth is usually below the fold anyway. A student with twelve
+   sections sees rows 8-12 land together, which is the right failure.
+
+   `--wc-enter-delay` shifts the whole run, so a list INSIDE a
+   staggered page can start after the panel holding it rather than
+   racing it.
+   ------------------------------------------------------------ */
+.wc-stagger {
+  --wc-enter-delay: 0ms;
+}
+.wc-stagger > * {
+  animation: wc-rise-in var(--wcm-dur-enter) var(--wcm-ease-out) both;
+}
+.wc-stagger > *:nth-child(1) {
+  animation-delay: var(--wc-enter-delay);
+}
+.wc-stagger > *:nth-child(2) {
+  animation-delay: calc(var(--wc-enter-delay) + var(--wcm-stagger) * 1);
+}
+.wc-stagger > *:nth-child(3) {
+  animation-delay: calc(var(--wc-enter-delay) + var(--wcm-stagger) * 2);
+}
+.wc-stagger > *:nth-child(4) {
+  animation-delay: calc(var(--wc-enter-delay) + var(--wcm-stagger) * 3);
+}
+.wc-stagger > *:nth-child(5) {
+  animation-delay: calc(var(--wc-enter-delay) + var(--wcm-stagger) * 4);
+}
+.wc-stagger > *:nth-child(6) {
+  animation-delay: calc(var(--wc-enter-delay) + var(--wcm-stagger) * 5);
+}
+.wc-stagger > *:nth-child(7) {
+  animation-delay: calc(var(--wc-enter-delay) + var(--wcm-stagger) * 6);
+}
+.wc-stagger > *:nth-child(n + 8) {
+  animation-delay: calc(var(--wc-enter-delay) + var(--wcm-stagger) * 7);
+}
+
+/* ------------------------------------------------------------
+   The one spinner. Constant motion, so linear per the easing table,
+   and fast — a quicker spinner makes the same wait feel shorter.
+   Only transform is animated.
+   ------------------------------------------------------------ */
+@keyframes wc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.wc-spin {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  border-top-color: var(--color-wc-blue-pale);
+  animation: wc-spin 700ms linear infinite;
+}
+
+/* Disclosure marker. CSS rather than state, so the <details> keeps
+   working with no JavaScript at all. */
+.wc-disclosure::after {
+  content: "+";
+}
+details[open] .wc-disclosure::after {
+  content: "−";
+}
+
+/* The sign-in panel. A flat raised face with a single top highlight —
+   no pointer-driven wash, because this card holds a third-party iframe
+   and a React state update per mousemove is not worth a gradient. */
+.wc-panel {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.055) 0%,
+      rgba(255, 255, 255, 0) 92px
+    ),
+    var(--color-wp-raise);
+}
+
+/* ============================================================
+   HOVER
+
+   The owner asked for hover effects by name, so they are a
+   deliverable here rather than a garnish. Every one of them is
+   inside this ONE media query and there is no hover rule anywhere
+   else in the app.
+
+   `(hover: hover) and (pointer: fine)` is two tests, and both are
+   needed. A touchscreen reports `hover: none` but a Chromebook
+   trackpad, a stylus and a mouse all report `hover: hover`; `pointer:
+   fine` then separates the trackpad from the fingertip. Without the
+   gate, a tap on a phone fires :hover, the effect applies, and it
+   STAYS applied to whatever the finger left behind until something
+   else is touched — so the last thing a student tapped is the thing
+   that looks interactive.
+
+   What is allowed to move: transform and opacity. Colours change
+   too, because a colour change costs paint and no layout. Nothing
+   here animates width, height, margin or padding.
+
+   Durations come from the tokens: 160ms, the press band. Hover is
+   seen tens of times a day, which rb-standards' frequency table puts
+   in "remove or drastically reduce" — so these are 1-2px of travel
+   and a few percent of light, not a lift-and-glow.
+   ============================================================ */
+.wc-hover-raise,
+.wc-hover-row,
+.wc-hover-next,
+.wc-field,
+.wc-hover-tile {
+  transition:
+    transform var(--wcm-dur-press) var(--wcm-ease-out),
+    background-color var(--wcm-dur-press) ease,
+    border-color var(--wcm-dur-press) ease,
+    color var(--wcm-dur-press) ease;
+}
+
+/* A row's left edge. Present at rest and transparent, so hovering
+   changes a colour rather than inserting a box — an element that
+   appears on hover shifts the text beside it by its own width. */
+.wc-hover-row {
+  position: relative;
+}
+.wc-hover-row::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 0;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--color-wc-blue-pale);
+  opacity: 0;
+  transition: opacity var(--wcm-dur-press) ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .wc-hover-raise:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+    border-color: var(--wp-hair-strong);
+  }
+
+  /* Timetable and gradebook rows. They are not links — nothing opens
+     — so the treatment says "this is one row, and it is the row your
+     pointer is on", not "click me". No cursor change for that reason. */
+  .wc-hover-row:hover {
+    background-color: rgba(255, 255, 255, 0.04);
+  }
+  .wc-hover-row:hover::before {
+    opacity: 1;
+  }
+
+  /* A number tile. The label under a figure goes from grey to the
+     school's pale blue: the smallest possible way to say the two
+     lines belong to each other. */
+  .wc-hover-tile:hover .wc-tile-label {
+    color: var(--color-wc-blue-pale);
+  }
+
+  /* The wallet. The lift is on the DECK, never on a card face: the
+     faces are absolutely positioned inside a rounded, overflow-hidden
+     box that motion is already writing a transform onto every frame,
+     so moving one would slide it out from under its own corners and
+     fight an inline style. Moving the whole deck says "this is an
+     object you can pick up", which on a pointer device is true — the
+     top card drags. */
+  .wc-hover-deck {
+    transition: transform var(--wcm-dur-press) var(--wcm-ease-out);
+  }
+  .wc-hover-deck:hover {
+    transform: translateY(-2px);
+  }
+
+  /* The one primary action per screen: Next, and Ask my teacher.
+     It is already the loudest thing on the panel, so hover only
+     lightens the blue — the school's own #2F67A7 toward #3B7ABF.
+     No lift: a full-width button that rises has nowhere to rise to. */
+  .wc-hover-next:hover:not(:disabled) {
+    background-color: #3b7abf;
+  }
+
+  /* A text field. The hairline picks up the school blue on hover,
+     the same signal the focus ring gives, so the two agree. */
+  .wc-field:hover:not(:focus) {
+    border-color: var(--wp-hair-strong);
+  }
+
+}
+
+/* Keyboard parity. A student on a Chromebook who tabs to a row gets
+   the same edge marker a pointer would draw, OUTSIDE the hover gate,
+   because focus is not hover and has nothing to do with the input
+   device. */
+.wc-hover-row:focus-visible::before,
+.wc-hover-row:focus-within::before {
+  opacity: 1;
+}
+
+/* Focus is never removed, only restyled. This is used on Chromebooks
+   with keyboards and by students who navigate by tab. */
+:focus-visible {
+  outline: 2px solid var(--color-wc-blue-pale);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+/* ------------------------------------------------------------
+   THE GRADE BAR.
+
+   A length that encodes a percent the server actually sent. It is
+   never drawn for an ungraded section: there is no zero-length bar
+   anywhere in this app, because a zero-length bar in a row of full
+   ones is a picture of failing, and "not graded yet" is not failing.
+
+   Filled with transform: scaleX from a left origin, so the growth is
+   a composited transform and not an animated width. `--wc-bar` is
+   set by the caller as a 0-1 fraction.
+   ------------------------------------------------------------ */
+.wc-bar {
+  position: relative;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+}
+.wc-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--color-wc-blue-pale);
+  transform-origin: left center;
+  transform: scaleX(var(--wc-bar, 0));
+}
+/* Only when the value has just arrived. A bar that regrows every time
+   a student comes back to the screen is an animation on a value that
+   did not change. See lib/arrive.ts. */
+.wc-bar-grow::after {
+  animation: wc-bar-grow var(--wcm-dur-count) var(--wcm-ease-out) both;
+  animation-delay: var(--wc-bar-delay, 0ms);
+}
+@keyframes wc-bar-grow {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+/* Scrollbars inside the dark panels. */
+.wc-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.wc-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.wc-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+}
+
+/* ------------------------------------------------------------
+   Reduced motion. Movement goes, opacity stays — "fewer and gentler,
+   not zero". The JS side reads the same query (useReducedMotion) and
+   stops handing distance/stagger to the React Bits components, because
+   a GSAP tween cannot be overridden from CSS.
+   ------------------------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    /* Delays go too. A zero-duration animation with a 120ms delay still holds
+       the element at its backwards fill for 120ms, which on a staggered
+       entrance means the sign-in button blinks in late for exactly the person
+       who asked for less movement. */
+    animation-delay: 0ms !important;
+    transition-duration: 0.15s !important;
+    scroll-behavior: auto !important;
+  }
+  .wc-press:active {
+    transform: none;
+  }
+  /* Hover keeps its colour change and loses its travel. The rule is
+     "fewer and gentler, not zero": the student still gets told which
+     row the pointer is on, without the page moving under it. */
+  .wc-hover-deck:hover {
+    transform: none;
+  }
+}

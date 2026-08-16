@@ -160,6 +160,47 @@ export function classify(
 }
 
 /**
+ * Whether a resolved student record may still act.
+ *
+ * A VALID TOKEN IS NOT ENROLMENT. sisSync.ts:92 archives a student who stops
+ * appearing on the PowerSchool roster, and archives them correctly: it keeps the
+ * row, the balance and the email, because a transfer still has money and a
+ * roster gap is not proof a person ceased to exist. But nothing read that flag
+ * at the door. A withdrawn student whose Google account still works kept full
+ * access, and the student portal turned that from reading their own card into
+ * WRITING hall pass and tap records: somebody who left in October could open a
+ * pass in November and appear on a teacher's live board as a child currently out
+ * of the building.
+ *
+ * THE MESSAGE IS SPECIFIC ON PURPOSE, and this is not a nicety. `archivedAt` is
+ * set by a sync, and a sync that runs against a partial roster archives students
+ * who never left. The person reading this refusal is a real child standing at a
+ * door being told the system does not recognise them, so it has to say what is
+ * wrong, that their work is not lost, and exactly who fixes it. A generic
+ * "Not authorized" would send them away with nothing and send the office to
+ * debug sign-in.
+ *
+ * Returns a verdict rather than throwing, and lives here rather than in
+ * identity.ts, so both the rule and its wording are directly testable.
+ */
+export function studentRecordVerdict(student: {
+  archivedAt?: string | null;
+}): { ok: boolean; reason: string } {
+  if (student.archivedAt) {
+    return {
+      ok: false,
+      reason:
+        "Your account is not on the current PowerSchool roster, so it is on " +
+        "hold. Nothing you earned has been deleted: your tickets and Wildcat " +
+        "Cash are still on your record and come back as soon as you are on the " +
+        "roster again. If you are still a student here, see the office and ask " +
+        "them to check your enrollment.",
+    };
+  }
+  return { ok: true, reason: "" };
+}
+
+/**
  * studentNumber -> the ONE address that student signs in with.
  *
  * Lives here, beside STUDENT_DOMAINS and REFUSED_DOMAINS, because choosing

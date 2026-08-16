@@ -91,3 +91,80 @@ export function studentSisView(row: RosterRowLike) {
     term: row.termAbbreviation ?? null,
   };
 }
+
+/**
+ * A day count from the SIS, or null. The single most repeated mistake in this
+ * codebase's history, written down once.
+ *
+ * `?? 0` on an OPTIONAL column reads on screen as a measurement. "0 days absent"
+ * and "we have never been told" are opposite facts about a child and they look
+ * identical, which is why schema.ts says beside psAttendance that absence there
+ * "means not synced yet, NOT zero".
+ *
+ * Rejected as well as undefined:
+ *   NaN        survives `!== undefined`, IS a number, serializes to null, so the
+ *              field would claim a count while rendering nothing.
+ *   Infinity   same.
+ *   negative   a student cannot be absent minus three days. That is a broken
+ *              aggregate upstream, and a broken aggregate is not a fact.
+ *   "4"        a string that looks like a count. Coercing it would hide the day
+ *              the sync starts writing text into a number column.
+ *
+ * Lives here rather than in studentProfileRules.ts beside the panel that uses
+ * it, because views.ts and studentProfileRules.ts are both imported directly by
+ * plain-node tests, and node will not resolve an extensionless specifier between
+ * two `.ts` files. Both modules therefore import nothing, which is the property
+ * that makes them testable at all.
+ */
+export function dayCount(value: unknown): number | null {
+  if (typeof value !== "number") return null;
+  if (!Number.isFinite(value)) return null;
+  if (value < 0) return null;
+  return value;
+}
+
+export type AttendanceRowLike = {
+  studentNumber?: string;
+  daysAbsentTerm?: number;
+  daysAbsentYtd?: number;
+  daysTardyTerm?: number;
+  attendanceRowsYtd?: number;
+  termFirstDay?: string;
+  termLastDay?: string;
+  termId?: string;
+  syncedAt?: string;
+  [key: string]: unknown;
+};
+
+/**
+ * One psAttendance row as STAFF see it in a student drill-down.
+ *
+ * An allowlist for the same reason every function above is one: psAttendance is
+ * written by a sync from a system nobody here controls, and a column added
+ * upstream must be invisible until someone adds it here on purpose.
+ *
+ * NOTHING IS DEFAULTED TO ZERO. Every count column in psAttendance is optional,
+ * and the schema comment beside it is explicit: "Absent means not synced yet,
+ * NOT zero. A student with no row here has unknown attendance; rendering that
+ * as 0 days absent would invent a fact about a child." dayCount enforces that,
+ * and also refuses NaN, Infinity and negatives, all of which survive a bare
+ * `!== undefined` test and would claim a measurement while rendering nothing.
+ *
+ * `attendanceRowsYtd` is deliberately NOT here. It is a row count from the
+ * aggregate, not a day count, and beside "days absent" it reads as a fourth
+ * attendance figure that means something to a teacher. It does not.
+ *
+ * `studentNumber` is not repeated because the caller already resolved the
+ * student, and `termId` is not here because it identifies nothing a teacher
+ * standing at a desk can use.
+ */
+export function staffAttendanceView(row: AttendanceRowLike) {
+  return {
+    daysAbsentTerm: dayCount(row.daysAbsentTerm),
+    daysAbsentYtd: dayCount(row.daysAbsentYtd),
+    daysTardyTerm: dayCount(row.daysTardyTerm),
+    termFirstDay: typeof row.termFirstDay === "string" ? row.termFirstDay : null,
+    termLastDay: typeof row.termLastDay === "string" ? row.termLastDay : null,
+    lastSyncedAt: typeof row.syncedAt === "string" ? row.syncedAt : null,
+  };
+}

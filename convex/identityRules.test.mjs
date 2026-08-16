@@ -7,7 +7,12 @@
 // can create a Microsoft tenant and mint an address that looks like staff, so a
 // prefix match accepted attackers. That case is why this file exists.
 
-import { classify, normalizeEmail, emailDomain } from "./identityRules.ts";
+import {
+  classify,
+  normalizeEmail,
+  emailDomain,
+  studentRecordVerdict,
+} from "./identityRules.ts";
 
 const OPTS = {
   staffDomain: "lapromisefund.org",
@@ -124,6 +129,59 @@ console.log("\nTypo domains explain themselves");
   try { classify(GOOGLE, "magat10856@rwwnms.org", OPTS); } catch (e) { retired = String(e?.data ?? e?.message ?? e); }
   check("a retired domain says it is retired", /retired/i.test(retired), retired);
   check("and still names where to fix it", /PowerSchool/i.test(retired), retired);
+}
+
+// A VALID TOKEN IS NOT ENROLMENT.
+//
+// sisSync.ts:92 archives a student who falls off the PowerSchool roster and
+// keeps the row, the balance and the email, correctly: a transfer still has
+// money and a roster gap is not proof a person ceased to exist. Nothing read
+// that flag at the door, so a withdrawn student with a working Google account
+// kept full access, and the student portal turned that from reading their own
+// card into WRITING hall pass and tap records. Somebody who left in October
+// could open a pass in November and appear on a teacher's live board as a child
+// currently out of the building.
+console.log("\nAn archived student cannot act");
+{
+  check("a current student may act", studentRecordVerdict({}).ok);
+  check("an explicitly un-archived student may act", studentRecordVerdict({ archivedAt: undefined }).ok);
+  check("a null archivedAt is not archived", studentRecordVerdict({ archivedAt: null }).ok);
+
+  const archived = studentRecordVerdict({ archivedAt: "2026-08-01T00:00:00.000Z" });
+  check("an archived student is refused", !archived.ok);
+
+  // The wording is the requirement, not a nicety. archivedAt is set by a sync,
+  // and a sync against a partial roster archives students who never left. The
+  // person reading this is a real child standing at a door.
+  check(
+    "the refusal says what is wrong, in terms a student understands",
+    /roster/i.test(archived.reason),
+    archived.reason,
+  );
+  check(
+    "it promises their earned value is not gone",
+    /tickets|cash/i.test(archived.reason) && /not been deleted|still on your record/i.test(archived.reason),
+    archived.reason,
+  );
+  check(
+    "it names exactly who fixes it",
+    /office/i.test(archived.reason),
+    archived.reason,
+  );
+  check(
+    "it is not a generic error",
+    !/^(not authorized|forbidden|error|server error)/i.test(archived.reason.trim()),
+    archived.reason,
+  );
+  check("and it is long enough to actually explain itself", archived.reason.length > 80);
+
+  // Any truthy archivedAt archives. A sync could write any timestamp format.
+  check(
+    "any archive timestamp counts, whatever its format",
+    ["2026-01-01", "2026-08-01T00:00:00Z", "some-marker"].every(
+      (v) => !studentRecordVerdict({ archivedAt: v }).ok,
+    ),
+  );
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

@@ -1,7 +1,8 @@
 import { query } from "./_generated/server";
-import { ConvexError } from "convex/values";
-import { requireIdentity, requireStaff } from "./identity";
+import { requireStaff, requireStudentSelf } from "./identity";
 import { restrictedFor } from "./restrictedPolicy";
+import { sisNumberKey, sisEmailKey, gradeCell } from "./studentPortalRules";
+import { studentView } from "./views";
 
 /**
  * The three reads the app actually needs.
@@ -85,37 +86,69 @@ export const teacherRoster = query({
   },
 });
 
-/** Student: my points, my cash, my grades, my schedule. Only ever my own. */
+/**
+ * Student: my points, my cash, my grades, my schedule. Only ever my own.
+ *
+ * ONE student boundary for the whole app. This used to re-implement
+ * requireStudentSelf inline (classify the identity, look the row up by email,
+ * throw its own message). Two copies of a security boundary is how they drift:
+ * the day a rule is added to the real one, an archived student, a second
+ * student domain, a disabled account, this copy keeps the old behaviour and
+ * nothing fails, because both still return a student.
+ *
+ * WHAT IS MISSING IS RETURNED AS MISSING, WITH THE REASON, the same shape
+ * passCard.mine uses. A blank grades panel is indistinguishable from a broken
+ * one; a panel that says the student number is not on the account yet is a fact
+ * the office can act on, and it is the honest answer rather than a query nobody
+ * should run. See studentPortalRules.ts for why an empty join key is refused
+ * instead of looked up.
+ */
 export const myStudentView = query({
   args: {},
   handler: async (ctx) => {
-    const id = await requireIdentity(ctx);
-    if (id.kind !== "student") throw new ConvexError("Students only.");
+    const student = await requireStudentSelf(ctx);
 
-    const student = await ctx.db
-      .query("students")
-      .withIndex("by_email", (q) => q.eq("email", id.email))
-      .unique();
-    if (!student) {
-      throw new ConvexError(
-        `No student record is linked to ${id.email} yet. ` +
-        `Student accounts are still being connected.`,
-      );
-    }
+    const number = sisNumberKey(student);
+    const email = sisEmailKey(student);
 
-    const num = student.studentNumber ?? student.legacyId ?? "";
-    const schedule = await ctx.db
-      .query("psRoster")
-      .withIndex("by_studentNumber", (q) => q.eq("studentNumber", num))
-      .collect();
-    const grades = await ctx.db
-      .query("psGrades")
-      .withIndex("by_studentNumber", (q) => q.eq("studentNumber", num))
-      .collect();
-    const attendance = await ctx.db
-      .query("psAttendance")
-      .withIndex("by_studentNumber", (q) => q.eq("studentNumber", num))
-      .unique();
+    // FAIL CLOSED. No key, no query. eq("studentNumber", "") is a real bucket
+    // lookup that returns whichever rows carry an empty number, which is a
+    // different child's grades rendered as this child's.
+    const gradeRows = number.ok
+      ? await ctx.db
+          .query("psGrades")
+          .withIndex("by_studentNumber", (q) => q.eq("studentNumber", number.value))
+          .collect()
+      : [];
+
+    // .first(), not .unique(). putAttendance upserts one row per student number,
+    // so a second row is a data fault, and .unique() answers a data fault by
+    // throwing a PLAIN Error, which Convex redacts to "Server Error" in
+    // production. That would take the student's whole portal down, every panel,
+    // over a duplicate attendance row. Showing one row is wrong in a way a human
+    // can see; showing nothing at all is not.
+    const attendance = number.ok
+      ? await ctx.db
+          .query("psAttendance")
+          .withIndex("by_studentNumber", (q) => q.eq("studentNumber", number.value))
+          .first()
+      : null;
+
+    // THE SCHEDULE JOINS ON EMAIL, not on the student number.
+    //
+    // me:get reads psRoster through by_studentEmail, because the address is what
+    // the verified token actually proves; this read used to use by_studentNumber.
+    // Two keys for one sign-in means one student can have two different
+    // schedules, and whichever screen they opened decided which one was true.
+    // Worse, the number key is derived from the app's own record rather than
+    // from the token, so a wrong number in `students` shows a real, complete,
+    // entirely wrong timetable, with another child's teachers on it.
+    const rosterRows = email.ok
+      ? await ctx.db
+          .query("psRoster")
+          .withIndex("by_studentEmail", (q) => q.eq("studentEmail", email.value))
+          .collect()
+      : [];
 
     return {
       name: `${student.firstName} ${student.lastName}`.trim(),
@@ -127,43 +160,56 @@ export const myStudentView = query({
         academic: student.academicTickets,
         total:
           student.pbisTickets + student.attendanceTickets + student.academicTickets,
-        weeksQualified: student.weeksQualified ?? 0,
+        // null, never 0. All four of these are OPTIONAL in schema.ts, and this
+        // file's own header says absence is expressed as null because "a student
+        // with no gradebook percent must not appear to have 0%". The same
+        // sentence is far more serious about money: wildcatCashBalance is
+        // SPENDABLE, and a field dropped by a sync or a partial write would show
+        // a child a balance of $0 that is indistinguishable from having spent it.
+        // The teacherRoster view four functions up already gets this right.
+        weeksQualified: student.weeksQualified ?? null,
         bigRaffleEntries: student.bigRaffleQualified.length,
       },
 
       wildcatCash: {
-        balance: student.wildcatCashBalance ?? 0,
-        earned: student.wildcatCashEarned ?? 0,
-        spent: student.wildcatCashSpent ?? 0,
+        balance: student.wildcatCashBalance ?? null,
+        earned: student.wildcatCashEarned ?? null,
+        spent: student.wildcatCashSpent ?? null,
       },
 
-      grades: grades.map((g) => ({
-        courseName: g.courseName ?? null,
-        courseNumber: g.courseNumber ?? null,
-        // null when the SIS has no grade. NEVER 0: a student with no gradebook
-        // entry must not appear to be failing.
-        currentGrade: g.currentGrade ?? null,
-        currentPercent: g.currentPercent ?? null,
-        available: g.currentGrade !== undefined || g.currentPercent !== undefined,
-      })),
+      grades: {
+        available: number.ok,
+        reason: number.reason,
+        // gradeCell, not an inline map. The inline version tested
+        // `currentGrade !== undefined`, which passes for "" and rendered an
+        // empty string as a grade. See studentPortalRules.gradeCell.
+        courses: gradeRows.map(gradeCell),
+      },
 
-      attendance: attendance
-        ? {
-            daysAbsentTerm: attendance.daysAbsentTerm ?? null,
-            daysAbsentYtd: attendance.daysAbsentYtd ?? null,
-            daysTardyTerm: attendance.daysTardyTerm ?? null,
-          }
-        : null,
+      attendance: {
+        // Three states, not two. `available: false` is "we cannot look this up",
+        // `available: true` with nulls is "looked up, nothing on file". Collapsing
+        // them into one empty panel is how a student concludes they have no
+        // absences when the truth is that nobody knows.
+        available: number.ok,
+        reason: number.reason,
+        daysAbsentTerm: attendance?.daysAbsentTerm ?? null,
+        daysAbsentYtd: attendance?.daysAbsentYtd ?? null,
+        daysTardyTerm: attendance?.daysTardyTerm ?? null,
+      },
 
-      schedule: schedule.map((r) => ({
-        courseName: r.courseName ?? null,
-        period: r.period ?? r.sectionExpression ?? null,
-        teacher:
-          [r.teacherFirstName, r.teacherLastName].filter(Boolean).join(" ") || null,
-      })),
+      schedule: {
+        available: email.ok,
+        reason: email.reason,
+        // The tested allowlist from views.ts, not a second hand-rolled map. It
+        // drops the state student number, both email addresses and every
+        // restricted column, and views.test.mjs asserts that against a row
+        // carrying all of them.
+        classes: rosterRows.map(studentView),
+      },
 
       // Brief Phase 6 point 2: every screen shows where the data came from and when.
-      dataAsOf: schedule[0]?.syncedAt ?? attendance?.syncedAt ?? null,
+      dataAsOf: rosterRows[0]?.syncedAt ?? attendance?.syncedAt ?? null,
     };
   },
 });
