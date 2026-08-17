@@ -1283,9 +1283,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    /* Grey ground across the whole screen (the same grey the running-wildcat
-       clip used), rather than the near-black it was. */
-    background: #848485;
+    /* Warm light-grey ground across the whole screen. */
+    background: #B1B0AF;
     opacity: 0;
     visibility: hidden;
     pointer-events: none;

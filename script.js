@@ -19743,6 +19743,25 @@
             // already in flight. Cover the login screen for it BEFORE the data
             // load below, so it never flashes while MSAL settles.
             maybeCoverRedirectSignIn();
+
+            // A session stashed from before a reload: cover the login screen with
+            // the loader NOW, before the data load and session restore below, so
+            // it never flashes for the second those take. This is the teacher's
+            // "login for a second then the dashboard" and the student's blank
+            // moment on refresh — both are the login screen showing while the
+            // restore runs. Skipped on a redirect return, where the block above
+            // owns the loader and its own watch hides it.
+            const _isRedirectReturn = /[#&](code|error|id_token|access_token)=/.test(String(window.location.hash || ''));
+            let _bootLoaderShown = false;
+            try {
+                if (!_isRedirectReturn &&
+                    (sessionStorage.getItem('currentUser') ||
+                     sessionStorage.getItem('currentStudent') ||
+                     sessionStorage.getItem('wc_student_idtoken'))) {
+                    if (typeof showLoader === 'function') { showLoader('Welcome back…'); _bootLoaderShown = true; }
+                }
+            } catch (e) { /* private mode etc. — the flash is the worst case */ }
+
             // Load data first so teachers array is populated
             await loadData();
             
@@ -19852,11 +19871,16 @@
                         updateSuperAdminList();
                     }
                 } else if (currentStudent) {
-                    // The portal, not the legacy #studentApp. fromBoot tells it
-                    // to fall back to the login screen rather than shout if the
-                    // auth session never turns up: a Google student session does
-                    // not survive a reload, so "no token" is the ordinary
-                    // outcome here, not a failure worth a red message.
+                    // The portal, not the legacy #studentApp. A Google student
+                    // session is only in memory, so restore it from the token
+                    // stashed at sign-in BEFORE opening the portal — that is what
+                    // keeps a student signed in across a reload. Convex re-verifies
+                    // the token, so an expired one is refused and fromBoot then
+                    // falls the portal back to the login screen quietly rather
+                    // than with a red error.
+                    if (window.WildcatAuth && window.WildcatAuth.resumeStudentSession) {
+                        try { await window.WildcatAuth.resumeStudentSession(); } catch (e) {}
+                    }
                     openStudentPortal(currentStudent, { fromBoot: true });
                 }
             } else {
@@ -19877,6 +19901,12 @@
             
             // Initialize Data & Analytics time filter to "All Time" by default
             setDataTimeFilter('allTime');
+
+            // The session is resolved (app shown, or login shown) — lift the
+            // boot cover if we put it up. hideLoader honours the app-wide 4s
+            // minimum, so a fast restore still shows the loader for the same beat
+            // as a sign-in rather than blinking.
+            if (_bootLoaderShown && typeof hideLoader === 'function') hideLoader();
         })();
 
         // ========================================

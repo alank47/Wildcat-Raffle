@@ -620,6 +620,17 @@
 
     session = { idToken, me };
 
+    // Persist a STUDENT token so a reload does not drop the session. Google gives
+    // no silent token refresh the way MSAL does for staff, so the token itself is
+    // stashed — in sessionStorage, which is same-origin and cleared when the tab
+    // closes, so a shared Chromebook never hands it to the next student. Staff
+    // restore through MSAL's own cache and need nothing here.
+    try {
+      if (me.kind === 'student' && window.sessionStorage) {
+        window.sessionStorage.setItem('wc_student_idtoken', idToken);
+      }
+    } catch (e) { /* storage unavailable — the session just will not survive a reload */ }
+
     // Record that federated sign-in actually worked. The cutover script that
     // deletes the cleartext passwords refuses to run until enough distinct
     // staff appear in this table, so this is what unlocks the last step of the
@@ -646,6 +657,41 @@
     window.dispatchEvent(new CustomEvent(name, { detail }));
   }
 
+  function clearStudentToken() {
+    try {
+      if (window.sessionStorage) window.sessionStorage.removeItem('wc_student_idtoken');
+    } catch (e) { /* nothing to clear */ }
+  }
+
+  /**
+   * Restore a student's session after a reload, from the token stashed at
+   * sign-in. Convex re-verifies the token (signature AND expiry) inside me:get,
+   * so an expired or tampered token is simply refused here and the app falls
+   * back to the login screen — this is why storing the token is safe: it is not
+   * trusted, it is re-checked. Only ever resumes a STUDENT; a token that comes
+   * back as anything else is dropped.
+   */
+  async function resumeStudentSession() {
+    if (session) return session;
+    let token = null;
+    try {
+      token = window.sessionStorage && window.sessionStorage.getItem('wc_student_idtoken');
+    } catch (e) { token = null; }
+    if (!token) return null;
+    try {
+      const me = await convexQuery('me:get', {}, token);
+      if (me.kind !== 'student') { clearStudentToken(); return null; }
+      session = { idToken: token, me };
+      emit('wildcat-auth-signin', me);
+      return session;
+    } catch (e) {
+      // Expired or invalid — drop it so the app shows login instead of retrying
+      // a token that will never work again.
+      clearStudentToken();
+      return null;
+    }
+  }
+
   function signOut() {
     // Captured before it is cleared, so the app can put the login screen back
     // on the tab the person actually came in through. A student who signs out
@@ -654,6 +700,7 @@
     const kind = (session && session.me && session.me.kind) || null;
 
     session = null;
+    clearStudentToken();
     if (window.google && window.google.accounts && window.google.accounts.id) {
       window.google.accounts.id.disableAutoSelect();
     }
@@ -908,6 +955,7 @@
     configured,
     signInWithMicrosoft,
     resumeSession,
+    resumeStudentSession,
     signInStaff,
     initStudentButton,
     renderStudentButton,
