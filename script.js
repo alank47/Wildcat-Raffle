@@ -16475,6 +16475,9 @@
         }
 
         function switchTab(tabName) {
+            // A tab was picked from the nav — on a phone, close the drawer so the
+            // chosen screen is actually visible rather than hidden behind it.
+            closeMobileSidebar();
             // If we're in Claw Pass / Discipline mode and the user picks a shared
             // sidebar tab, restore normal tab-content visibility first (those modes
             // hide all .tab-content divs with inline styles and show their own view).
@@ -20255,9 +20258,13 @@
             _sidebarModeApplied = true;
             toggleModeDropdown(false);
             switchSystemMode(mode);
-            if (mode === 'raffle') switchTab('tickets');
+            // Raffle is the default mode, and its landing screen is the Dashboard
+            // (student count + PowerSchool figures), not the ticket-award tab. A
+            // teacher who wants to award opens Award Tickets from the rail.
+            if (mode === 'raffle') switchTab('dashboard');
             // cash: updateTabVisibility (called inside switchSystemMode) handles its landing tab
             // hallpass/discipline: switchSystemMode opens their own views
+            closeMobileSidebar();
         }
 
         const MODE_SUBTABS = {
@@ -20314,6 +20321,7 @@
             document.querySelectorAll('#modeSubNav .tab').forEach(b => b.classList.remove('active'));
             const btn = document.getElementById(`sideSub_${mode}_${subId}`);
             if (btn) btn.classList.add('active');
+            closeMobileSidebar();
         }
 
         function updateSidebarModeUI() {
@@ -20393,6 +20401,16 @@
             }
         }
 
+        // On phones the sidebar is a drawer laid over the content. Once a teacher
+        // picks a destination the drawer has done its job, so close it and reveal
+        // the screen they just chose — leaving it open hides the very thing they
+        // navigated to. No-op on desktop, where the sidebar is permanent.
+        function closeMobileSidebar() {
+            if (window.innerWidth <= 900) {
+                document.body.classList.remove('sidebar-open');
+            }
+        }
+
         function initSidebarShell() {
             // Called from updateAllDisplays — must be safe to run repeatedly.
             if (!currentUser) return;
@@ -20408,15 +20426,13 @@
             if (saved) {
                 selectMode(saved);
             } else {
-                // Mode-first: no saved choice for this user — show the chooser.
-                const emptyState = document.getElementById('modeEmptyState');
-                const content = document.querySelector('#mainApp .content');
-                const modeNav = document.getElementById('modeNav');
-                if (emptyState) emptyState.style.display = 'flex';
-                if (content) content.style.display = 'none';
-                if (modeNav) modeNav.style.display = 'none';
-                toggleModeDropdown(true); // mode-first: open the chooser
-                _sidebarModeApplied = true; // don't re-show on every refresh tick
+                // Default to Raffle, landing on the Dashboard, rather than opening
+                // a "choose a mode" chooser. Raffle is the school's default
+                // economy, so a teacher lands in a working app instead of an
+                // empty picker. The mode dropdown stays available for anyone who
+                // wants Cash / Claw Pass / Discipline, and once they pick one it
+                // is remembered per user (getSavedTeacherMode) above.
+                selectMode('raffle');
             }
         }
 
