@@ -18709,6 +18709,123 @@
             }
         }
 
+        // ===================================================================
+        // NFC TAG PROGRAMMER
+        // Give a title; the app makes the slug (the same normalizeSlug the server
+        // applies), records the tag, and writes the tap URL to a physical tag.
+        // Mobile uses the device's own NFC (Web NFC); a desktop with no NFC gets
+        // the URL to program with a USB reader (see the note in the modal).
+        // ===================================================================
+        function wcSlugify(raw) {
+            return String(raw || '').trim().toLowerCase()
+                .replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 64);
+        }
+
+        function wcTapUrl(slug) { return 'https://wildcatraffle.com/?tap=' + slug; }
+
+        function openNfcProgrammer() {
+            let el = document.getElementById('nfcProgModal');
+            if (!el) { el = document.createElement('div'); el.id = 'nfcProgModal'; el.className = 'nfc-prog'; document.body.appendChild(el); }
+            const hasNfc = ('NDEFReader' in window);
+            el.innerHTML =
+                '<div class="nfc-prog-card" role="dialog" aria-label="Program NFC tag">' +
+                    '<button type="button" class="nfc-prog-x" aria-label="Close" onclick="closeNfcProgrammer()">&times;</button>' +
+                    '<div class="nfc-prog-eyebrow">&#128225; Program NFC tag</div>' +
+                    '<label class="nfc-prog-label" for="nfcTitle">Title</label>' +
+                    '<input type="text" id="nfcTitle" class="nfc-prog-input" placeholder="e.g. Room 16, Front Office" oninput="wcNfcSlugPreview()" autocomplete="off">' +
+                    '<label class="nfc-prog-label" for="nfcKind">Type</label>' +
+                    '<select id="nfcKind" class="nfc-prog-input">' +
+                        '<option value="classroom">Classroom</option>' +
+                        '<option value="restroom">Restroom</option>' +
+                        '<option value="office">Office</option>' +
+                        '<option value="nurse">Nurse</option>' +
+                        '<option value="other">Other</option>' +
+                    '</select>' +
+                    '<div class="nfc-prog-slug">Tag address: <code id="nfcSlugPreview">' + wcTapUrl('…') + '</code></div>' +
+                    '<button type="button" id="nfcWriteBtn" class="btn nfc-prog-write" onclick="wcDoNfcProgram()">' +
+                        (hasNfc ? 'Write to tag &amp; save' : 'Save &amp; get tag URL') + '</button>' +
+                    '<div id="nfcStatus" class="nfc-prog-status" aria-live="polite"></div>' +
+                    '<p class="nfc-prog-note">' + (hasNfc
+                        ? 'When you tap Write, hold the physical tag to the back of this device.'
+                        : 'This device has no built-in NFC. It records the tag and hands you the URL to program with a USB reader.') +
+                    '</p>' +
+                '</div>';
+            el.classList.add('is-on');
+            wcNfcSlugPreview();
+            setTimeout(function () { const t = document.getElementById('nfcTitle'); if (t) t.focus(); }, 30);
+        }
+        window.openNfcProgrammer = openNfcProgrammer;
+
+        function closeNfcProgrammer() {
+            const el = document.getElementById('nfcProgModal');
+            if (el) el.classList.remove('is-on');
+        }
+        window.closeNfcProgrammer = closeNfcProgrammer;
+
+        function wcNfcSlugPreview() {
+            const t = document.getElementById('nfcTitle');
+            const p = document.getElementById('nfcSlugPreview');
+            if (!t || !p) return;
+            const slug = wcSlugify(t.value);
+            p.textContent = wcTapUrl(slug || '…');
+        }
+        window.wcNfcSlugPreview = wcNfcSlugPreview;
+
+        async function wcDoNfcProgram() {
+            const titleEl = document.getElementById('nfcTitle');
+            const kindEl = document.getElementById('nfcKind');
+            const statusEl = document.getElementById('nfcStatus');
+            const btn = document.getElementById('nfcWriteBtn');
+            const title = ((titleEl && titleEl.value) || '').trim();
+            if (!title) { if (statusEl) statusEl.textContent = 'Enter a title first.'; return; }
+            const slug = wcSlugify(title);
+            if (!slug) { if (statusEl) statusEl.textContent = 'That title has no letters or numbers to make a tag from.'; return; }
+            const kind = (kindEl && kindEl.value) || 'other';
+            const url = wcTapUrl(slug);
+            const ctx = wcBellSession();
+            if (!ctx) { if (statusEl) statusEl.textContent = 'Sign in as an admin first.'; return; }
+            if (btn) btn.disabled = true;
+
+            // WRITE FIRST, still inside the button click's user activation, so Web
+            // NFC keeps the gesture it requires. A failure here does not stop the
+            // record — the tag is still logged and its URL shown.
+            let wrote = false;
+            if ('NDEFReader' in window) {
+                if (statusEl) statusEl.textContent = 'Hold the NFC tag to the back of your phone…';
+                try {
+                    const ndef = new NDEFReader();
+                    await ndef.write({ records: [{ recordType: 'url', data: url }] });
+                    wrote = true;
+                } catch (e) {
+                    if (statusEl) statusEl.textContent = 'Could not write the tag (' + ((e && e.message) || e) + '). Recording it anyway.';
+                }
+            }
+
+            // RECORD it. The server runs the same normalizeSlug, so the stored
+            // slug matches the URL just written. Admin only (tapLocations:upsert).
+            try {
+                await ctx.auth.convexMutation('tapLocations:upsert', { slug: slug, name: title, kind: kind }, ctx.session.idToken);
+            } catch (e) {
+                if (statusEl) statusEl.textContent = 'Could not record the tag: ' + ((e && e.message) || e);
+                if (btn) btn.disabled = false;
+                return;
+            }
+
+            if (statusEl) {
+                if (wrote) {
+                    statusEl.innerHTML = '&#10003; Written and saved as <b>' + escapeHtml(title) + '</b>.';
+                } else {
+                    statusEl.innerHTML = 'Saved <b>' + escapeHtml(title) + '</b>. Program the tag with: <code>' + escapeHtml(url) +
+                        '</code> <button type="button" class="btn" style="padding:3px 9px;font-size:11.5px;margin-left:4px;" onclick="copyTagUrl(this,\'' + url + '\')">Copy</button>';
+                }
+            }
+            if (btn) btn.disabled = false;
+            if (titleEl) titleEl.value = '';
+            wcNfcSlugPreview();
+            if (typeof renderTagManager === 'function') renderTagManager();
+        }
+        window.wcDoNfcProgram = wcDoNfcProgram;
+
         /** The tag rows the table last drew, and the staff/section lists for the picker. */
         let wcTagRows = [];
         let wcAssignable = null;
