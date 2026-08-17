@@ -7018,7 +7018,9 @@
          * comes down.
          */
         async function establishTeacherSession(teacher) {
-            if (typeof showLoader === 'function') showLoader('Signing you in…');
+            // On a phone, hold the sign-in loader for at least 5s so login is a
+            // deliberate handoff, not a flash. Desktop hides as soon as ready.
+            if (typeof showLoader === 'function') showLoader('Signing you in…', { minMs: window.innerWidth <= 900 ? 5000 : 0 });
             try {
                 return await establishTeacherSessionCore(teacher);
             } finally {
@@ -17669,7 +17671,9 @@
             // student sees the running wildcat, then a ready portal — never the
             // blank card stack mid-fetch. Hidden in the finally so a failed load
             // still shows its error rather than spinning forever.
-            if (typeof showLoader === 'function') showLoader('Loading your pass…');
+            // On a phone, hold the loader for at least 5s so a student sees the
+            // running-wildcat handoff rather than a flash. Desktop hides at ready.
+            if (typeof showLoader === 'function') showLoader('Loading your pass…', { minMs: window.innerWidth <= 900 ? 5000 : 0 });
             wpFromBoot = Boolean(options && options.fromBoot);
 
             ['loginScreen', 'mainApp', 'studentDashboard', 'studentApp'].forEach(function (id) {
@@ -22698,7 +22702,7 @@
         // hide (or a data load that never returns) can never trap the user
         // behind it.
         // ============================================================
-        function showLoader(message) {
+        function showLoader(message, opts) {
             const el = document.getElementById('wildcatLoader');
             if (!el) return;
             const img = document.getElementById('wildcatLoaderMascot');
@@ -22709,14 +22713,35 @@
             el.setAttribute('aria-hidden', 'false');
             el.setAttribute('aria-busy', 'true');
             document.body.classList.add('wc-loading');
+            // Minimum on-screen time. On login on a phone the loader is held for
+            // a set beat so the sign-in reads as a deliberate handoff (and the
+            // running-wildcat animation is actually seen) rather than flashing by.
+            // 0 everywhere else: the loader hides the instant its caller is ready.
+            showLoader._shownAt = Date.now();
+            showLoader._minMs = (opts && typeof opts.minMs === 'number') ? opts.minMs : 0;
+            clearTimeout(showLoader._minHideTimer);
             clearTimeout(showLoader._failsafe);
             showLoader._failsafe = setTimeout(function () {
                 console.warn('[loader] auto-hid after 20s; a caller never called hideLoader()');
+                showLoader._minMs = 0; // never let the minimum outlast the failsafe
                 hideLoader();
             }, 20000);
         }
         function hideLoader() {
+            // Honour the minimum on-screen time before actually hiding. The
+            // remaining time is deferred once; the deferred call clears the
+            // minimum so it hides for real rather than re-deferring forever.
+            const remaining = (showLoader._minMs || 0) - (Date.now() - (showLoader._shownAt || 0));
+            if (remaining > 0) {
+                clearTimeout(showLoader._minHideTimer);
+                showLoader._minHideTimer = setTimeout(function () {
+                    showLoader._minMs = 0;
+                    hideLoader();
+                }, remaining);
+                return;
+            }
             clearTimeout(showLoader._failsafe);
+            clearTimeout(showLoader._minHideTimer);
             const el = document.getElementById('wildcatLoader');
             if (!el) return;
             el.classList.remove('is-on');
