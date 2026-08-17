@@ -7018,9 +7018,9 @@
          * comes down.
          */
         async function establishTeacherSession(teacher) {
-            // On a phone, hold the sign-in loader for at least 5s so login is a
-            // deliberate handoff, not a flash. Desktop hides as soon as ready.
-            if (typeof showLoader === 'function') showLoader('Signing you in…', { minMs: window.innerWidth <= 900 ? 5000 : 0 });
+            // Held for the app-wide 4s default so login reads as a deliberate
+            // handoff rather than a flash.
+            if (typeof showLoader === 'function') showLoader('Signing you in…');
             try {
                 return await establishTeacherSessionCore(teacher);
             } finally {
@@ -17699,9 +17699,8 @@
             // student sees the running wildcat, then a ready portal — never the
             // blank card stack mid-fetch. Hidden in the finally so a failed load
             // still shows its error rather than spinning forever.
-            // On a phone, hold the loader for at least 5s so a student sees the
-            // running-wildcat handoff rather than a flash. Desktop hides at ready.
-            if (typeof showLoader === 'function') showLoader('Loading your pass…', { minMs: window.innerWidth <= 900 ? 5000 : 0 });
+            // Held for the app-wide 4s default so the handoff reads, not flashes.
+            if (typeof showLoader === 'function') showLoader('Loading your pass…');
             wpFromBoot = Boolean(options && options.fromBoot);
 
             ['loginScreen', 'mainApp', 'studentDashboard', 'studentApp'].forEach(function (id) {
@@ -22979,27 +22978,21 @@
         function showLoader(message, opts) {
             const el = document.getElementById('wildcatLoader');
             if (!el) return;
-            // Lazy-load the running-wildcat video on first show, so a visitor
-            // who never signs in never downloads it. muted + playsinline let it
-            // autoplay on iOS; play() is best-effort — a browser that blocks it
-            // still shows the first frame on the grey ground.
-            const vid = document.getElementById('wildcatLoaderVideo');
-            if (vid) {
-                if (!vid.getAttribute('src')) vid.setAttribute('src', 'assets/wildcat-run.mp4?v=20260817f');
-                try { const p = vid.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
-            }
+            const img = document.getElementById('wildcatLoaderMascot');
+            if (img && !img.getAttribute('src')) img.setAttribute('src', 'assets/wildcat-loader.gif');
             const msg = document.getElementById('wildcatLoaderMsg');
             if (msg) msg.textContent = (message == null || message === '') ? 'Loading…' : String(message);
             el.classList.add('is-on');
             el.setAttribute('aria-hidden', 'false');
             el.setAttribute('aria-busy', 'true');
             document.body.classList.add('wc-loading');
-            // Minimum on-screen time. On login on a phone the loader is held for
-            // a set beat so the sign-in reads as a deliberate handoff (and the
-            // running-wildcat animation is actually seen) rather than flashing by.
-            // 0 everywhere else: the loader hides the instant its caller is ready.
+            // Minimum on-screen time. The load screen is held a set beat so it
+            // reads as a deliberate handoff (and the running-wildcat animation is
+            // actually seen) rather than flashing by. The default is 4s across the
+            // whole app; a caller can override with opts.minMs (e.g. 0 to hide the
+            // instant its work is done).
             showLoader._shownAt = Date.now();
-            showLoader._minMs = (opts && typeof opts.minMs === 'number') ? opts.minMs : 0;
+            showLoader._minMs = (opts && typeof opts.minMs === 'number') ? opts.minMs : 4000;
             clearTimeout(showLoader._minHideTimer);
             clearTimeout(showLoader._failsafe);
             showLoader._failsafe = setTimeout(function () {
@@ -23029,10 +23022,6 @@
             el.setAttribute('aria-hidden', 'true');
             el.removeAttribute('aria-busy');
             document.body.classList.remove('wc-loading');
-            // Stop the video once the overlay is down, so it is not looping
-            // off-screen for the rest of the session.
-            const vid = document.getElementById('wildcatLoaderVideo');
-            if (vid) { try { vid.pause(); } catch (e) {} }
         }
         window.showLoader = showLoader;
         window.hideLoader = hideLoader;
