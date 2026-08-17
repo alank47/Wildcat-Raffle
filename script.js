@@ -18727,6 +18727,13 @@
             let el = document.getElementById('nfcProgModal');
             if (!el) { el = document.createElement('div'); el.id = 'nfcProgModal'; el.className = 'nfc-prog'; document.body.appendChild(el); }
             const hasNfc = ('NDEFReader' in window);
+            const hasUsb = !!(navigator.usb);
+            const writeLabel = hasNfc ? 'Write to tag &amp; save' : (hasUsb ? 'Write with USB reader &amp; save' : 'Save &amp; get tag URL');
+            const note = hasNfc
+                ? 'When you tap Write, hold the physical tag to the back of this device.'
+                : (hasUsb
+                    ? 'Connect your ACR122U reader; on Write you pick it once, then place the tag on it.'
+                    : 'No built-in NFC and no WebUSB here. It records the tag and gives you the URL to program elsewhere.');
             el.innerHTML =
                 '<div class="nfc-prog-card" role="dialog" aria-label="Program NFC tag">' +
                     '<button type="button" class="nfc-prog-x" aria-label="Close" onclick="closeNfcProgrammer()">&times;</button>' +
@@ -18743,12 +18750,9 @@
                     '</select>' +
                     '<div class="nfc-prog-slug">Tag address: <code id="nfcSlugPreview">' + wcTapUrl('…') + '</code></div>' +
                     '<button type="button" id="nfcWriteBtn" class="btn nfc-prog-write" onclick="wcDoNfcProgram()">' +
-                        (hasNfc ? 'Write to tag &amp; save' : 'Save &amp; get tag URL') + '</button>' +
+                        writeLabel + '</button>' +
                     '<div id="nfcStatus" class="nfc-prog-status" aria-live="polite"></div>' +
-                    '<p class="nfc-prog-note">' + (hasNfc
-                        ? 'When you tap Write, hold the physical tag to the back of this device.'
-                        : 'This device has no built-in NFC. It records the tag and hands you the URL to program with a USB reader.') +
-                    '</p>' +
+                    '<p class="nfc-prog-note">' + note + '</p>' +
                 '</div>';
             el.classList.add('is-on');
             wcNfcSlugPreview();
@@ -18799,6 +18803,15 @@
                 } catch (e) {
                     if (statusEl) statusEl.textContent = 'Could not write the tag (' + ((e && e.message) || e) + '). Recording it anyway.';
                 }
+            } else if (navigator.usb) {
+                // Desktop with a USB reader (ACR122U). requestDevice runs here,
+                // inside the button's user activation.
+                try {
+                    await wcAcrWriteUrl(url, statusEl);
+                    wrote = true;
+                } catch (e) {
+                    if (statusEl) statusEl.textContent = 'USB reader write failed: ' + ((e && e.message) || e) + '. Recording it anyway.';
+                }
             }
 
             // RECORD it. The server runs the same normalizeSlug, so the stored
@@ -18825,6 +18838,98 @@
             if (typeof renderTagManager === 'function') renderTagManager();
         }
         window.wcDoNfcProgram = wcDoNfcProgram;
+
+        // ---- ACR122U over WebUSB -------------------------------------------
+        // The ACR122U is a PC/SC reader whose contactless APDUs go over CCID
+        // bulk transfers. Writing an NTAG21x / Mifare Ultralight tag is: detect
+        // the card (FF CA 00 00 00 selects it), then Update Binary (FF D6) the
+        // NDEF TLV four bytes per page from page 4. Untested against real
+        // hardware in this build; the codes are the documented ACS/PC-SC ones.
+        let _acrSeq = 0;
+        async function wcAcrConnect() {
+            if (!navigator.usb) throw new Error('This browser has no WebUSB (use Chrome/Edge on desktop).');
+            const dev = await navigator.usb.requestDevice({ filters: [{ vendorId: 0x072F }] }); // ACS
+            await dev.open();
+            if (dev.configuration === null) await dev.selectConfiguration(1);
+            let iface = 0, epIn = 0, epOut = 0, found = false;
+            for (const intf of dev.configuration.interfaces) {
+                for (const ep of intf.alternate.endpoints) {
+                    if (ep.type === 'bulk') {
+                        if (ep.direction === 'in') epIn = ep.endpointNumber;
+                        else epOut = ep.endpointNumber;
+                        found = true;
+                    }
+                }
+                if (found) { iface = intf.interfaceNumber; break; }
+            }
+            if (!found) throw new Error('No bulk endpoint on the reader.');
+            await dev.claimInterface(iface);
+            return { dev: dev, epIn: epIn, epOut: epOut };
+        }
+
+        async function wcAcrTransmit(link, apdu) {
+            // CCID PC_to_RDR_XfrBlock (0x6F) wrapping the APDU.
+            const data = Uint8Array.from(apdu);
+            const pkt = new Uint8Array(10 + data.length);
+            pkt[0] = 0x6F;
+            pkt[1] = data.length & 0xff; pkt[2] = (data.length >> 8) & 0xff;
+            pkt[3] = (data.length >> 16) & 0xff; pkt[4] = (data.length >> 24) & 0xff;
+            pkt[5] = 0x00;                    // slot
+            pkt[6] = (_acrSeq++) & 0xff;      // sequence
+            pkt.set(data, 10);
+            await link.dev.transferOut(link.epOut, pkt);
+            const res = await link.dev.transferIn(link.epIn, 512);
+            const arr = new Uint8Array(res.data.buffer);
+            return arr.length > 10 ? arr.slice(10) : new Uint8Array(0); // response APDU
+        }
+
+        function wcAcrOk(resp) {
+            return resp.length >= 2 && resp[resp.length - 2] === 0x90 && resp[resp.length - 1] === 0x00;
+        }
+
+        async function wcAcrWaitForCard(link, timeoutMs) {
+            const start = Date.now();
+            while (Date.now() - start < timeoutMs) {
+                try {
+                    const r = await wcAcrTransmit(link, [0xFF, 0xCA, 0x00, 0x00, 0x00]); // Get UID
+                    if (wcAcrOk(r)) return true;
+                } catch (e) { /* keep polling */ }
+                await new Promise(function (res) { setTimeout(res, 400); });
+            }
+            return false;
+        }
+
+        // NDEF URL record wrapped in a tag TLV, padded to whole 4-byte pages.
+        function wcBuildNdefUrl(url) {
+            let code = 0x00, rest = url;
+            if (url.indexOf('https://') === 0) { code = 0x04; rest = url.slice(8); }
+            else if (url.indexOf('http://') === 0) { code = 0x03; rest = url.slice(7); }
+            const restBytes = new TextEncoder().encode(rest);
+            const payloadLen = 1 + restBytes.length;                 // id code + uri
+            const record = [0xD1, 0x01, payloadLen, 0x55, code].concat(Array.from(restBytes));
+            const tlv = [0x03, record.length].concat(record, [0xFE]); // NDEF message TLV + terminator
+            while (tlv.length % 4 !== 0) tlv.push(0x00);
+            return tlv;
+        }
+
+        async function wcAcrWriteUrl(url, statusEl) {
+            const link = await wcAcrConnect();
+            try {
+                if (statusEl) statusEl.textContent = 'Place the tag on the reader…';
+                const present = await wcAcrWaitForCard(link, 20000);
+                if (!present) throw new Error('No tag on the reader within 20s.');
+                const bytes = wcBuildNdefUrl(url);
+                for (let i = 0; i < bytes.length; i += 4) {
+                    const page = 4 + (i / 4);
+                    const apdu = [0xFF, 0xD6, 0x00, page, 0x04, bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]];
+                    const r = await wcAcrTransmit(link, apdu);
+                    if (!wcAcrOk(r)) throw new Error('Write refused at page ' + page + ' (is the tag NTAG/Ultralight and unlocked?).');
+                }
+                return true;
+            } finally {
+                try { await link.dev.close(); } catch (e) { /* ignore */ }
+            }
+        }
 
         /** The tag rows the table last drew, and the staff/section lists for the picker. */
         let wcTagRows = [];
