@@ -811,27 +811,47 @@
   });
 
   /**
-   * Render the Google button lazily, the first time someone opens the Student
-   * tab. Doing it on page load would pull Google's SDK for every teacher who
-   * never touches the student side.
+   * Render the Google button exactly once. Idempotent: the flag guards against
+   * the eager-on-load path and a later tab click both firing.
+   *
+   * The Student tab is now the DEFAULT view, so the button is rendered eagerly
+   * on page load (see onReady) — pulling Google's SDK immediately is correct
+   * when the student entrance is what everyone lands on. The lazy click below
+   * only covers the teacher-then-switches-to-student case, where the eager
+   * render was skipped because the teacher form was showing.
    */
+  let studentButtonRendered = false;
+  function renderStudentButton() {
+    if (studentButtonRendered || !configured.google()) return;
+    studentButtonRendered = true;
+    initStudentButton('googleSignInButton').catch(function (err) {
+      studentButtonRendered = false; // let a retry (tab click) try again
+      const el = document.getElementById('googleSignInError');
+      if (el) el.textContent = err.message;
+      console.error('[wildcat-auth] Google button failed to render:', err);
+    });
+  }
+
   function wireStudentButtonLazily() {
     const tab = document.getElementById('studentLoginBtn');
     if (!tab) return;
-    let done = false;
-    tab.addEventListener('click', function () {
-      if (done || !configured.google()) return;
-      done = true;
-      initStudentButton('googleSignInButton').catch(function (err) {
-        const el = document.getElementById('googleSignInError');
-        if (el) el.textContent = err.message;
-        console.error('[wildcat-auth] Google button failed to render:', err);
-      });
-    });
+    tab.addEventListener('click', renderStudentButton);
+  }
+
+  // True only when the student login is the one actually on screen. Used to
+  // decide whether to render Google eagerly on load: the default is now the
+  // student tab, but a returning teacher's tab state must still be honoured.
+  function studentFormVisible() {
+    const f = document.getElementById('studentLoginForm');
+    return !!f && !f.classList.contains('hidden');
   }
 
   function onReady() {
     wireStudentButtonLazily();
+    // Eager render when the student entrance is the visible default, so a
+    // student never sees an empty box waiting on a click that a teacher's tab
+    // used to require.
+    if (studentFormVisible()) renderStudentButton();
     // script.js defines establishTeacherSession and the teachers array, and it
     // loads AFTER this file. Defer to the end of the task queue so both exist
     // by the time the redirect is processed.
@@ -867,6 +887,7 @@
     resumeSession,
     signInStaff,
     initStudentButton,
+    renderStudentButton,
     signOut,
     staffEntranceActive,
     forgetCachedStaffAccount,

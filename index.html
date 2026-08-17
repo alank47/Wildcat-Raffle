@@ -7,16 +7,16 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Wildcat Hub</title>
-    <link rel="stylesheet" href="styles.css?v=20260815y">
+    <link rel="stylesheet" href="styles.css?v=20260816y">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260815y">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260816y">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20260815y">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260816y">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -43,12 +43,16 @@
         
         <!-- Tab switcher -->
         <div style="display: flex; background: #f4f4f8; border-radius: 12px; padding: 4px; margin-bottom: 28px; gap: 4px;">
-            <button id="teacherLoginBtn" onclick="showTeacherLogin()" style="flex: 1; padding: 10px; border: none; border-radius: 9px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; background: #2F67A7; color: white; box-shadow: 0 2px 8px rgba(47,103,167,0.35);">Teacher</button>
-            <button id="studentLoginBtn" onclick="showStudentLogin()" style="flex: 1; padding: 10px; border: none; border-radius: 9px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; background: transparent; color: #7a8494;">Student</button>
+            <!-- Student is the DEFAULT-active tab: this is a student hub, students
+                 vastly outnumber staff, and a student must never land on the
+                 teacher tab's Microsoft button. Teacher starts inactive; a staff
+                 member taps it to reveal Microsoft + the legacy password form. -->
+            <button id="teacherLoginBtn" onclick="showTeacherLogin()" style="flex: 1; padding: 10px; border: none; border-radius: 9px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; background: transparent; color: #7a8494;">Teacher</button>
+            <button id="studentLoginBtn" onclick="showStudentLogin()" style="flex: 1; padding: 10px; border: none; border-radius: 9px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; background: #2F67A7; color: white; box-shadow: 0 2px 8px rgba(47,103,167,0.35);">Student</button>
         </div>
         
         <!-- Teacher Login Form -->
-        <div id="teacherLoginForm">
+        <div id="teacherLoginForm" class="hidden">
             <!-- Entra ID (O365) sign-in. Placed ABOVE the password form because it
                  is the path staff should use; the password form below is the
                  legacy fallback and stays until every staff record has an email
@@ -95,7 +99,7 @@
              surfaces, below, next to #loginScreen rather than inside it. -->
 
         <!-- Student Login Form -->
-        <div id="studentLoginForm" class="hidden">
+        <div id="studentLoginForm">
             <!-- Google sign-in for students, using the westbrookacademy.org account
                  they already sign into their Chromebooks with. The button renders
                  itself into this container via Google Identity Services.
@@ -5297,10 +5301,10 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260815y"></script>
+    <script src="wildcat-auth.js?v=20260816y"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
-    <script src="wildcat-motion.js?v=20260815y"></script>
-    <script src="script.js?v=20260815y"></script>
+    <script src="wildcat-motion.js?v=20260816y"></script>
+    <script src="script.js?v=20260816y"></script>
 </body>
 </html>

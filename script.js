@@ -1171,6 +1171,17 @@
             document.getElementById('teacherLoginForm').classList.add('hidden');
             document.getElementById('studentLoginBtn').style.cssText = 'flex:1;padding:10px;border:none;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.2s;background:#2F67A7;color:white;box-shadow:0 2px 8px rgba(47,103,167,0.35);';
             document.getElementById('teacherLoginBtn').style.cssText = 'flex:1;padding:10px;border:none;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.2s;background:transparent;color:#7a8494;';
+            // Render the Google button whenever the student tab is shown, not only
+            // on a manual tab click. This screen is now the DEFAULT — a student
+            // must see Google immediately and never an empty box, and never the
+            // teacher's Microsoft button first. renderStudentButton is idempotent
+            // (flag-guarded in wildcat-auth.js), so this is safe to call every
+            // time and never double-renders against the eager on-load path.
+            try {
+                if (window.WildcatAuth && typeof window.WildcatAuth.renderStudentButton === 'function') {
+                    window.WildcatAuth.renderStudentButton();
+                }
+            } catch (e) { /* GIS not ready yet; the eager/tab-click paths still cover it */ }
         }
 
 
@@ -7184,7 +7195,7 @@
                 document.getElementById('loginError').textContent = '';
                 const studentErr = document.getElementById('studentLoginError');
                 if (studentErr) studentErr.textContent = '';
-                showTeacherLogin(); // Default to teacher login
+                showStudentLogin(); // Default to the student (Google) tab, never Microsoft
             }
         }
 
