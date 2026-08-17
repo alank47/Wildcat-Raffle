@@ -1366,3 +1366,77 @@ body.wc-loading { overflow: hidden; }
 /* On an ink surface the muted text would go dark-on-dark. */
 .wu-ink .wu-pager__count,
 .wu-ink .wu-pager__page { color: var(--wu-fg-on-ink-dim); }
+
+/* ============================================================
+   LIVE HALL-PASS REQUEST ALERT
+   A full-screen takeover so a teacher cannot miss a request. It sits above
+   every other layer, the loader included, because letting a child into the
+   hallway is the one interruption that should win over whatever is on screen.
+   ============================================================ */
+#wcPassAlert {
+    position: fixed;
+    inset: 0;
+    z-index: 100000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(11, 11, 14, 0.62);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+}
+#wcPassAlert.is-on {
+    display: flex;
+    animation: wcPassAlertIn 180ms var(--wu-ease, ease-out);
+}
+@keyframes wcPassAlertIn { from { opacity: 0; } to { opacity: 1; } }
+.wc-pass-alert-card {
+    width: min(440px, 100%);
+    background: var(--wu-surface, #fff);
+    border-radius: var(--wu-r-card, 28px);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, .45);
+    padding: 32px 28px 24px;
+    text-align: center;
+    animation: wcPassAlertPop 220ms var(--wu-ease, cubic-bezier(0.23, 1, 0.32, 1));
+}
+@keyframes wcPassAlertPop {
+    from { transform: scale(.92) translateY(10px); opacity: 0; }
+    to { transform: none; opacity: 1; }
+}
+.wc-pass-alert-eyebrow {
+    font-size: 12px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--wu-blue, #2F67A7);
+    font-weight: 700;
+    margin-bottom: 10px;
+}
+.wc-pass-alert-name {
+    font-size: 30px;
+    font-weight: 750;
+    letter-spacing: -.02em;
+    color: var(--wu-fg, #14161B);
+    line-height: 1.1;
+}
+.wc-pass-alert-reason { margin-top: 8px; font-size: 16px; color: var(--wu-fg-dim, #5F6570); }
+.wc-pass-alert-where { margin-top: 6px; font-size: 13.5px; color: var(--wu-fg-faint, #8B919C); }
+.wc-pass-alert-actions { display: flex; gap: 12px; margin-top: 26px; }
+.wc-pass-alert-actions button {
+    flex: 1;
+    padding: 16px;
+    font-size: 16px;
+    font-weight: 700;
+    border-radius: 14px;
+    cursor: pointer;
+    border: none;
+    transition: filter .15s ease, background .15s ease;
+}
+.wc-pass-alert-approve {
+    background: var(--wu-blue, #2F67A7);
+    color: #fff;
+    box-shadow: 0 4px 14px rgba(47, 103, 167, .35);
+}
+.wc-pass-alert-approve:hover { filter: brightness(1.06); }
+.wc-pass-alert-deny { background: var(--wu-surface-sunk, #EDF1F7); color: var(--wu-fg, #14161B); }
+.wc-pass-alert-deny:hover { filter: brightness(.97); }
+.wc-pass-alert-approve:disabled, .wc-pass-alert-deny:disabled { opacity: .6; cursor: default; }

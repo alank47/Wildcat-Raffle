@@ -7175,6 +7175,7 @@
                 currentStudent = null;
                 clearSession(); // Clear saved session
                 _sidebarModeApplied = false; // next login re-runs mode-first logic
+                if (typeof wcStopPassAlertPolling === 'function') wcStopPassAlertPolling();
                 document.body.classList.remove('sidebar-open', 'sidebar-collapsed');
                 
                 // Drop the federated session too. Without this a teacher could
@@ -19056,6 +19057,148 @@
             const session = auth && auth.getSession && auth.getSession();
             return session ? { auth: auth, session: session } : null;
         }
+
+        // ===================================================================
+        // LIVE HALL-PASS REQUEST ALERT
+        // A student's request has to reach the teacher wherever they are in the
+        // app, not only when they happen to have the Claw Pass board open. A
+        // poller checks the teacher's board on an interval; a request they have
+        // not seen before takes over the screen with a full-screen alert and a
+        // one-tap Approve / Deny. Phase 2 adds a device push so this also fires
+        // when the app is closed; the in-app alert here is the always-on half.
+        // ===================================================================
+        let _wcPassAlertSeen = new Set();   // request ids already surfaced this session
+        let _wcPassAlertTimer = null;
+        let _wcPassAlertCurrent = null;     // id on screen now, so alerts never stack
+        let _wcPassAlertPrimed = false;     // first poll primes the set without alerting
+
+        async function wcPollPassRequests() {
+            const ctx = wcBellSession();
+            if (!ctx) return;                                   // only when signed in
+            const kind = ctx.session.me && ctx.session.me.kind;
+            if (kind !== 'staff') return;                       // students have no class board
+            let board;
+            try {
+                board = await ctx.auth.convexQuery('hallPasses:myClassBoard', {}, ctx.session.idToken);
+            } catch (e) { return; }                             // transient — try again next tick
+            const requested = (board && Array.isArray(board.passes) ? board.passes : [])
+                .filter(function (p) { return String(p.state || '').toLowerCase() === 'requested'; });
+
+            // The first successful poll after sign-in PRIMES the seen-set without
+            // alerting, so a teacher opening the app to a class that already has
+            // pending requests is not ambushed by a stack of alerts for requests
+            // that predate them. Only requests that arrive AFTER this alert.
+            if (!_wcPassAlertPrimed) {
+                requested.forEach(function (p) { _wcPassAlertSeen.add(p.id); });
+                _wcPassAlertPrimed = true;
+                return;
+            }
+
+            const fresh = requested.find(function (p) { return !_wcPassAlertSeen.has(p.id); });
+            if (fresh && !_wcPassAlertCurrent) {
+                _wcPassAlertSeen.add(fresh.id);
+                wcShowPassAlert(fresh);
+            }
+        }
+
+        function wcStartPassAlertPolling() {
+            if (_wcPassAlertTimer) return;
+            _wcPassAlertPrimed = false;
+            wcPollPassRequests();                               // prompt first check
+            _wcPassAlertTimer = setInterval(wcPollPassRequests, 8000);
+        }
+
+        function wcStopPassAlertPolling() {
+            if (_wcPassAlertTimer) clearInterval(_wcPassAlertTimer);
+            _wcPassAlertTimer = null;
+            _wcPassAlertPrimed = false;
+            _wcPassAlertSeen = new Set();
+            wcDismissPassAlert();
+        }
+
+        function wcShowPassAlert(pass) {
+            _wcPassAlertCurrent = pass.id;
+            let el = document.getElementById('wcPassAlert');
+            if (!el) { el = document.createElement('div'); el.id = 'wcPassAlert'; document.body.appendChild(el); }
+            const where = [pass.courseName || '', pass.period ? 'Period ' + pass.period : '']
+                .filter(Boolean).join('  ·  ');
+            el.innerHTML =
+                '<div class="wc-pass-alert-card" role="alertdialog" aria-live="assertive">' +
+                  '<div class="wc-pass-alert-eyebrow">Hall pass request</div>' +
+                  '<div class="wc-pass-alert-name">' + wpEsc(pass.studentName || 'A student') + '</div>' +
+                  (pass.reason ? '<div class="wc-pass-alert-reason">' + wpEsc(pass.reason) + '</div>' : '') +
+                  (where ? '<div class="wc-pass-alert-where">' + wpEsc(where) + '</div>' : '') +
+                  '<div class="wc-pass-alert-actions">' +
+                    '<button type="button" class="wc-pass-alert-deny" onclick="wcAlertDeny(\'' + wpEsc(pass.id) + '\')">Deny</button>' +
+                    '<button type="button" class="wc-pass-alert-approve" onclick="wcAlertApprove(\'' + wpEsc(pass.id) + '\')">Approve</button>' +
+                  '</div>' +
+                '</div>';
+            el.classList.add('is-on');
+            try { if (navigator.vibrate) navigator.vibrate([180, 90, 180]); } catch (e) {}
+            wcPassAlertChime();
+        }
+
+        function wcDismissPassAlert() {
+            const el = document.getElementById('wcPassAlert');
+            if (el) el.classList.remove('is-on');
+            _wcPassAlertCurrent = null;
+        }
+
+        async function wcAlertApprove(passId) {
+            const ctx = wcBellSession();
+            if (!ctx) { wcDismissPassAlert(); return; }
+            const btn = document.querySelector('#wcPassAlert .wc-pass-alert-approve');
+            if (btn) { btn.disabled = true; btn.textContent = 'Approving…'; }
+            try {
+                // A default of 10 minutes: the full-screen alert is a quick yes/no,
+                // not the place for a minutes prompt. The teacher can adjust the
+                // length on the Claw Pass board if they need to.
+                await ctx.auth.convexMutation('hallPasses:approve', { passId: passId, minutes: 10 }, ctx.session.idToken);
+            } catch (e) { alert(e.message); }
+            wcDismissPassAlert();
+            if (typeof renderMyClassBoard === 'function') renderMyClassBoard().catch(function () {});
+        }
+
+        async function wcAlertDeny(passId) {
+            const ctx = wcBellSession();
+            if (!ctx) { wcDismissPassAlert(); return; }
+            const btn = document.querySelector('#wcPassAlert .wc-pass-alert-deny');
+            if (btn) { btn.disabled = true; btn.textContent = 'Denying…'; }
+            try {
+                await ctx.auth.convexMutation('hallPasses:deny', { passId: passId }, ctx.session.idToken);
+            } catch (e) { alert(e.message); }
+            wcDismissPassAlert();
+            if (typeof renderMyClassBoard === 'function') renderMyClassBoard().catch(function () {});
+        }
+
+        // A short attention chime through WebAudio, so nothing has to ship as an
+        // audio file. Best effort: a browser that blocks audio until a gesture
+        // simply stays silent, and the visual alert still lands.
+        function wcPassAlertChime() {
+            try {
+                const AC = window.AudioContext || window.webkitAudioContext;
+                if (!AC) return;
+                const ac = new AC();
+                const o = ac.createOscillator(); const g = ac.createGain();
+                o.type = 'sine'; o.frequency.value = 880;
+                o.connect(g); g.connect(ac.destination);
+                g.gain.setValueAtTime(0.0001, ac.currentTime);
+                g.gain.exponentialRampToValueAtTime(0.28, ac.currentTime + 0.02);
+                g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.55);
+                o.start(); o.stop(ac.currentTime + 0.55);
+            } catch (e) { /* silent is fine */ }
+        }
+
+        window.wcAlertApprove = wcAlertApprove;
+        window.wcAlertDeny = wcAlertDeny;
+
+        // Start the live alert for staff on sign-in; a student session is ignored
+        // (it has no class board). The poller itself re-checks the session every
+        // tick, so it goes quiet by itself if the session ends.
+        window.addEventListener('wildcat-auth-signin', function (e) {
+            const me = e && e.detail;
+            if (me && me.kind === 'staff') wcStartPassAlertPolling();
+        });
 
         async function renderBellSettings() {
             const host = document.getElementById('bellSettingsHost');

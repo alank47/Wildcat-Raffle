@@ -155,14 +155,22 @@ export const seedWestbrook = internalMutation({
     }
 
     // Settings: time zone is what every period boundary is computed against,
-    // and getting it wrong silently shifts every bell. The default schedule is
-    // the fallback only when a weekday matches nothing (it never does Mon-Fri
-    // here); point it at the Wednesday schedule as a safe all-six default.
+    // and getting it wrong silently shifts every bell.
+    //
+    // THE DEFAULT IS THE SCHEDULE THAT RUNS WHEN NO DATE OVERRIDE IS SET.
+    // scheduleForDay does NOT infer the schedule from the weekday (that is a
+    // deliberate "a choice, never an inference" design), so the default has to
+    // be a schedule that is valid on ANY day, or every day without a hand-set
+    // override refuses. "Regular · Wednesday" carries weekdays [3] and so
+    // refuses Mon/Tue/Thu/Fri. "Stack Day" carries weekdays [] — no weekday
+    // constraint — and all six periods, so it is valid every day and is the
+    // right always-on default. An admin can still set a specific schedule for a
+    // specific date in Settings > Bell Schedule.
     const settings = await ctx.db.query("bellSettings").withIndex("by_key", (q) => q.eq("key", "bell")).unique();
     const settingsDoc = {
       key: "bell",
       timeZone: "America/Los_Angeles",
-      defaultScheduleId: ids["Regular · Wednesday"] as any,
+      defaultScheduleId: ids["Stack Day / Return from Holiday"] as any,
       // The school runs a weekday schedule, not a letter cycle, so a section
       // that meets "(A-E)" should always be considered in session. Listing all
       // five letters makes the cycle-day check a non-constraint rather than a
