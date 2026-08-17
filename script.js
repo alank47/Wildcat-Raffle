@@ -17897,23 +17897,37 @@
                 });
             }
 
-            const cards = [
-                wpScheduleCard(sched),
-                wpGradesCard(grades, !mine),
-                wpReasonCard('Lunch', pass.lunchId, WP_FACE.lunch, WP_FACE.lunchOff),
-                wpReasonCard('Clever', pass.cleverBadge, WP_FACE.clever, WP_FACE.cleverOff),
-                wpHallPassCard(pass.hallPass),
-                wpStudentIdCard(pass.studentId),
-            ];
+            // On a phone the student does not get the Schedule and Grades cards.
+            // Those two are the data-dense cards, and the ask is for them to be
+            // off for students on mobile; the wallet a student holds on a phone
+            // is Lunch, Clever, the hall pass and their ID. On a larger screen
+            // (a Chromebook) they still appear. This function is the student's
+            // OWN portal — staff view a student through a different surface — so
+            // gating on width here only ever hides them from the student.
+            const onMobile = window.innerWidth <= 900;
+
+            const cards = [];
+            if (!onMobile) {
+                cards.push(wpScheduleCard(sched));
+                cards.push(wpGradesCard(grades, !mine));
+            }
+            cards.push(wpReasonCard('Lunch', pass.lunchId, WP_FACE.lunch, WP_FACE.lunchOff));
+            cards.push(wpReasonCard('Clever', pass.cleverBadge, WP_FACE.clever, WP_FACE.cleverOff));
+            const hallPassIdx = cards.length;
+            cards.push(wpHallPassCard(pass.hallPass));
+            const studentIdIdx = cards.length;
+            cards.push(wpStudentIdCard(pass.studentId));
 
             // A live pass is the thing you are holding the phone for. Otherwise
             // the ID barcode is, and it sits at the bottom of the stack where
             // Wallet keeps the card you reach for. preferIndex wins over both,
             // so cancelling a request leaves you looking at the card you just
-            // acted on rather than somewhere else.
+            // acted on rather than somewhere else. The hall pass and ID indices
+            // are read off the built stack, because dropping Schedule and Grades
+            // on a phone shifts every card below them up two slots.
             const open = (preferIndex === 0 || preferIndex)
                 ? preferIndex
-                : ((pass.hallPass && pass.hallPass.available) ? 4 : 5);
+                : ((pass.hallPass && pass.hallPass.available) ? hallPassIdx : studentIdIdx);
             wpRender(cards, open);
 
             if (pass.studentId && pass.studentId.available && window.JsBarcode) {

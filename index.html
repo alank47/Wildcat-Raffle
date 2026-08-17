@@ -7,16 +7,16 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Wildcat Hub</title>
-    <link rel="stylesheet" href="styles.css?v=20260817a">
+    <link rel="stylesheet" href="styles.css?v=20260817b">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260817a">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260817b">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20260817a">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260817b">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -5301,10 +5301,10 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260817a"></script>
+    <script src="wildcat-auth.js?v=20260817b"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
-    <script src="wildcat-motion.js?v=20260817a"></script>
-    <script src="script.js?v=20260817a"></script>
+    <script src="wildcat-motion.js?v=20260817b"></script>
+    <script src="script.js?v=20260817b"></script>
 </body>
 </html>
