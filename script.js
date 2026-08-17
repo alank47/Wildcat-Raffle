@@ -19247,6 +19247,37 @@
             if (me && me.kind === 'staff') wcStartPassAlertPolling();
         });
 
+        // The dashboard's "Your day" strip used to read a hardcoded legacy block
+        // schedule that has no meals and does not match the real Westbrook bells.
+        // This loads TODAY's actual schedule from Convex — the same one the hall
+        // pass and meal card use, meal periods included — and hands it to the
+        // strip. Fetched once per session; a failure leaves the legacy fallback
+        // in place rather than an empty day.
+        let _wcDaySchedule = null;         // { name, periods:[{period,label,start,end}] }
+        let _wcDayScheduleLoading = false;
+        async function wcLoadDaySchedule() {
+            if (_wcDaySchedule || _wcDayScheduleLoading) return;
+            const ctx = wcBellSession();
+            if (!ctx || !(ctx.session.me && ctx.session.me.kind === 'staff')) return;
+            _wcDayScheduleLoading = true;
+            try {
+                const s = await ctx.auth.convexQuery('bellSchedules:settings', {}, ctx.session.idToken);
+                const activeName = s && s.now && s.now.scheduleName;
+                let sch = activeName ? (s.schedules || []).find(function (x) { return x.name === activeName; }) : null;
+                if (!sch) sch = (s.schedules || []).find(function (x) { return x.isDefault; });
+                _wcDaySchedule = sch
+                    ? { name: sch.name, periods: (sch.periods || []).map(function (p) {
+                          return { period: p.label, label: p.label, start: p.start, end: p.end };
+                      }) }
+                    : { name: null, periods: [] };
+                if (typeof renderTeacherDashboard === 'function') renderTeacherDashboard();
+            } catch (e) {
+                _wcDaySchedule = { name: null, periods: [] }; // don't loop on error
+            } finally {
+                _wcDayScheduleLoading = false;
+            }
+        }
+
         async function renderBellSettings() {
             const host = document.getElementById('bellSettingsHost');
             if (!host) return;
@@ -25057,8 +25088,16 @@
             const tl = document.getElementById('dashTimeline');
             const chip = document.getElementById('dashScheduleChip');
             const tlTitle = document.getElementById('dashTimelineTitle');
+            // Prefer today's REAL schedule from Convex (meal periods included);
+            // fall back to the legacy block schedule and kick off the fetch so
+            // the next render has the real one.
             let schedule = null;
-            try { schedule = (typeof getActiveSchedule === 'function') ? getActiveSchedule() : null; } catch (e) { schedule = null; }
+            if (_wcDaySchedule && Array.isArray(_wcDaySchedule.periods) && _wcDaySchedule.periods.length) {
+                schedule = _wcDaySchedule;
+            } else {
+                try { schedule = (typeof getActiveSchedule === 'function') ? getActiveSchedule() : null; } catch (e) { schedule = null; }
+                if (typeof wcLoadDaySchedule === 'function') wcLoadDaySchedule();
+            }
 
             // getActiveSchedule() auto-detects from the day of the week and
             // falls back to the all-periods schedule when the lookup misses,
@@ -25113,14 +25152,22 @@
                     const span = `${escapeHtml(wcClock(p.start))} &ndash; ${escapeHtml(wcClock(p.end))}`;
 
                     if (!mySection) {
+                        const plabel = String(p.period);
+                        const isMeal = /breakfast|nutrition|lunch/i.test(plabel);
+                        const isNumeric = /^\d+$/.test(plabel.trim());
+                        // A meal shows its name with a food icon; a numeric period
+                        // the teacher does not teach reads as "Period N"; anything
+                        // else (Promise Time) shows its own label as written.
+                        const title = isNumeric ? ('Period ' + plabel) : plabel;
+                        const icon = isMeal ? '&#127869;&#65039; ' : '';
                         rows.push({
                             sort: start === null ? 9999 : start,
                             html: `
-                            <div class="wu-tl-row wu-tl-break ${isNow ? 'wu-tl-now' : ''}">
+                            <div class="wu-tl-row wu-tl-break ${isMeal ? 'wu-tl-meal' : ''} ${isNow ? 'wu-tl-now' : ''}">
                                 <span class="wu-tl-dot" aria-hidden="true"></span>
                                 <div class="wu-tl-card">
                                     <span class="wu-tl-time">${span}</span>
-                                    <span class="wu-tl-title">Period ${escapeHtml(String(p.period))}</span>
+                                    <span class="wu-tl-title">${icon}${escapeHtml(title)}</span>
                                 </div>
                             </div>`
                         });

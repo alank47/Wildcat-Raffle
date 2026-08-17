@@ -1455,3 +1455,11 @@ body.wc-loading { overflow: hidden; }
 .wc-pass-alert-deny { background: var(--wu-surface-sunk, #EDF1F7); color: var(--wu-fg, #14161B); }
 .wc-pass-alert-deny:hover { filter: brightness(.97); }
 .wc-pass-alert-approve:disabled, .wc-pass-alert-deny:disabled { opacity: .6; cursor: default; }
+
+/* Meal rows on the dashboard "Your day" strip — a warm tint so Breakfast,
+   Nutrition and Lunch read as breaks in the teaching day, not as classes. */
+.wu-tl-meal .wu-tl-card {
+    background: color-mix(in srgb, var(--wu-orange) 9%, var(--wu-surface));
+    border: 1px solid color-mix(in srgb, var(--wu-orange) 24%, transparent);
+}
+.wu-tl-meal .wu-tl-title { color: #8A4413; font-weight: 650; }
