@@ -178,6 +178,26 @@ export default defineSchema({
     .index("by_studentNumber", ["studentNumber"]),
 
   /**
+   * Web Push subscriptions, one row per browser/device a staff member enabled
+   * notifications on. A hall-pass request schedules a push to every row whose
+   * teacherEmail is the pass's origin teacher, so the alert reaches them even
+   * when the app is closed. Nothing here is a secret: the endpoint is a URL the
+   * push service issued and the keys encrypt payloads TO this device, they do
+   * not authenticate anything. Keyed by endpoint (unique per device) so the same
+   * device re-subscribing updates rather than duplicates.
+   */
+  pushSubscriptions: defineTable({
+    endpoint: v.string(),
+    p256dh: v.string(),
+    auth: v.string(),
+    teacherEmail: v.string(), // normalized, joins to teachers.email
+    userAgent: v.optional(v.string()),
+    createdAt: v.string(),
+  })
+    .index("by_endpoint", ["endpoint"])
+    .index("by_teacherEmail", ["teacherEmail"]),
+
+  /**
    * Attendance statistics per student per term, aggregated in SQL on the
    * PowerSchool side (brief Phase 2: days_absent respects
    * Attendance_Code.Presence_Status_CD rather than counting rows).

@@ -6,6 +6,7 @@ import {
   QueryCtx,
 } from "./_generated/server";
 import { Doc, Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
 import { v, ConvexError } from "convex/values";
 import { requireStaff, requireAdmin, requireStudentSelf } from "./identity";
 import { bellContext } from "./bellSchedules";
@@ -503,6 +504,23 @@ export const requestMine = mutation({
       ...(origin.courseName ? { originCourseName: origin.courseName } : {}),
       requestedVia: "student-schedule" as const,
     });
+
+    // Push the origin teacher's device(s), so the request reaches them even when
+    // the app is closed. Scheduled, never awaited: a slow or down push service
+    // must not make the student's request hang or fail. No-ops when that teacher
+    // has no subscriptions or VAPID is unset.
+    try {
+      await ctx.scheduler.runAfter(0, internal.pushSend.sendToTeacher, {
+        teacherEmail: origin.teacherEmail,
+        title: "Hall pass request",
+        body:
+          `${student.firstName} ${student.lastName} is asking to leave ` +
+          `${origin.courseName || "class"}.`,
+        url: "/?source=push",
+      });
+    } catch (e) {
+      console.error("[push] could not schedule notification:", e);
+    }
 
     // An allowlist, field by field, like every other response here. Never the
     // stored row: hallPasses gains columns (approvedByEmail already), and a

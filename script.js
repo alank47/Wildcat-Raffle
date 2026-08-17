@@ -19239,12 +19239,65 @@
         window.wcAlertApprove = wcAlertApprove;
         window.wcAlertDeny = wcAlertDeny;
 
+        // ---- Web Push: hall-pass alerts to the device when the app is closed --
+        // The public VAPID key is safe to ship (it only lets the browser accept
+        // pushes signed by our private key, which never leaves Convex env).
+        const WC_VAPID_PUBLIC = 'BA3fDo-X41G-nmrjQD1--n-mTEtSs1LXTrmveIL2USLLQWVtZ0oiwckFi71x2Z497gfgg5hFwTiwznUxFOArd-8';
+
+        function wcUrlB64ToUint8(base64) {
+            const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+            const b64 = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+            const raw = atob(b64);
+            const out = new Uint8Array(raw.length);
+            for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+            return out;
+        }
+
+        let _wcPushTried = false;
+        async function wcSetupPush() {
+            // Once per session: register this staff device for hall-pass push, so
+            // the alert reaches them when the app is closed. Best-effort — an
+            // unsupported browser, a denied permission, or no service worker just
+            // leaves the in-app full-screen alert as the only channel.
+            if (_wcPushTried) return;
+            _wcPushTried = true;
+            try {
+                if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return;
+                const ctx = wcBellSession();
+                if (!ctx || !(ctx.session.me && ctx.session.me.kind === 'staff')) return;
+                const reg = await navigator.serviceWorker.ready;
+                let sub = await reg.pushManager.getSubscription();
+                if (!sub) {
+                    const perm = await Notification.requestPermission();
+                    if (perm !== 'granted') return;
+                    sub = await reg.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: wcUrlB64ToUint8(WC_VAPID_PUBLIC),
+                    });
+                }
+                const j = sub.toJSON();
+                if (!j || !j.endpoint || !j.keys) return;
+                await ctx.auth.convexMutation('push:subscribe', {
+                    endpoint: j.endpoint,
+                    p256dh: j.keys.p256dh,
+                    auth: j.keys.auth,
+                    userAgent: navigator.userAgent,
+                }, ctx.session.idToken);
+                console.log('[push] device subscribed for hall-pass alerts');
+            } catch (e) {
+                console.warn('[push] setup failed:', e && e.message);
+                _wcPushTried = false; // let the next sign-in try again
+            }
+        }
+        window.wcSetupPush = wcSetupPush;
+
         // Start the live alert for staff on sign-in; a student session is ignored
         // (it has no class board). The poller itself re-checks the session every
-        // tick, so it goes quiet by itself if the session ends.
+        // tick, so it goes quiet by itself if the session ends. Also register the
+        // device for push so the alert reaches a closed app.
         window.addEventListener('wildcat-auth-signin', function (e) {
             const me = e && e.detail;
-            if (me && me.kind === 'staff') wcStartPassAlertPolling();
+            if (me && me.kind === 'staff') { wcStartPassAlertPolling(); wcSetupPush(); }
         });
 
         // The dashboard's "Your day" strip used to read a hardcoded legacy block
