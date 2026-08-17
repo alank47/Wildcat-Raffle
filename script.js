@@ -22895,8 +22895,15 @@
         function showLoader(message, opts) {
             const el = document.getElementById('wildcatLoader');
             if (!el) return;
-            const img = document.getElementById('wildcatLoaderMascot');
-            if (img && !img.getAttribute('src')) img.setAttribute('src', 'assets/wildcat-loader.gif');
+            // Lazy-load the running-wildcat video on first show, so a visitor
+            // who never signs in never downloads it. muted + playsinline let it
+            // autoplay on iOS; play() is best-effort — a browser that blocks it
+            // still shows the first frame on the grey ground.
+            const vid = document.getElementById('wildcatLoaderVideo');
+            if (vid) {
+                if (!vid.getAttribute('src')) vid.setAttribute('src', 'assets/wildcat-run.mp4?v=20260817f');
+                try { const p = vid.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+            }
             const msg = document.getElementById('wildcatLoaderMsg');
             if (msg) msg.textContent = (message == null || message === '') ? 'Loading…' : String(message);
             el.classList.add('is-on');
@@ -22938,6 +22945,10 @@
             el.setAttribute('aria-hidden', 'true');
             el.removeAttribute('aria-busy');
             document.body.classList.remove('wc-loading');
+            // Stop the video once the overlay is down, so it is not looping
+            // off-screen for the rest of the session.
+            const vid = document.getElementById('wildcatLoaderVideo');
+            if (vid) { try { vid.pause(); } catch (e) {} }
         }
         window.showLoader = showLoader;
         window.hideLoader = hideLoader;

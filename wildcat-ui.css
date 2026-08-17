@@ -1283,7 +1283,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--wu-ink-900);
+    /* The clip's own ground, so the video fills the screen with no seam and the
+       colour covers the whole screen behind it. */
+    background: #848485;
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
@@ -1297,25 +1299,38 @@
     pointer-events: auto;
     transition: opacity var(--wu-dur-panel) var(--wu-ease);
 }
+/* The running-wildcat video fills the whole screen. `cover` so there is never a
+   letterbox seam against the ground; the wildcat is centred so cover only ever
+   crops the outer motion streaks. */
+.wildcat-loader__video {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+    pointer-events: none;
+}
+/* The message rides at the bottom, over the video. */
 .wildcat-loader__inner {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: max(6vh, 28px);
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: var(--wu-s4);
-    padding: var(--wu-s5);
+    padding: var(--wu-s4);
     text-align: center;
-}
-.wildcat-loader__mascot {
-    width: min(46vw, 220px);
-    height: auto;
-    /* A transparent gif needs no card behind it; the ink ground is the frame. */
 }
 .wildcat-loader__msg {
     margin: 0;
-    color: var(--wu-fg-on-ink-dim);
+    /* On the clip's grey, white on a soft dark shadow reads at any brightness. */
+    color: #ffffff;
+    text-shadow: 0 1px 6px rgba(0, 0, 0, .55);
     font-size: 15px;
-    font-weight: 600;
-    letter-spacing: .01em;
+    font-weight: 700;
+    letter-spacing: .02em;
 }
 /* Lock the page behind the overlay while it is up. */
 body.wc-loading { overflow: hidden; }
