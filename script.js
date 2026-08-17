@@ -13500,11 +13500,12 @@
                     `<span class="ticket-badge${(Number(n) || 0) > 0 ? ' wc-has' : ''}" title="${label}">${Number(n) || 0}</span>`;
 
                 return `
-                <tr>
+                <tr class="wc-student-row" onclick="openStudentProfile('${s.id}')" tabindex="0"
+                    role="button" aria-label="Open ${escapeHtml(s.firstName)} ${escapeHtml(s.lastName)}"
+                    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStudentProfile('${s.id}')}">
                     <td>${s.id}</td>
                     <td>
-                        <a href="javascript:void(0)" class="student-link"
-                           onclick="openStudentProfile('${s.id}')">${escapeHtml(s.firstName)} ${escapeHtml(s.lastName)}</a>
+                        <span class="student-link">${escapeHtml(s.firstName)} ${escapeHtml(s.lastName)}</span>
                     </td>
                     <td>${(s.grade === undefined || s.grade === null || s.grade === '')
                             ? '<span class="wu-absent">not on file</span>' : escapeHtml(String(s.grade))}</td>
@@ -14128,12 +14129,50 @@
          * instead of a number. There is deliberately no `|| 0` and no `|| '--'`
          * anywhere below: an invented zero reads as a measurement.
          */
+        // Save an edited meal / cafeteria number from the student profile. Admin
+        // only on the server (studentDetail:setMealPin); the input only renders
+        // for an admin in the first place.
+        async function saveStudentMealPin(studentNumber) {
+            const input = document.getElementById('spMealPinInput');
+            const msg = document.getElementById('spMealPinMsg');
+            const btn = document.querySelector('.sp-save-btn');
+            if (!input) return;
+            const ctx = wcBellSession();
+            if (!ctx) { if (msg) { msg.textContent = 'Sign in again to save.'; } return; }
+            const value = input.value.trim();
+            if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+            if (msg) { msg.textContent = ''; msg.className = 'sp-edit-msg'; }
+            try {
+                await ctx.auth.convexMutation('studentDetail:setMealPin',
+                    { studentNumber: studentNumber, mealPin: value }, ctx.session.idToken);
+                if (msg) { msg.textContent = value ? 'Saved.' : 'Cleared.'; msg.className = 'sp-edit-msg sp-edit-msg--ok'; }
+            } catch (e) {
+                if (msg) { msg.textContent = (e && e.message) || 'Could not save.'; msg.className = 'sp-edit-msg sp-edit-msg--err'; }
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+            }
+        }
+        window.saveStudentMealPin = saveStudentMealPin;
+
         function renderStudentProfileTab(d) {
             const id = (d && d.identity) || {};
             const out = [];
 
             // ---- Identity -------------------------------------------------
             const email = id.email || {};
+            const role = (d && d.viewedAs && d.viewedAs.role) || '';
+            const canEditMeal = role === 'admin' || role === 'superadmin';
+            const mealPin = id.mealPin || '';
+            const mealRow = canEditMeal
+                ? '<div class="sp-field sp-field--edit">' +
+                    '<span class="sp-label">Meal / cafeteria number</span>' +
+                    '<span class="sp-edit">' +
+                        '<input type="text" id="spMealPinInput" class="sp-input" value="' + escapeHtml(mealPin) + '" placeholder="e.g. 4073" maxlength="24" inputmode="numeric">' +
+                        '<button type="button" class="btn sp-save-btn" onclick="saveStudentMealPin(\'' + escapeHtml(id.studentNumber || '') + '\')">Save</button>' +
+                    '</span>' +
+                    '<span id="spMealPinMsg" class="sp-edit-msg" aria-live="polite"></span>' +
+                  '</div>'
+                : spRow('Meal / cafeteria number', mealPin || null, 'Not on file yet.');
             out.push(
                 '<div class="wc-card sp-card">' +
                     '<div class="panel-head"><span class="panel-icon">🪪</span><h3>Identity</h3></div>' +
@@ -14144,6 +14183,7 @@
                         spRow('School email',
                             email.available ? email.address : null,
                             email.reason, true) +
+                        mealRow +
                     '</div>' +
                     (id.archivedAt
                         ? '<p class="sp-flag">Archived on ' + escapeHtml(spWhen(id.archivedAt) || id.archivedAt) +

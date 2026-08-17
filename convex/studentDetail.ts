@@ -1,7 +1,7 @@
-import { query } from "./_generated/server";
+import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
-import { requireStaff, requireIdentity } from "./identity";
+import { requireStaff, requireIdentity, requireAdmin } from "./identity";
 import { canViewStudent } from "./accessRules";
 import { studentSisView, staffAttendanceView } from "./views";
 import { readBehaviorForStudent } from "./psBehavior";
@@ -129,6 +129,9 @@ export const get = query({
         // goes reads as a broken page; "not synced yet, the office can check
         // Student Profile > Email" is a fact somebody can act on.
         email: emailPanel(student),
+        // The cafeteria / meal number behind the meal card's barcode. Shown here
+        // so the office can see and, through setMealPin below, correct it.
+        mealPin: textOrNull(student.mealPin),
         archivedAt: student.archivedAt ?? null,
       },
 
@@ -188,5 +191,32 @@ export const get = query({
 
       viewedAs: { role: teacher.role, scope: verdict.scope },
     };
+  },
+});
+
+/**
+ * Correct a student's meal (cafeteria) number — the value behind the meal card
+ * barcode. Admin only: this is identity data the office owns, not something a
+ * class teacher edits from a drill-down. An empty value clears it. Stored as
+ * typed (the ID cards print a bare 4-digit number), length-bounded only, so a
+ * transposed digit is the office's to catch rather than the app's to reformat.
+ */
+export const setMealPin = mutation({
+  args: { studentNumber: v.string(), mealPin: v.string() },
+  handler: async (ctx, { studentNumber, mealPin }) => {
+    await requireAdmin(ctx);
+    const asked = textOrNull(studentNumber);
+    if (!asked) throw new ConvexError("No student number was given.");
+    const student = await ctx.db
+      .query("students")
+      .withIndex("by_studentNumber", (q) => q.eq("studentNumber", asked))
+      .unique();
+    if (!student) throw new ConvexError(`No student with number ${asked}.`);
+    const clean = String(mealPin ?? "").trim();
+    if (clean.length > 24) {
+      throw new ConvexError("A meal number is short — that value is too long to be one.");
+    }
+    await ctx.db.patch(student._id, { mealPin: clean || undefined });
+    return { ok: true, studentNumber: asked, mealPin: clean || null };
   },
 });
