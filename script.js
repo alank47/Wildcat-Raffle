@@ -18699,8 +18699,9 @@
                     </td>
                     <td style="font-size:12px;color:#666;">${l.lastTapAt ? new Date(l.lastTapAt).toLocaleString() : 'never tapped'}</td>
                     <td style="white-space:nowrap;">${l.active
-                        ? `<button onclick="assignTagClassroom('${l.slug}')" style="padding:4px 10px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Assign</button>
-                           <button onclick="retireTag('${l.id}','${l.slug}')" style="margin-left:5px;padding:4px 10px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Retire</button>`
+                        ? `${l.kind === 'classroom'
+                              ? `<button onclick="assignTagClassroom('${l.slug}')" style="padding:4px 10px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Assign teacher</button> `
+                              : ''}<button onclick="retireTag('${l.id}','${l.slug}')" style="padding:4px 10px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Retire</button>`
                         : '<span style="font-size:12px;color:#999;">retired</span>'}</td>
                   </tr>`;
                 }).join('');
@@ -18742,12 +18743,13 @@
                     '<input type="text" id="nfcTitle" class="nfc-prog-input" placeholder="e.g. Room 16, Front Office" oninput="wcNfcSlugPreview()" autocomplete="off">' +
                     '<label class="nfc-prog-label" for="nfcKind">Type</label>' +
                     '<select id="nfcKind" class="nfc-prog-input">' +
-                        '<option value="classroom">Classroom</option>' +
-                        '<option value="restroom">Restroom</option>' +
-                        '<option value="office">Office</option>' +
-                        '<option value="nurse">Nurse</option>' +
-                        '<option value="other">Other</option>' +
+                        '<option value="restroom">Restroom (destination)</option>' +
+                        '<option value="office">Office (destination)</option>' +
+                        '<option value="nurse">Nurse (destination)</option>' +
+                        '<option value="other">Other destination</option>' +
+                        '<option value="classroom">Classroom &mdash; routes to a teacher</option>' +
                     '</select>' +
+                    '<p class="nfc-prog-hint">Destination tags are just places a student taps to check in. Only a <strong>Classroom</strong> tag is tied to a teacher (assign one in the tag list).</p>' +
                     '<div class="nfc-prog-slug">Tag address: <code id="nfcSlugPreview">' + wcTapUrl('…') + '</code></div>' +
                     '<button type="button" id="nfcWriteBtn" class="btn nfc-prog-write" onclick="wcDoNfcProgram()">' +
                         writeLabel + '</button>' +
