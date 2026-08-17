@@ -18728,12 +18728,12 @@
             if (!el) { el = document.createElement('div'); el.id = 'nfcProgModal'; el.className = 'nfc-prog'; document.body.appendChild(el); }
             const hasNfc = ('NDEFReader' in window);
             const hasUsb = !!(navigator.usb);
-            const writeLabel = hasNfc ? 'Write to tag &amp; save' : (hasUsb ? 'Write with USB reader &amp; save' : 'Save &amp; get tag URL');
+            const writeLabel = hasNfc ? 'Write tag &amp; save' : (hasUsb ? 'Write tag via USB reader &amp; save' : 'Save &amp; get tag URL');
             const note = hasNfc
-                ? 'When you tap Write, hold the physical tag to the back of this device.'
+                ? 'Writes the tap URL onto the NFC tag itself. Hold the tag to the back of this phone when you tap Write. A student later taps that tag and their phone opens the URL to check in.'
                 : (hasUsb
-                    ? 'Connect your ACR122U reader; on Write you pick it once, then place the tag on it.'
-                    : 'No built-in NFC and no WebUSB here. It records the tag and gives you the URL to program elsewhere.');
+                    ? 'Writes the tap URL onto the NFC tag placed on your ACR122U reader (the reader is only the writer). On Write you pick the reader once, then set the tag on it. A student later taps that tag to check in.'
+                    : 'No built-in NFC and no WebUSB here. It records the tag and gives you the URL to write onto the tag elsewhere.');
             el.innerHTML =
                 '<div class="nfc-prog-card" role="dialog" aria-label="Program NFC tag">' +
                     '<button type="button" class="nfc-prog-x" aria-label="Close" onclick="closeNfcProgrammer()">&times;</button>' +
