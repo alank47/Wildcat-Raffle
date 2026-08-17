@@ -14138,7 +14138,7 @@
             const btn = document.querySelector('.sp-save-btn');
             if (!input) return;
             const ctx = wcBellSession();
-            if (!ctx) { if (msg) { msg.textContent = 'Sign in again to save.'; } return; }
+            if (!ctx) { if (msg) { msg.textContent = 'This needs a Microsoft sign-in — open the Teacher tab and sign in with Microsoft, then try again.'; } return; }
             const value = input.value.trim();
             if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
             if (msg) { msg.textContent = ''; msg.className = 'sp-edit-msg'; }
@@ -18787,7 +18787,7 @@
             const kind = (kindEl && kindEl.value) || 'other';
             const url = wcTapUrl(slug);
             const ctx = wcBellSession();
-            if (!ctx) { if (statusEl) statusEl.textContent = 'Sign in as an admin first.'; return; }
+            if (!ctx) { if (statusEl) statusEl.textContent = 'This needs a Microsoft sign-in. Open the Teacher tab and sign in with Microsoft, then try again.'; return; }
             if (btn) btn.disabled = true;
 
             // WRITE FIRST, still inside the button click's user activation, so Web
@@ -20032,7 +20032,17 @@
             
             // Check for existing session AFTER data is loaded
             const hasSession = loadSession();
-            
+
+            // Restore the Microsoft session too when a STAFF user was restored,
+            // so Convex writes (meal PIN, NFC tags, hall passes, bell schedule)
+            // work after a reload rather than telling an admin to "sign in".
+            // Safe: MSAL's cache is per-tab sessionStorage, so this only ever
+            // resumes the same person who signed in on this tab; a new session
+            // has no cached account and it returns null.
+            if (hasSession && currentUser && window.WildcatAuth && window.WildcatAuth.resumeSession) {
+                try { await window.WildcatAuth.resumeSession({ knownStaff: true }); } catch (e) {}
+            }
+
             if (hasSession) {
                 // User/student was logged in, restore their session
                 if (currentUser) {

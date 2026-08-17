@@ -408,20 +408,32 @@
    * pressed the staff button. See the shared Chromebook guard above for why
    * that move matters more than anything else in this file.
    */
-  async function resumeSession() {
+  async function resumeSession(opts) {
     if (session) return session;
     if (!configured.entra()) return null;
 
     // The shared Chromebook guard. Both conditions are documented above; the
     // short version is that a page load is not a person and the student
     // entrance is not the staff entrance.
-    if (!staffSignInRequested) {
-      console.debug('[wildcat-auth] not resuming: no staff sign-in was requested');
-      return null;
-    }
-    if (!staffEntranceActive()) {
-      console.debug('[wildcat-auth] not resuming: the student entrance is on screen');
-      return null;
+    //
+    // BYPASSED when the caller passes { knownStaff: true }. That is only done on
+    // boot, and only when the app has already restored a STAFF currentUser from
+    // sessionStorage — proof that this same tab signed a staff member in. MSAL's
+    // cache is per-tab sessionStorage, so there is no other person's session to
+    // hand over: a genuinely new session has no cached account and the
+    // acquireTokenSilent below simply returns null. Without this, a staff member
+    // keeps their dashboard across a reload (currentUser survives) but loses the
+    // Microsoft token, so every Convex write says "sign in" — the reported bug.
+    const knownStaff = opts && opts.knownStaff === true;
+    if (!knownStaff) {
+      if (!staffSignInRequested) {
+        console.debug('[wildcat-auth] not resuming: no staff sign-in was requested');
+        return null;
+      }
+      if (!staffEntranceActive()) {
+        console.debug('[wildcat-auth] not resuming: the student entrance is on screen');
+        return null;
+      }
     }
 
     try {
