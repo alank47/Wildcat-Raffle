@@ -1,6 +1,8 @@
 import { query } from "./_generated/server";
 import { requireStudentSelf } from "./identity";
 import { elapsedMinutes, isOverdue, isTerminal } from "./hallPassRules";
+import { bellContext } from "./bellSchedules";
+import { mealFromPeriodLabel, mealLabel, formatClock } from "./scheduleRules";
 
 /**
  * Everything the student pass cards need, for the signed-in student only.
@@ -27,6 +29,23 @@ export const mine = query({
   handler: async (ctx) => {
     const student = await requireStudentSelf(ctx);
     const now = new Date().toISOString();
+
+    // The current meal, read off the running bell schedule so it always agrees
+    // with the day the office actually set. A period whose label names a meal
+    // (Breakfast / Nutrition / Lunch) IS that meal; a class or a between-periods
+    // gap is no meal, and the card then simply shows the barcode with no "now".
+    const bells = await bellContext(ctx, now);
+    const currentPeriodLabel = bells.ok && bells.period ? bells.period.label : null;
+    const mealKind = mealFromPeriodLabel(currentPeriodLabel);
+    const currentMeal =
+      mealKind && bells.ok && bells.period
+        ? {
+            kind: mealKind,
+            label: mealLabel(mealKind),
+            startsAt: formatClock(bells.period.startMinute),
+            endsAt: formatClock(bells.period.endMinute),
+          }
+        : null;
 
     // The newest few, never the whole history. This card is polled by every
     // signed-in student's browser, and an unbounded collect() here reads a
@@ -87,16 +106,29 @@ export const mine = query({
         format: "code128",
       },
 
-      // Card 2. A DIFFERENT number from the student number, used by nutrition
-      // services. STUDENTS.LUNCH_ID exists on the instance and answered 403, so
-      // it is one field line in the next access request away, not missing.
-      lunchId: {
-        available: false,
-        value: null,
+      // Card 2. The MEAL card: the cafeteria barcode (a DIFFERENT number from
+      // the student number, used by nutrition services) plus which meal is
+      // happening right now, read from the bell schedule. `meal` supersedes the
+      // old static `lunchId`; `lunchId` stays as a mirror for one release so an
+      // un-refreshed client does not render a blank card.
+      meal: {
+        available: Boolean(student.mealPin),
+        value: student.mealPin ?? null,
         format: "code128",
-        reason:
-          "Lunch numbers are not synced yet. The field exists in PowerSchool " +
-          "and needs one line added to the plugin's access request.",
+        currentMeal,
+        reason: student.mealPin
+          ? null
+          : "Meal numbers are not synced yet. The field exists in PowerSchool " +
+            "(STUDENTS.LUNCH_ID) and needs one line added to the plugin's access request.",
+      },
+      lunchId: {
+        available: Boolean(student.mealPin),
+        value: student.mealPin ?? null,
+        format: "code128",
+        reason: student.mealPin
+          ? null
+          : "Lunch numbers are not synced yet. The field exists in PowerSchool " +
+            "and needs one line added to the plugin's access request.",
       },
 
       // Card 3. Clever badges are QR codes, but whether this district issues a

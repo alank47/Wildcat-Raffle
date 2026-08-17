@@ -71,6 +71,16 @@ export const seedLawrencebTest = internalMutation({
     const lastName = student?.lastName || "Student";
     const gradeLevel = student?.grade || "9";
 
+    // Give the student a test meal PIN so the meal card has a barcode to show.
+    // Only writes when the record exists (it must, or the student could not load
+    // their portal) and only when empty, so a real synced number is never
+    // clobbered by the test.
+    let mealPin: string | null = student?.mealPin ?? null;
+    if (student && !student.mealPin) {
+      mealPin = "4821";
+      await ctx.db.patch(student._id, { mealPin });
+    }
+
     const now = new Date().toISOString();
 
     // Idempotent: drop only OUR prior test rows for this student, never a real
@@ -120,6 +130,8 @@ export const seedLawrencebTest = internalMutation({
       teacherEmail,
       teacherName: teacher.name,
       studentName: `${firstName} ${lastName}`,
+      mealPin: mealPin,
+      mealPinNote: student ? undefined : "No students record matched this email, so no meal PIN was set. The student must sign in once first.",
       removed,
       created,
       note:

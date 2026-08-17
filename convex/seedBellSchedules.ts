@@ -51,6 +51,7 @@ const p = (label: string, sh: number, sm: number, eh: number, em: number): P => 
 
 // ---- Regular: Mondays / Thursdays -> periods 1, 3, 5 ----
 const MON_THU: P[] = [
+  p("Breakfast", 8, 0, 8, 30),
   p("Promise Time", 8, 30, 9, 10),
   p("1", 9, 13, 10, 43),
   p("Nutrition", 10, 43, 10, 58),
@@ -62,6 +63,7 @@ const MON_THU: P[] = [
 
 // ---- Regular: Tuesdays / Fridays -> periods 2, 4, 6 ----
 const TUE_FRI: P[] = [
+  p("Breakfast", 8, 0, 8, 30),
   p("Promise Time", 8, 30, 9, 10),
   p("2", 9, 13, 10, 43),
   p("Nutrition", 10, 43, 10, 58),
@@ -73,6 +75,7 @@ const TUE_FRI: P[] = [
 
 // ---- Regular: Wednesdays -> all six periods, shortened ----
 const WED: P[] = [
+  p("Breakfast", 8, 0, 8, 30),
   p("Promise Time", 8, 30, 8, 35),
   p("1", 8, 38, 9, 18),
   p("2", 9, 21, 10, 1),
@@ -88,6 +91,7 @@ const WED: P[] = [
 
 // ---- Special: Stack Day / Return from Holiday -> all six, 45-min ----
 const STACK_DAY: P[] = [
+  p("Breakfast", 8, 0, 8, 30),
   p("Promise Time", 8, 30, 8, 55),
   p("1", 8, 58, 9, 43),
   p("2", 9, 46, 10, 31),
@@ -102,6 +106,7 @@ const STACK_DAY: P[] = [
 
 // ---- Special: Minimum Day -> same clock as Wednesday ----
 const MINIMUM_DAY: P[] = [
+  p("Breakfast", 8, 0, 8, 30),
   p("Promise Time", 8, 30, 8, 35),
   p("1", 8, 38, 9, 18),
   p("2", 9, 21, 10, 1),

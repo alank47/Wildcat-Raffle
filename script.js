@@ -17632,6 +17632,33 @@
             };
         }
 
+        // The Meal card. Two facts on one card: WHICH meal is happening right now
+        // (Breakfast / Nutrition / Lunch, read off the running bell schedule) and
+        // the cafeteria barcode the student scans in the line. The lead line is
+        // the live meal so a student glancing at it knows whether it is lunch; the
+        // barcode is what the register reads. When no meal window is open the card
+        // says so, and still carries the barcode for whenever the line opens.
+        function wpMealCard(meal) {
+            const nowMeal = meal && meal.currentMeal ? meal.currentMeal : null;
+            const lead = nowMeal
+                ? nowMeal.label + (nowMeal.startsAt ? '  ·  ' + nowMeal.startsAt + '–' + nowMeal.endsAt : '')
+                : 'No meal right now';
+            if (!meal || !meal.available) {
+                return {
+                    label: 'Meal', lead: lead, quiet: true, face: WP_FACE.lunchOff,
+                    body: wpEmpty(meal && meal.reason ? meal.reason : 'No meal number on your record yet.'),
+                };
+            }
+            return {
+                label: 'Meal',
+                lead: lead,
+                face: nowMeal ? WP_FACE.lunch : WP_FACE.lunchOff,
+                body: '<p class="wp-wordmark">' + (nowMeal ? wpEsc(nowMeal.label) + ' service' : 'Cafeteria') + '</p>' +
+                      '<div class="wp-plate"><svg id="wpMealBarcode"></svg>' +
+                      '<p class="wp-digits">' + wpEsc(String(meal.value)) + '</p></div>',
+            };
+        }
+
         function wpWhen(iso) {
             if (!iso) return '';
             const d = new Date(iso);
@@ -17916,7 +17943,7 @@
                 cards.push(wpScheduleCard(sched));
                 cards.push(wpGradesCard(grades, !mine));
             }
-            cards.push(wpReasonCard('Lunch', pass.lunchId, WP_FACE.lunch, WP_FACE.lunchOff));
+            cards.push(wpMealCard(pass.meal || pass.lunchId));
             cards.push(wpReasonCard('Clever', pass.cleverBadge, WP_FACE.clever, WP_FACE.cleverOff));
             const hallPassIdx = cards.length;
             cards.push(wpHallPassCard(pass.hallPass));
@@ -17951,6 +17978,26 @@
                     }
                 } catch (e) {
                     console.warn('[portal] barcode failed:', e && e.message);
+                }
+            }
+
+            // The meal card carries its own barcode (the cafeteria PIN), drawn
+            // into its own <svg> so it never fights the student-ID barcode above.
+            const mealSrc = pass.meal || pass.lunchId;
+            if (mealSrc && mealSrc.available && mealSrc.value && window.JsBarcode) {
+                try {
+                    JsBarcode('#wpMealBarcode', String(mealSrc.value), {
+                        format: 'CODE128', displayValue: false, height: 90, margin: 0,
+                        background: '#ffffff', lineColor: '#0B0B0E',
+                    });
+                    const svg = wpById('wpMealBarcode');
+                    if (svg) {
+                        svg.removeAttribute('width');
+                        svg.removeAttribute('height');
+                        svg.setAttribute('preserveAspectRatio', 'none');
+                    }
+                } catch (e) {
+                    console.warn('[portal] meal barcode failed:', e && e.message);
                 }
             }
 

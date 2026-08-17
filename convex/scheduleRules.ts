@@ -558,6 +558,30 @@ export function parseSectionExpression(raw: unknown): ParsedExpression {
 }
 
 // ===========================================================================
+// Meal periods. The three meals — breakfast, nutrition, lunch — are read off
+// the CURRENT bell period's LABEL, not a separate table, so "which meal is it"
+// always agrees with the schedule actually running today. A period whose label
+// names a meal is that meal; a class, Promise Time or a passing gap is no meal.
+// ===========================================================================
+export type MealKind = "breakfast" | "nutrition" | "lunch";
+
+export function mealFromPeriodLabel(label: unknown): MealKind | null {
+  const s = String(label ?? "").toLowerCase();
+  if (/breakfast/.test(s)) return "breakfast";
+  if (/nutrition/.test(s)) return "nutrition";
+  if (/lunch/.test(s)) return "lunch";
+  return null;
+}
+
+export function mealLabel(kind: MealKind): string {
+  return kind === "breakfast"
+    ? "Breakfast"
+    : kind === "nutrition"
+      ? "Nutrition"
+      : "Lunch";
+}
+
+// ===========================================================================
 // Section -> "is this the class the student is sitting in right now".
 // ===========================================================================
 

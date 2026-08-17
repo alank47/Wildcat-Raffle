@@ -38,6 +38,12 @@ export default defineSchema({
   students: defineTable({
     legacyId: v.optional(v.string()),
     studentNumber: v.optional(v.string()),
+    // Cafeteria / meal-account number, the payload behind the meal card's
+    // barcode. A DIFFERENT number from studentNumber (nutrition services keep
+    // their own). Optional: it syncs from PowerSchool STUDENTS.LUNCH_ID once
+    // that field is granted, and is null until then. Never an earned value, so
+    // a roster sync may write it freely.
+    mealPin: v.optional(v.string()),
     firstName: v.string(),
     lastName: v.string(),
     grade: v.optional(v.string()),
