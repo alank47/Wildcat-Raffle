@@ -559,6 +559,11 @@
       // hides the other half's account. See the CONFIG comment.
       ...(CONFIG.google.hostedDomain ? { hd: CONFIG.google.hostedDomain } : {}),
       auto_select: false,
+      // Use FedCM for the One Tap prompt. Beyond surviving the third-party
+      // cookie shutdown, FedCM's prompt hands back the credential from the
+      // session the student is ALREADY in on their Chromebook, without a fresh
+      // interactive sign-in.
+      use_fedcm_for_prompt: true,
       callback: (response) => {
         finishSignIn(response.credential, 'student').catch((err) => {
           emit('wildcat-auth-error', { kind: 'student', message: err.message });
@@ -573,6 +578,24 @@
         text: 'signin_with',
         width: 280,
       });
+    }
+    // WHY One Tap runs alongside the button. The rendered button starts a FRESH
+    // sign-in (prompt=select_account). For a westbrookacademy.org account that
+    // Google still has bound to the SAML profile, a fresh sign-in is exactly
+    // what makes Google hand the student to Microsoft's SAML endpoint. One Tap
+    // does the opposite: it returns an ID token from the session the student is
+    // ALREADY signed into on their Chromebook, so there is no re-authentication
+    // and therefore no SAML redirect. This is the same reason opening
+    // accounts.google.com directly lands on the account instead of Microsoft.
+    // The button stays as the manual fallback (e.g. no active session, or a
+    // student who dismissed One Tap). auto_select is left false so a shared
+    // Chromebook never signs in the previous student without a tap.
+    try {
+      window.google.accounts.id.prompt();
+    } catch (e) {
+      // Non-fatal: the button still works. One Tap can be unavailable (a recent
+      // dismissal cooldown, an unsupported browser); the fallback covers it.
+      console.warn('[wildcat-auth] One Tap prompt unavailable:', e && e.message);
     }
   }
 
