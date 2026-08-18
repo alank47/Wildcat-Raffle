@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20260817s">
-    <link rel="icon" href="favicon.ico?v=20260817s" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260817s" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260817s" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20260817t">
+    <link rel="icon" href="favicon.ico?v=20260817t" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260817t" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260817t" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260817s">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260817t">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20260817s">
+    <link rel="stylesheet" href="styles.css?v=20260817t">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260817s">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260817t">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20260817s">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260817t">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20260817s" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20260817t" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -240,6 +240,10 @@
                 <button type="button" class="wp-btn wp-btn-ghost" onclick="closeHallPassSheet()">Not now</button>
                 <button type="button" class="wp-btn wp-btn-solid" id="wpSheetGo" onclick="submitHallPassRequest()">Request pass</button>
             </div>
+            <!-- Android only: read the tag with the app open instead of letting
+                 it open the URL. Shown by openHallPassSheet when NDEFReader exists. -->
+            <button type="button" class="wp-btn wp-btn-ghost wp-sheet-scan" id="wpSheetScan"
+                    style="display:none" onclick="wcStudentNfcScan()">&#128225; Scan a tag with this phone</button>
         </section>
     </div>
 
@@ -503,7 +507,7 @@
         <header class="app-topbar">
             <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation">☰</button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20260817s" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20260817t" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -5316,11 +5320,11 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260817s"></script>
+    <script src="wildcat-auth.js?v=20260817t"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
-    <script src="wildcat-motion.js?v=20260817s"></script>
-    <script src="script.js?v=20260817s"></script>
+    <script src="wildcat-motion.js?v=20260817t"></script>
+    <script src="script.js?v=20260817t"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -5330,7 +5334,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20260817s').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20260817t').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {

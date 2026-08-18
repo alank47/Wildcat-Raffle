@@ -4324,6 +4324,15 @@ body.wp-open { overflow: hidden; }
     background: rgba(47, 140, 99, .22);
 }
 .wp-tap-mark.is-bad { background: rgba(200, 89, 66, .22); }
+/* The scanner's listening state: a calm pulse on the tag icon. */
+.wp-tap-mark.wp-scan-pulse { background: rgba(47, 103, 167, .22); animation: wpScanPulse 1.4s ease-in-out infinite; }
+@keyframes wpScanPulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(47, 103, 167, .35); }
+    50% { transform: scale(1.06); box-shadow: 0 0 0 12px rgba(47, 103, 167, 0); }
+}
+@media (prefers-reduced-motion: reduce) { .wp-tap-mark.wp-scan-pulse { animation: none; } }
+/* The scan entry sits under the request/close row, full width, quieter. */
+.wp-sheet-scan { display: block; width: 100%; margin-top: 10px; font-size: 14px; }
 .wp-tap h2 {
     margin: 0;
     font-size: 26px;

@@ -18112,6 +18112,12 @@
             sheet.setAttribute('aria-hidden', 'false');
             scrim.classList.add('is-open');
 
+            // The in-app scanner only exists where Web NFC read does (Android
+            // Chrome). Everywhere else the student taps the tag to open the URL,
+            // so the button would be a dead end and stays hidden.
+            const scanBtn = wpById('wpSheetScan');
+            if (scanBtn) scanBtn.style.display = ('NDEFReader' in window) ? '' : 'none';
+
             // ASKED EVERY TIME THE SHEET OPENS, never cached. The answer changes
             // at every bell, and a cached one is the difference between the
             // teacher a student is sitting with and the teacher they were with
@@ -18572,10 +18578,7 @@
             const slug = wpTapSlug;
             wpTapSlug = null;
             try {
-                const intent = await auth.convexMutation(
-                    'hallPasses:beginTap', { locationSlug: slug }, session.idToken);
-                const result = await auth.convexMutation(
-                    'hallPasses:tap', { locationSlug: slug, intentToken: intent.token }, session.idToken);
+                const result = await wcRunTapForSlug(slug);
                 showTapResult(result);
             } catch (e) {
                 // Verbatim. A refusal here is written for a student and says
@@ -18585,6 +18588,129 @@
                 wpBusy = false;
             }
         }
+
+        /**
+         * The beginTap + tap pair, shared by the tap-confirm button and the
+         * in-app scanner. Two calls, because a bare slug is not proof: beginTap
+         * mints a single-use token bound to THIS student and this slug, and tap
+         * burns it. Both callers mint inside a genuine gesture (a button press,
+         * or a physical tag tap that fired a scan reading), so the gesture
+         * guarantee the server relies on holds either way. It taps as the
+         * signed-in student, so nothing here can act in anybody else's name.
+         */
+        async function wcRunTapForSlug(slug) {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!slug) return { ok: false, reason: 'That tag could not be read. Try again.' };
+            if (!session) return { ok: false, reason: 'You are not signed in any more. Sign in again.' };
+            const intent = await auth.convexMutation(
+                'hallPasses:beginTap', { locationSlug: slug }, session.idToken);
+            return await auth.convexMutation(
+                'hallPasses:tap', { locationSlug: slug, intentToken: intent.token }, session.idToken);
+        }
+
+        // ===================================================================
+        // IN-APP NFC SCANNING (the "app listens" path, Android Chrome only)
+        //
+        // Web NFC READ needs a user gesture to START, then each physical tap
+        // fires a `reading` event with no further gesture. That physical tap is
+        // a stronger proof of presence than the URL path (which a forwarded link
+        // can forge), and it taps as THIS student, so it rides the same token
+        // flow with no extra guard. iPhones and Chromebooks have no NDEFReader
+        // and fall back to tapping the tag to open the URL, which still works.
+        // ===================================================================
+        let wcNfcScanController = null;
+
+        /** Pull our slug out of the tap URL we wrote (…/?tap=<slug>), any host/case. */
+        function wcNfcSlugFromUrl(url) {
+            try {
+                const u = new URL(String(url), 'https://wildcatraffle.com');
+                const tap = u.searchParams.get('tap');
+                return tap ? String(tap).trim().toLowerCase() : null;
+            } catch (e) { return null; }
+        }
+
+        /** The first URL record on a scanned tag that carries one of our slugs. */
+        function wcNfcSlugFromMessage(message) {
+            if (!message || !message.records) return null;
+            for (const rec of message.records) {
+                if (rec.recordType === 'url' || rec.recordType === 'U') {
+                    try {
+                        const url = new TextDecoder().decode(rec.data);
+                        const slug = wcNfcSlugFromUrl(url);
+                        if (slug) return slug;
+                    } catch (e) { /* try the next record */ }
+                }
+            }
+            return null;
+        }
+
+        async function wcStudentNfcScan() {
+            if (!('NDEFReader' in window)) {
+                showTapResult({ ok: false, reason: 'This phone cannot scan in the app. Touch the tag itself to open the check-in.' });
+                return;
+            }
+            if (wcNfcScanController) return; // already listening
+            closeHallPassSheet();
+            let reader;
+            try {
+                reader = new NDEFReader();
+                wcNfcScanController = new AbortController();
+                await reader.scan({ signal: wcNfcScanController.signal });
+            } catch (e) {
+                wcNfcScanController = null;
+                showTapResult({ ok: false, reason: 'Could not start scanning (' + ((e && e.message) || e) + '). Touch the tag itself instead.' });
+                return;
+            }
+            wcShowScanListening();
+            reader.onreadingerror = function () { /* a bad read; keep listening */ };
+            reader.onreading = async function (event) {
+                if (wpBusy) return;
+                const slug = wcNfcSlugFromMessage(event.message);
+                if (!slug) return; // not one of our tags; keep listening
+                wpBusy = true;
+                try {
+                    const result = await wcRunTapForSlug(slug);
+                    wcStopNfcScan();
+                    showTapResult(result);
+                } catch (e) {
+                    wcStopNfcScan();
+                    showTapResult({ ok: false, reason: e.message });
+                } finally {
+                    wpBusy = false;
+                }
+            };
+        }
+
+        function wcStopNfcScan() {
+            if (wcNfcScanController) {
+                try { wcNfcScanController.abort(); } catch (e) { /* already gone */ }
+                wcNfcScanController = null;
+            }
+        }
+
+        function wcShowScanListening() {
+            const view = document.getElementById('tapResultView');
+            if (!view) return;
+            document.body.classList.add('wp-open');
+            view.classList.remove('hidden');
+            view.innerHTML =
+              '<div class="wp-tap">' +
+                '<div class="wp-tap-mark wp-scan-pulse">&#128225;</div>' +
+                '<h2>Hold your phone to the tag</h2>' +
+                '<p>Keep the app open and touch the back of your phone to the hall pass tag.</p>' +
+                '<div class="wp-tap-actions">' +
+                  '<button type="button" class="wp-btn wp-btn-ghost" onclick="wcStopNfcScanUI()">Stop</button>' +
+                '</div>' +
+              '</div>';
+        }
+
+        function wcStopNfcScanUI() {
+            wcStopNfcScan();
+            closeTapResult();
+        }
+        window.wcStudentNfcScan = wcStudentNfcScan;
+        window.wcStopNfcScanUI = wcStopNfcScanUI;
 
         function showTapResult(result) {
             const view = document.getElementById('tapResultView');
@@ -18608,6 +18734,7 @@
             const view = document.getElementById('tapResultView');
             if (view) view.classList.add('hidden');
             wpTapSlug = null;
+            wcStopNfcScan();
             showStudentPassCards();
         }
 
