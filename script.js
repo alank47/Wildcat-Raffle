@@ -17368,7 +17368,7 @@
                       '--wp-rule:rgba(20,23,28,.13);--wp-pill:rgba(20,23,28,.08)',
             lunch:    '--wp-face:linear-gradient(158deg,#E28C3E 0%,#B4571B 100%);--wp-ink:#FFFFFF',
             clever:   '--wp-face:linear-gradient(158deg,#4C74F8 0%,#2A2F9E 100%);--wp-ink:#FFFFFF',
-            passOn:   '--wp-face:linear-gradient(158deg,#2F8C63 0%,#125236 100%);--wp-ink:#FFFFFF',
+            passOn:   '--wp-face:linear-gradient(158deg,#1B2E58 0%,#101E3B 100%);--wp-ink:#FFFFFF',
             passLate: '--wp-face:linear-gradient(158deg,#C85942 0%,#7E2519 100%);--wp-ink:#FFFFFF',
             passOff:  '--wp-face:linear-gradient(158deg,#22252C 0%,#131519 100%);--wp-ink:#F6F4EF',
             id:       '--wp-face:linear-gradient(158deg,#3B79BC 0%,#0C447C 52%,#05294F 100%);--wp-ink:#FFFFFF',
@@ -17387,6 +17387,20 @@
 
         function wpFoot(text) {
             return '<p class="wp-foot">' + wpEsc(text) + '</p>';
+        }
+
+        // Approved -> Out -> Back, the trip as a filling stepper. Replaces a dead
+        // barcode a hall pass never needed: every mark here is a real state the
+        // student and the teacher can both read. `out` fills the second leg.
+        function wpTripHtml(state) {
+            var out = (state === 'out');
+            return '<div class="wp-trip">' +
+                '<span class="wp-step done"><i></i>Approved</span>' +
+                '<span class="wp-seg' + (out ? ' done' : '') + '"></span>' +
+                '<span class="wp-step' + (out ? ' done' : '') + '"><i></i>Out</span>' +
+                '<span class="wp-seg"></span>' +
+                '<span class="wp-step"><i></i>Back</span>' +
+                '</div>';
         }
 
         /** Period 3 sorts before Period 11, and a lettered period sorts last. */
@@ -17620,21 +17634,44 @@
                         ? hp.expiresAfterMinutes
                         : null);
             const clockAttrs =
-                ' data-wp-clock="1"' +
+                ' data-wp-clock="1" data-wp-ring="1"' +
                 ' data-start="' + (startMs === null ? '' : startMs) + '"' +
                 ' data-limit="' + (limitMin === null ? '' : limitMin) + '"';
             const first = wpClockFace(startMs, limitMin);
+
+            // Real context around the clock, every piece optional: the route
+            // (where they were sent, or back to their room), who approved it, and
+            // a tap button only where a device can actually scan. Nothing is
+            // invented when a fact is missing; the piece just does not render.
+            const who = hp.teacherName ? wpEsc(hp.teacherName) : null;
+            const originName = hp.origin ? wpEsc(hp.origin) : null;
+            const routeHtml = sentTo
+                ? '<div class="wp-route"><span class="wp-r">' + sentTo + '</span>' +
+                  '<span class="wp-arw">&rarr;</span><span class="wp-r">' + (originName || 'class') + '</span></div>'
+                : (originName
+                    ? '<div class="wp-route"><span class="wp-r wp-r-solo">back to ' + originName + '</span></div>'
+                    : '');
+            const appHtml = who ? '<p class="wp-appby">Approved by <b>' + who + '</b></p>' : '';
+            const canScan = ('NDEFReader' in window) || wcNativeNfcAvailable();
+            const ctaHtml = canScan
+                ? '<button class="wp-tap-cta" type="button" onclick="wcStudentNfcScan()">' +
+                    '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><path d="M5 8.5a11 11 0 0 1 0 7M9 6.5a15 15 0 0 1 0 11M13 5a19 19 0 0 1 0 14"/><circle cx="18.5" cy="12" r="1.3" fill="currentColor" stroke="none"/></svg>' +
+                    (hp.overdue ? 'Tap the tag to head back' : 'Tap the tag to check in') +
+                  '</button>'
+                : '';
 
             return {
                 label: 'Hall Pass',
                 lead: first.value + ' ' + first.unit,
                 face: hp.overdue ? WP_FACE.passLate : WP_FACE.passOn,
-                body: '<p class="wp-big"' + clockAttrs + '><span class="wp-clock-value">' +
-                      wpEsc(first.value) + '</span><span class="wp-clock-unit">' +
-                      wpEsc(first.unit) + '</span></p>' +
-                      (state === 'active' && sentTo
-                          ? wpEmpty('You were sent to ' + sentTo + '. Tap the tag there to start your pass.')
-                          : '') +
+                body: '<div class="wp-ring"' + clockAttrs + '><div class="wp-ring-in">' +
+                        '<span class="wp-clock-value">' + wpEsc(first.value) + '</span>' +
+                        '<span class="wp-clock-unit">' + wpEsc(first.unit) + '</span>' +
+                      '</div></div>' +
+                      routeHtml +
+                      wpTripHtml(state) +
+                      appHtml +
+                      ctaHtml +
                       wpFoot(hp.overdue
                           ? 'You are past your time. Head back and tap the tag.'
                           : (state === 'active' && sentTo
@@ -17908,6 +17945,20 @@
                 var unitEl = node.querySelector('.wp-clock-unit');
                 if (valueEl && valueEl.textContent !== face.value) valueEl.textContent = face.value;
                 if (unitEl && unitEl.textContent !== face.unit) unitEl.textContent = face.unit;
+
+                // Sweep the ring so the depleting gold arc matches the digits to
+                // the second. Remaining fraction, so it empties as time runs out;
+                // a no-limit clock (count-up) stays a full ring rather than a bar
+                // that can never move.
+                if (node.hasAttribute('data-wp-ring')) {
+                    var frac = 1;
+                    if (limitMin !== null && startMs !== null) {
+                        var elapsedSec = (Date.now() - startMs) / 1000;
+                        frac = Math.max(0, Math.min(1, 1 - elapsedSec / (limitMin * 60)));
+                    }
+                    var t = frac.toFixed(3);
+                    node.style.background = 'conic-gradient(#F5A623 0turn, #FFD98A ' + t + 'turn, rgba(255,255,255,.10) ' + t + 'turn 1turn)';
+                }
             }
         }
 
