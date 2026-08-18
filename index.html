@@ -21,7 +21,7 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20260818d">
+    <link rel="stylesheet" href="styles.css?v=20260818e">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
     <link rel="stylesheet" href="wildcat-motion.css?v=20260818c">
@@ -3648,7 +3648,7 @@
                 <ul id="retiredRewardsList" class="retired-list"></ul>
             </div>
 
-            <!-- Receipts / fulfilment desk -->
+            <!-- Receipts / fulfillment desk -->
             <div id="receiptsTab" class="tab-content">
                 <div class="page-header">
                     <div>
@@ -5242,19 +5242,48 @@
                 </div>
             </div>
 
-            <div id="redeemRewardModal" class="login-container hidden" style="margin-top: 50px;">
-                <h2>Purchase for a student</h2>
-                <div class="form-group">
-                    <label>Select Student</label>
-                    <select id="redeemStudentSelect"></select>
+            <!-- A centred overlay, not a block in the page flow. This was a
+                 .login-container with margin-top:50px, which rendered at the
+                 bottom of the store and had to be scrolled to. -->
+            <div id="redeemRewardModal" class="modal hidden">
+                <div class="modal-content" style="max-width: 460px;">
+                    <h2 style="margin-top:0;">Purchase for a student</h2>
+
+                    <div id="redeemRewardInfo" class="redeem-item"></div>
+
+                    <div class="form-group">
+                        <label for="studentPickerInput">Student</label>
+                        <!-- A native select listing 600+ students opened taller
+                             than the window. This filters as you type. -->
+                        <div class="student-picker">
+                            <input type="text" id="studentPickerInput" class="wc-input"
+                                   placeholder="Type a name or ID…" autocomplete="off"
+                                   role="combobox" aria-expanded="false"
+                                   aria-controls="studentPickerResults"
+                                   oninput="filterStudentPicker()"
+                                   onkeydown="studentPickerKeydown(event)"
+                                   onfocus="filterStudentPicker()">
+                            <button type="button" id="studentPickerClear" class="student-picker-clear hidden"
+                                    onclick="clearStudentPick()" aria-label="Clear selected student">&times;</button>
+                            <ul id="studentPickerResults" class="student-picker-results hidden" role="listbox"></ul>
+                        </div>
+                        <input type="hidden" id="redeemStudentSelect">
+                        <div id="studentPickerChosen" class="student-picker-chosen hidden"></div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="redeemQuantity">Quantity</label>
+                        <input type="number" id="redeemQuantity" class="wc-input" value="1" min="1" step="1"
+                               oninput="updateRedeemTotal()">
+                    </div>
+
+                    <div id="redeemTotal" class="redeem-total"></div>
+
+                    <div style="display:flex; gap:10px; margin-top:18px;">
+                        <button class="btn" onclick="confirmRedeemReward()" style="flex:1;">Confirm purchase</button>
+                        <button class="btn btn-secondary" onclick="closeRedeemRewardModal()" style="flex:1;">Cancel</button>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Quantity</label>
-                    <input type="number" id="redeemQuantity" value="1" min="1" step="1">
-                </div>
-                <div id="redeemRewardInfo" style="margin: 20px 0;"></div>
-                <button class="btn" onclick="confirmRedeemReward()">Confirm purchase</button>
-                <button class="btn btn-secondary" onclick="closeRedeemRewardModal()">Cancel</button>
             </div>
 
             <!-- Edit an existing reward. Prices change; receipts keep the
@@ -5449,12 +5478,12 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260818d"></script>
+    <script src="wildcat-auth.js?v=20260818e"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
     <script src="wildcat-motion.js?v=20260818c"></script>
-    <script src="wildcat-store.js?v=20260818d"></script>
-    <script src="script.js?v=20260818d"></script>
+    <script src="wildcat-store.js?v=20260818e"></script>
+    <script src="script.js?v=20260818e"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never

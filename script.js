@@ -985,7 +985,7 @@
         // Separate from cashTransactions on purpose: the transaction is the
         // money leaving, the receipt is the promise of an item. They are
         // created together and linked by txId, but they close at different
-        // times, and "paid but not yet collected" is the state the fulfilment
+        // times, and "paid but not yet collected" is the state the fulfillment
         // desk exists to work through.
         let cashReceipts = [];
 
@@ -22567,7 +22567,7 @@
         }
 
         // ============================================================
-        // RECEIPTS AND FULFILMENT
+        // RECEIPTS AND FULFILLMENT
         // ============================================================
         function showReceiptModal(receipt) {
             const body = document.getElementById('receiptModalBody');
@@ -22656,7 +22656,7 @@
         // ============================================================
         // RECEIPTS VIEW
         //
-        // The fulfilment desk. Defaults to open receipts, because the question
+        // The fulfillment desk. Defaults to open receipts, because the question
         // this screen answers is "what does someone still owe a student".
         // ============================================================
         let receiptStatusFilter = 'issued';
@@ -22713,7 +22713,7 @@
                         ? '<span class="receipt-badge is-done">Fulfilled</span>'
                         : '<span class="receipt-badge is-void">Cancelled</span>';
                 const actions = r.status === 'issued'
-                    ? `<button class="btn btn-sm" onclick="fulfillReceipt('${r.id}')">Fulfil</button>
+                    ? `<button class="btn btn-sm" onclick="fulfillReceipt('${r.id}')">Fulfill</button>
                        <button class="btn btn-sm btn-secondary" onclick="cancelReceipt('${r.id}')">Cancel</button>`
                     : r.status === 'fulfilled'
                         ? `<span class="receipt-meta">by ${escapeHtml(r.fulfilledBy || '')}</span>`
@@ -22773,46 +22773,169 @@
                 </table>`;
         }
 
+        // ============================================================
+        // STUDENT PICKER
+        //
+        // A native <select> holding 600+ students opened a list taller than the
+        // window and could only be navigated by scrolling. This filters as the
+        // user types, which is what a staff member wants: they know the name.
+        //
+        // The chosen id lives in a hidden input (#redeemStudentSelect) so the
+        // rest of the flow reads it exactly as it read the select.
+        // ============================================================
+        let studentPickerMatches = [];
+        let studentPickerActive = -1;
+
+        function studentPickerBalance(student) {
+            return student.wildcatCashBalance !== undefined ? student.wildcatCashBalance : STARTING_BALANCE;
+        }
+
+        function filterStudentPicker() {
+            const input = document.getElementById('studentPickerInput');
+            const list = document.getElementById('studentPickerResults');
+            if (!input || !list) return;
+
+            const q = input.value.trim().toLowerCase();
+            const reward = wildcatCashRewards.find(r => r.id === window.currentRedeemRewardId);
+            const qty = Math.max(1, parseInt((document.getElementById('redeemQuantity') || {}).value, 10) || 1);
+            const needed = reward ? reward.cost * qty : 0;
+
+            // Only enrolled students, and only once a search has begun: opening
+            // an unfiltered list of everyone is the problem being fixed.
+            const pool = (typeof enrolledStudents === 'function' ? enrolledStudents() : students) || [];
+            studentPickerMatches = (q
+                ? pool.filter(s => {
+                    const name = `${s.firstName} ${s.lastName}`.toLowerCase();
+                    const rev = `${s.lastName} ${s.firstName}`.toLowerCase();
+                    return name.includes(q) || rev.includes(q) || String(s.id).toLowerCase().includes(q);
+                })
+                : pool.slice()
+            ).sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`))
+             .slice(0, 40);
+
+            studentPickerActive = -1;
+            input.setAttribute('aria-expanded', 'true');
+
+            if (!studentPickerMatches.length) {
+                list.innerHTML = '<li class="student-picker-empty">No student matches that.</li>';
+                list.classList.remove('hidden');
+                return;
+            }
+
+            list.innerHTML = studentPickerMatches.map((s, i) => {
+                const bal = studentPickerBalance(s);
+                const short = bal < needed;
+                return `
+                    <li class="student-picker-option${short ? ' is-short' : ''}"
+                        role="option" data-index="${i}"
+                        onmousedown="pickStudent('${s.id}')">
+                        <span class="sp-name">${escapeHtml(s.lastName)}, ${escapeHtml(s.firstName)}</span>
+                        <span class="sp-meta">Gr ${escapeHtml(String(s.grade || ''))} &middot; $${bal}${short ? ' — short' : ''}</span>
+                    </li>`;
+            }).join('');
+            list.classList.remove('hidden');
+        }
+
+        function studentPickerKeydown(e) {
+            const list = document.getElementById('studentPickerResults');
+            if (!list || list.classList.contains('hidden')) return;
+
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                const dir = e.key === 'ArrowDown' ? 1 : -1;
+                studentPickerActive = Math.max(0,
+                    Math.min(studentPickerMatches.length - 1, studentPickerActive + dir));
+                Array.from(list.children).forEach((li, i) =>
+                    li.classList.toggle('is-active', i === studentPickerActive));
+                const el = list.children[studentPickerActive];
+                if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                const hit = studentPickerMatches[studentPickerActive >= 0 ? studentPickerActive : 0];
+                if (hit) pickStudent(hit.id);
+            } else if (e.key === 'Escape') {
+                list.classList.add('hidden');
+            }
+        }
+
+        function pickStudent(studentId) {
+            const student = students.find(s => s.id === studentId);
+            if (!student) return;
+
+            document.getElementById('redeemStudentSelect').value = student.id;
+            const input = document.getElementById('studentPickerInput');
+            input.value = `${student.firstName} ${student.lastName}`;
+            input.setAttribute('aria-expanded', 'false');
+            document.getElementById('studentPickerResults').classList.add('hidden');
+            document.getElementById('studentPickerClear').classList.remove('hidden');
+
+            const chosen = document.getElementById('studentPickerChosen');
+            chosen.classList.remove('hidden');
+            chosen.innerHTML =
+                `<span>Balance</span><strong>$${studentPickerBalance(student)}</strong>`;
+            updateRedeemTotal();
+        }
+
+        function clearStudentPick() {
+            document.getElementById('redeemStudentSelect').value = '';
+            const input = document.getElementById('studentPickerInput');
+            input.value = '';
+            input.focus();
+            document.getElementById('studentPickerClear').classList.add('hidden');
+            document.getElementById('studentPickerChosen').classList.add('hidden');
+            updateRedeemTotal();
+            filterStudentPicker();
+        }
+
+        /**
+         * The running total, and whether this student can actually afford it.
+         * Uses the same rule the purchase itself will use, so the button never
+         * promises something buildPurchase will then refuse.
+         */
+        function updateRedeemTotal() {
+            const el = document.getElementById('redeemTotal');
+            if (!el) return;
+
+            const reward = wildcatCashRewards.find(r => r.id === window.currentRedeemRewardId);
+            const qty = Math.max(1, parseInt((document.getElementById('redeemQuantity') || {}).value, 10) || 1);
+            const studentId = (document.getElementById('redeemStudentSelect') || {}).value;
+            const student = students.find(s => s.id === studentId);
+
+            if (!reward) { el.innerHTML = ''; return; }
+            const total = reward.cost * qty;
+
+            if (!student) {
+                el.className = 'redeem-total';
+                el.innerHTML = `<span>Total</span><strong>$${total}</strong>`;
+                return;
+            }
+
+            const verdict = window.WildcatStore.canPurchase({ student, reward, quantity: qty });
+            el.className = 'redeem-total' + (verdict.allowed ? '' : ' is-blocked');
+            el.innerHTML = verdict.allowed
+                ? `<span>Total</span><strong>$${total}</strong>
+                   <span class="redeem-after">Balance after: $${studentPickerBalance(student) - total}</span>`
+                : `<span>Total</span><strong>$${total}</strong>
+                   <span class="redeem-warn">${escapeHtml(verdict.reason)}</span>`;
+        }
+
         function openRedeemRewardModal(rewardId) {
             const reward = wildcatCashRewards.find(r => r.id === rewardId);
             if (!reward) return;
-            
-            // Store reward ID for later
             window.currentRedeemRewardId = rewardId;
-            
-            // Populate student select
-            const select = document.getElementById('redeemStudentSelect');
-            select.innerHTML = '<option value="">Select a student...</option>';
-            
-            // Sort students by name
-            const sortedStudents = [...students].sort((a, b) => {
-                const nameA = `${a.lastName}, ${a.firstName}`.toLowerCase();
-                const nameB = `${b.lastName}, ${b.firstName}`.toLowerCase();
-                return nameA.localeCompare(nameB);
-            });
-            
-            sortedStudents.forEach(student => {
-                const balance = student.wildcatCashBalance !== undefined ? student.wildcatCashBalance : STARTING_BALANCE;
-                const canAfford = balance >= reward.cost;
-                const option = document.createElement('option');
-                option.value = student.id;
-                option.textContent = `${student.firstName} ${student.lastName} (Balance: $${balance})`;
-                option.disabled = !canAfford;
-                if (!canAfford) {
-                    option.textContent += ' - Insufficient funds';
-                }
-                select.appendChild(option);
-            });
-            
-            // Show reward info
+
             document.getElementById('redeemRewardInfo').innerHTML = `
-                <div style="background: #f0f9ff; padding: 15px; border-radius: 8px; border-left: 3px solid var(--wc-blue);">
-                    <div style="font-weight: 600; color: #333; margin-bottom: 5px;">${reward.name}</div>
-                    <div style="font-size: 20px; font-weight: 700; color: #667eea;">Cost: $${reward.cost}</div>
-                </div>
-            `;
-            
+                <div class="redeem-item-name">${escapeHtml(reward.name)}</div>
+                <div class="redeem-item-cost">$${reward.cost}<span> each</span></div>
+                ${reward.stock != null ? `<div class="receipt-meta">${reward.stock} in stock</div>` : ''}`;
+
+            const qtyEl = document.getElementById('redeemQuantity');
+            if (qtyEl) qtyEl.value = 1;
+            clearStudentPick();
+
             document.getElementById('redeemRewardModal').classList.remove('hidden');
+            const input = document.getElementById('studentPickerInput');
+            if (input) input.focus();
         }
 
         function closeRedeemRewardModal() {

@@ -270,7 +270,7 @@
   }
 
   // ---------------------------------------------------------------------
-  // Fulfilment
+  // Fulfillment
   // ---------------------------------------------------------------------
 
   function canFulfill(receipt) {
@@ -395,7 +395,7 @@
     });
   }
 
-  /** Everything a fulfilment desk needs in one pass over the receipts. */
+  /** Everything a fulfillment desk needs in one pass over the receipts. */
   function receiptSummary(receipts) {
     var out = { total: 0, issued: 0, fulfilled: 0, cancelled: 0, outstandingValue: 0, spentValue: 0 };
     (receipts || []).forEach(function (r) {

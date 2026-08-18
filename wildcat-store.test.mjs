@@ -156,7 +156,7 @@ console.log("\nA repriced reward does not rewrite history");
   check("even though the reward has since changed", repriced.cost === 9999);
 }
 
-console.log("\nFulfilment");
+console.log("\nFulfillment");
 {
   const r = S.buildPurchase({ student: student(), reward: reward(), actor: ACTOR, now: NOW, rand: seq }).receipt;
   check("an issued receipt can be fulfilled", S.canFulfill(r).allowed === true);
@@ -227,7 +227,7 @@ console.log("\nPopularity reporting");
     ranked[0].students === undefined);
 }
 
-console.log("\nFulfilment desk summary");
+console.log("\nFulfillment desk summary");
 {
   const receipts = [
     { status: "issued", totalCost: 1000 },
