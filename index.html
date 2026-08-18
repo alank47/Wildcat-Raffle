@@ -675,6 +675,24 @@
 
                         <div class="wc-dash-tiles" id="dashTiles"></div>
 
+                        <!-- WHO IS OUT, RIGHT NOW.
+                             Directly under the tiles because it is the one
+                             thing on this page that can be wrong in a way that
+                             matters: a child out of class for forty minutes is
+                             not a statistic to scroll to. Rendered by
+                             renderHallPassBoard() in script.js, which polls and
+                             ticks its own clocks. -->
+                        <section class="wu-panel" id="dashPassPanel" hidden>
+                            <div class="wu-panel-head">
+                                <div>
+                                    <h3 class="wu-panel-title">Out right now</h3>
+                                    <p class="wu-panel-sub" id="dashPassSub">Everyone currently out, school-wide.</p>
+                                </div>
+                                <span class="wu-chip" id="dashPassChip"></span>
+                            </div>
+                            <div id="dashPassList" class="wc-pass-board"></div>
+                        </section>
+
                         <section class="wu-panel wc-dash-gauge">
                             <div class="wu-panel-head">
                                 <div>

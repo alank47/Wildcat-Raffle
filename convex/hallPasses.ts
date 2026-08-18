@@ -1237,6 +1237,14 @@ export const liveBoard = query({
           elapsedMinutes: elapsedMinutes(p as any, now),
           overdue: isOverdue(p as any, now),
           requestedAt: p.requestedAt,
+          /*
+           * The timestamps the board COUNTS from. elapsedMinutes is correct
+           * the instant it is computed and frozen from then on, so a board
+           * built on it sits still between polls. Given these, the browser
+           * ticks its own clocks and the server is asked rarely.
+           */
+          approvedAt: p.approvedAt ?? null,
+          outAt: p.outAt ?? null,
           // Who it was routed to and from which lesson. Null on passes written
           // before requests came from a timetable, and null is the honest answer
           // for those: nobody recorded it, and back-filling a teacher onto an old
@@ -1318,6 +1326,14 @@ export const myClassBoard = query({
           elapsedMinutes: elapsedMinutes(p as any, now),
           overdue: isOverdue(p as any, now),
           requestedAt: p.requestedAt,
+          /*
+           * The timestamps the board COUNTS from. elapsedMinutes is correct
+           * the instant it is computed and frozen from then on, so a board
+           * built on it sits still between polls. Given these, the browser
+           * ticks its own clocks and the server is asked rarely.
+           */
+          approvedAt: p.approvedAt ?? null,
+          outAt: p.outAt ?? null,
           expiresAfterMinutes: p.expiresAfterMinutes,
         };
       }),
