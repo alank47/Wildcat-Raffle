@@ -21,7 +21,7 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20260818c">
+    <link rel="stylesheet" href="styles.css?v=20260818d">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
     <link rel="stylesheet" href="wildcat-motion.css?v=20260818c">
@@ -3634,12 +3634,60 @@
                 </div>
                 
                 <button class="btn" onclick="showAddRewardModal()" style="margin-bottom: 20px;">➕ Add New Reward</button>
-                
+
                 <div id="rewardsList" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px;"></div>
-                
-                <!-- Redemption History -->
+
+                <h3 class="chart-title">📊 What sells</h3>
+                <div id="rewardPopularity"></div>
+
                 <h3 class="chart-title">📜 Recent Redemptions</h3>
                 <div id="redemptionHistory"></div>
+
+                <h3 class="chart-title">🗄️ Retired rewards</h3>
+                <p class="panel-hint">Retired rewards cannot be purchased. They are kept so past receipts still resolve.</p>
+                <ul id="retiredRewardsList" class="retired-list"></ul>
+            </div>
+
+            <!-- Receipts / fulfilment desk -->
+            <div id="receiptsTab" class="tab-content">
+                <div class="page-header">
+                    <div>
+                        <h2 class="page-title">🧾 Receipts</h2>
+                        <p class="page-subtitle">Hand over items and close out purchases</p>
+                    </div>
+                    <span class="mode-pill"></span>
+                </div>
+
+                <div id="receiptSummary" class="receipt-summary"></div>
+
+                <div class="toolbar-card wc-card">
+                    <div class="toolbar-group">
+                        <button class="subtab-button receipt-filter-btn active" data-status="issued"
+                                onclick="setReceiptFilter('issued')">Awaiting pickup</button>
+                        <button class="subtab-button receipt-filter-btn" data-status="fulfilled"
+                                onclick="setReceiptFilter('fulfilled')">Fulfilled</button>
+                        <button class="subtab-button receipt-filter-btn" data-status="cancelled"
+                                onclick="setReceiptFilter('cancelled')">Cancelled</button>
+                        <button class="subtab-button receipt-filter-btn" data-status="all"
+                                onclick="setReceiptFilter('all')">All</button>
+                    </div>
+                    <div class="toolbar-group">
+                        <input type="text" id="receiptSearch" class="wc-input"
+                               placeholder="Receipt code, student, or item…" onkeyup="updateReceiptsTable()">
+                    </div>
+                </div>
+
+                <div style="overflow-x:auto;">
+                    <table class="wc-table">
+                        <thead>
+                            <tr>
+                                <th>Receipt</th><th>Student</th><th>Item</th>
+                                <th>Paid</th><th>Purchased</th><th>Status</th><th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="receiptsTableBody"></tbody>
+                    </table>
+                </div>
             </div>
 
             <!-- Student Accounts Tab -->
@@ -5173,7 +5221,19 @@
                     </div>
                     <div class="form-group">
                         <label>Cost (Wildcat Cash)</label>
-                        <input type="number" id="newRewardCost" value="500" min="100" step="100">
+                        <input type="number" id="newRewardCost" value="500" min="1" step="50">
+                    </div>
+                    <div class="form-group">
+                        <label>Description <span class="receipt-meta">(optional)</span></label>
+                        <input type="text" id="newRewardDescription" placeholder="What the student actually gets">
+                    </div>
+                    <div class="form-group">
+                        <label>Category</label>
+                        <input type="text" id="newRewardCategory" placeholder="e.g., Privileges" value="General">
+                    </div>
+                    <div class="form-group">
+                        <label>Stock <span class="receipt-meta">(blank = unlimited)</span></label>
+                        <input type="number" id="newRewardStock" placeholder="Unlimited" min="0" step="1">
                     </div>
                     <div style="display: flex; gap: 10px; margin-top: 20px;">
                         <button class="btn" onclick="addNewReward()" style="flex: 1;">💾 Add Reward</button>
@@ -5183,14 +5243,65 @@
             </div>
 
             <div id="redeemRewardModal" class="login-container hidden" style="margin-top: 50px;">
-                <h2>Redeem Reward</h2>
+                <h2>Purchase for a student</h2>
                 <div class="form-group">
                     <label>Select Student</label>
                     <select id="redeemStudentSelect"></select>
                 </div>
+                <div class="form-group">
+                    <label>Quantity</label>
+                    <input type="number" id="redeemQuantity" value="1" min="1" step="1">
+                </div>
                 <div id="redeemRewardInfo" style="margin: 20px 0;"></div>
-                <button class="btn" onclick="confirmRedeemReward()">✅ Confirm Redemption</button>
+                <button class="btn" onclick="confirmRedeemReward()">Confirm purchase</button>
                 <button class="btn btn-secondary" onclick="closeRedeemRewardModal()">Cancel</button>
+            </div>
+
+            <!-- Edit an existing reward. Prices change; receipts keep the
+                 price that was actually paid, so this cannot rewrite history. -->
+            <div id="editRewardModal" class="modal hidden">
+                <div class="modal-content" style="max-width: 500px;">
+                    <h2>Edit Reward</h2>
+                    <div class="form-group">
+                        <label>Reward Name</label>
+                        <input type="text" id="editRewardName">
+                    </div>
+                    <div class="form-group">
+                        <label>Cost (Wildcat Cash)</label>
+                        <input type="number" id="editRewardCost" min="1" step="50">
+                    </div>
+                    <div class="form-group">
+                        <label>Description <span class="receipt-meta">(optional)</span></label>
+                        <input type="text" id="editRewardDescription">
+                    </div>
+                    <div class="form-group">
+                        <label>Category</label>
+                        <input type="text" id="editRewardCategory">
+                    </div>
+                    <div class="form-group">
+                        <label>Stock <span class="receipt-meta">(blank = unlimited)</span></label>
+                        <input type="number" id="editRewardStock" placeholder="Unlimited" min="0" step="1">
+                    </div>
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:8px;">
+                            <input type="checkbox" id="editRewardAvailable" style="width:auto;">
+                            Available for purchase
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 10px; margin-top: 20px;">
+                        <button class="btn" onclick="saveRewardEdit()" style="flex: 1;">💾 Save changes</button>
+                        <button class="btn btn-secondary" onclick="closeEditRewardModal()" style="flex: 1;">Cancel</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- The receipt a student shows to collect their item. -->
+            <div id="receiptModal" class="modal hidden">
+                <div class="modal-content" style="max-width: 420px;">
+                    <h2>Receipt</h2>
+                    <div id="receiptModalBody"></div>
+                    <button class="btn" onclick="closeReceiptModal()" style="width:100%;margin-top:16px;">Done</button>
+                </div>
             </div>
 
     <!-- Chart.js for Data Analytics -->
@@ -5338,11 +5449,12 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260818c"></script>
+    <script src="wildcat-auth.js?v=20260818d"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
     <script src="wildcat-motion.js?v=20260818c"></script>
-    <script src="script.js?v=20260818c"></script>
+    <script src="wildcat-store.js?v=20260818d"></script>
+    <script src="script.js?v=20260818d"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
