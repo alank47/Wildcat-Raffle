@@ -1,0 +1,7 @@
+# Capacitor mobile app. Heavy + generated; only the config and scripts are tracked.
+node_modules/
+www/
+ios/
+android/
+.DS_Store
+*.log

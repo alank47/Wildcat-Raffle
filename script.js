@@ -18244,7 +18244,7 @@
             // Chrome). Everywhere else the student taps the tag to open the URL,
             // so the button would be a dead end and stays hidden.
             const scanBtn = wpById('wpSheetScan');
-            if (scanBtn) scanBtn.style.display = ('NDEFReader' in window) ? '' : 'none';
+            if (scanBtn) scanBtn.style.display = (('NDEFReader' in window) || wcNativeNfcAvailable()) ? '' : 'none';
 
             // ASKED EVERY TIME THE SHEET OPENS, never cached. The answer changes
             // at every bell, and a cached one is the difference between the
@@ -18773,7 +18773,85 @@
             return null;
         }
 
+        // ---- Native NFC bridge (Capacitor app only) ----
+        // In the native app, Core NFC reads AND writes tags on iPhone, which no
+        // iOS browser can. In a browser these are never reached (window.WC_NATIVE
+        // is false) and the Web NFC / URL-tap path stands. The plugin call shapes
+        // are TODO-VERIFY against @capawesome-team/capacitor-nfc on a real device:
+        // NFC cannot run in a simulator, so this is structured, not device-proven.
+        function wcNativeNfcAvailable() {
+            return !!(window.WC_NATIVE && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Nfc);
+        }
+
+        function wcNativeSlugFromTag(event) {
+            // Dig a URL/slug out of a scanned tag's NDEF records however they
+            // arrive: a decoded uri string, or a URI record whose first payload
+            // byte is the well-known-prefix code (0x04 = https://).
+            try {
+                var tag = (event && (event.nfcTag || event.tag)) || event;
+                var records = (tag && tag.message && tag.message.records) || (tag && tag.records) || [];
+                for (var i = 0; i < records.length; i++) {
+                    var r = records[i];
+                    var text = null;
+                    if (typeof r.uri === 'string') text = r.uri;
+                    else if (typeof r.payload === 'string') text = r.payload;
+                    else if (Array.isArray(r.payload) && r.payload.length) {
+                        text = String.fromCharCode.apply(null, r.payload.slice(1));
+                        if (r.payload[0] === 4) text = 'https://' + text;
+                    }
+                    var slug = wcNfcSlugFromUrl(text);
+                    if (slug) return slug;
+                }
+            } catch (e) { /* fall through to null */ }
+            return null;
+        }
+
+        async function wcNativeNfcTap() {
+            var Nfc = window.Capacitor.Plugins.Nfc;
+            wcShowScanListening();
+            try {
+                window._wcNfcListener = await Nfc.addListener('nfcTagScanned', async function (event) {
+                    if (wpBusy) return;
+                    var slug = wcNativeSlugFromTag(event);
+                    if (!slug) return; // not one of ours; keep listening
+                    wpBusy = true;
+                    try {
+                        var result = await wcRunTapForSlug(slug);
+                        await wcNativeNfcStop();
+                        showTapResult(result);
+                    } catch (e) {
+                        await wcNativeNfcStop();
+                        showTapResult({ ok: false, reason: e.message });
+                    } finally { wpBusy = false; }
+                });
+                await Nfc.startScanSession();
+            } catch (e) {
+                showTapResult({ ok: false, reason: 'Could not start the NFC reader: ' + ((e && e.message) || e) });
+            }
+        }
+
+        async function wcNativeNfcStop() {
+            try {
+                var Nfc = window.Capacitor.Plugins.Nfc;
+                if (window._wcNfcListener && window._wcNfcListener.remove) await window._wcNfcListener.remove();
+                window._wcNfcListener = null;
+                if (Nfc && Nfc.stopScanSession) await Nfc.stopScanSession();
+            } catch (e) { /* best effort */ }
+        }
+
+        // Write a tap URL to a physical tag via Core NFC, for the programmer when
+        // running natively (this is the iOS tag-writing the browser cannot do).
+        async function wcNativeNfcWrite(url) {
+            var Nfc = window.Capacitor.Plugins.Nfc;
+            await Nfc.startScanSession();
+            await Nfc.write({ message: { records: [{ uri: url }] } });
+            await Nfc.stopScanSession();
+        }
+        window.wcNativeNfcWrite = wcNativeNfcWrite;
+
         async function wcStudentNfcScan() {
+            // In the native app, Core NFC works on iPhone too; route there first.
+            if (wcNativeNfcAvailable()) { return wcNativeNfcTap(); }
             if (!('NDEFReader' in window)) {
                 showTapResult({ ok: false, reason: 'This phone cannot scan in the app. Touch the tag itself to open the check-in.' });
                 return;
@@ -18811,6 +18889,7 @@
         }
 
         function wcStopNfcScan() {
+            if (wcNativeNfcAvailable()) { wcNativeNfcStop(); return; }
             if (wcNfcScanController) {
                 try { wcNfcScanController.abort(); } catch (e) { /* already gone */ }
                 wcNfcScanController = null;
@@ -18982,7 +19061,7 @@
         function openNfcProgrammer() {
             let el = document.getElementById('nfcProgModal');
             if (!el) { el = document.createElement('div'); el.id = 'nfcProgModal'; el.className = 'nfc-prog'; document.body.appendChild(el); }
-            const hasNfc = ('NDEFReader' in window);
+            const hasNfc = ('NDEFReader' in window) || wcNativeNfcAvailable();
             const hasUsb = !!(navigator.usb);
             const writeLabel = hasNfc ? 'Write tag &amp; save' : (hasUsb ? 'Write tag via USB reader &amp; save' : 'Save &amp; get tag URL');
             const note = hasNfc
@@ -19051,7 +19130,16 @@
             // NFC keeps the gesture it requires. A failure here does not stop the
             // record — the tag is still logged and its URL shown.
             let wrote = false;
-            if ('NDEFReader' in window) {
+            if (wcNativeNfcAvailable()) {
+                // Native app: Core NFC writes the tag, iPhone included.
+                if (statusEl) statusEl.textContent = 'Hold the tag to the top of your phone…';
+                try {
+                    await window.wcNativeNfcWrite(url);
+                    wrote = true;
+                } catch (e) {
+                    if (statusEl) statusEl.textContent = 'Could not write the tag (' + ((e && e.message) || e) + '). Recording it anyway.';
+                }
+            } else if ('NDEFReader' in window) {
                 if (statusEl) statusEl.textContent = 'Hold the NFC tag to the back of your phone…';
                 try {
                     const ndef = new NDEFReader();
