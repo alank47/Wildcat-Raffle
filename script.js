@@ -25635,9 +25635,15 @@
 
         async function loadHallPassBoard() {
             var panel = document.getElementById('dashPassPanel');
+            var list = document.getElementById('dashPassList');
             if (!panel) return;
             try {
-                var session = (typeof auth !== 'undefined' && auth.getSession) ? auth.getSession() : null;
+                // window.WildcatAuth, not a bare `auth`. There is no global by
+                // that name - every call site in this file takes its own local
+                // reference - so the bare form was always undefined and this
+                // board quietly hid itself instead of loading.
+                var auth = window.WildcatAuth;
+                var session = auth && auth.getSession ? auth.getSession() : null;
                 var token = session && session.idToken;
                 if (!token) { panel.hidden = true; return; }
 
@@ -25654,9 +25660,27 @@
                 wcPassBoard.at = fetchedAt;
                 wcRenderPassRows();
             } catch (err) {
-                // Staff-only. A student or a signed-out tab simply has no board,
-                // and that is not an error worth shouting about.
-                panel.hidden = true;
+                /*
+                 * A board that hides itself on any failure cannot be told from
+                 * a board with nothing to show, and that is exactly how this
+                 * shipped broken and looked like an empty school.
+                 *
+                 * Not being staff is the one case that legitimately has no
+                 * board. Everything else says so, on the panel, where someone
+                 * will actually see it.
+                 */
+                var message = String((err && (err.message || err)) || '');
+                var notStaff = /staff|forbidden|unauthor|not allowed|permission/i.test(message);
+                if (notStaff) {
+                    panel.hidden = true;
+                    return;
+                }
+                panel.hidden = false;
+                if (list) {
+                    list.innerHTML = '<p class="wc-pass-empty">Could not load who is out. ' +
+                        wcEsc(message || 'The server did not answer.') + '</p>';
+                }
+                console.warn('[hall pass board]', err);
             }
         }
 
