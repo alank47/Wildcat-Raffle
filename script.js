@@ -25512,7 +25512,7 @@
               which is the one thing it exists never to do.
            ============================================================ */
 
-        var wcPassBoard = { rows: [], truncated: [], poll: null, tick: null, at: 0 };
+        var wcPassBoard = { rows: [], elsewhere: [], whole: false, truncated: [], poll: null, tick: null, at: 0 };
 
         /* Seconds -> M:SS, or H:MM:SS once an hour has gone. Named for the
            elapsed sense: wcClock already exists and formats a time of DAY. */
@@ -25562,6 +25562,37 @@
             return { label: row.state || 'Open', tone: 'ok' };
         }
 
+        /** One row of the board. */
+        function wcPassRowHtml(row, now) {
+            var st = wcPassState(row);
+            var startMs = wcPassStartMs(row);
+            var clock = startMs === null ? '\u2014' : wcElapsedClock((now - startMs) / 1000);
+
+            /* The course label often already carries the period, so appending
+               it again gave "Test Class \u00b7 Period 1 \u00b7 Period 1". Only add
+               it when the name does not already say it. */
+            var course = row.courseName || '';
+            var periodText = row.period ? 'Period ' + row.period : '';
+            var where = periodText && course.indexOf(periodText) === -1
+                ? [course, periodText].filter(Boolean).join(' \u00b7 ')
+                : (course || periodText);
+
+            return '' +
+              '<div class="wc-pass-row wc-pass-' + st.tone + '">' +
+                '<div class="wc-pass-who">' +
+                  '<span class="wc-pass-name">' + wcEsc(row.studentName || 'Unknown') + '</span>' +
+                  '<span class="wc-pass-meta">' + wcEsc(where || 'No lesson recorded') + '</span>' +
+                '</div>' +
+                '<div class="wc-pass-state">' +
+                  '<span class="wc-pass-badge">' + wcEsc(st.label) + '</span>' +
+                '</div>' +
+                '<div class="wc-pass-clock" data-start="' + (startMs === null ? '' : startMs) + '"' +
+                  ' title="' + (row.state === 'requested' ? 'Waiting this long' : 'Out this long') + '">' +
+                  clock +
+                '</div>' +
+              '</div>';
+        }
+
         function wcRenderPassRows() {
             var list = document.getElementById('dashPassList');
             var chip = document.getElementById('dashPassChip');
@@ -25570,49 +25601,55 @@
             if (!list || !panel) return;
 
             var rows = wcPassBoard.rows || [];
+            var elsewhere = wcPassBoard.elsewhere || [];
+            var whole = !!wcPassBoard.whole;
             panel.hidden = false;
 
             if (chip) {
-                var overdue = rows.filter(function (r) { return r.overdue; }).length;
-                chip.textContent = rows.length === 0
+                // The count a chip shows must be the count of what is on
+                // screen, or it reads as a board that is hiding something.
+                var counted = rows.concat(elsewhere);
+                var overdue = counted.filter(function (r) { return r.overdue; }).length;
+                chip.textContent = counted.length === 0
                     ? 'All in'
-                    : rows.length + ' out' + (overdue ? ' \u00b7 ' + overdue + ' overdue' : '');
+                    : counted.length + ' out' + (overdue ? ' \u00b7 ' + overdue + ' overdue' : '');
                 chip.className = 'wu-chip' + (overdue ? ' wu-chip-bad' : '');
             }
 
             if (sub) {
                 sub.textContent = wcPassBoard.truncated && wcPassBoard.truncated.length
                     ? 'Longest-running only \u2014 more are open than fit on this board.'
-                    : 'Everyone currently out, school-wide.';
-            }
-
-            if (rows.length === 0) {
-                list.innerHTML = '<p class="wc-pass-empty">Nobody is out right now.</p>';
-                return;
+                    : (whole ? 'Everyone currently out, school-wide.' : 'Your classes first.');
             }
 
             var now = Date.now();
-            list.innerHTML = rows.map(function (row) {
-                var st = wcPassState(row);
-                var startMs = wcPassStartMs(row);
-                var clock = startMs === null ? '\u2014' : wcElapsedClock((now - startMs) / 1000);
-                var where = [row.courseName, row.period ? 'Period ' + row.period : null]
-                    .filter(Boolean).join(' \u00b7 ');
-                return '' +
-                  '<div class="wc-pass-row wc-pass-' + st.tone + '">' +
-                    '<div class="wc-pass-who">' +
-                      '<span class="wc-pass-name">' + wcEsc(row.studentName || 'Unknown') + '</span>' +
-                      '<span class="wc-pass-meta">' + wcEsc(where || 'No lesson recorded') + '</span>' +
+            var html = '';
+
+            if (rows.length === 0) {
+                html += '<p class="wc-pass-empty">' +
+                    (whole ? 'Nobody is out right now.' : 'None of your students are out.') +
+                    '</p>';
+            } else {
+                html += rows.map(function (r) { return wcPassRowHtml(r, now); }).join('');
+            }
+
+            /* The rest of the school, folded. Real, but not this teacher's job
+               this minute - and a teacher who needs it should not have to go
+               to another screen to find out a child is missing. */
+            if (!whole && elsewhere.length > 0) {
+                var overdueElsewhere = elsewhere.filter(function (r) { return r.overdue; }).length;
+                html += '<details class="wc-pass-more">' +
+                    '<summary>' +
+                        'Elsewhere in school (' + elsewhere.length +
+                        (overdueElsewhere ? ', ' + overdueElsewhere + ' overdue' : '') + ')' +
+                    '</summary>' +
+                    '<div class="wc-pass-board wc-pass-more-list">' +
+                        elsewhere.map(function (r) { return wcPassRowHtml(r, now); }).join('') +
                     '</div>' +
-                    '<div class="wc-pass-state">' +
-                      '<span class="wc-pass-badge">' + wcEsc(st.label) + '</span>' +
-                    '</div>' +
-                    '<div class="wc-pass-clock" data-start="' + (startMs === null ? '' : startMs) + '"' +
-                      ' title="' + (row.state === 'requested' ? 'Waiting this long' : 'Out this long') + '">' +
-                      clock +
-                    '</div>' +
-                  '</div>';
-            }).join('');
+                '</details>';
+            }
+
+            list.innerHTML = html;
         }
 
         /* Only the digits are rewritten each second. Re-rendering the whole
@@ -25633,6 +25670,19 @@
                 .replace(/"/g, '&quot;');
         }
 
+        /* Who sees what.
+
+           A campus aide IS the person who goes and finds the child, so the
+           whole school is their board and anything less makes it useless. A
+           teacher with 34 children in front of them needs their own three at
+           the top; the rest of the building is real but it is not their job
+           this minute, so it goes behind a disclosure rather than being
+           hidden or dumped on them. */
+        function wcSeesWholeSchool() {
+            var role = (currentUser && currentUser.role) ? String(currentUser.role).toLowerCase() : '';
+            return role === 'campusaide' || role === 'admin' || role === 'superadmin';
+        }
+
         async function loadHallPassBoard() {
             var panel = document.getElementById('dashPassPanel');
             var list = document.getElementById('dashPassList');
@@ -25647,16 +25697,35 @@
                 var token = session && session.idToken;
                 if (!token) { panel.hidden = true; return; }
 
-                var data = await auth.convexQuery('hallPasses:liveBoard', {}, token);
+                var whole = wcSeesWholeSchool();
                 var fetchedAt = Date.now();
-                var rows = (data && data.passes) || [];
-                if (!Array.isArray(rows)) rows = [];
-                // Stamp the fetch so a row falling back to elapsedMinutes
-                // counts from when that number was true, not from now.
-                rows.forEach(function (r) { r.fetchedAt = fetchedAt; });
 
-                wcPassBoard.rows = rows;
-                wcPassBoard.truncated = (data && data.truncatedStates) || [];
+                // A teacher asks for both: theirs to act on, the school's to
+                // fold away. One round trip each, twenty seconds apart.
+                var school = await auth.convexQuery('hallPasses:liveBoard', {}, token);
+                var mine = whole
+                    ? null
+                    : await auth.convexQuery('hallPasses:myClassBoard', {}, token).catch(function () { return null; });
+
+                var all = (school && school.passes) || [];
+                all.forEach(function (r) { r.fetchedAt = fetchedAt; });
+
+                var primary, elsewhere;
+                if (whole || !mine) {
+                    primary = all;
+                    elsewhere = [];
+                } else {
+                    primary = (mine.passes || []);
+                    primary.forEach(function (r) { r.fetchedAt = fetchedAt; });
+                    var seen = {};
+                    primary.forEach(function (r) { seen[r.id] = true; });
+                    elsewhere = all.filter(function (r) { return !seen[r.id]; });
+                }
+
+                wcPassBoard.whole = whole;
+                wcPassBoard.rows = primary;
+                wcPassBoard.elsewhere = elsewhere;
+                wcPassBoard.truncated = (school && school.truncatedStates) || [];
                 wcPassBoard.at = fetchedAt;
                 wcRenderPassRows();
             } catch (err) {
