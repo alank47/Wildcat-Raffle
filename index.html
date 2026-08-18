@@ -21,7 +21,7 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20260818e">
+    <link rel="stylesheet" href="styles.css?v=20260818f">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
     <link rel="stylesheet" href="wildcat-motion.css?v=20260818c">
@@ -5262,9 +5262,10 @@
                                    aria-controls="studentPickerResults"
                                    oninput="filterStudentPicker()"
                                    onkeydown="studentPickerKeydown(event)"
-                                   onfocus="filterStudentPicker()">
+                                   onclick="filterStudentPicker()"
+                                   onblur="hideStudentPicker()">
                             <button type="button" id="studentPickerClear" class="student-picker-clear hidden"
-                                    onclick="clearStudentPick()" aria-label="Clear selected student">&times;</button>
+                                    onclick="clearStudentPick(true)" aria-label="Clear selected student">&times;</button>
                             <ul id="studentPickerResults" class="student-picker-results hidden" role="listbox"></ul>
                         </div>
                         <input type="hidden" id="redeemStudentSelect">
@@ -5478,12 +5479,12 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260818e"></script>
+    <script src="wildcat-auth.js?v=20260818f"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
     <script src="wildcat-motion.js?v=20260818c"></script>
-    <script src="wildcat-store.js?v=20260818e"></script>
-    <script src="script.js?v=20260818e"></script>
+    <script src="wildcat-store.js?v=20260818f"></script>
+    <script src="script.js?v=20260818f"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never

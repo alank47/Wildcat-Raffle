@@ -22786,6 +22786,21 @@
         let studentPickerMatches = [];
         let studentPickerActive = -1;
 
+        /**
+         * Close the suggestion list.
+         *
+         * Safe to call from onblur even though the options are clickable:
+         * each option fires on MOUSEDOWN, which runs before the input's blur,
+         * so a click on a name still registers before this hides the list.
+         */
+        function hideStudentPicker() {
+            const list = document.getElementById('studentPickerResults');
+            const input = document.getElementById('studentPickerInput');
+            if (list) list.classList.add('hidden');
+            if (input) input.setAttribute('aria-expanded', 'false');
+            studentPickerActive = -1;
+        }
+
         function studentPickerBalance(student) {
             return student.wildcatCashBalance !== undefined ? student.wildcatCashBalance : STARTING_BALANCE;
         }
@@ -22854,7 +22869,7 @@
                 const hit = studentPickerMatches[studentPickerActive >= 0 ? studentPickerActive : 0];
                 if (hit) pickStudent(hit.id);
             } else if (e.key === 'Escape') {
-                list.classList.add('hidden');
+                hideStudentPicker();
             }
         }
 
@@ -22865,8 +22880,7 @@
             document.getElementById('redeemStudentSelect').value = student.id;
             const input = document.getElementById('studentPickerInput');
             input.value = `${student.firstName} ${student.lastName}`;
-            input.setAttribute('aria-expanded', 'false');
-            document.getElementById('studentPickerResults').classList.add('hidden');
+            hideStudentPicker();
             document.getElementById('studentPickerClear').classList.remove('hidden');
 
             const chosen = document.getElementById('studentPickerChosen');
@@ -22876,15 +22890,20 @@
             updateRedeemTotal();
         }
 
-        function clearStudentPick() {
+        /**
+         * Reset the picker. Deliberately does NOT open the suggestion list:
+         * an open list covers Quantity, the total and the Cancel button, so
+         * it appears only when the user asks for it by clicking or typing.
+         */
+        function clearStudentPick(focusInput) {
             document.getElementById('redeemStudentSelect').value = '';
             const input = document.getElementById('studentPickerInput');
             input.value = '';
-            input.focus();
             document.getElementById('studentPickerClear').classList.add('hidden');
             document.getElementById('studentPickerChosen').classList.add('hidden');
+            hideStudentPicker();
             updateRedeemTotal();
-            filterStudentPicker();
+            if (focusInput) input.focus();
         }
 
         /**
@@ -22931,11 +22950,12 @@
 
             const qtyEl = document.getElementById('redeemQuantity');
             if (qtyEl) qtyEl.value = 1;
-            clearStudentPick();
+            clearStudentPick(false);
 
+            // Opened with the whole form visible and the list closed. Focusing
+            // the input here would have fired the list open over Quantity, the
+            // total and Cancel, which is what made a misclick hard to undo.
             document.getElementById('redeemRewardModal').classList.remove('hidden');
-            const input = document.getElementById('studentPickerInput');
-            if (input) input.focus();
         }
 
         function closeRedeemRewardModal() {
