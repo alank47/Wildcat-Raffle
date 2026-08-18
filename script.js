@@ -25390,9 +25390,194 @@
             return { key: 'award', label: 'Tickets', tag: 'wu-tag-award', icon: '&#127903;' };
         }
 
+        /* ============================================================
+           WHO IS OUT, RIGHT NOW.
+
+           `hallPasses:liveBoard` has existed for a while and nothing ever
+           called it, so the one question a dashboard should answer on sight
+           - is anybody out, and for how long - could only be answered by
+           opening another screen.
+
+           Two rules this board lives by:
+
+           1. It counts locally. The server sends elapsed minutes as a float
+              computed at query time; printing that gives you
+              "0.22198333333333334 min" frozen until a refresh. Given the
+              approval time, the browser ticks it.
+           2. It says when it is incomplete. A board that silently stops at
+              its cap is a board missing a child who is out of the building,
+              which is the one thing it exists never to do.
+           ============================================================ */
+
+        var wcPassBoard = { rows: [], truncated: [], poll: null, tick: null, at: 0 };
+
+        /* Seconds -> M:SS, or H:MM:SS once an hour has gone. Named for the
+           elapsed sense: wcClock already exists and formats a time of DAY. */
+        function wcElapsedClock(totalSeconds) {
+            var t = Math.max(0, Math.floor(totalSeconds));
+            var h = Math.floor(t / 3600);
+            var m = Math.floor((t % 3600) / 60);
+            var sec = t % 60;
+            var pad = function (n) { return String(n).padStart(2, '0'); };
+            return h > 0 ? h + ':' + pad(m) + ':' + pad(sec) : m + ':' + pad(sec);
+        }
+
+        /* The moment a pass started running, as epoch ms. Prefers the real
+           timestamp; falls back to the server's figure so a row still counts
+           on a deployment that has not shipped approvedAt yet. */
+        function wcPassStartMs(row) {
+            /* A pass still waiting has not started going anywhere, so what
+               matters is how long the REQUEST has sat. Once approved, the
+               clock is time out of class. Two different questions, and the
+               row says which one it is answering. */
+            var stamp = row.state === 'requested'
+                ? (row.requestedAt || null)
+                : (row.outAt || row.approvedAt || null);
+            if (stamp) {
+                var parsed = Date.parse(stamp);
+                if (isFinite(parsed)) return parsed;
+            }
+            if (typeof row.elapsedMinutes === 'number' && isFinite(row.elapsedMinutes)) {
+                return (row.fetchedAt || Date.now()) - row.elapsedMinutes * 60000;
+            }
+            return null;
+        }
+
+        /* What the state MEANS, in the words a teacher would use. The raw
+           machine states are not for reading: "out" and "requested" are the
+           difference between a child in a corridor and one still sitting in
+           your room with a hand up. */
+        function wcPassState(row) {
+            // The three live states, in the words a teacher would use. The raw
+            // names are not for reading: "requested" and "out" are the
+            // difference between a child still in your room with a hand up and
+            // one already in a corridor.
+            if (row.overdue) return { label: 'Overdue', tone: 'bad' };
+            if (row.state === 'requested') return { label: 'Waiting on you', tone: 'wait' };
+            if (row.state === 'active') return { label: 'Approved, not gone yet', tone: 'ok' };
+            if (row.state === 'out') return { label: 'Out', tone: 'ok' };
+            return { label: row.state || 'Open', tone: 'ok' };
+        }
+
+        function wcRenderPassRows() {
+            var list = document.getElementById('dashPassList');
+            var chip = document.getElementById('dashPassChip');
+            var sub = document.getElementById('dashPassSub');
+            var panel = document.getElementById('dashPassPanel');
+            if (!list || !panel) return;
+
+            var rows = wcPassBoard.rows || [];
+            panel.hidden = false;
+
+            if (chip) {
+                var overdue = rows.filter(function (r) { return r.overdue; }).length;
+                chip.textContent = rows.length === 0
+                    ? 'All in'
+                    : rows.length + ' out' + (overdue ? ' \u00b7 ' + overdue + ' overdue' : '');
+                chip.className = 'wu-chip' + (overdue ? ' wu-chip-bad' : '');
+            }
+
+            if (sub) {
+                sub.textContent = wcPassBoard.truncated && wcPassBoard.truncated.length
+                    ? 'Longest-running only \u2014 more are open than fit on this board.'
+                    : 'Everyone currently out, school-wide.';
+            }
+
+            if (rows.length === 0) {
+                list.innerHTML = '<p class="wc-pass-empty">Nobody is out right now.</p>';
+                return;
+            }
+
+            var now = Date.now();
+            list.innerHTML = rows.map(function (row) {
+                var st = wcPassState(row);
+                var startMs = wcPassStartMs(row);
+                var clock = startMs === null ? '\u2014' : wcElapsedClock((now - startMs) / 1000);
+                var where = [row.courseName, row.period ? 'Period ' + row.period : null]
+                    .filter(Boolean).join(' \u00b7 ');
+                return '' +
+                  '<div class="wc-pass-row wc-pass-' + st.tone + '">' +
+                    '<div class="wc-pass-who">' +
+                      '<span class="wc-pass-name">' + wcEsc(row.studentName || 'Unknown') + '</span>' +
+                      '<span class="wc-pass-meta">' + wcEsc(where || 'No lesson recorded') + '</span>' +
+                    '</div>' +
+                    '<div class="wc-pass-state">' +
+                      '<span class="wc-pass-badge">' + wcEsc(st.label) + '</span>' +
+                    '</div>' +
+                    '<div class="wc-pass-clock" data-start="' + (startMs === null ? '' : startMs) + '"' +
+                      ' title="' + (row.state === 'requested' ? 'Waiting this long' : 'Out this long') + '">' +
+                      clock +
+                    '</div>' +
+                  '</div>';
+            }).join('');
+        }
+
+        /* Only the digits are rewritten each second. Re-rendering the whole
+           board every tick would fight anyone trying to read it. */
+        function wcTickPassClocks() {
+            var now = Date.now();
+            var nodes = document.querySelectorAll('#dashPassList .wc-pass-clock[data-start]');
+            for (var i = 0; i < nodes.length; i++) {
+                var start = parseInt(nodes[i].getAttribute('data-start'), 10);
+                if (!isFinite(start)) continue;
+                nodes[i].textContent = wcElapsedClock((now - start) / 1000);
+            }
+        }
+
+        function wcEsc(value) {
+            return String(value == null ? '' : value)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        async function loadHallPassBoard() {
+            var panel = document.getElementById('dashPassPanel');
+            if (!panel) return;
+            try {
+                var session = (typeof auth !== 'undefined' && auth.getSession) ? auth.getSession() : null;
+                var token = session && session.idToken;
+                if (!token) { panel.hidden = true; return; }
+
+                var data = await auth.convexQuery('hallPasses:liveBoard', {}, token);
+                var fetchedAt = Date.now();
+                var rows = (data && data.passes) || [];
+                if (!Array.isArray(rows)) rows = [];
+                // Stamp the fetch so a row falling back to elapsedMinutes
+                // counts from when that number was true, not from now.
+                rows.forEach(function (r) { r.fetchedAt = fetchedAt; });
+
+                wcPassBoard.rows = rows;
+                wcPassBoard.truncated = (data && data.truncatedStates) || [];
+                wcPassBoard.at = fetchedAt;
+                wcRenderPassRows();
+            } catch (err) {
+                // Staff-only. A student or a signed-out tab simply has no board,
+                // and that is not an error worth shouting about.
+                panel.hidden = true;
+            }
+        }
+
+        function startHallPassBoard() {
+            stopHallPassBoard();
+            loadHallPassBoard();
+            // The server is asked rarely; the clocks move every second.
+            wcPassBoard.poll = setInterval(loadHallPassBoard, 20000);
+            wcPassBoard.tick = setInterval(wcTickPassClocks, 1000);
+        }
+
+        function stopHallPassBoard() {
+            if (wcPassBoard.poll) clearInterval(wcPassBoard.poll);
+            if (wcPassBoard.tick) clearInterval(wcPassBoard.tick);
+            wcPassBoard.poll = null;
+            wcPassBoard.tick = null;
+        }
+
         function renderTeacherDashboard() {
             const host = document.getElementById('dashboard');
             if (!host) return;
+
+            // Who is out, before anything else on the page is computed.
+            startHallPassBoard();
 
             const roster = wcMyRoster();
             const all = (typeof enrolledStudents === 'function') ? enrolledStudents() : [];

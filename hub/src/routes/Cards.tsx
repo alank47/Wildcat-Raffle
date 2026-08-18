@@ -5,6 +5,7 @@ import Counter from "@/components/Counter";
 import GlareHover from "@/components/GlareHover";
 import StarBorder from "@/components/StarBorder";
 import { useArrival } from "@/lib/arrive";
+import { formatSpokenDuration, useElapsedSeconds } from "@/lib/elapsed";
 import { useFinePointer, useReducedMotion } from "@/lib/motion";
 import {
   useCardsModel,
@@ -148,6 +149,8 @@ function CardsView({ model }: { model: CardsModel }) {
  * pass is actually open, and it goes away the moment the pass closes.
  */
 function LivePassBanner({ pass }: { pass: LivePassSummary }) {
+  // Counted on the device so the banner keeps moving without a refresh.
+  const passSeconds = useElapsedSeconds(pass.startedAt, pass.elapsed);
   return (
     <StarBorder
       as="div"
@@ -167,9 +170,9 @@ function LivePassBanner({ pass }: { pass: LivePassSummary }) {
             {pass.overdue ? "Hall pass overdue" : "Hall pass open"}
           </p>
           <p className="mt-1 text-[15px] font-bold text-wp-fg">
-            {pass.elapsed === null
+            {passSeconds === null
               ? "Out of class"
-              : `Out for ${pass.elapsed} minute${pass.elapsed === 1 ? "" : "s"}`}
+              : `Out for ${formatSpokenDuration(passSeconds)}`}
             {pass.limit !== null && (
               <span className="font-normal text-wp-dim"> of {pass.limit}</span>
             )}
@@ -365,6 +368,9 @@ function HallPassFace({
 }: {
   body: Extract<WalletCard["body"], { kind: "pass" }>;
 }) {
+  // Hooks run before the early return, or the order changes when a pass
+  // opens and React tears the component down.
+  const bodySeconds = useElapsedSeconds(body.startedAt, body.elapsed);
   if (body.open) {
     return (
       <div>
@@ -372,9 +378,9 @@ function HallPassFace({
           {body.overdue ? "Overdue" : "Open"}
         </p>
         <p className="mt-2 text-[12.5px] text-white/70">
-          {body.elapsed === null
+          {bodySeconds === null
             ? "Out of class now."
-            : `Out for ${body.elapsed} minute${body.elapsed === 1 ? "" : "s"}.`}
+            : `Out for ${formatSpokenDuration(bodySeconds)}.`}
         </p>
       </div>
     );

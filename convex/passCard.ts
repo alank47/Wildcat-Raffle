@@ -153,6 +153,16 @@ export const mine = query({
             overdue: isOverdue(live as any, now),
             expiresAfterMinutes: live.expiresAfterMinutes,
 
+            /*
+             * When it was approved, so the card can COUNT rather than print a
+             * number. elapsedMinutes is correct the instant it is computed and
+             * frozen from then on, which left the timer on screen sitting still
+             * until the student pulled to refresh. Given the start, the device
+             * ticks it. Null until approved, which is also when there is
+             * nothing to count.
+             */
+            approvedAt: live.approvedAt ?? null,
+
             // WHERE IT STARTED AND WHO IT WENT TO, in words. The pass now
             // originates from the class the student was timetabled into, so the
             // card has to be able to say "waiting on Ms Vega, period 3" rather
