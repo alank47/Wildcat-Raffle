@@ -1552,8 +1552,13 @@ body.wc-loading { overflow: hidden; }
 .wc-pass-ok   { border-left-color: #2f6fd0; }
 .wc-pass-wait { border-left-color: #d69412; }
 /* Overdue is the only row that gets a fill. If every row shouts, the one
-   child who has been gone forty minutes does not. */
-.wc-pass-bad  { border-left-color: #c0392b; background: #fdf1ef; }
+   child who has been gone forty minutes does not.
+
+   The fill is a WASH, not a colour block: the text on it stays the same
+   near-black as every other row, so the row reads as urgent without
+   trading away the ability to read it. Pale ink on pink was the whole
+   complaint. */
+.wc-pass-bad  { border-left-color: #c0392b; background: #fcecea; }
 
 .wc-pass-who { min-width: 0; }
 
@@ -1595,7 +1600,18 @@ body.wc-loading { overflow: hidden; }
   min-width: 68px;
   text-align: right;
 }
-.wc-pass-bad .wc-pass-clock { color: #a32a1c; }
+.wc-pass-bad .wc-pass-name  { color: #17202e; }
+.wc-pass-bad .wc-pass-meta  { color: #6b4a46; }
+.wc-pass-bad .wc-pass-clock { color: #9b2418; }
+
+/* The row states its own colour rather than inheriting one. The panel it
+   sits in is used on both light and dark surfaces elsewhere in the app, and
+   inheriting is how the first version ended up white on a white card.
+
+   A blanket `.wc-pass-row *` would have done it too, and would have beaten
+   every specific rule above on specificity - taking the badge colours with
+   it. Each part says its own colour instead. */
+.wc-pass-row { color: #17202e; }
 
 .wu-chip-bad { background: #f7d9d4; color: #93261a; }
 
