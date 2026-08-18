@@ -15273,18 +15273,26 @@
         // UPDATE RAFFLE DASHBOARD STATS
         // ============================================
         function updateDashboardStats() {
+            // Enrolled only, for the same reason updateStats uses it: the
+            // students array holds everyone the app has ever seen, including
+            // students who have left, whose records are kept so their balances
+            // and histories survive rather than so they can be counted. A
+            // departed student could otherwise be shown as this week's top
+            // earner, and the qualified count included people who are not here.
+            const roster = enrolledStudents();
+
             // Calculate total tickets awarded this week
             let totalTickets = 0;
-            students.forEach(s => {
+            roster.forEach(s => {
                 totalTickets += (s.pbisTickets || 0) + (s.attendanceTickets || 0) + (s.academicTickets || 0);
             });
-            
+
             // Count qualified students
-            const qualifiedCount = students.filter(s => isQualifiedForJackpot(s)).length;
-            
+            const qualifiedCount = roster.filter(s => isQualifiedForJackpot(s)).length;
+
             // Find top earner
             let topEarner = { name: '-', total: 0 };
-            students.forEach(s => {
+            roster.forEach(s => {
                 const studentTotal = (s.pbisTickets || 0) + (s.attendanceTickets || 0) + (s.academicTickets || 0);
                 if (studentTotal > topEarner.total) {
                     topEarner = {
@@ -23181,8 +23189,21 @@
                 return;
             }
             
-            // Filter students by selected grades
-            const filteredStudents = students.filter(s => selectedGrades.includes(String(s.grade)));
+            // Enrolled only, then by grade.
+            //
+            // This counted the raw students array, which holds everyone the app
+            // has ever seen: students who have left, and prior-year records
+            // kept deliberately so their balances and histories survive. A
+            // teacher reads "Total Students" as "how many students are here",
+            // so counting the archived ones makes the tile wrong, and makes
+            // every average below it wrong too, because filteredStudents.length
+            // is the denominator for behaviours per student and dollars per
+            // student.
+            //
+            // updateStats already learned this lesson for the raffle tiles.
+            // This dashboard was missed.
+            const filteredStudents = enrolledStudents()
+                .filter(s => selectedGrades.includes(String(s.grade)));
             
             if (filteredStudents.length === 0) {
                 // No students in selected grades

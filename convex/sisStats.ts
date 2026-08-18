@@ -1,4 +1,4 @@
-import { internalMutation } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 
 /**
@@ -105,6 +105,86 @@ export const stats = internalMutation({
       gradeRowsMissingPercent: grades.filter((g) => g.currentPercent === undefined).length,
       appStudents: students.length,
       lastSyncedAt: roster[0]?.syncedAt ?? null,
+    };
+  },
+});
+
+/**
+ * Read only. Answers one question before anybody deletes anything:
+ * is the students table double counting the same children?
+ *
+ * WHY THIS EXISTS. sisSync matches an incoming roster row to an existing
+ * student by `studentNumber ?? legacyId`. A student imported from the old CSV
+ * carries a legacyId like "STU001" and NO studentNumber. The SIS sends
+ * studentNumber "11414". Those keys do not match, so the sync inserts a
+ * SECOND row for a child who is already there: the legacy row keeps the
+ * balance, and the new SIS row starts at zero.
+ *
+ * That matters enormously for what to do next. If the money is sitting on the
+ * legacy rows, then "delete everything that came from the CSV" deletes the
+ * Wildcat Cash with it. The duplicates have to be MERGED, not dropped.
+ *
+ * Returns counts and money only. Set sampleNames to see a handful of the
+ * suspected pairs; it is off by default so a routine run prints no names.
+ */
+export const duplicateAudit = internalQuery({
+  args: { sampleNames: v.optional(v.boolean()) },
+  handler: async (ctx, { sampleNames }) => {
+    const students = await ctx.db.query("students").collect();
+
+    const norm = (s: { firstName?: string; lastName?: string; grade?: string }) =>
+      `${(s.firstName ?? "").trim().toLowerCase()}|${(s.lastName ?? "").trim().toLowerCase()}|${(s.grade ?? "").trim()}`;
+
+    const money = (s: { wildcatCashBalance?: number }) => s.wildcatCashBalance ?? 0;
+
+    const sisMatched = students.filter((s) => !!s.studentNumber);
+    const legacyOnly = students.filter((s) => !s.studentNumber);
+    const archived = students.filter((s) => !!s.archivedAt);
+
+    // Same person, more than one row.
+    const byIdentity = new Map<string, typeof students>();
+    for (const s of students) {
+      const k = norm(s);
+      if (!byIdentity.has(k)) byIdentity.set(k, []);
+      byIdentity.get(k)!.push(s);
+    }
+    const dupeGroups = [...byIdentity.entries()].filter(([, rows]) => rows.length > 1);
+
+    // The decisive number: money held on rows the SIS has never matched.
+    const strandedMoney = legacyOnly.reduce((n, s) => n + money(s), 0);
+
+    return {
+      totalStudents: students.length,
+      archived: archived.length,
+      active: students.length - archived.length,
+
+      sisMatched: sisMatched.length,
+      legacyOnly: legacyOnly.length,
+
+      duplicateIdentities: dupeGroups.length,
+      rowsInvolvedInDuplicates: dupeGroups.reduce((n, [, rows]) => n + rows.length, 0),
+      // A duplicate pair where one side holds money and the other does not is
+      // the signature of the legacyId / studentNumber mismatch above.
+      duplicatesWhereOnlyOneSideHasMoney: dupeGroups.filter(([, rows]) => {
+        const withMoney = rows.filter((r) => money(r) > 0).length;
+        return withMoney > 0 && withMoney < rows.length;
+      }).length,
+
+      totalBalance: students.reduce((n, s) => n + money(s), 0),
+      balanceOnSisMatched: sisMatched.reduce((n, s) => n + money(s), 0),
+      balanceOnLegacyOnly: strandedMoney,
+
+      sampleDuplicates: sampleNames
+        ? dupeGroups.slice(0, 10).map(([k, rows]) => ({
+            identity: k,
+            rows: rows.map((r) => ({
+              legacyId: r.legacyId ?? null,
+              studentNumber: r.studentNumber ?? null,
+              balance: money(r),
+              archivedAt: r.archivedAt ?? null,
+            })),
+          }))
+        : undefined,
     };
   },
 });
