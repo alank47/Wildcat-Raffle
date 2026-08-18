@@ -67,8 +67,21 @@ export type Pass = {
    * there would be no way afterwards to tell which passes were which.
    */
   closedAt?: string;
-  /** Minutes after approval at which an un-returned pass is considered overdue. */
+  /**
+   * The RETURN window: minutes after the destination tap (outAt) that an
+   * un-returned pass is overdue. Two-phase by design; see reachMinutes for the
+   * first leg. A teacher may widen this at approval; validatePassMinutes bounds
+   * it. For a pass written before reachMinutes existed, this also governs the
+   * first leg, which is the old single-window behaviour preserved unchanged.
+   */
   expiresAfterMinutes: number;
+  /**
+   * The REACH window: minutes after APPROVAL that a not-yet-departed pass (still
+   * `active`, no destination tap) is overdue. This is the "get to where you are
+   * going" leg. Optional so old rows fall back to expiresAfterMinutes and keep
+   * their original one-window timing; new passes set it at approval.
+   */
+  reachMinutes?: number;
 };
 
 export type TapResult =
@@ -80,6 +93,52 @@ const minutes = (fromIso: string, toIso: string) =>
 
 export function isTerminal(state: PassState): boolean {
   return TERMINAL_STATES.includes(state);
+}
+
+/**
+ * The first-leg window: how long after approval a student has to reach and tap
+ * the destination before the pass is overdue. Five minutes, as specified. Set on
+ * every pass at approval; the RETURN leg is expiresAfterMinutes, timed fresh from
+ * the destination tap.
+ */
+export const DEFAULT_REACH_MINUTES = 5;
+
+/**
+ * The clock that governs the CURRENT leg of a live pass.
+ *
+ * Two legs, two anchors: while `active` the student is heading OUT and the clock
+ * runs from approval; once `out` they have arrived and the return clock runs
+ * fresh from the destination tap (outAt). This is what makes "5 to get there,
+ * then a fresh 10 to get back" true without the return leg inheriting time
+ * already spent walking over. `elapsedMinutes` is deliberately NOT this: that
+ * one stays total-time-from-approval for the board, so a teacher sees the whole
+ * time out of class, not just the current leg.
+ *
+ * Falls back to approvedAt for an `out` pass with no outAt, which cannot happen
+ * through `tap` (it writes both together) but keeps a hand-edited row timeable.
+ */
+function phaseAnchor(pass: Pass): string | undefined {
+  if (pass.state === "out") return pass.outAt ?? pass.approvedAt;
+  return pass.approvedAt;
+}
+
+/**
+ * The window that governs the CURRENT leg. Return leg: expiresAfterMinutes.
+ * Reach leg: reachMinutes, falling back to expiresAfterMinutes for a row written
+ * before reachMinutes existed, which is exactly the old single-window timing.
+ */
+function phaseWindowMinutes(pass: Pass): number {
+  if (pass.state === "out") return pass.expiresAfterMinutes;
+  return pass.reachMinutes ?? pass.expiresAfterMinutes;
+}
+
+/** Minutes since the current leg's clock started; null if it cannot be read. */
+function phaseElapsedMinutes(pass: Pass, now: string): number | null {
+  const anchor = phaseAnchor(pass);
+  if (!anchor) return null;
+  const value = minutes(anchor, now);
+  if (!Number.isFinite(value)) return null;
+  return Math.max(0, value);
 }
 
 /**
@@ -99,7 +158,14 @@ export function isTerminal(state: PassState): boolean {
  */
 export function hasCorruptClock(pass: Pass): boolean {
   const stamp = pass.approvedAt ?? pass.requestedAt;
-  return !Number.isFinite(Date.parse(stamp));
+  if (!Number.isFinite(Date.parse(stamp))) return true;
+  // On the return leg the deadline is timed from outAt, so an unreadable one is
+  // as untimeable as a bad approvedAt: it must still sort to the top of the board
+  // and stay sweepable rather than becoming a pass nothing can ever close.
+  if (pass.state === "out" && pass.outAt && !Number.isFinite(Date.parse(pass.outAt))) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -141,8 +207,11 @@ export function elapsedMinutes(pass: Pass, now: string): number | null {
 export function isOverdue(pass: Pass, now: string): boolean {
   if (pass.state !== "active" && pass.state !== "out") return false;
   if (hasCorruptClock(pass)) return true;
-  const elapsed = elapsedMinutes(pass, now);
-  return elapsed !== null && elapsed > pass.expiresAfterMinutes;
+  // Phase-aware: on the way out, overdue means past the reach window from
+  // approval; once out, past the return window from the destination tap. NOT
+  // total elapsed, so arriving late does not eat the return leg's clock.
+  const elapsed = phaseElapsedMinutes(pass, now);
+  return elapsed !== null && elapsed > phaseWindowMinutes(pass);
 }
 
 /**
@@ -380,8 +449,11 @@ export function isAbandoned(
   // comparison against an unparseable date is false, so without this branch the
   // sweep skips it forever and the student stays blocked for good.
   if (hasCorruptClock(pass)) return true;
-  const elapsed = elapsedMinutes(pass, now);
-  return elapsed !== null && elapsed > pass.expiresAfterMinutes + graceMinutes;
+  // Same phase clock as isOverdue, plus the grace: the sweep may only close a
+  // pass that is past the CURRENT leg's window, so a student who arrived late is
+  // judged on their return leg, not on time already spent walking there.
+  const elapsed = phaseElapsedMinutes(pass, now);
+  return elapsed !== null && elapsed > phaseWindowMinutes(pass) + graceMinutes;
 }
 
 /**

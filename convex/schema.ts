@@ -475,7 +475,13 @@ export default defineSchema({
     // than the origin is accepted, exactly as before.
     assignedDestinationLocationId: v.optional(v.id("tapLocations")),
 
+    // The RETURN-leg window: minutes from the destination tap before an
+    // un-returned pass is overdue. See hallPassRules.ts.
     expiresAfterMinutes: v.number(),
+    // The REACH-leg window: minutes from approval to tap the destination.
+    // Optional so rows written before the two-phase timer keep their original
+    // single-window timing (they fall back to expiresAfterMinutes).
+    reachMinutes: v.optional(v.number()),
   })
     .index("by_student", ["studentId"])
     .index("by_state", ["state"])

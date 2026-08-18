@@ -925,7 +925,11 @@
   // student tab, but a returning teacher's tab state must still be honoured.
   function studentFormVisible() {
     const f = document.getElementById('studentLoginForm');
-    return !!f && !f.classList.contains('hidden');
+    // classList is guarded, not assumed: this runs at boot inside onReady, before
+    // the rest of the app has touched the DOM, and a stub or a half-built element
+    // with no classList must make this answer "not visible" rather than throw and
+    // take the whole sign-in bootstrap down with it.
+    return !!(f && f.classList && !f.classList.contains('hidden'));
   }
 
   function onReady() {

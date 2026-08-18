@@ -195,7 +195,7 @@ export const get = query({
 });
 
 /**
- * Correct a student's meal (cafeteria) number — the value behind the meal card
+ * Correct a student's meal (cafeteria) number, the value behind the meal card
  * barcode. Admin only: this is identity data the office owns, not something a
  * class teacher edits from a drill-down. An empty value clears it. Stored as
  * typed (the ID cards print a bare 4-digit number), length-bounded only, so a
@@ -214,7 +214,7 @@ export const setMealPin = mutation({
     if (!student) throw new ConvexError(`No student with number ${asked}.`);
     const clean = String(mealPin ?? "").trim();
     if (clean.length > 24) {
-      throw new ConvexError("A meal number is short — that value is too long to be one.");
+      throw new ConvexError("That is too long to be a meal number. Check the digits and try again.");
     }
     await ctx.db.patch(student._id, { mealPin: clean || undefined });
     return { ok: true, studentNumber: asked, mealPin: clean || null };

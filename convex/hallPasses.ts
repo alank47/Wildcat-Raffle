@@ -33,6 +33,7 @@ import {
   trimReason,
   validatePassMinutes,
   withinTapRateLimit,
+  DEFAULT_REACH_MINUTES,
   TAP_INTENT_TTL_SECONDS,
   MAX_TAP_INTENTS_PER_WINDOW,
 } from "./hallPassRules";
@@ -400,6 +401,9 @@ export const approve = mutation({
       state: "active",
       approvedAt: new Date().toISOString(),
       approvedByEmail: teacher.email,
+      // The reach leg starts now: 5 minutes to tap the destination. The return
+      // leg (expiresAfterMinutes) is timed fresh from that tap.
+      reachMinutes: DEFAULT_REACH_MINUTES,
       ...(expiresAfterMinutes !== undefined ? { expiresAfterMinutes } : {}),
     });
     return { state: "active" };
@@ -692,6 +696,9 @@ export const openForStudent = mutation({
       originTeacherEmail: teacher.email,
       requestedVia: "teacher" as const,
       expiresAfterMinutes,
+      // Opened active, so the reach leg starts immediately: 5 minutes to tap the
+      // assigned destination, then expiresAfterMinutes to return.
+      reachMinutes: DEFAULT_REACH_MINUTES,
     });
 
     return {

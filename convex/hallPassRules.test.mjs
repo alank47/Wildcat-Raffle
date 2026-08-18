@@ -192,14 +192,49 @@ console.log("\nElapsed time");
 
 console.log("\nOverdue");
 {
-  const p = { ...base, state: "out", approvedAt: T(0), outAt: T(1) };
-  check("not overdue inside the window", !isOverdue(p, T(9)));
-  check("overdue past it", isOverdue(p, T(11)));
+  // The return leg is timed from the destination tap (outAt), not from approval,
+  // so tapping in at T(1) with a 10-minute window is overdue at T(1)+11, not
+  // T(0)+11.
+  const p = { ...base, state: "out", approvedAt: T(0), outAt: T(1), expiresAfterMinutes: 10 };
+  check("not overdue inside the return window", !isOverdue(p, T(10)));
+  check("overdue past the return window", isOverdue(p, T(12)));
   check(
     "a returned pass is never overdue, however long it took",
     !isOverdue({ ...base, state: "returned", approvedAt: T(0), returnedAt: T(90) }, T(200)),
   );
   check("a pass nobody approved is not overdue", !isOverdue({ ...base, state: "requested" }, T(200)));
+}
+
+console.log("\nTwo-phase timer: 5 to reach, a fresh window to return");
+{
+  // REACH leg. Timed from approval, bounded by reachMinutes, NOT by the longer
+  // return window. This is "get to where you are going, or you are overdue".
+  const reaching = { ...base, state: "active", approvedAt: T(0), reachMinutes: 5, expiresAfterMinutes: 10 };
+  check("not overdue while inside the 5-minute reach window", !isOverdue(reaching, T(4)));
+  check("overdue once 5 minutes pass with no destination tap", isOverdue(reaching, T(6)));
+  check(
+    "reach overdue keys off reachMinutes, not the return window",
+    isOverdue(reaching, T(6)) && !isOverdue({ ...reaching, reachMinutes: 10 }, T(6)),
+  );
+
+  // RETURN leg. Tapping the destination starts a fresh window from outAt, so a
+  // student who used the whole reach window still gets the full time to return.
+  const late = { ...base, state: "out", approvedAt: T(0), outAt: T(5), reachMinutes: 5, expiresAfterMinutes: 10 };
+  check("arriving at the last second does not eat the return window", !isOverdue(late, T(14)));
+  check("the return window is timed from the tap", isOverdue(late, T(16)));
+  check(
+    "the sweep respects the return leg too, from the tap plus grace",
+    !isAbandoned(late, T(5 + 10 + EXPIRY_GRACE_MINUTES)) &&
+      isAbandoned(late, T(5 + 10 + EXPIRY_GRACE_MINUTES + 1)),
+  );
+
+  // Backward compatibility. A row written before reachMinutes existed falls back
+  // to the single window, so its timing is exactly what it was.
+  const legacy = { ...base, state: "active", approvedAt: T(0), expiresAfterMinutes: 10 };
+  check(
+    "a legacy pass with no reach window keeps its single 10-minute timing",
+    !isOverdue(legacy, T(9)) && isOverdue(legacy, T(11)),
+  );
 }
 
 console.log("\nOne live pass at a time");
