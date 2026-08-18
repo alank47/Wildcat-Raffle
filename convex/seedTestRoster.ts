@@ -17,8 +17,12 @@ import { v } from "convex/values";
  * student has exactly one class and it is this teacher's.
  *
  * TWO CAVEATS.
- *  1. Bell schedules must be seeded (seedBellSchedules:seedWestbrook) or there is
- *     no "current period" to match and every request is refused.
+ *  1. A TEST account (every roster row carries the TESTROSTER marker) bypasses
+ *     the "no current bell period" cutoff in resolveScheduledOrigin: it falls
+ *     back to the lowest seeded period so the student can request a pass at any
+ *     time, off-hours included. Real students still need a live bell period
+ *     (seedBellSchedules:seedWestbrook). This seed also ensures the test teacher
+ *     has one classroom tag, without which a request fails at "no classroom tag".
  *  2. psRoster is replaced WHOLESALE by a PowerSchool roster sync, so a sync will
  *     delete these rows. They carry schoolId "TESTROSTER" so this seed only ever
  *     removes its OWN rows (never a real schedule) and can be re-run to restore.
@@ -43,7 +47,7 @@ export const seedLawrencebTest = internalMutation({
 
     // Fail loudly if the teacher address is wrong. A test roster pointed at a
     // teacher the app cannot match to a real sign-in routes every pass into a
-    // void — the student would get "waiting for approval" that no one can see.
+    // void , the student would get "waiting for approval" that no one can see.
     const teacher = await ctx.db
       .query("teachers")
       .withIndex("by_email", (q) => q.eq("email", teacherEmail))
@@ -124,20 +128,64 @@ export const seedLawrencebTest = internalMutation({
       created++;
     }
 
+    // The origin ROOM. A request resolves the teacher from the roster, then the
+    // room from a classroom tag tied to that teacher (pickClassroomTag). Without
+    // one, every test request fails at "no classroom tag" even with a perfect
+    // roster. Ensure exactly one active classroom tag for the test teacher:
+    // reuse an existing one so we never create the ambiguity pickClassroomTag
+    // refuses, and create the test tag only when the teacher has none.
+    const teacherTags = await ctx.db
+      .query("tapLocations")
+      .withIndex("by_teacherEmail", (q) => q.eq("teacherEmail", teacherEmail))
+      .take(8);
+    let classroomTag = teacherTags.find((t) => t.active) ?? null;
+    let tagCreated = false;
+    if (!classroomTag) {
+      const slug =
+        "test-classroom-" +
+        (teacherEmail.split("@")[0] || "teacher").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      const bySlug = await ctx.db
+        .query("tapLocations")
+        .withIndex("by_slug", (q) => q.eq("slug", slug))
+        .unique();
+      if (bySlug) {
+        await ctx.db.patch(bySlug._id, {
+          active: true,
+          kind: "classroom",
+          teacherEmail,
+          name: `Test Classroom (${teacher.name})`,
+        });
+        classroomTag = await ctx.db.get(bySlug._id);
+      } else {
+        const id = await ctx.db.insert("tapLocations", {
+          slug,
+          name: `Test Classroom (${teacher.name})`,
+          kind: "classroom" as const,
+          active: true,
+          createdAt: now,
+          teacherEmail,
+        });
+        classroomTag = await ctx.db.get(id);
+        tagCreated = true;
+      }
+    }
+
     return {
       ok: true,
       studentEmail,
       teacherEmail,
       teacherName: teacher.name,
       studentName: `${firstName} ${lastName}`,
+      classroomTag: classroomTag ? { slug: classroomTag.slug, name: classroomTag.name } : null,
+      classroomTagCreated: tagCreated,
       mealPin: mealPin,
       mealPinNote: student ? undefined : "No students record matched this email, so no meal PIN was set. The student must sign in once first.",
       removed,
       created,
       note:
         "A PowerSchool roster sync replaces psRoster wholesale and will clear " +
-        "these TESTROSTER rows; re-run this to restore. Requires bell schedules " +
-        "to be seeded for a current period to match.",
+        "these TESTROSTER rows; re-run this to restore. This account bypasses the " +
+        "'no current bell period' cutoff, so it can request a pass at any time.",
     };
   },
 });

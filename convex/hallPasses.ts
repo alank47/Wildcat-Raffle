@@ -58,6 +58,16 @@ import { normalizeSlug } from "./tapSlug";
 const DEFAULT_MINUTES = 10;
 
 /**
+ * The schoolId marker seedTestRoster.ts stamps on every test roster row. A
+ * student whose ENTIRE timetable carries it is a test account, and
+ * resolveScheduledOrigin lets that account request a pass at any time, bypassing
+ * the "no bell period right now" cutoff so the request flow can be exercised
+ * off-hours. Kept in sync with seedTestRoster.ts by hand; those are the only two
+ * readers, and clearing the seed removes every row that carries it.
+ */
+const TEST_ROSTER_MARKER = "TESTROSTER";
+
+/**
  * How many of a student's most recent passes any handler reads.
  *
  * NOBODY NEEDS THE WHOLE HISTORY, and reading it is an outage on a timer. Every
@@ -153,13 +163,13 @@ export async function resolveScheduledOrigin(
   nowIso: string,
 ): Promise<OriginResult> {
   const bells = await bellContext(ctx, nowIso);
-  if (!bells.ok || !bells.period) {
-    return { ok: false, code: bells.code, reason: bells.reason };
-  }
 
   // The SAME join key the rest of the portal uses: the address the token
   // actually proves, never a number derived from the app's own record. See
   // views_app.myStudentView for what the other key did.
+  //
+  // Resolved BEFORE the bell period is judged, because whether a missing period
+  // may be overridden depends on whose timetable this is.
   const email = sisEmailKey(student);
   if (!email.ok) {
     return { ok: false, code: "no-student-email", reason: email.reason };
@@ -180,8 +190,30 @@ export async function resolveScheduledOrigin(
     };
   }
 
+  // The period a request resolves against. Normally the live bell period.
+  //
+  // TEST-ACCOUNT BYPASS. A student whose WHOLE timetable is the TESTROSTER seed
+  // exists to exercise the request flow, not to be governed by the wall clock.
+  // For them, when there is no live bell period (after school, a weekend, an
+  // untimed moment), fall back to the lowest seeded period so a request always
+  // resolves to the test teacher. This fires ONLY when every roster row carries
+  // the test marker, so a real student is never affected, and it disappears the
+  // moment the seed is cleared (seedTestRoster:clearLawrencebTest).
+  let period: string;
+  if (bells.ok && bells.period) {
+    period = bells.period.label;
+  } else if (rows.every((r) => r.schoolId === TEST_ROSTER_MARKER)) {
+    const testPeriods = rows
+      .map((r) => String(r.period ?? "").trim())
+      .filter(Boolean)
+      .sort();
+    period = testPeriods[0] || "1";
+  } else {
+    return { ok: false, code: bells.code, reason: bells.reason };
+  }
+
   const section = resolveCurrentSection(rows, {
-    period: bells.period.label,
+    period,
     cycleDay: bells.cycleDay,
     schoolCycleDays: bells.schoolCycleDays,
   });
