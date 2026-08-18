@@ -17596,11 +17596,32 @@
                 };
             }
 
+            /* ---- The clock ------------------------------------------
+               A student glances at this in a corridor. What they need is
+               how long they have LEFT, in the shape a clock has: 04:12.
+               "27.567983333333334 min" is a number the server happened to
+               compute, printed at a child.
+
+               Counted here, from the timestamps, so it moves on its own.
+               The card is re-fetched every few seconds to catch a state
+               change; the digits cannot wait that long to be right. */
+            const startMs = wpPassStartMs(hp);
+            const limitMin = (typeof hp.expiresAfterMinutes === 'number' && isFinite(hp.expiresAfterMinutes))
+                ? hp.expiresAfterMinutes
+                : null;
+            const clockAttrs =
+                ' data-wp-clock="1"' +
+                ' data-start="' + (startMs === null ? '' : startMs) + '"' +
+                ' data-limit="' + (limitMin === null ? '' : limitMin) + '"';
+            const first = wpClockFace(startMs, limitMin);
+
             return {
                 label: 'Hall Pass',
-                lead: mins + ' min',
+                lead: first.value + ' ' + first.unit,
                 face: hp.overdue ? WP_FACE.passLate : WP_FACE.passOn,
-                body: '<p class="wp-big">' + wpEsc(mins) + '<span>min out</span></p>' +
+                body: '<p class="wp-big"' + clockAttrs + '><span class="wp-clock-value">' +
+                      wpEsc(first.value) + '</span><span class="wp-clock-unit">' +
+                      wpEsc(first.unit) + '</span></p>' +
                       (state === 'active' && sentTo
                           ? wpEmpty('You were sent to ' + sentTo + '. Tap the tag there to start your pass.')
                           : '') +
@@ -17793,8 +17814,90 @@
             return [hp.id, hp.state, hp.sentTo || ''].join('|');
         }
 
+        /* ============================================================
+           THE PASS CLOCK.
+
+           Time LEFT while the pass is good, time OVER once it is not.
+           Both as mm:ss, because that is the shape a clock has and a
+           child reading it in a corridor should not have to parse a
+           decimal. Ticked in the page so it moves without a refresh.
+           ============================================================ */
+
+        /** mm:ss, and h:mm:ss only if a pass has somehow run past an hour. */
+        function wpMMSS(totalSeconds) {
+            var t = Math.max(0, Math.round(totalSeconds));
+            var h = Math.floor(t / 3600);
+            var m = Math.floor((t % 3600) / 60);
+            var sec = t % 60;
+            var pad = function (n) { return String(n).padStart(2, '0'); };
+            return h > 0 ? h + ':' + pad(m) + ':' + pad(sec) : pad(m) + ':' + pad(sec);
+        }
+
+        /* When the clock started, in epoch ms. The tap is what starts a pass,
+           but the server measures from approval, so approval is the truth here
+           and the two must not disagree. Falls back to the server's figure so
+           the card still counts against a deployment that has not shipped the
+           timestamp yet. */
+        function wpPassStartMs(hp) {
+            if (!hp) return null;
+            var stamp = hp.approvedAt || hp.outAt || null;
+            if (stamp) {
+                var parsed = Date.parse(stamp);
+                if (isFinite(parsed)) return parsed;
+            }
+            if (typeof hp.elapsedMinutes === 'number' && isFinite(hp.elapsedMinutes)) {
+                return Date.now() - hp.elapsedMinutes * 60000;
+            }
+            return null;
+        }
+
+        /* The two words this card can say. Counting down is the useful one:
+           a student wants to know how long they have, not how long they have
+           used. Once that runs out the same clock counts up, because "over by
+           2:14" is the thing that gets them moving. */
+        function wpClockFace(startMs, limitMin) {
+            if (startMs === null) return { value: '--:--', unit: 'out' };
+            var elapsedSec = (Date.now() - startMs) / 1000;
+            if (limitMin === null) return { value: wpMMSS(elapsedSec), unit: 'out' };
+            var leftSec = limitMin * 60 - elapsedSec;
+            return leftSec >= 0
+                ? { value: wpMMSS(leftSec), unit: 'left' }
+                : { value: wpMMSS(-leftSec), unit: 'over' };
+        }
+
+        /* Only the digits are rewritten. Re-dealing the card once a second
+           would close whatever the student had open. */
+        function wpTickClocks() {
+            var nodes = document.querySelectorAll('[data-wp-clock]');
+            for (var i = 0; i < nodes.length; i++) {
+                var node = nodes[i];
+                var rawStart = node.getAttribute('data-start');
+                var rawLimit = node.getAttribute('data-limit');
+                var startMs = rawStart === '' ? null : parseInt(rawStart, 10);
+                var limitMin = rawLimit === '' ? null : parseFloat(rawLimit);
+                if (startMs !== null && !isFinite(startMs)) startMs = null;
+                if (limitMin !== null && !isFinite(limitMin)) limitMin = null;
+
+                var face = wpClockFace(startMs, limitMin);
+                var valueEl = node.querySelector('.wp-clock-value');
+                var unitEl = node.querySelector('.wp-clock-unit');
+                if (valueEl && valueEl.textContent !== face.value) valueEl.textContent = face.value;
+                if (unitEl && unitEl.textContent !== face.unit) unitEl.textContent = face.unit;
+            }
+        }
+
+        var wpClockTimer = null;
+        function wpStartClocks() {
+            if (wpClockTimer) return;
+            wpTickClocks();
+            wpClockTimer = setInterval(wpTickClocks, 1000);
+        }
+
         function wpStartPassWatch() {
             wpStopPassWatch();
+            // The digits move on their own from here; the poll below only
+            // watches for the pass CHANGING STATE.
+            wpStartClocks();
             wpWatchTimer = setInterval(async function () {
                 const view = wpById('studentPassView');
                 if (!view || view.classList.contains('hidden')) { wpStopPassWatch(); return; }
@@ -18537,7 +18640,7 @@
                 (action ? '<p class="wp-tap-meta">' +
                     (hp.elapsedMinutes === null || hp.elapsedMinutes === undefined
                         ? 'Your pass is not being timed yet.'
-                        : 'Out for ' + hp.elapsedMinutes + ' min.') + '</p>' : '') +
+                        : 'Out for ' + wpMMSS((hp.elapsedMinutes || 0) * 60) + '.') + '</p>' : '') +
                 '<div class="wp-tap-actions">' +
                   '<button type="button" class="wp-btn wp-btn-ghost" onclick="closeTapResult()">' +
                     (action ? 'Not me' : 'My cards') + '</button>' +

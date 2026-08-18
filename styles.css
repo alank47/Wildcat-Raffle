@@ -3864,6 +3864,18 @@ body.wp-open { overflow: hidden; }
     opacity: .66;
     margin-left: 4px;
 }
+/* The clock splits into two spans so the digits can be rewritten every
+   second without touching the word beside them. The digits are the headline,
+   so they take the parent's size back off the generic span rule above. */
+.wp-big .wp-clock-value {
+    font-size: inherit;
+    font-weight: inherit;
+    letter-spacing: inherit;
+    opacity: 1;
+    margin-left: 0;
+    /* mm:ss must not shuffle sideways as the seconds tick. */
+    font-variant-numeric: tabular-nums;
+}
 
 .wp-foot {
     padding-top: 14px;
