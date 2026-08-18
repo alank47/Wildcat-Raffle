@@ -20,6 +20,7 @@ import {
   isStaleRequest,
   isTerminal,
   hasLivePass,
+  passClock,
   passesTakenOnDay,
   schoolDayKey,
   shouldExpire,
@@ -235,6 +236,44 @@ console.log("\nTwo-phase timer: 5 to reach, a fresh window to return");
     "a legacy pass with no reach window keeps its single 10-minute timing",
     !isOverdue(legacy, T(9)) && isOverdue(legacy, T(11)),
   );
+}
+
+console.log("\npassClock: the card ticks the CURRENT leg, so it matches overdue");
+{
+  // Reach leg: anchor is approval, window is reachMinutes.
+  const reaching = { ...base, state: "active", approvedAt: T(0), reachMinutes: 5, expiresAfterMinutes: 10 };
+  const rc = passClock(reaching);
+  check("reach leg anchors on approval", rc.startAt === T(0));
+  check("reach leg window is the reach window, not the return one", rc.limitMinutes === 5);
+
+  // Return leg: anchor is the destination tap, window is the return window.
+  const out = { ...base, state: "out", approvedAt: T(0), outAt: T(4), reachMinutes: 5, expiresAfterMinutes: 10 };
+  const oc = passClock(out);
+  check("return leg anchors on the destination tap, not approval", oc.startAt === T(4));
+  check("return leg window is the return window", oc.limitMinutes === 10);
+
+  // Not a live pass: no clock at all, so the card does not invent one.
+  check("a requested pass has no clock", passClock({ ...base, state: "requested" }).limitMinutes === null);
+  check("a returned pass has no clock", passClock({ ...base, state: "returned", approvedAt: T(0), returnedAt: T(6) }).limitMinutes === null);
+
+  // The card's countdown flips to "over" the same instant isOverdue goes true:
+  // limit is the phase window and start is the phase anchor, which is exactly
+  // what isOverdue compares. This is the sync the fix exists to guarantee.
+  const c = passClock(out);
+  const overAt = Date.parse(c.startAt) + c.limitMinutes * 60000;
+  check("passClock's deadline is isOverdue's threshold", !isOverdue(out, new Date(overAt).toISOString()) && isOverdue(out, new Date(overAt + 1000).toISOString()));
+}
+
+console.log("\nStaff cleared timer: no limit, never overdue, never swept");
+{
+  const cleared = { ...base, state: "out", approvedAt: T(0), outAt: T(1), expiresAfterMinutes: 10, timerCleared: true };
+  check("a cleared timer is never overdue, however long", !isOverdue(cleared, T(100000)));
+  check("a cleared timer is never swept, so staff must close it", !isAbandoned(cleared, T(100000)));
+  check("a cleared pass reports no window, so the card counts up", passClock(cleared).limitMinutes === null);
+  check("but it still keeps its anchor, so the card can show time out", passClock(cleared).startAt === T(1));
+  // Clearing it does not change that it is a LIVE pass blocking new requests.
+  check("a cleared timer is still a live pass", hasLivePass([cleared]));
+  check("clearing a corrupt-clock pass still suppresses overdue", !isOverdue({ ...cleared, outAt: "not-a-date" }, T(5)));
 }
 
 console.log("\nOne live pass at a time");

@@ -826,6 +826,65 @@ export const forceClose = mutation({
 });
 
 /**
+ * Staff RESETS the timer on a live pass: restart the current leg's clock so the
+ * student gets a fresh window, and lift any cleared-timer flag.
+ *
+ * On the reach leg (active, not yet tapped out) that is a fresh reachMinutes from
+ * now; on the return leg (out) a fresh return window from the moment of reset.
+ * The pass stays in the same state, at the same origin and destination; only its
+ * clock moves. Refused on a pass that is not live, because there is no running
+ * timer to reset on one that is requested, denied, cancelled, expired or returned.
+ */
+export const resetTimer = mutation({
+  args: { passId: v.id("hallPasses") },
+  handler: async (ctx, { passId }) => {
+    await requireStaff(ctx);
+    const pass = await ctx.db.get(passId);
+    if (!pass) throw new ConvexError("No such pass.");
+    if (pass.state !== "active" && pass.state !== "out") {
+      throw new ConvexError(
+        `This pass is ${pass.state}, so there is no running timer to reset.`,
+      );
+    }
+    const now = new Date().toISOString();
+    // undefined UNSETS the field in Convex, which is how a reset also lifts a
+    // prior clearTimer: the pass goes back to being timed from now.
+    const patch: Record<string, unknown> = { timerCleared: undefined };
+    if (pass.state === "active") {
+      patch.approvedAt = now;
+      patch.reachMinutes = DEFAULT_REACH_MINUTES;
+    } else {
+      patch.outAt = now;
+    }
+    await ctx.db.patch(passId, patch as any);
+    return { ok: true as const, state: pass.state };
+  },
+});
+
+/**
+ * Staff CLEARS the timer on a live pass: it stays open and closeable but is never
+ * overdue and never taken by the nightly sweep. For a trip whose length is
+ * nobody's to predict, a nurse visit or an office call. Undo with resetTimer, or
+ * close it with forceClose; a return tap still closes it normally. Refused on a
+ * pass that is not live.
+ */
+export const clearTimer = mutation({
+  args: { passId: v.id("hallPasses") },
+  handler: async (ctx, { passId }) => {
+    await requireStaff(ctx);
+    const pass = await ctx.db.get(passId);
+    if (!pass) throw new ConvexError("No such pass.");
+    if (pass.state !== "active" && pass.state !== "out") {
+      throw new ConvexError(
+        `This pass is ${pass.state}, so there is no timer to clear.`,
+      );
+    }
+    await ctx.db.patch(passId, { timerCleared: true });
+    return { ok: true as const, state: pass.state };
+  },
+});
+
+/**
  * The nightly sweep. Closes passes nobody is coming back to.
  *
  * `internalMutation`, so it is reachable from crons.ts and from nothing a
@@ -1335,6 +1394,9 @@ export const myClassBoard = query({
           approvedAt: p.approvedAt ?? null,
           outAt: p.outAt ?? null,
           expiresAfterMinutes: p.expiresAfterMinutes,
+          // Staff cleared the limit: the board shows "no limit" and offers to
+          // restore rather than reset, and overdue is already false above.
+          timerCleared: p.timerCleared ?? false,
         };
       }),
     );

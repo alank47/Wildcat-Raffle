@@ -482,6 +482,9 @@ export default defineSchema({
     // Optional so rows written before the two-phase timer keep their original
     // single-window timing (they fall back to expiresAfterMinutes).
     reachMinutes: v.optional(v.number()),
+    // Staff cleared the time limit: the pass stays live and closeable but is
+    // never overdue and never swept. Set by clearTimer, unset by resetTimer.
+    timerCleared: v.optional(v.boolean()),
   })
     .index("by_student", ["studentId"])
     .index("by_state", ["state"])

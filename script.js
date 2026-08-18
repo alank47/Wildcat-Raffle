@@ -17606,9 +17606,19 @@
                The card is re-fetched every few seconds to catch a state
                change; the digits cannot wait that long to be right. */
             const startMs = wpPassStartMs(hp);
-            const limitMin = (typeof hp.expiresAfterMinutes === 'number' && isFinite(hp.expiresAfterMinutes))
-                ? hp.expiresAfterMinutes
-                : null;
+            // The CURRENT leg's window, phase-aware from the server: reach while
+            // active, return while out, and explicitly null when staff cleared
+            // the timer (the card then counts up and never says "over"). null is
+            // distinguished from a missing field: an OLD payload has no
+            // clockLimitMinutes and falls back to expiresAfterMinutes; the server
+            // sending null is a decision to show no window and must be honoured.
+            const limitMin = (hp.clockLimitMinutes === null)
+                ? null
+                : (typeof hp.clockLimitMinutes === 'number' && isFinite(hp.clockLimitMinutes))
+                    ? hp.clockLimitMinutes
+                    : ((typeof hp.expiresAfterMinutes === 'number' && isFinite(hp.expiresAfterMinutes))
+                        ? hp.expiresAfterMinutes
+                        : null);
             const clockAttrs =
                 ' data-wp-clock="1"' +
                 ' data-start="' + (startMs === null ? '' : startMs) + '"' +
@@ -17833,17 +17843,32 @@
             return h > 0 ? h + ':' + pad(m) + ':' + pad(sec) : pad(m) + ':' + pad(sec);
         }
 
-        /* When the clock started, in epoch ms. The tap is what starts a pass,
-           but the server measures from approval, so approval is the truth here
-           and the two must not disagree. Falls back to the server's figure so
-           the card still counts against a deployment that has not shipped the
-           timestamp yet. */
+        /* When the CURRENT leg's clock started, in epoch ms, corrected for device
+           clock skew. The server hands down clockStartAt (approval while heading
+           out, the destination tap while heading back) so the card ticks against
+           the same anchor the server judges overdue on, and serverTime so a wrong
+           phone clock cannot pull the two apart. Falls back to approvedAt for a
+           payload from before those fields shipped. */
         function wpPassStartMs(hp) {
             if (!hp) return null;
-            var stamp = hp.approvedAt || hp.outAt || null;
+            // Clock SKEW correction. The server's timestamps are in the server's
+            // clock; this ticks in the browser's. Anchoring to the server's own
+            // `now` means a wrong phone clock cannot make the countdown disagree
+            // with the server's overdue decision, which is exactly what "showing
+            // incorrect time" was: the two were only as synced as the device.
+            var skew = 0;
+            if (hp.serverTime) {
+                var sv = Date.parse(hp.serverTime);
+                if (isFinite(sv)) skew = Date.now() - sv;
+            }
+            // The CURRENT leg's anchor: approval while heading out, the destination
+            // tap while heading back. clockStartAt carries whichever it is, so the
+            // card matches the two-phase server timer. Older payloads that predate
+            // the field fall back to approvedAt, then outAt.
+            var stamp = hp.clockStartAt || hp.approvedAt || hp.outAt || null;
             if (stamp) {
                 var parsed = Date.parse(stamp);
-                if (isFinite(parsed)) return parsed;
+                if (isFinite(parsed)) return parsed + skew;
             }
             if (typeof hp.elapsedMinutes === 'number' && isFinite(hp.elapsedMinutes)) {
                 return Date.now() - hp.elapsedMinutes * 60000;
@@ -19386,16 +19411,32 @@
                     p.assignedDestination ? '→ ' + p.assignedDestination : '',
                 ].filter(Boolean).join('  ·  ');
 
-                const actions = state === 'requested'
-                    ? '<button onclick="approveClassPass(\'' + esc(p.id) + '\')" class="btn" style="font-size:12px;padding:6px 12px;">Approve</button>' +
-                      ' <button onclick="denyClassPass(\'' + esc(p.id) + '\')" style="margin-left:6px;padding:6px 12px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Deny</button>'
-                    : '<button onclick="closeClassPass(\'' + esc(p.id) + '\')" style="padding:6px 12px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Close</button>';
+                const ghostBtn = 'padding:6px 12px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;';
+                let actions;
+                if (state === 'requested') {
+                    actions =
+                        '<button onclick="approveClassPass(\'' + esc(p.id) + '\')" class="btn" style="font-size:12px;padding:6px 12px;">Approve</button>' +
+                        ' <button onclick="denyClassPass(\'' + esc(p.id) + '\')" style="margin-left:6px;' + ghostBtn + '">Deny</button>';
+                } else if (state === 'active' || state === 'out') {
+                    // Live pass: staff can reset the current leg's clock, drop the
+                    // limit entirely, or close it. A cleared timer offers Restore
+                    // (which is a reset) instead of another Reset/No limit pair.
+                    const timerBtns = p.timerCleared
+                        ? '<button onclick="resetClassPassTimer(\'' + esc(p.id) + '\')" style="' + ghostBtn + '">Restore timer</button>'
+                        : '<button onclick="resetClassPassTimer(\'' + esc(p.id) + '\')" style="' + ghostBtn + '">Reset timer</button>' +
+                          ' <button onclick="clearClassPassTimer(\'' + esc(p.id) + '\')" style="margin-left:6px;' + ghostBtn + '">No limit</button>';
+                    actions = timerBtns +
+                        ' <button onclick="closeClassPass(\'' + esc(p.id) + '\')" style="margin-left:6px;' + ghostBtn + '">Close</button>';
+                } else {
+                    actions = '<button onclick="closeClassPass(\'' + esc(p.id) + '\')" style="' + ghostBtn + '">Close</button>';
+                }
 
                 return '<tr style="' + (p.overdue ? 'background:rgba(179,57,47,.07);' : '') + '">' +
                   '<td><b>' + esc(p.studentName) + '</b>' +
                     (p.reason ? '<div style="font-size:12px;color:#666;">' + esc(p.reason) + '</div>' : '') + '</td>' +
                   '<td style="font-size:12.5px;">' + esc(where || '—') + '</td>' +
-                  '<td>' + esc(state) + (p.overdue ? ' <b style="color:#B3392F;">overdue</b>' : '') + '</td>' +
+                  '<td>' + esc(state) + (p.overdue ? ' <b style="color:#B3392F;">overdue</b>' : '') +
+                      (p.timerCleared ? ' <b style="color:#2F67A7;">no limit</b>' : '') + '</td>' +
                   '<td>' + (mins === null ? '<span style="color:#999;">not started</span>' : esc(mins) + ' min') + '</td>' +
                   '<td style="white-space:nowrap;">' + actions + '</td>' +
                 '</tr>';
@@ -19557,11 +19598,38 @@
             } catch (e) { alert(e.message); }
         }
 
+        // Restart the current leg's clock (fresh window), and lift any "no limit".
+        // No prompt: it is a one-tap correction a teacher makes while watching the
+        // board, not a decision that needs an argument.
+        async function resetClassPassTimer(passId) {
+            const ctx = wcBellSession();
+            if (!ctx) return;
+            try {
+                await ctx.auth.convexMutation('hallPasses:resetTimer', { passId: passId }, ctx.session.idToken);
+                await renderMyClassBoard();
+            } catch (e) { alert(e.message); }
+        }
+
+        // Drop the time limit: the pass stays open, never overdue, never swept,
+        // until a tag tap or a Close ends it. Confirmed, because it turns off the
+        // one thing that guarantees a forgotten pass cannot block the student.
+        async function clearClassPassTimer(passId) {
+            const ctx = wcBellSession();
+            if (!ctx) return;
+            if (!confirm('Remove the time limit on this pass? It will stay open with no countdown until the student taps back in or you close it.')) return;
+            try {
+                await ctx.auth.convexMutation('hallPasses:clearTimer', { passId: passId }, ctx.session.idToken);
+                await renderMyClassBoard();
+            } catch (e) { alert(e.message); }
+        }
+
         window.renderMyClassBoard = renderMyClassBoard;
         window.openPassForStudent = openPassForStudent;
         window.approveClassPass = approveClassPass;
         window.denyClassPass = denyClassPass;
         window.closeClassPass = closeClassPass;
+        window.resetClassPassTimer = resetClassPassTimer;
+        window.clearClassPassTimer = clearClassPassTimer;
 
         // ---------------------------------------------------------------
         // BELL SCHEDULE. Settings -> Bell Schedule.

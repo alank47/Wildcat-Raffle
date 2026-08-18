@@ -82,6 +82,14 @@ export type Pass = {
    * their original one-window timing; new passes set it at approval.
    */
   reachMinutes?: number;
+  /**
+   * Staff removed the time limit on this pass. It stays live and closeable, but
+   * is never overdue and is never taken by the sweep: an open-ended trip (a nurse
+   * visit, an office call) that a teacher will close by hand or a tap will close.
+   * Set by clearTimer, undone by resetTimer. hasLivePass still counts it, so the
+   * student cannot open a second pass while it is open, which is the point.
+   */
+  timerCleared?: boolean;
 };
 
 export type TapResult =
@@ -139,6 +147,28 @@ function phaseElapsedMinutes(pass: Pass, now: string): number | null {
   const value = minutes(anchor, now);
   if (!Number.isFinite(value)) return null;
   return Math.max(0, value);
+}
+
+/**
+ * The clock a pass card should DISPLAY: the current leg's anchor and window, so
+ * a student's countdown ticks against exactly what isOverdue judges on the
+ * server. Returned as raw values (an ISO anchor and a minute count) rather than
+ * a computed remaining, because the client ticks the seconds itself and must
+ * anchor to the SERVER's clock, not the phone's. See the pass card in script.js.
+ *
+ * A null window means "not being timed": no live leg (terminal or requested), or
+ * the timer was cleared by staff. The card then counts up instead of down.
+ */
+export function passClock(pass: Pass): { startAt: string | null; limitMinutes: number | null } {
+  if (pass.state !== "active" && pass.state !== "out") {
+    return { startAt: null, limitMinutes: null };
+  }
+  if (pass.timerCleared) {
+    // Cleared: still show how long they have been out (anchor stands), but with
+    // no window, so the card counts up and never says "over".
+    return { startAt: phaseAnchor(pass) ?? null, limitMinutes: null };
+  }
+  return { startAt: phaseAnchor(pass) ?? null, limitMinutes: phaseWindowMinutes(pass) };
 }
 
 /**
@@ -206,6 +236,10 @@ export function elapsedMinutes(pass: Pass, now: string): number | null {
  */
 export function isOverdue(pass: Pass, now: string): boolean {
   if (pass.state !== "active" && pass.state !== "out") return false;
+  // A cleared timer is never overdue, by staff decision. Checked before the
+  // corrupt-clock branch on purpose: staff chose to stop timing this pass, so it
+  // must not sort to the top of the board as an exception either.
+  if (pass.timerCleared) return false;
   if (hasCorruptClock(pass)) return true;
   // Phase-aware: on the way out, overdue means past the reach window from
   // approval; once out, past the return window from the destination tap. NOT
@@ -445,6 +479,10 @@ export function isAbandoned(
   graceMinutes: number = EXPIRY_GRACE_MINUTES,
 ): boolean {
   if (pass.state !== "active" && pass.state !== "out") return false;
+  // A cleared timer is open-ended BY STAFF DECISION: the sweep leaves it alone.
+  // It is closed by a return tap or a staff forceClose, never by the clock. The
+  // teacher who cleared it owns closing it; that is the meaning of "no limit".
+  if (pass.timerCleared) return false;
   // A pass nobody can time is a pass nobody can close by any other route: every
   // comparison against an unparseable date is false, so without this branch the
   // sweep skips it forever and the student stays blocked for good.

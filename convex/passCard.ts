@@ -1,6 +1,6 @@
 import { query } from "./_generated/server";
 import { requireStudentSelf } from "./identity";
-import { elapsedMinutes, isOverdue, isTerminal } from "./hallPassRules";
+import { elapsedMinutes, isOverdue, isTerminal, passClock } from "./hallPassRules";
 import { bellContext } from "./bellSchedules";
 import { mealFromPeriodLabel, mealLabel, formatClock } from "./scheduleRules";
 
@@ -152,6 +152,23 @@ export const mine = query({
             elapsedMinutes: elapsedMinutes(live as any, now),
             overdue: isOverdue(live as any, now),
             expiresAfterMinutes: live.expiresAfterMinutes,
+
+            /*
+             * THE CLOCK THE CARD TICKS, and the reason it is not just approvedAt
+             * plus expiresAfterMinutes. The timer is two-phase: heading out it
+             * runs from approval against reachMinutes, heading back it runs from
+             * the destination tap against the return window. clockStartAt is the
+             * CURRENT leg's anchor and clockLimitMinutes its window, so the
+             * countdown on the phone flips to "over" the same second isOverdue
+             * goes true here. A cleared timer returns a null window and the card
+             * counts up. serverTime rides along so the card can subtract a wrong
+             * device clock: without it the two were only ever as synced as the
+             * phone, which is what read as the pass "showing incorrect time".
+             */
+            clockStartAt: passClock(live as any).startAt,
+            clockLimitMinutes: passClock(live as any).limitMinutes,
+            timerCleared: live.timerCleared ?? false,
+            serverTime: now,
 
             /*
              * When it was approved, so the card can COUNT rather than print a
