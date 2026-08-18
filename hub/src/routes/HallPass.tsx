@@ -19,6 +19,7 @@ import {
   Surface,
   Unavailable,
 } from "@/ui/primitives";
+import { formatClock, useElapsedSeconds } from "@/lib/elapsed";
 
 /**
  * Asking to leave the room.
@@ -256,7 +257,17 @@ function OpenPass({
      you watch, so they are the one that should move when they do — and should
      sit still when a re-render arrives carrying the same figure. */
   const reduced = useReducedMotion();
-  const ticking = useArrival("pass.elapsed", pass.elapsed);
+  /*
+   * Counted here rather than read off the server. The server's number is
+   * right the instant it is computed and frozen from then on, which is why
+   * this screen sat still until someone pulled to refresh.
+   */
+  const seconds = useElapsedSeconds(pass.startedAt, pass.elapsed);
+  const clock = seconds === null ? null : formatClock(seconds);
+
+  // The entrance animation belongs to the MINUTE turning over, not the
+  // second: replaying it once a second would be a strobe.
+  const ticking = useArrival("pass.elapsed", seconds === null ? null : Math.floor(seconds / 60));
 
   const cancel = async () => {
     if (!pass.id) return;
@@ -308,16 +319,16 @@ function OpenPass({
                  element, and re-adding a class React never removed does nothing.
                  `ticking` then decides whether the class is there at all, so
                  coming back to this screen with the same number on it is silent. */
-              key={`elapsed-${pass.elapsed}`}
+              key={`elapsed-${seconds === null ? "none" : Math.floor(seconds / 60)}`}
               className={`mt-2 text-[34px] leading-none font-bold tabular-nums text-wp-fg ${
                 ticking && !reduced ? "wc-enter" : ""
               }`}
             >
-              {pass.elapsed === null ? "—" : pass.elapsed}
+              {clock === null ? "—" : clock}
               <span className="ml-2 text-[15px] font-normal text-wp-dim">
-                {pass.elapsed === null
-                  ? "minutes not reported"
-                  : `min out${pass.limit !== null ? ` of ${pass.limit}` : ""}`}
+                {clock === null
+                  ? "time not reported"
+                  : `out${pass.limit !== null ? ` of ${pass.limit} min` : ""}`}
               </span>
             </p>
           )}
@@ -427,6 +438,7 @@ function RequestPass({
         // Null, never 0. The pass has not been approved, so no time has been
         // spent out of class, and 0 would read as a timer that has started.
         elapsed: null,
+        startedAt: null,
         limit: null,
         cancellable: str(result.id) !== null,
         waiting: true,

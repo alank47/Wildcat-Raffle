@@ -68,7 +68,7 @@ export type CardBody =
       earned: number | null;
       spent: number | null;
     }
-  | { kind: "pass"; open: boolean; overdue: boolean; elapsed: number | null }
+  | { kind: "pass"; open: boolean; overdue: boolean; elapsed: number | null; startedAt: string | null }
   | { kind: "missing"; reason: string | null };
 
 export type WalletCard = {
@@ -93,6 +93,10 @@ export type WalletModel = {
 export type LivePassSummary = {
   overdue: boolean;
   elapsed: number | null;
+  /* When the pass was approved. The screen counts from this so the clock
+     runs without a refresh; `elapsed` stays for anything that only needs a
+     number and cannot tick. */
+  startedAt: string | null;
   limit: number | null;
 };
 
@@ -135,6 +139,7 @@ export function useCardsModel(): CardsModel {
         ? {
             overdue: hp.overdue === true,
             elapsed: count(hp.elapsedMinutes),
+            startedAt: str(hp.approvedAt) || null,
             limit: count(hp.expiresAfterMinutes),
           }
         : null;
@@ -215,6 +220,7 @@ function buildWallet(
         open: hp.available === true,
         overdue: hp.overdue === true,
         elapsed: count(hp.elapsedMinutes),
+        startedAt: str(hp.approvedAt) || null,
       },
     },
     {
@@ -564,6 +570,10 @@ export type LivePassModel = {
   state: string;
   overdue: boolean;
   elapsed: number | null;
+  /* When the pass was approved. The screen counts from this so the clock
+     runs without a refresh; `elapsed` stays for anything that only needs a
+     number and cannot tick. */
+  startedAt: string | null;
   limit: number | null;
   /** The server allows a cancel only while the pass is still `requested`. */
   cancellable: boolean;
@@ -615,6 +625,7 @@ export function useHallPassModel(): {
               state,
               overdue: hp.overdue === true,
               elapsed: count(hp.elapsedMinutes),
+            startedAt: str(hp.approvedAt) || null,
               limit: count(hp.expiresAfterMinutes),
               cancellable: state === "requested" && id !== null,
               waiting: state === "requested",
