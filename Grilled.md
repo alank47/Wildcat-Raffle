@@ -321,3 +321,10 @@ buys iOS parity plus a home-screen presence on both.
 22. Which portal surfaces ship in the app: the whole student portal, or only the
     pass wallet and tap flow?
 23. iOS NFC entitlement and provisioning profile, which gate any real-device tap.
+
+### Update 2026-08-17: open question 19 resolved
+
+Apple Developer account exists: `lawrenceb@myindmedia.org` (Myind Media). The app
+distributes under that team. Bundle id stays `org.westbrookacademy.wildcat`
+(reverse-DNS is just an identifier, registered under the Myind Media account). This
+unblocks device NFC verification and TestFlight (scope piece 05).
