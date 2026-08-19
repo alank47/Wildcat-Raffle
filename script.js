@@ -989,6 +989,12 @@
         // desk exists to work through.
         let cashReceipts = [];
 
+        // One compact record per closed school year: totals plus every
+        // student's closing balance. The full ledger for that year lives in
+        // the dated backup, not here, so this does not grow the document the
+        // app reads on every load by a year of transactions annually.
+        let cashYearArchives = [];
+
         // REMOVED: the global `wildcatCashTransactions`.
         //
         // It was declared "legacy alias, no longer written to" while two paths
@@ -2409,6 +2415,7 @@
                         window.WildcatStore.normalizeReward(r, Date.now(), currentUser || {}));
                 }
                 cashReceipts = data.cashReceipts || [];
+                cashYearArchives = data.cashYearArchives || [];
                 localTombstones = data.localTombstones || []; // NEW
                 entityTombstones = data.entityTombstones || []; // NEW
                 lastSaveTimestamp = data.lastSaveTimestamp || 0;
@@ -3633,6 +3640,7 @@
                             // until the next page load.
                             wildcatCashRewards,
                             cashReceipts,
+                            cashYearArchives,
                             loginHistory,
                             autoWeekEnabled,
                             lastAutoResetDate,
@@ -4239,6 +4247,11 @@
         // ========================================
         
         function switchSettingsSubtab(subtab) {
+            // Past year closures are only meaningful next to the button that
+            // creates them.
+            if (subtab === 'cash' && typeof renderCashYearArchives === 'function') {
+                setTimeout(renderCashYearArchives, 0);
+            }
             // Update button states
             document.querySelectorAll('.settings-subtab-button').forEach(btn => {
                 btn.classList.remove('active');
@@ -16798,8 +16811,15 @@
             if (!currentUser) return;
 
             if (tabName === 'awardCash') {
+                // Paint immediately from whatever is cached, then fetch the SIS
+                // roster and repaint. Awaiting here would leave a teacher on a
+                // blank tab for the length of a network round trip.
                 updateCashPeriodFilter();
                 updateCashTable();
+                loadTeacherRosterFromSIS().then(() => {
+                    updateCashPeriodFilter();
+                    updateCashTable();
+                });
             } else if (tabName === 'cashActivity') {
                 updateCashActivityLog();
             } else if (tabName === 'cashLeaderboard') {
@@ -23126,6 +23146,7 @@
                         <button class="tab" id="studentAccountsTabBtn" onclick="switchTab('studentAccounts')">💳 Accounts</button>
                         <button class="tab" id="cashAnalyticsTabBtn" onclick="switchTab('cashAnalytics')">📊 Analytics</button>
                         <button class="tab" id="cashAuditTabBtn" onclick="switchTab('cashAudit')">📋 Audit Log</button>
+                        <button class="tab admin-only" id="cashSettingsTabBtn" onclick="openCashSettings()">⚙️ Cash Settings</button>
                     `;
                     const modeNavEl = document.getElementById('modeNav');
                     if (modeNavEl) {
@@ -23157,6 +23178,10 @@
                     student.wildcatCashBalance = STARTING_BALANCE;
                     student.wildcatCashEarned = 0;
                     student.wildcatCashSpent = 0;
+                    // Was omitted here while every other initialiser set it, so
+                    // a student first seen on this screen had no deducted total
+                    // to show.
+                    student.wildcatCashDeducted = 0;
                     student.wildcatCashDeducted = 0;
                     student.wildcatCashTransactions = [];
                     student.wildcatCashRewardsRedeemed = [];
@@ -23233,8 +23258,11 @@
             
             // Filter students, recording what each stage removed so an empty
             // table can say WHY it is empty instead of just that it is.
-            let filteredStudents = students;
-            const funnel = { loaded: students.length, afterGrade: null, afterPeriod: null, stage: 'none' };
+            //
+            // Enrolled first: the students array holds everyone the app has
+            // ever seen, including leavers kept for their balances.
+            let filteredStudents = enrolledStudents();
+            const funnel = { loaded: filteredStudents.length, afterGrade: null, afterPeriod: null, stage: 'none' };
 
             // Apply grade filter
             if (gradeFilter) {
@@ -23242,28 +23270,35 @@
                 funnel.afterGrade = filteredStudents.length;
                 if (filteredStudents.length === 0) funnel.stage = 'grade filter';
             }
-            
-            // Apply period filter (match Raffle Mode logic)
-            if (periodFilter && currentUser.sections) {
-                // Find the selected section by sectionId
-                const section = currentUser.sections.find(s => s.sectionId === periodFilter);
-                if (section && section.students) {
-                    // Filter students using the section's student list
-                    filteredStudents = filteredStudents.filter(student => 
-                        section.students.includes(student.id)
-                    );
-                    funnel.afterPeriod = filteredStudents.length;
-                    if (filteredStudents.length === 0) funnel.stage = 'class period';
-                }
-            } else if (currentUser.role === 'teacher' && currentUser.sections && !periodFilter) {
-                // If no period selected, teachers only see students from ALL their sections
-                const allTeacherStudentIds = currentUser.sections.flatMap(s => s.students || []);
-                filteredStudents = filteredStudents.filter(student => 
-                    allTeacherStudentIds.includes(student.id)
-                );
-                funnel.afterPeriod = filteredStudents.length;
-                funnel.teacherSectionIds = allTeacherStudentIds.length;
-                if (filteredStudents.length === 0) funnel.stage = 'your class rosters';
+
+            // SIS scoping. Admins and campus aides keep the whole school; a
+            // classroom teacher sees the students psRoster says are theirs,
+            // joined on studentNumber because student.id may still be a legacy
+            // CSV value.
+            //
+            // A teacher with no SIS roster now sees NOBODY. The old code only
+            // applied its filter when currentUser.sections existed, so a
+            // teacher with none fell through to the entire school: absent data
+            // read as unrestricted.
+            const scoped = window.WildcatRoster.scopeStudents({
+                students: filteredStudents,
+                role: currentUser && currentUser.role,
+                roster: sisTeacherRoster,
+                sectionId: periodFilter || null
+            });
+            filteredStudents = scoped.students;
+            funnel.afterPeriod = filteredStudents.length;
+            funnel.scope = scoped.scope;
+            funnel.scopeReason = scoped.reason;
+            if (filteredStudents.length === 0 && funnel.stage === 'none') {
+                funnel.stage = scoped.scope === 'section' ? 'class period' : 'your class rosters';
+            }
+
+            // A failed fetch is not an empty roster. Say which happened.
+            if (!sisTeacherRoster && sisRosterState === 'failed'
+                && !window.WildcatRoster.seesEveryStudent(currentUser && currentUser.role)) {
+                funnel.scopeReason = 'Could not load your class roster: ' + (sisRosterError || 'unknown error') +
+                                     '. Reload the page to try again.';
             }
             // Admins with no period selected see all students
             
@@ -23317,16 +23352,17 @@
                 if (funnel.loaded === 0) {
                     why = 'No roster is loaded yet. If you signed in with a username and password, ' +
                           'sign in with Microsoft instead: the roster comes from the SIS now.';
-                } else if (funnel.stage === 'your class rosters') {
-                    why = `${funnel.loaded} students are loaded, but none are on your class rosters ` +
-                          `(${funnel.teacherSectionIds || 0} student ids across your sections). ` +
-                          'Ask an admin to re-match your sections.';
+                } else if (funnel.scopeReason) {
+                    // scopeStudents already worked out which of the several
+                    // empties this is, and each one sends the reader somewhere
+                    // different. Prefer its wording over a generic restatement.
+                    why = funnel.scopeReason;
                 } else if (funnel.stage !== 'none') {
                     why = `${funnel.loaded} students are loaded, but the ${funnel.stage} matched none of them.`;
                 } else {
                     why = `${funnel.loaded} students are loaded but none reached the table.`;
                 }
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 40px; color: #999;">' +
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px; color: #999;">' +
                     '<div style="font-weight:600;margin-bottom:6px;">No students to display</div>' +
                     '<div style="font-size:13px;max-width:520px;margin:0 auto;">' + why + '</div>' +
                     '</td></tr>';
@@ -23372,6 +23408,7 @@
                     <td class="wc-money ${bal < 0 ? 'wc-money-neg' : ''}">$${bal}</td>
                     <td class="wc-money">$${Number(student.wildcatCashEarned) || 0}</td>
                     <td class="wc-money">$${Number(student.wildcatCashSpent) || 0}</td>
+                    <td class="wc-money${(Number(student.wildcatCashDeducted) || 0) > 0 ? ' wc-money-neg' : ''}">$${Number(student.wildcatCashDeducted) || 0}</td>
                 `;
                 
                 tbody.appendChild(row);
@@ -23429,28 +23466,93 @@
         }
 
         // Update cash period filter
+        // ============================================================
+        // MY SIS ROSTER
+        //
+        // Who a teacher actually teaches, from psRoster, matched to the
+        // signed-in identity by email SERVER SIDE in views_app:teacherRoster.
+        // The browser never says whose roster it wants.
+        //
+        // Replaces currentUser.sections, an editable field on the teacher's own
+        // app record left from the CSV era. convex/accessRules.ts refuses to
+        // read that field for the same reason: a teacher who can edit their own
+        // profile could otherwise grant themselves the whole school.
+        // ============================================================
+        let sisTeacherRoster = null;      // last successful payload
+        let sisRosterState = 'idle';      // idle | loading | ready | failed
+        let sisRosterError = null;
+
+        async function loadTeacherRosterFromSIS(force) {
+            if (sisRosterState === 'loading') return sisTeacherRoster;
+            if (sisTeacherRoster && !force) return sisTeacherRoster;
+
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) {
+                sisRosterState = 'failed';
+                sisRosterError = 'Not signed in.';
+                return null;
+            }
+
+            sisRosterState = 'loading';
+            try {
+                sisTeacherRoster = await auth.convexQuery('views_app:teacherRoster', {}, session.idToken);
+                sisRosterState = 'ready';
+                sisRosterError = null;
+            } catch (e) {
+                // Left as failed rather than empty. An empty roster and a failed
+                // request look identical downstream, and they need opposite
+                // responses: one is a data problem, the other is a network one.
+                sisRosterState = 'failed';
+                sisRosterError = (e && e.message) || String(e);
+                console.error('[cash] teacherRoster failed:', sisRosterError);
+            }
+            return sisTeacherRoster;
+        }
+
+        /**
+         * Wildcat Cash settings, from inside Wildcat Cash mode.
+         *
+         * They live as a subtab of the main Settings tab, and
+         * `body.cash-mode #settingsTab { display: none !important }` hides the
+         * only button that reached it. So in cash mode the cash settings were
+         * unreachable: rewards, starting balance and the year rollover could
+         * only be opened by first switching back to Raffle mode, which is not
+         * a thing anybody would guess.
+         *
+         * removeCashTabButtons has always listed 'cashSettingsTabBtn' for
+         * cleanup, so a button was intended here and never built. This is it.
+         *
+         * Admin only, matching the Settings tab it opens.
+         */
+        function openCashSettings() {
+            switchTab('settings');
+            switchSettingsSubtab('cash');
+        }
+
         function updateCashPeriodFilter() {
             const select = document.getElementById('cashPeriodFilter');
-            select.innerHTML = '<option value="">All Students</option>';
-            
-            // Allow teachers, admins, and superadmins with sections to see their periods
-            if (currentUser.sections && currentUser.sections.length > 0) {
-                const periodOrder = ['A1', 'P1', 'P2', 'P3', 'P4', 'HPU', 'P5', 'P6', 'A2'];
-                const sortedSections = [...currentUser.sections].sort((a, b) => {
-                    const indexA = periodOrder.indexOf(a.period);
-                    const indexB = periodOrder.indexOf(b.period);
-                    if (indexA === -1) return 1;
-                    if (indexB === -1) return -1;
-                    return indexA - indexB;
-                });
-                
-                sortedSections.forEach(section => {
-                    const option = document.createElement('option');
-                    option.value = section.sectionId;
-                    option.textContent = `Period ${section.period} - ${section.className || section.courseName}`;
-                    select.appendChild(option);
-                });
-            }
+            if (!select) return;
+
+            const sections = window.WildcatRoster.sectionsFrom(sisTeacherRoster);
+            const seesAll = window.WildcatRoster.seesEveryStudent(currentUser && currentUser.role);
+
+            select.innerHTML = seesAll
+                ? '<option value="">All students</option>'
+                : (sections.length ? '<option value="">All my students</option>'
+                                   : '<option value="">No classes found</option>');
+
+            // sectionsFrom classifies and labels each block, so the dropdown
+            // shows "Promise Time" rather than "Period 1 - Promise Time". At
+            // Westbrook the core periods are 1 to 6; Promise Time and Power Up
+            // are not periods, they just occupy numbered slots in PowerSchool.
+            sections.forEach(section => {
+                const option = document.createElement('option');
+                option.value = section.sectionId;
+                const count = (section.students || []).length;
+                option.textContent = `${section.label} (${count})`;
+                select.appendChild(option);
+            });
         }
 
         // Update Cash Activity Log
@@ -24512,6 +24614,156 @@
             // Save other settings as needed
             saveData();
             alert('✅ Settings saved successfully!');
+        }
+
+
+        // ============================================================
+        // START OF YEAR ROLLOVER
+        //
+        // Closing a school year is not the same as zeroing balances, which is
+        // what resetAllStudentCash does and all it does. On launch morning a
+        // wiped balance sitting next to last year's leaderboard, last year's
+        // activity feed and a year-old unfulfilled receipt reads as a broken
+        // app rather than a fresh start.
+        //
+        // Order matters, and it is: back up, show what will happen, get an
+        // explicit confirmation, then apply. The backup runs FIRST and the
+        // rollover refuses to continue without it, because this is the one
+        // action here that cannot be undone from inside the app.
+        //
+        // Nothing is deleted. Last year's ledger and receipts go to the dated
+        // backup, and a per-student closing balance stays in the app, which is
+        // what anyone actually asks for later: what did this child finish the
+        // year with.
+        // ============================================================
+        /** Past closures, so the archive is visible rather than only in the data. */
+        function renderCashYearArchives() {
+            const el = document.getElementById('cashYearArchiveList');
+            if (!el) return;
+            if (!Array.isArray(cashYearArchives) || !cashYearArchives.length) {
+                el.textContent = 'No school year has been closed yet.';
+                return;
+            }
+            el.innerHTML = cashYearArchives.slice().reverse().map(a =>
+                `<div>Closed <strong>${escapeHtml(a.schoolYear)}</strong> on ` +
+                `${new Date(a.closedAt).toLocaleDateString()} by ${escapeHtml(a.closedBy || '')} — ` +
+                `${a.totals.students} students, $${(a.totals.totalBalance || 0).toLocaleString()} cleared` +
+                `${a.backupRef ? `, backup <code>${escapeHtml(a.backupRef)}</code>` : ''}</div>`
+            ).join('');
+        }
+
+        async function startNewSchoolYear() {
+            const preview = window.WildcatStore.buildYearEndRollover({
+                students,
+                transactions: cashTransactions,
+                receipts: cashReceipts,
+                actor: currentUser || {},
+                now: Date.now()
+            });
+            const t = preview.counts;
+
+            const outstandingWarning = t.receiptsOutstanding > 0
+                ? `\n⚠️  ${t.receiptsOutstanding} receipt${t.receiptsOutstanding === 1 ? ' is' : 's are'} still awaiting pickup. ` +
+                  `Closing the year files them away unfulfilled.\n`
+                : '';
+
+            const ok = await showConfirm(
+                `Close ${preview.summary.schoolYear} and start fresh?\n\n` +
+                `This will:\n` +
+                `  • Zero the balance for all ${t.students} students ` +
+                `($${t.totalBalance.toLocaleString()} in circulation)\n` +
+                `  • File away ${t.transactions} ledger entries\n` +
+                `  • File away ${t.receiptsOutstanding + t.receiptsFulfilled + t.receiptsCancelled} receipts\n` +
+                `  • Clear leaderboards, activity and analytics\n` +
+                outstandingWarning +
+                `\nA full backup is written first. Each student's closing balance is kept.`
+            );
+            if (!ok) return;
+
+            const typed = await showPrompt(
+                `Last check. This cannot be undone from inside the app.\n\n` +
+                `Type START NEW YEAR to confirm:`
+            );
+            if (typed !== 'START NEW YEAR') {
+                if (typed !== null) alert('❌ Cancelled. Nothing was changed.');
+                return;
+            }
+
+            // BACKUP FIRST, and stop if it fails. Everything below is
+            // irreversible; a rollover with no backup behind it is not.
+            let backupRef = null;
+            try {
+                showToast('Backing up before closing the year…', 'info');
+                await createAutomaticBackup();
+                backupRef = `backups/${new Date().toISOString().split('T')[0]}_cash`;
+            } catch (e) {
+                console.error('[rollover] backup failed:', e);
+                alert('❌ The backup failed, so nothing was changed.\n\n' +
+                      ((e && e.message) || String(e)) +
+                      '\n\nFix the backup first: this step is what makes the rollover recoverable.');
+                return;
+            }
+
+            // Recompute against the same arrays now that the backup is done,
+            // so the record matches what is actually being cleared rather than
+            // what was on screen a moment ago.
+            const roll = window.WildcatStore.buildYearEndRollover({
+                students,
+                transactions: cashTransactions,
+                receipts: cashReceipts,
+                actor: currentUser || {},
+                now: Date.now(),
+                backupRef
+            });
+
+            const patchById = {};
+            roll.studentPatches.forEach(p => { patchById[p.studentId] = p; });
+            students.forEach(s => {
+                const p = patchById[s.id];
+                if (!p) return;
+                s.wildcatCashBalance = 0;
+                s.wildcatCashEarned = 0;
+                s.wildcatCashSpent = 0;
+                s.wildcatCashDeducted = 0;
+                s.wildcatCashTransactions = [];
+                s.wildcatCashRewardsRedeemed = [];
+            });
+
+            // The summary stays in the app. The full ledger does not: it is in
+            // the backup, and a second copy here would grow the document read
+            // on every page load by a year of transactions annually.
+            if (!Array.isArray(cashYearArchives)) cashYearArchives = [];
+            cashYearArchives.push(roll.summary);
+
+            cashTransactions = [];
+            cashReceipts = [];
+
+            addToAuditLog(
+                'school_year_rollover',
+                'all',
+                'Wildcat Cash',
+                roll.counts.totalBalance,
+                `Closed ${roll.summary.schoolYear}: ${roll.counts.students} students zeroed, ` +
+                `${roll.counts.transactions} ledger entries and ` +
+                `${roll.counts.receiptsOutstanding} outstanding receipts filed. Backup ${backupRef}.`
+            );
+
+            await saveData();
+
+            if (typeof updateCashTable === 'function') updateCashTable();
+            if (typeof updateStudentAccounts === 'function') updateStudentAccounts();
+            if (typeof updateCashLeaderboards === 'function') updateCashLeaderboards();
+            if (typeof updateReceiptsTable === 'function') updateReceiptsTable();
+            if (typeof updateRewardsStore === 'function') updateRewardsStore();
+            renderCashYearArchives();
+
+            alert(
+                `✅ ${roll.summary.schoolYear} is closed.\n\n` +
+                `${roll.counts.students} students start at $0.\n` +
+                `$${roll.counts.totalBalance.toLocaleString()} was cleared and recorded.\n` +
+                `Backup: ${backupRef}\n\n` +
+                `Closing balances are kept under Cash Settings.`
+            );
         }
 
         async function resetAllStudentCash() {

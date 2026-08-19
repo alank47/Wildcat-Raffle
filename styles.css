@@ -6449,6 +6449,13 @@ body:has(#mainApp:not(.hidden)) { padding: 0; margin: 0; }
 .popularity-bar { background: var(--wc-blue-mist); border-radius: 999px; height: 9px; overflow: hidden; }
 .popularity-bar span { display: block; height: 100%; background: var(--wc-blue); border-radius: 999px; }
 
+/* The Settings PANE must stay reachable in cash mode even though the raffle
+   Settings BUTTON is hidden there: the Cash Settings button in the cash nav
+   opens the same pane. Hiding #settingsTab hides the button, not the content,
+   so nothing further is needed here. This note exists because the obvious
+   "tidy-up" is to add #settings to that hide list, which would break the only
+   route to the rewards store settings and the year rollover. */
+
 /* ---------- Purchase modal: item, searchable student picker, total ---------- */
 .redeem-item {
     background: var(--wc-blue-mist);

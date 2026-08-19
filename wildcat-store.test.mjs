@@ -253,5 +253,83 @@ console.log("\nLooking a receipt up at the desk");
   check("an empty query matches nothing", S.findReceipt(receipts, "") === null);
 }
 
+console.log("\nSchool year boundaries");
+// LOCAL dates, because schoolYearOf reads local months on purpose: a school
+// year boundary is a calendar fact about where the school is. Date.parse on a
+// bare "2027-07-01" is UTC midnight, which is still 30 June in Los Angeles,
+// and asserting on that would have pinned the wrong behaviour.
+const localNoon = (y, m, d) => new Date(y, m - 1, d, 12, 0, 0).getTime();
+check("September is the start of a new year", S.schoolYearOf(localNoon(2026, 9, 9)) === "2026-2027");
+check("the following March is the SAME school year", S.schoolYearOf(localNoon(2027, 3, 1)) === "2026-2027");
+check("June is still the year that started last autumn", S.schoolYearOf(localNoon(2027, 6, 30)) === "2026-2027");
+check("July rolls over", S.schoolYearOf(localNoon(2027, 7, 1)) === "2027-2028");
+check("the last evening of June does not roll early",
+  S.schoolYearOf(new Date(2027, 5, 30, 23, 59).getTime()) === "2026-2027");
+
+console.log("\nYear end rollover");
+{
+  const students = [
+    { id: "A", studentNumber: "101", firstName: "Ada", lastName: "L", grade: "10",
+      wildcatCashBalance: 1240, wildcatCashEarned: 2000, wildcatCashSpent: 600, wildcatCashDeducted: 160 },
+    { id: "B", studentNumber: "102", firstName: "Grace", lastName: "H", grade: "9",
+      wildcatCashBalance: 0, wildcatCashEarned: 500, wildcatCashSpent: 500, wildcatCashDeducted: 0 },
+    { id: "C", studentNumber: "103", firstName: "Alan", lastName: "T", grade: "11" },
+  ];
+  const transactions = [{ id: "t1" }, { id: "t2" }, { id: "t3" }];
+  const receipts = [
+    { status: "issued" }, { status: "issued" },
+    { status: "fulfilled" }, { status: "cancelled" },
+  ];
+
+  const roll = S.buildYearEndRollover({
+    students, transactions, receipts,
+    actor: { name: "Alan K" }, now: localNoon(2026, 9, 9),
+    backupRef: "backups/2026-09-09_cash",
+  });
+
+  check("the school year is derived", roll.summary.schoolYear === "2026-2027");
+  check("who closed it is recorded", roll.summary.closedBy === "Alan K");
+  check("the backup it belongs to is referenced", roll.summary.backupRef === "backups/2026-09-09_cash");
+
+  check("every student gets a closing record, including those on zero",
+    roll.summary.closingBalances.length === 3);
+  check("a student with no cash fields at all is still recorded",
+    roll.summary.closingBalances.find((c) => c.studentId === "C").balance === 0);
+  check("closing balances carry the student number for later lookup",
+    roll.summary.closingBalances[0].studentNumber === "101");
+
+  check("total balance is summed", roll.counts.totalBalance === 1240);
+  check("students WITH a balance are counted separately from all students",
+    roll.counts.studentsWithBalance === 1 && roll.counts.students === 3);
+  check("earned, spent and deducted are summed",
+    roll.counts.totalEarned === 2500 && roll.counts.totalSpent === 1100 && roll.counts.totalDeducted === 160);
+  check("the ledger size is reported", roll.counts.transactions === 3);
+
+  // A receipt is a promise of an item. Somebody should see how many are
+  // outstanding BEFORE agreeing to close the year.
+  check("outstanding receipts are counted, not silently dropped",
+    roll.counts.receiptsOutstanding === 2);
+  check("fulfilled and cancelled are counted separately",
+    roll.counts.receiptsFulfilled === 1 && roll.counts.receiptsCancelled === 1);
+
+  check("every student is patched to zero", roll.studentPatches.length === 3);
+  check("the patch zeroes the balance", roll.studentPatches[0].wildcatCashBalance === 0);
+  check("and the derived counters, so none contradicts a zero balance",
+    roll.studentPatches[0].wildcatCashEarned === 0 &&
+    roll.studentPatches[0].wildcatCashSpent === 0 &&
+    roll.studentPatches[0].wildcatCashDeducted === 0);
+  check("and clears the per-student transaction view",
+    Array.isArray(roll.studentPatches[0].wildcatCashTransactions) &&
+    roll.studentPatches[0].wildcatCashTransactions.length === 0);
+
+  // Computing what WOULD happen must not be destructive.
+  check("nothing was mutated by asking", students[0].wildcatCashBalance === 1240);
+  check("the transaction list was not touched", transactions.length === 3);
+
+  const empty = S.buildYearEndRollover({ students: [], transactions: [], receipts: [], now: localNoon(2026, 9, 9) });
+  check("an empty school does not throw", empty.counts.students === 0);
+  check("and reports a zero total rather than NaN", empty.counts.totalBalance === 0);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

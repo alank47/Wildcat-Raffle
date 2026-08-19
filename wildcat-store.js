@@ -424,7 +424,134 @@
     return hit;
   }
 
+  // ---------------------------------------------------------------------
+  // Start of year rollover
+  // ---------------------------------------------------------------------
+
+  /**
+   * The school year a date falls in, as "2026-2027".
+   *
+   * Rolls in July, not January: a year that flipped on 1 January would put the
+   * autumn and spring halves of one school year in different buckets.
+   *
+   * LOCAL time, deliberately. A school year boundary is a calendar fact about
+   * where the school is, not a UTC instant. Reading UTC months here would put
+   * an evening in late June into the next school year for anywhere behind UTC,
+   * which includes this one.
+   */
+  function schoolYearOf(now) {
+    var d = new Date(now);
+    var y = d.getFullYear();
+    // Month is 0-based; 6 is July.
+    return d.getMonth() >= 6 ? y + '-' + (y + 1) : (y - 1) + '-' + y;
+  }
+
+  /**
+   * What closing the year does, computed but NOT applied.
+   *
+   * Returns { summary, studentPatches, counts }. The caller applies the
+   * patches, archives what it wants and clears the live arrays, so this stays
+   * testable and so nothing is destroyed by asking what would happen.
+   *
+   * WHY A SUMMARY RATHER THAN THE WHOLE LEDGER.
+   *
+   * The full transactions and receipts go to the dated backup the app already
+   * writes. Keeping a second full copy inside the live document would grow it
+   * without bound, one school year at a time, and that document is read on
+   * every page load. What stays in the app is a per-student closing balance,
+   * which is what anybody actually asks for later: "what did this child end
+   * the year with". It is small, and it is the answer.
+   *
+   * OUTSTANDING RECEIPTS ARE COUNTED, NOT SILENTLY DROPPED. A receipt is a
+   * promise of an item. If eleven of them are unfulfilled when the year
+   * closes, somebody should see that number before agreeing to close, not
+   * discover it when a student turns up in September with a code.
+   */
+  function buildYearEndRollover(opts) {
+    var o = opts || {};
+    var students = o.students || [];
+    var transactions = o.transactions || [];
+    var receipts = o.receipts || [];
+    var now = isFiniteNumber(o.now) ? o.now : Date.now();
+    var actor = o.actor || {};
+    var year = trimmed(o.schoolYear) || schoolYearOf(now);
+
+    var totals = {
+      students: 0,
+      studentsWithBalance: 0,
+      totalBalance: 0,
+      totalEarned: 0,
+      totalSpent: 0,
+      totalDeducted: 0,
+      transactions: transactions.length,
+      receiptsOutstanding: 0,
+      receiptsFulfilled: 0,
+      receiptsCancelled: 0
+    };
+
+    var closingBalances = [];
+    var studentPatches = [];
+
+    students.forEach(function (s) {
+      if (!s) return;
+      var bal = isFiniteNumber(s.wildcatCashBalance) ? s.wildcatCashBalance : 0;
+      var earned = isFiniteNumber(s.wildcatCashEarned) ? s.wildcatCashEarned : 0;
+      var spent = isFiniteNumber(s.wildcatCashSpent) ? s.wildcatCashSpent : 0;
+      var deducted = isFiniteNumber(s.wildcatCashDeducted) ? s.wildcatCashDeducted : 0;
+
+      totals.students += 1;
+      if (bal !== 0) totals.studentsWithBalance += 1;
+      totals.totalBalance += bal;
+      totals.totalEarned += earned;
+      totals.totalSpent += spent;
+      totals.totalDeducted += deducted;
+
+      // Recorded for EVERY student, including those ending on zero. A student
+      // missing from the record is indistinguishable from one who was never
+      // looked at.
+      closingBalances.push({
+        studentId: s.id,
+        studentNumber: s.studentNumber || null,
+        name: trimmed((s.firstName || '') + ' ' + (s.lastName || '')),
+        grade: s.grade || null,
+        balance: bal, earned: earned, spent: spent, deducted: deducted
+      });
+
+      studentPatches.push({
+        studentId: s.id,
+        wildcatCashBalance: 0,
+        wildcatCashEarned: 0,
+        wildcatCashSpent: 0,
+        wildcatCashDeducted: 0,
+        wildcatCashTransactions: [],
+        wildcatCashRewardsRedeemed: []
+      });
+    });
+
+    receipts.forEach(function (r) {
+      if (!r) return;
+      if (r.status === 'issued') totals.receiptsOutstanding += 1;
+      else if (r.status === 'fulfilled') totals.receiptsFulfilled += 1;
+      else if (r.status === 'cancelled') totals.receiptsCancelled += 1;
+    });
+
+    return {
+      summary: {
+        schoolYear: year,
+        closedAt: new Date(now).toISOString(),
+        closedBy: trimmed(actor.name || actor.username) || 'Unknown',
+        backupRef: o.backupRef || null,
+        totals: totals,
+        closingBalances: closingBalances
+      },
+      studentPatches: studentPatches,
+      counts: totals
+    };
+  }
+
   root.WildcatStore = {
+    schoolYearOf: schoolYearOf,
+    buildYearEndRollover: buildYearEndRollover,
     RECEIPT_STATES: RECEIPT_STATES,
     TERMINAL_RECEIPT_STATES: TERMINAL_RECEIPT_STATES,
     makeReceiptCode: makeReceiptCode,
