@@ -19120,9 +19120,27 @@
             if (!slug) return;
 
             const auth = window.WildcatAuth;
-            const session = auth && auth.getSession();
+            let session = auth && auth.getSession && auth.getSession();
 
-            // Not signed in: keep the slug in the URL so it survives the Google
+            // WAIT FOR THE SESSION BEFORE GIVING UP, because on the path that
+            // matters most it is not ready yet.
+            //
+            // A student holding their phone to a wall tag with the app closed
+            // launches it cold. iOS hands over the URL almost immediately, while
+            // restoring the student's session is a round trip that has barely
+            // started. The old code read getSession() once, got null, and
+            // returned silently: the app opened, the card drew from cache, and
+            // the check-in screen never appeared. Nothing was recorded and
+            // nothing said why, which is the worst shape a failure can take at a
+            // doorway with a child in front of it.
+            //
+            // wpWaitForSession already exists for exactly this and is what
+            // loadStudentPortal uses. Seven seconds is its established budget.
+            if (!session && typeof wpWaitForSession === 'function') {
+                try { session = await wpWaitForSession(7000); } catch (e) { session = null; }
+            }
+
+            // Genuinely not signed in: keep the slug so it survives the Google
             // redirect, and handle it once they are back.
             if (!session) return;
 
