@@ -328,3 +328,300 @@ Apple Developer account exists: `lawrenceb@myindmedia.org` (Myind Media). The ap
 distributes under that team. Bundle id stays `org.westbrookacademy.wildcat`
 (reverse-DNS is just an identifier, registered under the Myind Media account). This
 unblocks device NFC verification and TestFlight (scope piece 05).
+
+### Update 2026-08-18: Apple Team ID, and two decisions the NFC scope did not cover
+
+**Apple Team ID: `SCFGWPBXMF`.** Full app identifier for entitlements and for the
+Universal Links association file: `SCFGWPBXMF.org.westbrookacademy.wildcat`. Not a
+secret; it ships in `.well-known/apple-app-site-association`, which is public by
+design. This answers the last unknown blocking the association file.
+
+**Decision 24: the tag URL gains a path. Tags now hold
+`https://wildcatraffle.com/tap/?tap=<slug>`, not `/?tap=<slug>`.**
+
+Forced by a platform asymmetry, not by taste. Android intent filters match only
+scheme, host, port and path; they cannot see a query string at all. A filter on
+`wildcatraffle.com` therefore claims EVERY link on the host, so once App Links
+verified, a staff member tapping any portal link on an Android phone would be
+thrown into the student app. Apple can match a query item and does not need this,
+but both platforms have to agree on one URL, so the distinction had to move into
+the path where Android can see it. `android:pathPrefix="/tap/"` then scopes it. The trailing slash on that prefix is
+deliberate: `pathPrefix` is a literal string prefix, so a bare `/tap` would also
+claim `/tap` with no slash and any future `/tap*` page, which iOS would not. With
+the slash the two platforms claim exactly the same set, so a mistyped sticker
+fails on both rather than working on every Android phone and no iPhone, which is
+the version of that bug that costs a day to diagnose.
+
+Consequences, in the order they matter:
+
+1. Every tag already programmed with the old URL keeps working as a plain web
+   link but stops opening the app once the path filter ships. Mounted tags need
+   rewriting, and the native app is the thing that can rewrite them, so the app
+   has to reach a device before the tags can be migrated.
+2. `tap/index.html` now exists: a forwarding page for the phone with no app
+   installed, which sends `/tap/?tap=<slug>` on to `/?tap=<slug>` where the
+   portal's existing arrival handling takes over. GitHub Pages cannot issue
+   redirects, so it is done in the page. Apple's no-redirect rule governs the
+   association file, not the tag URL, so this is safe.
+3. `wcTapUrl()` in `script.js` is the single writer of tag URLs and is what makes
+   the new shape real for anyone programming a tag.
+
+**Decision 25: the NFC plugin is swapped, not bought.**
+
+`@capawesome-team/capacitor-nfc`, which `mobile/package.json` had declared since
+the scaffold, is paid sponsorware: 404 on the public npm registry, closed source,
+private registry plus licence key, 990 dollars a year. There is no lockfile and no
+`node_modules` in `mobile/`, which confirms `npm install` there had never once
+succeeded, and is why every NFC call in `script.js` carried a `TODO-VERIFY`.
+
+Replaced with `@exxili/capacitor-nfc`: MIT, public, real NDEF read and write on
+both platforms, compatible with the pinned Capacitor 6. Two costs accepted: it is
+version 0.0.13 with a single maintainer, and it cannot customise the iOS scan
+sheet, so students see Apple's generic wording instead of ours.
+
+**Constraint added: the iOS tap is two actions, and cannot be one.**
+
+Apple shows an unconditional notification banner on a background tag read; a
+Universal Link changes what the banner opens, not whether there is one. Direct
+launch is Android behaviour. So the doorway cost is 2 actions on iPhone XS and
+later, 3 if locked, and the background path does not exist at all on iPhone 7, 8
+or X without the student first enabling NFC Tag Reader in Control Center. The
+in-app scan session is therefore the primary flow and the banner is the fallback,
+which is the opposite of how the scope was originally imagined.
+
+This also constrains the anti-forgery design: on the banner path the app receives
+only a URL, which a student can forward to a friend, and no proof a tag was
+physically present. The existing gesture requirement in `confirmTapCheckIn` is
+what keeps that honest, so the deep-link handler routes into the same confirmation
+screen and never taps on its own.
+
+### Update 2026-08-18: the native shell is real, and one dispute is closed
+
+Built and run. Xcode 26.3, CocoaPods 1.17.0 via Homebrew (no sudo; the system
+Ruby 2.6 is untouched), Node 22 from the keg. `npm install` in `mobile/`
+completes cleanly, which is the practical proof of decision 25: the paid plugin
+404s for anyone without a licence key, and `@exxili/capacitor-nfc@0.0.13`
+installs. Capacitor wired all five native plugins, the simulator build succeeded,
+and the app launched.
+
+**Closed: does a no-build Capacitor app need `registerPlugin`?** No. Two critics
+in the round 3 gauntlet asserted with high confidence that nothing calls
+`Capacitor.registerPlugin`, so `Capacitor.Plugins` must be empty on device and
+the whole native block was unreachable. A probe in the running app disproved it:
+`registerPlugin` is indeed `undefined`, and `Plugins.NFC`, `.App` and `.Haptics`
+are all live objects with callable methods, injected natively by `JSExport.swift`
+before any page script runs. The lesson worth keeping is that a bundled-app
+mental model gives the wrong answer for this project, confidently, and the only
+way to settle it was to run it.
+
+**Constraint added: `console.log` is not a debugging channel on device.** The
+bridge registers a Console plugin, but webview logs did not reach
+`xcrun simctl spawn booted log stream`. Use Safari Web Inspector, or render the
+value on screen and screenshot it.
+
+**Dropbox hazard, learned the hard way.** `mobile/.dropboxignore` now exists and
+is committed. Marking a generated folder ignored by xattr AFTER Dropbox has begun
+syncing it makes Dropbox remove the local copy: a freshly generated `ios/` became
+an empty directory plus an `ios 2` conflict folder within a minute. The rule has
+to exist before the folder does.
+
+### Decision 26 (2026-08-18): Capacitor 6 to 8, because students could not sign in
+
+Found by running the app, not by reading it. The native shell built and launched,
+and the student sign-in screen showed `Failed to load
+https://accounts.google.com/gsi/client`. Diagnosed in the simulator:
+
+```
+origin: capacitor://localhost   (then capacitor://wildcatraffle.com)
+wildcatraffle.com fetch: HTTP 200      <- network is fine
+XHR accounts.google.com/gsi/client: status 0, CORS
+script tag: onerror                    <- what the student sees
+```
+
+Google Identity Services will not serve to a `capacitor://` origin, and iOS
+cannot give a locally served webview an `https://` origin: setting
+`server.iosScheme: 'https'` is silently ignored, because WKWebView reserves http
+and https for real network loads. Tested and reverted. So the web sign-in the
+browser portal uses cannot work inside the app, at all, on any iPhone.
+
+The fix is native Google sign-in. The only maintained Capacitor plugin for it,
+`@capgo/capacitor-social-login`, needs Capacitor >= 8, so the project moves to
+**Capacitor 8.5.0**. Chosen over the one Capacitor 6 option
+(`@codetrix-studio/capacitor-google-auth@3.4.0-rc.4`) because putting a release
+candidate on the authentication path of an app used by 623 children is a worse
+trade than an upgrade done now, while the native project is one command to
+regenerate and nothing is on a student's phone yet. Capacitor 6 was also two
+majors old and its no-bundler escape hatch is already deprecated.
+
+Consequences:
+
+1. **CocoaPods is no longer used.** Capacitor 8 builds iOS through Swift Package
+   Manager. There is no `.xcworkspace`; every `xcodebuild` command becomes
+   `-project ios/App/App.xcodeproj`.
+2. **`@capacitor-community/barcode-scanner` is dropped, not upgraded.** Its peer
+   range is `^5.0.0`, so it never worked on 6 either: `cap add ios` reported five
+   plugins where package.json listed six, and nothing in the codebase referenced
+   it. The maintained replacement is `@capacitor-mlkit/barcode-scanning`, and it
+   waits until open question 20 says what the student camera is for.
+3. **The backend is untouched.** `convex/auth.config.ts` checks a token's `aud`
+   against a specific Google client ID, and the plugin's `serverClientId` option
+   requests an ID token audienced to that same existing web client. The two
+   provider entries and the server-side domain check in `identity.ts` all stand.
+
+### Open question 26: the Google iOS OAuth client
+
+Native sign-in needs an **iOS OAuth client** created in Google Cloud Console for
+bundle id `org.westbrookacademy.wildcat`, in the same project as the existing web
+client. The web client id stays the `serverClientId` so the token audience does
+not change. Nobody has created the iOS client yet, and it cannot be created from
+this repo. Unanswered.
+
+### Verified 2026-08-18: Capacitor 8 native shell builds and runs
+
+`BUILD SUCCEEDED`, app installed and launched in the simulator, and a probe in the
+running app reports the full native surface live:
+
+```
+platform: ios   PluginHeaders: 11   WC_NATIVE: true
+keys: CapacitorHttp, Console, WebView, CapacitorCookies, SystemBars,
+      SocialLogin, NFC, Haptics, App, Camera, PushNotifications
+NFC.startScan: function    NFC.writeNDEF: function    SocialLogin: object
+```
+
+Two hazards cost most of that time and are now written into `mobile/SETUP.md`:
+
+1. **Dropbox produced 269 conflicted copies inside `node_modules`** despite both
+   `.dropboxignore` and the ignore xattr, including a conflicted `.swift` file
+   that SPM compiled, giving `Unable to find module dependency: 'IONCameraLib'`.
+   That message names a module and reads like a dependency bug; it is Dropbox.
+   `mobile/node_modules` is now a symlink to `~/.wildcat-build/`, outside Dropbox.
+2. **Capacitor 8 derives SPM product names from the NPM package name** and gets
+   `@exxili/capacitor-nfc` wrong, because that plugin declares its library as
+   `CapacitorNfc`. `scripts/configure-ios.mjs` now repairs this generically after
+   every sync.
+
+### Decision 27 (2026-08-18): the native build is staged OUTSIDE Dropbox
+
+Four escape hatches were tried and all four failed. `xattr com.dropbox.ignored`
+on a populated `ios/` made Dropbox delete it into an `ios 2` conflict folder. The
+same xattr on an empty `node_modules` before install did not prevent 269
+conflicted copies during that install. A committed `.dropboxignore` was ignored.
+Replacing `node_modules` with a symlink to a folder outside Dropbox lasted
+minutes before Dropbox restored its own directory over the symlink, with 314
+conflicted copies in it.
+
+So `mobile/` in the repo now holds SOURCE ONLY: `capacitor.config.ts`,
+`package.json`, `scripts/`, `SETUP.md`. `npm run stage` copies those plus the web
+portal to `~/.wildcat-build/mobile`, and every native command runs there. A
+`.wildcat-repo-root` pointer keeps the staged `sync-web` reading the real portal,
+so the app still ships exactly what the website serves.
+
+The reason this matters more than tidiness: the failures are silent and they
+impersonate dependency bugs. A conflicted `.swift` file compiles beside the real
+one and Swift reports `invalid redeclaration of 'AppPlugin'` or `Unable to find
+module dependency: 'IONCameraLib'`. Nobody would look at Dropbox.
+
+`typescript` was added to `mobile/devDependencies`: outside the repo there is no
+parent `node_modules` to borrow it from, and the Capacitor CLI needs it to read a
+`.ts` config.
+
+### Native student sign-in is written, and waiting on one value
+
+`wildcat-auth.js` now branches: in the app it renders its own Google button and
+signs in through `@capgo/capacitor-social-login`, then hands the resulting ID
+token to the SAME `finishSignIn` the web flow uses, so `me:get` and the
+server-side domain check in `identity.ts` are unchanged. Verified in the
+simulator: the red "Failed to load accounts.google.com/gsi/client" is gone and
+the button renders.
+
+**Correction to an earlier claim in this file.** It is NOT yet established that
+the backend needs no change. `convex/auth.config.ts` pins `applicationID` to a
+single `GOOGLE_CLIENT_ID`, and whether the native token's `aud` is the web client
+or the iOS client depends on runtime behaviour nobody here has measured. The
+sign-in path therefore decodes the returned token and emits
+`wildcat-auth-native-token-audience` with `aud`, `azp` and whether it matches the
+web client. Read that on the first real device sign-in. If it reports the iOS
+client, the fix is a second Google provider entry in `auth.config.ts`, not a
+client change.
+
+### RESOLVED 2026-08-18 on real hardware: native student sign-in works
+
+Open question 26 is closed. The iOS OAuth client exists
+(`718452352756-9gvjcrk7t7qd8k27d4fpp76qabhvko1r.apps.googleusercontent.com`,
+bundle `org.westbrookacademy.wildcat`, same Google project as the web client),
+the app is signed and installed on a physical iPhone 17 Pro Max (iOS 26.6.1,
+UDID `00008150-001674513408401C`, registered to team SCFGWPBXMF), and a student
+signed in through the native flow and **reached the student portal**.
+
+**That last fact settles the audience question, which this file previously left
+open and which I had flagged as unproven.** The portal only loads if
+`finishSignIn` got a successful `me:get`, and `me:get` only succeeds if Convex
+validated the token. Convex pins `applicationID` to a single
+`GOOGLE_CLIENT_ID`, so the token's `aud` must have been the WEB client, not the
+iOS one. `iOSServerClientId` behaves as documented.
+
+**`convex/auth.config.ts` needs no change.** No second Google provider entry, no
+new environment variable. The two-provider model and the server-side domain check
+in `identity.ts` stand exactly as they were.
+
+Two supporting details that were needed to get there, both scripted in
+`mobile/scripts/configure-ios.mjs` so a fresh clone cannot lose them:
+
+- The **reversed client id URL scheme**
+  (`com.googleusercontent.apps.718452352756-9gvjcrk7t7qd8k27d4fpp76qabhvko1r`),
+  derived from the client id rather than pasted, so they cannot drift. Without
+  it the sign-in sheet opens, the student authenticates, and nothing happens,
+  because iOS has nowhere to deliver the result.
+- **`CFBundleName` set to "Wildcat Hub".** Capacitor leaves it as
+  `$(PRODUCT_NAME)`, and several system prompts use it rather than the display
+  name, so the consent sheet read: *"App" Wants to Use "google.com" to Sign In*.
+  A child has every reason to distrust that.
+
+Signed entitlements on the installed binary, confirmed with `codesign -d`:
+`com.apple.developer.nfc.readersession.formats` = [NDEF, TAG], and
+`com.apple.developer.associated-domains` = [applinks:wildcatraffle.com].
+
+### Still unproven: every NFC path, and the tag-opens-app path
+
+NFC has still never actually run. The simulator has no radio, and on device the
+functions are present and callable but no tag has been read or written.
+
+Separately, `.well-known/apple-app-site-association` is **still uncommitted**, so
+`https://wildcatraffle.com/.well-known/apple-app-site-association` returns 404
+and Apple's CDN reports `SWCERR00101 Bad HTTP Response: 404`. Until those files
+are on `main`, an iPhone reading a tag opens Safari. After they ship, Apple's CDN
+can take up to 24 hours before the first tap works.
+
+### Requirement added 2026-08-18: teachers AND IT program tags, on iPhone too
+
+Stated by the user this session. Programming a tag is not a developer task; it is
+something teachers and the IT team do so students have somewhere to check in.
+Devices they will actually hold: **iPhone, Android phone, and a desktop with the
+ACR122U reader**, all three.
+
+Two of those already worked and needed nothing: Chrome on Android has Web NFC, so
+a teacher signs in on wildcatraffle.com as staff and programs from the website;
+and the desktop reader path is the natural fit for IT doing a batch. Chromebooks
+can never do it, having no NFC radio, which is worth knowing when deciding who
+owns the job.
+
+The iPhone could not, and that is the gap this closes. `wildcat-auth.js` built the
+Microsoft reply URL from `window.location.origin`, which is `capacitor://localhost`
+in the app, so Entra would refuse it and MSAL's redirect could not run anyway.
+Staff sign-in was therefore impossible in the app, and the tag programmer is
+staff-only, so **the app could not write a tag at all** despite Core NFC write on
+iPhone being a headline reason for building it.
+
+Now: `signInStaff()` branches on native and uses the generic OAuth2 provider that
+`@capgo/capacitor-social-login` already ships, pointed at Entra's OIDC discovery
+document, authorization-code flow with PKCE (a public client, and this repo is
+public, so there is no secret and never will be). Same client id and same
+`openid profile email` scopes as the web flow, so the token's `aud` is unchanged
+and `convex/auth.config.ts` stays untouched.
+
+**Open action, and it is not mine.** The reply URL
+`msauth.org.westbrookacademy.wildcat://auth` must be added to the Wildcat Hub app
+registration (client `0f22dd11-7c0a-4356-93d7-0abf07642001`, tenant
+`afc1d09c-9f9b-4d45-9643-198f7dc264c4`) under Mobile and desktop applications.
+The matching `CFBundleURLSchemes` entry is already scripted in
+`configure-ios.mjs`. Both halves are required and neither works alone.

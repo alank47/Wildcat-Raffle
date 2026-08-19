@@ -10,7 +10,7 @@ is honestly worth.
 **A tag holds a URL. Nothing else.**
 
 ```
-NFC tag on the wall  ->  https://wildcatraffle.com/tap/restroom-2
+NFC tag on the wall  ->  https://wildcatraffle.com/tap/?tap=restroom-2
 ```
 
 iOS 14+ reads tags in the background and opens that link with no app installed.

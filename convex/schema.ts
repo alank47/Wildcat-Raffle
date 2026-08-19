@@ -354,6 +354,18 @@ export default defineSchema({
     active: v.boolean(), // a peeled-off or retired tag stops working without deletion
     createdAt: v.string(),
 
+    // WAS A PHYSICAL CARD EVER ACTUALLY WRITTEN FOR THIS SLUG.
+    //
+    // Registering a tag and programming a tag are two different acts, and the
+    // programmer deliberately does the first even when the second fails, so an
+    // admin who has no reader to hand still keeps the record and the URL. The
+    // cost of that kindness was a list that could not tell the difference: a row
+    // that had never touched a sticker looked exactly like a row on a wall, and
+    // the first anybody learned otherwise was a child holding a phone to a blank
+    // card. Optional, because every tag registered before this existed predates
+    // the answer and absent means "nobody knows", not "no".
+    writtenAt: v.optional(v.string()),
+
     // Denormalized "when did anybody last tap this", updated by hallPasses.tap.
     //
     // Replaces deriving it by scanning the newest 2,000 tapEvents. That window

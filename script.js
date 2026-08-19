@@ -7205,6 +7205,9 @@
         }
 
         async function logout() {
+            // The next person on this Chromebook starts where their role starts,
+            // not where the last one left off.
+            wcForgetTab();
             if (await showConfirm('Are you sure you want to logout?')) {
                 currentUser = null;
                 currentStudent = null;
@@ -14179,7 +14182,7 @@
             const btn = document.querySelector('.sp-save-btn');
             if (!input) return;
             const ctx = wcBellSession();
-            if (!ctx) { if (msg) { msg.textContent = 'This needs a Microsoft sign-in — open the Teacher tab and sign in with Microsoft, then try again.'; } return; }
+            if (!ctx) { if (msg) { msg.textContent = wcNeedsMicrosoftMessage(); } return; }
             const value = input.value.trim();
             if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
             if (msg) { msg.textContent = ''; msg.className = 'sp-edit-msg'; }
@@ -16566,7 +16569,63 @@
             alert(`✅ Cycle ${currentNum} closed. Welcome to Cycle ${nextNum}, Week 1!`);
         }
 
+        /* ============================================================
+           WHERE YOU WERE, ACROSS A REFRESH.
+
+           A refresh used to land everyone back on their role's default screen,
+           because boot calls switchTab('tickets') / ('students') / ('dashboard')
+           per role and nothing ever recorded where the person actually was. A
+           teacher halfway through a hall-pass board, refreshing to clear a
+           glitch, was thrown back to Award Tickets every time.
+
+           sessionStorage, deliberately, not localStorage. It is per tab and it
+           dies when the tab closes, so a shared Chromebook never hands the next
+           student the last one's screen. Same reasoning as the student token in
+           finishSignIn. systemMode stays where it already lives, in
+           localStorage, because that is a genuine per-user preference rather
+           than a transient position.
+           ============================================================ */
+        var WC_VIEW_KEY = 'wc_view_tab';
+
+        function wcRememberTab(tabName) {
+            try {
+                if (tabName) window.sessionStorage.setItem(WC_VIEW_KEY, String(tabName));
+            } catch (e) { /* private mode: losing the position is not worth an error */ }
+        }
+
+        function wcForgetTab() {
+            try { window.sessionStorage.removeItem(WC_VIEW_KEY); } catch (e) { /* as above */ }
+        }
+
+        /**
+         * Put the person back where they were, if that is still somewhere they
+         * are allowed to be.
+         *
+         * The permission check is the load-bearing half. Boot has already run
+         * the role branch by the time this is called, which is what disables the
+         * tabs a role may not see; restoring blindly would walk a teacher into
+         * an admin screen that boot had just locked. So a stored tab is only
+         * honoured when its button exists and is not disabled, and anything
+         * else falls through to the default boot already chose.
+         */
+        function wcRestoreTab() {
+            var saved = null;
+            try { saved = window.sessionStorage.getItem(WC_VIEW_KEY); } catch (e) { return; }
+            if (!saved) return;
+
+            var buttons = document.querySelectorAll('.tab');
+            for (var i = 0; i < buttons.length; i++) {
+                var onclick = buttons[i].getAttribute('onclick') || '';
+                if (onclick.indexOf("'" + saved + "'") === -1) continue;
+                if (buttons[i].classList.contains('disabled')) return; // not theirs any more
+                if (buttons[i].offsetParent === null) return;          // hidden in this mode
+                switchTab(saved);
+                return;
+            }
+        }
+
         function switchTab(tabName) {
+            wcRememberTab(tabName);
             // A tab was picked from the nav — on a phone, close the drawer so the
             // chosen screen is actually visible rather than hidden behind it.
             closeMobileSidebar();
@@ -17616,7 +17675,16 @@
             if (!live || state === 'none') {
                 return {
                     label: 'Hall Pass', lead: 'None active', quiet: true, face: WP_FACE.passOff,
-                    body: wpEmpty('No pass right now. Ask for one, then tap the tag at the place you are going.') +
+                    /* "HOLD NEAR", NEVER "TAP". Apple's NFC guidance is explicit
+                       that a device only has to come close to a tag, never touch
+                       it, and that asking a person to tap teaches them to press a
+                       phone against a wall and then wonder why nothing happened.
+                       Same page bans saying NFC to a user. The word "tag" stays:
+                       it is the physical object mounted on the wall and what the
+                       staff who mount them call it, and swapping in a word this
+                       school does not use would cost the student the one thing
+                       the sentence is for, which is knowing what to look for. */
+                    body: wpEmpty('No pass right now. Ask for one, then hold your phone near the tag at the place you are going.') +
                           '<div class="wp-actions"><button type="button" class="wp-btn wp-btn-solid" ' +
                           'onclick="openHallPassSheet()">Request a pass</button></div>' +
                           wpFoot('Your teacher has to approve it'),
@@ -17661,7 +17729,7 @@
             // WHERE THEY WERE SENT, when a teacher opened the pass. This is the
             // tag that validates it and no other tag will, so naming it is the
             // difference between an instruction a child can follow and one they
-            // cannot: "tap the tag at the Nurse" against "tap the tag".
+            // cannot: "the tag at the Nurse" against "the tag".
             const sentTo = hp.sentTo ? wpEsc(hp.sentTo) : '';
 
             if (mins === null) {
@@ -17669,7 +17737,14 @@
                     label: 'Hall Pass',
                     lead: wpTitleCase(state),
                     face: WP_FACE.passOn,
-                    body: wpEmpty('Your pass is ' + state + '. The clock starts when you tap the tag ' +
+                    // AND THE CLOCK DOES NOT START AT THE TAG. It starts the
+                    // moment a teacher approves, because a student who is
+                    // approved and never leaves is still out of class. The old
+                    // sentence here told a child the opposite, which is a
+                    // promise of time they do not have.
+                    body: wpEmpty('Your pass is ' + state + '. It is not being timed yet: the clock ' +
+                                  'starts the moment a teacher approves it, and then you hold your ' +
+                                  'phone near the tag ' +
                                   (sentTo ? 'at ' + sentTo + '.' : 'at the place you are going.')) +
                           wpFoot('Not being timed yet'),
                 };
@@ -17691,18 +17766,42 @@
             // distinguished from a missing field: an OLD payload has no
             // clockLimitMinutes and falls back to expiresAfterMinutes; the server
             // sending null is a decision to show no window and must be honoured.
-            const limitMin = (hp.clockLimitMinutes === null)
+            const rawLimit = (hp.clockLimitMinutes === null)
                 ? null
                 : (typeof hp.clockLimitMinutes === 'number' && isFinite(hp.clockLimitMinutes))
                     ? hp.clockLimitMinutes
                     : ((typeof hp.expiresAfterMinutes === 'number' && isFinite(hp.expiresAfterMinutes))
                         ? hp.expiresAfterMinutes
                         : null);
+            // Then through the one place that decides what counts as a deadline,
+            // so an open-ended pass cannot be drawn as a countdown whatever shape
+            // the "no limit" arrived in.
+            const limitMin = wpClockWindow(rawLimit);
+            // WHICH LEG, in one word, so the ticker can relabel the due line
+            // without going back to the pass for it. `active` is due AT the
+            // destination, `out` is due BACK in class.
+            const leg = state === 'out' ? 'back' : 'reach';
+            const first = wpClockFace(startMs, limitMin);
             const clockAttrs =
                 ' data-wp-clock="1" data-wp-ring="1"' +
                 ' data-start="' + (startMs === null ? '' : startMs) + '"' +
-                ' data-limit="' + (limitMin === null ? '' : limitMin) + '"';
-            const first = wpClockFace(startMs, limitMin);
+                ' data-limit="' + (limitMin === null ? '' : limitMin) + '"' +
+                ' data-leg="' + leg + '"' +
+                ' data-wp-phase="' + wpEsc(first.phase) + '"';
+
+            /* THE TIME THEY ARE DUE, as a clock reads it.
+               Off the same anchor and the same window as the digits, so the two
+               cannot disagree by so much as a second, and ABSENT rather than
+               invented on a pass with no window: an open-ended pass gets the
+               sentence that is true about it instead of a deadline nobody set. */
+            const dueClock = wpDueClockLabel(wpDueAtMs(startMs, limitMin));
+            const dueHtml = dueClock
+                ? '<p class="wp-due"><span class="wp-due-lead">' + wpEsc(wpDueLead(first.phase, leg)) +
+                  '</span> <b class="wp-due-time">' + wpEsc(dueClock) + '</b></p>'
+                : (limitMin === null && startMs !== null
+                    ? '<p class="wp-due wp-due-open">No time limit on this pass. It ends when you get ' +
+                      'back, or when your teacher closes it.</p>'
+                    : '');
 
             // Real context around the clock, every piece optional: the route
             // (where they were sent, or back to their room), who approved it, and
@@ -17721,7 +17820,7 @@
             const ctaHtml = canScan
                 ? '<button class="wp-tap-cta" type="button" onclick="wcStudentNfcScan()">' +
                     '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><path d="M5 8.5a11 11 0 0 1 0 7M9 6.5a15 15 0 0 1 0 11M13 5a19 19 0 0 1 0 14"/><circle cx="18.5" cy="12" r="1.3" fill="currentColor" stroke="none"/></svg>' +
-                    (hp.overdue ? 'Tap the tag to head back' : 'Tap the tag to check in') +
+                    (hp.overdue ? 'Hold near the tag to head back' : 'Hold near the tag to check in') +
                   '</button>'
                 : '';
 
@@ -17732,16 +17831,25 @@
                 body: '<div class="wp-ring"' + clockAttrs + '><div class="wp-ring-in">' +
                         '<span class="wp-clock-value">' + wpEsc(first.value) + '</span>' +
                         '<span class="wp-clock-unit">' + wpEsc(first.unit) + '</span>' +
-                      '</div></div>' +
+                      '</div><span class="wp-ring-flag">' + wpEsc(wpPhaseFlag(first.phase)) + '</span></div>' +
+                      dueHtml +
                       routeHtml +
                       wpTripHtml(state) +
                       appHtml +
                       ctaHtml +
+                      // ONE INSTRUCTION, AND THE ONE FOR THE LEG THEY ARE ON. A
+                      // student who is already `out` has arrived; telling them
+                      // to hold their phone near the tag "when you get there"
+                      // is an instruction for a walk they have finished, and at
+                      // a doorway a child follows the sentence rather than
+                      // working out that it is not addressed to them.
                       wpFoot(hp.overdue
-                          ? 'You are past your time. Head back and tap the tag.'
-                          : (state === 'active' && sentTo
-                              ? 'Tap the tag at ' + sentTo + ', then back in class'
-                              : 'Tap the wall tag when you get there, and again when you are back.')),
+                          ? 'You are past your time. Head back and hold your phone near the tag.'
+                          : (state === 'out'
+                              ? 'When you are back in class, hold your phone near the tag in there.'
+                              : (sentTo
+                                  ? 'Hold your phone near the tag at ' + sentTo + ', then back in class'
+                                  : 'Hold your phone near the wall tag when you get there, and again when you are back.'))),
             };
         }
 
@@ -17921,9 +18029,42 @@
         let wpWatchSignature = null;
         const WP_WATCH_MS = 15000;
 
+        /**
+         * What counts as "the pass changed" for the 15 second watch.
+         *
+         * THE CLOCK IS PART OF THE IDENTITY, and leaving it out was a real bug
+         * with a child on the other end of it. Staff can clear a timer, for a
+         * nurse visit or a counsellor, and hallPasses:clearTimer patches nothing
+         * but `timerCleared`. It does not touch id, state or destination. So a
+         * signature of [id, state, sentTo] came back byte identical, the poll
+         * threw the fresh payload away, and data-start and data-limit on the
+         * card kept the window that had just been deleted. The student's card
+         * went on counting down, crossed zero, turned red, printed an overtime
+         * figure, buzzed a warning haptic and claimed "back by 10:42" for a
+         * deadline the server says can never exist, because isOverdue returns
+         * false for a cleared timer. The staff board showed nothing wrong,
+         * which is the worst part: nobody could see it but the child.
+         *
+         * clockStartAt also moves on its own, at the destination tap, when the
+         * reach leg hands over to a fresh return leg. Carrying it here means
+         * that handover re-deals the card instead of leaving the old anchor in
+         * the DOM.
+         *
+         * serverTime is deliberately NOT in here. It changes on every single
+         * poll, so including it would re-deal the card every 15 seconds and
+         * close whatever the student had open, which is the exact thing
+         * wpTickClocks goes out of its way to avoid.
+         */
         function wpPassSignature(hp) {
             if (!hp || !hp.available) return 'none';
-            return [hp.id, hp.state, hp.sentTo || ''].join('|');
+            return [
+                hp.id,
+                hp.state,
+                hp.sentTo || '',
+                hp.clockStartAt || '',
+                hp.clockLimitMinutes === null || hp.clockLimitMinutes === undefined ? '' : hp.clockLimitMinutes,
+                hp.timerCleared ? 'cleared' : ''
+            ].join('|');
         }
 
         /* ============================================================
@@ -17933,7 +18074,17 @@
            Both as mm:ss, because that is the shape a clock has and a
            child reading it in a corridor should not have to parse a
            decimal. Ticked in the page so it moves without a refresh.
+
+           And beside it the ABSOLUTE time the leg is due, because a
+           countdown on its own only answers "how much". To turn that
+           into "am I late" a child has to add it to a now they do not
+           know, standing in a corridor, already anxious. Every corridor
+           in this building has a clock on the wall. "Back by 10:42" is
+           the line that lets them use it, and it is the one thing the
+           category leader's timer will not tell a student at all.
            ============================================================ */
+
+        /* ---- pass clock arithmetic ---- */
 
         /** mm:ss, and h:mm:ss only if a pass has somehow run past an hour. */
         function wpMMSS(totalSeconds) {
@@ -17978,22 +18129,195 @@
             return null;
         }
 
-        /* The two words this card can say. Counting down is the useful one:
-           a student wants to know how long they have, not how long they have
-           used. Once that runs out the same clock counts up, because "over by
-           2:14" is the thing that gets them moving. */
-        function wpClockFace(startMs, limitMin) {
-            if (startMs === null) return { value: '--:--', unit: 'out' };
-            var elapsedSec = (Date.now() - startMs) / 1000;
-            if (limitMin === null) return { value: wpMMSS(elapsedSec), unit: 'out' };
-            var leftSec = limitMin * 60 - elapsedSec;
-            return leftSec >= 0
-                ? { value: wpMMSS(leftSec), unit: 'left' }
-                : { value: wpMMSS(-leftSec), unit: 'over' };
+        /* WHAT COUNTS AS A DEADLINE AT ALL, decided in one place.
+
+           Today a teacher who lifts the limit makes the server send
+           clockLimitMinutes: null, which is unambiguous and is honoured
+           exactly. But "no limit" is also the shape a limit takes when somebody
+           encodes it as an enormous number instead, and a card that counted a
+           child down towards a deadline eleven hours away would be presenting
+           an invention as a fact. So anything a day or longer is read as no
+           window. MAX_PASS_MINUTES is 240, so no pass a teacher can actually
+           write is touched by this.
+
+           Zero and negative go the same way. A zero window would put every pass
+           into overtime the instant it was approved, which is a louder lie than
+           saying nothing; MIN_PASS_MINUTES is 1, so it cannot arrive honestly.
+
+           NaN and Infinity likewise: neither is a time a student can be back by,
+           and a countdown to one is a countdown to nowhere. */
+        const WP_NO_LIMIT_MINUTES = 24 * 60;
+        function wpClockWindow(limitMin) {
+            if (limitMin === null || limitMin === undefined) return null;
+            if (typeof limitMin !== 'number' || !isFinite(limitMin)) return null;
+            if (limitMin <= 0) return null;
+            if (limitMin >= WP_NO_LIMIT_MINUTES) return null;
+            return limitMin;
         }
 
+        /* The instant this leg is due, in epoch ms, or null when nothing is due.
+
+           OFF wpPassStartMs, never computed on its own. That anchor is already
+           corrected for a wrong device clock, so the due time, the digits
+           counting down to it, and the server's own overdue decision all come
+           off one anchor and one window and cannot drift apart. Deriving it any
+           other way (now plus whatever is left, say) would put back exactly the
+           skew wpPassStartMs exists to take out, and the card would print a due
+           time that disagreed with its own countdown.
+
+           What that costs, said plainly: on a phone whose clock is wrong, this
+           prints a time that matches THAT PHONE rather than the clock on the
+           corridor wall. That is the right way round. The student is holding
+           the phone, the countdown ticks in the phone's frame, and a due time
+           that agreed with the wall but not with the digits directly above it
+           would be the card arguing with itself. */
+        function wpDueAtMs(startMs, limitMin) {
+            var win = wpClockWindow(limitMin);
+            if (startMs === null || win === null) return null;
+            if (typeof startMs !== 'number' || !isFinite(startMs)) return null;
+            return startMs + win * 60000;
+        }
+
+        /* "10:42". The student's own device settings decide 12 or 24 hour and
+           which separator, because the point of this line is that it matches the
+           clock they already read on their lock screen. Null in, null out:
+           nothing here invents a time. */
+        function wpDueClockLabel(dueMs) {
+            if (dueMs === null || dueMs === undefined) return null;
+            var d = new Date(dueMs);
+            if (isNaN(d.getTime())) return null;
+            try {
+                return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            } catch (e) {
+                // A browser that refuses the options bag still owes the student a
+                // time rather than a blank.
+                return d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0');
+            }
+        }
+
+        /* HOW LONG BEFORE THE END THE CARD STARTS WARNING.
+
+           Two minutes, or a quarter of this leg, whichever is shorter, never
+           less than thirty seconds.
+
+           Two minutes because that is what the warning is FOR. Leaving a
+           restroom and walking back to a classroom in this building is a minute
+           or two; a warning that lands with less than that in hand has stopped
+           being a chance to act and become an announcement of a fact.
+
+           A quarter of the leg because the reach leg is five minutes and the
+           return leg is commonly ten. A flat two minutes would leave a
+           five-minute pass in its alarm state for 40% of its life, and a state a
+           child spends most of the trip inside is not a state, it is the
+           background. Proportional keeps the warning rare enough to still mean
+           something when it arrives.
+
+           The thirty second floor is for the one-minute pass MIN_PASS_MINUTES
+           allows, where a quarter is fifteen seconds and the warning would land
+           after the decision it exists to inform. */
+        function wpWarnLeadSeconds(limitMin) {
+            var win = wpClockWindow(limitMin);
+            if (win === null) return 0;
+            return Math.max(30, Math.min(120, (win * 60) / 4));
+        }
+
+        /* WHAT THE NUMBER MEANS, returned with the number, because the moment it
+           changes meaning is the moment a timer either keeps telling the truth
+           or quietly stops.
+
+           Counting down is the useful direction: a student wants to know how
+           long they have, not how long they have used. When that runs out the
+           same digits count up, and the category leader lets exactly that happen
+           in silence, at the same size, in the same place, with nothing
+           relabelled. So the inversion is signed here in the digits themselves
+           ("+01:14"), named in the unit word ("left" becomes "overtime"), and
+           handed to the ticker as a phase so the ring, the flag on it and the
+           due line all turn over together.
+
+           The five phases, each a different sentence the card is allowed to say:
+             none   there is no clock to read
+             open   no window at all: staff lifted the limit. Counts UP from the
+                    start and is never late, because it never can be
+             live    inside the window
+             warn    inside the window, but close enough to the end that a
+                     student who turns round now still gets back in time
+             over    past it
+        */
+        function wpClockFace(startMs, limitMin) {
+            if (startMs === null) return { value: '--:--', unit: 'out', phase: 'none' };
+            var win = wpClockWindow(limitMin);
+            var elapsedSec = (Date.now() - startMs) / 1000;
+            // NO WINDOW IS NOT A LONG WINDOW. This pass is never overdue and is
+            // never taken by the sweep, so counting it down towards a deadline
+            // would be the card inventing one and then blaming a child for it.
+            // It counts up and says "out", which is the only true thing about it.
+            if (win === null) return { value: wpMMSS(elapsedSec), unit: 'out', phase: 'open' };
+            var leftSec = win * 60 - elapsedSec;
+            // >= 0 matches isOverdue's `elapsed > window` on the server to the
+            // second: at exactly the limit the pass is not late in either place.
+            // An off-by-one here is a child told they are late by a card the
+            // teacher's board disagrees with.
+            if (leftSec >= 0) {
+                return {
+                    value: wpMMSS(leftSec),
+                    unit: 'left',
+                    phase: leftSec <= wpWarnLeadSeconds(win) ? 'warn' : 'live',
+                };
+            }
+            return { value: '+' + wpMMSS(-leftSec), unit: 'overtime', phase: 'over' };
+        }
+
+        /* The words in front of the due time. They have to change when the
+           number above them changes meaning, and they have to name the right
+           errand: `active` is due AT the destination, `out` is due BACK in
+           class. One line that said "back by" for both would be handing half the
+           students reading it the wrong instruction. */
+        function wpDueLead(phase, leg) {
+            var back = leg === 'back';
+            if (phase === 'over') return back ? 'Was due back at' : 'Was due there at';
+            return back ? 'Back by' : 'Get there by';
+        }
+
+        /* The flag clipped to the ring. Two words at most: at a doorway this is
+           read in peripheral vision or not at all. Empty while the pass is
+           simply running, because a badge that is always there says nothing on
+           the one afternoon it matters. */
+        function wpPhaseFlag(phase) {
+            if (phase === 'over') return 'Overtime';
+            if (phase === 'warn') return 'Head back';
+            return '';
+        }
+
+        /* ---- end pass clock arithmetic ---- */
+
+        /* The ring's two gold stops, and the pairs it wears instead once the
+           pass is nearly out of time or past it. GEOMETRY IS UNTOUCHED: the same
+           conic-gradient, at the same size, in the same place, wearing a
+           different pair of colours, so the change is caught in peripheral
+           vision without anything on the card moving under a reading finger. */
+        const WP_RING_RAMP = {
+            live: ['#F5A623', '#FFD98A'],
+            open: ['#F5A623', '#FFD98A'],
+            none: ['#F5A623', '#FFD98A'],
+            warn: ['#FF8A3D', '#FFC46B'],
+            over: ['#FF4136', '#FF8F84'],
+        };
+
         /* Only the digits are rewritten. Re-dealing the card once a second
-           would close whatever the student had open. */
+           would close whatever the student had open.
+
+           THE PHASE IS WRITTEN HERE TOO, and that is the other half of the same
+           restraint. Crossing into the warning, and crossing into overtime, both
+           land on a second no fetch is going to arrive on: the pass watch polls
+           every fifteen seconds and redraws only when id, state or destination
+           changed, and neither "nearly out of time" nor "out of time" changes
+           any of the three. So before this the digits kept moving and NOTHING
+           ELSE ON THE CARD ever acknowledged that they had reversed, which is
+           precisely the silent inversion this screen exists to beat. The ticker
+           owns the crossing: it writes data-wp-phase, the ring and its flag
+           restyle from CSS, the words that name the number are rewritten beside
+           it, and on a native device the phone says so in the pocket sense, by
+           buzzing once. */
         function wpTickClocks() {
             var nodes = document.querySelectorAll('[data-wp-clock]');
             for (var i = 0; i < nodes.length; i++) {
@@ -18003,13 +18327,100 @@
                 var startMs = rawStart === '' ? null : parseInt(rawStart, 10);
                 var limitMin = rawLimit === '' ? null : parseFloat(rawLimit);
                 if (startMs !== null && !isFinite(startMs)) startMs = null;
-                if (limitMin !== null && !isFinite(limitMin)) limitMin = null;
+                // One normalisation, at the top, so the digits, the phase and the
+                // ring sweep below all read the same window. A "no limit" that
+                // arrived as an enormous number must not sweep a ring towards a
+                // deadline the rest of the card has already refused to print.
+                limitMin = wpClockWindow(limitMin);
 
                 var face = wpClockFace(startMs, limitMin);
                 var valueEl = node.querySelector('.wp-clock-value');
                 var unitEl = node.querySelector('.wp-clock-unit');
                 if (valueEl && valueEl.textContent !== face.value) valueEl.textContent = face.value;
                 if (unitEl && unitEl.textContent !== face.unit) unitEl.textContent = face.unit;
+
+                // The flag on the ring, and the words in front of the due time.
+                // Both are part of the same sentence as the digits, so both are
+                // rewritten on the same tick rather than waiting for a redraw
+                // that is not coming.
+                var flagEl = node.querySelector('.wp-ring-flag');
+                var flag = wpPhaseFlag(face.phase);
+                if (flagEl && flagEl.textContent !== flag) flagEl.textContent = flag;
+
+                // The due line is a SIBLING of the ring, not a child of it, so
+                // it is reached through the card body. In the wide layout that
+                // body is parked in the detail panel, and the ring travels with
+                // it, so this holds in both places.
+                var host = (node.closest && node.closest('.wp-body')) || node.parentNode;
+                var leadEl = host && host.querySelector ? host.querySelector('.wp-due-lead') : null;
+                if (leadEl) {
+                    var lead = wpDueLead(face.phase, node.getAttribute('data-leg'));
+                    if (leadEl.textContent !== lead) leadEl.textContent = lead;
+                }
+
+                // AND THE HEADER STRIP, off the same face as everything above.
+                // The strip's value is written once, at deal time, from this same
+                // wpClockFace, and nothing re-deals the card on a crossing: the
+                // pass watch redraws on id, state and destination, and neither
+                // "nearly out of time" nor "out of time" changes any of the three.
+                // So left alone, the one line a student reads on a COLLAPSED card
+                // sat at the minute the card was opened while the ring below it
+                // counted down, turned red and buzzed. Two mm:ss on one card that
+                // disagree is the same silent lie the rest of this ticker exists
+                // to stop, and the strip is the copy of it a student sees without
+                // opening anything.
+                //
+                // FOUR SURFACES, ONE WRITE, because they are all fed from the
+                // card: the strip itself, the card's data-lead (which is where
+                // the wide layout's detail panel reads it from), the aria-label
+                // VoiceOver announces, and the panel's own line while this card
+                // is the open one, since wpSyncWide runs on a layout and not on
+                // a tick.
+                var stripLead = face.value + ' ' + face.unit;
+                var cardEl = node.closest ? node.closest('.wp-card') : null;
+                if (!cardEl && host && host.dataset && host.dataset.i !== undefined) {
+                    // Wide layout: the body was MOVED into the detail panel, so
+                    // the ring has no card above it any more. The body carries the
+                    // card's index, and that is the way back to it.
+                    var stackEl = wpById('wpStack');
+                    if (stackEl) cardEl = stackEl.querySelector('.wp-card[data-i="' + host.dataset.i + '"]');
+                }
+                if (cardEl && cardEl.dataset.lead !== stripLead) {
+                    cardEl.dataset.lead = stripLead;
+                    var stripEl = cardEl.querySelector('.wp-lead');
+                    if (stripEl) stripEl.textContent = stripLead;
+                    cardEl.setAttribute('aria-label', (cardEl.dataset.label || '') + '. ' + stripLead);
+                    if (cardEl.classList.contains('is-open')) {
+                        var detailLead = wpById('wpDetailLead');
+                        if (detailLead) detailLead.textContent = stripLead;
+                    }
+                }
+
+                var prevPhase = node.getAttribute('data-wp-phase') || '';
+                if (prevPhase !== face.phase) node.setAttribute('data-wp-phase', face.phase);
+                // The BODY wears it too, for the pieces of the card that sit
+                // outside the ring. Compared every tick rather than written only
+                // on a crossing, because the card is dealt with a phase already
+                // on the ring: a card that OPENED overdue never crosses anything,
+                // and its due line would sit there in the running colour saying
+                // "was due back at" as though nothing were wrong.
+                if (host && host.getAttribute && host.getAttribute('data-wp-phase') !== face.phase) {
+                    host.setAttribute('data-wp-phase', face.phase);
+                }
+                // A STATE CHANGE A CHILD NOTICES WITHOUT READING, on a device
+                // that can do it. Warning on the way in, error at the crossing,
+                // matching Apple's documented meanings for the two rather than
+                // borrowing a pattern for a job it does not name.
+                //
+                // ONLY ON AN ACTUAL CROSSING. prevPhase is empty only before the
+                // first paint, and a card dealt to a student who is ALREADY late
+                // carries its phase in the markup, so it compares equal and stays
+                // silent. Nothing buzzes at a child to tell them about a deadline
+                // that passed before they opened the app.
+                if (prevPhase && prevPhase !== face.phase) {
+                    if (face.phase === 'warn') wcNativeHaptic('warning');
+                    if (face.phase === 'over') wcNativeHaptic('error');
+                }
 
                 // Sweep the ring so the depleting gold arc matches the digits to
                 // the second. Remaining fraction, so it empties as time runs out;
@@ -18021,8 +18432,18 @@
                         var elapsedSec = (Date.now() - startMs) / 1000;
                         frac = Math.max(0, Math.min(1, 1 - elapsedSec / (limitMin * 60)));
                     }
+                    // OVERTIME FILLS THE RING RATHER THAN EMPTYING IT. Past zero
+                    // the remaining fraction is pinned at nought, so the arc it
+                    // would draw is nothing at all: a ring that had been visibly
+                    // counting down arrives at the most urgent moment of the trip
+                    // as an empty grey circle, which reads as "finished" or as
+                    // "broken" and never as "you are late". Full and red is the
+                    // opposite reading and the true one.
+                    if (face.phase === 'over') frac = 1;
+                    var ramp = WP_RING_RAMP[face.phase] || WP_RING_RAMP.live;
                     var t = frac.toFixed(3);
-                    node.style.background = 'conic-gradient(#F5A623 0turn, #FFD98A ' + t + 'turn, rgba(255,255,255,.10) ' + t + 'turn 1turn)';
+                    node.style.background = 'conic-gradient(' + ramp[0] + ' 0turn, ' + ramp[1] + ' ' + t +
+                        'turn, rgba(255,255,255,.10) ' + t + 'turn 1turn)';
                 }
             }
         }
@@ -18039,29 +18460,43 @@
             // The digits move on their own from here; the poll below only
             // watches for the pass CHANGING STATE.
             wpStartClocks();
-            wpWatchTimer = setInterval(async function () {
-                const view = wpById('studentPassView');
-                if (!view || view.classList.contains('hidden')) { wpStopPassWatch(); return; }
-                if (document.hidden) return;
-                const auth = window.WildcatAuth;
-                const session = auth && auth.getSession && auth.getSession();
-                if (!session) return;
-                try {
-                    const card = await auth.convexQuery('passCard:mine', {}, session.idToken);
-                    const next = wpPassSignature(card && card.hallPass);
-                    if (wpWatchSignature === null) { wpWatchSignature = next; return; }
-                    if (next !== wpWatchSignature) {
-                        wpWatchSignature = next;
-                        // Land on the hall pass card, because it is the thing
-                        // that changed and the reason the phone is in their hand.
-                        await loadStudentPortal(4);
-                    }
-                } catch (e) {
-                    // Silent. A dropped poll is not worth a message on a screen a
-                    // student is holding at a doorway; the next one will either
-                    // work or the session check above will stop the timer.
+            wpWatchTimer = setInterval(function () { wpPollPassOnce(false); }, WP_WATCH_MS);
+        }
+
+        /**
+         * One turn of the watch: read the card, and re-render only when the pass
+         * has actually CHANGED STATE.
+         *
+         * Split out of the interval so the native app can run it the instant a
+         * student comes back to the app. `force` exists for exactly one line
+         * below. The interval skips itself while document.hidden, which is right
+         * for a phone in a pocket and wrong the moment it is back in a hand: on
+         * iOS the foreground notification can land before the webview is marked
+         * visible, so a resync that honoured document.hidden would poll nothing
+         * and leave the stale card sitting there anyway.
+         */
+        async function wpPollPassOnce(force) {
+            const view = wpById('studentPassView');
+            if (!view || view.classList.contains('hidden')) { wpStopPassWatch(); return; }
+            if (!force && document.hidden) return;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!session) return;
+            try {
+                const card = await auth.convexQuery('passCard:mine', {}, session.idToken);
+                const next = wpPassSignature(card && card.hallPass);
+                if (wpWatchSignature === null) { wpWatchSignature = next; return; }
+                if (next !== wpWatchSignature) {
+                    wpWatchSignature = next;
+                    // Land on the hall pass card, because it is the thing
+                    // that changed and the reason the phone is in their hand.
+                    await loadStudentPortal(4);
                 }
-            }, WP_WATCH_MS);
+            } catch (e) {
+                // Silent. A dropped poll is not worth a message on a screen a
+                // student is holding at a doorway; the next one will either
+                // work or the session check above will stop the timer.
+            }
         }
 
         function wpStopPassWatch() {
@@ -18547,6 +18982,7 @@
         }
 
         function studentPassSignOut() {
+            wcForgetTab();
             if (window.WildcatAuth && window.WildcatAuth.signOut) {
                 try { window.WildcatAuth.signOut(); } catch (e) { /* still leave */ }
             }
@@ -18611,12 +19047,19 @@
         // ---------------------------------------------------------------
         // NFC tags.
         //
-        // A tag holds https://wildcatraffle.com/?tap=<slug>. A QUERY STRING, not
-        // a path: this is a static site on GitHub Pages, which cannot route
-        // /tap/<slug> to index.html without a 404 redirect trick that behaves
-        // differently in different browsers. A query string is boring and works
-        // everywhere, and the tag is encoded once and mounted on a wall, so
-        // "boring and works everywhere" is the whole requirement.
+        // A tag holds https://wildcatraffle.com/tap/?tap=<slug>. The SLUG IS A
+        // QUERY STRING, not a path: this is a static site on GitHub Pages, which
+        // cannot route /tap/<slug> to index.html without a 404 redirect trick
+        // that behaves differently in different browsers. A query string is
+        // boring and works everywhere, and the tag is encoded once and mounted on
+        // a wall, so "boring and works everywhere" is the whole requirement.
+        //
+        // The /tap/ PATH in front of it is the app-link claim, and the trailing
+        // slash is load bearing. The apple-app-site-association and the Android
+        // assetlinks both claim /tap/*, so a tag pointing at the bare apex would
+        // never open the installed app; /tap/index.html is the page a phone
+        // WITHOUT the app lands on, and it forwards to /?tap=<slug> where the
+        // handling below takes over. See docs/universal-links.md.
         //
         // Tapping is a NAVIGATION, not a callback. iOS 14+ reads the tag in the
         // background and opens the link; Android Chrome does the same. Nothing
@@ -18624,7 +19067,12 @@
         // ---------------------------------------------------------------
         function pendingTapSlug() {
             const match = /[?&]tap=([a-zA-Z0-9-]+)/.exec(window.location.search);
-            return match ? match[1].toLowerCase() : null;
+            if (match) return match[1].toLowerCase();
+            // The native app's address bar never changes: the operating system
+            // hands it the tag URL as a universal link instead, and
+            // wcNativeHandleAppUrl parks the slug there. Same slug, same handler,
+            // different doorway.
+            return wcNativeTapSlug || null;
         }
 
         /**
@@ -18635,6 +19083,11 @@
          * a second refusal. The record would show taps the student never made.
          */
         function clearTapFromUrl() {
+            // The native app's slug never reached the address bar, so it is
+            // dropped here alongside and for the identical reason: a resume, a
+            // reload, or a second reading of the launch URL must not re-arm a
+            // tap the student has already answered.
+            wcNativeTapSlug = null;
             const url = new URL(window.location.href);
             url.searchParams.delete('tap');
             window.history.replaceState({}, '', url.toString());
@@ -18648,7 +19101,7 @@
          * meant the tap was performed by whoever sent the link, not by the
          * student it got recorded against:
          *
-         *   - send a classmate https://wildcatraffle.com/?tap=<slug> in a chat
+         *   - send a classmate https://wildcatraffle.com/tap/?tap=<slug> in a chat
          *   - or encode a blank NTAG and hold it near their phone, since iOS
          *     reads tags in the background with no app installed
          *
@@ -18741,7 +19194,13 @@
             const state = String((hp && hp.state) || '').toLowerCase();
             const out = live && state !== 'requested' && state !== 'pending';
 
-            let kicker = 'You tapped';
+            // "Scanned", because a phone never has to make contact with a tag.
+            // Apple NFC guidance is to use scan and hold near for this gesture;
+            // the vocabulary of pressing two things together teaches a child to
+            // push a phone against a wall and then wonder why nothing happened.
+            // The card itself already says "hold your phone near", and this
+            // screen is the very next thing the same student reads.
+            let kicker = 'You scanned';
             let title = unsure ? 'Check in here' : name;
             let line;
             let action = '';
@@ -18756,7 +19215,7 @@
                        'Nothing has been recorded. Ask your teacher for a pass first.';
             } else if (!out) {
                 line = 'Your pass is still waiting for your teacher. Once it is approved, ' +
-                       'tap this tag again to check in at ' + name + '.';
+                       'hold your phone near this tag again to check in at ' + name + '.';
             } else {
                 line = 'This records you at ' + name + '. If this is where your pass started, ' +
                        'it ends the pass and stops your timer.';
@@ -18816,6 +19275,20 @@
             const session = auth && auth.getSession();
             if (!session) return;
 
+            // The FIRST of the two beats, and on iPhone this is the only place
+            // it can happen. A student who arrived by holding their phone to a
+            // tag came through the notification banner, not through a scan
+            // session, so wcNativeHapticDetect never fired for them: the app
+            // was handed a URL and saw no tag at all. Without this, the whole
+            // universal-link path is silent from the press until the network
+            // answers, and two mutations have to complete before showTapResult
+            // plays anything. Wallet's lesson is that the haptic is the load
+            // bearing channel, and the one moment worth confirming here is the
+            // moment the student committed. It fires before the awaits, not
+            // after, because the point is to acknowledge the press rather than
+            // to report the outcome.
+            wcNativeHapticDetect();
+
             const btn = wpById('wpTapGo');
             wpBusy = true;
             if (btn) { btn.disabled = true; btn.textContent = 'Checking in...'; }
@@ -18865,7 +19338,9 @@
         // ===================================================================
         let wcNfcScanController = null;
 
-        /** Pull our slug out of the tap URL we wrote (…/?tap=<slug>), any host/case. */
+        /** Pull our slug out of the tap URL we wrote (…/tap/?tap=<slug>), any host/case.
+            Reads the QUERY only, so a tag written before the /tap/ path existed
+            still decodes: the slug never moved, only the path in front of it. */
         function wcNfcSlugFromUrl(url) {
             try {
                 const u = new URL(String(url), 'https://wildcatraffle.com');
@@ -18892,84 +19367,518 @@
         // ---- Native NFC bridge (Capacitor app only) ----
         // In the native app, Core NFC reads AND writes tags on iPhone, which no
         // iOS browser can. In a browser these are never reached (window.WC_NATIVE
-        // is false) and the Web NFC / URL-tap path stands. The plugin call shapes
-        // are TODO-VERIFY against @capawesome-team/capacitor-nfc on a real device:
-        // NFC cannot run in a simulator, so this is structured, not device-proven.
+        // is false) and the Web NFC / URL-tap path stands.
+        //
+        // The plugin is @exxili/capacitor-nfc (MIT, on the public registry). It
+        // replaced @capawesome-team/capacitor-nfc, which is paid sponsorware:
+        // that package answers 404 for anybody without a licence, so the install
+        // in mobile/ could never have completed and not one of the calls written
+        // against it had ever run anywhere. Everything below is written against
+        // the exxili plugin's own definitions and native source instead.
+        //
+        // THE PLUGIN KEY IS "NFC", ALL CAPITALS. The native plugin declares
+        // itself as name = "NFC", and that name is the property Capacitor hangs
+        // on window.Capacitor.Plugins. The old check looked for `.Nfc` and would
+        // have been false forever, quietly sending every student down the "this
+        // phone cannot scan" branch with nothing anywhere to explain why.
         function wcNativeNfcAvailable() {
-            return !!(window.WC_NATIVE && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Nfc);
+            return !!(window.WC_NATIVE && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.NFC);
         }
 
-        function wcNativeSlugFromTag(event) {
-            // Dig a URL/slug out of a scanned tag's NDEF records however they
-            // arrive: a decoded uri string, or a URI record whose first payload
-            // byte is the well-known-prefix code (0x04 = https://).
+        // ---- Native NDEF decoding ----
+        //
+        // The NFC Forum URI Record Type Definition abbreviation table. A URI
+        // record does NOT hold "https://wildcatraffle.com/tap/?tap=room-16"; it
+        // holds a one byte code standing in for a common prefix, and then the
+        // rest of the string as UTF-8. So payload[0] has to be expanded back
+        // into text before the URL means anything at all.
+        //
+        // Code 4 is https:// and is what our own writer emits, and the old code
+        // understood only code 4. A tag encoded by any third party writer app
+        // very often arrives as 1 or 2 instead, and every one of those tags read
+        // as an unknown tag: a student stands at a door tapping a sticker that
+        // does nothing, and no error is raised anywhere to say why. Codes 0 to
+        // 28 are byte identical across the two independent plugin
+        // implementations checked; 29 and up come from the exxili table.
+        var WC_NDEF_URI_PREFIX = [
+            '', 'http://www.', 'https://www.', 'http://', 'https://',
+            'tel:', 'mailto:', 'ftp://anonymous:anonymous@', 'ftp://ftp.', 'ftps://',
+            'sftp://', 'smb://', 'nfs://', 'ftp://', 'dav://', 'news:', 'telnet://',
+            'imap:', 'rtsp://', 'urn:', 'pop:', 'sip:', 'sips:', 'tftp:', 'btspp://',
+            'btl2cap://', 'btgoep://', 'tcpobex://', 'irdaobex://', 'file://',
+            'urn:epc:id:', 'urn:epc:tag:', 'urn:epc:pat:', 'urn:epc:raw:', 'urn:epc:', 'urn:nfc:'
+        ];
+
+        /**
+         * The raw payload bytes of one record, whatever shape the bridge used.
+         *
+         * exxili base64 encodes the payload on BOTH platforms, so a string is
+         * the normal case and has to be decoded before byte zero can be read as
+         * a prefix code. Arrays and typed arrays are accepted too, because the
+         * plugin's own numberArray() and uint8Array() views hand the same
+         * records over that way and it costs one branch to be right for all of
+         * them. Anything else, or base64 that is not base64, returns null and
+         * the caller moves on to the next record rather than throwing.
+         */
+        function wcNativeRecordBytes(payload) {
+            if (payload === null || payload === undefined) return null;
+            var out = [];
+            var i;
+            if (typeof payload === 'string') {
+                var binary;
+                try { binary = atob(payload); } catch (e) { return null; }
+                for (i = 0; i < binary.length; i++) out.push(binary.charCodeAt(i) & 0xff);
+                return out;
+            }
+            if (typeof payload === 'object' && typeof payload.length === 'number') {
+                for (i = 0; i < payload.length; i++) {
+                    var b = Number(payload[i]);
+                    if (!isFinite(b)) return null;
+                    out.push(b & 0xff);
+                }
+                return out;
+            }
+            return null;
+        }
+
+        /** Expand a well-known URI record's bytes back into the whole URL. */
+        function wcNativeUriFromBytes(bytes) {
+            if (!bytes || !bytes.length) return null;
+            // An unknown code is not a reason to drop the record. It means no
+            // prefix compression we recognise, so the rest is read as-is and a
+            // URL that was stored whole still resolves.
+            var prefix = WC_NDEF_URI_PREFIX[bytes[0]] || '';
             try {
-                var tag = (event && (event.nfcTag || event.tag)) || event;
-                var records = (tag && tag.message && tag.message.records) || (tag && tag.records) || [];
-                for (var i = 0; i < records.length; i++) {
-                    var r = records[i];
-                    var text = null;
-                    if (typeof r.uri === 'string') text = r.uri;
-                    else if (typeof r.payload === 'string') text = r.payload;
-                    else if (Array.isArray(r.payload) && r.payload.length) {
-                        text = String.fromCharCode.apply(null, r.payload.slice(1));
-                        if (r.payload[0] === 4) text = 'https://' + text;
+                // TextDecoder, never String.fromCharCode.apply: the old call
+                // blew the stack on a long payload and mangled every multi-byte
+                // character it met on the way.
+                return prefix + new TextDecoder('utf-8').decode(Uint8Array.from(bytes.slice(1)));
+            } catch (e) { return null; }
+        }
+
+        /**
+         * The slug on one record, or null.
+         *
+         * THE TYPE CHECK COMES FIRST, and it is not a formality. A Text
+         * record's first payload byte is a status byte holding a language code
+         * length, not a URI prefix code, so reading one as a URI produces
+         * plausible looking rubbish that then fails a tag lookup in silence.
+         * exxili also emits a synthetic { type: 'ID' } record when a tag carries
+         * no NDEF message at all, which this refuses for the same reason.
+         */
+        function wcNativeSlugFromRecord(record) {
+            if (!record || record.type !== 'U') return null;
+            var bytes = wcNativeRecordBytes(record.payload);
+            var url = bytes ? wcNativeUriFromBytes(bytes) : null;
+            var slug = url ? wcNfcSlugFromUrl(url) : null;
+            if (slug) return slug;
+            // Belt and braces: the plugin's own string() view hands back a URL
+            // that is already expanded, and a URL is not base64, so the decode
+            // above returns null for it. Read it as a URL rather than throw away
+            // a record that plainly carries one of our slugs.
+            if (typeof record.payload === 'string') return wcNfcSlugFromUrl(record.payload);
+            return null;
+        }
+
+        /**
+         * The first of our slugs anywhere on a scanned tag.
+         *
+         * exxili delivers { messages: [ { records: [ { type, payload } ] } ] }
+         * on both platforms. The old code read event.nfcTag.message.records and
+         * probed a record.uri property that exists on neither plugin.
+         */
+        function wcNativeSlugFromTag(data) {
+            try {
+                var messages = (data && data.messages) || [];
+                for (var m = 0; m < messages.length; m++) {
+                    var records = (messages[m] && messages[m].records) || [];
+                    for (var r = 0; r < records.length; r++) {
+                        var slug = wcNativeSlugFromRecord(records[r]);
+                        if (slug) return slug;
                     }
-                    var slug = wcNfcSlugFromUrl(text);
-                    if (slug) return slug;
                 }
             } catch (e) { /* fall through to null */ }
             return null;
         }
+        // ---- end native NDEF decoding ----
 
         async function wcNativeNfcTap() {
-            var Nfc = window.Capacitor.Plugins.Nfc;
+            var NFC = window.Capacitor.Plugins.NFC;
+            // ONE SESSION AT A TIME, the same guard the Web NFC path keeps a few
+            // hundred lines below. A second Scan press used to overwrite
+            // window._wcNfcListener and orphan the first listener for the life
+            // of the app; on Android, where the activity is in reading mode the
+            // whole time it is foregrounded, that orphan then fired on every
+            // tag the phone met afterwards.
+            if (window._wcNfcListener || wpBusy) return;
             wcShowScanListening();
             try {
-                window._wcNfcListener = await Nfc.addListener('nfcTagScanned', async function (event) {
+                // The listener goes on FIRST, the scan second. On Android the
+                // listener is the WHOLE mechanism (the activity is already in
+                // reading mode whenever it is foregrounded) and startScan there
+                // is not merely unnecessary, it REJECTS: NFCPlugin.kt answers
+                // "Android NFC scanning does not require 'startScan' method."
+                // Awaiting that inside this try painted a refusal card and an
+                // error haptic on every Android scan the app ever attempted. On
+                // iOS startScan is the call that raises the system sheet, and
+                // the listener has to exist before the sheet can deliver.
+                window._wcNfcListener = await NFC.addListener('nfcTag', async function (data) {
                     if (wpBusy) return;
-                    var slug = wcNativeSlugFromTag(event);
+                    var slug = wcNativeSlugFromTag(data);
                     if (!slug) return; // not one of ours; keep listening
                     wpBusy = true;
+                    // THE FIRST OF TWO BEATS, and the reason it is above the
+                    // network rather than below it. Everything past this line is
+                    // two round trips to Convex, and until one of them answers
+                    // the student is still holding a phone against a sticker
+                    // with nothing telling them it was read. A light impact here
+                    // says "it saw the tag"; the notification haptic in
+                    // showTapResult says "and here is the answer". That pair is
+                    // what Apple Pay actually feels like.
+                    wcNativeHapticDetect();
+                    // The session closes BEFORE the mutations, not after. On iOS
+                    // Apple's sheet covers the whole screen until cancelScan
+                    // runs, so closing it afterwards left the student reading
+                    // "Hold your iPhone near the NFC tag" for the entire wait.
+                    await wcNativeNfcStop();
                     try {
                         var result = await wcRunTapForSlug(slug);
-                        await wcNativeNfcStop();
-                        showTapResult(result);
+                        showTapResult(result, true);
                     } catch (e) {
-                        await wcNativeNfcStop();
-                        showTapResult({ ok: false, reason: e.message });
+                        showTapResult({ ok: false, reason: e.message }, true);
                     } finally { wpBusy = false; }
                 });
-                await Nfc.startScanSession();
+                if (String(window.WC_NATIVE_PLATFORM || '') !== 'android') {
+                    await NFC.startScan();
+                }
             } catch (e) {
-                showTapResult({ ok: false, reason: 'Could not start the NFC reader: ' + ((e && e.message) || e) });
+                // No plugin name and no exception text. This is a child at a
+                // doorway between classes, and the only thing they can act on is
+                // the sticker in front of them. wcNativeNfcStop also releases
+                // the guard above, so the next press gets a clean session.
+                await wcNativeNfcStop();
+                showTapResult({ ok: false, reason: 'Scanning could not start. Hold your phone near the tag itself to check in.' });
             }
         }
 
         async function wcNativeNfcStop() {
             try {
-                var Nfc = window.Capacitor.Plugins.Nfc;
+                var NFC = window.Capacitor.Plugins.NFC;
                 if (window._wcNfcListener && window._wcNfcListener.remove) await window._wcNfcListener.remove();
                 window._wcNfcListener = null;
-                if (Nfc && Nfc.stopScanSession) await Nfc.stopScanSession();
+                // cancelScan is iOS only and a no-op on Android, which is why it
+                // is safe to call on both without a platform test.
+                if (NFC && NFC.cancelScan) await NFC.cancelScan();
             } catch (e) { /* best effort */ }
         }
 
-        // Write a tap URL to a physical tag via Core NFC, for the programmer when
-        // running natively (this is the iOS tag-writing the browser cannot do).
+        // How long a write waits for a tag before giving up. BOTH platforms need
+        // a deadline, for different reasons.
+        //
+        // Android arms the write and it happens on the NEXT tag the phone meets,
+        // so something has to decide when the admin has walked away; an armed
+        // write left running overwrites whatever tag turns up next.
+        //
+        // iOS looks like it does not need one, because Core NFC invalidates its
+        // own session after about a minute. It does need one anyway: the plugin
+        // filters readerSessionInvalidationErrorUserCanceled out of its error
+        // callback, so an admin who taps Cancel on Apple's sheet produces NO
+        // event at all and the write would hang for the life of the page. The
+        // iOS deadline sits just past Apple's own so that a genuine session
+        // timeout still reports itself first, with its own wording.
+        var WC_NFC_WRITE_WAIT_MS = 30000;
+        var WC_NFC_WRITE_WAIT_IOS_MS = 65000;
+
+        /**
+         * The NFC Forum URI record payload for a URL, as the BYTES the native
+         * side actually reads.
+         *
+         * IT HAS TO BE BUILT HERE. The plugin's friendly `NFC` wrapper builds it
+         * in src/index.ts, and that wrapper is an ES module. This app has no
+         * bundler, so the only thing a plain script can reach is the raw proxy
+         * on window.Capacitor.Plugins, which does no framing whatsoever. Handing
+         * THAT a plain string is not a smaller version of the same thing; it
+         * fails, and it fails differently on each platform. iOS casts
+         * `recordData["payload"] as? [NSNumber]`, the cast fails, `continue`
+         * skips the record, an EMPTY NDEF message is written, and call.resolve()
+         * reports success anyway: the admin would be told every sticker
+         * programmed and not one of them would hold a URL. Android calls
+         * getJSONArray("payload") on the string and throws, which at least
+         * surfaces as an error.
+         *
+         * Identifier code 0 means no prefix compression, so the URL is stored
+         * literally. That is about nine bytes more than code 4, which is nothing
+         * on an NTAG213, and it keeps the tag readable by anything that never
+         * implemented the abbreviation table.
+         */
+        function wcNativeUriPayload(url) {
+            var bytes = new TextEncoder().encode(String(url));
+            var out = [0x00];
+            for (var i = 0; i < bytes.length; i++) out.push(bytes[i]);
+            return out;
+        }
+
+        /**
+         * Write a tap URL onto a physical tag, for the admin programming the
+         * stickers. This is the one thing no iOS browser can do at all.
+         *
+         * THE OLD ORDER COULD NOT WORK. It opened a read session, called a
+         * write, then closed the read session. On iOS that is a reader session
+         * being asked to perform a write it was never configured for; on Android
+         * startScan is a no-op, so the write had nothing holding it open. The
+         * plugin's contract is the other way round: writeNDEF is what opens the
+         * session, and it is called BEFORE the tag is presented.
+         *
+         * BOTH PLATFORMS WAIT ON THE EVENTS, and iOS is not the exception this
+         * function used to treat it as. NFCPlugin.swift calls
+         * writer.startWriting(message:) and then call.resolve() on the very next
+         * line, so the promise resolves the moment the system sheet is RAISED
+         * and says nothing at all about whether a tag was written. The truth
+         * arrives on nfcWriteSuccess or nfcError, exactly as it does on Android.
+         * Awaiting only the promise told the admin every sticker had been
+         * programmed, including the ones where they put the phone down.
+         */
         async function wcNativeNfcWrite(url) {
-            var Nfc = window.Capacitor.Plugins.Nfc;
-            await Nfc.startScanSession();
-            await Nfc.write({ message: { records: [{ uri: url }] } });
-            await Nfc.stopScanSession();
+            var NFC = window.Capacitor.Plugins.NFC;
+            var isAndroid = String(window.WC_NATIVE_PLATFORM || '') === 'android';
+            var records = [{ type: 'U', payload: wcNativeUriPayload(url) }];
+
+            // On Android writeNDEF only ARMS the write: it buffers the records
+            // and the write happens on the next tag intent. On iOS it raises the
+            // system sheet. Either way the outcome is on the events below, never
+            // on the promise. An armed Android write left running would
+            // overwrite the next tag anybody held to this phone, including a
+            // wall tag a student was trying to read, so it is always disarmed on
+            // the way out.
+            var settleOk = null;
+            var settleFail = null;
+            var settled = new Promise(function (resolve, reject) {
+                settleOk = resolve;
+                settleFail = reject;
+            });
+            // Marks the rejection handled, so a write that throws before the
+            // await below does not ALSO surface as an unhandled rejection. The
+            // await still sees the real error.
+            settled.catch(function () { /* reported by the await, or nobody is waiting */ });
+
+            var okHandle = null;
+            var errHandle = null;
+            var timer = null;
+            try {
+                // Awaited one at a time, so the handles are in hand before
+                // anything can fail. A handle captured in a .then callback can
+                // still be null when the finally block runs, and a listener that
+                // outlives its write is a listener that fires on the NEXT one.
+                okHandle = await NFC.addListener('nfcWriteSuccess', function () { settleOk(); });
+                errHandle = await NFC.addListener('nfcError', function (err) {
+                    settleFail(new Error((err && err.error) || 'The tag could not be written.'));
+                });
+                timer = setTimeout(function () {
+                    settleFail(new Error('No tag was written. Hold the tag flat against the phone and try again.'));
+                }, isAndroid ? WC_NFC_WRITE_WAIT_MS : WC_NFC_WRITE_WAIT_IOS_MS);
+                await NFC.writeNDEF({ records: records });
+                await settled;
+            } finally {
+                if (timer) { clearTimeout(timer); timer = null; }
+                try { if (okHandle && okHandle.remove) await okHandle.remove(); } catch (e) { /* already gone */ }
+                try { if (errHandle && errHandle.remove) await errHandle.remove(); } catch (e) { /* already gone */ }
+                // Android only. cancelWriteAndroid REJECTS on iOS with "Function
+                // not implemented for iOS", which would turn a write that worked
+                // into an error on screen.
+                if (isAndroid && NFC.cancelWriteAndroid) {
+                    try { await NFC.cancelWriteAndroid(); } catch (e) { /* nothing was armed */ }
+                }
+            }
         }
         window.wcNativeNfcWrite = wcNativeNfcWrite;
+
+        /**
+         * The second of the two beats a student feels, and the one that carries
+         * the answer. The first is wcNativeHapticDetect, below.
+         *
+         * Apple puts a completed check-in in the NOTIFICATION family, not the
+         * impact family: notification haptics are for the outcome of a task
+         * ("depositing a check, unlocking a vehicle"), and impact haptics are a
+         * metaphor for two objects colliding. A hall pass check-in is an
+         * outcome. Success on a confirmed tap and Error on a refusal, and
+         * nothing else, so the two stay tellable apart by a phone held at waist
+         * height in a corridor.
+         *
+         * GATED ON NATIVE AND WRAPPED, because @capacitor/haptics does not
+         * quietly no-op on the web: its web implementation THROWS when
+         * navigator.vibrate is missing, and navigator.vibrate is missing in
+         * Safari on every iPhone and every Mac. script.js is the same file the
+         * browser portal runs, so an ungated call here would throw on a
+         * student's phone in Safari.
+         *
+         * NOTHING AWAITS THIS AND NOTHING SHOULD. The plugin resolves as soon as
+         * the haptic is SCHEDULED on the main thread, so the promise says
+         * nothing whatever about whether anything was felt. Treating it as proof
+         * of feedback would be treating a resolved promise as a sensation.
+         */
+        function wcNativeHaptic(kind) {
+            try {
+                if (!window.WC_NATIVE || !window.Capacitor || !window.Capacitor.Plugins) return;
+                var Haptics = window.Capacitor.Plugins.Haptics;
+                if (!Haptics || !Haptics.notification) return;
+                // The native side compares the raw string, and an unrecognised
+                // one falls back to SUCCESS in silence, which would make a
+                // refusal feel exactly like a pass. These three spellings are the
+                // enum's values, and they are shouted.
+                //
+                // WARNING earns its place with the pass clock. Apple's own
+                // meanings for the family are Success for a completed action,
+                // Warning for one that produced a warning, Error for a failure,
+                // and the guidance is not to borrow a pattern for a job it does
+                // not name. "Two minutes left" is a warning, not a failure and
+                // not a success, so it gets the one that means that.
+                var played = Haptics.notification({
+                    type: kind === 'error' ? 'ERROR' : (kind === 'warning' ? 'WARNING' : 'SUCCESS'),
+                });
+                // A rejection arrives later than the try/catch can see, so it is
+                // caught here as well.
+                if (played && played.catch) played.catch(function () { /* no Taptic Engine on this device */ });
+            } catch (e) { /* a device with no haptics, or a browser */ }
+        }
+
+        /**
+         * The first beat: "it saw the tag".
+         *
+         * IMPACT, not notification, and that is the whole distinction Apple
+         * draws. This one is not an outcome, because at the moment it fires
+         * nothing has been decided: two mutations are still in the air. It is
+         * the physical event of a phone meeting a sticker, which is exactly what
+         * the impact family is a metaphor for. Light, because a heavy one at the
+         * moment of contact reads as the answer and a student would walk off on
+         * it.
+         *
+         * Its whole job is to fill the gap the network leaves. Without it the
+         * student holds still against the wall until the round trip lands, and
+         * anything where a person is still holding still at one second has
+         * already failed them.
+         *
+         * Same gate and same wrapping as wcNativeHaptic, and for the same
+         * reason: @capacitor/haptics THROWS on the web rather than no-opping,
+         * and this file is the file the browser portal runs.
+         */
+        function wcNativeHapticDetect() {
+            try {
+                if (!window.WC_NATIVE || !window.Capacitor || !window.Capacitor.Plugins) return;
+                var Haptics = window.Capacitor.Plugins.Haptics;
+                if (!Haptics || !Haptics.impact) return;
+                // SCREAMING, like the notification types: the native side
+                // compares the raw string and an unrecognised one falls back to
+                // HEAVY, which at the instant of contact would be mistaken for
+                // the confirmation.
+                var played = Haptics.impact({ style: 'LIGHT' });
+                if (played && played.catch) played.catch(function () { /* no Taptic Engine on this device */ });
+            } catch (e) { /* a device with no haptics, or a browser */ }
+        }
+
+        // ---- Native app links and lifecycle (Capacitor app only) ----
+        //
+        // On iPhone, a tag read in the BACKGROUND never reaches an NFC session.
+        // The system reads it, shows a notification, and only when the student
+        // taps that notification does it hand the app the tag's URL, as a
+        // universal link. There is no plugin call anywhere in that path: it
+        // arrives here, on appUrlOpen, and if nothing is listening the tap does
+        // nothing at all.
+        var wcNativeTapSlug = null;
+        var wcNativeHandledUrl = null;
+
+        /**
+         * A URL the operating system handed the app.
+         *
+         * IT NEVER TAPS. It parks the slug and hands over to handleTapArrival,
+         * which SHOWS the confirm screen and stops there.
+         *
+         * That restraint is the entire anti-forgery design, and it matters more
+         * on this path than on any other in the file. All the app receives here
+         * is a URL, and a URL is a thing a student can forward to a friend in a
+         * chat, or encode onto a blank sticker and hold near somebody else's
+         * phone. There is no proof of presence in it whatsoever: unlike the
+         * in-app scan, the app never saw a tag, only a string. The token that
+         * stands in for presence is minted inside the press in
+         * confirmTapCheckIn and nowhere earlier, so it proves a person chose to
+         * check in rather than proving a page loaded. Anything here that called
+         * wcRunTapForSlug would hand a forwarded link the power to close
+         * somebody else's pass and stamp returnedAt on their record while they
+         * were still in a corridor, which the schema comment on that column says
+         * is permanent and undetectable.
+         */
+        function wcNativeHandleAppUrl(url) {
+            var slug = wcNfcSlugFromUrl(url);
+            // The same shape the address bar reader accepts, so the native path
+            // cannot admit a slug the browser path would have refused.
+            if (!slug || !/^[a-z0-9-]+$/.test(slug)) return;
+            wcNativeHandledUrl = String(url);
+            wcNativeTapSlug = slug;
+            // Only ever SHOWS. clearTapFromUrl inside it drops the parked slug
+            // the moment it is taken into memory, so a resume cannot re-arm the
+            // screen and a forwarded link is spent once.
+            handleTapArrival();
+        }
+
+        async function wcNativeInitAppLifecycle() {
+            if (!window.WC_NATIVE || !window.Capacitor || !window.Capacitor.Plugins) return;
+            var App = window.Capacitor.Plugins.App;
+            if (!App || !App.addListener) return;
+            try {
+                await App.addListener('appUrlOpen', function (event) {
+                    wcNativeHandleAppUrl(event && event.url);
+                });
+
+                // Coming back to the app. The pass watch SKIPS its poll while
+                // document.hidden, and nothing was listening for the return, so
+                // a student who locked the phone and came back read a card that
+                // had stopped being true minutes earlier and kept reading it
+                // until the next poll came round. force is true because on iOS
+                // the foreground notification can land before the webview is
+                // marked visible, and a resync that honoured document.hidden
+                // here would poll nothing and leave the stale card up anyway.
+                // Android does not fire resume on FIRST launch, which is fine:
+                // opening the portal already primes the watch.
+                await App.addListener('resume', function () {
+                    // THE CLOCKS FIRST, and synchronously. wpPollPassOnce is a
+                    // network query that only re-renders when the pass CHANGES
+                    // STATE, so on the ordinary return it does nothing visible
+                    // at all: the student comes back to a gold ring and a
+                    // countdown frozen wherever the screen stopped painting, and
+                    // waits up to a whole tick for them to jump. Repainting from
+                    // Date.now() right here costs nothing and is true the
+                    // instant they look.
+                    wpTickClocks();
+                    var polled = wpPollPassOnce(true);
+                    if (polled && polled.catch) polled.catch(function () { /* silent, as the interval is */ });
+                });
+
+                // The cold start. A universal link that launched the app may
+                // arrive on appUrlOpen (Capacitor holds the event until a
+                // listener exists) or only here, and the two are not reliably
+                // ordered, so both are handled and the URL is deduped between
+                // them. getLaunchUrl matters because it returns the LAST url the
+                // app ever saw and is never cleared: without the check, a slug
+                // the student already answered could be put back on screen.
+                if (App.getLaunchUrl) {
+                    var launch = await App.getLaunchUrl();
+                    if (launch && launch.url && String(launch.url) !== wcNativeHandledUrl) {
+                        wcNativeHandleAppUrl(launch.url);
+                    }
+                }
+            } catch (e) {
+                // A missing @capacitor/app is a build problem, not a student
+                // problem. The in-app scanner and the ?tap= path both still
+                // work, so this stays quiet rather than putting a plugin name on
+                // a child's screen at a doorway.
+            }
+        }
+        wcNativeInitAppLifecycle();
 
         async function wcStudentNfcScan() {
             // In the native app, Core NFC works on iPhone too; route there first.
             if (wcNativeNfcAvailable()) { return wcNativeNfcTap(); }
             if (!('NDEFReader' in window)) {
-                showTapResult({ ok: false, reason: 'This phone cannot scan in the app. Touch the tag itself to open the check-in.' });
+                showTapResult({ ok: false, reason: 'This phone cannot scan from inside the app. Hold your phone near the tag itself to check in.' });
                 return;
             }
             if (wcNfcScanController) return; // already listening
@@ -18981,7 +19890,10 @@
                 await reader.scan({ signal: wcNfcScanController.signal });
             } catch (e) {
                 wcNfcScanController = null;
-                showTapResult({ ok: false, reason: 'Could not start scanning (' + ((e && e.message) || e) + '). Touch the tag itself instead.' });
+                // Same rule as the native branch: no exception text on a
+                // student's screen. The message they get is the one thing they
+                // can do about it.
+                showTapResult({ ok: false, reason: 'Scanning could not start. Hold your phone near the tag itself to check in.' });
                 return;
             }
             wcShowScanListening();
@@ -19020,8 +19932,8 @@
             view.innerHTML =
               '<div class="wp-tap">' +
                 '<div class="wp-tap-mark wp-scan-pulse">&#128225;</div>' +
-                '<h2>Hold your phone to the tag</h2>' +
-                '<p>Keep the app open and touch the back of your phone to the hall pass tag.</p>' +
+                '<h2>Hold your phone near the tag</h2>' +
+                '<p>Keep the app open and hold the back of your phone near the hall pass tag.</p>' +
                 '<div class="wp-tap-actions">' +
                   '<button type="button" class="wp-btn wp-btn-ghost" onclick="wcStopNfcScanUI()">Stop</button>' +
                 '</div>' +
@@ -19035,11 +19947,30 @@
         window.wcStudentNfcScan = wcStudentNfcScan;
         window.wcStopNfcScanUI = wcStopNfcScanUI;
 
-        function showTapResult(result) {
+        /**
+         * The outcome screen for every tap path in the file.
+         *
+         * `fromScan` says the student got here by holding the phone to a tag
+         * rather than by pressing a confirm button, and it changes only one
+         * thing: a refusal then offers Try again as the primary action. It has
+         * to. A missed read is the commonest failure at a doorway, and the only
+         * way out of this screen used to be My cards, which meant closing the
+         * result, finding the scan entry again and starting a fresh session:
+         * three actions to retry a tap that was half a centimetre off.
+         */
+        function showTapResult(result, fromScan) {
             const view = document.getElementById('tapResultView');
             if (!view) return;
+            // The haptic goes before the paint. It is fired here rather than at
+            // each call site because this is the single place a tap outcome is
+            // ever shown, confirmed or refused, from every path in the file. In
+            // a browser it does nothing at all; see wcNativeHaptic.
+            wcNativeHaptic(result && result.ok ? 'success' : 'error');
             document.body.classList.add('wp-open');
             view.classList.remove('hidden');
+            const retry = (fromScan && !(result && result.ok))
+                ? '<button type="button" class="wp-btn wp-btn-solid" onclick="wcRetryNfcScan()">Try again</button>'
+                : '';
             view.innerHTML =
               '<div class="wp-tap">' +
                 '<div class="wp-tap-mark' + (result.ok ? '' : ' is-bad') + '">' +
@@ -19048,10 +19979,23 @@
                 '<h2>' + wpEsc(result.ok ? (result.location || 'Checked in') : 'Not checked in') + '</h2>' +
                 '<p>' + wpEsc(result.reason || '') + '</p>' +
                 '<div class="wp-tap-actions">' +
-                  '<button type="button" class="wp-btn wp-btn-solid" onclick="closeTapResult()">My cards</button>' +
+                  retry +
+                  '<button type="button" class="wp-btn ' + (retry ? 'wp-btn-ghost' : 'wp-btn-solid') + '" onclick="closeTapResult()">My cards</button>' +
                 '</div>' +
               '</div>';
         }
+
+        /**
+         * Straight back into a listening session from the refusal itself.
+         *
+         * It routes through wcStudentNfcScan rather than calling the native
+         * scanner directly, so the one place that decides between Core NFC, Web
+         * NFC and "this phone cannot scan" stays the one place that decides it.
+         */
+        function wcRetryNfcScan() {
+            wcStudentNfcScan();
+        }
+        window.wcRetryNfcScan = wcRetryNfcScan;
 
         function closeTapResult() {
             const view = document.getElementById('tapResultView');
@@ -19119,14 +20063,19 @@
                 const data = await auth.convexQuery('tapLocations:list', {}, session.idToken);
 
                 if (!data.locations.length) {
-                    host.innerHTML = '<tr><td colspan="7" style="padding:30px;text-align:center;color:#999;">' +
+                    host.innerHTML = '<tr><td colspan="8" style="padding:30px;text-align:center;color:#999;">' +
                         'No tags yet. Encode a sticker with the URL shown above, tap it with your phone, and it will offer to register itself.</td></tr>';
                     return;
                 }
                 // Held so the assign panel can read a row without a second fetch.
                 wcTagRows = data.locations;
                 host.innerHTML = data.locations.map(l => {
-                    const url = l.url || `https://wildcatraffle.com/?tap=${l.slug}`;
+                    // wcTapUrl, never a second literal. The server sends a
+                    // ready-made url and this is only the fallback, but a
+                    // fallback that disagreed with the writer is exactly how the
+                    // apex shape survived decision 24 and got encoded onto
+                    // stickers that then would not open the app.
+                    const url = l.url || wcTapUrl(l.slug);
                     // NOT ASSIGNED is said in words, not left blank. A blank cell
                     // in a column called Classroom reads as a screen that failed
                     // to load, and the whole point of the column is that somebody
@@ -19148,11 +20097,15 @@
                       <button onclick="copyTagUrl(this, '${url}')" style="margin-left:6px;padding:3px 9px;font-size:11.5px;border:1px solid var(--wc-border);border-radius:5px;background:#fff;cursor:pointer;">Copy</button>
                     </td>
                     <td style="font-size:12px;color:#666;">${l.lastTapAt ? new Date(l.lastTapAt).toLocaleString() : 'never tapped'}</td>
+                    <td style="font-size:12px;">${l.writtenAt
+                        ? `<span style="color:#1E7A46;">&#10003; card written</span>`
+                        : `<span style="color:#B3392F;" title="Registered here, but no physical card was ever successfully programmed. A student holding a phone to it would read nothing.">&#9888; no card yet</span>`}</td>
                     <td style="white-space:nowrap;">${l.active
                         ? `${l.kind === 'classroom'
                               ? `<button onclick="assignTagClassroom('${l.slug}')" style="padding:4px 10px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Assign teacher</button> `
-                              : ''}<button onclick="retireTag('${l.id}','${l.slug}')" style="padding:4px 10px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Retire</button>`
-                        : '<span style="font-size:12px;color:#999;">retired</span>'}</td>
+                              : ''}<button onclick="retireTag('${l.id}','${l.slug}')" style="padding:4px 10px;font-size:12px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer;">Retire</button>` +
+                          `${l.lastTapAt ? '' : ` <button onclick="deleteTag('${l.id}','${l.slug}')" style="padding:4px 10px;font-size:12px;border:1px solid #E3B4AE;border-radius:5px;background:#fff;color:#B3392F;cursor:pointer;">Delete</button>`}`
+                        : `<span style="font-size:12px;color:#999;">retired</span>${l.lastTapAt ? '' : ` <button onclick="deleteTag('${l.id}','${l.slug}')" style="padding:4px 10px;font-size:12px;border:1px solid #E3B4AE;border-radius:5px;background:#fff;color:#B3392F;cursor:pointer;">Delete</button>`}`}</td>
                   </tr>`;
                 }).join('');
             } catch (e) {
@@ -19172,7 +20125,27 @@
                 .replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 64);
         }
 
-        function wcTapUrl(slug) { return 'https://wildcatraffle.com/?tap=' + slug; }
+        /**
+         * The one place a tag URL is made, and the shape it makes is
+         * /tap/?tap=<slug>, not /?tap=<slug>.
+         *
+         * THE PATH IS NOT DECORATION. Android intent filters match scheme, host,
+         * port and path and cannot see a query string at all, so a filter on
+         * wildcatraffle.com claims EVERY link on the host: once App Links
+         * verified, a staff member tapping any portal link on an Android phone
+         * would be thrown into the student app. The distinction therefore had to
+         * move into the path, where Android can see it, and both platforms have
+         * to agree on one URL. Apple can match a query item and does not need
+         * this, but .well-known/apple-app-site-association requires EVERY listed
+         * component to match, and it lists "/": "/tap/*" as well as the query,
+         * so a tag written at the apex would not have opened the app on iOS
+         * either. See Grilled.md decision 24 and docs/universal-links.md.
+         *
+         * /tap/index.html is the other half: the phone with no app installed
+         * lands there and is forwarded to /?tap=<slug>, which is the arrival the
+         * portal has always handled.
+         */
+        function wcTapUrl(slug) { return 'https://wildcatraffle.com/tap/?tap=' + slug; }
 
         function openNfcProgrammer() {
             let el = document.getElementById('nfcProgModal');
@@ -19239,46 +20212,78 @@
             const kind = (kindEl && kindEl.value) || 'other';
             const url = wcTapUrl(slug);
             const ctx = wcBellSession();
-            if (!ctx) { if (statusEl) statusEl.textContent = 'This needs a Microsoft sign-in. Open the Teacher tab and sign in with Microsoft, then try again.'; return; }
+            if (!ctx) { if (statusEl) statusEl.textContent = wcNeedsMicrosoftMessage(); return; }
             if (btn) btn.disabled = true;
 
             // WRITE FIRST, still inside the button click's user activation, so Web
             // NFC keeps the gesture it requires. A failure here does not stop the
             // record — the tag is still logged and its URL shown.
+            // EVERY WRITER THIS DEVICE HAS, IN TURN, until one of them puts bytes
+            // on a card.
+            //
+            // This used to be an if / else-if chain, which meant exactly one
+            // attempt: the first branch whose capability EXISTED won the right to
+            // fail. That is how a desk with an ACR122U plugged into it ended up
+            // never touching the reader. `'NDEFReader' in window` only asks
+            // whether the interface is defined, not whether Web NFC can do
+            // anything here, so on a browser that exposes it without supporting
+            // it the write threw, the USB reader below was never reached, and the
+            // tag was recorded as though it had been programmed. The admin got a
+            // row in the list and a blank sticker, and found out when a child
+            // held a phone to it.
+            //
+            // Ordered by how likely each is to be the thing the person actually
+            // meant. A phone in the native app means the phone. Web NFC means an
+            // Android phone. A USB reader is a deliberate act: somebody bought it
+            // and plugged it in, so it is tried last but it is always tried.
             let wrote = false;
+            const writers = [];
             if (wcNativeNfcAvailable()) {
-                // Native app: Core NFC writes the tag, iPhone included.
-                if (statusEl) statusEl.textContent = 'Hold the tag to the top of your phone…';
+                writers.push({
+                    say: 'Hold the tag to the top of your phone…',
+                    run: function () { return window.wcNativeNfcWrite(url); },
+                    label: 'this phone',
+                });
+            }
+            if ('NDEFReader' in window) {
+                writers.push({
+                    say: 'Hold the NFC tag to the back of your phone…',
+                    run: function () {
+                        return new NDEFReader().write({ records: [{ recordType: 'url', data: url }] });
+                    },
+                    label: 'this phone',
+                });
+            }
+            if (navigator.usb) {
+                writers.push({
+                    // wcAcrWriteUrl sets its own status as it goes.
+                    say: null,
+                    // requestDevice must run inside the button's user activation,
+                    // which is still live here.
+                    run: function () { return wcAcrWriteUrl(url, statusEl); },
+                    label: 'the USB reader',
+                });
+            }
+
+            const attempts = [];
+            for (let wi = 0; wi < writers.length && !wrote; wi++) {
+                const w = writers[wi];
+                if (w.say && statusEl) statusEl.textContent = w.say;
                 try {
-                    await window.wcNativeNfcWrite(url);
+                    await w.run();
                     wrote = true;
                 } catch (e) {
-                    if (statusEl) statusEl.textContent = 'Could not write the tag (' + ((e && e.message) || e) + '). Recording it anyway.';
+                    attempts.push(w.label + ': ' + ((e && e.message) || e));
                 }
-            } else if ('NDEFReader' in window) {
-                if (statusEl) statusEl.textContent = 'Hold the NFC tag to the back of your phone…';
-                try {
-                    const ndef = new NDEFReader();
-                    await ndef.write({ records: [{ recordType: 'url', data: url }] });
-                    wrote = true;
-                } catch (e) {
-                    if (statusEl) statusEl.textContent = 'Could not write the tag (' + ((e && e.message) || e) + '). Recording it anyway.';
-                }
-            } else if (navigator.usb) {
-                // Desktop with a USB reader (ACR122U). requestDevice runs here,
-                // inside the button's user activation.
-                try {
-                    await wcAcrWriteUrl(url, statusEl);
-                    wrote = true;
-                } catch (e) {
-                    if (statusEl) statusEl.textContent = 'USB reader write failed: ' + ((e && e.message) || e) + '. Recording it anyway.';
-                }
+            }
+            if (!wrote && attempts.length && statusEl) {
+                statusEl.textContent = 'Could not write the card (' + attempts.join('; ') + ').';
             }
 
             // RECORD it. The server runs the same normalizeSlug, so the stored
             // slug matches the URL just written. Admin only (tapLocations:upsert).
             try {
-                await ctx.auth.convexMutation('tapLocations:upsert', { slug: slug, name: title, kind: kind }, ctx.session.idToken);
+                await ctx.auth.convexMutation('tapLocations:upsert', { slug: slug, name: title, kind: kind, written: wrote }, ctx.session.idToken);
             } catch (e) {
                 if (statusEl) statusEl.textContent = 'Could not record the tag: ' + ((e && e.message) || e);
                 if (btn) btn.disabled = false;
@@ -19535,6 +20540,24 @@
                 renderTagManager();
             } catch (e) { alert('Could not retire: ' + e.message); }
         }
+
+        /**
+         * Delete a tag outright. Offered ONLY on tags nothing has ever tapped.
+         *
+         * The button is hidden rather than disabled for a tag with history,
+         * because the honest answer there is "retire", and offering a Delete
+         * that always refuses teaches people to ignore the refusal. The server
+         * enforces the same rule regardless of what this screen renders.
+         */
+        async function deleteTag(id, slug) {
+            if (!confirm(`Delete tag "${slug}" completely?\n\nThis is for tags that never made it onto a wall. It cannot be undone, and it is only possible because nothing has ever tapped this one.`)) return;
+            try {
+                const auth = window.WildcatAuth;
+                await auth.convexMutation('tapLocations:remove', { id }, auth.getSession().idToken);
+                renderTagManager();
+            } catch (e) { alert('Could not delete: ' + e.message); }
+        }
+        window.deleteTag = deleteTag;
 
         async function addTagByHand() {
             const slug = prompt('Tag slug, as printed on the sticker (e.g. restroom-2):');
@@ -19863,6 +20886,31 @@
         /** The last settings payload, and the schedule currently being edited. */
         let wcBell = null;
         let wcBellDraft = null;
+
+        /**
+         * Why a Convex-backed action is refused, said in a way that matches what
+         * the person just did.
+         *
+         * There are two doors on the Teacher tab and only one of them counts.
+         * "Sign in with Microsoft" mints the Convex session everything below
+         * needs; the legacy password form signs somebody into the app and mints
+         * nothing, and it still exists because 39 of 40 staff records have no
+         * email address to sign in with. So a teacher who used the password form
+         * IS signed in, sees their name in the corner, and gets told to sign in.
+         * That reads as a broken app rather than as a second door they missed.
+         */
+        function wcNeedsMicrosoftMessage() {
+            var signedInSomehow = false;
+            try { signedInSomehow = !!currentUser; } catch (e) { /* not defined yet */ }
+            if (signedInSomehow) {
+                return 'You are signed in with the staff password, which cannot write to ' +
+                       'the school record. Sign out, then use the "Sign in with Microsoft" ' +
+                       'button on the Teacher tab. The password form is the old way in and ' +
+                       'does not carry the permission this needs.';
+            }
+            return 'This needs a Microsoft sign-in. Open the Teacher tab and use the ' +
+                   '"Sign in with Microsoft" button, not the password form.';
+        }
 
         function wcBellSession() {
             const auth = window.WildcatAuth;
@@ -20519,12 +21567,21 @@
             // owns the loader and its own watch hides it.
             const _isRedirectReturn = /[#&](code|error|id_token|access_token)=/.test(String(window.location.hash || ''));
             let _bootLoaderShown = false;
+            let _bootLoaderTimer = null;
             try {
                 if (!_isRedirectReturn &&
                     (sessionStorage.getItem('currentUser') ||
                      sessionStorage.getItem('currentStudent') ||
                      sessionStorage.getItem('wc_student_idtoken'))) {
-                    if (typeof showLoader === 'function') { showLoader('Welcome back…'); _bootLoaderShown = true; }
+                    // DELAYED, so a refresh that is already fast never flashes a
+                    // loader at anybody. The loader exists to cover the login
+                    // screen showing during a slow restore; on a warm refresh
+                    // the restore beats this timer and the loader never appears
+                    // at all, which is what "refresh should be instant" means in
+                    // practice. On a slow one it still does its original job.
+                    _bootLoaderTimer = setTimeout(function () {
+                        if (typeof showLoader === 'function') { showLoader('Welcome back…'); _bootLoaderShown = true; }
+                    }, 260);
                 }
             } catch (e) { /* private mode etc. — the flash is the worst case */ }
 
@@ -20682,6 +21739,13 @@
             // boot cover if we put it up. hideLoader honours the app-wide 4s
             // minimum, so a fast restore still shows the loader for the same beat
             // as a sign-in rather than blinking.
+            // Last, because the role branches above have finished deciding what
+            // this person may see, and the restore has to respect that.
+            try { wcRestoreTab(); } catch (e) { /* position is a nicety; never block boot */ }
+
+            // Cancels a loader that was scheduled but has not fired: the common
+            // case on a warm refresh, and the reason nothing flashes.
+            if (_bootLoaderTimer) { clearTimeout(_bootLoaderTimer); _bootLoaderTimer = null; }
             if (_bootLoaderShown && typeof hideLoader === 'function') hideLoader();
         })();
 

@@ -63,6 +63,22 @@
     google: {
       clientId: '718452352756-cclr7dbvucal375vrj5m9fg25fn3eh3s.apps.googleusercontent.com',
 
+      // NATIVE APP ONLY. The browser never reads this.
+      //
+      // Google Identity Services refuses to load under the `capacitor://` origin
+      // a locally served webview has, and iOS cannot give that webview an https
+      // origin: `iosScheme: 'https'` is ignored, because WKWebView reserves http
+      // and https for real network loads. Measured, not assumed. So inside the
+      // app the web sign-in above cannot work at all and native sign-in takes
+      // over, which needs its own OAuth client of type iOS, created in the SAME
+      // Google project as the web client above, for bundle id
+      // org.westbrookacademy.wildcat.
+      //
+      // Until that exists this stays the placeholder and the app says so plainly
+      // rather than failing with a Google error nobody can act on. See
+      // Grilled.md open question 26.
+      iosClientId: '718452352756-9gvjcrk7t7qd8k27d4fpp76qabhvko1r.apps.googleusercontent.com',
+
       // RESTORED 2026-08-14. It was unset while students appeared to be on two
       // domains; the RWWN ones turned out to be retired, so STUDENT_DOMAINS is a
       // single entry and pinning the chooser hides nobody. On a shared
@@ -527,7 +543,93 @@
     }
   }
 
+  /**
+   * Sign a teacher or IT admin in through the native OAuth flow.
+   *
+   * WHY THIS EXISTS. MSAL.js signs in by NAVIGATING to Microsoft and coming back
+   * to `redirectUri`, which this file builds from `window.location.origin`.
+   * Inside the app that origin is `capacitor://localhost`, which Entra will not
+   * accept as a reply URL and could not reach anyway. So the whole redirect
+   * dance is unavailable in the app, exactly as Google's script is.
+   *
+   * WHY IT MATTERS MORE THAN IT LOOKS. Programming a tag is a staff action, and
+   * Core NFC WRITE on an iPhone is the one capability no browser on earth has.
+   * Without staff sign-in in the app, a teacher holding an iPhone cannot make a
+   * tag at all, and the ability to write tags was a large part of why this app
+   * exists. Teachers here carry iPhones, Android phones and desktops; the other
+   * two already work through the website.
+   *
+   * The same client id and the same scopes as the web flow on purpose. Convex
+   * checks the token's `aud` against ENTRA_CLIENT_ID, so reusing the
+   * registration keeps `convex/auth.config.ts` untouched. All that differs is
+   * the doorway.
+   */
+  async function nativeStaffSignIn() {
+    const SocialLogin = window.Capacitor.Plugins.SocialLogin;
+
+    await SocialLogin.initialize({
+      oauth2: {
+        clientId: CONFIG.entra.clientId,
+        // Discovery rather than hand-written endpoints, so a tenant or endpoint
+        // change on Microsoft's side does not need a code change here.
+        discoveryUrl:
+          'https://login.microsoftonline.com/' + CONFIG.entra.tenantId +
+          '/v2.0/.well-known/openid-configuration',
+        // Must be registered on the Wildcat Hub app registration as a mobile
+        // reply URL, or Entra refuses before the sheet even renders. The scheme
+        // half is also registered in Info.plist by configure-ios.mjs; both are
+        // required and neither is sufficient alone.
+        redirectUrl: 'msauth.org.westbrookacademy.wildcat://auth',
+        // Authorization code with PKCE. Entra requires PKCE for a public client,
+        // and there is no secret in this app, nor should there ever be: the repo
+        // is public.
+        responseType: 'code',
+        pkceEnabled: true,
+        // 'email' explicitly, because the email claim is the join key. Without
+        // the optional claim configured on the registration the token arrives
+        // without it and Convex refuses with a clear message rather than
+        // guessing at identity. Same reasoning as the web request below.
+        scopes: ['openid', 'profile', 'email'],
+        additionalParameters: { prompt: 'select_account' },
+      },
+    });
+
+    const res = await SocialLogin.login({ provider: 'oauth2' });
+    const idToken = res && res.result && res.result.idToken;
+    if (!idToken) {
+      throw new Error('Microsoft did not return a sign-in token. Try again.');
+    }
+
+    // Same measurement the student path takes, for the same reason: `aud` is the
+    // only thing that decides whether Convex accepts this, and reading it once
+    // on a real device beats reasoning about it.
+    try {
+      const claims = JSON.parse(
+        decodeURIComponent(
+          atob(idToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))
+            .split('')
+            .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+            .join(''),
+        ),
+      );
+      emit('wildcat-auth-native-token-audience', {
+        kind: 'staff',
+        aud: claims.aud,
+        matchesEntraClient: claims.aud === CONFIG.entra.clientId,
+      });
+    } catch (e) {
+      /* diagnostic only; never block a sign-in on it */
+    }
+
+    await finishSignIn(idToken, 'staff');
+  }
+
   async function signInStaff() {
+    // In the app there is no redirect to make. Nothing after this returns.
+    if (nativeSignInAvailable()) {
+      return nativeStaffSignIn();
+    }
+
     const app = await entraClient();
     // 'email' is requested explicitly because the join key is the email claim.
     // If the optional claim was not configured on the app registration, the
@@ -556,10 +658,124 @@
   // ---------------------------------------------------------------------
   const GIS_CDN = 'https://accounts.google.com/gsi/client';
 
+  /** Is this the native shell, with the native sign-in plugin actually present? */
+  function nativeSignInAvailable() {
+    return Boolean(
+      window.WC_NATIVE &&
+      window.Capacitor &&
+      window.Capacitor.Plugins &&
+      window.Capacitor.Plugins.SocialLogin,
+    );
+  }
+
+  /**
+   * Sign a student in through the native Google SDK.
+   *
+   * WHY THIS EXISTS AT ALL. Everything above this line is the web flow, and the
+   * web flow cannot run inside the app. Google will not serve
+   * accounts.google.com/gsi/client to a `capacitor://` origin, and iOS will not
+   * let a locally served webview claim an https one. That is not a
+   * configuration problem to be worked around; it is the platform. So in the app
+   * the student signs in through the native SDK, which opens a real
+   * ASWebAuthenticationSession that Google does permit, and hands back an ID
+   * token in the same shape the web callback produces.
+   *
+   * finishSignIn is deliberately shared. Whatever the doorway, the token is
+   * verified the same way, `me:get` decides who the person is, and the domain
+   * check in identity.ts is still the thing that proves they belong to this
+   * school. Nothing about the trust model changes here.
+   */
+  async function nativeStudentSignIn() {
+    const SocialLogin = window.Capacitor.Plugins.SocialLogin;
+
+    if (!CONFIG.google.iosClientId || CONFIG.google.iosClientId.endsWith('_PENDING')) {
+      throw new Error(
+        'This app has not been given its Google iOS sign-in ID yet. ' +
+        'Tell the office, and use the website on a Chromebook until then.',
+      );
+    }
+
+    await SocialLogin.initialize({
+      google: {
+        iOSClientId: CONFIG.google.iosClientId,
+        // Both point at the WEB client on purpose. Google issues the ID token
+        // audienced to the server client rather than the iOS one when it is
+        // told there is a server, which is what keeps the token acceptable to
+        // convex/auth.config.ts without a second provider entry. That behaviour
+        // is asserted here and MEASURED below, because it decides whether the
+        // backend needs changing and no amount of reading settles it.
+        iOSServerClientId: CONFIG.google.clientId,
+        webClientId: CONFIG.google.clientId,
+      },
+    });
+
+    const res = await SocialLogin.login({
+      provider: 'google',
+      options: {
+        scopes: ['email', 'profile'],
+        ...(CONFIG.google.hostedDomain ? { hostedDomain: CONFIG.google.hostedDomain } : {}),
+      },
+    });
+
+    const idToken = res && res.result && res.result.idToken;
+    if (!idToken) {
+      throw new Error('Google did not return a sign-in token. Try again.');
+    }
+
+    // THE MEASUREMENT. `aud` is the only thing that decides whether Convex will
+    // accept this token, because auth.config.ts pins applicationID to one client
+    // id. If this logs the iOS client rather than the web client, the fix is a
+    // second Google entry in that file, NOT a change here. Read once, on the
+    // first real device sign-in, then this can go.
+    try {
+      const claims = JSON.parse(
+        decodeURIComponent(
+          atob(idToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))
+            .split('')
+            .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+            .join(''),
+        ),
+      );
+      emit('wildcat-auth-native-token-audience', {
+        aud: claims.aud,
+        azp: claims.azp,
+        matchesWebClient: claims.aud === CONFIG.google.clientId,
+      });
+    } catch (e) {
+      /* the decode is diagnostic only; never block a sign-in on it */
+    }
+
+    await finishSignIn(idToken, 'student');
+  }
+
   async function initStudentButton(containerId) {
     if (!configured.google()) {
       throw new Error('Google is not configured yet. See docs/google-signin-setup.md');
     }
+
+    // The app renders its own button, because Google's rendered button is part
+    // of the script that will not load here.
+    if (nativeSignInAvailable()) {
+      const host = document.getElementById(containerId);
+      if (host) {
+        host.innerHTML =
+          '<button type="button" id="wcNativeGoogleBtn" class="wc-native-google">' +
+          'Sign in with Google</button>';
+        const btn = document.getElementById('wcNativeGoogleBtn');
+        if (btn) {
+          btn.addEventListener('click', () => {
+            btn.disabled = true;
+            nativeStudentSignIn()
+              .catch((err) => {
+                emit('wildcat-auth-error', { kind: 'student', message: err.message });
+              })
+              .finally(() => { btn.disabled = false; });
+          });
+        }
+      }
+      return;
+    }
+
     await loadScript(GIS_CDN);
     window.google.accounts.id.initialize({
       client_id: CONFIG.google.clientId,
@@ -974,6 +1190,8 @@
     resumeStudentSession,
     signInStaff,
     initStudentButton,
+    nativeSignInAvailable,
+    nativeStaffSignIn,
     renderStudentButton,
     signOut,
     staffEntranceActive,

@@ -53,7 +53,17 @@ export const list = query({
           // which is what an unchecked form field writes.
           teacherEmail: r.teacherEmail ?? null,
           sectionId: r.sectionId ?? null,
-          url: `https://wildcatraffle.com/?tap=${r.slug}`,
+          // /tap/, not the apex. Android intent filters cannot match a query
+          // string, so the tag URL carries the distinction in its PATH; the
+          // association file lists "/": "/tap/*" and Apple requires every listed
+          // component to match. This string is what the admin copies onto a
+          // sticker, so it has to be the shape the app will actually claim.
+          // Mirrors wcTapUrl() in script.js. See Grilled.md decision 24.
+          url: `https://wildcatraffle.com/tap/?tap=${r.slug}`,
+          // Absent means nobody knows: either it predates this column, or the
+          // card was never successfully programmed. The screen says so rather
+          // than implying a sticker exists on a wall somewhere.
+          writtenAt: r.writtenAt ?? null,
         }))
         .sort((a, b) => a.slug.localeCompare(b.slug)),
     };
@@ -246,8 +256,12 @@ export const upsert = mutation({
     // several and pickClassroomTag starts refusing them all.
     teacherEmail: v.optional(v.string()),
     sectionId: v.optional(v.string()),
+    // Did a physical card actually get programmed in this same press?
+    // Only ever set true by the writer when the hardware confirmed it. Absent
+    // on every older client, which is why the column is optional.
+    written: v.optional(v.boolean()),
   },
-  handler: async (ctx, { slug, name, kind, teacherEmail, sectionId }) => {
+  handler: async (ctx, { slug, name, kind, teacherEmail, sectionId, written }) => {
     await requireAdmin(ctx);
     const clean = normalizeSlug(slug);
     if (!clean) throw new ConvexError("A tag needs a slug, for example restroom-2.");
@@ -296,6 +310,12 @@ export const upsert = mutation({
         active: true,
         teacherEmail: owner,
         sectionId: section,
+        // Only ever set forward, never cleared. A successful write is a fact
+        // about a physical object that stays true; a later failed attempt to
+        // rewrite the same sticker does not un-write the one already on the
+        // wall, and blanking this would send somebody to re-do a tag that was
+        // fine.
+        ...(written ? { writtenAt: new Date().toISOString() } : {}),
       });
       return { outcome: existing.active ? "updated" : "reactivated", slug: clean };
     }
@@ -308,8 +328,48 @@ export const upsert = mutation({
       createdAt: new Date().toISOString(),
       ...(owner ? { teacherEmail: owner } : {}),
       ...(section ? { sectionId: section } : {}),
+      ...(written ? { writtenAt: new Date().toISOString() } : {}),
     });
     return { outcome: "created", slug: clean };
+  },
+});
+
+/**
+ * Delete a tag outright, for the ones that should never have existed.
+ *
+ * WHY THIS IS NOT SIMPLY `ctx.db.delete`. The comment on retire below is right:
+ * tapEvents carry a locationSlug and nothing else, so deleting a slug that has
+ * been tapped orphans every event that named it, and the hall-pass history
+ * quietly starts referring to a place that cannot be looked up. That history is
+ * the record of where children were, which is the last thing in this system that
+ * should develop holes.
+ *
+ * So the two cases are separated rather than merged:
+ *
+ *   never tapped  ->  delete it. It is a typo, a test, a duplicate. Nothing
+ *                     refers to it and nothing ever will.
+ *   ever tapped   ->  refuse, and say to retire instead. Retiring stops the tag
+ *                     working while leaving the history intact.
+ *
+ * The check is O(1) rather than a scan of tapEvents, which has no index on
+ * locationSlug: `lastTapAt` is already denormalized onto this row for exactly
+ * the question "has anybody ever tapped this".
+ */
+export const remove = mutation({
+  args: { id: v.id("tapLocations") },
+  handler: async (ctx, { id }) => {
+    await requireAdmin(ctx);
+    const row = await ctx.db.get(id);
+    if (!row) throw new ConvexError("No such tag.");
+    if (row.lastTapAt) {
+      throw new ConvexError(
+        `"${row.name}" has been tapped before, so deleting it would orphan the ` +
+          `hall-pass history that names it. Retire it instead: it stops working ` +
+          `immediately and the record stays readable.`,
+      );
+    }
+    await ctx.db.delete(id);
+    return { deleted: row.slug };
   },
 });
 

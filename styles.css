@@ -3924,6 +3924,85 @@ body.wp-open { overflow: hidden; }
     opacity: .6;
     margin-top: 7px;
 }
+/* ---- The pass clock's three states ---------------------------
+   What changes when a pass runs low, and when it runs out, is COLOUR and
+   ONE FLAG. Never geometry: the ring is the same circle, at the same size,
+   in the same place, in every state, so nothing on the card moves under a
+   reading finger at the exact moment a child is least able to cope with it
+   moving. The ticker writes data-wp-phase on the ring and on the card body;
+   everything below hangs off that one attribute. */
+
+/* The flag clipped to the ring, the way a stamp sits on an envelope. Inside
+   the ring's own box on purpose, so it costs no layout and appearing cannot
+   push the rest of the card down. */
+.wp-ring-flag {
+    position: absolute;
+    z-index: 2;
+    top: 3px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 3px 11px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: #241a03;
+    background: #FFC46B;
+    box-shadow: 0 6px 14px -8px rgba(0,0,0,.7);
+    /* Nothing to say while the pass is simply running. */
+    opacity: 0;
+    visibility: hidden;
+}
+.wp-ring[data-wp-phase="warn"] .wp-ring-flag,
+.wp-ring[data-wp-phase="over"] .wp-ring-flag { opacity: 1; visibility: visible; }
+.wp-ring[data-wp-phase="over"] .wp-ring-flag { background: #FFD9D4; color: #5E0F07; }
+
+/* The unit word is the label on the number, and at the two moments the
+   number changes meaning it stops being a caption and becomes the point. */
+.wp-ring[data-wp-phase="warn"] .wp-clock-unit { opacity: .85; }
+.wp-ring[data-wp-phase="over"] .wp-clock-unit { opacity: 1; font-weight: 800; }
+
+/* The warning a child notices WITHOUT READING: the ring breathes. Two
+   seconds, because a fast pulse on a card somebody is already anxious about
+   reads as an alarm rather than as a nudge, and box-shadow only, so the ring
+   never changes size and the digits inside it never move. */
+@keyframes wpRingBreathe {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255,138,61,0); }
+    50%      { box-shadow: 0 0 0 9px rgba(255,138,61,.20); }
+}
+@keyframes wpRingBreatheLate {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255,65,54,0); }
+    50%      { box-shadow: 0 0 0 11px rgba(255,65,54,.26); }
+}
+.wp-ring[data-wp-phase="warn"] { animation: wpRingBreathe 2s ease-in-out infinite; }
+.wp-ring[data-wp-phase="over"] { animation: wpRingBreatheLate 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+    /* The state still has to be visible without the motion, so it HOLDS the
+       glow rather than losing it. A student who turned animation off is not
+       a student who asked to stop being told they are late. */
+    .wp-ring[data-wp-phase="warn"] { animation: none; box-shadow: 0 0 0 7px rgba(255,138,61,.18); }
+    .wp-ring[data-wp-phase="over"] { animation: none; box-shadow: 0 0 0 9px rgba(255,65,54,.24); }
+}
+
+/* The due time. The one line SmartPass does not have: a countdown answers
+   "how much", this answers "by when", and only the second one can be checked
+   against the clock on the corridor wall. */
+.wp-due {
+    text-align: center;
+    margin: 0 0 10px;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    opacity: .78;
+}
+.wp-due b { font-weight: 800; opacity: 1; font-variant-numeric: tabular-nums; }
+/* The open-ended pass says what is true about it instead of a time. */
+.wp-due-open { font-size: 12.5px; font-weight: 400; opacity: .6; }
+.wp-body[data-wp-phase="warn"] .wp-due { opacity: .95; }
+.wp-body[data-wp-phase="over"] .wp-due { opacity: 1; color: #FFD9D4; }
+
 .wp-route { display: flex; justify-content: center; align-items: center; gap: 8px; margin: 6px 0 10px; flex-wrap: wrap; }
 .wp-route .wp-r { background: rgba(255,255,255,.11); padding: 5px 12px; border-radius: 9px; font-weight: 600; font-size: 13px; }
 .wp-route .wp-arw { opacity: .7; font-weight: 800; }
@@ -3931,20 +4010,29 @@ body.wp-open { overflow: hidden; }
 .wp-trip .wp-step { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 650; opacity: .46; white-space: nowrap; }
 .wp-trip .wp-step.done { opacity: 1; }
 .wp-trip .wp-step i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: .4; }
-.wp-trip .wp-step.done i { background: #FFC94D; opacity: 1; }
+/* THE STEPPER FILLS IN INK, NOT IN A SECOND GOLD. Gold on this card is the
+   live timer and nothing else; a stepper wearing the ring's own colour put a
+   second gold object under it, competing for the one glance a student gives
+   this card at a doorway. Done is already carried by the opacity jump above,
+   which is the same distinction without spending the hue twice. */
+.wp-trip .wp-step.done i { background: currentColor; opacity: 1; }
 .wp-trip .wp-seg { flex: 1; height: 2px; border-radius: 2px; background: rgba(255,255,255,.16); }
-.wp-trip .wp-seg.done { background: #FFC94D; }
+.wp-trip .wp-seg.done { background: rgba(255,255,255,.55); }
 .wp-appby { text-align: center; font-size: 11px; opacity: .56; margin: 10px 0 0; }
 .wp-appby b { opacity: .9; font-weight: 600; }
+/* THE BUTTON IS THE WAY TO DO THE THING, NOT THE THING. A full-bleed gold
+   gradient under a gold glow made this the loudest object on a card whose
+   whole subject is the timer above it, and it spent the ring's colour a
+   third time. Same size, same place, same words: glass instead of gold, so
+   the only saturated object left on the card is the one that is counting. */
 .wp-tap-cta {
     display: flex; align-items: center; justify-content: center; gap: 9px;
     width: 100%; margin-top: 13px;
-    background: linear-gradient(180deg, #FFC94D, #F5A623);
-    color: #241a03; border: 0; border-radius: 14px; padding: 13px;
+    background: rgba(255,255,255,.13);
+    color: inherit; border: 1px solid rgba(255,255,255,.20); border-radius: 14px; padding: 12px;
     font-size: 15px; font-weight: 800; letter-spacing: -0.01em; cursor: pointer;
-    box-shadow: 0 12px 22px -12px rgba(245,166,35,.6);
 }
-.wp-tap-cta:active { transform: translateY(1px); }
+.wp-tap-cta:active { transform: translateY(1px); background: rgba(255,255,255,.19); }
 
 /* ---- Under the stack --------------------------------------- */
 

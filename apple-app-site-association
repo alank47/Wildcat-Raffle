@@ -1,0 +1,16 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": [ "SCFGWPBXMF.org.westbrookacademy.wildcat" ],
+        "components": [
+          {
+            "/": "/tap/*",
+            "?": { "tap": "?*" },
+            "comment": "NFC door tags. A tag holds https://wildcatraffle.com/tap/?tap=<slug> and only that shape opens the app. Both components must match, so the path confines this to /tap/ and the query requires a non-empty slug. The path is scoped rather than omitted because Android intent filters cannot match a query string at all, so the tag URL had to carry the distinction in its PATH for Android to claim only the tags instead of the whole site. iOS does not need the path restriction, but the two platforms must agree on one tag URL. The value is ?* and not *, because * also matches the empty string, so a malformed .../tap/?tap= would match and hand the app an empty slug."
+          }
+        ]
+      }
+    ]
+  }
+}
