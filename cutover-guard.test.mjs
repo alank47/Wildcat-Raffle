@@ -532,5 +532,30 @@ check("an available update surfaces as a dismissible bar",
 check("and the reload button flushes a save before reloading",
   /saveData\(\)[\s\S]{0,200}location\.reload\(\)/.test(script));
 
+console.log("\nThe referral save merges, and its transaction is side-effect free");
+// referral-save.test.mjs models this path. These assertions keep the model
+// honest: if the real code stops matching it, the model proves nothing.
+//
+// Anchored on `mergedReferrals`, which appears only in the save path. The
+// string 'raffle_data', 'referrals' also matches the LOAD path earlier in the
+// file, and anchoring there silently measured the wrong code.
+{
+  const at = script.indexOf("mergedReferrals");
+  check("the save path is findable at all", at !== -1);
+  const near = script.slice(Math.max(0, at - 2500), at + 2500);
+
+  check("referrals are written in a transaction, not a bare setDoc",
+    /runTransaction/.test(near) && !/setDoc\(\s*doc\([^)]*'referrals'\)/.test(near));
+  check("the stored list is read before writing", /transaction\.get\(/.test(near));
+  check("and merged rather than replaced", /WildcatMerge\.mergeById/.test(near));
+  // Firestore retries the callback. Assigning outer state inside it is safe
+  // only by accident of idempotency, and lies about state if it then fails.
+  check("the in-memory list is assigned AFTER the transaction, not inside it",
+    /if \(mergedReferrals\) behaviorReferrals = mergedReferrals;/.test(near));
+  check("nothing assigns behaviorReferrals inside the callback",
+    !/transaction\.set\([\s\S]{0,400}behaviorReferrals =/.test(near));
+  check("the counter cannot go backwards", /Math\.max\(/.test(near));
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

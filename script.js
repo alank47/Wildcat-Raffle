@@ -3351,6 +3351,16 @@
                         // mid-save. Closing it properly is what lets the reload
                         // go.
                         try {
+                            // Firestore RETRIES this callback on contention, so it
+                            // must not mutate anything outside itself. An earlier
+                            // revision assigned behaviorReferrals in here: safe only
+                            // by accident, because the merge is idempotent, and it
+                            // left the in-memory list claiming rows that were never
+                            // written if the transaction ultimately failed. The
+                            // result is applied once, after the transaction
+                            // resolves, and every attempt merges the ORIGINAL local
+                            // list against freshly read storage.
+                            let mergedReferrals = null;
                             await runTransaction(firebaseDb, async (transaction) => {
                                 const ref = doc(firebaseDb, 'raffle_data', 'referrals');
                                 const snap = await transaction.get(ref);
@@ -3375,8 +3385,9 @@
                                         Number(snap.exists() ? snap.data().referralIdCounter : 1) || 1),
                                     lastSaveTimestamp: timestamp
                                 });
-                                behaviorReferrals = merged;
+                                mergedReferrals = merged;
                             });
+                            if (mergedReferrals) behaviorReferrals = mergedReferrals;
                             console.log(`✅ Referrals saved (${(behaviorReferrals || []).length} records, merged)`);
                         } catch (refErr) {
                             console.error('❌ referrals save failed:', refErr?.code, refErr?.message);
