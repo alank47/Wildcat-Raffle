@@ -1,0 +1,14 @@
+# Keep Dropbox out of the generated native build.
+#
+# These are regenerated per machine by `npx cap add ios` / `add android` and by
+# npm, and every one of them is already in .gitignore. Dropbox syncing them is
+# pure cost: ios/Pods alone is thousands of files, and this repo has a history of
+# Dropbox evicting or conflict-renaming heavy generated folders mid-write. An
+# earlier attempt at this session marked ios/ ignored by xattr AFTER it had been
+# populated, and Dropbox purged the local copy into an "ios 2" conflict folder.
+#
+# Declaring it here instead means the rule exists BEFORE the folder does, which
+# is the only ordering that works.
+ios
+android
+node_modules

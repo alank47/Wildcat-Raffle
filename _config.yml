@@ -22,3 +22,16 @@ exclude:
 # app/ is the built React hub served at /app/ — keep it. It contains no .md,
 # and its .js/.css are copied verbatim (Jekyll only Liquid-renders front-matter
 # files and .md), so it is safe to leave in.
+
+# Belt and braces for Universal Links / App Links. Jekyll is NOT running on this
+# site today (.nojekyll is honoured, and /_config.yml itself returns 200, which a
+# Jekyll build would never emit), so this line currently does nothing. It is here
+# because Jekyll's `include` defaults to [".htaccess"] and dotfiles are excluded
+# by default, so if anyone deletes .nojekyll or GitHub moves this site onto the
+# Actions build path, .well-known/ would vanish from the published site and both
+# apple-app-site-association and assetlinks.json would silently 404. Nothing
+# reports that failure. One line now avoids a day of debugging later.
+# Use the DIRECTORY form, not a file path: Jekyll prunes the directory before it
+# descends into it. See docs/universal-links.md.
+include:
+  - ".well-known"

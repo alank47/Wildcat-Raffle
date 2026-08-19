@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wildcat Hub</title>
+<meta name="robots" content="noindex">
+<style>
+  html { background: #0C447C; color: #F6F1E6; font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+  main { max-width: 32ch; text-align: center; }
+  h1 { font-size: 19px; margin: 0 0 8px; }
+  p { margin: 0; color: #C9D8EA; font-size: 14px; }
+  a { color: #FFD98A; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Opening your hall pass</h1>
+  <p id="m">One moment.</p>
+</main>
+<script>
+/* This page exists only for the phone that has no app installed.
+   A tag holds https://wildcatraffle.com/tap/?tap=<slug>. On a phone with the
+   Wildcat app, iOS and Android claim that URL and this page is never fetched.
+   Everyone else lands here and is forwarded to the portal, which already knows
+   how to handle an arriving ?tap= slug: it SHOWS a confirmation and waits for a
+   press. It never checks anybody in on its own.
+
+   The path had to carry /tap/ because Android intent filters cannot match on a
+   query string. Without it, the app would claim every wildcatraffle.com link on
+   Android, including the staff portal. See docs/universal-links.md.
+
+   The forward is done here rather than by the server because GitHub Pages cannot
+   issue redirects. That is fine: Apple's no-redirect rule governs the
+   apple-app-site-association file, not the tag URL. */
+(function () {
+  var slug = /[?&]tap=([a-zA-Z0-9-]+)/.exec(window.location.search);
+  if (slug) {
+    window.location.replace('/?tap=' + encodeURIComponent(slug[1]));
+    return;
+  }
+  document.getElementById('m').innerHTML =
+    'That tag could not be read. <a href="/">Open Wildcat Hub</a> and use the check-in button on your pass.';
+})();
+</script>
+<noscript>
+  <p style="text-align:center"><a href="/">Open Wildcat Hub</a></p>
+</noscript>
+</body>
+</html>

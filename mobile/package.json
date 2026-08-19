@@ -2,11 +2,13 @@
   "name": "wildcat-student-app",
   "version": "0.1.0",
   "private": true,
-  "description": "Native iOS + Android wrapper of the Wildcat student portal, with Core NFC read/write and camera.",
+  "description": "Native iOS + Android wrapper of the Wildcat student portal, with NDEF NFC read/write, native Google sign-in, camera and push.",
   "type": "module",
   "scripts": {
+    "stage": "node scripts/stage-native.mjs",
     "sync-web": "node scripts/sync-web.mjs",
-    "prepare-native": "npm run sync-web && npx cap sync",
+    "prepare-native": "npm run sync-web && npx cap sync && npm run configure:ios",
+    "configure:ios": "node scripts/configure-ios.mjs",
     "add:ios": "npx cap add ios",
     "add:android": "npx cap add android",
     "open:ios": "npx cap open ios",
@@ -15,15 +17,18 @@
     "run:android": "npm run prepare-native && npx cap run android"
   },
   "dependencies": {
-    "@capacitor/android": "^6.2.0",
-    "@capacitor/camera": "^6.1.2",
-    "@capacitor/core": "^6.2.0",
-    "@capacitor/ios": "^6.2.0",
-    "@capacitor/push-notifications": "^6.0.4",
-    "@capacitor-community/barcode-scanner": "^4.0.1",
-    "@capawesome-team/capacitor-nfc": "^6.2.0"
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/camera": "^8.2.2",
+    "@capacitor/core": "^8.5.0",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/ios": "^8.5.0",
+    "@capacitor/push-notifications": "^8.1.2",
+    "@capgo/capacitor-social-login": "^8.4.3",
+    "@exxili/capacitor-nfc": "^0.0.13"
   },
   "devDependencies": {
-    "@capacitor/cli": "^6.2.0"
+    "@capacitor/cli": "^8.5.0",
+    "typescript": "^5.6.0"
   }
 }

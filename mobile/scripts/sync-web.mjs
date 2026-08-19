@@ -6,13 +6,19 @@
 // Zero dependencies on purpose, like powerschool/sync: this must run with no
 // install step so a fresh clone can prepare a build immediately.
 import { cp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const mobile = resolve(here, '..');
-const root = resolve(mobile, '..');
+// Normally the repo is one level up. When this script has been staged OUTSIDE
+// the repo (see stage-native.mjs, which exists because Dropbox corrupts native
+// builds), a .wildcat-repo-root pointer says where the real repo is.
+const rootPointer = join(mobile, '.wildcat-repo-root');
+const root = existsSync(rootPointer)
+  ? readFileSync(rootPointer, 'utf8').trim()
+  : resolve(mobile, '..');
 const www = join(mobile, 'www');
 
 // The student portal's files. index.html defaults to the Student tab, so it is a
