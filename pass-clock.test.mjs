@@ -45,6 +45,7 @@ function slice(startMarker, endMarker) {
 
 const {
   wpMMSS,
+  wpRingDigits,
   wpPassStartMs,
   wpClockWindow,
   wpDueAtMs,
@@ -53,10 +54,13 @@ const {
   wpClockFace,
   wpDueLead,
   wpPhaseFlag,
+  wpClockCaption,
+  wpApprovedClockLabel,
 } = new Function(
   slice("/* ---- pass clock arithmetic ---- */", "/* ---- end pass clock arithmetic ---- */") +
-    "\nreturn { wpMMSS, wpPassStartMs, wpClockWindow, wpDueAtMs, wpDueClockLabel," +
-    " wpWarnLeadSeconds, wpClockFace, wpDueLead, wpPhaseFlag };",
+    "\nreturn { wpMMSS, wpRingDigits, wpPassStartMs, wpClockWindow, wpDueAtMs, wpDueClockLabel," +
+    " wpWarnLeadSeconds, wpClockFace, wpDueLead, wpPhaseFlag, wpClockCaption," +
+    " wpApprovedClockLabel };",
 )();
 
 let pass = 0;
@@ -284,6 +288,48 @@ console.log("\nThe crossover, which must not be silent");
 }
 
 /* ---------------------------------------------------------------
+   TWO SHAPES OF ONE CLOCK, AND WHY THE RING GETS THE SHORTER ONE.
+
+   The digits inside the ring are the one thing on this card meant to be read
+   from across a corridor, and the ring is a circle: the widest line that fits
+   in it is its diameter, so every glyph the number spends costs height off
+   the whole number. "07:32" is five glyphs where "7:32" is four.
+
+   The STRIP keeps the padded form, and that is not an oversight. There the
+   clock sits in a row of text beside a word, and "7:32 left" would jog
+   sideways the moment the minutes crossed ten while "07:32 left" holds its
+   column.
+
+   What must never happen is the two drifting into one: the card is dealt with
+   one shape and ticked with the other, so a mismatch shows up as the number
+   visibly changing width one second after the card opens.
+   --------------------------------------------------------------- */
+console.log("\nThe ring drops the leading zero, the strip keeps it");
+{
+  check("a single digit minute loses its zero in the ring", wpRingDigits("07:32") === "7:32");
+  check("and the strip still has it", wpMMSS(452) === "07:32");
+  check("two digit minutes are untouched", wpRingDigits("12:34") === "12:34");
+  check("zero minutes keep a zero rather than becoming a bare colon", wpRingDigits("00:07") === "0:07");
+  check("and the moment it runs out still reads as a clock", wpRingDigits("00:00") === "0:00");
+  check("the sign on an overtime clock survives", wpRingDigits("+00:01") === "+0:01");
+  check("and so does an overtime clock past ten minutes", wpRingDigits("+12:34") === "+12:34");
+  check("an hours field is never touched", wpRingDigits("1:02:34") === "1:02:34");
+  check("and neither is the no-clock face", wpRingDigits("--:--") === "--:--");
+  check("nothing in, nothing out", wpRingDigits(null) === "" && wpRingDigits(undefined) === "");
+
+  // The card and the ticker have to agree, or the digits change width on the
+  // first tick after the card is dealt.
+  const card = fnBody(src, "function wpHallPassCard(");
+  const tick = fnBody(src, "function wpTickClocks(");
+  check("the card deals the ring in the ring's shape", /wpRingDigits\(first\.value\)/.test(card));
+  check("and the ticker writes the same shape", /wpRingDigits\(face\.value\)/.test(tick));
+  check(
+    "while the strip is still written from the unshortened clock",
+    /face\.value \+ ' ' \+ face\.unit/.test(tick),
+  );
+}
+
+/* ---------------------------------------------------------------
    Source guards. Weak tests, and the right ones here: both failures
    below are invisible in a browser and neither can be reached through
    an import, because the card is built as a string inside a 20,000
@@ -395,6 +441,200 @@ console.log("\nThe ticker owns the crossing");
   );
 }
 
+/* ---------------------------------------------------------------
+   THE WORD UNDER THE DIGITS.
+
+   "LEFT" is true of every timer ever built and tells a child nothing about
+   what the number is for. The caption names the errand, the errand is
+   different on each leg, and two of the five phases are not a countdown at
+   all: captioning either of those as one is the same lie as drawing a
+   no-limit pass as a ring emptying towards a deadline nobody set.
+   --------------------------------------------------------------- */
+console.log("\nThe word under the digits");
+{
+  check("the reach leg is about getting there", wpClockCaption("live", "reach") === "to get there");
+  check("the return leg is about getting back", wpClockCaption("live", "back") === "to get back");
+  check("and the warning does not change the errand", wpClockCaption("warn", "back") === "to get back");
+  check(
+    "an open ended pass is captioned as time SPENT, never time left",
+    wpClockCaption("open", "back") === "time out of class",
+  );
+  check("and past the deadline the word turns with the number", wpClockCaption("over", "back") === "past your time");
+  // The flag clipped to the ring already says "Overtime" two centimetres
+  // away. Two labels shouting one word at a child who is already late is
+  // noise, not emphasis.
+  check(
+    "which is not simply the word already on the flag",
+    wpClockCaption("over", "back") !== wpPhaseFlag("over").toLowerCase(),
+  );
+}
+
+/* ---------------------------------------------------------------
+   THE HOUR A TEACHER SAID YES.
+
+   A permission with no name and no hour on it is a rumour. The hour is the
+   half a student can hold up against the clock on the corridor wall, so it
+   has to be in the same frame as everything else the card prints: the
+   countdown, the due time and this all come off one skew correction or the
+   card is arguing with itself.
+   --------------------------------------------------------------- */
+console.log("\nThe hour a teacher said yes");
+{
+  const agoMs = 12 * MIN;
+  const plain = { approvedAt: iso(deviceNow - agoMs), serverTime: iso(deviceNow) };
+  check("an approval prints a readable time", /^\d{1,2}[:.]\d{2}/.test(wpApprovedClockLabel(plain)));
+  check("no stamp means no line rather than an invented hour", wpApprovedClockLabel({}) === null);
+  check("and a stamp that will not parse is the same", wpApprovedClockLabel({ approvedAt: "soon" }) === null);
+  check("and no pass at all is the same again", wpApprovedClockLabel(null) === null);
+
+  // THE INVARIANT. A device six minutes fast must not print an approval time
+  // six minutes away from the due time two lines above it.
+  const skewed = {
+    approvedAt: iso(deviceNow - 6 * MIN - agoMs),
+    serverTime: iso(deviceNow - 6 * MIN),
+  };
+  check(
+    "the approval time carries the same skew correction as the countdown",
+    wpApprovedClockLabel(skewed) === wpApprovedClockLabel(plain),
+    `${wpApprovedClockLabel(skewed)} vs ${wpApprovedClockLabel(plain)}`,
+  );
+}
+
+/* ---------------------------------------------------------------
+   WHAT THE CARD HANDS UP.
+
+   Source guards, and the right kind of weak test: none of the four below is
+   visible in a browser until a student is standing at a doorway with a
+   running pass, and none can be reached through an import.
+   --------------------------------------------------------------- */
+console.log("\nWhat the card hands up");
+{
+  const card = fnBody(src, "function wpHallPassCard(");
+  check("a running pass asks for the taller card box", /tall: true/.test(card));
+  check("and wears its own class, so its header can be an eyebrow", /wp-card-pass/.test(card));
+  check("and hands up a status pill", /wp-status/.test(card));
+  // The pill names the LEG, which only changes when `state` changes, and a
+  // state change re-deals the card. A pill that tried to say "late" would go
+  // stale on a second no fetch lands on, which is the silent inversion this
+  // whole screen exists to beat.
+  check("that names the leg rather than the lateness", /heading back/.test(card) && /heading there/.test(card));
+  check("the approver line is still on the card", /wp-appby/.test(card));
+  // The control that ENDS a pass lived below a ring, a due time, a route, a
+  // tracker and an approver, in a box sized for a barcode. On a short screen
+  // it was the first thing off the bottom.
+  check("but the tap control is handed up for under the stack", /under: ctaHtml/.test(card));
+
+  const layout = fnBody(src, "function wpLayout(");
+  check("the layout honours a card that asked to be tall", /data-tall/.test(layout));
+  check(
+    "and still reserves the tallest card whatever is open, so the page does not move",
+    /tallest/.test(layout) && /\+ tallest\)/.test(layout),
+  );
+
+  const render = fnBody(src, "function wpRender(");
+  check("the renderer fills the bar under the stack", /wpPassBar/.test(render));
+  // A page served from an older index.html has no bar. Dropping the one
+  // control that closes a pass would be worse than a card that is a little
+  // crowded.
+  check("and keeps it on the card when the page has no bar", /bar \? '' : \(c\.under/.test(render));
+
+  const tick = fnBody(src, "function wpTickClocks(");
+  check("the ticker rewrites the caption on a crossing", /wpClockCaption/.test(tick));
+  // The ticker rewrites the whole conic-gradient every second, so a track
+  // colour that only moved in the stylesheet would be overwritten one second
+  // later and the ring would go back to reading as two rings.
+  check("and paints the ring track from the one constant", /WP_RING_TRACK/.test(tick));
+  check("which is not a second hardcoded alpha", !/rgba\(255,255,255,\.10\)/.test(tick));
+}
+
+/* ---------------------------------------------------------------
+   THE RING IS THE CARD'S ONE JOB, AND IT IS A SHARE, NOT A CEILING.
+
+   This is the regression that shipped and was measured: the ring was pinned by
+   a px cap (152px) and a viewport-height cap, both of which bound on every
+   phone, so it drew at 0.39 of the card's width where the reference draws it
+   at 0.61, and 49px of card sat empty underneath it. The number a student is
+   supposed to read from across a corridor arrived at medallion scale.
+
+   The fix is structural rather than a bigger number: the ring lives in the one
+   flexible item in the card body's column and takes its size from the space
+   that is actually left, so a short screen shrinks the circle instead of
+   clipping the approver line off the bottom. These guard the structure, because
+   a stylesheet has no other way to be tested here and the failure is invisible
+   until somebody measures a screenshot.
+   --------------------------------------------------------------- */
+console.log("\nThe ring is sized by the card, not by a ceiling");
+{
+  const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  /** One rule's declaration block, by exact selector. */
+  function rule(selector) {
+    const at = css.indexOf(`\n${selector} {`);
+    if (at === -1) return "";
+    const end = css.indexOf("}", at);
+    return end === -1 ? "" : css.slice(at, end);
+  }
+
+  const wrap = rule(".wp-ring-wrap");
+  const ring = rule(".wp-ring");
+  check("the ring has a box that can give way", wrap.length > 40);
+  check("and that box is the flexible one", /flex:\s*1 1 var\(--wp-ring-ideal\)/.test(wrap));
+  check("with a floor, so it never shrinks past legible", /min-height:\s*\d+px/.test(wrap));
+  // IDEAL AND LEASH ARE ONE TOKEN. That is what makes the ring exactly the
+  // reference's proportion rather than approximately it: it can be that size
+  // or smaller, never bigger.
+  check("and a leash that is the same number as the ideal", /max-height:\s*var\(--wp-ring-ideal\)/.test(wrap));
+
+  // The two ratios the reference actually sets, written as ratios against the
+  // width the card really gets rather than as pixel guesses at it. A px
+  // literal here is how the ring ended up at 0.39 in the first place.
+  check(
+    "the ring's ideal is a share of the card's own width",
+    /--wp-ring-ideal:[^;]*var\(--wp-cardw\) \* 0\.611/.test(css),
+  );
+  check(
+    "and the card's height is a share of it too",
+    /--wp-pass-h:[^;]*var\(--wp-cardw\) \* 1\.12/.test(css),
+  );
+  check(
+    "with the card's width derived rather than assumed",
+    /--wp-cardw:\s*calc\(min\(var\(--wp-col\), 100vw\) - 2 \* var\(--wp-gutter\)\)/.test(css),
+  );
+
+  check("the ring itself takes its height from that box", /height:\s*100%/.test(ring));
+  check("and its width from its height", /width:\s*auto/.test(ring) && /aspect-ratio/.test(ring));
+  check(
+    "it no longer carries a px ceiling of its own",
+    !/width:\s*min\(\s*\d+px/.test(ring),
+    "a px cap binds on every phone and is what made the ring 0.39 of the card",
+  );
+
+  // The arc's THICKNESS was the one proportion that was already right. Left as
+  // 13px it would have become a hairline on a ring half again as big.
+  const hole = css.slice(css.indexOf(".wp-ring::before"), css.indexOf(".wp-ring-in"));
+  check("the arc's thickness is a share of the ring", /inset:\s*[\d.]+%/.test(hole));
+  check("not a length that would thin out as the ring grew", !/inset:\s*\d+px/.test(hole));
+
+  // The two margins the paragraph reset was eating. Both are <p> elements and
+  // `#studentPassView p { margin: 0 }` outranks a class however late it is
+  // declared, so the tracker and the approver ran together as one block.
+  check(
+    "the due line's margin is restored at the weight the reset uses",
+    /#studentPassView \.wp-due \{[^}]*margin/.test(css),
+  );
+  check(
+    "and so is the gap above the approver",
+    /#studentPassView \.wp-appby \{[^}]*margin/.test(css),
+  );
+  // Restored as MARGIN ONLY. A whole rule behind the id would outrank
+  // `.wp-body[data-wp-phase="warn"] .wp-due` and freeze the due line's colour
+  // through the warning and the overrun.
+  check(
+    "the phase can still repaint the due line",
+    /\.wp-body\[data-wp-phase="over"\] \.wp-due \{[^}]*color/.test(css),
+  );
+}
+
 /* ============================================================
    THE WATCH SIGNATURE.
 
@@ -467,6 +707,12 @@ console.log("\nThe watch signature");
     "but the server's clock ticking does NOT change it",
     wpPassSignature({ ...live, serverTime: "2026-08-18T17:31:00.000Z" }) === sig,
     "including serverTime would re-deal the card every 15 seconds",
+  );
+
+  check(
+    "going overdue changes it",
+    wpPassSignature({ ...live, overdue: true }) !== sig,
+    "the face is picked at deal time, so an unchanged signature leaves a calm header over a red ring",
   );
 
   check(

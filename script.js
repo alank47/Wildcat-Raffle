@@ -17052,14 +17052,26 @@
          * property returns the literal string "clamp(46px, 7.4svh, 66px)".
          * parseFloat of that is NaN, which fell through to a hardcoded
          * fallback and quietly laid the stack out at the wrong size on every
-         * screen. So two zero width rulers in the markup carry the heights and
-         * the browser resolves them.
+         * screen. So three zero width rulers in the markup carry the heights
+         * and the browser resolves them.
+         *
+         * THE THIRD RULER IS THE RUNNING HALL PASS. Every other card in this
+         * wallet is a name and a value; a pass with a clock on it is a ring, a
+         * due time, a route, a three step tracker and the teacher who approved
+         * it, and none of that fits in the box a barcode needs. So --wp-pass-h
+         * is a second card height, in the same viewport-relative shape as the
+         * first so it shrinks on a short screen with everything else, and
+         * wpLayout gives it to the one card that asked for it. A page served
+         * with an older index.html has no such ruler; passH then falls back to
+         * cardH and the stack is exactly the stack it was.
          */
         function wpMetrics() {
             const stripEl = wpById('wpMetricStrip');
             const cardEl = wpById('wpMetricCard');
+            const passEl = wpById('wpMetricPass');
             const strip = stripEl ? stripEl.getBoundingClientRect().height : 0;
             const cardH = cardEl ? cardEl.getBoundingClientRect().height : 0;
+            const passH = passEl ? passEl.getBoundingClientRect().height : 0;
             // How far each card slides UNDER the one below it. Unlike the
             // two heights above, --wp-tuck is a plain px length rather than
             // a clamp(), so it survives being read back. It is declared in
@@ -17081,9 +17093,15 @@
                 radius = parseFloat(cs.getPropertyValue('--wp-radius')) || 0;
                 lift = parseFloat(cs.getPropertyValue('--wp-lift')) || 0;
             }
+            const card = cardH > 0 ? cardH : 240;
             return {
                 strip: strip > 0 ? strip : 56,
-                cardH: cardH > 0 ? cardH : 240,
+                cardH: card,
+                // Never SHORTER than an ordinary card: a tall card that came
+                // back smaller than the box it is drawn in would clip its own
+                // ring, and the honest fallback is the geometry that already
+                // works.
+                passH: passH > card ? passH : card,
                 tuck: tuck > 0 ? tuck : 0,
                 radius: radius > 0 ? radius : 17,
                 lift: lift > 0 ? lift : 48,
@@ -17122,16 +17140,34 @@
          * Three numbers per card, and they are the same four states this
          * function always had:
          *
-         *   box    cardH + tuck, or cardH for the last card, which has no
-         *          neighbour to tuck under. Constant.
+         *   box    own height + tuck, or own height for the last card, which
+         *          has no neighbour to tuck under. Constant.
          *   clip   how much of the box bottom is hidden by the clip:
-         *          nothing for the open card, cardH - strip for the rest.
+         *          nothing for the open card, own height - strip for the rest.
          *   hide   what the card is holding back in total, clip plus its
          *          own tuck. CSS uses it to keep the decorative effect
          *          layers and the focus ring inside the exposed band.
          *
          * box - clip is exactly the height this function used to write, in
          * all four states, which is why nothing on screen moves.
+         *
+         * ONE CARD MAY BE TALLER THAN THE OTHERS, and only one is: a hall pass
+         * with a running clock, which carries a ring, a due time, a route, a
+         * tracker and an approver where every other card carries a name and a
+         * value. It asks by wearing data-tall, and it gets --wp-pass-h.
+         *
+         * THE STACK STILL DOES NOT CHANGE HEIGHT WHEN A CARD OPENS. That was
+         * the invariant here and it survives, because the stack now reserves
+         * the TALLEST card's height whatever is open, rather than the height of
+         * the card that happens to be open. So the as-of line under the stack
+         * sits in one place all session, exactly as before; when a short card
+         * is open the surplus is empty ground below the last card, which is the
+         * cheapest possible price for the pass card being the size a pass is.
+         *
+         * What the tall card costs is REAL and worth naming: with six cards on
+         * a Chromebook the stack is one pass-card taller than it was, so a
+         * portal that used to fit may now scroll, and drag-to-select stands
+         * down when it does (wpMeasureFit). Tapping a card always works.
          */
         function wpLayout(animate) {
             const stack = wpById('wpStack');
@@ -17146,14 +17182,24 @@
             if (animate === false) stack.classList.add('wp-noanim');
 
             const last = cards.length - 1;
-            const folded = Math.max(0, m.cardH - m.strip);
+            // One card's own box height. data-tall is the card asking for the
+            // pass geometry; everything else is a card.
+            const boxOf = function (el) {
+                return (el.getAttribute('data-tall') === '1') ? m.passH : m.cardH;
+            };
+            // The height the stack reserves, whatever is open. See the note
+            // above: this is what keeps the page under the thumb still.
+            let tallest = m.cardH;
+            for (let t = 0; t < cards.length; t++) tallest = Math.max(tallest, boxOf(cards[t]));
+            const openH = boxOf(cards[k]);
 
             cards.forEach(function (el, i) {
+                const own = boxOf(el);
                 const top = i <= k
                     ? i * m.strip
-                    : (k * m.strip) + m.cardH + ((i - k - 1) * m.strip);
-                const box = (i === last ? m.cardH : m.cardH + m.tuck);
-                const clip = (i === k ? 0 : folded);
+                    : (k * m.strip) + openH + ((i - k - 1) * m.strip);
+                const box = (i === last ? own : own + m.tuck);
+                const clip = (i === k ? 0 : Math.max(0, own - m.strip));
                 el.style.transform = 'translate3d(0,' + Math.round(top) + 'px,0)';
                 el.style.height = box + 'px';
                 // Opened out at the top by --wp-lift so the clip does not
@@ -17168,7 +17214,7 @@
                 el.classList.toggle('is-open', i === k);
             });
 
-            stack.style.height = (((cards.length - 1) * m.strip) + m.cardH) + 'px';
+            stack.style.height = (((cards.length - 1) * m.strip) + tallest) + 'px';
 
             if (animate === false) {
                 void stack.offsetHeight;          // flush, then let motion back in
@@ -17392,9 +17438,26 @@
             const parked = document.querySelectorAll('#wpDetail > .wp-body');
             for (let i = 0; i < parked.length; i++) parked[i].remove();
 
+            // THE ACTION UNDER THE STACK. A card carries what it IS; the thing
+            // a student does next is a full width control under the wallet,
+            // where a thumb reaches it without opening anything and where it
+            // cannot be clipped by the card box. Only the hall pass uses it,
+            // and only while a pass is running, so the bar is empty (and CSS
+            // hides it) the rest of the time.
+            //
+            // A page served from an older index.html has no bar to write into.
+            // Rather than drop the one control that closes a pass, the card
+            // keeps it inside its own body there, which is where it lived
+            // before this and still works.
+            const bar = wpById('wpPassBar');
+            let under = '';
+            for (let u = 0; u < cards.length; u++) if (cards[u].under) under = cards[u].under;
+
             stack.innerHTML = cards.map(function (c, i) {
                 return '<article class="wp-card' + (c.cls ? ' ' + c.cls : '') + '"' +
                     ' role="tab" tabindex="0" data-i="' + i + '"' +
+                    // A card may ask for the taller box. wpLayout reads this.
+                    (c.tall ? ' data-tall="1"' : '') +
                     // The face is kept as data as well as inline style, so the
                     // wide layout's detail panel can wear the same one without
                     // inheriting the transform and clip wpLayout writes.
@@ -17406,10 +17469,19 @@
                     '<div class="wp-head">' +
                       '<span class="wp-label">' + wpEsc(c.label) + '</span>' +
                       '<span class="wp-lead' + (c.quiet ? ' is-quiet' : '') + '">' + wpEsc(c.lead) + '</span>' +
+                      // A card may hand up a STATUS to sit beside its name: a
+                      // pill that says what state the thing is in, where the
+                      // lead says what its number is. Markup the card built,
+                      // so it is written as-is; every value inside it went
+                      // through wpEsc there.
+                      (c.status || '') +
                     '</div>' +
-                    '<div class="wp-body" data-i="' + i + '">' + c.body + '</div>' +
+                    '<div class="wp-body" data-i="' + i + '">' + c.body +
+                      (bar ? '' : (c.under || '')) + '</div>' +
                     '</article>';
             }).join('');
+
+            if (bar) bar.innerHTML = under;
 
             wpWireStack();
             wpSelected = Math.max(0, Math.min(selectIndex || 0, cards.length - 1));
@@ -17515,8 +17587,45 @@
                       '--wp-rule:rgba(20,23,28,.13);--wp-pill:rgba(20,23,28,.08)',
             lunch:    '--wp-face:linear-gradient(158deg,#E28C3E 0%,#B4571B 100%);--wp-ink:#FFFFFF',
             clever:   '--wp-face:linear-gradient(158deg,#4C74F8 0%,#2A2F9E 100%);--wp-ink:#FFFFFF',
-            passOn:   '--wp-face:linear-gradient(158deg,#1B2E58 0%,#101E3B 100%);--wp-ink:#FFFFFF',
-            passLate: '--wp-face:linear-gradient(158deg,#C85942 0%,#7E2519 100%);--wp-ink:#FFFFFF',
+            /* --wp-core fills the HOLE in the timer ring, and it is the card's
+               own gradient resampled for the ring's much smaller box rather than
+               a flat colour.
+
+               The hole used to repaint --wp-face itself, and the same gradient
+               painted across a 152px circle is not the same colour as it is
+               across a 388px card: the middle of the ring came out lighter than
+               the card around it, so the eye read a pale disc sitting behind the
+               digits instead of an arc drawn on the card. A flat fill only moves
+               the problem, because the card is a gradient and a flat disc can
+               only agree with it along one line.
+
+               So these are the face's colours at the two ends of the ring's own
+               box, on the same 158deg axis. Interpolation is linear, so matching
+               the ends matches every point between them, and the hole disappears
+               into the card. Only the two faces that ever carry a ring need one.
+
+               BOTH PAIRS MOVED WITH THE RING. The ring is now about 0.61 of the
+               card's width where it was 0.39, so it covers a different and much
+               longer stretch of the face's gradient: on a 388 by 436 card the
+               158deg gradient line runs 550px, and the circle now spans from
+               0.23 to 0.66 along it rather than 0.27 to 0.58. Left at the old
+               stops the hole would have gone back to being a visibly paler disc
+               behind the digits, which is the exact seam these two values exist
+               to remove. Recomputed on both faces, because the overdue card
+               carries a ring too and a seam there would land on the one card a
+               student is already unhappy to be holding.
+
+               THE NAVY IS ALSO A STEP DARKER than it was, #1B2E58 down to
+               #17284D. The reference this card is judged against sits on a
+               light page, where a mid navy reads as the dark object; ours sits
+               on a near black one, where the same navy reads as the bright
+               object and the gold has to fight it. A step down puts the field
+               back behind the arc without turning the card into the ground it
+               is lying on, which would lose the card. */
+            passOn:   '--wp-face:linear-gradient(158deg,#17284D 0%,#0D1932 100%);--wp-ink:#FFFFFF;' +
+                      '--wp-core:linear-gradient(158deg,#152547 0%,#101E3B 100%)',
+            passLate: '--wp-face:linear-gradient(158deg,#C85942 0%,#7E2519 100%);--wp-ink:#FFFFFF;' +
+                      '--wp-core:linear-gradient(158deg,#B74D39 0%,#973727 100%)',
             passOff:  '--wp-face:linear-gradient(158deg,#22252C 0%,#131519 100%);--wp-ink:#F6F4EF',
             id:       '--wp-face:linear-gradient(158deg,#3B79BC 0%,#0C447C 52%,#05294F 100%);--wp-ink:#FFFFFF',
 
@@ -17730,6 +17839,12 @@
                 ].filter(Boolean).join(', ');
                 return {
                     label: 'Hall Pass', lead: 'Waiting', face: WP_FACE.passOff,
+                    cls: 'wp-card-pass',
+                    // The same pill the running pass wears, in the state before
+                    // it: a request nobody has answered yet is a state, and a
+                    // card that looks identical to one with no request on it at
+                    // all is how a student ends up asking twice.
+                    status: '<span class="wp-status is-wait"><i aria-hidden="true"></i>Waiting for approval</span>',
                     body: wpEmpty(
                             'Sent to ' + who + (where ? ' (' + where + ')' : '') + '. ' +
                             'You cannot ask for another pass while this one is waiting, so cancel it ' +
@@ -17827,18 +17942,49 @@
                     : '');
 
             // Real context around the clock, every piece optional: the route
-            // (where they were sent, or back to their room), who approved it, and
-            // a tap button only where a device can actually scan. Nothing is
-            // invented when a fact is missing; the piece just does not render.
+            // (where they were sent, or back to their room), who approved it and
+            // at what time, and a tap button only where a device can actually
+            // scan. Nothing is invented when a fact is missing; the piece just
+            // does not render.
             const who = hp.teacherName ? wpEsc(hp.teacherName) : null;
             const originName = hp.origin ? wpEsc(hp.origin) : null;
             const routeHtml = sentTo
                 ? '<div class="wp-route"><span class="wp-r">' + sentTo + '</span>' +
-                  '<span class="wp-arw">&rarr;</span><span class="wp-r">' + (originName || 'class') + '</span></div>'
+                  '<span class="wp-arw" aria-hidden="true">&rarr;</span><span class="wp-r">' + (originName || 'class') + '</span></div>'
                 : (originName
                     ? '<div class="wp-route"><span class="wp-r wp-r-solo">back to ' + originName + '</span></div>'
                     : '');
-            const appHtml = who ? '<p class="wp-appby">Approved by <b>' + who + '</b></p>' : '';
+
+            /* WHO SAID YES, AND AT WHAT HOUR.
+               A pass is a permission, and a permission with no name and no time
+               on it is a rumour. The name shipped first; the hour is the half
+               that settles a corridor argument, because it is the one fact on
+               this card a student can hold up against the clock on the wall and
+               a teacher's memory of when they let them go. It comes off the same
+               skew correction as the countdown, so the two times this card
+               prints are in one frame and cannot disagree. Both halves are
+               absent rather than invented when the pass does not carry them. */
+            const appAt = wpApprovedClockLabel(hp);
+            const appHtml = who
+                ? '<p class="wp-appby">Approved by <b>' + who + '</b>' +
+                  (appAt ? '<span class="wp-appat"> &middot; ' + wpEsc(appAt) + '</span>' : '') + '</p>'
+                : (appAt ? '<p class="wp-appby">Approved at <b>' + wpEsc(appAt) + '</b></p>' : '');
+
+            /* THE STATE IN TWO WORDS, top right, where a wallet card keeps its
+               one value and where the eye lands after the name.
+
+               It names the LEG and never the lateness, and that restraint is
+               load bearing. The leg changes only when the server changes
+               `state`, which is in the watch signature and therefore re-deals
+               the whole card; "late" arrives on a second that no fetch lands on
+               at all. A pill that tried to say late would sit there saying "on
+               time" while the ring beside it turned red, which is the exact
+               silent lie the rest of this screen is built to beat. Lateness
+               belongs to the ring, because the ring is ticked. */
+            const statusHtml = '<span class="wp-status"><i aria-hidden="true"></i>' +
+                (state === 'out' ? 'Out &middot; heading back' : 'Approved &middot; heading there') +
+                '</span>';
+
             const canScan = ('NDEFReader' in window) || wcNativeNfcAvailable();
             const ctaHtml = canScan
                 ? '<button class="wp-tap-cta" type="button" onclick="wcStudentNfcScan()">' +
@@ -17847,32 +17993,59 @@
                   '</button>'
                 : '';
 
+            // ONE INSTRUCTION, AND THE ONE FOR THE LEG THEY ARE ON. A student
+            // who is already `out` has arrived; telling them to hold their phone
+            // near the tag "when you get there" is an instruction for a walk
+            // they have finished, and at a doorway a child follows the sentence
+            // rather than working out that it is not addressed to them.
+            const footHtml = wpFoot(hp.overdue
+                ? 'You are past your time. Head back and hold your phone near the tag.'
+                : (state === 'out'
+                    ? 'When you are back in class, hold your phone near the tag in there.'
+                    : (sentTo
+                        ? 'Hold your phone near the tag at ' + sentTo + ', then back in class'
+                        : 'Hold your phone near the wall tag when you get there, and again when you are back.')));
+
             return {
                 label: 'Hall Pass',
                 lead: first.value + ' ' + first.unit,
+                // The pass card's own name, so its header can be an eyebrow and
+                // a status pill rather than the name-and-value strip every other
+                // card in this wallet wears.
+                cls: 'wp-card-pass',
+                status: statusHtml,
+                // A ring, a due time, a route, a tracker and an approver do not
+                // fit in the box a barcode needs. See wpLayout.
+                tall: true,
                 face: hp.overdue ? WP_FACE.passLate : WP_FACE.passOn,
-                body: '<div class="wp-ring"' + clockAttrs + '><div class="wp-ring-in">' +
-                        '<span class="wp-clock-value">' + wpEsc(first.value) + '</span>' +
-                        '<span class="wp-clock-unit">' + wpEsc(first.unit) + '</span>' +
-                      '</div><span class="wp-ring-flag">' + wpEsc(wpPhaseFlag(first.phase)) + '</span></div>' +
+                // THE RING SITS IN A BOX THAT CAN GIVE WAY, and that box is the
+                // only reason the ring is allowed to be the size the card's job
+                // needs. Everything under it (the due line, the route, the trip,
+                // the approver) is a WORD, and words do not shrink: on a short
+                // card the ring is the one thing that can lose a few millimetres
+                // without anything becoming unreadable, so wp-ring-wrap is the
+                // single flexible item in the body's column and absorbs the
+                // whole shortfall. See the note on it in styles.css. Before
+                // this the ring was pinned to a px ceiling and the approver line
+                // was what fell off the bottom of an SE.
+                body: '<div class="wp-ring-wrap"><div class="wp-ring"' + clockAttrs + '><div class="wp-ring-in">' +
+                        '<span class="wp-clock-value">' + wpEsc(wpRingDigits(first.value)) + '</span>' +
+                        // THE WORD UNDER THE DIGITS NAMES THE ERRAND, not the
+                        // arithmetic. "LEFT" is true of any timer ever built;
+                        // "TO GET BACK" is what these particular seconds are
+                        // for, and it is the difference between a number a
+                        // child reads and a number a child acts on. The ticker
+                        // rewrites it off the same face and the same leg.
+                        '<span class="wp-clock-unit">' + wpEsc(wpClockCaption(first.phase, leg)) + '</span>' +
+                      '</div><span class="wp-ring-flag">' + wpEsc(wpPhaseFlag(first.phase)) + '</span></div></div>' +
                       dueHtml +
                       routeHtml +
                       wpTripHtml(state) +
-                      appHtml +
-                      ctaHtml +
-                      // ONE INSTRUCTION, AND THE ONE FOR THE LEG THEY ARE ON. A
-                      // student who is already `out` has arrived; telling them
-                      // to hold their phone near the tag "when you get there"
-                      // is an instruction for a walk they have finished, and at
-                      // a doorway a child follows the sentence rather than
-                      // working out that it is not addressed to them.
-                      wpFoot(hp.overdue
-                          ? 'You are past your time. Head back and hold your phone near the tag.'
-                          : (state === 'out'
-                              ? 'When you are back in class, hold your phone near the tag in there.'
-                              : (sentTo
-                                  ? 'Hold your phone near the tag at ' + sentTo + ', then back in class'
-                                  : 'Hold your phone near the wall tag when you get there, and again when you are back.'))),
+                      appHtml,
+                // Under the wallet, not on the card: the pass is the card, and
+                // the tag is what you do about it. Full width, thumb height, and
+                // it cannot be clipped by the card box.
+                under: ctaHtml + footHtml,
             };
         }
 
@@ -18086,7 +18259,17 @@
                 hp.sentTo || '',
                 hp.clockStartAt || '',
                 hp.clockLimitMinutes === null || hp.clockLimitMinutes === undefined ? '' : hp.clockLimitMinutes,
-                hp.timerCleared ? 'cleared' : ''
+                hp.timerCleared ? 'cleared' : '',
+                // OVERDUE CHANGES THE CARD'S FACE, so it has to change the
+                // signature too. The face is chosen once at deal time; the
+                // ticker only rewrites the digits, the ring and the due line.
+                // Without this, a pass that goes overdue while the student is
+                // looking at it keeps the calm face it was dealt with: the ring
+                // turns red and the number counts up underneath a header that
+                // still reads like everything is fine. Same shape of bug as the
+                // cleared timer earlier, and the same fix: if it changes what
+                // the card SAYS, it belongs in the identity the watch compares.
+                hp.overdue ? 'overdue' : ''
             ].join('|');
         }
 
@@ -18119,24 +18302,58 @@
             return h > 0 ? h + ':' + pad(m) + ':' + pad(sec) : pad(m) + ':' + pad(sec);
         }
 
+        /* THE SAME CLOCK, WITHOUT THE LEADING ZERO, and only inside the ring.
+           "7:32", the way every clock a child has ever read prints it, and the
+           way the mock this card is measured against prints it.
+
+           This is not typography, it is SIZE. The digits inside the ring are the
+           one thing on this card that has to be readable across a corridor, and
+           the ring is a circle: the widest line that fits inside it is its
+           diameter, so every character the number spends is a character of
+           height taken off the whole number. "07:32" is five glyphs where "7:32"
+           is four, which is a fifth of the ring's width thrown away saying
+           nothing, on the one screen where the number is the point.
+
+           THE STRIP KEEPS THE PADDING. wpMMSS is still what the collapsed card,
+           the VoiceOver label and the wide panel's line are written from, and
+           there the clock sits in a row of text next to a word: "07:32 left"
+           holds its column as the minutes tick over where "7:32 left" would jog
+           sideways every sixty seconds. Two shapes for two jobs, one arithmetic.
+
+           Only a leading zero in the MINUTES field goes. "00:07" keeps its
+           minutes as "0:07" rather than becoming a bare ":07", the sign on an
+           overtime clock survives, and an hours field is never touched. */
+        function wpRingDigits(value) {
+            return String(value === null || value === undefined ? '' : value)
+                .replace(/^([+-]?)0(\d:\d\d)$/, '$1$2');
+        }
+
         /* When the CURRENT leg's clock started, in epoch ms, corrected for device
            clock skew. The server hands down clockStartAt (approval while heading
            out, the destination tap while heading back) so the card ticks against
            the same anchor the server judges overdue on, and serverTime so a wrong
            phone clock cannot pull the two apart. Falls back to approvedAt for a
            payload from before those fields shipped. */
+        /* HOW FAR THIS DEVICE'S CLOCK IS FROM THE SERVER'S, in milliseconds.
+
+           Clock SKEW correction, in one place because more than one line on the
+           card now needs it. The server's timestamps are in the server's clock;
+           this page ticks in the browser's. Anchoring to the server's own `now`
+           means a wrong phone clock cannot make the countdown disagree with the
+           server's overdue decision, which is exactly what "showing incorrect
+           time" was: the two were only ever as synced as the device.
+
+           Zero when the payload does not carry serverTime, which is the
+           pre-skew behaviour rather than a guess. */
+        function wpClockSkewMs(hp) {
+            if (!hp || !hp.serverTime) return 0;
+            var sv = Date.parse(hp.serverTime);
+            return isFinite(sv) ? Date.now() - sv : 0;
+        }
+
         function wpPassStartMs(hp) {
             if (!hp) return null;
-            // Clock SKEW correction. The server's timestamps are in the server's
-            // clock; this ticks in the browser's. Anchoring to the server's own
-            // `now` means a wrong phone clock cannot make the countdown disagree
-            // with the server's overdue decision, which is exactly what "showing
-            // incorrect time" was: the two were only as synced as the device.
-            var skew = 0;
-            if (hp.serverTime) {
-                var sv = Date.parse(hp.serverTime);
-                if (isFinite(sv)) skew = Date.now() - sv;
-            }
+            var skew = wpClockSkewMs(hp);
             // The CURRENT leg's anchor: approval while heading out, the destination
             // tap while heading back. clockStartAt carries whichever it is, so the
             // card matches the two-phase server timer. Older payloads that predate
@@ -18216,6 +18433,24 @@
                 // time rather than a blank.
                 return d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0');
             }
+        }
+
+        /* "9:38 AM", the hour a teacher said yes.
+
+           Through the SAME skew correction as the countdown and the due time, so
+           every clock this card prints is in one frame. Without that, a phone
+           six minutes fast would show an approval time six minutes off the due
+           time sitting two lines above it, and a student comparing the two would
+           be reading an argument between the card and itself.
+
+           Null in, null out, and null on a pass that carries no approval stamp:
+           the line simply does not render rather than inventing an hour for a
+           permission. */
+        function wpApprovedClockLabel(hp) {
+            if (!hp || !hp.approvedAt) return null;
+            var t = Date.parse(hp.approvedAt);
+            if (!isFinite(t)) return null;
+            return wpDueClockLabel(t + wpClockSkewMs(hp));
         }
 
         /* HOW LONG BEFORE THE END THE CARD STARTS WARNING.
@@ -18301,6 +18536,35 @@
             return back ? 'Back by' : 'Get there by';
         }
 
+        /* THE WORD UNDER THE DIGITS, and it names the errand rather than the
+           arithmetic.
+
+           "LEFT" is true of every timer ever built and tells a child nothing
+           about what to do with the number above it. "TO GET BACK" is what these
+           particular seconds are for, and the same digits mean a different
+           errand on each leg: heading out they are the walk TO somewhere,
+           heading back they are the walk to class. One word that said "left" for
+           both would hand half the students reading it a caption for the other
+           half's trip.
+
+           Two of the five phases are not a countdown at all and must not be
+           captioned as one:
+             open  no window exists, the digits count UP, and the only true
+                   caption is how long they have been out
+             over  the digits have reversed and now measure the overrun. The
+                   word changes with them, which is the whole point of the
+                   inversion being signed rather than silent. */
+        function wpClockCaption(phase, leg) {
+            // Not the word on the flag clipped to the ring, which already says
+            // "Overtime" two centimetres away. Two labels shouting one word at a
+            // child who is already late is noise; this one says what the number
+            // underneath it IS.
+            if (phase === 'over') return 'past your time';
+            if (phase === 'open') return 'time out of class';
+            if (phase === 'none') return 'out';
+            return leg === 'back' ? 'to get back' : 'to get there';
+        }
+
         /* The flag clipped to the ring. Two words at most: at a doorway this is
            read in peripheral vision or not at all. Empty while the pass is
            simply running, because a badge that is always there says nothing on
@@ -18325,6 +18589,18 @@
             warn: ['#FF8A3D', '#FFC46B'],
             over: ['#FF4136', '#FF8F84'],
         };
+
+        /* WHAT THE GOLD HAS NOT REACHED YET, and it is nearly nothing on
+           purpose. At white 10% this track read as a second ring: the eye caught
+           a complete circle with a lighter section in it rather than an arc that
+           is running out, and how much is left is the one thing this shape exists
+           to say at a glance. At 4.5% it is still there to measure the arc
+           against and it is no longer an object competing with it.
+
+           It lives here as well as in styles.css because the ticker rewrites the
+           whole conic-gradient every second, so a value that only moved in the
+           CSS would be overwritten one second later. The two must agree. */
+        const WP_RING_TRACK = 'rgba(255,255,255,.045)';
 
         /* Only the digits are rewritten. Re-dealing the card once a second
            would close whatever the student had open.
@@ -18359,8 +18635,24 @@
                 var face = wpClockFace(startMs, limitMin);
                 var valueEl = node.querySelector('.wp-clock-value');
                 var unitEl = node.querySelector('.wp-clock-unit');
-                if (valueEl && valueEl.textContent !== face.value) valueEl.textContent = face.value;
-                if (unitEl && unitEl.textContent !== face.unit) unitEl.textContent = face.unit;
+                // THE RING'S OWN SHAPE, not the strip's. The card was dealt with
+                // wpRingDigits and the strip with wpMMSS; a ticker that wrote
+                // face.value into the ring would swap "7:32" for "07:32" on the
+                // very first tick and the number would jog sideways a second
+                // after the card opened. Compared in the same shape it writes,
+                // so the guard is still one string compare and still writes only
+                // when the second actually changed.
+                var ringValue = wpRingDigits(face.value);
+                if (valueEl && valueEl.textContent !== ringValue) valueEl.textContent = ringValue;
+                // The caption under the digits names the errand, and the errand
+                // is a function of the phase AND the leg, so it is rewritten
+                // here for the same reason the flag and the due lead are: the
+                // moment a countdown becomes an overrun is a second no fetch is
+                // going to land on, and a caption still reading "to get back"
+                // over a number counting up is the card telling a child the
+                // opposite of what has happened.
+                var caption = wpClockCaption(face.phase, node.getAttribute('data-leg'));
+                if (unitEl && unitEl.textContent !== caption) unitEl.textContent = caption;
 
                 // The flag on the ring, and the words in front of the due time.
                 // Both are part of the same sentence as the digits, so both are
@@ -18466,7 +18758,7 @@
                     var ramp = WP_RING_RAMP[face.phase] || WP_RING_RAMP.live;
                     var t = frac.toFixed(3);
                     node.style.background = 'conic-gradient(' + ramp[0] + ' 0turn, ' + ramp[1] + ' ' + t +
-                        'turn, rgba(255,255,255,.10) ' + t + 'turn 1turn)';
+                        'turn, ' + WP_RING_TRACK + ' ' + t + 'turn 1turn)';
                 }
             }
         }
@@ -18844,9 +19136,36 @@
          * remaining reader is showTapConfirm, which has a slug off a wall tag and
          * needs the words that go with it, because "check in at rm-16" is a
          * database key held up to a fourteen year old.
+         *
+         * ASKED EVERY TIME, NEVER CACHED, and the deleted line was
+         * `if (wpLocations) return;`. That memo was for the life of the page,
+         * and the list it froze is a function of the student's OWN LIVE PASSES:
+         * tapLocations.listForStudents returns the common destinations plus only
+         * the rooms this caller's passes name, and their passes name a different
+         * origin every period, because hallPasses.requestMine derives the origin
+         * from the class they are timetabled into RIGHT NOW.
+         *
+         * So the loop closed on the server and stayed dead on the phone. A
+         * student who tapped once at period 2 from Room 16 filled the cache with
+         * Room 16 and the common kinds. At period 5 they got a pass out of Room
+         * 21, walked to the restroom (a common kind, so the arrival tap worked
+         * and the pass went `out`), walked back, held the phone to the Room 21
+         * tag, and read "this tag is not set up yet" from a cache taken three
+         * periods earlier. The server would have accepted that tap and closed
+         * the pass. The card had just told them to go and make it.
+         *
+         * The cost of dropping the memo is one indexed read per tap, on a
+         * screen that only exists because a phone was held to a sticker. The
+         * cost of keeping it was a child stranded in a corridor with a ring
+         * running down and no button.
          */
         async function wpLoadLocations() {
-            if (wpLocations) return;
+            // Dropped before the fetch, not after it. A previous tap's list is
+            // the same lie as a memo if a later load fails or the session has
+            // gone: showTapConfirm has one signal for "the list did not load"
+            // and it is this being null, and it must not be able to read a list
+            // from a period the student is no longer in.
+            wpLocations = null;
             const auth = window.WildcatAuth;
             const session = auth && auth.getSession && auth.getSession();
             if (!session) return;
@@ -20754,13 +21073,39 @@
             const destinations = ((wcClassTags && wcClassTags.locations) || [])
                 .filter(function (t) { return t.active && t.kind !== 'classroom'; });
 
+            // WHERE THE PASS STARTS, AND WHY THIS PICKER HAD TO EXIST.
+            //
+            // openForStudent derives the origin from the teacher's OWN classroom
+            // tag, and refuses with "Or say which room this pass starts from"
+            // when no tag carries their address. That sentence named an argument
+            // the server accepts (originSlug) and this form had no field for, so
+            // the refusal was a dead end: every teacher without a tag assigned to
+            // them could read what to do and had nowhere to do it. No pass was
+            // opened, so no student ever reached a destination tag, so the round
+            // trip could not start. tapEvents has never held a row.
+            //
+            // Classrooms first, because the room a pass starts in is the room it
+            // is tapped back into and a classroom is what that normally is. Every
+            // other active tag stays on the list underneath: a teacher taking a
+            // lesson in the library still needs somewhere for the child to tap
+            // back in, and a school whose only registered tags are restrooms
+            // would otherwise be back at the same dead end with a picker on top.
+            const originTags = ((wcClassTags && wcClassTags.locations) || [])
+                .filter(function (t) { return t.active; })
+                .sort(function (a, b) {
+                    const rank = function (t) { return t.kind === 'classroom' ? 0 : 1; };
+                    return rank(a) - rank(b) || String(a.name).localeCompare(String(b.name));
+                });
+
             const opener =
                 '<div class="wc-card panel-card">' +
                   '<div class="panel-head"><span class="panel-icon">&#9995;</span><h3>Start a pass for a student</h3></div>' +
                   '<p class="panel-hint" style="margin:0 0 14px;">' +
                     'Pick the child and where they are going. It appears on their phone straight ' +
                     'away, and they still have to tap the tag at that place to start it and the ' +
-                    'tag in this room to end it. Only the place you pick will start it.' +
+                    'tag in the room it started from to end it. Only the place you pick will ' +
+                    'start it. Leave "Starting from" on "My room" unless you are teaching ' +
+                    'somewhere else, or no wall tag is registered to you yet.' +
                   '</p>' +
                   '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;align-items:end;">' +
                     '<div><label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Student</label>' +
@@ -20779,6 +21124,18 @@
                             return '<option value="' + esc(t.slug) + '">' + esc(t.name) + '</option>';
                           }).join('')
                         : '<option value="">No tags registered yet</option>') +
+                      '</select></div>' +
+                    '<div><label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Starting from</label>' +
+                      '<select id="wcPassOrigin" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;">' +
+                      // The empty value sends NO originSlug, which leaves the
+                      // server deriving the teacher's own room exactly as before.
+                      // Absence and a choice are different arguments here, and a
+                      // slug of "" would be a lookup for a tag nobody registered.
+                      '<option value="">My room (work it out)</option>' +
+                      originTags.map(function (t) {
+                          return '<option value="' + esc(t.slug) + '">' + esc(t.name) +
+                            (t.kind === 'classroom' ? '' : '  (' + esc(t.kind) + ')') + '</option>';
+                      }).join('') +
                       '</select></div>' +
                     '<div><label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Minutes</label>' +
                       '<input type="number" id="wcPassMinutes" min="1" max="240" value="10" ' +
@@ -20806,6 +21163,7 @@
             if (!ctx) return;
             const number = (document.getElementById('wcPassStudent') || {}).value || '';
             const dest = (document.getElementById('wcPassDest') || {}).value || '';
+            const origin = (document.getElementById('wcPassOrigin') || {}).value || '';
             const minutes = Number((document.getElementById('wcPassMinutes') || {}).value || 0);
             const reason = (document.getElementById('wcPassReason') || {}).value || '';
             if (!number || !dest) {
@@ -20816,9 +21174,16 @@
                 // The SIS number straight off the roster the server sent. The
                 // mutation resolves it, and refuses rather than guessing when no
                 // record or two records carry it.
+                //
+                // originSlug is OMITTED when the picker is on "My room", not sent
+                // as "". The server treats `originSlug !== undefined` as "the
+                // teacher has told me where they are" and looks the slug up; an
+                // empty string would be a lookup that finds nothing and refuses a
+                // pass the teacher never meant to place anywhere in particular.
                 await ctx.auth.convexMutation('hallPasses:openForStudent', {
                     studentNumber: number,
                     destinationSlug: dest,
+                    ...(origin ? { originSlug: origin } : {}),
                     minutes: minutes || undefined,
                     reason: reason || undefined,
                 }, ctx.session.idToken);
