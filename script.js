@@ -8434,9 +8434,15 @@
             document.querySelectorAll('.hall-pass-tab').forEach(tab => {
                 tab.style.display = 'none';
             });
+            // CLASS, NOT INLINE STYLE. These were painted here with literal
+            // hexes, so the stylesheet could never theme them: an inline style
+            // beats any rule, and the first tab click undid whatever the design
+            // system had done. The look lives in .subtab-button and
+            // .subtab-button.active now; this only says which one is current.
             document.querySelectorAll('.subtab-button').forEach(btn => {
-                btn.style.background = '#f5f5f5';
-                btn.style.color = '#333';
+                btn.classList.remove('active');
+                btn.style.removeProperty('background');
+                btn.style.removeProperty('color');
             });
             
             // Show selected tab
@@ -8454,10 +8460,7 @@
                           tabName === 'history' ? 'historyTabBtn' : 'passSettingsTabBtn';
             const btn = document.getElementById(btnId);
 
-            if (btn) {
-                btn.style.background = '#667eea';
-                btn.style.color = 'white';
-            }
+            if (btn) btn.classList.add('active');
 
             // Fetched on open, never cached. This board is the answer to "which
             // of my students is out of the room right now", and a stale one is

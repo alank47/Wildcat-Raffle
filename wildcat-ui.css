@@ -1663,3 +1663,79 @@ body.wc-loading { overflow: hidden; }
 .wc-native-google:active { background: #F1F3F4; }
 .wc-native-google:disabled { opacity: .6; cursor: default; }
 .wc-native-google:focus-visible { outline: 2px solid #2F67A7; outline-offset: 2px; }
+
+/* ============================================================
+   CLAW PASS, brought onto the same system as the dashboard.
+
+   This page predates the design system: an emoji in an h2, a yellow
+   warning bar, a 48px slab repeating the page title, and seven tab
+   buttons carrying their own inline colours. Inline styles are why it
+   could never be themed from here, so they were removed rather than
+   fought with !important.
+   ============================================================ */
+
+/* The page's own heading block. Eyebrow, title, and one chip for state,
+   which is the same three-part shape every panel head already uses. */
+.wu-pagehead {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 0 0 var(--wu-s5);
+}
+.wu-pagehead .wu-eyebrow { width: 100%; margin: 0; }
+.wu-pagetitle {
+  font-size: clamp(22px, 3vw, 27px);
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--wu-fg);
+  margin: 0;
+}
+
+/* Sub-tabs. A quiet row of pills, with the active one on the same soft
+   blue the nav rail uses for its current item, so "where am I" reads the
+   same way in both places. */
+.hall-pass-tab-row,
+#modeSubNav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 var(--wu-s5); }
+.subtab-button {
+  padding: 8px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--wu-r-chip);
+  background: var(--wu-surface-sunk);
+  color: var(--wu-fg-dim);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--wu-dur-ui) var(--wu-ease),
+              color var(--wu-dur-ui) var(--wu-ease);
+}
+.subtab-button:hover { background: var(--wu-blue-mist); color: var(--wu-blue-deep); }
+.subtab-button.active {
+  background: var(--wu-blue-mist);
+  color: var(--wu-blue-deep);
+  border-color: color-mix(in srgb, var(--wu-blue) 22%, transparent);
+}
+.subtab-button:focus-visible { outline: 2px solid var(--wu-blue); outline-offset: 2px; }
+
+/* The kiosk. One subject, one action, centred, and large enough to use
+   at arm's length on a shared screen without becoming a billboard. */
+.wu-kiosk { max-width: 520px; margin: 0 auto; }
+.wu-kiosk .wu-panel-head { text-align: center; }
+.wu-kiosk-input {
+  width: 100%;
+  padding: 16px 18px;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: var(--wu-fg);
+  background: var(--wu-surface-sunk);
+  border: 1px solid var(--wu-hair-strong);
+  border-radius: var(--wu-r-card);
+  margin-bottom: var(--wu-s4);
+}
+.wu-kiosk-input:focus-visible {
+  outline: 2px solid var(--wu-blue);
+  outline-offset: 1px;
+  background: var(--wu-surface);
+}
+.wu-kiosk-go { width: 100%; padding: 14px; font-size: 16px; justify-content: center; }
