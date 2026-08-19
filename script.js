@@ -989,6 +989,12 @@
         // desk exists to work through.
         let cashReceipts = [];
 
+        // One compact record per closed school year: totals plus every
+        // student's closing balance. The full ledger for that year lives in
+        // the dated backup, not here, so this does not grow the document the
+        // app reads on every load by a year of transactions annually.
+        let cashYearArchives = [];
+
         // REMOVED: the global `wildcatCashTransactions`.
         //
         // It was declared "legacy alias, no longer written to" while two paths
@@ -2409,6 +2415,7 @@
                         window.WildcatStore.normalizeReward(r, Date.now(), currentUser || {}));
                 }
                 cashReceipts = data.cashReceipts || [];
+                cashYearArchives = data.cashYearArchives || [];
                 localTombstones = data.localTombstones || []; // NEW
                 entityTombstones = data.entityTombstones || []; // NEW
                 lastSaveTimestamp = data.lastSaveTimestamp || 0;
@@ -3633,6 +3640,7 @@
                             // until the next page load.
                             wildcatCashRewards,
                             cashReceipts,
+                            cashYearArchives,
                             loginHistory,
                             autoWeekEnabled,
                             lastAutoResetDate,
@@ -4239,6 +4247,11 @@
         // ========================================
         
         function switchSettingsSubtab(subtab) {
+            // Past year closures are only meaningful next to the button that
+            // creates them.
+            if (subtab === 'cash' && typeof renderCashYearArchives === 'function') {
+                setTimeout(renderCashYearArchives, 0);
+            }
             // Update button states
             document.querySelectorAll('.settings-subtab-button').forEach(btn => {
                 btn.classList.remove('active');
@@ -24210,6 +24223,156 @@
             // Save other settings as needed
             saveData();
             alert('✅ Settings saved successfully!');
+        }
+
+
+        // ============================================================
+        // START OF YEAR ROLLOVER
+        //
+        // Closing a school year is not the same as zeroing balances, which is
+        // what resetAllStudentCash does and all it does. On launch morning a
+        // wiped balance sitting next to last year's leaderboard, last year's
+        // activity feed and a year-old unfulfilled receipt reads as a broken
+        // app rather than a fresh start.
+        //
+        // Order matters, and it is: back up, show what will happen, get an
+        // explicit confirmation, then apply. The backup runs FIRST and the
+        // rollover refuses to continue without it, because this is the one
+        // action here that cannot be undone from inside the app.
+        //
+        // Nothing is deleted. Last year's ledger and receipts go to the dated
+        // backup, and a per-student closing balance stays in the app, which is
+        // what anyone actually asks for later: what did this child finish the
+        // year with.
+        // ============================================================
+        /** Past closures, so the archive is visible rather than only in the data. */
+        function renderCashYearArchives() {
+            const el = document.getElementById('cashYearArchiveList');
+            if (!el) return;
+            if (!Array.isArray(cashYearArchives) || !cashYearArchives.length) {
+                el.textContent = 'No school year has been closed yet.';
+                return;
+            }
+            el.innerHTML = cashYearArchives.slice().reverse().map(a =>
+                `<div>Closed <strong>${escapeHtml(a.schoolYear)}</strong> on ` +
+                `${new Date(a.closedAt).toLocaleDateString()} by ${escapeHtml(a.closedBy || '')} — ` +
+                `${a.totals.students} students, $${(a.totals.totalBalance || 0).toLocaleString()} cleared` +
+                `${a.backupRef ? `, backup <code>${escapeHtml(a.backupRef)}</code>` : ''}</div>`
+            ).join('');
+        }
+
+        async function startNewSchoolYear() {
+            const preview = window.WildcatStore.buildYearEndRollover({
+                students,
+                transactions: cashTransactions,
+                receipts: cashReceipts,
+                actor: currentUser || {},
+                now: Date.now()
+            });
+            const t = preview.counts;
+
+            const outstandingWarning = t.receiptsOutstanding > 0
+                ? `\n⚠️  ${t.receiptsOutstanding} receipt${t.receiptsOutstanding === 1 ? ' is' : 's are'} still awaiting pickup. ` +
+                  `Closing the year files them away unfulfilled.\n`
+                : '';
+
+            const ok = await showConfirm(
+                `Close ${preview.summary.schoolYear} and start fresh?\n\n` +
+                `This will:\n` +
+                `  • Zero the balance for all ${t.students} students ` +
+                `($${t.totalBalance.toLocaleString()} in circulation)\n` +
+                `  • File away ${t.transactions} ledger entries\n` +
+                `  • File away ${t.receiptsOutstanding + t.receiptsFulfilled + t.receiptsCancelled} receipts\n` +
+                `  • Clear leaderboards, activity and analytics\n` +
+                outstandingWarning +
+                `\nA full backup is written first. Each student's closing balance is kept.`
+            );
+            if (!ok) return;
+
+            const typed = await showPrompt(
+                `Last check. This cannot be undone from inside the app.\n\n` +
+                `Type START NEW YEAR to confirm:`
+            );
+            if (typed !== 'START NEW YEAR') {
+                if (typed !== null) alert('❌ Cancelled. Nothing was changed.');
+                return;
+            }
+
+            // BACKUP FIRST, and stop if it fails. Everything below is
+            // irreversible; a rollover with no backup behind it is not.
+            let backupRef = null;
+            try {
+                showToast('Backing up before closing the year…', 'info');
+                await createAutomaticBackup();
+                backupRef = `backups/${new Date().toISOString().split('T')[0]}_cash`;
+            } catch (e) {
+                console.error('[rollover] backup failed:', e);
+                alert('❌ The backup failed, so nothing was changed.\n\n' +
+                      ((e && e.message) || String(e)) +
+                      '\n\nFix the backup first: this step is what makes the rollover recoverable.');
+                return;
+            }
+
+            // Recompute against the same arrays now that the backup is done,
+            // so the record matches what is actually being cleared rather than
+            // what was on screen a moment ago.
+            const roll = window.WildcatStore.buildYearEndRollover({
+                students,
+                transactions: cashTransactions,
+                receipts: cashReceipts,
+                actor: currentUser || {},
+                now: Date.now(),
+                backupRef
+            });
+
+            const patchById = {};
+            roll.studentPatches.forEach(p => { patchById[p.studentId] = p; });
+            students.forEach(s => {
+                const p = patchById[s.id];
+                if (!p) return;
+                s.wildcatCashBalance = 0;
+                s.wildcatCashEarned = 0;
+                s.wildcatCashSpent = 0;
+                s.wildcatCashDeducted = 0;
+                s.wildcatCashTransactions = [];
+                s.wildcatCashRewardsRedeemed = [];
+            });
+
+            // The summary stays in the app. The full ledger does not: it is in
+            // the backup, and a second copy here would grow the document read
+            // on every page load by a year of transactions annually.
+            if (!Array.isArray(cashYearArchives)) cashYearArchives = [];
+            cashYearArchives.push(roll.summary);
+
+            cashTransactions = [];
+            cashReceipts = [];
+
+            addToAuditLog(
+                'school_year_rollover',
+                'all',
+                'Wildcat Cash',
+                roll.counts.totalBalance,
+                `Closed ${roll.summary.schoolYear}: ${roll.counts.students} students zeroed, ` +
+                `${roll.counts.transactions} ledger entries and ` +
+                `${roll.counts.receiptsOutstanding} outstanding receipts filed. Backup ${backupRef}.`
+            );
+
+            await saveData();
+
+            if (typeof updateCashTable === 'function') updateCashTable();
+            if (typeof updateStudentAccounts === 'function') updateStudentAccounts();
+            if (typeof updateCashLeaderboards === 'function') updateCashLeaderboards();
+            if (typeof updateReceiptsTable === 'function') updateReceiptsTable();
+            if (typeof updateRewardsStore === 'function') updateRewardsStore();
+            renderCashYearArchives();
+
+            alert(
+                `✅ ${roll.summary.schoolYear} is closed.\n\n` +
+                `${roll.counts.students} students start at $0.\n` +
+                `$${roll.counts.totalBalance.toLocaleString()} was cleared and recorded.\n` +
+                `Backup: ${backupRef}\n\n` +
+                `Closing balances are kept under Cash Settings.`
+            );
         }
 
         async function resetAllStudentCash() {
