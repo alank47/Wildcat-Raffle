@@ -16798,8 +16798,15 @@
             if (!currentUser) return;
 
             if (tabName === 'awardCash') {
+                // Paint immediately from whatever is cached, then fetch the SIS
+                // roster and repaint. Awaiting here would leave a teacher on a
+                // blank tab for the length of a network round trip.
                 updateCashPeriodFilter();
                 updateCashTable();
+                loadTeacherRosterFromSIS().then(() => {
+                    updateCashPeriodFilter();
+                    updateCashTable();
+                });
             } else if (tabName === 'cashActivity') {
                 updateCashActivityLog();
             } else if (tabName === 'cashLeaderboard') {
@@ -22868,8 +22875,11 @@
             
             // Filter students, recording what each stage removed so an empty
             // table can say WHY it is empty instead of just that it is.
-            let filteredStudents = students;
-            const funnel = { loaded: students.length, afterGrade: null, afterPeriod: null, stage: 'none' };
+            //
+            // Enrolled first: the students array holds everyone the app has
+            // ever seen, including leavers kept for their balances.
+            let filteredStudents = enrolledStudents();
+            const funnel = { loaded: filteredStudents.length, afterGrade: null, afterPeriod: null, stage: 'none' };
 
             // Apply grade filter
             if (gradeFilter) {
@@ -22877,28 +22887,35 @@
                 funnel.afterGrade = filteredStudents.length;
                 if (filteredStudents.length === 0) funnel.stage = 'grade filter';
             }
-            
-            // Apply period filter (match Raffle Mode logic)
-            if (periodFilter && currentUser.sections) {
-                // Find the selected section by sectionId
-                const section = currentUser.sections.find(s => s.sectionId === periodFilter);
-                if (section && section.students) {
-                    // Filter students using the section's student list
-                    filteredStudents = filteredStudents.filter(student => 
-                        section.students.includes(student.id)
-                    );
-                    funnel.afterPeriod = filteredStudents.length;
-                    if (filteredStudents.length === 0) funnel.stage = 'class period';
-                }
-            } else if (currentUser.role === 'teacher' && currentUser.sections && !periodFilter) {
-                // If no period selected, teachers only see students from ALL their sections
-                const allTeacherStudentIds = currentUser.sections.flatMap(s => s.students || []);
-                filteredStudents = filteredStudents.filter(student => 
-                    allTeacherStudentIds.includes(student.id)
-                );
-                funnel.afterPeriod = filteredStudents.length;
-                funnel.teacherSectionIds = allTeacherStudentIds.length;
-                if (filteredStudents.length === 0) funnel.stage = 'your class rosters';
+
+            // SIS scoping. Admins and campus aides keep the whole school; a
+            // classroom teacher sees the students psRoster says are theirs,
+            // joined on studentNumber because student.id may still be a legacy
+            // CSV value.
+            //
+            // A teacher with no SIS roster now sees NOBODY. The old code only
+            // applied its filter when currentUser.sections existed, so a
+            // teacher with none fell through to the entire school: absent data
+            // read as unrestricted.
+            const scoped = window.WildcatRoster.scopeStudents({
+                students: filteredStudents,
+                role: currentUser && currentUser.role,
+                roster: sisTeacherRoster,
+                sectionId: periodFilter || null
+            });
+            filteredStudents = scoped.students;
+            funnel.afterPeriod = filteredStudents.length;
+            funnel.scope = scoped.scope;
+            funnel.scopeReason = scoped.reason;
+            if (filteredStudents.length === 0 && funnel.stage === 'none') {
+                funnel.stage = scoped.scope === 'section' ? 'class period' : 'your class rosters';
+            }
+
+            // A failed fetch is not an empty roster. Say which happened.
+            if (!sisTeacherRoster && sisRosterState === 'failed'
+                && !window.WildcatRoster.seesEveryStudent(currentUser && currentUser.role)) {
+                funnel.scopeReason = 'Could not load your class roster: ' + (sisRosterError || 'unknown error') +
+                                     '. Reload the page to try again.';
             }
             // Admins with no period selected see all students
             
@@ -22952,10 +22969,11 @@
                 if (funnel.loaded === 0) {
                     why = 'No roster is loaded yet. If you signed in with a username and password, ' +
                           'sign in with Microsoft instead: the roster comes from the SIS now.';
-                } else if (funnel.stage === 'your class rosters') {
-                    why = `${funnel.loaded} students are loaded, but none are on your class rosters ` +
-                          `(${funnel.teacherSectionIds || 0} student ids across your sections). ` +
-                          'Ask an admin to re-match your sections.';
+                } else if (funnel.scopeReason) {
+                    // scopeStudents already worked out which of the several
+                    // empties this is, and each one sends the reader somewhere
+                    // different. Prefer its wording over a generic restatement.
+                    why = funnel.scopeReason;
                 } else if (funnel.stage !== 'none') {
                     why = `${funnel.loaded} students are loaded, but the ${funnel.stage} matched none of them.`;
                 } else {
@@ -23064,28 +23082,70 @@
         }
 
         // Update cash period filter
+        // ============================================================
+        // MY SIS ROSTER
+        //
+        // Who a teacher actually teaches, from psRoster, matched to the
+        // signed-in identity by email SERVER SIDE in views_app:teacherRoster.
+        // The browser never says whose roster it wants.
+        //
+        // Replaces currentUser.sections, an editable field on the teacher's own
+        // app record left from the CSV era. convex/accessRules.ts refuses to
+        // read that field for the same reason: a teacher who can edit their own
+        // profile could otherwise grant themselves the whole school.
+        // ============================================================
+        let sisTeacherRoster = null;      // last successful payload
+        let sisRosterState = 'idle';      // idle | loading | ready | failed
+        let sisRosterError = null;
+
+        async function loadTeacherRosterFromSIS(force) {
+            if (sisRosterState === 'loading') return sisTeacherRoster;
+            if (sisTeacherRoster && !force) return sisTeacherRoster;
+
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) {
+                sisRosterState = 'failed';
+                sisRosterError = 'Not signed in.';
+                return null;
+            }
+
+            sisRosterState = 'loading';
+            try {
+                sisTeacherRoster = await auth.convexQuery('views_app:teacherRoster', {}, session.idToken);
+                sisRosterState = 'ready';
+                sisRosterError = null;
+            } catch (e) {
+                // Left as failed rather than empty. An empty roster and a failed
+                // request look identical downstream, and they need opposite
+                // responses: one is a data problem, the other is a network one.
+                sisRosterState = 'failed';
+                sisRosterError = (e && e.message) || String(e);
+                console.error('[cash] teacherRoster failed:', sisRosterError);
+            }
+            return sisTeacherRoster;
+        }
+
         function updateCashPeriodFilter() {
             const select = document.getElementById('cashPeriodFilter');
-            select.innerHTML = '<option value="">All Students</option>';
-            
-            // Allow teachers, admins, and superadmins with sections to see their periods
-            if (currentUser.sections && currentUser.sections.length > 0) {
-                const periodOrder = ['A1', 'P1', 'P2', 'P3', 'P4', 'HPU', 'P5', 'P6', 'A2'];
-                const sortedSections = [...currentUser.sections].sort((a, b) => {
-                    const indexA = periodOrder.indexOf(a.period);
-                    const indexB = periodOrder.indexOf(b.period);
-                    if (indexA === -1) return 1;
-                    if (indexB === -1) return -1;
-                    return indexA - indexB;
-                });
-                
-                sortedSections.forEach(section => {
-                    const option = document.createElement('option');
-                    option.value = section.sectionId;
-                    option.textContent = `Period ${section.period} - ${section.className || section.courseName}`;
-                    select.appendChild(option);
-                });
-            }
+            if (!select) return;
+
+            const sections = window.WildcatRoster.sectionsFrom(sisTeacherRoster);
+            const seesAll = window.WildcatRoster.seesEveryStudent(currentUser && currentUser.role);
+
+            select.innerHTML = seesAll
+                ? '<option value="">All students</option>'
+                : (sections.length ? '<option value="">All my students</option>'
+                                   : '<option value="">No classes found</option>');
+
+            sections.forEach(section => {
+                const option = document.createElement('option');
+                option.value = section.sectionId;
+                const count = (section.students || []).length;
+                option.textContent = `${section.period ? 'Period ' + section.period + ' - ' : ''}` +
+                                     `${section.courseName || 'Class'} (${count})`;
+                select.appendChild(option);
+            });
         }
 
         // Update Cash Activity Log
