@@ -62,10 +62,20 @@
    *     3(A-E)   Multimedia Production 3A    <- Period 2
    *    10(A-E)   Promise Time 12A
    *
-   * Slots 6 and 7 are inferred as Periods 5 and 6 by continuing the run; no
-   * section was observed in them. Slot 9 has never been seen and is left
-   * unmapped rather than guessed: it falls through to 'other' and shows its
-   * course name, which is visible and correctable rather than silently wrong.
+   * Slots 6 and 7 carry Periods 5 and 6. No section was observed in either,
+   * because they are that teacher's prep, but they are not a guess: slots 2 to
+   * 5 are confirmed as Periods 1 to 4, slot 8 is confirmed as Power Up and is
+   * not a period, and the school has exactly six core periods. That leaves two
+   * periods and exactly two slots between the last confirmed class and Power
+   * Up, in an order that cannot flip.
+   *
+   * The one way that deduction fails is if a non-class block sits at 6 or 7 and
+   * pushes a period out to slot 9. Slot 9 has never been observed, so it is
+   * deliberately NOT mapped: anything landing there shows its course name with
+   * no period attached, which is visible and correctable rather than silently
+   * wrong. A teacher who does teach Periods 5 or 6 confirms or refutes all of
+   * this the moment they open the tab, which is why it is worth leaving the raw
+   * slot on every section.
    *
    * AM VERSUS PM PROMISE TIME IS ONLY KNOWABLE FROM THE SLOT. Both rows above
    * carry the identical course name "Promise Time 12A", so a name-based rule
