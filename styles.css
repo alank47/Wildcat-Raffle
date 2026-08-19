@@ -6138,3 +6138,25 @@ body:has(#mainApp:not(.hidden)) { padding: 0; margin: 0; }
 
 /* The modal body can outgrow a laptop screen once the picker is open. */
 .modal-content { max-height: 88vh; overflow-y: auto; }
+
+/* Update prompt. Deliberately a bar the user dismisses, never an automatic
+   reload: the reload it replaces was eating in-flight background saves. */
+.wc-update-bar {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+    z-index: 9999;
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px;
+    background: var(--wc-ink, #0E0E0E); color: #fff;
+    border-radius: 12px;
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.4);
+    font-size: 14px;
+    max-width: calc(100vw - 32px);
+}
+.wc-update-bar button {
+    border: none; border-radius: 8px; cursor: pointer;
+    font-size: 13px; font-weight: 700; font-family: inherit;
+    padding: 7px 14px; white-space: nowrap;
+}
+.wc-update-bar .wc-update-reload { background: var(--wc-blue, #2F67A7); color: #fff; }
+.wc-update-bar .wc-update-later  { background: transparent; color: rgba(255,255,255,0.7); padding: 7px 8px; }
+.wc-update-bar .wc-update-later:hover { color: #fff; }

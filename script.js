@@ -300,41 +300,80 @@
         };
         
         // ========================================
-        // VERSION MANAGEMENT & AUTO-UPDATE
+        // VERSION MANAGEMENT & UPDATE PROMPT
         // ========================================
-        // This timestamp is set when the file is loaded - it's unique per deployment
-        const SCRIPT_LOAD_TIME = Date.now();
-        
-        // Check for updates every 5 minutes
-        setInterval(async () => {
+        //
+        // WHAT THIS REPLACES, AND WHY IT MATTERED.
+        //
+        // The previous check compared the deployed file's Last-Modified header
+        // against the moment the PAGE loaded:
+        //
+        //     const SCRIPT_LOAD_TIME = Date.now();
+        //     const timeDiff = Math.abs(serverTime - SCRIPT_LOAD_TIME);
+        //     if (timeDiff > 60000) location.reload(true);
+        //
+        // Those are not the same kind of thing. One is when the file was
+        // deployed, the other is when the user opened the app. Any page opened
+        // more than a minute after the last deploy satisfied that condition,
+        // which is every page, always. And reloading did not help: the reload
+        // reset SCRIPT_LOAD_TIME to now while Last-Modified stayed where it
+        // was, so the next check was equally "stale".
+        //
+        // The result was every session reloading itself every five minutes,
+        // forever, for every user. That is where the submitted referral went:
+        // saveInBackground was still in flight when the page reloaded under
+        // it, and the referral existed only in memory.
+        //
+        // NOW: compare the VERSION, and never reload without being asked.
+        //
+        // index.html carries the deployed version in its ?v= cache buster.
+        // Comparing that to the one this page loaded answers the actual
+        // question. A mismatch shows a bar; the person clicks it when they are
+        // between tasks. Nothing is reloaded out from under a save.
+        const APP_VERSION = (function () {
+            var tag = document.querySelector('script[src*="script.js?v="]');
+            var m = tag && /[?&]v=([^"&]+)/.exec(tag.getAttribute('src'));
+            return m ? m[1] : null;
+        })();
+
+        function showUpdateBar(newVersion) {
+            if (document.getElementById('wcUpdateBar')) return;   // already shown
+            var bar = document.createElement('div');
+            bar.id = 'wcUpdateBar';
+            bar.className = 'wc-update-bar';
+            bar.innerHTML =
+                '<span>A new version of Wildcat Hub is available.</span>' +
+                '<button type="button" class="wc-update-reload">Reload now</button>' +
+                '<button type="button" class="wc-update-later" aria-label="Dismiss">Later</button>';
+            bar.querySelector('.wc-update-reload').addEventListener('click', function () {
+                // Flush anything outstanding first. The whole point of not
+                // reloading unprompted is that a reload can eat unsaved work.
+                Promise.resolve(typeof saveData === 'function' ? saveData() : null)
+                    .catch(function () { /* reload anyway; the user asked */ })
+                    .then(function () { location.reload(); });
+            });
+            bar.querySelector('.wc-update-later').addEventListener('click', function () {
+                bar.remove();
+            });
+            document.body.appendChild(bar);
+            console.log('[update] new version available:', newVersion, 'running:', APP_VERSION);
+        }
+
+        async function checkForAppUpdate() {
+            if (!APP_VERSION) return;   // cannot compare what we cannot read
             try {
-                // Fetch the HTML file to see if script.js has been updated
-                const response = await fetch('script.js?check=' + Date.now(), { method: 'HEAD' });
-                const lastModified = response.headers.get('Last-Modified');
-                
-                if (lastModified) {
-                    const serverTime = new Date(lastModified).getTime();
-                    const timeDiff = Math.abs(serverTime - SCRIPT_LOAD_TIME);
-                    
-                    // If server version is more than 1 minute different, reload
-                    if (timeDiff > 60000) {
-                        console.log('🔄 New version detected on server');
-                        
-                        // Save current state before reloading
-                        if (currentUser || currentStudent) {
-                            saveSession();
-                        }
-                        
-                        // Auto-reload to get fresh code
-                        console.log('Reloading to update...');
-                        location.reload(true);
-                    }
-                }
-            } catch (error) {
-                // Silently fail - don't interrupt user
-                console.log('Update check skipped');
+                const res = await fetch('index.html?vcheck=' + Date.now(), { cache: 'no-store' });
+                if (!res.ok) return;
+                const html = await res.text();
+                const m = /script\.js\?v=([^"&]+)/.exec(html);
+                if (m && m[1] && m[1] !== APP_VERSION) showUpdateBar(m[1]);
+            } catch (e) {
+                // Offline or blocked. Silent: an update prompt is not worth an
+                // error message, and the next check will catch it.
             }
-        }, 300000); // Check every 5 minutes
+        }
+
+        setInterval(checkForAppUpdate, 300000);   // every 5 minutes
         
         // ========================================
         // DATA INITIALIZATION

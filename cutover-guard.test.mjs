@@ -513,5 +513,24 @@ console.log("\nCache busters");
   );
 }
 
+console.log("\nThe app never reloads itself unprompted");
+// This one cost a submitted referral. The old check compared the deployed
+// file's Last-Modified against the moment the PAGE loaded, which are different
+// kinds of thing, so every session past the first minute after a deploy
+// reloaded itself every five minutes forever. A reload mid-save loses whatever
+// saveInBackground was still writing.
+check("no unconditional auto-reload survives in script.js",
+  !/^\s*location\.reload\(true\)/m.test(script));
+check("the update check compares a VERSION, not a timestamp",
+  /script\\.js\\?v=\(\[\^"&\]\+\)/.test(script) || /script\.js\?v=/.test(script));
+// Ignore comment lines: the replacement documents the old broken comparison
+// on purpose, and a guard that forbids naming a bug stops it being explained.
+check("SCRIPT_LOAD_TIME is gone from the CODE (the comment may still explain it)",
+  !script.split("\n").some((l) => /SCRIPT_LOAD_TIME/.test(l) && !/^\s*(\/\/|\*)/.test(l)));
+check("an available update surfaces as a dismissible bar",
+  /wcUpdateBar/.test(script) && /wc-update-later/.test(script));
+check("and the reload button flushes a save before reloading",
+  /saveData\(\)[\s\S]{0,200}location\.reload\(\)/.test(script));
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
