@@ -41,38 +41,63 @@
   var ALL_STUDENT_ROLES = ['admin', 'superadmin', 'campusaide'];
 
   /**
-   * WHY A SECTION IS CLASSIFIED BY COURSE NAME, NOT BY PERIOD NUMBER.
+   * THE DAY, BY EXPRESSION SLOT.
    *
-   * At Westbrook the core teaching periods are 1 to 6. Promise Time and Power
-   * Up are not periods at all, but PowerSchool still has to put them somewhere
-   * in the day, so they come back sitting in numbered slots: Promise Time
-   * reports as period 1 and period 10. Ordering or labelling on that number
-   * puts Promise Time first and calls it "Period 1", which collides with the
-   * real first period and is what made the list look jumbled.
+   * psRoster.period is not a period number. sync-to-app.ts fills it from
+   * Sections.Expression, e.g. "2(A-E)", and that leading number is the SLOT in
+   * the day, not what the school calls the period. Promise Time occupies slot
+   * 1, so every core class sits one slot higher than its name: Newscasting is
+   * "Period 1" on the timetable and reports as expression 2.
    *
-   * The bell schedule this app already owns says the same thing from the other
-   * direction: convex/seedBellSchedules.ts labels class periods with a bare
-   * number and everything else descriptively, precisely so the named blocks
-   * match no section.
+   * Reading the slot as the period number is what made every period read one
+   * too high.
    *
-   * So: the course name decides what a block IS, and the number is only
-   * trusted once a section is known to be a core class.
+   * Measured, not assumed. From a real teacher's roster on 2026-08-18:
+   *
+   *     8(A-E)   Power Up 11A
+   *     1(A-E)   Promise Time 12A
+   *     2(A-E)   Newscasting A               <- the timetable's Period 1
+   *     5(A-E)   Multimedia Production 1A    <- Period 4
+   *     4(A-E)   Multimedia Production 2A    <- Period 3
+   *     3(A-E)   Multimedia Production 3A    <- Period 2
+   *    10(A-E)   Promise Time 12A
+   *
+   * Slots 6 and 7 are inferred as Periods 5 and 6 by continuing the run; no
+   * section was observed in them. Slot 9 has never been seen and is left
+   * unmapped rather than guessed: it falls through to 'other' and shows its
+   * course name, which is visible and correctable rather than silently wrong.
+   *
+   * AM VERSUS PM PROMISE TIME IS ONLY KNOWABLE FROM THE SLOT. Both rows above
+   * carry the identical course name "Promise Time 12A", so a name-based rule
+   * would label them the same and a teacher would see two entries that look
+   * like duplicates.
    */
-  var CORE_MIN = 1;
-  var CORE_MAX = 6;
+  var SLOT_MAP = {
+    1:  { kind: 'promise',    label: 'Promise Time (AM)' },
+    2:  { kind: 'core', period: 1 },
+    3:  { kind: 'core', period: 2 },
+    4:  { kind: 'core', period: 3 },
+    5:  { kind: 'core', period: 4 },
+    6:  { kind: 'core', period: 5 },
+    7:  { kind: 'core', period: 6 },
+    8:  { kind: 'powerup',    label: 'Power Up' },
+    10: { kind: 'promise-pm', label: 'Promise Time (PM)' }
+  };
 
-  // Checked in order; first match wins. Promise Time PM before Promise Time,
-  // or "Promise Time PM" classifies as the morning block.
+  /**
+   * Fallback only, for a section whose slot is not in the map above. Checked in
+   * order; first match wins, so the PM variant is tested before the AM one.
+   */
   var NAMED_BLOCKS = [
-    { kind: 'promise-pm', label: 'Promise Time PM', match: /promise\s*time\s*(pm|afternoon)/i },
-    { kind: 'promise',    label: 'Promise Time',    match: /promise\s*time/i },
-    { kind: 'powerup',    label: 'Power Up',        match: /power\s*up/i },
-    { kind: 'nutrition',  label: 'Nutrition',       match: /nutrition|breakfast/i },
-    { kind: 'lunch',      label: 'Lunch',           match: /lunch/i }
+    { kind: 'promise-pm', label: 'Promise Time (PM)', match: /promise\s*time\s*(pm|afternoon)/i },
+    { kind: 'promise',    label: 'Promise Time (AM)', match: /promise\s*time/i },
+    { kind: 'powerup',    label: 'Power Up',          match: /power\s*up/i },
+    { kind: 'nutrition',  label: 'Nutrition',         match: /nutrition|breakfast/i },
+    { kind: 'lunch',      label: 'Lunch',             match: /lunch/i }
   ];
 
-  // Core classes first in bell order, then the named blocks in the order the
-  // day runs them, then anything unrecognised. Nothing is ever hidden.
+  // Core classes first in timetable order, then the named blocks in the order
+  // the day runs them, then anything unrecognised. Nothing is ever hidden.
   var KIND_ORDER = ['core', 'promise', 'powerup', 'promise-pm', 'nutrition', 'lunch', 'other'];
 
   function trimmed(s) {
@@ -93,42 +118,58 @@
 
   /**
    * What kind of block is this, what should it be called, and where does it
-   * sort. Returns { kind, label, order, periodNumber }.
+   * sort. Returns { kind, label, order, period, slot }.
+   *
+   * `slot` is the raw expression number. `period` is what the timetable calls
+   * it, and exists only for a core class.
    */
   function classifySection(section) {
     var s = section || {};
     var course = trimmed(s.courseName);
-    var num = periodNumber(s.period);
+    var slot = periodNumber(s.period);
 
+    var mapped = slot !== null ? SLOT_MAP[slot] : null;
+    if (mapped) {
+      if (mapped.kind === 'core') {
+        return {
+          kind: 'core',
+          label: 'Period ' + mapped.period + (course ? ' - ' + course : ''),
+          order: KIND_ORDER.indexOf('core'),
+          period: mapped.period,
+          slot: slot
+        };
+      }
+      return {
+        kind: mapped.kind,
+        label: mapped.label,
+        order: KIND_ORDER.indexOf(mapped.kind),
+        period: null,
+        slot: slot
+      };
+    }
+
+    // Slot not in the map. Fall back to the course name so a block the school
+    // adds later is still named sensibly rather than called a period.
     for (var i = 0; i < NAMED_BLOCKS.length; i++) {
       if (NAMED_BLOCKS[i].match.test(course)) {
         return {
           kind: NAMED_BLOCKS[i].kind,
-          // Named for what it is. The period number it reports is an artefact
-          // of where PowerSchool had to put it in the day.
           label: NAMED_BLOCKS[i].label,
           order: KIND_ORDER.indexOf(NAMED_BLOCKS[i].kind),
-          periodNumber: num
+          period: null,
+          slot: slot
         };
       }
     }
 
-    if (num !== null && num >= CORE_MIN && num <= CORE_MAX) {
-      return {
-        kind: 'core',
-        label: 'Period ' + num + (course ? ' - ' + course : ''),
-        order: KIND_ORDER.indexOf('core'),
-        periodNumber: num
-      };
-    }
-
-    // Neither a recognised block nor a core period number. Shown as itself
-    // rather than forced into a period it does not belong to.
+    // Neither a mapped slot nor a recognised name. Shown as itself, never
+    // relabelled into a period it does not occupy.
     return {
       kind: 'other',
-      label: course || (num !== null ? 'Period ' + num : 'Unscheduled'),
+      label: course || (slot !== null ? 'Slot ' + slot : 'Unscheduled'),
       order: KIND_ORDER.indexOf('other'),
-      periodNumber: num
+      period: null,
+      slot: slot
     };
   }
 
@@ -145,7 +186,8 @@
       for (var k in section) if (Object.prototype.hasOwnProperty.call(section, k)) out[k] = section[k];
       out.kind = meta.kind;
       out.label = meta.label;
-      out.periodNumber = meta.periodNumber;
+      out.period = meta.period;   // timetable period, core classes only
+      out.slot = meta.slot;       // raw expression slot
       out._order = meta.order;
       return out;
     }).sort(function (a, b) {
@@ -153,7 +195,7 @@
       // Within core, by period number. Within a named block, by course name,
       // because a teacher may hold two sections of the same block.
       if (a.kind === 'core' && b.kind === 'core') {
-        return (a.periodNumber || 0) - (b.periodNumber || 0);
+        return (a.period || 0) - (b.period || 0);
       }
       return trimmed(a.courseName).localeCompare(trimmed(b.courseName));
     });
@@ -277,8 +319,7 @@
 
   root.WildcatRoster = {
     ALL_STUDENT_ROLES: ALL_STUDENT_ROLES,
-    CORE_MIN: CORE_MIN,
-    CORE_MAX: CORE_MAX,
+    SLOT_MAP: SLOT_MAP,
     classifySection: classifySection,
     periodNumber: periodNumber,
     seesEveryStudent: seesEveryStudent,

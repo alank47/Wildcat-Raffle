@@ -110,67 +110,67 @@ console.log("\nEmpty results explain themselves differently");
     /no students in the SIS/.test(emptySection.reason));
 }
 
-console.log("\nWestbrook block classification");
+console.log("\nWestbrook slots: the expression is a SLOT, not a period name");
 {
-  // Promise Time really does come back from PowerSchool sitting in periods 1
-  // and 10. Classifying on that number is what jumbled the list and made two
-  // different things both call themselves "Period 1".
   const c = (period, courseName) => R.classifySection({ period, courseName });
 
-  check("a core class is core", c("3", "Biology").kind === "core");
-  check("and is labelled with its period and course",
-    c("3", "Biology").label === "Period 3 - Biology");
-  check("periods 1 through 6 are core",
-    [1,2,3,4,5,6].every((n) => c(String(n), "Math").kind === "core"));
+  // THE BUG THIS PINS. Every period read one too high because the expression
+  // slot was used as the period number, and Promise Time occupies slot 1.
+  check("slot 2 is the timetable's Period 1", c("2(A-E)", "Newscasting A").period === 1);
+  check("and is labelled Period 1", c("2(A-E)", "Newscasting A").label === "Period 1 - Newscasting A");
+  check("slot 3 is Period 2", c("3(A-E)", "Multimedia Production 3A").period === 2);
+  check("slot 4 is Period 3", c("4(A-E)", "Multimedia Production 2A").period === 3);
+  check("slot 5 is Period 4", c("5(A-E)", "Multimedia Production 1A").period === 4);
+  check("slot 6 is Period 5", c("6(A-E)", "Anything").period === 5);
+  check("slot 7 is Period 6", c("7(A-E)", "Anything").period === 6);
+  check("no core slot maps to its own number", ![2,3,4,5,6,7].some(n => c(n + "(A-E)", "X").period === n));
 
-  check("Promise Time in period 1 is NOT a core class",
-    c("1", "Promise Time").kind === "promise");
-  check("and is named for what it is, not the slot it sits in",
-    c("1", "Promise Time").label === "Promise Time");
-  check("Promise Time in period 10 classifies the same way",
-    c("10", "Promise Time").kind === "promise");
-  check("Promise Time PM is its own block, not the morning one",
-    c("10", "Promise Time PM").kind === "promise-pm");
+  check("slot 1 is Promise Time, not Period 1", c("1(A-E)", "Promise Time 12A").kind === "promise");
+  check("slot 8 is Power Up, not a period", c("8(A-E)", "Power Up 11A").kind === "powerup");
+  check("slot 10 is Promise Time PM", c("10(A-E)", "Promise Time 12A").kind === "promise-pm");
+  check("a named block reports no timetable period", c("8(A-E)", "Power Up 11A").period === null);
 
-  check("Power Up is its own thing", c("4", "Power Up").kind === "powerup");
-  check("and keeps its own name", c("4", "Power Up").label === "Power Up");
-  check("spelling variations still match", c("4", "POWERUP").kind === "powerup");
+  // Both Promise Time rows carry the SAME course name in the real data, so
+  // only the slot can tell them apart.
+  check("AM and PM Promise Time are distinguished despite identical course names",
+    c("1(A-E)", "Promise Time 12A").label !== c("10(A-E)", "Promise Time 12A").label);
 
-  check("a period above 6 that is not a named block is not core",
-    c("10", "Study Hall").kind === "other");
-  check("and shows its course name rather than a wrong period",
-    c("10", "Study Hall").label === "Study Hall");
+  check("the expression's day letters are ignored", R.periodNumber("2(A-E)") === 2);
+  check("a bare number still parses", R.periodNumber("2") === 2);
+  check("slot 10 is not read as 1", R.periodNumber("10(A-E)") === 10);
 
-  check("a period value like P3 still reads as 3", R.periodNumber("P3") === 3);
-  check("Period 3 reads as 3", R.periodNumber("Period 3") === 3);
-  check("a non-numeric period is null", R.periodNumber("Advisory") === null);
+  // Slot 9 was never observed. It must not be invented as a period.
+  check("an unmapped slot is not called a period", c("9(A-E)", "Mystery Block").kind === "other");
+  check("and shows its course name", c("9(A-E)", "Mystery Block").label === "Mystery Block");
+  check("an unmapped slot with a known block name still resolves by name",
+    c("9(A-E)", "Nutrition Break").kind === "nutrition");
 }
 
-console.log("\nOrdering: core 1-6 first, then the named blocks");
+console.log("\nOrdering, against the real roster");
 {
+  const real = [
+    ["8(A-E)",  "Power Up 11A"],
+    ["1(A-E)",  "Promise Time 12A"],
+    ["2(A-E)",  "Newscasting A"],
+    ["5(A-E)",  "Multimedia Production 1A"],
+    ["4(A-E)",  "Multimedia Production 2A"],
+    ["3(A-E)",  "Multimedia Production 3A"],
+    ["10(A-E)", "Promise Time 12A"],
+  ];
   const ordered = R.sectionsFrom({
-    sections: [
-      { sectionId: "pu",  period: "4",  courseName: "Power Up" },
-      { sectionId: "p5",  period: "5",  courseName: "History" },
-      { sectionId: "pt",  period: "1",  courseName: "Promise Time" },
-      { sectionId: "p1",  period: "1",  courseName: "Algebra" },
-      { sectionId: "odd", period: "10", courseName: "Study Hall" },
-      { sectionId: "ptp", period: "10", courseName: "Promise Time PM" },
-      { sectionId: "p3",  period: "3",  courseName: "Biology" },
-    ],
+    sections: real.map(([period, courseName], i) => ({ sectionId: "s" + i, period, courseName, students: [] })),
   });
-  check("core periods come first, in numeric order",
-    ordered.slice(0, 3).map((s) => s.sectionId).join() === "p1,p3,p5");
-  check("then Promise Time", ordered[3].sectionId === "pt");
-  check("then Power Up", ordered[4].sectionId === "pu");
-  check("then Promise Time PM", ordered[5].sectionId === "ptp");
-  check("and the unrecognised block last, never dropped", ordered[6].sectionId === "odd");
-  check("nothing is lost in the sort", ordered.length === 7);
-  check("each section carries its display label", ordered[0].label === "Period 1 - Algebra");
+  check("core periods come first, in timetable order",
+    ordered.slice(0, 4).map((s) => s.period).join() === "1,2,3,4");
+  check("Period 1 is Newscasting", ordered[0].label === "Period 1 - Newscasting A");
+  check("then Promise Time AM", ordered[4].kind === "promise");
+  check("then Power Up", ordered[5].kind === "powerup");
+  check("then Promise Time PM", ordered[6].kind === "promise-pm");
+  check("nothing is lost", ordered.length === 7);
+  check("the raw slot is carried through for debugging", ordered[0].slot === 2);
   check("sectionsFrom on a null roster returns empty rather than throwing",
     R.sectionsFrom(null).length === 0);
 }
-
 
 console.log("\nA chosen section wins for every role");
 {
@@ -190,7 +190,7 @@ console.log("\nLabels a teacher can read");
 check("all-students scope", R.scopeLabel({ scope: "all" }) === "All students");
 check("no-roster scope", R.scopeLabel({ scope: "none" }) === "No roster");
 check("a named period",
-  R.scopeLabel({ scope: "section" }, ROSTER, "sec-P3") === "Period 3 - Biology");
+  R.scopeLabel({ scope: "section" }, ROSTER, "sec-P3") === "Period 2 - Biology");
 check("my whole roster", R.scopeLabel({ scope: "my-roster" }, ROSTER) === "My students");
 
 console.log(`\n${pass} passed, ${fail} failed`);
