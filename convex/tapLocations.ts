@@ -2,6 +2,7 @@ import { query, mutation } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
 import { requireStaff, requireAdmin, requireStudentSelf, normalizeEmail } from "./identity";
 import { normalizeSlug } from "./tapSlug";
+import { roomsNamedOnPasses } from "./hallPassRules";
 
 /**
  * Managing the NFC tags on walls.
@@ -142,7 +143,7 @@ const STUDENT_PICKER_LIMIT = 500;
 const COMMON_DESTINATION_KINDS = ["restroom", "office", "nurse"] as const;
 
 /** How many of the caller's own recent passes are consulted for their rooms. */
-const OWN_ORIGIN_LOOKBACK = 40;
+const OWN_ROOM_LOOKBACK = 40;
 
 /**
  * The rooms a student may name as the one they are leaving.
@@ -155,8 +156,15 @@ const OWN_ORIGIN_LOOKBACK = 40;
  *
  * NARROWED TO THIS STUDENT. It used to return every active tag in the school,
  * which handed anybody a complete slug list. Now it returns the common
- * destinations above, plus only the rooms this caller has themselves used as an
- * origin before, which is their own history and tells them nothing new.
+ * destinations above, plus only the rooms this caller's own passes name: the
+ * room they were let out of, the room a teacher sent them to, and the room they
+ * already tapped. That is their own history and tells them nothing new.
+ *
+ * ALL THREE, not just the origin. Origins alone made the teacher-issued pass
+ * unusable end to end, because the tag a teacher sends a child to is very often
+ * an `other` kind that is neither common nor anybody's origin: the student was
+ * told the library tag was not registered while standing in front of it. See
+ * roomsNamedOnPasses in hallPassRules.ts.
  *
  * NO LONGER THE ORIGIN PICKER. A student used to choose the room they were
  * leaving from this list, and that was the wrong model: the record said where a
@@ -184,19 +192,30 @@ export const listForStudents = query({
       .withIndex("by_active", (q) => q.eq("active", true))
       .take(STUDENT_PICKER_LIMIT);
 
-    // The caller's own recent origins. Indexed and bounded, and it is their own
-    // data: every one of these is a room they have already been let out of.
+    // The caller's own recent rooms. Indexed and bounded, and it is their own
+    // data: every one of these is a room they have been let out of, sent to, or
+    // already tapped.
     const passes = await ctx.db
       .query("hallPasses")
       .withIndex("by_student", (q) => q.eq("studentId", student._id))
       .order("desc")
-      .take(OWN_ORIGIN_LOOKBACK);
-    const ownOrigins = new Set(passes.map((p) => p.originLocationId));
+      .take(OWN_ROOM_LOOKBACK);
+
+    // ORIGINS ALONE WAS A DEAD LOOP. This used to be
+    // `new Set(passes.map((p) => p.originLocationId))`, so the only rooms a
+    // student could see beyond restrooms, the office and the nurse were rooms
+    // they had already left from. A teacher's pass names a DESTINATION, and the
+    // staff picker offers every active non-classroom tag, `other` included. So a
+    // child sent to the library was shown "this tag is not set up yet" at the
+    // library tag, the pass never left `active`, and the trip could not be
+    // started or finished. roomsNamedOnPasses reads all three columns; see the
+    // note on it in hallPassRules.ts.
+    const ownRooms = roomsNamedOnPasses(passes);
 
     const visible = rows.filter(
       (r) =>
         (COMMON_DESTINATION_KINDS as readonly string[]).includes(r.kind) ||
-        ownOrigins.has(r._id),
+        ownRooms.has(r._id),
     );
 
     return {

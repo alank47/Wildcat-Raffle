@@ -1227,13 +1227,32 @@ export const tap = mutation({
 
     await recordTapEvent(ctx, student._id, slug, location._id, now, result.ok, result.reason, live._id);
 
+    // NOTHING IS PATCHED ON A REFUSAL. The tapEvents row above is the record
+    // that somebody tapped here and was turned away; the pass itself is left
+    // exactly as it was, so a student tapping the wrong tag cannot advance,
+    // close, or re-stamp a trip.
     if (!result.ok) return { ok: false, reason: result.reason, location: location.name };
 
-    await ctx.db.patch(live._id, {
+    /* ---- what a tap writes ---- */
+    // Hoisted out of the patch call so the round-trip test can lift THIS object
+    // rather than keep its own copy of it. A test that models what a tap writes
+    // is a test that keeps passing after a tap starts writing something else;
+    // hall-pass-round-trip.test.mjs slices between these two markers and runs
+    // the real expression. Same trick pass-clock.test.mjs uses on script.js.
+    const written = {
       state: result.nextState,
+      // outAt on the first tap, returnedAt on the second. applyTap owns which,
+      // because the ordering rule and the field are the same decision.
       [result.field]: now,
+      // WHERE THEY ACTUALLY WENT, recorded only on the leg that has an arrival.
+      // Kept apart from assignedDestinationLocationId, which is where a teacher
+      // SENT them: one is a measurement and one is an instruction, and folding
+      // them erases "went somewhere else".
       ...(result.field === "outAt" ? { destinationLocationId: location._id } : {}),
-    } as any);
+    };
+    /* ---- end what a tap writes ---- */
+
+    await ctx.db.patch(live._id, written as any);
 
     return { ok: true, state: result.nextState, reason: result.reason, location: location.name };
   },

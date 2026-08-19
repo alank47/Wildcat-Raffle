@@ -455,6 +455,67 @@ export function passesTakenOnDay(
 }
 
 /**
+ * EVERY ROOM THIS STUDENT'S OWN PASSES POINT AT.
+ *
+ * THE BUG THIS EXISTS FOR IS A DEAD LOOP, and it is worth writing down because
+ * nothing about it looks like a bug from either end.
+ *
+ * tapLocations.listForStudents is the only room list a student's browser ever
+ * sees, and script.js refuses to offer the check-in button for a tag that is not
+ * on it: an unrecognised slug is reported as "this tag is not set up yet",
+ * because a student holding a phone at a blank sticker has to be told something.
+ * That list was the common kinds (restroom, office, nurse) plus the rooms this
+ * student had used as an ORIGIN.
+ *
+ * A teacher's pass names a destination, and the destination picker on the staff
+ * screen offers every active tag that is not a classroom, which includes `other`
+ * (the library, the gym, the counsellor). None of those kinds is common and none
+ * of them is anybody's origin. So a child sent to the library walked to the
+ * library, held their phone to the library tag, and was told the tag did not
+ * exist. The pass could never leave `active`, so the return tag never became
+ * tappable either, and the whole round trip was unreachable while every screen
+ * on both sides looked correct.
+ *
+ * ALL THREE COLUMNS, deliberately. `assignedDestinationLocationId` is where a
+ * teacher SENT them and is the tag that validates the pass; `destinationLocationId`
+ * is where they actually tapped, which is the room they are standing in when they
+ * need the list again; `originLocationId` is the room that closes it. A student
+ * who cannot see the room that closes their pass cannot end it at all.
+ *
+ * DISCLOSES NOTHING NEW. Every id here came off a pass belonging to this caller:
+ * a room a teacher told them to walk to, a room they already tapped, or a room
+ * they were let out of. That is the same test the origin-only version passed,
+ * applied to the other two columns it had simply missed.
+ */
+export function roomsNamedOnPasses<T>(
+  passes: Array<{
+    originLocationId?: T;
+    destinationLocationId?: T;
+    assignedDestinationLocationId?: T;
+  }>,
+): Set<T> {
+  const rooms = new Set<T>();
+  for (const p of Array.isArray(passes) ? passes : []) {
+    // Undefined is skipped rather than added: a Set holding undefined matches
+    // every row whose column is absent, which would quietly publish the whole
+    // tag table the first time a pass had no destination.
+    if (p.originLocationId !== undefined && p.originLocationId !== null) {
+      rooms.add(p.originLocationId);
+    }
+    if (p.destinationLocationId !== undefined && p.destinationLocationId !== null) {
+      rooms.add(p.destinationLocationId);
+    }
+    if (
+      p.assignedDestinationLocationId !== undefined &&
+      p.assignedDestinationLocationId !== null
+    ) {
+      rooms.add(p.assignedDestinationLocationId);
+    }
+  }
+  return rooms;
+}
+
+/**
  * Grace beyond `expiresAfterMinutes` before the sweep may close a pass.
  *
  * NOT zero, and the difference matters. `isOverdue` goes true the minute a pass
