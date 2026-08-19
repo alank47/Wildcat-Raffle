@@ -22781,6 +22781,7 @@
                         <button class="tab" id="studentAccountsTabBtn" onclick="switchTab('studentAccounts')">💳 Accounts</button>
                         <button class="tab" id="cashAnalyticsTabBtn" onclick="switchTab('cashAnalytics')">📊 Analytics</button>
                         <button class="tab" id="cashAuditTabBtn" onclick="switchTab('cashAudit')">📋 Audit Log</button>
+                        <button class="tab admin-only" id="cashSettingsTabBtn" onclick="openCashSettings()">⚙️ Cash Settings</button>
                     `;
                     const modeNavEl = document.getElementById('modeNav');
                     if (modeNavEl) {
@@ -23137,6 +23138,26 @@
                 console.error('[cash] teacherRoster failed:', sisRosterError);
             }
             return sisTeacherRoster;
+        }
+
+        /**
+         * Wildcat Cash settings, from inside Wildcat Cash mode.
+         *
+         * They live as a subtab of the main Settings tab, and
+         * `body.cash-mode #settingsTab { display: none !important }` hides the
+         * only button that reached it. So in cash mode the cash settings were
+         * unreachable: rewards, starting balance and the year rollover could
+         * only be opened by first switching back to Raffle mode, which is not
+         * a thing anybody would guess.
+         *
+         * removeCashTabButtons has always listed 'cashSettingsTabBtn' for
+         * cleanup, so a button was intended here and never built. This is it.
+         *
+         * Admin only, matching the Settings tab it opens.
+         */
+        function openCashSettings() {
+            switchTab('settings');
+            switchSettingsSubtab('cash');
         }
 
         function updateCashPeriodFilter() {
