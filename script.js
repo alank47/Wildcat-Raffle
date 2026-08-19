@@ -22813,6 +22813,10 @@
                     student.wildcatCashBalance = STARTING_BALANCE;
                     student.wildcatCashEarned = 0;
                     student.wildcatCashSpent = 0;
+                    // Was omitted here while every other initialiser set it, so
+                    // a student first seen on this screen had no deducted total
+                    // to show.
+                    student.wildcatCashDeducted = 0;
                     student.wildcatCashDeducted = 0;
                     student.wildcatCashTransactions = [];
                     student.wildcatCashRewardsRedeemed = [];
@@ -22993,7 +22997,7 @@
                 } else {
                     why = `${funnel.loaded} students are loaded but none reached the table.`;
                 }
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 40px; color: #999;">' +
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px; color: #999;">' +
                     '<div style="font-weight:600;margin-bottom:6px;">No students to display</div>' +
                     '<div style="font-size:13px;max-width:520px;margin:0 auto;">' + why + '</div>' +
                     '</td></tr>';
@@ -23039,6 +23043,7 @@
                     <td class="wc-money ${bal < 0 ? 'wc-money-neg' : ''}">$${bal}</td>
                     <td class="wc-money">$${Number(student.wildcatCashEarned) || 0}</td>
                     <td class="wc-money">$${Number(student.wildcatCashSpent) || 0}</td>
+                    <td class="wc-money${(Number(student.wildcatCashDeducted) || 0) > 0 ? ' wc-money-neg' : ''}">$${Number(student.wildcatCashDeducted) || 0}</td>
                 `;
                 
                 tbody.appendChild(row);
