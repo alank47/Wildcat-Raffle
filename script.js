@@ -3339,13 +3339,45 @@
                         // They used to be written last, after seven other documents,
                         // so any upstream failure meant a referral never persisted.
                         // The document is tiny, so writing it first costs nothing.
+                        //
+                        // MERGED, never replaced. This was a whole-document
+                        // setDoc of whatever this tab held in memory, which is
+                        // last-write-wins: teacher A files a referral, teacher
+                        // B's tab has been open since morning and saves for any
+                        // reason, and A's referral is gone with no error
+                        // anywhere. The five minute auto-reload existed to keep
+                        // that window small; it narrowed the problem instead of
+                        // closing it, and cost a referral when a reload landed
+                        // mid-save. Closing it properly is what lets the reload
+                        // go.
                         try {
-                            await setDoc(doc(firebaseDb, 'raffle_data', 'referrals'), {
-                                behaviorReferrals,
-                                referralIdCounter,
-                                lastSaveTimestamp: timestamp
+                            await runTransaction(firebaseDb, async (transaction) => {
+                                const ref = doc(firebaseDb, 'raffle_data', 'referrals');
+                                const snap = await transaction.get(ref);
+                                const stored = snap.exists() ? (snap.data().behaviorReferrals || []) : [];
+
+                                const merged = window.WildcatMerge.mergeById(stored, behaviorReferrals);
+                                const report = window.WildcatMerge.mergeReport(stored, behaviorReferrals, merged);
+                                if (report.wouldHaveLost.length) {
+                                    console.warn(
+                                        `[referrals] kept ${report.keptFromStorage} referral(s) this tab had not seen: ` +
+                                        report.wouldHaveLost.join(', ') +
+                                        '. A whole-document write would have destroyed them.');
+                                }
+
+                                transaction.set(ref, {
+                                    behaviorReferrals: merged,
+                                    // The counter only ever goes up. Taking the
+                                    // max stops a stale tab handing out an id
+                                    // another tab has already used.
+                                    referralIdCounter: Math.max(
+                                        Number(referralIdCounter) || 1,
+                                        Number(snap.exists() ? snap.data().referralIdCounter : 1) || 1),
+                                    lastSaveTimestamp: timestamp
+                                });
+                                behaviorReferrals = merged;
                             });
-                            console.log(`✅ Referrals saved (${(behaviorReferrals || []).length} records)`);
+                            console.log(`✅ Referrals saved (${(behaviorReferrals || []).length} records, merged)`);
                         } catch (refErr) {
                             console.error('❌ referrals save failed:', refErr?.code, refErr?.message);
                         }
@@ -26061,7 +26093,10 @@
                 loopClosed: false,
                 loopClosedBy: '',
                 loopClosedAt: '',
-                forwardedTo: []
+                forwardedTo: [],
+                // Read by wildcat-merge to decide which copy of a referral is
+                // newer when two tabs both hold one.
+                updatedAt: new Date().toISOString()
             };
 
             const submitBtn = document.querySelector('.btn-referral-submit');
@@ -26282,6 +26317,7 @@
             }
 
             r.status = 'closed';
+            r.updatedAt = new Date().toISOString();   // so a merge can order this edit
             r.resolutionType = resolution;
             r.closingActions = actions;
             r.adminNotes = notes;
@@ -26408,6 +26444,7 @@
 
             const recipients = Array.from(new Set([r.referredBy, ...picked].filter(Boolean)));
             r.loopClosed = true;
+            r.updatedAt = new Date().toISOString();   // so a merge can order this edit
             r.loopClosedBy = currentUser.name;
             r.loopClosedAt = new Date().toISOString();
             r.forwardedTo = recipients;
