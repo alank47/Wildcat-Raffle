@@ -23138,12 +23138,15 @@
                 : (sections.length ? '<option value="">All my students</option>'
                                    : '<option value="">No classes found</option>');
 
+            // sectionsFrom classifies and labels each block, so the dropdown
+            // shows "Promise Time" rather than "Period 1 - Promise Time". At
+            // Westbrook the core periods are 1 to 6; Promise Time and Power Up
+            // are not periods, they just occupy numbered slots in PowerSchool.
             sections.forEach(section => {
                 const option = document.createElement('option');
                 option.value = section.sectionId;
                 const count = (section.students || []).length;
-                option.textContent = `${section.period ? 'Period ' + section.period + ' - ' : ''}` +
-                                     `${section.courseName || 'Class'} (${count})`;
+                option.textContent = `${section.label} (${count})`;
                 select.appendChild(option);
             });
         }

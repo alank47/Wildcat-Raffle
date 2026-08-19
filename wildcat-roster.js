@@ -40,9 +40,40 @@
    */
   var ALL_STUDENT_ROLES = ['admin', 'superadmin', 'campusaide'];
 
-  // Bell order, not alphabetical: a teacher scanning for "third period" wants
-  // it third. Anything unrecognised sorts to the end rather than being hidden.
-  var PERIOD_ORDER = ['A1', 'P1', 'P2', 'P3', 'P4', 'HPU', 'P5', 'P6', 'A2'];
+  /**
+   * WHY A SECTION IS CLASSIFIED BY COURSE NAME, NOT BY PERIOD NUMBER.
+   *
+   * At Westbrook the core teaching periods are 1 to 6. Promise Time and Power
+   * Up are not periods at all, but PowerSchool still has to put them somewhere
+   * in the day, so they come back sitting in numbered slots: Promise Time
+   * reports as period 1 and period 10. Ordering or labelling on that number
+   * puts Promise Time first and calls it "Period 1", which collides with the
+   * real first period and is what made the list look jumbled.
+   *
+   * The bell schedule this app already owns says the same thing from the other
+   * direction: convex/seedBellSchedules.ts labels class periods with a bare
+   * number and everything else descriptively, precisely so the named blocks
+   * match no section.
+   *
+   * So: the course name decides what a block IS, and the number is only
+   * trusted once a section is known to be a core class.
+   */
+  var CORE_MIN = 1;
+  var CORE_MAX = 6;
+
+  // Checked in order; first match wins. Promise Time PM before Promise Time,
+  // or "Promise Time PM" classifies as the morning block.
+  var NAMED_BLOCKS = [
+    { kind: 'promise-pm', label: 'Promise Time PM', match: /promise\s*time\s*(pm|afternoon)/i },
+    { kind: 'promise',    label: 'Promise Time',    match: /promise\s*time/i },
+    { kind: 'powerup',    label: 'Power Up',        match: /power\s*up/i },
+    { kind: 'nutrition',  label: 'Nutrition',       match: /nutrition|breakfast/i },
+    { kind: 'lunch',      label: 'Lunch',           match: /lunch/i }
+  ];
+
+  // Core classes first in bell order, then the named blocks in the order the
+  // day runs them, then anything unrecognised. Nothing is ever hidden.
+  var KIND_ORDER = ['core', 'promise', 'powerup', 'promise-pm', 'nutrition', 'lunch', 'other'];
 
   function trimmed(s) {
     return String(s == null ? '' : s).trim();
@@ -52,18 +83,79 @@
     return ALL_STUDENT_ROLES.indexOf(trimmed(role)) !== -1;
   }
 
-  function periodRank(period) {
-    var i = PERIOD_ORDER.indexOf(trimmed(period));
-    return i === -1 ? PERIOD_ORDER.length : i;
+  /** The bare number in a period value, or null. "P3", "3", "Period 3" -> 3. */
+  function periodNumber(period) {
+    var m = /(\d+)/.exec(trimmed(period));
+    if (!m) return null;
+    var n = parseInt(m[1], 10);
+    return isFinite(n) ? n : null;
   }
 
-  /** Sections from a views_app:teacherRoster payload, in bell order. */
+  /**
+   * What kind of block is this, what should it be called, and where does it
+   * sort. Returns { kind, label, order, periodNumber }.
+   */
+  function classifySection(section) {
+    var s = section || {};
+    var course = trimmed(s.courseName);
+    var num = periodNumber(s.period);
+
+    for (var i = 0; i < NAMED_BLOCKS.length; i++) {
+      if (NAMED_BLOCKS[i].match.test(course)) {
+        return {
+          kind: NAMED_BLOCKS[i].kind,
+          // Named for what it is. The period number it reports is an artefact
+          // of where PowerSchool had to put it in the day.
+          label: NAMED_BLOCKS[i].label,
+          order: KIND_ORDER.indexOf(NAMED_BLOCKS[i].kind),
+          periodNumber: num
+        };
+      }
+    }
+
+    if (num !== null && num >= CORE_MIN && num <= CORE_MAX) {
+      return {
+        kind: 'core',
+        label: 'Period ' + num + (course ? ' - ' + course : ''),
+        order: KIND_ORDER.indexOf('core'),
+        periodNumber: num
+      };
+    }
+
+    // Neither a recognised block nor a core period number. Shown as itself
+    // rather than forced into a period it does not belong to.
+    return {
+      kind: 'other',
+      label: course || (num !== null ? 'Period ' + num : 'Unscheduled'),
+      order: KIND_ORDER.indexOf('other'),
+      periodNumber: num
+    };
+  }
+
+  /**
+   * Sections in the order the school day runs: core periods 1 to 6 first, then
+   * the named blocks, then anything unrecognised. Each carries the label and
+   * kind the UI should use, so no caller re-derives them.
+   */
   function sectionsFrom(roster) {
     var sections = (roster && roster.sections) || [];
-    return sections.slice().sort(function (a, b) {
-      var d = periodRank(a && a.period) - periodRank(b && b.period);
-      if (d !== 0) return d;
-      return trimmed(a && a.courseName).localeCompare(trimmed(b && b.courseName));
+    return sections.map(function (section) {
+      var meta = classifySection(section);
+      var out = {};
+      for (var k in section) if (Object.prototype.hasOwnProperty.call(section, k)) out[k] = section[k];
+      out.kind = meta.kind;
+      out.label = meta.label;
+      out.periodNumber = meta.periodNumber;
+      out._order = meta.order;
+      return out;
+    }).sort(function (a, b) {
+      if (a._order !== b._order) return a._order - b._order;
+      // Within core, by period number. Within a named block, by course name,
+      // because a teacher may hold two sections of the same block.
+      if (a.kind === 'core' && b.kind === 'core') {
+        return (a.periodNumber || 0) - (b.periodNumber || 0);
+      }
+      return trimmed(a.courseName).localeCompare(trimmed(b.courseName));
     });
   }
 
@@ -100,6 +192,31 @@
     var roster = o.roster;
     var sectionId = o.sectionId ? trimmed(o.sectionId) : null;
 
+    // A CHOSEN SECTION ALWAYS WINS, FOR EVERY ROLE.
+    //
+    // This used to sit after the seesEveryStudent check, so an admin who
+    // picked "Period 3" was handed the whole school instead: the selection was
+    // read, then silently discarded. Picking a period means that period,
+    // whoever is asking.
+    if (sectionId) {
+      var picked = studentNumbersFor(roster, sectionId);
+      var inSection = all.filter(function (s) {
+        var n = trimmed(s && s.studentNumber);
+        return n && picked[n] === true;
+      });
+      if (inSection.length) {
+        return { students: inSection, scope: 'section', reason: null };
+      }
+      return {
+        students: [],
+        scope: 'section',
+        reason: !Object.keys(picked).length
+          ? 'That class has no students in the SIS.'
+          : 'The students in that class have no records in the app yet. ' +
+            'They should appear after the next sync.'
+      };
+    }
+
     if (seesEveryStudent(role)) {
       return {
         students: all,
@@ -120,24 +237,23 @@
       };
     }
 
-    var allowed = studentNumbersFor(roster, sectionId);
+    var allowed = studentNumbersFor(roster, null);
     var scoped = all.filter(function (s) {
       var n = trimmed(s && s.studentNumber);
       return n && allowed[n] === true;
     });
 
     if (scoped.length) {
-      return { students: scoped, scope: sectionId ? 'section' : 'my-roster', reason: null };
+      return { students: scoped, scope: 'my-roster', reason: null };
     }
 
-    // Distinguish "that period is empty" from "none of your students have app
+    // Distinguish "your roster is empty" from "none of your students have app
     // records", which look identical on screen and need different fixes.
-    var anyAllowed = Object.keys(allowed).length;
     return {
       students: [],
-      scope: sectionId ? 'section' : 'my-roster',
-      reason: !anyAllowed
-        ? (sectionId ? 'That class has no students in the SIS.' : 'Your SIS roster is empty.')
+      scope: 'my-roster',
+      reason: !Object.keys(allowed).length
+        ? 'Your SIS roster is empty.'
         : 'Your students are on the SIS roster but have no records in the app yet. ' +
           'They should appear after the next sync.'
     };
@@ -152,16 +268,19 @@
       var hit = sectionsFrom(roster).filter(function (s) {
         return trimmed(s.sectionId) === trimmed(sectionId);
       })[0];
-      if (hit) {
-        return (hit.period ? 'Period ' + hit.period + ' — ' : '') + (hit.courseName || 'Class');
-      }
+      // sectionsFrom already worked out the right name for this block, so the
+      // header cannot disagree with the dropdown the user chose from.
+      if (hit) return hit.label;
     }
     return 'My students';
   }
 
   root.WildcatRoster = {
     ALL_STUDENT_ROLES: ALL_STUDENT_ROLES,
-    PERIOD_ORDER: PERIOD_ORDER,
+    CORE_MIN: CORE_MIN,
+    CORE_MAX: CORE_MAX,
+    classifySection: classifySection,
+    periodNumber: periodNumber,
     seesEveryStudent: seesEveryStudent,
     sectionsFrom: sectionsFrom,
     studentNumbersFor: studentNumbersFor,

@@ -110,28 +110,87 @@ console.log("\nEmpty results explain themselves differently");
     /no students in the SIS/.test(emptySection.reason));
 }
 
-console.log("\nSections come back in bell order");
+console.log("\nWestbrook block classification");
+{
+  // Promise Time really does come back from PowerSchool sitting in periods 1
+  // and 10. Classifying on that number is what jumbled the list and made two
+  // different things both call themselves "Period 1".
+  const c = (period, courseName) => R.classifySection({ period, courseName });
+
+  check("a core class is core", c("3", "Biology").kind === "core");
+  check("and is labelled with its period and course",
+    c("3", "Biology").label === "Period 3 - Biology");
+  check("periods 1 through 6 are core",
+    [1,2,3,4,5,6].every((n) => c(String(n), "Math").kind === "core"));
+
+  check("Promise Time in period 1 is NOT a core class",
+    c("1", "Promise Time").kind === "promise");
+  check("and is named for what it is, not the slot it sits in",
+    c("1", "Promise Time").label === "Promise Time");
+  check("Promise Time in period 10 classifies the same way",
+    c("10", "Promise Time").kind === "promise");
+  check("Promise Time PM is its own block, not the morning one",
+    c("10", "Promise Time PM").kind === "promise-pm");
+
+  check("Power Up is its own thing", c("4", "Power Up").kind === "powerup");
+  check("and keeps its own name", c("4", "Power Up").label === "Power Up");
+  check("spelling variations still match", c("4", "POWERUP").kind === "powerup");
+
+  check("a period above 6 that is not a named block is not core",
+    c("10", "Study Hall").kind === "other");
+  check("and shows its course name rather than a wrong period",
+    c("10", "Study Hall").label === "Study Hall");
+
+  check("a period value like P3 still reads as 3", R.periodNumber("P3") === 3);
+  check("Period 3 reads as 3", R.periodNumber("Period 3") === 3);
+  check("a non-numeric period is null", R.periodNumber("Advisory") === null);
+}
+
+console.log("\nOrdering: core 1-6 first, then the named blocks");
 {
   const ordered = R.sectionsFrom({
     sections: [
-      { sectionId: "d", period: "P5" }, { sectionId: "a", period: "A1" },
-      { sectionId: "c", period: "HPU" }, { sectionId: "b", period: "P1" },
-      { sectionId: "z", period: "WEIRD" },
+      { sectionId: "pu",  period: "4",  courseName: "Power Up" },
+      { sectionId: "p5",  period: "5",  courseName: "History" },
+      { sectionId: "pt",  period: "1",  courseName: "Promise Time" },
+      { sectionId: "p1",  period: "1",  courseName: "Algebra" },
+      { sectionId: "odd", period: "10", courseName: "Study Hall" },
+      { sectionId: "ptp", period: "10", courseName: "Promise Time PM" },
+      { sectionId: "p3",  period: "3",  courseName: "Biology" },
     ],
   });
-  check("bell order, not alphabetical",
-    ordered.map((s) => s.sectionId).join() === "a,b,c,d,z");
-  check("an unrecognised period sorts last rather than vanishing",
-    ordered[ordered.length - 1].sectionId === "z");
+  check("core periods come first, in numeric order",
+    ordered.slice(0, 3).map((s) => s.sectionId).join() === "p1,p3,p5");
+  check("then Promise Time", ordered[3].sectionId === "pt");
+  check("then Power Up", ordered[4].sectionId === "pu");
+  check("then Promise Time PM", ordered[5].sectionId === "ptp");
+  check("and the unrecognised block last, never dropped", ordered[6].sectionId === "odd");
+  check("nothing is lost in the sort", ordered.length === 7);
+  check("each section carries its display label", ordered[0].label === "Period 1 - Algebra");
   check("sectionsFrom on a null roster returns empty rather than throwing",
     R.sectionsFrom(null).length === 0);
+}
+
+
+console.log("\nA chosen section wins for every role");
+{
+  // THE BUG THIS REPLACES: the see-everything check ran BEFORE the section
+  // check, so an admin picking a period was handed the whole school.
+  for (const role of ["admin", "superadmin", "campusaide"]) {
+    const picked = R.scopeStudents({ students: ALL, role, roster: ROSTER, sectionId: "sec-P1" });
+    check(`${role} picking a period gets THAT period, not everyone`,
+      picked.students.length === 2);
+    check(`${role} scope is reported as section`, picked.scope === "section");
+  }
+  const all = R.scopeStudents({ students: ALL, role: "admin", roster: ROSTER });
+  check("an admin with no period chosen still sees everyone", all.students.length === 5);
 }
 
 console.log("\nLabels a teacher can read");
 check("all-students scope", R.scopeLabel({ scope: "all" }) === "All students");
 check("no-roster scope", R.scopeLabel({ scope: "none" }) === "No roster");
 check("a named period",
-  R.scopeLabel({ scope: "section" }, ROSTER, "sec-P3") === "Period P3 — Biology");
+  R.scopeLabel({ scope: "section" }, ROSTER, "sec-P3") === "Period 3 - Biology");
 check("my whole roster", R.scopeLabel({ scope: "my-roster" }, ROSTER) === "My students");
 
 console.log(`\n${pass} passed, ${fail} failed`);
