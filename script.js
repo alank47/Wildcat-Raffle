@@ -978,7 +978,27 @@
         // Named distinctly from student.wildcatCashTransactions, which previously
         // shared the same identifier and made the code ambiguous to read.
         let cashTransactions = [];
-        let wildcatCashTransactions = []; // legacy alias, no longer written to
+
+        // Reward purchases. One receipt per purchase, which the student shows
+        // to collect the item and staff close out on handover.
+        //
+        // Separate from cashTransactions on purpose: the transaction is the
+        // money leaving, the receipt is the promise of an item. They are
+        // created together and linked by txId, but they close at different
+        // times, and "paid but not yet collected" is the state the fulfillment
+        // desk exists to work through.
+        let cashReceipts = [];
+
+        // REMOVED: the global `wildcatCashTransactions`.
+        //
+        // It was declared "legacy alias, no longer written to" while two paths
+        // still wrote to it (reward redemption and the cash reset) and three
+        // still read it. Nothing persisted it, and distributeCashTransactions()
+        // rebuilds the per-student copy from cashTransactions on every load, so
+        // anything written here was erased at the next refresh. That is why
+        // "My Cash Activity" and the behaviour-frequency panel were empty.
+        // cashTransactions is the ledger. Read student.wildcatCashTransactions
+        // for a single student's view of it.
         let STARTING_BALANCE = 0; // Students earn from scratch each year
         
         // Claw Pass (Digital Hall Pass) System Variables
@@ -2282,20 +2302,22 @@
                         detentionLocations = secondaryData.detentionLocations || ['Main Office', 'Library', 'Room 101', 'Room 102', 'Cafeteria', 'Gym'];
                         detentionReasons = secondaryData.detentionReasons || ['Disrupting Class', 'Tardiness', 'Dress Code Violation', 'Inappropriate Behavior', 'Defiance/Disrespect', 'Cell Phone Violation', 'Missing Assignment', 'Other'];
                         
-                        // MERGE wildcatCashTransactions to preserve local transactions
-                        const firebaseCashTransactions = secondaryData.wildcatCashTransactions || [];
-                        if (wildcatCashTransactions && wildcatCashTransactions.length > 0) {
-                            const combinedCashTransactions = [...firebaseCashTransactions];
-                            wildcatCashTransactions.forEach(localTxn => {
-                                if (!firebaseCashTransactions.find(t => t.id === localTxn.id)) {
-                                    combinedCashTransactions.push(localTxn);
+                        // Receipts merge by id, the same union-by-id shape the
+                        // rest of this loader uses, so a receipt raised on one
+                        // device is not dropped by a save from another.
+                        const firebaseReceipts = secondaryData.cashReceipts || [];
+                        if (cashReceipts && cashReceipts.length > 0) {
+                            const merged = [...firebaseReceipts];
+                            cashReceipts.forEach(localReceipt => {
+                                if (!firebaseReceipts.find(r => r.id === localReceipt.id)) {
+                                    merged.push(localReceipt);
                                 }
                             });
-                            wildcatCashTransactions = combinedCashTransactions.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                            cashReceipts = merged.sort((a, b) => new Date(a.purchasedAt) - new Date(b.purchasedAt));
                         } else {
-                            wildcatCashTransactions = firebaseCashTransactions;
+                            cashReceipts = firebaseReceipts;
                         }
-                        
+
                         console.log('✅ Loaded data from Firebase (5 documents: main, secondary, ticket_history_ms, ticket_history_hs, audit_log)');
                         
                         // Apply school branding
@@ -2379,7 +2401,14 @@
                 detentionLocations = data.detentionLocations || ['Main Office', 'Library', 'Room 101', 'Room 102', 'Cafeteria', 'Gym'];
                 detentionReasons = data.detentionReasons || ['Disrupting Class', 'Tardiness', 'Dress Code Violation', 'Inappropriate Behavior', 'Defiance/Disrespect', 'Cell Phone Violation', 'Missing Assignment', 'Other'];
                 loginHistory = data.loginHistory || [];
-                wildcatCashTransactions = data.wildcatCashTransactions || [];
+                // Fall back to the built-in starter set only when nothing has
+                // been saved yet, so a school that has curated its own rewards
+                // never has the defaults pushed back on top of them.
+                if (Array.isArray(data.wildcatCashRewards) && data.wildcatCashRewards.length) {
+                    wildcatCashRewards = data.wildcatCashRewards.map(r =>
+                        window.WildcatStore.normalizeReward(r, Date.now(), currentUser || {}));
+                }
+                cashReceipts = data.cashReceipts || [];
                 localTombstones = data.localTombstones || []; // NEW
                 entityTombstones = data.entityTombstones || []; // NEW
                 lastSaveTimestamp = data.lastSaveTimestamp || 0;
@@ -3598,6 +3627,12 @@
                             detentionLocations,
                             detentionReasons,
                             cashTransactions,
+                            // Rewards were a hardcoded array that was never
+                            // saved and never loaded, so every reward an admin
+                            // added, and every price they edited, lived only
+                            // until the next page load.
+                            wildcatCashRewards,
+                            cashReceipts,
                             loginHistory,
                             autoWeekEnabled,
                             lastAutoResetDate,
@@ -8294,9 +8329,14 @@
                 kind: 'award'
             });
             if (typeof addToAuditLog === 'function') {
-                addToAuditLog('Awarded Wildcat Cash',
+                // 'cash_award' is what the Cash Audit Log filters for. This
+                // used to pass 'Awarded Wildcat Cash', which matched nothing,
+                // so awards never appeared there. The last two arguments were
+                // also reversed: the signature is (.., ticketCount, reason).
+                addToAuditLog('cash_award',
                     selectedStudentForCash.id, 'Wildcat Cash',
-                    behavior.name + (notes.trim() ? ' — ' + notes.trim() : ''), Math.abs(amount));
+                    Math.abs(amount),
+                    behavior.name + (notes.trim() ? ' — ' + notes.trim() : ''));
             }
 
             closeAddCashModal();
@@ -8372,9 +8412,10 @@
                 kind: 'deduct'
             });
             if (typeof addToAuditLog === 'function') {
-                addToAuditLog('Deducted Wildcat Cash',
+                addToAuditLog('cash_deduct',
                     selectedStudentForCash.id, 'Wildcat Cash',
-                    behavior.name + (notes.trim() ? ' — ' + notes.trim() : ''), Math.abs(amount));
+                    Math.abs(amount),
+                    behavior.name + (notes.trim() ? ' — ' + notes.trim() : ''));
             }
 
             closeRemoveCashModal();
@@ -15235,18 +15276,26 @@
         // UPDATE RAFFLE DASHBOARD STATS
         // ============================================
         function updateDashboardStats() {
+            // Enrolled only, for the same reason updateStats uses it: the
+            // students array holds everyone the app has ever seen, including
+            // students who have left, whose records are kept so their balances
+            // and histories survive rather than so they can be counted. A
+            // departed student could otherwise be shown as this week's top
+            // earner, and the qualified count included people who are not here.
+            const roster = enrolledStudents();
+
             // Calculate total tickets awarded this week
             let totalTickets = 0;
-            students.forEach(s => {
+            roster.forEach(s => {
                 totalTickets += (s.pbisTickets || 0) + (s.attendanceTickets || 0) + (s.academicTickets || 0);
             });
-            
+
             // Count qualified students
-            const qualifiedCount = students.filter(s => isQualifiedForJackpot(s)).length;
-            
+            const qualifiedCount = roster.filter(s => isQualifiedForJackpot(s)).length;
+
             // Find top earner
             let topEarner = { name: '-', total: 0 };
-            students.forEach(s => {
+            roster.forEach(s => {
                 const studentTotal = (s.pbisTickets || 0) + (s.attendanceTickets || 0) + (s.academicTickets || 0);
                 if (studentTotal > topEarner.total) {
                     topEarner = {
@@ -16617,6 +16666,7 @@
                 'cashActivity': 'cashActivityTab',
                 'cashLeaderboard': 'cashLeaderboardTab',
                 'rewardsStore': 'rewardsStoreTab',
+                'receipts': 'receiptsTab',
                 'studentAccounts': 'studentAccountsTab',
                 'cashAnalytics': 'cashAnalyticsTab',
                 'cashAudit': 'cashAuditTab'
@@ -16730,23 +16780,38 @@
             // tag list every time somebody opened Teachers was a query for a
             // table that is no longer on that screen.
 
-            // Handle Wildcat Cash tab-specific updates (data population)
-            if (tabName === 'awardCash' && currentUser && currentUser.role === 'superadmin') {
+            // Wildcat Cash tab data population.
+            //
+            // These were each gated on role === 'superadmin' while the tab
+            // BUTTONS had already been opened to every role (see the note in
+            // updateTabVisibility). The result was a tab a teacher could open
+            // and which then rendered nothing at all: no roster to award to, no
+            // store, no receipts. Cash mode is open to all staff, so the
+            // renderers are too.
+            //
+            // This is not the authorization boundary. That is server side, in
+            // convex/identity.ts and convex/accessRules.ts. Hiding a renderer
+            // never stopped anyone reading the data underneath it.
+            if (!currentUser) return;
+
+            if (tabName === 'awardCash') {
                 updateCashPeriodFilter();
                 updateCashTable();
-            } else if (tabName === 'cashActivity' && currentUser && currentUser.role === 'superadmin') {
+            } else if (tabName === 'cashActivity') {
                 updateCashActivityLog();
-            } else if (tabName === 'cashLeaderboard' && currentUser && currentUser.role === 'superadmin') {
+            } else if (tabName === 'cashLeaderboard') {
                 updateCashLeaderboards();
-            } else if (tabName === 'rewardsStore' && currentUser && currentUser.role === 'superadmin') {
+            } else if (tabName === 'rewardsStore') {
                 updateRewardsStore();
-            } else if (tabName === 'studentAccounts' && currentUser && currentUser.role === 'superadmin') {
+            } else if (tabName === 'receipts') {
+                updateReceiptsTable();
+            } else if (tabName === 'studentAccounts') {
                 updateStudentAccounts();
-            } else if (tabName === 'cashAnalytics' && currentUser && currentUser.role === 'superadmin') {
+            } else if (tabName === 'cashAnalytics') {
                 updateCashAnalytics();
                 // Initialize dashboard view
                 switchAnalyticsSubtab('dashboard');
-            } else if (tabName === 'cashAudit' && currentUser && currentUser.role === 'superadmin') {
+            } else if (tabName === 'cashAudit') {
                 updateCashAuditLogTable();
             }
         }
@@ -21754,7 +21819,8 @@
                 hallPasses: typeof hallPasses !== 'undefined' ? hallPasses : [],
                 preventionGroups: typeof preventionGroups !== 'undefined' ? preventionGroups : [],
                 detentions: typeof detentions !== 'undefined' ? detentions : [],
-                wildcatCashTransactions: typeof wildcatCashTransactions !== 'undefined' ? wildcatCashTransactions : []
+                cashTransactions: typeof cashTransactions !== 'undefined' ? cashTransactions : [],
+                cashReceipts: typeof cashReceipts !== 'undefined' ? cashReceipts : []
             };
 
             const referralsPayload = {
@@ -22670,6 +22736,7 @@
                         <button class="tab" id="cashActivityTabBtn" onclick="switchTab('cashActivity')">📝 My Activity</button>
                         <button class="tab" id="cashLeaderboardTabBtn" onclick="switchTab('cashLeaderboard')">🏆 Leaderboard</button>
                         <button class="tab" id="rewardsStoreTabBtn" onclick="switchTab('rewardsStore')">🏪 Rewards Store</button>
+                        <button class="tab" id="receiptsTabBtn" onclick="switchTab('receipts')">🧾 Receipts</button>
                         <button class="tab" id="studentAccountsTabBtn" onclick="switchTab('studentAccounts')">💳 Accounts</button>
                         <button class="tab" id="cashAnalyticsTabBtn" onclick="switchTab('cashAnalytics')">📊 Analytics</button>
                         <button class="tab" id="cashAuditTabBtn" onclick="switchTab('cashAudit')">📋 Audit Log</button>
@@ -22691,7 +22758,7 @@
         function removeCashTabButtons() {
             ['awardCashTabBtn', 'cashActivityTabBtn', 'cashLeaderboardTabBtn',
              'rewardsStoreTabBtn', 'studentAccountsTabBtn', 'cashAnalyticsTabBtn',
-             'cashAuditTabBtn', 'cashSettingsTabBtn'].forEach(btnId => {
+             'cashAuditTabBtn', 'cashSettingsTabBtn', 'receiptsTabBtn'].forEach(btnId => {
                 const btn = document.getElementById(btnId);
                 if (btn) btn.remove();
             });
@@ -22743,10 +22810,10 @@
                 if (tx) awarded.push(student);
                 if (typeof addToAuditLog === 'function') {
                     addToAuditLog(
-                        behavior.points >= 0 ? 'Awarded Wildcat Cash' : 'Deducted Wildcat Cash',
+                        behavior.points >= 0 ? 'cash_award' : 'cash_deduct',
                         student.id, 'Wildcat Cash',
-                        `${behavior.name}${notes ? ' — ' + notes : ''}`,
-                        Math.abs(behavior.points)
+                        Math.abs(behavior.points),
+                        `${behavior.name}${notes ? ' — ' + notes : ''}`
                     );
                 }
             });
@@ -23004,8 +23071,11 @@
         function updateCashActivityLog() {
             const container = document.getElementById('cashActivityLog');
             
-            // Get teacher's transactions - check teacherId, addedBy, or removedBy
-            const teacherTransactions = wildcatCashTransactions.filter(t => {
+            // Reads cashTransactions, the persisted ledger. This used to read
+            // the global wildcatCashTransactions, which nothing wrote and
+            // nothing saved, so this tab said "No transactions yet" to a
+            // teacher who had awarded cash all week.
+            const teacherTransactions = cashTransactions.filter(t => {
                 const teacherId = t.teacherId || t.addedBy || t.removedBy;
                 // Match by ID or username (since Add/Remove use username)
                 return teacherId === currentUser.id || teacherId === currentUser.username;
@@ -23117,26 +23187,53 @@
             const container = document.getElementById('rewardsList');
             container.innerHTML = '';
             
-            const availableRewards = wildcatCashRewards.filter(r => r.available !== false);
-            
-            if (availableRewards.length === 0) {
-                container.innerHTML = '<p style="text-align: center; color: #999; padding: 40px; grid-column: 1/-1;">No rewards available</p>';
-                return;
+            // Retired rewards are hidden from the store but still listed under
+            // "Retired" below, because an admin needs to see that a reward
+            // exists before wondering why they cannot re-add its name.
+            const liveRewards = wildcatCashRewards.filter(r => !r.retiredAt);
+            const retiredRewards = wildcatCashRewards.filter(r => r.retiredAt);
+
+            if (liveRewards.length === 0) {
+                container.innerHTML = '<p style="text-align: center; color: #999; padding: 40px; grid-column: 1/-1;">No rewards yet. Add one to get started.</p>';
+            } else {
+                container.innerHTML = liveRewards.map(reward => {
+                    const outOfStock = reward.stock != null && reward.stock <= 0;
+                    const paused = reward.available === false;
+                    const stockLabel = reward.stock == null
+                        ? 'Unlimited'
+                        : `${reward.stock} left`;
+                    return `
+                    <div class="wc-card reward-card${paused || outOfStock ? ' is-unavailable' : ''}">
+                        <div class="reward-card-head">
+                            <h3>${escapeHtml(reward.name)}</h3>
+                            <span class="reward-stock${outOfStock ? ' is-out' : ''}">${stockLabel}</span>
+                        </div>
+                        ${reward.description ? `<p class="reward-desc">${escapeHtml(reward.description)}</p>` : ''}
+                        <div class="reward-cost">$${reward.cost}</div>
+                        <div class="reward-category">${escapeHtml(reward.category || 'General')}</div>
+                        ${paused ? '<div class="reward-flag">Paused — not purchasable</div>' : ''}
+                        ${outOfStock && !paused ? '<div class="reward-flag">Out of stock</div>' : ''}
+                        <div class="reward-actions">
+                            <button class="btn" onclick="openRedeemRewardModal('${reward.id}')"
+                                    ${paused || outOfStock ? 'disabled' : ''}>Purchase for student</button>
+                            <button class="btn btn-secondary btn-sm" onclick="openEditRewardModal('${reward.id}')">Edit</button>
+                            <button class="btn btn-secondary btn-sm" onclick="retireRewardById('${reward.id}')">Retire</button>
+                        </div>
+                    </div>`;
+                }).join('');
             }
-            
-            availableRewards.forEach(reward => {
-                const card = document.createElement('div');
-                card.style.cssText = 'background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);';
-                card.innerHTML = `
-                    <h3 style="margin: 0 0 10px 0; color: #333;">${reward.name}</h3>
-                    <div style="font-size: 24px; font-weight: 700; color: #667eea; margin-bottom: 15px;">$${reward.cost}</div>
-                    <button class="btn" onclick="openRedeemRewardModal('${reward.id}')" style="width: 100%;">🎁 Redeem for Student</button>
-                `;
-                container.appendChild(card);
-            });
-            
-            // Update redemption history
+
+            const retiredEl = document.getElementById('retiredRewardsList');
+            if (retiredEl) {
+                retiredEl.innerHTML = retiredRewards.length
+                    ? retiredRewards.map(r =>
+                        `<li>${escapeHtml(r.name)} <span class="receipt-meta">retired ${new Date(r.retiredAt).toLocaleDateString()} by ${escapeHtml(r.retiredBy || '')}</span></li>`
+                      ).join('')
+                    : '<li class="receipt-meta">None</li>';
+            }
+
             updateRedemptionHistory();
+            if (typeof updateRewardPopularity === 'function') updateRewardPopularity();
         }
 
         function updateRedemptionHistory() {
@@ -23302,8 +23399,9 @@
             if (!container) return;
             
             // Behavior frequency
+            // Same fix as My Activity: the ledger, not the dead global.
             const behaviorFreq = {};
-            wildcatCashTransactions.forEach(txn => {
+            cashTransactions.forEach(txn => {
                 if (!behaviorFreq[txn.behaviorName]) {
                     behaviorFreq[txn.behaviorName] = { count: 0, total: 0 };
                 }
@@ -23438,75 +23536,497 @@
             document.getElementById('newRewardCost').value = '50';
         }
 
-        function addNewReward() {
-            const name = document.getElementById('newRewardName').value.trim();
-            const cost = parseInt(document.getElementById('newRewardCost').value);
-            
-            if (!name) {
-                alert('Please enter a reward name');
-                return;
-            }
-            
-            if (isNaN(cost) || cost <= 0) {
-                alert('Please enter a valid cost (must be positive)');
-                return;
-            }
-            
-            const reward = {
-                id: 'reward_custom_' + Date.now(),
-                name: name,
-                cost: cost,
-                available: true,
-                custom: true
+        // ============================================================
+        // REWARD MANAGEMENT
+        //
+        // Rewards are editable after creation and RETIRED rather than deleted:
+        // every receipt points at a rewardId, and removing the reward orphans
+        // a term of purchases. Validation lives in wildcat-store.js so the
+        // rules are asserted in tests rather than trusted to a form.
+        // ============================================================
+        function readRewardForm(prefix) {
+            const el = id => document.getElementById(id);
+            const stockRaw = (el(prefix + 'RewardStock') || {}).value;
+            const stockTrimmed = String(stockRaw == null ? '' : stockRaw).trim();
+            return {
+                name: ((el(prefix + 'RewardName') || {}).value || '').trim(),
+                cost: parseInt((el(prefix + 'RewardCost') || {}).value, 10),
+                description: ((el(prefix + 'RewardDescription') || {}).value || '').trim(),
+                category: ((el(prefix + 'RewardCategory') || {}).value || '').trim(),
+                // Blank means unlimited. Without this an empty box would parse
+                // to NaN and be rejected as invalid stock.
+                stock: stockTrimmed === '' ? null : parseInt(stockTrimmed, 10)
             };
-            
-            wildcatCashRewards.push(reward);
+        }
+
+        function addNewReward() {
+            const patch = readRewardForm('new');
+            const check = window.WildcatStore.validateReward(patch);
+            if (!check.ok) { alert('⚠️ ' + check.errors.join('\n')); return; }
+
+            wildcatCashRewards.push(window.WildcatStore.normalizeReward(
+                Object.assign({ id: 'reward_custom_' + Date.now() }, patch),
+                Date.now(), currentUser || {}
+            ));
             saveData();
-            
             closeAddRewardModal();
             updateRewardsStore();
-            alert('✅ Reward added successfully!');
+            showToast('✅ Reward added', 'success');
+        }
+
+        function openEditRewardModal(rewardId) {
+            const reward = wildcatCashRewards.find(r => r.id === rewardId);
+            if (!reward) return;
+            window.currentEditRewardId = rewardId;
+            const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+            set('editRewardName', reward.name);
+            set('editRewardCost', reward.cost);
+            set('editRewardDescription', reward.description || '');
+            set('editRewardCategory', reward.category || 'General');
+            set('editRewardStock', reward.stock == null ? '' : reward.stock);
+            const avail = document.getElementById('editRewardAvailable');
+            if (avail) avail.checked = reward.available !== false;
+            const modal = document.getElementById('editRewardModal');
+            if (modal) modal.classList.remove('hidden');
+        }
+
+        function closeEditRewardModal() {
+            const modal = document.getElementById('editRewardModal');
+            if (modal) modal.classList.add('hidden');
+            window.currentEditRewardId = null;
+        }
+
+        function saveRewardEdit() {
+            const idx = wildcatCashRewards.findIndex(r => r.id === window.currentEditRewardId);
+            if (idx === -1) { alert('⚠️ Reward not found'); return; }
+
+            const patch = readRewardForm('edit');
+            const availEl = document.getElementById('editRewardAvailable');
+            if (availEl) patch.available = availEl.checked;
+
+            const check = window.WildcatStore.validateReward(patch);
+            if (!check.ok) { alert('⚠️ ' + check.errors.join('\n')); return; }
+
+            // Replaced, never mutated: receipts already carry their own price
+            // snapshot, so changing this cannot rewrite what anyone paid.
+            wildcatCashRewards[idx] = window.WildcatStore.applyRewardEdit(
+                wildcatCashRewards[idx], patch, Date.now(), currentUser || {}
+            );
+            saveData();
+            closeEditRewardModal();
+            updateRewardsStore();
+            showToast('✅ Reward updated', 'success');
+        }
+
+        async function retireRewardById(rewardId) {
+            const idx = wildcatCashRewards.findIndex(r => r.id === rewardId);
+            if (idx === -1) return;
+            const reward = wildcatCashRewards[idx];
+            const sold = cashReceipts.filter(r => r.rewardId === rewardId).length;
+
+            const ok = await showConfirm(
+                `Retire "${reward.name}"?\n\n` +
+                `It stops appearing in the store and cannot be purchased.\n` +
+                (sold ? `${sold} past purchase${sold === 1 ? '' : 's'} keep their records.\n` : '') +
+                `\nRetiring is not deleting: past receipts still resolve to this reward.`
+            );
+            if (!ok) return;
+
+            wildcatCashRewards[idx] = window.WildcatStore.retireReward(reward, Date.now(), currentUser || {});
+            saveData();
+            updateRewardsStore();
+            showToast('Reward retired', 'success');
+        }
+
+        // ============================================================
+        // RECEIPTS AND FULFILLMENT
+        // ============================================================
+        function showReceiptModal(receipt) {
+            const body = document.getElementById('receiptModalBody');
+            const modal = document.getElementById('receiptModal');
+            if (!body || !modal) {
+                alert(`✅ Purchase complete.\n\nReceipt ${receipt.id}\n${receipt.rewardName}` +
+                      `${receipt.quantity > 1 ? ' x' + receipt.quantity : ''}\n$${receipt.totalCost}`);
+                return;
+            }
+            body.innerHTML = `
+                <div class="receipt-card">
+                    <div class="receipt-code">${escapeHtml(receipt.id)}</div>
+                    <p class="receipt-hint">Show this code to collect the item.</p>
+                    <dl class="receipt-lines">
+                        <dt>Student</dt><dd>${escapeHtml(receipt.studentName)} (Grade ${escapeHtml(receipt.studentGrade)})</dd>
+                        <dt>Item</dt><dd>${escapeHtml(receipt.rewardName)}${receipt.quantity > 1 ? ' &times; ' + receipt.quantity : ''}</dd>
+                        <dt>Paid</dt><dd>$${receipt.totalCost}</dd>
+                        <dt>Purchased</dt><dd>${new Date(receipt.purchasedAt).toLocaleString()}</dd>
+                        <dt>Sold by</dt><dd>${escapeHtml(receipt.purchasedBy.name)}</dd>
+                    </dl>
+                </div>`;
+            modal.classList.remove('hidden');
+        }
+
+        function closeReceiptModal() {
+            const modal = document.getElementById('receiptModal');
+            if (modal) modal.classList.add('hidden');
+        }
+
+        async function fulfillReceipt(receiptId) {
+            const idx = cashReceipts.findIndex(r => r.id === receiptId);
+            if (idx === -1) { alert('⚠️ Receipt not found'); return; }
+
+            const verdict = window.WildcatStore.canFulfill(cashReceipts[idx]);
+            if (!verdict.allowed) { alert('⚠️ ' + verdict.reason); return; }
+
+            cashReceipts[idx] = window.WildcatStore.applyFulfill(
+                cashReceipts[idx], Date.now(), currentUser || {}
+            );
+            addToAuditLog('reward_fulfilled', cashReceipts[idx].studentId, 'Wildcat Cash',
+                cashReceipts[idx].totalCost,
+                `Handed over ${cashReceipts[idx].rewardName} — receipt ${receiptId}`);
+            saveData();
+            updateReceiptsTable();
+            showToast(`✅ ${receiptId} fulfilled`, 'success');
+        }
+
+        async function cancelReceipt(receiptId) {
+            const idx = cashReceipts.findIndex(r => r.id === receiptId);
+            if (idx === -1) { alert('⚠️ Receipt not found'); return; }
+            const receipt = cashReceipts[idx];
+
+            const verdict = window.WildcatStore.canCancel(receipt);
+            if (!verdict.allowed) { alert('⚠️ ' + verdict.reason); return; }
+
+            const reason = await showPrompt(
+                `Cancel receipt ${receiptId} for ${receipt.rewardName}?\n\n` +
+                `$${receipt.totalCost} will be refunded to ${receipt.studentName}.\n\n` +
+                `Reason:`);
+            if (reason === null) return;
+
+            const student = students.find(s => s.id === receipt.studentId);
+            const res = window.WildcatStore.buildCancel({
+                receipt, student, reason, refund: true,
+                actor: currentUser || {}, now: Date.now()
+            });
+            if (!res.ok) { alert('⚠️ ' + res.reason); return; }
+
+            // The refund is a new forward transaction, never an edit of the
+            // original charge, so the ledger still shows both events.
+            if (res.transactionRequest) {
+                const refundTx = recordCashTransaction(res.transactionRequest);
+                if (refundTx) res.receipt.refundTxId = refundTx.id;
+            }
+            cashReceipts[idx] = res.receipt;
+
+            addToAuditLog('reward_cancelled', receipt.studentId, 'Wildcat Cash',
+                receipt.totalCost,
+                `Cancelled ${receipt.rewardName} — receipt ${receiptId}. ${res.receipt.cancelReason}`);
+            saveData();
+            updateReceiptsTable();
+            showToast(`${receiptId} cancelled and refunded`, 'success');
+        }
+
+
+        // ============================================================
+        // RECEIPTS VIEW
+        //
+        // The fulfillment desk. Defaults to open receipts, because the question
+        // this screen answers is "what does someone still owe a student".
+        // ============================================================
+        let receiptStatusFilter = 'issued';
+
+        function setReceiptFilter(status) {
+            receiptStatusFilter = status;
+            document.querySelectorAll('.receipt-filter-btn').forEach(b => {
+                b.classList.toggle('active', b.dataset.status === status);
+            });
+            updateReceiptsTable();
+        }
+
+        function updateReceiptsTable() {
+            const tbody = document.getElementById('receiptsTableBody');
+            if (!tbody) return;
+
+            const search = (document.getElementById('receiptSearch')?.value || '').toLowerCase().trim();
+            let rows = (cashReceipts || []).slice();
+
+            if (receiptStatusFilter !== 'all') {
+                rows = rows.filter(r => r.status === receiptStatusFilter);
+            }
+            if (search) {
+                rows = rows.filter(r =>
+                    (r.id || '').toLowerCase().includes(search) ||
+                    (r.studentName || '').toLowerCase().includes(search) ||
+                    (r.rewardName || '').toLowerCase().includes(search));
+            }
+            rows.sort((a, b) => new Date(b.purchasedAt) - new Date(a.purchasedAt));
+
+            const summary = window.WildcatStore.receiptSummary(cashReceipts);
+            const summaryEl = document.getElementById('receiptSummary');
+            if (summaryEl) {
+                summaryEl.innerHTML =
+                    `<span class="receipt-stat"><strong>${summary.issued}</strong> awaiting collection` +
+                    ` ($${summary.outstandingValue})</span>` +
+                    `<span class="receipt-stat"><strong>${summary.fulfilled}</strong> fulfilled</span>` +
+                    `<span class="receipt-stat"><strong>${summary.cancelled}</strong> cancelled</span>`;
+            }
+
+            if (!rows.length) {
+                tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:40px;color:#999;">
+                    ${search || receiptStatusFilter !== 'all'
+                        ? 'No receipts match this view.'
+                        : 'No purchases yet.'}</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = rows.map(r => {
+                const when = new Date(r.purchasedAt);
+                const badge = r.status === 'issued'
+                    ? '<span class="receipt-badge is-open">Awaiting pickup</span>'
+                    : r.status === 'fulfilled'
+                        ? '<span class="receipt-badge is-done">Fulfilled</span>'
+                        : '<span class="receipt-badge is-void">Cancelled</span>';
+                const actions = r.status === 'issued'
+                    ? `<button class="btn btn-sm" onclick="fulfillReceipt('${r.id}')">Fulfill</button>
+                       <button class="btn btn-sm btn-secondary" onclick="cancelReceipt('${r.id}')">Cancel</button>`
+                    : r.status === 'fulfilled'
+                        ? `<span class="receipt-meta">by ${escapeHtml(r.fulfilledBy || '')}</span>`
+                        : `<span class="receipt-meta">${escapeHtml(r.cancelReason || '')}</span>`;
+                return `
+                    <tr>
+                        <td style="font-family:ui-monospace,monospace;font-weight:700;">${escapeHtml(r.id)}</td>
+                        <td>${escapeHtml(r.studentName)}<div class="receipt-meta">Grade ${escapeHtml(r.studentGrade || '')}</div></td>
+                        <td>${escapeHtml(r.rewardName)}${r.quantity > 1 ? ' &times; ' + r.quantity : ''}</td>
+                        <td>$${r.totalCost}</td>
+                        <td>${when.toLocaleDateString()}<div class="receipt-meta">${when.toLocaleTimeString()}</div></td>
+                        <td>${badge}</td>
+                        <td>${actions}</td>
+                    </tr>`;
+            }).join('');
+        }
+
+        // ============================================================
+        // WHAT SELLS
+        //
+        // Ranked by UNITS moved rather than purchase count: five of one item
+        // in a single purchase is five items to stock, not one.
+        // ============================================================
+        function updateRewardPopularity() {
+            const container = document.getElementById('rewardPopularity');
+            if (!container) return;
+
+            const ranked = window.WildcatStore.rewardPopularity(cashReceipts);
+            if (!ranked.length) {
+                container.innerHTML = '<p style="text-align:center;color:#999;padding:30px;">No purchases yet.</p>';
+                return;
+            }
+
+            const max = ranked[0].units || 1;
+            container.innerHTML = `
+                <table class="wc-table">
+                    <thead><tr>
+                        <th>Reward</th><th>Units</th><th>Purchases</th>
+                        <th>Students</th><th>Spent</th><th>Outstanding</th><th></th>
+                    </tr></thead>
+                    <tbody>
+                    ${ranked.map(r => `
+                        <tr>
+                            <td>${escapeHtml(r.rewardName)}<div class="receipt-meta">${escapeHtml(r.category)}</div></td>
+                            <td><strong>${r.units}</strong></td>
+                            <td>${r.purchases}</td>
+                            <td>${r.uniqueStudents}</td>
+                            <td>$${r.revenue}</td>
+                            <td>${r.outstanding}</td>
+                            <td style="width:34%;">
+                                <div class="popularity-bar">
+                                    <span style="width:${Math.round((r.units / max) * 100)}%"></span>
+                                </div>
+                            </td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>`;
+        }
+
+        // ============================================================
+        // STUDENT PICKER
+        //
+        // A native <select> holding 600+ students opened a list taller than the
+        // window and could only be navigated by scrolling. This filters as the
+        // user types, which is what a staff member wants: they know the name.
+        //
+        // The chosen id lives in a hidden input (#redeemStudentSelect) so the
+        // rest of the flow reads it exactly as it read the select.
+        // ============================================================
+        let studentPickerMatches = [];
+        let studentPickerActive = -1;
+
+        /**
+         * Close the suggestion list.
+         *
+         * Safe to call from onblur even though the options are clickable:
+         * each option fires on MOUSEDOWN, which runs before the input's blur,
+         * so a click on a name still registers before this hides the list.
+         */
+        function hideStudentPicker() {
+            const list = document.getElementById('studentPickerResults');
+            const input = document.getElementById('studentPickerInput');
+            if (list) list.classList.add('hidden');
+            if (input) input.setAttribute('aria-expanded', 'false');
+            studentPickerActive = -1;
+        }
+
+        function studentPickerBalance(student) {
+            return student.wildcatCashBalance !== undefined ? student.wildcatCashBalance : STARTING_BALANCE;
+        }
+
+        function filterStudentPicker() {
+            const input = document.getElementById('studentPickerInput');
+            const list = document.getElementById('studentPickerResults');
+            if (!input || !list) return;
+
+            const q = input.value.trim().toLowerCase();
+            const reward = wildcatCashRewards.find(r => r.id === window.currentRedeemRewardId);
+            const qty = Math.max(1, parseInt((document.getElementById('redeemQuantity') || {}).value, 10) || 1);
+            const needed = reward ? reward.cost * qty : 0;
+
+            // Only enrolled students, and only once a search has begun: opening
+            // an unfiltered list of everyone is the problem being fixed.
+            const pool = (typeof enrolledStudents === 'function' ? enrolledStudents() : students) || [];
+            studentPickerMatches = (q
+                ? pool.filter(s => {
+                    const name = `${s.firstName} ${s.lastName}`.toLowerCase();
+                    const rev = `${s.lastName} ${s.firstName}`.toLowerCase();
+                    return name.includes(q) || rev.includes(q) || String(s.id).toLowerCase().includes(q);
+                })
+                : pool.slice()
+            ).sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`))
+             .slice(0, 40);
+
+            studentPickerActive = -1;
+            input.setAttribute('aria-expanded', 'true');
+
+            if (!studentPickerMatches.length) {
+                list.innerHTML = '<li class="student-picker-empty">No student matches that.</li>';
+                list.classList.remove('hidden');
+                return;
+            }
+
+            list.innerHTML = studentPickerMatches.map((s, i) => {
+                const bal = studentPickerBalance(s);
+                const short = bal < needed;
+                return `
+                    <li class="student-picker-option${short ? ' is-short' : ''}"
+                        role="option" data-index="${i}"
+                        onmousedown="pickStudent('${s.id}')">
+                        <span class="sp-name">${escapeHtml(s.lastName)}, ${escapeHtml(s.firstName)}</span>
+                        <span class="sp-meta">Gr ${escapeHtml(String(s.grade || ''))} &middot; $${bal}${short ? ' — short' : ''}</span>
+                    </li>`;
+            }).join('');
+            list.classList.remove('hidden');
+        }
+
+        function studentPickerKeydown(e) {
+            const list = document.getElementById('studentPickerResults');
+            if (!list || list.classList.contains('hidden')) return;
+
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                const dir = e.key === 'ArrowDown' ? 1 : -1;
+                studentPickerActive = Math.max(0,
+                    Math.min(studentPickerMatches.length - 1, studentPickerActive + dir));
+                Array.from(list.children).forEach((li, i) =>
+                    li.classList.toggle('is-active', i === studentPickerActive));
+                const el = list.children[studentPickerActive];
+                if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                const hit = studentPickerMatches[studentPickerActive >= 0 ? studentPickerActive : 0];
+                if (hit) pickStudent(hit.id);
+            } else if (e.key === 'Escape') {
+                hideStudentPicker();
+            }
+        }
+
+        function pickStudent(studentId) {
+            const student = students.find(s => s.id === studentId);
+            if (!student) return;
+
+            document.getElementById('redeemStudentSelect').value = student.id;
+            const input = document.getElementById('studentPickerInput');
+            input.value = `${student.firstName} ${student.lastName}`;
+            hideStudentPicker();
+            document.getElementById('studentPickerClear').classList.remove('hidden');
+
+            const chosen = document.getElementById('studentPickerChosen');
+            chosen.classList.remove('hidden');
+            chosen.innerHTML =
+                `<span>Balance</span><strong>$${studentPickerBalance(student)}</strong>`;
+            updateRedeemTotal();
+        }
+
+        /**
+         * Reset the picker. Deliberately does NOT open the suggestion list:
+         * an open list covers Quantity, the total and the Cancel button, so
+         * it appears only when the user asks for it by clicking or typing.
+         */
+        function clearStudentPick(focusInput) {
+            document.getElementById('redeemStudentSelect').value = '';
+            const input = document.getElementById('studentPickerInput');
+            input.value = '';
+            document.getElementById('studentPickerClear').classList.add('hidden');
+            document.getElementById('studentPickerChosen').classList.add('hidden');
+            hideStudentPicker();
+            updateRedeemTotal();
+            if (focusInput) input.focus();
+        }
+
+        /**
+         * The running total, and whether this student can actually afford it.
+         * Uses the same rule the purchase itself will use, so the button never
+         * promises something buildPurchase will then refuse.
+         */
+        function updateRedeemTotal() {
+            const el = document.getElementById('redeemTotal');
+            if (!el) return;
+
+            const reward = wildcatCashRewards.find(r => r.id === window.currentRedeemRewardId);
+            const qty = Math.max(1, parseInt((document.getElementById('redeemQuantity') || {}).value, 10) || 1);
+            const studentId = (document.getElementById('redeemStudentSelect') || {}).value;
+            const student = students.find(s => s.id === studentId);
+
+            if (!reward) { el.innerHTML = ''; return; }
+            const total = reward.cost * qty;
+
+            if (!student) {
+                el.className = 'redeem-total';
+                el.innerHTML = `<span>Total</span><strong>$${total}</strong>`;
+                return;
+            }
+
+            const verdict = window.WildcatStore.canPurchase({ student, reward, quantity: qty });
+            el.className = 'redeem-total' + (verdict.allowed ? '' : ' is-blocked');
+            el.innerHTML = verdict.allowed
+                ? `<span>Total</span><strong>$${total}</strong>
+                   <span class="redeem-after">Balance after: $${studentPickerBalance(student) - total}</span>`
+                : `<span>Total</span><strong>$${total}</strong>
+                   <span class="redeem-warn">${escapeHtml(verdict.reason)}</span>`;
         }
 
         function openRedeemRewardModal(rewardId) {
             const reward = wildcatCashRewards.find(r => r.id === rewardId);
             if (!reward) return;
-            
-            // Store reward ID for later
             window.currentRedeemRewardId = rewardId;
-            
-            // Populate student select
-            const select = document.getElementById('redeemStudentSelect');
-            select.innerHTML = '<option value="">Select a student...</option>';
-            
-            // Sort students by name
-            const sortedStudents = [...students].sort((a, b) => {
-                const nameA = `${a.lastName}, ${a.firstName}`.toLowerCase();
-                const nameB = `${b.lastName}, ${b.firstName}`.toLowerCase();
-                return nameA.localeCompare(nameB);
-            });
-            
-            sortedStudents.forEach(student => {
-                const balance = student.wildcatCashBalance !== undefined ? student.wildcatCashBalance : STARTING_BALANCE;
-                const canAfford = balance >= reward.cost;
-                const option = document.createElement('option');
-                option.value = student.id;
-                option.textContent = `${student.firstName} ${student.lastName} (Balance: $${balance})`;
-                option.disabled = !canAfford;
-                if (!canAfford) {
-                    option.textContent += ' - Insufficient funds';
-                }
-                select.appendChild(option);
-            });
-            
-            // Show reward info
+
             document.getElementById('redeemRewardInfo').innerHTML = `
-                <div style="background: #f0f9ff; padding: 15px; border-radius: 8px; border-left: 3px solid var(--wc-blue);">
-                    <div style="font-weight: 600; color: #333; margin-bottom: 5px;">${reward.name}</div>
-                    <div style="font-size: 20px; font-weight: 700; color: #667eea;">Cost: $${reward.cost}</div>
-                </div>
-            `;
-            
+                <div class="redeem-item-name">${escapeHtml(reward.name)}</div>
+                <div class="redeem-item-cost">$${reward.cost}<span> each</span></div>
+                ${reward.stock != null ? `<div class="receipt-meta">${reward.stock} in stock</div>` : ''}`;
+
+            const qtyEl = document.getElementById('redeemQuantity');
+            if (qtyEl) qtyEl.value = 1;
+            clearStudentPick(false);
+
+            // Opened with the whole form visible and the list closed. Focusing
+            // the input here would have fired the list open over Quantity, the
+            // total and Cancel, which is what made a misclick hard to undo.
             document.getElementById('redeemRewardModal').classList.remove('hidden');
         }
 
@@ -23515,93 +24035,90 @@
             window.currentRedeemRewardId = null;
         }
 
-        function confirmRedeemReward() {
-            const studentId = document.getElementById('redeemStudentSelect').value;
-            const rewardId = window.currentRedeemRewardId;
-            
-            if (!studentId) {
-                alert('Please select a student');
-                return;
-            }
-            
+        // ============================================================
+        // REWARD PURCHASES
+        //
+        // THE single place a reward purchase happens, for staff buying on a
+        // student's behalf and (later) for a student buying for themselves.
+        //
+        // What this replaces: confirmRedeemReward used to decrement the balance
+        // itself, build its own transaction object, and push it into the global
+        // wildcatCashTransactions, which nothing persisted and which
+        // distributeCashTransactions() overwrote on the next load. The money
+        // left the account with no surviving ledger row to say why, and
+        // reconcileCashBalances(), which recomputes from cashTransactions,
+        // would have handed every student back everything they had ever spent.
+        //
+        // Money still moves in exactly one place: recordCashTransaction.
+        // The rules live in wildcat-store.js so they can be tested directly.
+        // ============================================================
+        function purchaseReward(studentId, rewardId, quantity, opts) {
+            const options = opts || {};
             const student = students.find(s => s.id === studentId);
             const reward = wildcatCashRewards.find(r => r.id === rewardId);
-            
-            if (!student || !reward) {
-                alert('Error: Student or reward not found');
-                return;
-            }
-            
-            // Initialize if needed
-            if (student.wildcatCashBalance === undefined) {
-                student.wildcatCashBalance = STARTING_BALANCE;
-                student.wildcatCashEarned = 0;
-                student.wildcatCashSpent = 0;
-                student.wildcatCashDeducted = 0;
-                student.wildcatCashTransactions = [];
-                student.wildcatCashRewardsRedeemed = [];
-            }
-            
-            // Check balance
-            if (student.wildcatCashBalance < reward.cost) {
-                alert('Student has insufficient funds for this reward');
-                return;
-            }
-            
-            // Process redemption
-            student.wildcatCashBalance -= reward.cost;
-            student.wildcatCashSpent += reward.cost;
-            
-            // Create transaction
-            const transaction = {
-                id: 'txn_reward_' + Date.now(),
-                timestamp: new Date().toISOString(),
-                studentId: student.id,
-                teacherId: currentUser.id,
-                teacherName: currentUser.name,
-                type: 'reward',
-                behaviorId: rewardId,
-                behaviorName: reward.name,
-                amount: -reward.cost,
-                newBalance: student.wildcatCashBalance,
-                notes: `Redeemed: ${reward.name}`,
-                period: 'N/A'
-            };
-            
-            student.wildcatCashTransactions.push(transaction);
-            wildcatCashTransactions.push(transaction);
-            
-            // Add to redemption history
-            const redemption = {
+
+            const built = window.WildcatStore.buildPurchase({
+                student, reward,
+                quantity: quantity || 1,
+                actor: currentUser || {},
+                channel: options.channel || 'staff',
+                now: Date.now()
+            });
+            if (!built.ok) return { ok: false, reason: built.reason };
+
+            // Money first. If this throws or returns nothing, no receipt is
+            // raised, so there is never a promise of an item that was not paid
+            // for. The reverse order could leave a receipt with no charge.
+            const tx = recordCashTransaction(built.transactionRequest);
+            if (!tx) return { ok: false, reason: 'Could not record the transaction. Nothing was charged.' };
+
+            built.receipt.txId = tx.id;
+            cashReceipts.push(built.receipt);
+
+            // Stock only decrements for a limited reward. null means unlimited
+            // and must stay null rather than becoming NaN.
+            if (built.stockAfter !== null) reward.stock = built.stockAfter;
+
+            // The per-student redemption list is kept for the existing store UI.
+            if (!Array.isArray(student.wildcatCashRewardsRedeemed)) student.wildcatCashRewardsRedeemed = [];
+            student.wildcatCashRewardsRedeemed.push({
+                receiptId: built.receipt.id,
                 rewardId: reward.id,
                 rewardName: reward.name,
-                cost: reward.cost,
-                timestamp: new Date().toISOString(),
-                redeemedBy: currentUser.name
-            };
-            
-            if (!student.wildcatCashRewardsRedeemed) {
-                student.wildcatCashRewardsRedeemed = [];
-            }
-            student.wildcatCashRewardsRedeemed.push(redemption);
-            
-            // Add to audit log
-            const logEntry = {
-                timestamp: new Date().toISOString(),
-                teacherId: currentUser.id,
-                teacherName: currentUser.name,
-                action: 'reward_redemption',
-                details: `${student.firstName} ${student.lastName} redeemed ${reward.name} for $${reward.cost} (New balance: $${student.wildcatCashBalance})`,
-                studentId: student.id
-            };
-            auditLog.push(logEntry);
-            
+                cost: built.receipt.totalCost,
+                quantity: built.receipt.quantity,
+                timestamp: built.receipt.purchasedAt,
+                redeemedBy: built.receipt.purchasedBy.name
+            });
+
+            // 'reward_redemption' is the action the Cash Audit Log filters for.
+            addToAuditLog(
+                'reward_redemption',
+                student.id,
+                'Wildcat Cash',
+                built.receipt.totalCost,
+                `Purchased ${reward.name}${built.receipt.quantity > 1 ? ' x' + built.receipt.quantity : ''} — receipt ${built.receipt.id}`
+            );
+
+            return { ok: true, receipt: built.receipt, transaction: tx };
+        }
+
+        function confirmRedeemReward() {
+            const studentId = document.getElementById('redeemStudentSelect').value;
+            if (!studentId) { alert('Please select a student'); return; }
+
+            const qtyEl = document.getElementById('redeemQuantity');
+            const quantity = qtyEl ? (parseInt(qtyEl.value, 10) || 1) : 1;
+
+            const result = purchaseReward(studentId, window.currentRedeemRewardId, quantity, { channel: 'staff' });
+            if (!result.ok) { alert('⚠️ ' + result.reason); return; }
+
             saveData();
-            
-            alert(`✅ Successfully redeemed ${reward.name} for ${student.firstName} ${student.lastName}!`);
             closeRedeemRewardModal();
             updateRewardsStore();
-            updateStudentAccounts();
+            if (typeof updateStudentAccounts === 'function') updateStudentAccounts();
+            if (typeof updateReceiptsTable === 'function') updateReceiptsTable();
+            showReceiptModal(result.receipt);
         }
 
         function saveCashSettings() {
@@ -23622,36 +24139,43 @@
             }
             
             let resetCount = 0;
-            
-            // Reset all student cash balances
+
+            // Read the balance BEFORE zeroing it.
+            //
+            // The previous version set wildcatCashBalance = 0 and then recorded
+            // `amount: -student.wildcatCashBalance`, which by that point was
+            // -0. Every reset transaction claimed that no money moved while
+            // wiping the account. It also left wildcatCashEarned and
+            // wildcatCashDeducted untouched, so a student ended on a $0 balance
+            // that still reported thousands earned.
+            //
+            // The reset now goes through recordCashTransaction like every other
+            // movement, which writes to the ledger the balances are recomputed
+            // from, so the zero survives a reconcile instead of being undone by
+            // one.
             students.forEach(student => {
-                if (student.wildcatCashBalance !== undefined) {
-                    student.wildcatCashBalance = 0;
-                    student.wildcatCashSpent = 0;
-                    resetCount++;
-                    
-                    // Add transaction record
-                    const transaction = {
-                        id: 'txn_reset_' + Date.now() + '_' + student.id,
-                        timestamp: new Date().toISOString(),
-                        studentId: student.id,
-                        teacherId: currentUser.id,
-                        teacherName: currentUser.name,
-                        type: 'system_reset',
+                if (student.wildcatCashBalance === undefined) return;
+
+                const balanceBefore = Number(student.wildcatCashBalance) || 0;
+                if (balanceBefore !== 0) {
+                    recordCashTransaction({
+                        student,
+                        amount: -balanceBefore,
                         behaviorId: 'system_reset',
                         behaviorName: 'System Reset to $0',
-                        amount: -student.wildcatCashBalance,
-                        newBalance: 0,
                         notes: 'All student accounts reset by administrator',
-                        period: 'N/A'
-                    };
-                    
-                    if (!student.wildcatCashTransactions) {
-                        student.wildcatCashTransactions = [];
-                    }
-                    student.wildcatCashTransactions.push(transaction);
-                    wildcatCashTransactions.push(transaction);
+                        kind: 'deduct'
+                    });
                 }
+
+                // recordCashTransaction has now applied the delta. Pin the
+                // derived counters to a genuine zero rather than leaving the
+                // running totals describing an account that no longer exists.
+                student.wildcatCashBalance = 0;
+                student.wildcatCashEarned = 0;
+                student.wildcatCashSpent = 0;
+                student.wildcatCashDeducted = 0;
+                resetCount++;
             });
             
             // Add to audit log
@@ -23729,8 +24253,21 @@
                 return;
             }
             
-            // Filter students by selected grades
-            const filteredStudents = students.filter(s => selectedGrades.includes(String(s.grade)));
+            // Enrolled only, then by grade.
+            //
+            // This counted the raw students array, which holds everyone the app
+            // has ever seen: students who have left, and prior-year records
+            // kept deliberately so their balances and histories survive. A
+            // teacher reads "Total Students" as "how many students are here",
+            // so counting the archived ones makes the tile wrong, and makes
+            // every average below it wrong too, because filteredStudents.length
+            // is the denominator for behaviours per student and dollars per
+            // student.
+            //
+            // updateStats already learned this lesson for the raffle tiles.
+            // This dashboard was missed.
+            const filteredStudents = enrolledStudents()
+                .filter(s => selectedGrades.includes(String(s.grade)));
             
             if (filteredStudents.length === 0) {
                 // No students in selected grades

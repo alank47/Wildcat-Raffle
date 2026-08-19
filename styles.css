@@ -6005,3 +6005,129 @@ body:has(#mainApp:not(.hidden)) { padding: 0; margin: 0; }
 }
 .wc-listrow:last-child { border-bottom: 0; }
 .wc-listrow-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 550; color: var(--wu-fg, #14161B); }
+
+/* ============================================================
+   REWARDS STORE, RECEIPTS AND FULFILLMENT
+   ============================================================ */
+.reward-card { display: flex; flex-direction: column; gap: 8px; }
+.reward-card.is-unavailable { opacity: 0.62; }
+.reward-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.reward-card-head h3 { margin: 0; font-size: 16px; color: var(--wc-ink); }
+.reward-stock { font-size: 12px; font-weight: 700; color: var(--wc-gray-text); white-space: nowrap; }
+.reward-stock.is-out { color: #B3392F; }
+.reward-desc { margin: 0; font-size: 13px; color: var(--wc-gray-text); }
+.reward-cost { font-size: 26px; font-weight: 700; color: var(--wc-blue); }
+.reward-category {
+    align-self: flex-start;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--wc-blue-deep); background: var(--wc-blue-mist);
+    padding: 3px 9px; border-radius: 999px;
+}
+.reward-flag { font-size: 12px; font-weight: 700; color: #B3392F; }
+.reward-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.reward-actions .btn { flex: 1 1 auto; }
+.btn.btn-sm { padding: 7px 12px; font-size: 12px; flex: 0 0 auto; }
+
+.retired-list { margin: 0; padding-left: 18px; color: var(--wc-ink); }
+.retired-list li { margin-bottom: 4px; }
+
+.receipt-summary { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 16px; }
+.receipt-stat {
+    background: #fff; border: 1px solid var(--wc-border); border-radius: 10px;
+    padding: 10px 14px; font-size: 13px; color: var(--wc-gray-text);
+}
+.receipt-stat strong { color: var(--wc-ink); font-size: 17px; margin-right: 4px; }
+.receipt-meta { font-size: 12px; color: var(--wc-gray-text); }
+
+.receipt-badge {
+    display: inline-block; padding: 4px 10px; border-radius: 999px;
+    font-size: 12px; font-weight: 700; white-space: nowrap;
+}
+.receipt-badge.is-open { background: #FFF6E5; color: #8A5A00; }
+.receipt-badge.is-done { background: #F4FBF7; color: #2E7D52; }
+.receipt-badge.is-void { background: #FDF5F4; color: #B3392F; }
+
+/* The receipt a student shows at the desk. The code is the only thing that
+   matters at arm's length, so it is the only thing set large. */
+.receipt-card { text-align: center; padding: 8px 0 4px; }
+.receipt-code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 30px; font-weight: 700; letter-spacing: 0.09em;
+    color: var(--wc-blue-deep); background: var(--wc-blue-mist);
+    border-radius: 12px; padding: 14px 10px;
+}
+.receipt-hint { margin: 8px 0 16px; font-size: 13px; color: var(--wc-gray-text); }
+.receipt-lines { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; text-align: left; margin: 0; }
+.receipt-lines dt { font-size: 12px; font-weight: 700; color: var(--wc-gray-text); }
+.receipt-lines dd { margin: 0; font-size: 14px; color: var(--wc-ink); }
+
+.popularity-bar { background: var(--wc-blue-mist); border-radius: 999px; height: 9px; overflow: hidden; }
+.popularity-bar span { display: block; height: 100%; background: var(--wc-blue); border-radius: 999px; }
+
+/* ---------- Purchase modal: item, searchable student picker, total ---------- */
+.redeem-item {
+    background: var(--wc-blue-mist);
+    border-left: 3px solid var(--wc-blue);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 16px;
+}
+.redeem-item-name { font-weight: 700; color: var(--wc-ink); }
+.redeem-item-cost { font-size: 22px; font-weight: 700; color: var(--wc-blue); }
+.redeem-item-cost span { font-size: 13px; font-weight: 600; color: var(--wc-gray-text); }
+
+.student-picker { position: relative; }
+.student-picker-clear {
+    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    border: none; background: none; cursor: pointer;
+    font-size: 20px; line-height: 1; color: var(--wc-gray-text); padding: 4px 6px;
+}
+.student-picker-clear:hover { color: var(--wc-ink); }
+
+/* Capped and scrollable. The native select this replaces opened a list of
+   600+ students taller than the window, which is what made it unusable. */
+.student-picker-results {
+    position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+    z-index: 30;
+    max-height: 240px; overflow-y: auto;
+    margin: 0; padding: 4px;
+    list-style: none;
+    background: #fff;
+    border: 1px solid var(--wc-border);
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.14);
+}
+.student-picker-results.hidden { display: none; }
+.student-picker-option {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    padding: 9px 10px; border-radius: 7px; cursor: pointer;
+}
+.student-picker-option:hover,
+.student-picker-option.is-active { background: var(--wc-blue-mist); }
+.student-picker-option .sp-name { font-weight: 600; color: var(--wc-ink); font-size: 14px; }
+.student-picker-option .sp-meta { font-size: 12px; color: var(--wc-gray-text); white-space: nowrap; }
+/* Shown, not hidden: a staff member needs to see the student exists and is
+   short, rather than concluding the name is missing from the roster. */
+.student-picker-option.is-short .sp-meta { color: #B3392F; }
+.student-picker-empty { padding: 14px 10px; text-align: center; color: var(--wc-gray-text); font-size: 13px; }
+
+.student-picker-chosen {
+    display: flex; align-items: baseline; gap: 8px;
+    margin-top: 8px; font-size: 13px; color: var(--wc-gray-text);
+}
+.student-picker-chosen strong { color: var(--wc-ink); font-size: 15px; }
+.student-picker-chosen.hidden { display: none; }
+
+.redeem-total {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    margin-top: 14px; padding: 12px 14px;
+    background: #F6F8FB; border: 1px solid var(--wc-border); border-radius: 10px;
+    font-size: 13px; color: var(--wc-gray-text);
+}
+.redeem-total strong { font-size: 20px; color: var(--wc-ink); }
+.redeem-total.is-blocked { background: #FDF5F4; border-color: #F0C9C4; }
+.redeem-after { margin-left: auto; }
+.redeem-warn { margin-left: auto; color: #B3392F; font-weight: 600; }
+
+/* The modal body can outgrow a laptop screen once the picker is open. */
+.modal-content { max-height: 88vh; overflow-y: auto; }
