@@ -2344,6 +2344,15 @@
                             }
                         }
                         detentions = secondaryData.detentions || [];
+                        // Read the counter back from Firebase, not just localStorage.
+                        // It used to be localStorage-only, and localStorage is never
+                        // consulted when Firebase loads, so it reset to 1 every load
+                        // and new detentions were handed ids that already existed.
+                        // Max, so a tab that has already issued ids this session
+                        // does not go backwards and reissue them.
+                        detentionIdCounter = Math.max(
+                            Number(detentionIdCounter) || 1,
+                            Number(secondaryData.detentionIdCounter) || 1);
                         detentionLocations = secondaryData.detentionLocations || ['Main Office', 'Library', 'Room 101', 'Room 102', 'Cafeteria', 'Gym'];
                         detentionReasons = secondaryData.detentionReasons || ['Disrupting Class', 'Tardiness', 'Dress Code Violation', 'Inappropriate Behavior', 'Defiance/Disrespect', 'Cell Phone Violation', 'Missing Assignment', 'Other'];
                         
@@ -3664,28 +3673,123 @@
                             setDoc(doc(firebaseDb, 'raffle_data', 'schedules'), {
                                 sections: sectionsToSave,
                                 lastSaveTimestamp: timestamp
-                            }),
-                            setDoc(doc(firebaseDb, 'raffle_data', 'secondary'), {
-                                weeklyWinners,
-                                bigRaffleWinners,
-                                weeklyHistory,
-                                loginHistory,
-                                hallPasses,
-                                preventionGroups,
-                                detentions,
-                                detentionLocations,
-                                detentionReasons,
-                                lastSaveTimestamp: timestamp
                             })
                         ]);
                         const writeNames = [
                             ...Object.keys(cashByWeek).map(w => `cash_tx_${w}`),
-                            'schedules', 'secondary'
+                            'schedules'
                         ];
                         independentWrites.forEach((res, i) => {
                             if (res.status === 'fulfilled') console.log(`✅ ${writeNames[i]} saved`);
                             else console.error(`❌ ${writeNames[i]} save failed:`, res.reason?.code, res.reason?.message);
                         });
+
+                        // TRANSACTION 3: the secondary document.
+                        //
+                        // MERGED BY ID, never replaced. This was a whole-document
+                        // setDoc of whatever this tab held in memory — the same
+                        // last-write-wins bug that used to eat referrals, still
+                        // live for everything else sharing this document. Teacher
+                        // A assigns a detention, teacher B's tab has been open
+                        // since morning and saves for any reason, and A's
+                        // detention is gone with no error anywhere.
+                        //
+                        // cashReceipts is in this write for the FIRST time. It was
+                        // read from this document on load and written only to
+                        // localStorage, and localStorage is never consulted when
+                        // Firebase loads successfully. So every receipt in the
+                        // school came back as an empty array on every page load.
+                        // Balances were never affected — those live in the
+                        // cash_tx_* documents — but the record of what was bought
+                        // and whether it had been handed over was destroyed each
+                        // time somebody opened the app.
+                        //
+                        // detentionIdCounter is here for the same reason: it was
+                        // saved to localStorage only and never read back from
+                        // Firebase, so it reset to 1 on every load and new
+                        // detentions were handed ids that already existed. Since
+                        // markDetentionDay looks a detention up BY id, that meant
+                        // marking one student's detention served could credit
+                        // another student's record.
+                        try {
+                            let mergedSecondary = null;
+                            await runTransaction(firebaseDb, async (transaction) => {
+                                const ref = doc(firebaseDb, 'raffle_data', 'secondary');
+                                const snap = await transaction.get(ref);
+                                const stored = snap.exists() ? snap.data() : {};
+                                const M = window.WildcatMerge;
+
+                                // Stamp lists are newest-concept-first so rows
+                                // written before `updatedAt` existed still order
+                                // sensibly instead of collapsing to zero.
+                                const lists = {
+                                    detentions: [detentions,
+                                        ['updatedAt', 'completedAt', 'assignedAt']],
+                                    hallPasses: [hallPasses,
+                                        ['updatedAt', 'returnedAt', 'createdAt']],
+                                    preventionGroups: [preventionGroups,
+                                        ['updatedAt', 'createdAt']],
+                                    cashReceipts: [cashReceipts,
+                                        ['updatedAt', 'cancelledAt', 'fulfilledAt', 'purchasedAt']]
+                                };
+
+                                const out = {
+                                    // No ids on these four, so they keep the
+                                    // previous whole-value behaviour. That is
+                                    // unchanged rather than newly introduced;
+                                    // giving them ids is its own change.
+                                    weeklyWinners,
+                                    bigRaffleWinners,
+                                    weeklyHistory,
+                                    loginHistory,
+                                    detentionLocations,
+                                    detentionReasons,
+                                    // The counter only ever goes up, so a stale
+                                    // tab cannot hand out an id another tab has
+                                    // already used. Same rule as referralIdCounter.
+                                    detentionIdCounter: Math.max(
+                                        Number(detentionIdCounter) || 1,
+                                        Number(stored.detentionIdCounter) || 1),
+                                    lastSaveTimestamp: timestamp
+                                };
+
+                                Object.keys(lists).forEach(key => {
+                                    const local = lists[key][0] || [];
+                                    const storedList = stored[key] || [];
+                                    out[key] = M.mergeById(storedList, local,
+                                        { stampFields: lists[key][1] });
+                                    const rep = M.mergeReport(storedList, local, out[key]);
+                                    if (rep.wouldHaveLost.length) {
+                                        console.warn(
+                                            `[secondary] kept ${rep.keptFromStorage} ${key} this tab ` +
+                                            `had not seen: ${rep.wouldHaveLost.join(', ')}. ` +
+                                            'A whole-document write would have destroyed them.');
+                                    }
+                                });
+
+                                transaction.set(ref, out);
+                                mergedSecondary = out;
+                            });
+
+                            // Applied AFTER the transaction resolves, never inside
+                            // it: Firestore retries that callback on contention,
+                            // and a callback that mutates outside itself leaves
+                            // this tab claiming rows that were never written if
+                            // the transaction ultimately fails.
+                            if (mergedSecondary) {
+                                detentions = mergedSecondary.detentions;
+                                hallPasses = mergedSecondary.hallPasses;
+                                preventionGroups = mergedSecondary.preventionGroups;
+                                cashReceipts = mergedSecondary.cashReceipts;
+                                detentionIdCounter = mergedSecondary.detentionIdCounter;
+                                activeHallPasses = hallPasses.filter(p => p.status === 'active');
+                            }
+                            console.log(
+                                `✅ secondary saved (merged: ${(detentions || []).length} detentions, ` +
+                                `${(cashReceipts || []).length} receipts, ${(hallPasses || []).length} passes)`);
+                        } catch (secErr) {
+                            console.error('❌ secondary save failed:', secErr?.code, secErr?.message);
+                        }
                         
                         
                         lastSaveTimestamp = timestamp;
@@ -14040,9 +14144,13 @@
                       '</div>';
             }
             
-            // Add behavior referral count if superadmin
+            // Discipline is run by admins and the PBIS team, not only by the
+            // superadmin. Gating a student's referral history to superadmin hid
+            // it from exactly the people who act on it.
             const studentReferrals = behaviorReferrals.filter(r => r.studentId === studentId);
-            if (currentUser && currentUser.role === 'superadmin' && studentReferrals.length > 0) {
+            const canSeeReferralHistory = currentUser &&
+                ['admin', 'superadmin', 'pbis'].indexOf(currentUser.role) !== -1;
+            if (canSeeReferralHistory && studentReferrals.length > 0) {
                 // Add referral count to stats
                 const statsGrid = document.querySelector('#studentProfileModal .content > div:nth-child(2)');
                 if (statsGrid) {
@@ -26081,6 +26189,14 @@
             const referral = {
                 id: `REF${referralIdCounter++}`,
                 studentId: studentId,
+                // SNAPSHOT, like the demographics below. studentId may be a
+                // legacy CSV value, while the SIS is keyed by student number,
+                // so the race breakdown has to resolve one to the other. Doing
+                // that through the live roster works only while the student is
+                // enrolled: once they withdraw they drop off it and their
+                // referrals become permanently unmatchable. Recorded here so
+                // the referral carries its own answer.
+                studentNumber: (student.studentNumber || ''),
                 studentName: `${student.firstName} ${student.lastName}`,
                 studentGrade: student.grade || '',
                 school: (grade >= 9) ? 'High School' : 'Middle School',
@@ -27590,6 +27706,10 @@
                 markedBy: currentUser.name,
                 markedAt: new Date().toISOString()
             });
+            // Read by wildcat-merge to decide which copy of a detention is
+            // newer when two tabs both hold one. Without it a stale tab's copy
+            // ties on stamps and can win, undoing this attendance mark.
+            detention.updatedAt = new Date().toISOString();
             
             // Only increment days served if PRESENT
             if (status === 'present') {
