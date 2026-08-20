@@ -110,6 +110,18 @@ export const stats = internalMutation({
       restrictedStudents: restricted.length,
       restrictedWithRace: restricted.filter((r) => (r.raceCodes ?? []).length > 0).length,
       restrictedWithEthnicity: restricted.filter((r) => r.fedEthnicity).length,
+      // Distinct code values with counts. AGGREGATE ONLY, and it exists to
+      // answer one operational question: which codes does this instance
+      // actually use. PowerSchool RACECD values are district configurable, so
+      // guessing the labels would put a wrong race name on a chart.
+      raceCodeCounts: restricted.reduce((acc: Record<string, number>, r) => {
+        for (const c of r.raceCodes ?? []) acc[c] = (acc[c] ?? 0) + 1;
+        return acc;
+      }, {}),
+      ethnicityCounts: restricted.reduce((acc: Record<string, number>, r) => {
+        if (r.fedEthnicity) acc[r.fedEthnicity] = (acc[r.fedEthnicity] ?? 0) + 1;
+        return acc;
+      }, {}),
       lastSyncedAt: roster[0]?.syncedAt ?? null,
     };
   },
@@ -248,5 +260,37 @@ export const replaceRestricted = internalMutation({
       written++;
     }
     return { cleared, written };
+  },
+});
+
+/**
+ * Which race codes this instance actually uses, and how many students carry
+ * each. COUNTS ONLY, no student rows.
+ *
+ * Exists because the codes are school configured. PowerSchool ships federal
+ * categories but an instance can define its own, so mapping a code to a label
+ * by assuming the federal set is how a chart ends up confidently mislabelling
+ * a group of children. Measure, then map.
+ */
+export const raceCodesInUse = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("psRestricted").collect();
+    const codes: Record<string, number> = {};
+    const ethnicities: Record<string, number> = {};
+    for (const r of rows) {
+      for (const c of r.raceCodes ?? []) codes[c] = (codes[c] ?? 0) + 1;
+      if (r.fedEthnicity) ethnicities[r.fedEthnicity] = (ethnicities[r.fedEthnicity] ?? 0) + 1;
+    }
+    return {
+      students: rows.length,
+      raceCodes: Object.entries(codes)
+        .map(([code, students]) => ({ code, students }))
+        .sort((a, b) => b.students - a.students),
+      ethnicityValues: Object.entries(ethnicities)
+        .map(([value, students]) => ({ value, students }))
+        .sort((a, b) => b.students - a.students),
+      studentsWithMultipleCodes: rows.filter((r) => (r.raceCodes ?? []).length > 1).length,
+    };
   },
 });

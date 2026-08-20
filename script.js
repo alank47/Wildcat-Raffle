@@ -26883,7 +26883,7 @@
                         Served by the server as counts only. No student's race is sent to this page.
                     </p>
                     <table class="wc-table"><thead><tr>
-                        <th>Race code</th><th>Referrals</th><th>Share of referrals</th>
+                        <th>Race / Ethnicity</th><th>Referrals</th><th>Share of referrals</th>
                         <th>Share of enrolment</th><th>Index</th>
                     </tr></thead><tbody>
                     ${rows.map(r => `
@@ -26901,9 +26901,17 @@
                     <p class="receipt-meta demo-legend">
                         Index 1.00 is proportionate. 2.00 means referred at twice the rate enrolment
                         predicts. Groups under ${res.smallGroupThreshold} enrolled are withheld by the
-                        server, not hidden by this page. A student with several race codes is counted
-                        under each; totals will exceed the referral count.
+                        server, not hidden by this page. A student of two or more races is
+                        counted under each, so totals can exceed the referral count. Categories
+                        are the federal reporting groups; PowerSchool's detailed CALPADS
+                        subcodes are rolled up.
                     </p>
+                    ${(res.unmappedCodes || []).length ? `
+                        <p class="receipt-meta demo-legend">
+                            Unrecognised code(s): ${res.unmappedCodes.map(escapeHtml).join(', ')}.
+                            Shown as themselves rather than guessed at, so a district-specific
+                            code is visible instead of silently mislabelled.
+                        </p>` : ''}
                 </div>`;
         }
 

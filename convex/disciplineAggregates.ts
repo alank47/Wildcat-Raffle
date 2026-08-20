@@ -34,6 +34,44 @@ import { requireStaff } from "./identity";
 /** Below this many ENROLLED students, a rate is noise and may identify. */
 const SMALL_GROUP = 10;
 
+/**
+ * CALPADS race codes to the federal reporting categories.
+ *
+ * The codes in this instance are the California three digit set, confirmed by
+ * looking: 700, 600, 100, 400, 800 and a spread of 2xx and 3xx.
+ *
+ * MAPPED BY GROUP, NOT BY SUBCODE, on purpose.
+ *
+ * CALPADS distinguishes 201 Asian Indian from 203 Chinese from 207 Korean, and
+ * so on. Two reasons not to surface that here:
+ *
+ *  1. Federal disproportionality reporting uses the seven categories below.
+ *     That is the comparison a discipline review makes, and it is what the
+ *     index in this file is for.
+ *  2. Every subcode in this school has a handful of students. Labelling a
+ *     group of one or two by a specific national origin, on a discipline
+ *     chart, identifies that child to anyone who knows the school. Rolling up
+ *     is both the correct reporting unit AND the safer one.
+ *
+ * The prefixes are the part I am confident of. If the school wants the
+ * detailed breakdown, the subcode labels should be taken from the CALPADS code
+ * set or PowerSchool's own table rather than from memory: a wrong race name on
+ * a chart about children is worse than a code.
+ *
+ * An unrecognised code is NEVER guessed. It is returned as itself and flagged,
+ * so it is visible and correctable rather than silently mislabelled.
+ */
+function raceLabel(code: string): { label: string; mapped: boolean } {
+  const c = String(code ?? "").trim();
+  if (c === "100") return { label: "American Indian or Alaska Native", mapped: true };
+  if (c === "400") return { label: "Filipino", mapped: true };
+  if (c === "600") return { label: "Black or African American", mapped: true };
+  if (c === "700") return { label: "White", mapped: true };
+  if (/^2\d\d$/.test(c)) return { label: "Asian", mapped: true };
+  if (/^3\d\d$/.test(c)) return { label: "Native Hawaiian or Other Pacific Islander", mapped: true };
+  return { label: "Code " + c, mapped: false };
+}
+
 /** Roles that may see discipline aggregates by protected characteristic. */
 const AGGREGATE_ROLES = ["admin", "superadmin", "pbis"];
 
@@ -68,14 +106,25 @@ export const byRace = query({
       };
     }
 
-    // studentNumber -> the codes for that student. Multi-race students carry
-    // several, and they are NEVER collapsed into a single "Two or more":
-    // doing that is a reporting decision the school has not made, and it
-    // hides exactly the students it claims to describe.
+    // studentNumber -> the federal categories for that student.
+    //
+    // Multi-race students are NEVER collapsed into a single "Two or more":
+    // that is a reporting decision the school has not made, and it hides
+    // exactly the students it claims to describe. A student with codes in two
+    // categories counts under both, and the UI says so.
+    //
+    // Deduplicated per student AFTER rolling up, so a student carrying 203 and
+    // 207 counts once under Asian rather than twice.
     const codesByNumber = new Map<string, string[]>();
+    const unmappedCodes = new Set<string>();
     for (const r of restricted) {
-      const codes = (r.raceCodes ?? []).filter(Boolean);
-      if (codes.length) codesByNumber.set(r.studentNumber, codes);
+      const labels = new Set<string>();
+      for (const code of (r.raceCodes ?? []).filter(Boolean)) {
+        const { label, mapped } = raceLabel(code);
+        if (!mapped) unmappedCodes.add(code);
+        labels.add(label);
+      }
+      if (labels.size) codesByNumber.set(r.studentNumber, [...labels]);
     }
 
     // Enrolment denominator, from the current roster.
@@ -149,6 +198,10 @@ export const byRace = query({
       // denominator is visible rather than quietly shrinking every rate.
       unmatched,
       groupsWithheld: withheld,
+      // Codes the mapping did not recognise, shown as themselves. Reported so
+      // a new or district specific code is visible rather than quietly
+      // becoming its own unlabelled bar.
+      unmappedCodes: [...unmappedCodes],
       smallGroupThreshold: SMALL_GROUP,
       viewedAs: { role: staff.role },
     };
