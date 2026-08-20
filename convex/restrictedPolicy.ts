@@ -39,6 +39,16 @@ export type RestrictedField = (typeof RESTRICTED_FIELDS)[number];
  */
 export const ALLOWED_BY_ROLE: Record<string, RestrictedField[]> = {
   teacher: [],
+  // STILL EMPTY, deliberately, and this is the point of the pbis role.
+  //
+  // PBIS reviews discipline patterns, which needs COUNTS BY RACE, not any
+  // child's race. Those are different permissions and only one of them was
+  // asked for. Aggregates are served by a separate function that never
+  // returns a student row; nothing here is widened to get them.
+  //
+  // Decided 2026-08-19 with the app owner, who was explicit: "I am not
+  // looking to see an individual child's race."
+  pbis: [],
   campusaide: [],
   admin: [],
   superadmin: [],

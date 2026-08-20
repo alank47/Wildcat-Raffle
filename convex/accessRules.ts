@@ -36,7 +36,11 @@ const ADMIN_ROLES = ["admin", "superadmin"];
  * Restricted fields stay denied to them by ALLOWED_BY_ROLE in
  * restrictedPolicy.ts, which is empty for every role including this one.
  */
-const CAMPUS_WIDE_ROLES = ["campusaide"];
+// pbis joins campusaide here: a PBIS reviewer reads referrals across the
+// school, so scoping them to a teaching roster they do not have scopes them
+// to nothing. It grants NO admin power: that hangs off requireAdmin in
+// identity.ts, which tests the role directly and does not consult this file.
+const CAMPUS_WIDE_ROLES = ["campusaide", "pbis"];
 
 export function canViewStudent(viewer: Viewer, rosterRows: RosterRef[]): Verdict {
   const email = String(viewer.email ?? "").trim().toLowerCase();

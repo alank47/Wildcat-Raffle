@@ -7108,6 +7108,7 @@
             const roleNames = {
                 'teacher': 'Teacher',
                 'campusaide': 'Campus Aide',
+                'pbis': 'PBIS Team',
                 'admin': 'Admin',
                 'superadmin': 'Super Admin'
             };
@@ -7194,7 +7195,7 @@
             document.getElementById('currentUserRole').textContent = getFriendlyRoleName(teacher.role);
             
             // Force admin, teacher, and campus aide users to Raffle Mode only
-            if (teacher.role === 'teacher' || teacher.role === 'campusaide' || teacher.role === 'admin') {
+            if (teacher.role === 'teacher' || teacher.role === 'campusaide' || teacher.role === 'pbis' || teacher.role === 'admin') {
                 wildcatCashEnabled = false;
                 localStorage.setItem('systemMode', 'raffle');
                 document.body.classList.remove('cash-mode', 'hallpass-mode', 'discipline-mode');
@@ -7223,7 +7224,7 @@
             const adminTabs = document.querySelectorAll('.admin-only');
             const superAdminTabs = document.querySelectorAll('.super-admin-only');
             
-            if (teacher.role === 'teacher' || teacher.role === 'campusaide') {
+            if (teacher.role === 'teacher' || teacher.role === 'campusaide' || teacher.role === 'pbis') {
                 // Teachers and Campus Aides only see basic tabs
                 adminTabs.forEach(tab => tab.classList.add('disabled'));
                 superAdminTabs.forEach(tab => tab.classList.add('disabled'));
@@ -12144,6 +12145,7 @@
                     superadmin: ['Super Admin', 'wu-chip-warn'],
                     admin: ['Admin', ''],
                     campusaide: ['Campus Aide', ''],
+                    pbis: ['PBIS Team', ''],
                     teacher: ['Teacher', '']
                 };
 

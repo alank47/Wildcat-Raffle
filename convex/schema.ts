@@ -24,6 +24,7 @@ export default defineSchema({
       v.literal("admin"),
       v.literal("superadmin"),
       v.literal("campusaide"),
+      v.literal("pbis"),
     ),
     ticketsAwarded: v.number(),
     sections: v.optional(v.array(v.string())),
