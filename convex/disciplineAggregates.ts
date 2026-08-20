@@ -77,10 +77,23 @@ const AGGREGATE_ROLES = ["admin", "superadmin", "pbis"];
 
 export const byRace = query({
   args: {
+    /**
+     * The student numbers that received referrals, from the caller.
+     *
+     * NOT read from the database, because referrals are still in Firestore
+     * and race is in Convex: the join has to happen somewhere, and the
+     * browser is the only place holding both handles. An earlier revision
+     * read an appState key "referrals" that nothing has ever written, so this
+     * always returned zero and the panel looked broken.
+     *
+     * This does not weaken the guarantee. The caller sends student NUMBERS,
+     * which it already has, and receives COUNTS. No race value crosses back.
+     */
+    studentNumbers: v.array(v.string()),
     // Optional window, so a review can ask about a term rather than all time.
     sinceIso: v.optional(v.string()),
   },
-  handler: async (ctx, { sinceIso }) => {
+  handler: async (ctx, { studentNumbers }) => {
     const staff = await requireStaff(ctx);
     if (!AGGREGATE_ROLES.includes(staff.role)) {
       // Named plainly. A PBIS member who has not been given the role should
@@ -90,6 +103,26 @@ export const byRace = query({
         reason:
           "Discipline breakdowns by race are limited to administrators and the PBIS team. " +
           "Ask an administrator to set your access level to PBIS Team.",
+        rows: [],
+      };
+    }
+
+    // THE INFERENCE GUARD.
+    //
+    // Sending one student number would return that student's categories, which
+    // is a way to read an individual's race through an aggregate. Admins may
+    // see individual race anyway (approved 2026-08-19), so the guard costs
+    // them nothing. For PBIS it is the difference between the permission they
+    // were given and the one they were not.
+    const distinct = new Set(studentNumbers.filter(Boolean));
+    if (staff.role === "pbis" && distinct.size > 0 && distinct.size < SMALL_GROUP) {
+      return {
+        allowed: true,
+        loaded: true,
+        tooFew: true,
+        reason:
+          `A breakdown over ${distinct.size} student(s) can identify them. ` +
+          `This appears once at least ${SMALL_GROUP} students have referrals.`,
         rows: [],
       };
     }
@@ -121,7 +154,12 @@ export const byRace = query({
       const labels = new Set<string>();
       for (const code of (r.raceCodes ?? []).filter(Boolean)) {
         const { label, mapped } = raceLabel(code);
-        if (!mapped) unmappedCodes.add(code);
+        // An unrecognised code is NOT given a row of its own. 800 appears once
+        // in this instance, nobody could find what it means, and a row reading
+        // "Code 800: 1" is a bar about one identifiable child that tells a
+        // reader nothing. It is counted in a footnote so the student is not
+        // silently dropped from the denominator either.
+        if (!mapped) { unmappedCodes.add(code); continue; }
         labels.add(label);
       }
       if (labels.size) codesByNumber.set(r.studentNumber, [...labels]);
@@ -137,25 +175,11 @@ export const byRace = query({
       }
     }
 
-    // Referrals live in the app blob, not their own table yet, so they arrive
-    // through appState rather than a query here.
-    const state = await ctx.db
-      .query("appState")
-      .withIndex("by_key", (q) => q.eq("key", "referrals"))
-      .unique();
-    const referrals: any[] = (state?.value as any)?.behaviorReferrals ?? [];
-    const since = sinceIso ? Date.parse(sinceIso) : null;
-
     const referralsBy: Record<string, number> = {};
     let counted = 0;
     let unmatched = 0;
-    for (const ref of referrals) {
-      if (since !== null) {
-        const t = Date.parse(ref?.submittedAt ?? "");
-        if (!isFinite(t) || t < since) continue;
-      }
-      const num = String(ref?.studentNumber ?? ref?.studentId ?? "");
-      const codes = codesByNumber.get(num);
+    for (const num of studentNumbers) {
+      const codes = codesByNumber.get(String(num ?? ""));
       if (!codes || !codes.length) { unmatched += 1; continue; }
       counted += 1;
       for (const code of codes) referralsBy[code] = (referralsBy[code] ?? 0) + 1;
@@ -201,7 +225,11 @@ export const byRace = query({
       // Codes the mapping did not recognise, shown as themselves. Reported so
       // a new or district specific code is visible rather than quietly
       // becoming its own unlabelled bar.
+      // Reported as a count, not as a category, so a code nobody recognises
+      // is visible without becoming a bar about one child.
       unmappedCodes: [...unmappedCodes],
+      unmappedStudents: restricted.filter((r) =>
+        (r.raceCodes ?? []).some((c) => !raceLabel(c).mapped)).length,
       smallGroupThreshold: SMALL_GROUP,
       viewedAs: { role: staff.role },
     };

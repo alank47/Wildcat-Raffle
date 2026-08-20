@@ -26751,12 +26751,27 @@
         // Race comes from the SERVER, cached per open of the tab.
         let raceAggregate = null;
 
-        async function loadRaceAggregate() {
+        async function loadRaceAggregate(referrals) {
             const auth = window.WildcatAuth;
             const session = auth && auth.getSession && auth.getSession();
             if (!auth || !session) return { allowed: false, reason: 'Sign in with Microsoft to see this.' };
+
+            // The join happens on the server, but the server cannot see
+            // referrals: they are still in Firestore and race is in Convex.
+            // So this sends the student NUMBERS it already holds and gets
+            // COUNTS back. No race value ever crosses back to this page.
+            //
+            // studentNumber, not studentId: a referral's studentId may be a
+            // legacy CSV value, and psRestricted is keyed by student number.
+            const numbers = (referrals || []).map(r => {
+                if (r && r.studentNumber) return String(r.studentNumber);
+                const s = (students || []).find(x => String(x.id) === String(r && r.studentId));
+                return s && s.studentNumber ? String(s.studentNumber) : '';
+            }).filter(Boolean);
+
             try {
-                return await auth.convexQuery('disciplineAggregates:byRace', {}, session.idToken);
+                return await auth.convexQuery('disciplineAggregates:byRace',
+                    { studentNumbers: numbers }, session.idToken);
             } catch (e) {
                 return { allowed: false, reason: (e && e.message) || String(e) };
             }
@@ -26838,7 +26853,7 @@
             raceHost.innerHTML = '<div class="wc-card demo-card"><p class="panel-hint">Loading race breakdown…</p></div>';
             el.appendChild(raceHost);
 
-            loadRaceAggregate().then(res => {
+            loadRaceAggregate(all).then(res => {
                 raceAggregate = res;
                 renderRaceCard(raceHost, res);
             });
@@ -26854,6 +26869,15 @@
                         <div class="demo-head"><h3>Race / Ethnicity</h3>
                             <span class="demo-flag">Not available to you</span></div>
                         <p class="panel-hint">${escapeHtml((res && res.reason) || 'Unavailable.')}</p>
+                    </div>`;
+                return;
+            }
+            if (res.tooFew) {
+                host.innerHTML = `
+                    <div class="wc-card demo-card is-unavailable">
+                        <div class="demo-head"><h3>Race / Ethnicity</h3>
+                            <span class="demo-flag">Too few students</span></div>
+                        <p class="panel-hint">${escapeHtml(res.reason || '')}</p>
                     </div>`;
                 return;
             }
@@ -26906,11 +26930,12 @@
                         are the federal reporting groups; PowerSchool's detailed CALPADS
                         subcodes are rolled up.
                     </p>
-                    ${(res.unmappedCodes || []).length ? `
+                    ${res.unmappedStudents ? `
                         <p class="receipt-meta demo-legend">
-                            Unrecognised code(s): ${res.unmappedCodes.map(escapeHtml).join(', ')}.
-                            Shown as themselves rather than guessed at, so a district-specific
-                            code is visible instead of silently mislabelled.
+                            ${res.unmappedStudents} student${res.unmappedStudents === 1 ? '' : 's'}
+                            carr${res.unmappedStudents === 1 ? 'ies' : 'y'} a race code this app does not
+                            recognise (${(res.unmappedCodes || []).map(escapeHtml).join(', ')}), so
+                            ${res.unmappedStudents === 1 ? 'it is' : 'they are'} not counted above.
                         </p>` : ''}
                 </div>`;
         }
