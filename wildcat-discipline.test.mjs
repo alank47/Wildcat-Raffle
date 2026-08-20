@@ -33,6 +33,16 @@ console.log("\nWhat gets captured on a referral");
   check("gender is captured as sex", snap.sex === "F");
 
   // A gap must never become a category. "Unknown" in a chart is a group.
+  // THE GUARANTEE. Copying race onto a referral would write it into the app
+  // blob, which is saved to Firestore and loaded into every staff browser.
+  const withRestricted = D.snapshotDemographics({
+    grade: "9", race: "Group A", iep: "Yes", gender: "F",
+  });
+  check("race is NEVER snapshotted onto a referral", !("race" in withRestricted));
+  check("nor IEP status", !("iep" in withRestricted));
+  check("but the unrestricted fields still are",
+    withRestricted.grade === "9" && withRestricted.sex === "F");
+
   const sparse = D.snapshotDemographics({ grade: "9" });
   check("a missing field is ABSENT, not stored as 'Unknown'",
     !("race" in sparse) && !("sex" in sparse) && !("iep" in sparse));
@@ -63,8 +73,11 @@ console.log("\nAvailability is measured from the data, never hardcoded");
   const race = D.availability(rows, "race");
   check("race reads as unavailable", race.available === false);
   check("and is flagged restricted", race.restricted === true);
-  check("and says what a PERSON must do to unblock it",
-    /deliberate act|approved/.test(race.unblock));
+  // Race is no longer derived from referral snapshots at all: it is served by
+  // the server so no child's race reaches this browser. The message has to say
+  // which of the two reasons applies, because they need different responses.
+  check("its message names both reasons it could be empty",
+    /sync has not loaded/.test(race.unblock) && /role is not admin/.test(race.unblock));
 
   const iep = D.availability(rows, "iep");
   check("IEP says the source is unconfirmed, not that it was denied",

@@ -26748,11 +26748,29 @@
                 </div>`;
         }
 
+        // Race comes from the SERVER, cached per open of the tab.
+        let raceAggregate = null;
+
+        async function loadRaceAggregate() {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) return { allowed: false, reason: 'Sign in with Microsoft to see this.' };
+            try {
+                return await auth.convexQuery('disciplineAggregates:byRace', {}, session.idToken);
+            } catch (e) {
+                return { allowed: false, reason: (e && e.message) || String(e) };
+            }
+        }
+
         function renderReferralDemographics(all) {
             const el = document.getElementById('referralDemographics');
             if (!el) return;
             const D = window.WildcatDiscipline;
-            const dims = ['grade', 'school', 'sex', 'race', 'iep'];
+            // Race is NOT in this list: it is never derived from referral
+            // snapshots, because a child's race must not be written into the
+            // app blob. It is fetched from the server and rendered separately
+            // below.
+            const dims = ['grade', 'school', 'sex', 'iep'];
 
             el.innerHTML = dims.map(dim => {
                 const avail = D.availability(all, dim);
@@ -26812,6 +26830,81 @@
                             </p>` : ''}
                     </div>`;
             }).join('');
+
+            // Race, from the server. Rendered after the rest so the panel is
+            // useful immediately rather than waiting on a round trip.
+            const raceHost = document.createElement('div');
+            raceHost.id = 'referralRaceCard';
+            raceHost.innerHTML = '<div class="wc-card demo-card"><p class="panel-hint">Loading race breakdown…</p></div>';
+            el.appendChild(raceHost);
+
+            loadRaceAggregate().then(res => {
+                raceAggregate = res;
+                renderRaceCard(raceHost, res);
+            });
+        }
+
+        function renderRaceCard(host, res) {
+            if (!host) return;
+            const D = window.WildcatDiscipline;
+
+            if (!res || res.allowed === false) {
+                host.innerHTML = `
+                    <div class="wc-card demo-card is-unavailable">
+                        <div class="demo-head"><h3>Race / Ethnicity</h3>
+                            <span class="demo-flag">Not available to you</span></div>
+                        <p class="panel-hint">${escapeHtml((res && res.reason) || 'Unavailable.')}</p>
+                    </div>`;
+                return;
+            }
+            if (res.loaded === false) {
+                host.innerHTML = `
+                    <div class="wc-card demo-card is-unavailable">
+                        <div class="demo-head"><h3>Race / Ethnicity</h3>
+                            <span class="demo-flag">Not loaded</span></div>
+                        <p class="panel-hint">${escapeHtml(res.reason || '')}</p>
+                    </div>`;
+                return;
+            }
+
+            const rows = res.rows || [];
+            const shown = rows.filter(r => !r.suppressed);
+            host.innerHTML = `
+                <div class="wc-card demo-card">
+                    <div class="demo-head">
+                        <h3>Race / Ethnicity</h3>
+                        <span class="receipt-meta">
+                            ${res.counted} referral${res.counted === 1 ? '' : 's'} matched
+                            ${res.unmatched ? ` &middot; ${res.unmatched} with no race record` : ''}
+                            ${res.groupsWithheld ? ` &middot; ${res.groupsWithheld} group(s) withheld` : ''}
+                        </span>
+                    </div>
+                    <p class="panel-hint">
+                        Served by the server as counts only. No student's race is sent to this page.
+                    </p>
+                    <table class="wc-table"><thead><tr>
+                        <th>Race code</th><th>Referrals</th><th>Share of referrals</th>
+                        <th>Share of enrolment</th><th>Index</th>
+                    </tr></thead><tbody>
+                    ${rows.map(r => `
+                        <tr>
+                            <td>${escapeHtml(r.code)}</td>
+                            <td>${r.suppressed ? '<span class="receipt-meta">withheld</span>' : `<strong>${r.count}</strong>`}</td>
+                            <td>${r.suppressed ? '—' : Math.round(r.shareOfReferrals * 100) + '%'}</td>
+                            <td>${r.suppressed ? '—' : Math.round(r.shareOfEnrollment * 100) + '%'}</td>
+                            <td>${r.suppressed
+                                ? `<span class="receipt-meta" title="Fewer than ${res.smallGroupThreshold} enrolled: withheld by the server.">withheld</span>`
+                                : (r.index === null ? '—'
+                                   : `<span class="${r.index >= 1.5 ? 'demo-over' : ''}">${r.index.toFixed(2)}</span>`)}</td>
+                        </tr>`).join('')}
+                    </tbody></table>
+                    <p class="receipt-meta demo-legend">
+                        Index 1.00 is proportionate. 2.00 means referred at twice the rate enrolment
+                        predicts. Groups under ${res.smallGroupThreshold} enrolled are withheld by the
+                        server, not hidden by this page. A student with several race codes is counted
+                        under each; totals will exceed the referral count.
+                    </p>
+                </div>`;
         }
 
         function renderClosedAnalytics(all) {

@@ -73,10 +73,13 @@
     },
     race: {
       key: 'race', label: 'Race / Ethnicity', restricted: true,
-      unblock: 'Restricted. convex/restrictedPolicy.ts denies fedEthnicity and raceCodes ' +
-               'to every role, including admins, and the data is not loaded. Widening it ' +
-               'is a deliberate act: record who approved it and what decision it informs, ' +
-               'then add the field to that role in ALLOWED_BY_ROLE.'
+      // Served by the SERVER, not derived from referral snapshots, so this
+      // panel asks convex/disciplineAggregates.ts:byRace rather than looking
+      // for a value the browser is deliberately never given.
+      serverAggregate: 'disciplineAggregates:byRace',
+      unblock: 'Race breakdowns are served by the server so no child\'s race reaches ' +
+               'this browser. If this is empty, either the sync has not loaded psRestricted ' +
+               'yet or your role is not admin, superadmin or PBIS.'
     },
     iep: {
       key: 'iep', label: 'IEP Status', restricted: true,
@@ -116,8 +119,19 @@
     if (!isBlank(s.grade)) out.grade = trimmed(s.grade);
     if (!isBlank(s.school)) out.school = trimmed(s.school);
     if (!isBlank(s.sex || s.gender)) out.sex = trimmed(s.sex || s.gender);
-    if (!isBlank(s.race)) out.race = trimmed(s.race);
-    if (!isBlank(s.iep) || s.iepStatus === true) out.iep = trimmed(s.iep) || 'Yes';
+
+    // RACE AND IEP ARE DELIBERATELY NOT SNAPSHOTTED HERE.
+    //
+    // An earlier revision copied them if present. That would write a child's
+    // race into behaviorReferrals, which is the app blob: saved to Firestore,
+    // loaded into every staff browser, and readable by anyone who can read a
+    // referral. It would take restricted data that lives in one guarded table
+    // and scatter copies of it through unguarded storage, which is precisely
+    // what the aggregate-only design exists to prevent.
+    //
+    // Race breakdowns come from convex/disciplineAggregates.ts:byRace, which
+    // joins referrals to psRestricted SERVER SIDE, returns counts, and never
+    // builds a student row. The browser is never given the value at all.
     return out;
   }
 
