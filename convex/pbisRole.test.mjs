@@ -41,10 +41,17 @@ console.log("\nBut PBIS CANNOT see an individual child's protected data");
 // This is the line that must not move. Aggregates are served separately.
 check("pbis is listed in ALLOWED_BY_ROLE", /pbis: \[\]/.test(policy));
 check("and its allowlist is EMPTY", /pbis: \[\],/.test(policy));
-check("no role has been given a restricted field",
-  !/(teacher|admin|superadmin|campusaide|pbis):\s*\[\s*"/.test(policy));
+// admin and superadmin WERE widened on 2026-08-19, for verifying the
+// aggregate. The assertion that matters is that the widening stopped there.
+check("teacher has no restricted field", /teacher: \[\],/.test(policy));
+check("campusaide has no restricted field", /campusaide: \[\],/.test(policy));
+check("pbis has no restricted field", /pbis: \[\],/.test(policy));
+check("admin was widened to race and ethnicity ONLY",
+  /admin: \["fedEthnicity", "raceCodes"\]/.test(policy));
+check("and not to IEP, 504 or English Learner",
+  !/admin: \[[^\]]*(iepStatus|section504|elaStatus)/.test(policy));
 check("the reason is recorded next to it",
-  /different permissions and only one of them was/.test(policy));
+  /only the first was/.test(policy) && /WIDENED 2026-08-19/.test(policy));
 
 console.log("\nThe aggregate never returns a student");
 check("it is a query, not a table read the caller can shape",

@@ -21,10 +21,26 @@ as unanswered.
 > what races are being hit with referrals and the data just gives us an
 > aggregate. so we will never see that a specific child is a specific race."
 
-So this is NOT an entry in `ALLOWED_BY_ROLE`. That list controls whether a role
-can read a restricted field ON A STUDENT, and it remains empty for every role,
-including PBIS and superadmin. `studentDetail` cannot return `raceCodes` to
-anybody.
+### Amended the same day: admin verification access
+
+**Approved 2026-08-19 by Alan K (app owner).**
+
+`admin` and `superadmin` now hold `fedEthnicity` and `raceCodes` in
+`ALLOWED_BY_ROLE`, so an administrator can see an individual student's race.
+
+**The decision it informs:** confirming the aggregate is counting and
+displaying correctly. An aggregate that cannot be checked against its source is
+a number taken on faith, and this one is used to make claims about how the
+school disciplines children by race.
+
+This is genuinely wider than the aggregate-only grant above, and is recorded as
+such rather than folded into it.
+
+**It stops there.** `teacher`, `campusaide` and `pbis` remain empty. PBIS asked
+for counts and gets counts; the gap between PBIS and admin is deliberate, and
+`convex/pbisRole.test.mjs` asserts it in both directions.
+
+**Not extended to IEP, 504 or English Learner** for any role.
 
 Aggregates are served by `convex/disciplineAggregates.ts:byRace`, which reads
 `psRestricted`, tallies, and returns counts. It never constructs a student row,

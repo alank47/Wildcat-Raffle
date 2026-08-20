@@ -188,3 +188,59 @@ export const duplicateAudit = internalQuery({
     };
   },
 });
+
+/**
+ * Load restricted demographics into psRestricted.
+ *
+ * SEPARATE FROM EVERY OTHER SYNC WRITE, on purpose. These are the fields the
+ * brief names restricted, and keeping them out of the students table means a
+ * view that forgets to check policy cannot accidentally return them: they are
+ * not on the row it is reading.
+ *
+ * Full replace, like grades. A student who is corrected in PowerSchool from
+ * two race codes to one must LOSE the extra, and a merge cannot express a
+ * deletion. Getting this wrong makes the app permanently more certain about a
+ * child's race than the SIS is.
+ *
+ * Race codes are one to many and are stored as an array, never collapsed. A
+ * multi-race student is multi-race; flattening them to "Two or more" is a
+ * reporting decision this school has not made.
+ */
+export const replaceRestricted = internalMutation({
+  args: {
+    syncedAt: v.string(),
+    rows: v.array(
+      v.object({
+        studentNumber: v.string(),
+        fedEthnicity: v.optional(v.string()),
+        elaStatus: v.optional(v.string()),
+        raceCodes: v.optional(v.array(v.string())),
+      }),
+    ),
+    clearFirst: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { syncedAt, rows, clearFirst }) => {
+    let cleared = 0;
+    if (clearFirst) {
+      const existing = await ctx.db.query("psRestricted").collect();
+      for (const row of existing) {
+        await ctx.db.delete(row._id);
+        cleared++;
+      }
+    }
+
+    let written = 0;
+    for (const row of rows) {
+      if (!row.studentNumber) continue;
+      await ctx.db.insert("psRestricted", {
+        studentNumber: row.studentNumber,
+        fedEthnicity: row.fedEthnicity,
+        elaStatus: row.elaStatus,
+        raceCodes: row.raceCodes,
+        syncedAt,
+      });
+      written++;
+    }
+    return { cleared, written };
+  },
+});
