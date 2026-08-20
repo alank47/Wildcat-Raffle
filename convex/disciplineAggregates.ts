@@ -1,6 +1,7 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
-import { requireStaff } from "./identity";
+import { requireStaff, requireAdmin } from "./identity";
+import { reportedCategories, classifyEthnicity, HISPANIC_LABEL } from "./raceRollup";
 
 /**
  * Discipline breakdowns by protected characteristic. COUNTS ONLY, NEVER ROWS.
@@ -12,65 +13,28 @@ import { requireStaff } from "./identity";
  * explicit on 2026-08-19: "I am not looking to see an individual child's race,
  * I just want data to show what races are being hit with referrals."
  *
- * So restrictedPolicy.ts stays empty for every role, studentDetail still
- * cannot return raceCodes to anybody, and this function serves the aggregate
- * separately. It reads psRestricted, joins it to referrals in memory, and
- * returns tallies. There is no argument that could make it return a student,
- * because it never builds one.
+ * So restrictedPolicy.ts stays empty for PBIS, studentDetail still cannot
+ * return raceCodes to them, and this function serves the aggregate separately.
+ * It reads psRestricted, joins it to referrals in memory, and returns tallies.
+ * There is no argument that could make it return a student to PBIS, because
+ * for PBIS it never builds one.
  *
  * SUPPRESSION HAPPENS HERE, NOT IN THE BROWSER.
  *
  * The UI already withholds small cells, but that is cosmetic: anyone can read
  * the network response. For "aggregate only" to be a property rather than a
  * claim, a cell small enough to identify a child must never leave the server.
- * A group below SMALL_GROUP is returned with its enrolment and rate stripped.
  *
- * Even the counts are floored: a group of 3 enrolled students with 1 referral
- * is still 1 referral attached to a nearly identifiable person, so groups
- * under SMALL_GROUP report `suppressed: true` and no rate, and the caller is
- * told how many groups were withheld so the total still reconciles.
+ * THE CATEGORIES COME FROM raceRollup, NOT FROM raceCodes ALONE.
+ *
+ * An earlier revision of this file mapped race codes directly and ignored
+ * fedEthnicity. In California that reports a predominantly Hispanic school as
+ * White, because Hispanic students still answer the race question and very
+ * commonly answer it 700. See raceRollup.ts for the rule and the bug.
  */
 
 /** Below this many ENROLLED students, a rate is noise and may identify. */
 const SMALL_GROUP = 10;
-
-/**
- * CALPADS race codes to the federal reporting categories.
- *
- * The codes in this instance are the California three digit set, confirmed by
- * looking: 700, 600, 100, 400, 800 and a spread of 2xx and 3xx.
- *
- * MAPPED BY GROUP, NOT BY SUBCODE, on purpose.
- *
- * CALPADS distinguishes 201 Asian Indian from 203 Chinese from 207 Korean, and
- * so on. Two reasons not to surface that here:
- *
- *  1. Federal disproportionality reporting uses the seven categories below.
- *     That is the comparison a discipline review makes, and it is what the
- *     index in this file is for.
- *  2. Every subcode in this school has a handful of students. Labelling a
- *     group of one or two by a specific national origin, on a discipline
- *     chart, identifies that child to anyone who knows the school. Rolling up
- *     is both the correct reporting unit AND the safer one.
- *
- * The prefixes are the part I am confident of. If the school wants the
- * detailed breakdown, the subcode labels should be taken from the CALPADS code
- * set or PowerSchool's own table rather than from memory: a wrong race name on
- * a chart about children is worse than a code.
- *
- * An unrecognised code is NEVER guessed. It is returned as itself and flagged,
- * so it is visible and correctable rather than silently mislabelled.
- */
-function raceLabel(code: string): { label: string; mapped: boolean } {
-  const c = String(code ?? "").trim();
-  if (c === "100") return { label: "American Indian or Alaska Native", mapped: true };
-  if (c === "400") return { label: "Filipino", mapped: true };
-  if (c === "600") return { label: "Black or African American", mapped: true };
-  if (c === "700") return { label: "White", mapped: true };
-  if (/^2\d\d$/.test(c)) return { label: "Asian", mapped: true };
-  if (/^3\d\d$/.test(c)) return { label: "Native Hawaiian or Other Pacific Islander", mapped: true };
-  return { label: "Code " + c, mapped: false };
-}
 
 /** Roles that may see discipline aggregates by protected characteristic. */
 const AGGREGATE_ROLES = ["admin", "superadmin", "pbis"];
@@ -134,35 +98,28 @@ export const byRace = query({
         loaded: false,
         reason:
           "Race data has not been loaded yet. PowerSchool grants it and the query works; " +
-          "the sync does not populate psRestricted yet.",
+          "the sync has not populated psRestricted.",
         rows: [],
       };
     }
 
-    // studentNumber -> the federal categories for that student.
+    // studentNumber -> the reporting categories for that student.
     //
-    // Multi-race students are NEVER collapsed into a single "Two or more":
-    // that is a reporting decision the school has not made, and it hides
-    // exactly the students it claims to describe. A student with codes in two
-    // categories counts under both, and the UI says so.
-    //
-    // Deduplicated per student AFTER rolling up, so a student carrying 203 and
-    // 207 counts once under Asian rather than twice.
-    const codesByNumber = new Map<string, string[]>();
+    // Hispanic or Latino collapses to a single category (ethnicity wins).
+    // A non-Hispanic student with codes in two categories counts under BOTH
+    // and is never collapsed into "Two or more races": that is a reporting
+    // decision this school has not made, and it hides exactly the students it
+    // claims to describe.
+    const catsByNumber = new Map<string, string[]>();
     const unmappedCodes = new Set<string>();
+    let unknownEthnicity = 0;
     for (const r of restricted) {
-      const labels = new Set<string>();
-      for (const code of (r.raceCodes ?? []).filter(Boolean)) {
-        const { label, mapped } = raceLabel(code);
-        // An unrecognised code is NOT given a row of its own. 800 appears once
-        // in this instance, nobody could find what it means, and a row reading
-        // "Code 800: 1" is a bar about one identifiable child that tells a
-        // reader nothing. It is counted in a footnote so the student is not
-        // silently dropped from the denominator either.
-        if (!mapped) { unmappedCodes.add(code); continue; }
-        labels.add(label);
-      }
-      if (labels.size) codesByNumber.set(r.studentNumber, [...labels]);
+      const rep = reportedCategories(r);
+      for (const c of rep.unmapped) unmappedCodes.add(c);
+      // Counted, not corrected. A pile of unknowns is a sync gap, and saying
+      // so is the difference between a broken feed and a finding about kids.
+      if (rep.ethnicity === "unknown") unknownEthnicity += 1;
+      if (rep.categories.length) catsByNumber.set(r.studentNumber, rep.categories);
     }
 
     // Enrolment denominator, from the current roster.
@@ -170,7 +127,7 @@ export const byRace = query({
     const enrolledNumbers = new Set(roster.map((r) => r.studentNumber));
     const enrolledBy: Record<string, number> = {};
     for (const num of enrolledNumbers) {
-      for (const code of codesByNumber.get(num) ?? []) {
+      for (const code of catsByNumber.get(num) ?? []) {
         enrolledBy[code] = (enrolledBy[code] ?? 0) + 1;
       }
     }
@@ -179,7 +136,7 @@ export const byRace = query({
     let counted = 0;
     let unmatched = 0;
     for (const num of studentNumbers) {
-      const codes = codesByNumber.get(String(num ?? ""));
+      const codes = catsByNumber.get(String(num ?? ""));
       if (!codes || !codes.length) { unmatched += 1; continue; }
       counted += 1;
       for (const code of codes) referralsBy[code] = (referralsBy[code] ?? 0) + 1;
@@ -222,16 +179,88 @@ export const byRace = query({
       // denominator is visible rather than quietly shrinking every rate.
       unmatched,
       groupsWithheld: withheld,
-      // Codes the mapping did not recognise, shown as themselves. Reported so
-      // a new or district specific code is visible rather than quietly
-      // becoming its own unlabelled bar.
-      // Reported as a count, not as a category, so a code nobody recognises
-      // is visible without becoming a bar about one child.
+      // Students whose ethnicity question never synced. Surfaced because they
+      // fall through to race, which is exactly the path that produced the
+      // wrong chart, and a reader should be able to see how many.
+      unknownEthnicity,
       unmappedCodes: [...unmappedCodes],
       unmappedStudents: restricted.filter((r) =>
-        (r.raceCodes ?? []).some((c) => !raceLabel(c).mapped)).length,
+        reportedCategories(r).unmapped.length > 0).length,
       smallGroupThreshold: SMALL_GROUP,
+      hispanicLabel: HISPANIC_LABEL,
       viewedAs: { role: staff.role },
     };
+  },
+});
+
+/**
+ * ADMIN ONLY. The per-student rows behind the chart, so the numbers can be
+ * checked rather than trusted.
+ *
+ * WHY THIS IS ALLOWED TO RETURN A CHILD'S RACE, WHEN NOTHING ELSE IS.
+ *
+ * The app owner asked for it on 2026-08-20, for one stated reason: an
+ * aggregate nobody can audit is not trustworthy, and the first version of the
+ * chart WAS wrong. They spotted it because they know the school ("I am fairly
+ * certain that my school has no white students") and had no way to confirm.
+ * Verification is the reason this exists, and it is the only reason.
+ *
+ * requireAdmin, NOT requireStaff with a role list. PBIS was given counts and
+ * only counts, and this is precisely the permission they were not given, so
+ * the check is the strict one and cannot drift by editing an array.
+ *
+ * It returns what the SIS holds AND what the rollup decided, side by side,
+ * because "is this number right" cannot be answered by the number alone. The
+ * `basis` field says which question drove the answer, which is what makes a
+ * surprising row explainable instead of just surprising.
+ */
+export const raceVerification = query({
+  args: { studentNumbers: v.array(v.string()) },
+  handler: async (ctx, { studentNumbers }) => {
+    const staff = await requireAdmin(ctx);
+
+    const wanted = new Set(studentNumbers.filter(Boolean).map(String));
+    if (!wanted.size) return { allowed: true, rows: [], viewedAs: { role: staff.role } };
+
+    const restricted = await ctx.db.query("psRestricted").collect();
+    const byNumber = new Map(restricted.map((r) => [r.studentNumber, r]));
+
+    // Names, so an admin can check a row against a student they know. One
+    // roster row per section, so collapse to the first for each student.
+    const roster = await ctx.db.query("psRoster").collect();
+    const nameByNumber = new Map<string, { firstName: string; lastName: string; gradeLevel?: string }>();
+    for (const r of roster) {
+      if (!nameByNumber.has(r.studentNumber)) {
+        nameByNumber.set(r.studentNumber, {
+          firstName: r.firstName, lastName: r.lastName, gradeLevel: r.gradeLevel,
+        });
+      }
+    }
+
+    const rows = [...wanted].map((num) => {
+      const rec = byNumber.get(num);
+      const name = nameByNumber.get(num);
+      // A student with no restricted record is RETURNED, not dropped. Missing
+      // rows are the usual reason a chart's total is lower than the referral
+      // count, and hiding them makes that impossible to find.
+      const rep = rec ? reportedCategories(rec) : null;
+      return {
+        studentNumber: num,
+        firstName: name?.firstName ?? "",
+        lastName: name?.lastName ?? "",
+        gradeLevel: name?.gradeLevel ?? "",
+        onRoster: !!name,
+        hasRecord: !!rec,
+        ethnicity: rec ? classifyEthnicity(rec.fedEthnicity) : "unknown",
+        fedEthnicityRaw: rec?.fedEthnicity ?? "",
+        raceCodes: rec?.raceCodes ?? [],
+        raceLabels: rep?.raceLabels ?? [],
+        reported: rep?.categories ?? [],
+        basis: rep?.basis ?? "none",
+        unmapped: rep?.unmapped ?? [],
+      };
+    }).sort((a, b) => (a.lastName || "~").localeCompare(b.lastName || "~"));
+
+    return { allowed: true, rows, viewedAs: { role: staff.role } };
   },
 });

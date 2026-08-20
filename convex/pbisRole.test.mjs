@@ -78,8 +78,28 @@ check("how many groups were withheld is reported, so totals reconcile",
 console.log("\nMulti-race students are not collapsed");
 check("a student with several codes counts under each",
   /for \(const code of codes\) referralsBy\[code\]/.test(aggregates));
+// The decision moved into raceRollup.ts when ethnicity was added, so the
+// guarantee is asserted where it is actually made. raceRollup.test.mjs proves
+// the behaviour; this pins that the rule stays written down next to it.
 check("and the reason is recorded",
-  /NEVER collapsed into a single "Two or more"/.test(aggregates));
+  /never collapsed into "Two or more races"/.test(read("raceRollup.ts")));
+check("the aggregate says so too, where a reader of that file will see it",
+  /never collapsed into "Two or more races"/.test(aggregates));
+
+console.log("\nEthnicity is asked before race, or the chart is wrong");
+// The bug that made this necessary: reading raceCodes alone reports a
+// predominantly Hispanic school as White, because Hispanic students still
+// answer the race question and commonly answer it 700.
+check("the aggregate categorises through raceRollup, not its own mapper",
+  /reportedCategories/.test(aggregates) && !/function raceLabel/.test(aggregates));
+
+console.log("\nIndividual race stays out of PBIS's reach");
+// raceVerification returns a named child's race. It is the one thing PBIS was
+// explicitly not given, so it must never be gated on the aggregate role list.
+check("verification is gated on requireAdmin",
+  /raceVerification[\s\S]*?requireAdmin\(ctx\)/.test(aggregates));
+check("and pbis is not named anywhere near it",
+  !/raceVerification[\s\S]*?"pbis"/.test(aggregates));
 
 console.log("\nMissing data is reported, not hidden");
 check("referrals with no race record are counted as unmatched",

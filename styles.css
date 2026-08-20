@@ -6193,6 +6193,34 @@ body:has(#mainApp:not(.hidden)) { padding: 0; margin: 0; }
 .demo-over { font-weight: 700; color: #8A5A00; }
 .demo-legend { display: block; margin-top: 10px; }
 
+/* ADMIN VERIFICATION.
+   Deliberately set apart from the chart above it. This block puts named
+   children's race on screen, which nothing else in the app does, and it should
+   not read as just another table. The rule and the tint are the signal that
+   the reader has crossed into restricted data. */
+.race-verify {
+    margin-top: 16px; padding-top: 14px;
+    border-top: 2px solid var(--wc-line, #E4E8EE);
+}
+.race-verify .btn-secondary { margin-bottom: 6px; }
+.race-verify-card {
+    margin-top: 12px;
+    background: #FFFBF3;
+    border: 1px solid #E8D9B8;
+}
+.race-verify-card .wc-table { font-size: 13px; }
+.race-verify-card .wc-table th { white-space: nowrap; }
+
+/* A referral whose student has no race record. Marked so the gap is visible:
+   these are the rows that make the chart's total lower than the referral
+   count, and they are the first thing to check when the numbers disagree. */
+.demo-gap td { background: #FAFBFC; color: var(--wc-gray-text); }
+
+.race-verify-tally {
+    margin-top: 14px; padding-top: 10px;
+    border-top: 1px dashed #E8D9B8;
+}
+
 /* Analytics tabs carry their own class, deliberately NOT .subtab-button.
    #disciplineContent .subtab-button is display:none !important, because the
    discipline navigation moved to the sidebar and the old in-content rows were

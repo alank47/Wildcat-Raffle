@@ -26751,6 +26751,20 @@
         // Race comes from the SERVER, cached per open of the tab.
         let raceAggregate = null;
 
+        // studentNumber, not studentId: a referral's studentId may be a legacy
+        // CSV value, while psRestricted and psRoster are keyed by student
+        // number. Shared by the aggregate and the admin verification view so
+        // the two cannot disagree about which student a referral belongs to.
+        function referralStudentNumber(r) {
+            if (r && r.studentNumber) return String(r.studentNumber);
+            const s = (students || []).find(x => String(x.id) === String(r && r.studentId));
+            return s && s.studentNumber ? String(s.studentNumber) : '';
+        }
+
+        function referralStudentNumbers(referrals) {
+            return (referrals || []).map(referralStudentNumber).filter(Boolean);
+        }
+
         async function loadRaceAggregate(referrals) {
             const auth = window.WildcatAuth;
             const session = auth && auth.getSession && auth.getSession();
@@ -26777,11 +26791,7 @@
             //
             // studentNumber, not studentId: a referral's studentId may be a
             // legacy CSV value, and psRestricted is keyed by student number.
-            const numbers = (referrals || []).map(r => {
-                if (r && r.studentNumber) return String(r.studentNumber);
-                const s = (students || []).find(x => String(x.id) === String(r && r.studentId));
-                return s && s.studentNumber ? String(s.studentNumber) : '';
-            }).filter(Boolean);
+            const numbers = referralStudentNumbers(referrals);
 
             try {
                 return await auth.convexQuery('disciplineAggregates:byRace',
@@ -26881,11 +26891,11 @@
 
             loadRaceAggregate(all).then(res => {
                 raceAggregate = res;
-                renderRaceCard(raceHost, res);
+                renderRaceCard(raceHost, res, all);
             });
         }
 
-        function renderRaceCard(host, res) {
+        function renderRaceCard(host, res, all) {
             if (!host) return;
             const D = window.WildcatDiscipline;
 
@@ -26975,6 +26985,184 @@
                             recognise (${(res.unmappedCodes || []).map(escapeHtml).join(', ')}), so
                             ${res.unmappedStudents === 1 ? 'it is' : 'they are'} not counted above.
                         </p>` : ''}
+                    ${res.unknownEthnicity ? `
+                        <p class="receipt-meta demo-legend">
+                            ${res.unknownEthnicity} student${res.unknownEthnicity === 1 ? '' : 's'}
+                            ${res.unknownEthnicity === 1 ? 'has' : 'have'} no answer to the
+                            Hispanic/Latino question in the SIS, so
+                            ${res.unknownEthnicity === 1 ? 'it is' : 'they are'} categorised by race
+                            code alone. That is a sync gap, not a finding — a large number here
+                            means the ethnicity field is not coming through.
+                        </p>` : ''}
+                </div>`;
+
+            appendRaceVerification(host, all);
+        }
+
+        // ADMIN ONLY: the per-referral rows behind the chart.
+        //
+        // WHY THIS SHOWS INDIVIDUAL RACE WHEN NOTHING ELSE DOES.
+        //
+        // Asked for on 2026-08-20, for one reason: an aggregate nobody can
+        // check is not trustworthy, and the first version of this chart WAS
+        // wrong — it read race codes and ignored the Hispanic/Latino question,
+        // so a school with no White students reported White. The admin spotted
+        // it from knowing the school and had no way to confirm it.
+        //
+        // Gated twice. This function hides the button for anyone who is not an
+        // admin, and the server refuses the query outright with requireAdmin,
+        // so hiding the button is a courtesy rather than the control. PBIS was
+        // given counts and only counts; this is the permission they were not
+        // given.
+        function appendRaceVerification(host, all) {
+            const role = (currentUser && currentUser.role) || '';
+            if (role !== 'admin' && role !== 'superadmin') return;
+            const card = host.querySelector('.demo-card');
+            if (!card) return;
+
+            const wrap = document.createElement('div');
+            wrap.className = 'race-verify';
+            wrap.innerHTML = `
+                <button type="button" class="btn-secondary race-verify-btn">
+                    Verify these counts
+                </button>
+                <p class="receipt-meta">
+                    Administrators only. Opens the referral-by-referral rows behind the chart,
+                    with each student's race and Hispanic/Latino answer exactly as PowerSchool
+                    holds it, so the totals above can be checked against the roster. Behind a
+                    click because it puts named children's race on screen.
+                </p>
+                <div class="race-verify-out"></div>`;
+            card.appendChild(wrap);
+
+            const btn = wrap.querySelector('.race-verify-btn');
+            const out = wrap.querySelector('.race-verify-out');
+            btn.addEventListener('click', function () {
+                setButtonBusy(btn, true, 'Loading…');
+                out.innerHTML = '<p class="panel-hint">Loading the rows behind the numbers…</p>';
+                loadRaceVerification(all).then(function (v) {
+                    setButtonBusy(btn, false);
+                    renderRaceVerification(out, all, v);
+                });
+            });
+        }
+
+        async function loadRaceVerification(referrals) {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) {
+                return {
+                    allowed: false, needsSignIn: true,
+                    reason: 'This reads the SIS, which needs a Microsoft sign-in. ' +
+                            'A username session carries no identity for the server to check.'
+                };
+            }
+            try {
+                return await auth.convexQuery('disciplineAggregates:raceVerification',
+                    { studentNumbers: referralStudentNumbers(referrals) }, session.idToken);
+            } catch (e) {
+                const msg = (e && e.message) || String(e);
+                if (/\b401\b|unauthor/i.test(msg)) {
+                    return { allowed: false, needsSignIn: true,
+                        reason: 'The Microsoft sign-in for this session has expired. Sign out and back in.' };
+                }
+                return { allowed: false, reason: msg };
+            }
+        }
+
+        function renderRaceVerification(out, referrals, v) {
+            if (!out) return;
+            if (!v || v.allowed === false) {
+                out.innerHTML = `<p class="panel-hint">${escapeHtml((v && v.reason) || 'Unavailable.')}</p>`;
+                return;
+            }
+
+            const byNumber = {};
+            (v.rows || []).forEach(function (r) { byNumber[r.studentNumber] = r; });
+
+            // ONE ROW PER REFERRAL, because the chart counts referrals. A
+            // per-student list would not reconcile against it for any student
+            // with two referrals, which is exactly the case worth checking.
+            const lines = (referrals || []).slice().sort(function (a, b) {
+                return new Date(b.submittedAt) - new Date(a.submittedAt);
+            }).map(function (r) {
+                const num = referralStudentNumber(r);
+                return { referral: r, number: num, info: num ? byNumber[num] : null };
+            });
+
+            // The reconciliation. Counted the same way the server counts: a
+            // referral adds one to EVERY category its student reports under.
+            const tally = {};
+            lines.forEach(function (l) {
+                ((l.info && l.info.reported) || []).forEach(function (c) {
+                    tally[c] = (tally[c] || 0) + 1;
+                });
+            });
+            const noRecord = lines.filter(function (l) { return !l.info || !l.info.reported.length; }).length;
+
+            const why = function (info) {
+                if (!info) return 'No SIS record';
+                if (info.basis === 'ethnicity') return 'Hispanic/Latino — ethnicity is asked first and overrides race';
+                if (info.basis === 'race') return 'Not Hispanic/Latino, so categorised by race code';
+                if (!info.hasRecord) return 'No restricted record synced for this student';
+                return 'No usable race code or ethnicity answer';
+            };
+
+            out.innerHTML = `
+                <div class="wc-card race-verify-card">
+                    <p class="receipt-meta">
+                        ${lines.length} referral${lines.length === 1 ? '' : 's'}
+                        &middot; restricted data, admins only &middot; do not export or screenshot
+                    </p>
+                    <table class="wc-table"><thead><tr>
+                        <th>Referral</th><th>Student</th><th>Gr.</th><th>Status</th>
+                        <th>Counted as</th><th>Hispanic/Latino?</th><th>Race code(s)</th><th>Why</th>
+                    </tr></thead><tbody>
+                    ${lines.map(function (l) {
+                        const i = l.info;
+                        const eth = !i ? '—'
+                            : i.ethnicity === 'hispanic' ? 'Yes'
+                            : i.ethnicity === 'not' ? 'No'
+                            : '<span class="receipt-meta" title="Never answered in the SIS">Not answered</span>';
+                        const codes = i && i.raceCodes.length
+                            ? i.raceCodes.map(function (c, n) {
+                                  const lab = i.raceLabels[n];
+                                  return escapeHtml(c) + (lab ? ' <span class="receipt-meta">(' + escapeHtml(lab) + ')</span>' : '');
+                              }).join(', ')
+                            : '<span class="receipt-meta">none</span>';
+                        return `
+                        <tr${(!i || !i.reported.length) ? ' class="demo-gap"' : ''}>
+                            <td>${escapeHtml(l.referral.id || '')}</td>
+                            <td>${escapeHtml(l.referral.studentName || ((i && (i.firstName + ' ' + i.lastName)) || 'Unknown'))}</td>
+                            <td>${escapeHtml((i && i.gradeLevel) || l.referral.studentGrade || '')}</td>
+                            <td>${l.referral.status === 'closed' ? 'Closed' : '<strong>Open</strong>'}</td>
+                            <td>${i && i.reported.length
+                                    ? i.reported.map(escapeHtml).join(' + ')
+                                    : '<span class="receipt-meta">not counted</span>'}</td>
+                            <td>${eth}</td>
+                            <td>${codes}</td>
+                            <td class="receipt-meta">${escapeHtml(why(i))}</td>
+                        </tr>`;
+                    }).join('')}
+                    </tbody></table>
+
+                    <div class="race-verify-tally">
+                        <div class="sh-detail-head">These rows add up to</div>
+                        ${Object.keys(tally).sort(function (a, b) { return tally[b] - tally[a]; })
+                            .map(function (k) {
+                                return '<div class="sh-detail-row"><span>' + escapeHtml(k) +
+                                       '</span><span>' + tally[k] + '</span></div>';
+                            }).join('')}
+                        ${noRecord ? '<div class="sh-detail-row"><span>Not counted (no race record)</span><span>' +
+                                     noRecord + '</span></div>' : ''}
+                    </div>
+                    <p class="receipt-meta demo-legend">
+                        Compare this list with the chart above: the numbers should match exactly,
+                        except where the chart withheld a group under ${escapeHtml(String(
+                            (raceAggregate && raceAggregate.smallGroupThreshold) || 10))} enrolled.
+                        A student of two or more races adds one to each of their categories, so
+                        the totals here can exceed the referral count.
+                    </p>
                 </div>`;
         }
 
