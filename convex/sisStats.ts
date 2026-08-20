@@ -93,6 +93,7 @@ export const stats = internalMutation({
     const att = await ctx.db.query("psAttendance").collect();
     const grades = await ctx.db.query("psGrades").collect();
     const students = await ctx.db.query("students").collect();
+    const restricted = await ctx.db.query("psRestricted").collect();
     return {
       rosterRows: roster.length,
       rosterStudents: new Set(roster.map((r) => r.studentNumber)).size,
@@ -104,6 +105,11 @@ export const stats = internalMutation({
       // gap is visible rather than rendered as 0%.
       gradeRowsMissingPercent: grades.filter((g) => g.currentPercent === undefined).length,
       appStudents: students.length,
+      // Demographics. COUNTS ONLY: this is an operational check that the load
+      // ran, and it must not become a way to read the data it is counting.
+      restrictedStudents: restricted.length,
+      restrictedWithRace: restricted.filter((r) => (r.raceCodes ?? []).length > 0).length,
+      restrictedWithEthnicity: restricted.filter((r) => r.fedEthnicity).length,
       lastSyncedAt: roster[0]?.syncedAt ?? null,
     };
   },
