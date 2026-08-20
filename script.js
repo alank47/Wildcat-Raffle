@@ -26754,7 +26754,21 @@
         async function loadRaceAggregate(referrals) {
             const auth = window.WildcatAuth;
             const session = auth && auth.getSession && auth.getSession();
-            if (!auth || !session) return { allowed: false, reason: 'Sign in with Microsoft to see this.' };
+            // NOT a permissions refusal, and it must not be reported as one.
+            // Username login carries no Convex identity, so every Convex call
+            // 401s. Reporting that as "Not available to you" reads as "your
+            // role is not allowed to see this", which sends an admin off to
+            // check role settings that were never the problem. It cost a round
+            // of debugging already.
+            if (!auth || !session) {
+                return {
+                    allowed: false, needsSignIn: true,
+                    reason: 'Race comes from the SIS, which needs a Microsoft sign-in. ' +
+                            'This session is signed in with a username, so the request ' +
+                            'carries no identity and the server refuses it. Sign in with ' +
+                            'Microsoft to see this breakdown.'
+                };
+            }
 
             // The join happens on the server, but the server cannot see
             // referrals: they are still in Firestore and race is in Convex.
@@ -26773,7 +26787,19 @@
                 return await auth.convexQuery('disciplineAggregates:byRace',
                     { studentNumbers: numbers }, session.idToken);
             } catch (e) {
-                return { allowed: false, reason: (e && e.message) || String(e) };
+                const msg = (e && e.message) || String(e);
+                // A 401 is the same situation as holding no session: a token
+                // that expired or was rejected, not a decision about the role.
+                // Told apart here so the card can say which, because the two
+                // need opposite responses from the reader.
+                if (/\b401\b|unauthor/i.test(msg)) {
+                    return {
+                        allowed: false, needsSignIn: true,
+                        reason: 'The Microsoft sign-in for this session has expired or was ' +
+                                'rejected by the server. Sign out and sign back in with Microsoft.'
+                    };
+                }
+                return { allowed: false, reason: msg };
             }
         }
 
@@ -26862,6 +26888,18 @@
         function renderRaceCard(host, res) {
             if (!host) return;
             const D = window.WildcatDiscipline;
+
+            // Sign-in first, because it is not a permissions answer and the
+            // reader's next action is completely different.
+            if (res && res.needsSignIn) {
+                host.innerHTML = `
+                    <div class="wc-card demo-card is-unavailable">
+                        <div class="demo-head"><h3>Race / Ethnicity</h3>
+                            <span class="demo-flag">Microsoft sign-in needed</span></div>
+                        <p class="panel-hint">${escapeHtml(res.reason || '')}</p>
+                    </div>`;
+                return;
+            }
 
             if (!res || res.allowed === false) {
                 host.innerHTML = `
