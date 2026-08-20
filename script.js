@@ -26643,7 +26643,7 @@
 
         function switchAnalyticsTab(tab) {
             analyticsTab = tab;
-            document.querySelectorAll('.analytics-tabs .subtab-button').forEach(b =>
+            document.querySelectorAll('.analytics-tabs .analytics-tab').forEach(b =>
                 b.classList.toggle('active', b.dataset.atab === tab));
             document.querySelectorAll('.analytics-pane').forEach(p =>
                 p.classList.toggle('hidden', p.dataset.apane !== tab));

@@ -6192,3 +6192,29 @@ body:has(#mainApp:not(.hidden)) { padding: 0; margin: 0; }
    prompt to look, not a verdict on a group of children. */
 .demo-over { font-weight: 700; color: #8A5A00; }
 .demo-legend { display: block; margin-top: 10px; }
+
+/* Analytics tabs carry their own class, deliberately NOT .subtab-button.
+   #disciplineContent .subtab-button is display:none !important, because the
+   discipline navigation moved to the sidebar and the old in-content rows were
+   suppressed wholesale. These tabs are CONTENT inside a pane, not navigation,
+   so reusing that class made them invisible with no way to override it. */
+.analytics-tab {
+    padding: 9px 18px;
+    background: #ffffff;
+    color: var(--wc-gray-text);
+    border: 1px solid #d7dde5;
+    border-radius: 9px;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 13px;
+    font-family: inherit;
+    white-space: nowrap;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.analytics-tab:hover { border-color: var(--wc-blue); color: var(--wc-blue); }
+.analytics-tab.active {
+    background: var(--wc-blue);
+    border-color: var(--wc-blue);
+    color: #ffffff;
+}
+.analytics-tab:focus-visible { outline: 2px solid var(--wc-blue); outline-offset: 2px; }

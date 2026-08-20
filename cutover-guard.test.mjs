@@ -557,6 +557,26 @@ console.log("\nThe referral save merges, and its transaction is side-effect free
   check("the counter cannot go backwards", /Math\.max\(/.test(near));
 }
 
+console.log("\nAnalytics tabs are not suppressed by the legacy-subtab rule");
+// styles.css has:
+//   #disciplineContent .subtab-button { display: none !important; }
+// written when discipline navigation moved to the sidebar. The analytics tabs
+// live inside #disciplineContent, so using that class made them invisible with
+// no way to override it: present in the DOM, display:none, zero height.
+{
+  const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+  check("the suppression rule still exists (this guard is about it)",
+    /#disciplineContent \.subtab-button\s*\{[^}]*display:\s*none/.test(css));
+  check("no analytics tab uses the suppressed class",
+    !/class="[^"]*\bsubtab-button\b[^"]*"[^>]*data-atab=/.test(html));
+  check("analytics tabs use their own class", /class="analytics-tab/.test(html));
+  check("and that class is actually styled", /\.analytics-tab\s*\{/.test(css));
+  check("the trend grain buttons are not suppressed either",
+    !/class="[^"]*\bsubtab-button\b[^"]*"[^>]*id="trendGrain/.test(html));
+  check("the switcher targets the class the markup uses",
+    script.includes(".analytics-tabs .analytics-tab"));
+}
+
 console.log("\nAnalytics panes live inside the analytics section");
 // A pane inserted by string anchor landed 670 lines away, inside the cash
 // activity table, and the tabs silently did nothing. Structure, not strings.
