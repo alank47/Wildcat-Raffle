@@ -6160,3 +6160,35 @@ body:has(#mainApp:not(.hidden)) { padding: 0; margin: 0; }
 .wc-update-bar .wc-update-reload { background: var(--wc-blue, #2F67A7); color: #fff; }
 .wc-update-bar .wc-update-later  { background: transparent; color: rgba(255,255,255,0.7); padding: 7px 8px; }
 .wc-update-bar .wc-update-later:hover { color: #fff; }
+
+/* ============================================================
+   DISCIPLINE ANALYTICS
+   ============================================================ */
+.analytics-tabs { margin-bottom: 18px; }
+.analytics-pane.hidden { display: none; }
+
+.trend-quiet td { color: var(--wc-gray-text); }
+
+.demo-card { margin-bottom: 18px; }
+.demo-card.is-unavailable { background: #FAFBFC; border-style: dashed; }
+.demo-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap; margin-bottom: 8px;
+}
+.demo-head h3 { margin: 0; font-size: 15px; color: var(--wc-ink); }
+.demo-flag {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: #8A5A00; background: #FFF6E5; padding: 3px 9px; border-radius: 999px;
+}
+
+/* A count presented where a rate belongs is the failure mode this whole
+   panel is designed against, so saying so is not decoration. */
+.demo-warn {
+    background: #FFF6E5; border-left: 3px solid #C08A2E;
+    padding: 9px 12px; border-radius: 8px; color: #8A5A00;
+}
+
+/* Over-representation is marked, never colour-coded green/red: this is a
+   prompt to look, not a verdict on a group of children. */
+.demo-over { font-weight: 700; color: #8A5A00; }
+.demo-legend { display: block; margin-top: 10px; }

@@ -25088,6 +25088,7 @@
                 populateHistoryStudentDropdown();
             } else if (subtab === 'analytics') {
                 updateReferralAnalytics();
+                switchAnalyticsTab(analyticsTab);
             }
         }
 
@@ -26107,7 +26108,15 @@
                 forwardedTo: [],
                 // Read by wildcat-merge to decide which copy of a referral is
                 // newer when two tabs both hold one.
-                updatedAt: new Date().toISOString()
+                updatedAt: new Date().toISOString(),
+
+                // SNAPSHOT, for the same reason a receipt records the price
+                // paid. A referral is a record of an incident on a date, and a
+                // student's grade changes every year, so reading it live in
+                // September would silently relabel last spring's referrals.
+                // Fields with no value are absent rather than "Unknown", so a
+                // gap can be measured instead of becoming a category.
+                demographics: window.WildcatDiscipline.snapshotDemographics(student)
             };
 
             const submitBtn = document.querySelector('.btn-referral-submit');
@@ -26619,6 +26628,225 @@
                     </tr>
                 `;
             }).join('');
+        }
+
+
+        // ============================================================
+        // REFERRAL ANALYTICS TABS
+        //
+        // Each pane answers one question. The demographics pane is the one
+        // that needs care: see wildcat-discipline.js for why every breakdown
+        // there reports a rate against enrolment rather than a raw count.
+        // ============================================================
+        let analyticsTab = 'all';
+        let trendGrain = 'week';
+
+        function switchAnalyticsTab(tab) {
+            analyticsTab = tab;
+            document.querySelectorAll('.analytics-tabs .subtab-button').forEach(b =>
+                b.classList.toggle('active', b.dataset.atab === tab));
+            document.querySelectorAll('.analytics-pane').forEach(p =>
+                p.classList.toggle('hidden', p.dataset.apane !== tab));
+            renderAnalyticsPane(tab);
+        }
+
+        function setTrendGrain(grain) {
+            trendGrain = grain;
+            const w = document.getElementById('trendGrainWeek');
+            const m = document.getElementById('trendGrainMonth');
+            if (w) w.classList.toggle('active', grain === 'week');
+            if (m) m.classList.toggle('active', grain === 'month');
+            renderAnalyticsPane('trends');
+        }
+
+        /**
+         * Enrolment counts per value, the denominator every demographic rate
+         * needs. Built from the CURRENT roster, which is the right population:
+         * "who is enrolled now" is what a disproportionality figure compares
+         * referrals against.
+         */
+        function enrollmentBy(dimension) {
+            const out = {};
+            enrolledStudents().forEach(s => {
+                let v = null;
+                if (dimension === 'grade') v = s.grade;
+                else if (dimension === 'school') v = s.school;
+                else if (dimension === 'sex') v = s.sex || s.gender;
+                else if (dimension === 'race') v = s.race;
+                else if (dimension === 'iep') v = s.iep;
+                v = String(v == null ? '' : v).trim();
+                if (v) out[v] = (out[v] || 0) + 1;
+            });
+            return out;
+        }
+
+        function renderAnalyticsPane(tab) {
+            const all = behaviorReferrals || [];
+            if (tab === 'trends')       return renderReferralTrend(all);
+            if (tab === 'behaviors')    return renderReferralBehaviors(all);
+            if (tab === 'demographics') return renderReferralDemographics(all);
+            if (tab === 'closed')       return renderClosedAnalytics(all);
+        }
+
+        function renderReferralTrend(all) {
+            const el = document.getElementById('referralTrend');
+            if (!el) return;
+            const t = window.WildcatDiscipline.trend(all, trendGrain);
+            if (!t.points.length) {
+                el.innerHTML = '<p class="panel-hint">No referrals yet.</p>';
+                return;
+            }
+            const max = Math.max.apply(null, t.points.map(p => p.count)) || 1;
+            el.innerHTML = `
+                <div class="wc-card">
+                    <table class="wc-table"><thead><tr>
+                        <th>${trendGrain === 'month' ? 'Month' : 'Week'}</th><th>Referrals</th><th></th>
+                    </tr></thead><tbody>
+                    ${t.points.map(p => `
+                        <tr${p.count === 0 ? ' class="trend-quiet"' : ''}>
+                            <td>${escapeHtml(p.key)}</td>
+                            <td><strong>${p.count}</strong></td>
+                            <td style="width:60%;">
+                                <div class="popularity-bar">
+                                    <span style="width:${Math.round((p.count / max) * 100)}%"></span>
+                                </div>
+                            </td>
+                        </tr>`).join('')}
+                    </tbody></table>
+                </div>`;
+        }
+
+        function renderReferralBehaviors(all) {
+            const el = document.getElementById('referralBehaviors');
+            if (!el) return;
+            const rows = window.WildcatDiscipline.behaviorBreakdown(all);
+            if (!rows.length) {
+                el.innerHTML = '<p class="panel-hint">No referrals yet.</p>';
+                return;
+            }
+            const max = rows[0].count || 1;
+            el.innerHTML = `
+                <div class="wc-card">
+                    <table class="wc-table"><thead><tr>
+                        <th>Behavior</th><th>Referrals</th><th>Students</th><th>Share</th><th></th>
+                    </tr></thead><tbody>
+                    ${rows.map(r => `
+                        <tr>
+                            <td>${escapeHtml(r.behavior)}</td>
+                            <td><strong>${r.count}</strong></td>
+                            <td>${r.uniqueStudents}</td>
+                            <td>${Math.round(r.share * 100)}%</td>
+                            <td style="width:40%;">
+                                <div class="popularity-bar">
+                                    <span style="width:${Math.round((r.count / max) * 100)}%"></span>
+                                </div>
+                            </td>
+                        </tr>`).join('')}
+                    </tbody></table>
+                </div>`;
+        }
+
+        function renderReferralDemographics(all) {
+            const el = document.getElementById('referralDemographics');
+            if (!el) return;
+            const D = window.WildcatDiscipline;
+            const dims = ['grade', 'school', 'sex', 'race', 'iep'];
+
+            el.innerHTML = dims.map(dim => {
+                const avail = D.availability(all, dim);
+
+                // Unavailable dimensions are SHOWN, with what would unblock
+                // them. Hiding them would let a reader conclude the school
+                // does not track this, rather than that it is withheld.
+                if (!avail.available) {
+                    return `
+                        <div class="wc-card demo-card is-unavailable">
+                            <div class="demo-head">
+                                <h3>${escapeHtml(avail.label)}</h3>
+                                <span class="demo-flag">${avail.restricted ? 'Restricted' : 'Not collected yet'}</span>
+                            </div>
+                            <p class="panel-hint">${escapeHtml(avail.unblock || 'No data for this field yet.')}</p>
+                        </div>`;
+                }
+
+                const out = D.breakdownBy(all, dim, enrollmentBy(dim));
+                const coverage = Math.round(avail.coverage * 100);
+                return `
+                    <div class="wc-card demo-card">
+                        <div class="demo-head">
+                            <h3>${escapeHtml(out.label)}</h3>
+                            <span class="receipt-meta">
+                                ${out.counted} of ${avail.total} referrals carry this (${coverage}%)
+                                ${out.missing ? ` &middot; ${out.missing} without a value` : ''}
+                            </span>
+                        </div>
+                        ${!out.hasDenominator ? `
+                            <p class="panel-hint demo-warn">
+                                No enrolment figures for this field, so shares below are counts only.
+                                A count is not a rate: do not read a tall bar as over-representation.
+                            </p>` : ''}
+                        <table class="wc-table"><thead><tr>
+                            <th>${escapeHtml(out.label)}</th><th>Referrals</th>
+                            <th>Share of referrals</th>
+                            ${out.hasDenominator ? '<th>Share of enrolment</th><th>Index</th>' : ''}
+                        </tr></thead><tbody>
+                        ${out.rows.map(r => `
+                            <tr>
+                                <td>${escapeHtml(r.value)}</td>
+                                <td><strong>${r.count}</strong></td>
+                                <td>${Math.round(r.shareOfReferrals * 100)}%</td>
+                                ${out.hasDenominator ? `
+                                    <td>${r.shareOfEnrollment === null ? '—' : Math.round(r.shareOfEnrollment * 100) + '%'}</td>
+                                    <td>${r.suppressed
+                                        ? `<span class="receipt-meta" title="Fewer than ${out.smallGroupThreshold} enrolled: a rate here would be noise and could identify a student.">withheld</span>`
+                                        : (r.index === null ? '—' :
+                                           `<span class="${r.index >= 1.5 ? 'demo-over' : ''}">${r.index.toFixed(2)}</span>`)}</td>` : ''}
+                            </tr>`).join('')}
+                        </tbody></table>
+                        ${out.hasDenominator ? `
+                            <p class="receipt-meta demo-legend">
+                                Index 1.00 is proportionate. 2.00 means referred at twice the rate
+                                enrolment predicts. Groups under ${out.smallGroupThreshold} enrolled are withheld.
+                            </p>` : ''}
+                    </div>`;
+            }).join('');
+        }
+
+        function renderClosedAnalytics(all) {
+            const el = document.getElementById('referralClosedAnalytics');
+            if (!el) return;
+            const closed = all.filter(r => r && r.status === 'closed');
+            if (!closed.length) {
+                el.innerHTML = '<p class="panel-hint">No referrals have been closed yet.</p>';
+                return;
+            }
+            const byResolution = {};
+            let loopClosed = 0;
+            let totalDays = 0, timed = 0;
+            closed.forEach(r => {
+                const res = String(r.resolutionType || '').trim() || 'Not recorded';
+                byResolution[res] = (byResolution[res] || 0) + 1;
+                if (r.loopClosed) loopClosed += 1;
+                const a = new Date(r.submittedAt), b = new Date(r.closedAt);
+                if (!isNaN(a) && !isNaN(b) && b >= a) { totalDays += (b - a) / 864e5; timed += 1; }
+            });
+            const rows = Object.keys(byResolution)
+                .map(k => ({ resolution: k, count: byResolution[k] }))
+                .sort((a, b) => b.count - a.count);
+
+            el.innerHTML = `
+                <div class="receipt-summary">
+                    <span class="receipt-stat"><strong>${closed.length}</strong> closed</span>
+                    <span class="receipt-stat"><strong>${loopClosed}</strong> loop closed</span>
+                    <span class="receipt-stat"><strong>${timed ? (totalDays / timed).toFixed(1) : '—'}</strong> avg days to close</span>
+                </div>
+                <div class="wc-card">
+                    <table class="wc-table"><thead><tr><th>Resolution</th><th>Referrals</th><th>Share</th></tr></thead><tbody>
+                    ${rows.map(r => `
+                        <tr><td>${escapeHtml(r.resolution)}</td><td><strong>${r.count}</strong></td>
+                        <td>${Math.round((r.count / closed.length) * 100)}%</td></tr>`).join('')}
+                    </tbody></table>
+                </div>`;
         }
 
         function updateReferralAnalytics() {
