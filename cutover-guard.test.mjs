@@ -557,5 +557,28 @@ console.log("\nThe referral save merges, and its transaction is side-effect free
   check("the counter cannot go backwards", /Math\.max\(/.test(near));
 }
 
+console.log("\nAnalytics panes live inside the analytics section");
+// A pane inserted by string anchor landed 670 lines away, inside the cash
+// activity table, and the tabs silently did nothing. Structure, not strings.
+{
+  const lines = html.split("\n");
+  const start = lines.findIndex((l) => l.includes('id="behaviorAnalytics"'));
+  let depth = 0, end = -1;
+  for (let i = start; i < lines.length; i++) {
+    depth += (lines[i].match(/<div\b/g) || []).length - (lines[i].match(/<\/div>/g) || []).length;
+    if (depth === 0 && i > start) { end = i; break; }
+  }
+  check("the analytics section is balanced and findable", start !== -1 && end > start);
+
+  const panes = ["all", "trends", "behaviors", "demographics", "closed"];
+  for (const name of panes) {
+    const at = lines.findIndex((l) => l.includes(`data-apane="${name}"`));
+    check(`pane ${name} is inside the analytics section`, at > start && at < end);
+  }
+  for (const name of panes) {
+    check(`tab ${name} has a button`, html.includes(`data-atab="${name}"`));
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
