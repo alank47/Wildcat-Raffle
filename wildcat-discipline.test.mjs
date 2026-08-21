@@ -83,14 +83,40 @@ console.log("\nAvailability is measured from the data, never hardcoded");
   check("IEP says the source is unconfirmed, not that it was denied",
     /registrar/.test(iep.unblock));
 
-  // Sex is granted in PowerSchool already; it is a sync gap, not an approval.
+  // Sex is manifest field 9, fieldClass "Standard": already granted in
+  // plugin.xml and already selected by the roster query. It was never an
+  // approval question, only a sync gap, and the sync now carries it.
   check("sex is NOT described as restricted", D.DIMENSIONS.sex.restricted === false);
-  check("and its unblock names a sync change, not an approval",
-    /sync change, not an approval/.test(D.DIMENSIONS.sex.unblock));
+  check("its unblock points at a sync run, not an approval",
+    /twice-daily sync has not run/.test(D.DIMENSIONS.sex.unblock) &&
+    !/approval/.test(D.DIMENSIONS.sex.unblock.replace('not an approval', '')));
+  check("and it warns that older referrals stay empty",
+    /keep whatever was recorded at the time/.test(D.DIMENSIONS.sex.unblock));
 
   const partial = D.availability([ref({ demographics: { grade: "9" } }), ref()], "grade");
   check("partial coverage is reported as a fraction, not rounded to available",
     partial.coverage === 0.5 && partial.covered === 1);
+}
+
+console.log("\nSex is labelled for a reader, never rewritten");
+{
+  check("M displays as Male", D.displayValue('sex', 'M') === 'Male');
+  check("F displays as Female", D.displayValue('sex', 'F') === 'Female');
+  check("lowercase from the SIS still resolves", D.displayValue('sex', 'f') === 'Female');
+  // The one that matters: a district recording something else must not be
+  // bucketed into M/F, and must not be relabelled at all.
+  check("an unexpected value passes through UNCHANGED",
+    D.displayValue('sex', 'X') === 'X' && D.displayValue('sex', 'Non-binary') === 'Non-binary');
+  check("other dimensions are never relabelled",
+    D.displayValue('grade', 'M') === 'M' && D.displayValue('school', 'F') === 'F');
+  check("blank stays blank rather than becoming a category",
+    D.displayValue('sex', '') === '' && D.displayValue('sex', null) === '');
+
+  // The snapshot still records what the SIS holds, not the label.
+  check("the referral stores the raw SIS value, not the display label",
+    D.snapshotDemographics({ gender: 'M' }).sex === 'M');
+  check("and reads it from either field name",
+    D.snapshotDemographics({ sex: 'F' }).sex === 'F');
 }
 
 console.log("\nRates, not counts");

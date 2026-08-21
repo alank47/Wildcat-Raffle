@@ -8,7 +8,9 @@
 // The adversarial cases matter more than the happy path: a sync payload that
 // explicitly carries zeroes is exactly what a buggy or malicious upstream
 // would send, and it must not win.
-import { mergeStudent, sisFieldsFor, EARNED_FIELDS } from "./sisMerge.ts";
+import { mergeStudent, sisFieldsFor, EARNED_FIELDS, SIS_OWNED_FIELDS } from "./sisMerge.ts";
+import { readFileSync } from "node:fs";
+const read = (f) => readFileSync(new URL(`./${f}`, import.meta.url), "utf8");
 
 let pass = 0, fail = 0;
 const check = (l, c, d = "") => {
@@ -83,7 +85,40 @@ console.log("\nThe allowlist is closed");
   const patch = mergeStudent(RICH, { springCarnivalTickets: 0, secretAdminFlag: true, role: "admin" });
   check("an unanticipated new field is NOT written", Object.keys(patch).length === 0, Object.keys(patch).join());
   check("EARNED_FIELDS and SIS_OWNED_FIELDS do not overlap",
-    !EARNED_FIELDS.some((f) => ["firstName","lastName","grade","email","school"].includes(f)));
+    !EARNED_FIELDS.some((f) => SIS_OWNED_FIELDS.includes(f)));
+}
+
+console.log("\nGender: the SIS owns it, and it is not a restricted field");
+{
+  // Manifest field 9, fieldClass "Standard". Already ViewOnly in plugin.xml
+  // and already selected by the roster query as S.GENDER AS gender, so
+  // carrying it was a sync change and never an approval question.
+  check("the SIS may write gender", SIS_OWNED_FIELDS.includes("gender"));
+  check("it is NOT an earned value a sync must protect",
+    !EARNED_FIELDS.includes("gender"));
+  check("it is not in the restricted list",
+    !/"gender"/.test(read("restrictedPolicy.ts")));
+  check("the schema carries it", /gender: v\.optional\(v\.string\(\)\)/.test(read("schema.ts")));
+  check("the sync reads it from the roster query", /gender: s\(r\.gender\)/.test(read("sisAction.ts")));
+  check("and it reaches the browser's student record",
+    /gender: row\.gender/.test(read("appDataShape.ts")));
+
+  // It behaves like grade: updated by the sync, never invented.
+  check("a supplied value is passed through", sisFieldsFor({ gender: "F" }).gender === "F");
+  check("a blank one is dropped rather than written as empty",
+    sisFieldsFor({ gender: "" }).gender === undefined);
+  check("an absent one is not fabricated",
+    sisFieldsFor({ firstName: "Ana" }).gender === undefined);
+
+  // The guarantee this whole file exists for still holds with the new field.
+  // mergeStudent returns a PATCH of changed SIS fields, so the assertion is
+  // that gender is in it and nothing earned came along.
+  const patch = mergeStudent(RICH, { studentNumber: "11414", gender: "F" });
+  check("the patch carries gender", patch.gender === "F");
+  check("and carries no earned field with it",
+    !EARNED_FIELDS.some((f) => f in patch));
+  check("an unchanged gender produces no write",
+    mergeStudent({ ...RICH, gender: "F" }, { gender: "F" }).gender === undefined);
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

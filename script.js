@@ -27034,7 +27034,7 @@
                         </tr></thead><tbody>
                         ${out.rows.map(r => `
                             <tr>
-                                <td>${escapeHtml(r.value)}</td>
+                                <td>${escapeHtml(D.displayValue(dim, r.value))}</td>
                                 <td><strong>${r.count}</strong></td>
                                 <td>${Math.round(r.shareOfReferrals * 100)}%</td>
                                 ${out.hasDenominator ? `

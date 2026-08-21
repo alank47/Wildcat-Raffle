@@ -60,6 +60,9 @@ export function toAppStudent(row: Record<string, any>): AppStudent {
     firstName: row.firstName,
     lastName: row.lastName,
     grade: row.grade,
+    // Read by wildcat-discipline's snapshotDemographics as `sex`, which
+    // already falls back through `s.sex || s.gender`.
+    gender: row.gender,
     school: row.school,
     email: row.email,
 

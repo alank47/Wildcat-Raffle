@@ -37,6 +37,11 @@ export const SIS_OWNED_FIELDS = [
   "firstName",
   "lastName",
   "grade",
+  // PowerSchool is the record of truth for this, the same as grade. It is not
+  // a restricted field (manifest 9, "Standard") and it is never earned, so a
+  // sync may write it freely. It stays OUT of EARNED_FIELDS above for the same
+  // reason grade does.
+  "gender",
   "email",
   "school",
 ] as const;

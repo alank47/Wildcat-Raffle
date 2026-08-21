@@ -48,6 +48,16 @@ export default defineSchema({
     firstName: v.string(),
     lastName: v.string(),
     grade: v.optional(v.string()),
+    // STUDENTS.GENDER. Manifest field 9, fieldClass "Standard" — NOT one of
+    // the restricted fields, already ViewOnly in plugin.xml, and already
+    // selected by the roster PowerQuery. It was simply never carried onto the
+    // student record, which is why discipline analytics could not break
+    // referrals down by sex.
+    //
+    // Stored as PowerSchool writes it rather than normalised to a fixed set.
+    // Districts record more than M/F, and rounding a child's record to the two
+    // values this code expected to see would be a silent edit of their record.
+    gender: v.optional(v.string()),
     school: v.optional(
       v.union(v.literal("middleschool"), v.literal("highschool")),
     ),

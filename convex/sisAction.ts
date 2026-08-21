@@ -192,6 +192,9 @@ export const syncFromPowerSchool = internalAction({
         firstName: s(r.first_name) ?? "",
         lastName: s(r.last_name) ?? "",
         grade: s(r.grade_level),
+        // Already selected by the roster query as S.GENDER AS gender, and
+        // already granted in plugin.xml. Reading it here is the whole change.
+        gender: s(r.gender),
       });
     }
     const students = [...seen.values()];

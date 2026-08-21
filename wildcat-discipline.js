@@ -68,8 +68,10 @@
       // Students.Gender is already ViewOnly in plugin.xml and in the manifest.
       // It is simply not carried onto the app's student record yet, so this
       // needs a sync field, not an approval.
-      unblock: 'PowerSchool already grants Students.Gender. It is not yet carried ' +
-               'onto the app student record, so this needs a sync change, not an approval.'
+      unblock: 'PowerSchool grants Students.Gender and the sync now carries it onto ' +
+               'the student record. If this is empty, the twice-daily sync has not run ' +
+               'since that change. It fills in on the next run. Referrals filed before ' +
+               'then keep whatever was recorded at the time, which is nothing.'
     },
     race: {
       key: 'race', label: 'Race / Ethnicity', restricted: true,
@@ -133,6 +135,28 @@
     // joins referrals to psRestricted SERVER SIDE, returns counts, and never
     // builds a student row. The browser is never given the value at all.
     return out;
+  }
+
+  /**
+   * How a stored value is SHOWN. Display only; nothing is rewritten.
+   *
+   * PowerSchool stores sex as a single letter. "M" on a chart about children
+   * is a code, not a label, and a reader has to already know the convention
+   * to read the row. The referral still records exactly what the SIS holds.
+   *
+   * A value outside the known set is passed through UNCHANGED rather than
+   * bucketed or relabelled. Districts record more than two values, and
+   * collapsing a child into a category the school did not choose is the same
+   * class of mistake as reading race codes without asking about ethnicity.
+   */
+  var SEX_LABELS = { M: 'Male', F: 'Female' };
+  function displayValue(dimension, value) {
+    var v = trimmed(value);
+    if (dimension === 'sex') {
+      var hit = SEX_LABELS[v.toUpperCase()];
+      if (hit) return hit;
+    }
+    return v;
   }
 
   /** Read a dimension off a referral, preferring the snapshot taken at filing. */
@@ -370,6 +394,7 @@
     SMALL_GROUP: SMALL_GROUP,
     DIMENSIONS: DIMENSIONS,
     snapshotDemographics: snapshotDemographics,
+    displayValue: displayValue,
     valueOf: valueOf,
     availability: availability,
     breakdownBy: breakdownBy,
