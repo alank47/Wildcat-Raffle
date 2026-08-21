@@ -3118,7 +3118,18 @@
                             // former students would DELETE them and their
                             // balances. Convex would merely skip them, but
                             // Firestore is still the system of record.
-                            let studentsToSave = students.concat(nonEnrolledStudents);
+                            // Stripped HERE as well as in the merge branch below,
+                            // because this is what gets written when `main` does not
+                            // exist yet. The merge branch replaces studentsToSave
+                            // entirely, so the two paths have to strip independently.
+                            let studentsToSave = students.concat(nonEnrolledStudents).map(s => {
+                                const c = Object.assign({}, s);
+                                delete c.ticketHistory;
+                                delete c.sections;
+                                delete c.wildcatCashTransactions;
+                                delete c.cashTransactions;
+                                return c;
+                            });
                             let teachersToSave = teachers;
                             
                             if (mainDoc.exists()) {
@@ -3210,6 +3221,22 @@
                                         
                                         delete studentData.ticketHistory;
                                         delete studentData.sections;   // stored in the `schedules` document
+                                        // DERIVED, exactly like the two above, and the
+                                        // reason `main` sat at 81% of Firestore's 1MB
+                                        // limit. The authoritative ledger is the
+                                        // cash_tx_* weekly documents;
+                                        // distributeCashTransactions() rebuilds this
+                                        // per-student view from it on every load. Writing
+                                        // it here stored a SECOND complete copy of every
+                                        // cash transaction in the school, sharded across
+                                        // student records, in the one document every
+                                        // teacher loads on open.
+                                        //
+                                        // `cashTransactions` is the retired name for the
+                                        // same thing; ensureCashFields already deletes it
+                                        // from every student on load.
+                                        delete studentData.wildcatCashTransactions;
+                                        delete studentData.cashTransactions;
                                         return studentData;
                                     });
                                 
@@ -3220,6 +3247,8 @@
                                         const studentData = {...localStudent};
                                         delete studentData.ticketHistory;
                                         delete studentData.sections;   // stored in the `schedules` document
+                                        delete studentData.wildcatCashTransactions;  // see above
+                                        delete studentData.cashTransactions;
                                         mergedStudents.push(studentData);
                                     }
                                 });
@@ -3315,6 +3344,12 @@
                         students = savedAll.filter(s => s.enrolled !== false);
                         nonEnrolledStudents = savedAll.filter(s => s.enrolled === false);
                         teachers = mainTransactionResult.teachersToSave;
+                        // The cash view was just stripped out of what was written, and
+                        // ticketHistory/sections are re-attached above from the copies
+                        // taken before the transaction. This one is rebuilt from the
+                        // ledger instead, which is the same thing loadData does. Without
+                        // it "My Cash Activity" empties out until the next refresh.
+                        if (typeof distributeCashTransactions === 'function') distributeCashTransactions();
 
                         console.log(`✅ Main document saved (transaction)`);
 
@@ -22083,6 +22118,8 @@
                 const copy = Object.assign({}, s);
                 delete copy.ticketHistory;   // lives in ticket_history_ms / _hs
                 delete copy.sections;        // lives in the schedules document
+                delete copy.wildcatCashTransactions;  // lives in cash_tx_*
+                delete copy.cashTransactions;         // retired name for the same
                 return copy;
             });
 
@@ -22192,10 +22229,16 @@
             rows.forEach(r => { r.pct = r.bytes / STORAGE_DOC_LIMIT; });
 
             // What's taking up room inside `main` — the actionable detail
+            // What is taking up room inside `main` — the actionable detail.
+            //
+            // This used to report the per-student cash arrays, which were indeed
+            // the bulk of the problem: a duplicate of the whole cash ledger rode
+            // into `main` on every student record. They are no longer written
+            // there, so reporting them here would measure something the save does
+            // not produce and send someone chasing space that is already free.
             const detail = [
-                { label: 'Cash balances & counters on students', bytes: (students || []).reduce((n, s) => n + _byteSize(s.wildcatCashTransactions || []), 0) },
-                { label: 'Cash transactions on students',       bytes: (students || []).reduce((n, s) => n + _byteSize(s.cashTransactions || []), 0) },
-                { label: 'Teacher records',                     bytes: _byteSize(teachers || []) }
+                { label: 'Student records (core fields)', bytes: _byteSize(studentsForMain) },
+                { label: 'Teacher records',              bytes: _byteSize(teachers || []) }
             ];
 
             return { rows, detail };
