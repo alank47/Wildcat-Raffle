@@ -138,16 +138,20 @@ console.log("\nBackfilling sex is safe; backfilling grade is not");
 
 console.log("\nRates, not counts");
 {
-  // 6 of 10 referrals to a group that is 60% of the school is PROPORTIONATE.
+  // 60 of 100 referrals to a group that is 60% of the school is PROPORTIONATE.
+  //
+  // Counts scaled x10 from the original 6/4 when MIN_REFERRALS_FOR_INDEX
+  // arrived: an index is no longer computed from a handful of referrals, and
+  // the ratios these assertions check are unchanged by the scaling.
   const rows = [];
-  for (let i = 0; i < 6; i++) rows.push(ref({ studentId: "A" + i, demographics: { race: "GroupA" } }));
-  for (let i = 0; i < 4; i++) rows.push(ref({ studentId: "B" + i, demographics: { race: "GroupB" } }));
+  for (let i = 0; i < 60; i++) rows.push(ref({ studentId: "A" + i, demographics: { race: "GroupA" } }));
+  for (let i = 0; i < 40; i++) rows.push(ref({ studentId: "B" + i, demographics: { race: "GroupB" } }));
 
   const noDenominator = D.breakdownBy(rows, "race");
   check("without enrolment there is NO index", noDenominator.rows.every((r) => r.index === null));
   check("and the caller is told the denominator is missing",
     noDenominator.hasDenominator === false);
-  check("counts are still reported", noDenominator.rows[0].count === 6);
+  check("counts are still reported", noDenominator.rows[0].count === 60);
 
   const withDenominator = D.breakdownBy(rows, "race", { GroupA: 600, GroupB: 400 });
   const a = withDenominator.rows.find((r) => r.value === "GroupA");
@@ -158,17 +162,68 @@ console.log("\nRates, not counts");
 
   // Now a genuinely disproportionate case.
   const skewed = [];
-  for (let i = 0; i < 8; i++) skewed.push(ref({ studentId: "C" + i, demographics: { race: "GroupA" } }));
-  for (let i = 0; i < 2; i++) skewed.push(ref({ studentId: "D" + i, demographics: { race: "GroupB" } }));
+  for (let i = 0; i < 80; i++) skewed.push(ref({ studentId: "C" + i, demographics: { race: "GroupA" } }));
+  for (let i = 0; i < 20; i++) skewed.push(ref({ studentId: "D" + i, demographics: { race: "GroupB" } }));
   const s = D.breakdownBy(skewed, "race", { GroupA: 400, GroupB: 600 });
   const sa = s.rows.find((r) => r.value === "GroupA");
   check("a group referred at twice its enrolment share scores 2.0",
     Math.abs(sa.index - 2) < 1e-9);
 }
 
+console.log("\nA ratio is not computed from a handful of referrals");
+{
+  // THE REPORTED CASE. Six referrals, one to a group that is 7% of the school.
+  // That produced 2.38, and zero referrals produces 0.00, with nothing in
+  // between: the group cannot score near 1.0 no matter what is true.
+  const rows = [];
+  for (let i = 0; i < 5; i++) rows.push(ref({ studentId: "H" + i, demographics: { race: "Hispanic" } }));
+  rows.push(ref({ studentId: "B1", demographics: { race: "Black" } }));
+
+  const out = D.breakdownBy(rows, "race", { Hispanic: 560, Black: 44 });
+  const black = out.rows.find((r) => r.value === "Black");
+  const hisp = out.rows.find((r) => r.value === "Hispanic");
+
+  check("a group with one referral gets NO index", black.index === null);
+  check("and says why, distinctly from privacy suppression",
+    black.tooFewReferrals === true && black.suppressed === false);
+  check("its count is still reported, because that is a fact", black.count === 1);
+  check("so is its share of referrals",
+    Math.abs(black.shareOfReferrals - 1 / 6) < 1e-9);
+  check("so is its enrolment share, which is what makes the count readable",
+    Math.abs(black.shareOfEnrollment - 44 / 604) < 1e-9);
+
+  // The majority group is equally uncomputable at this volume, even though
+  // its 0.93 looked reassuringly precise.
+  check("the majority group is ALSO withheld at five referrals",
+    hisp.index === null && hisp.tooFewReferrals === true);
+
+  check("the threshold is reported so the UI can explain itself",
+    out.minReferralsForIndex === D.MIN_REFERRALS_FOR_INDEX);
+
+  // At the threshold the index appears, and is correct.
+  const many = [];
+  for (let i = 0; i < 10; i++) many.push(ref({ studentId: "B" + i, demographics: { race: "Black" } }));
+  for (let i = 0; i < 90; i++) many.push(ref({ studentId: "H" + i, demographics: { race: "Hispanic" } }));
+  const big = D.breakdownBy(many, "race", { Black: 100, Hispanic: 900 });
+  const b2 = big.rows.find((r) => r.value === "Black");
+  check("at exactly the threshold the index appears", b2.tooFewReferrals === false);
+  check("and it is proportionate, not inflated", Math.abs(b2.index - 1) < 1e-9);
+
+  // A group over the threshold that IS disproportionate still says so.
+  const skew = [];
+  for (let i = 0; i < 30; i++) skew.push(ref({ studentId: "B" + i, demographics: { race: "Black" } }));
+  for (let i = 0; i < 70; i++) skew.push(ref({ studentId: "H" + i, demographics: { race: "Hispanic" } }));
+  const s2 = D.breakdownBy(skew, "race", { Black: 100, Hispanic: 900 });
+  check("real disproportionality is NOT hidden by the new rule",
+    Math.abs(s2.rows.find((r) => r.value === "Black").index - 3) < 1e-9);
+}
+
 console.log("\nSmall groups are suppressed, not published");
 {
-  const rows = [ref({ demographics: { race: "Tiny" } }), ref({ studentId: "S2", demographics: { race: "Big" } })];
+  const rows = [ref({ demographics: { race: "Tiny" } })];
+  // Big needs enough referrals to clear MIN_REFERRALS_FOR_INDEX, or "not
+  // suppressed" would pass for the wrong reason and stop testing suppression.
+  for (let i = 0; i < 12; i++) rows.push(ref({ studentId: "S" + i, demographics: { race: "Big" } }));
   const out = D.breakdownBy(rows, "race", { Tiny: 4, Big: 900 });
   const tiny = out.rows.find((r) => r.value === "Tiny");
   check("a group below the threshold is marked suppressed", tiny.suppressed === true);
@@ -180,6 +235,13 @@ console.log("\nSmall groups are suppressed, not published");
 
   const big = out.rows.find((r) => r.value === "Big");
   check("a large group is not suppressed", big.suppressed === false && big.index !== null);
+  // Both flags can be true here, and that is fine: this module runs in the
+  // browser, which already holds every referral, so nothing is leaked by
+  // saying so. The SERVER deliberately reports tooFewReferrals as false for a
+  // suppressed group, because there the flag would be a second fact about a
+  // group too small to describe — asserted in convex/raceRollup.test.mjs.
+  check("suppression and too-few are independent flags",
+    tiny.suppressed === true && tiny.tooFewReferrals === true);
 }
 
 console.log("\nMissing values are counted, never bucketed");

@@ -36,6 +36,32 @@ import { reportedCategories, classifyEthnicity, HISPANIC_LABEL } from "./raceRol
 /** Below this many ENROLLED students, a rate is noise and may identify. */
 const SMALL_GROUP = 10;
 
+/**
+ * Minimum REFERRALS in a group before a disproportionality index is computed.
+ *
+ * A DIFFERENT RULE FROM SMALL_GROUP, GUARDING A DIFFERENT AXIS.
+ *
+ * SMALL_GROUP withholds a whole row when few students are ENROLLED, because a
+ * cell that small can identify a child. That is privacy. This is statistics:
+ * it withholds only the ratio when a group has few REFERRALS, because a ratio
+ * built on one or two incidents is noise reported to two decimal places.
+ *
+ * WHY IT HAD TO EXIST. With six referrals in the system and one going to a
+ * group that is 7% of the school, this returned 2.38. With zero it returns
+ * 0.00. There is no value in between, so the group cannot score near 1.0 no
+ * matter what is true. The index was reporting the resolution limit of the
+ * data as a finding about children, and "referred at 2.4x their share" is
+ * exactly the sentence that leaves a slide without its caveat attached.
+ *
+ * 10 matches the enrolment threshold and the usual floor in federal IDEA
+ * disproportionality work. California uses 30 for its own determinations, so
+ * this is the permissive end of defensible rather than the strict end.
+ *
+ * COUNTS AND SHARES ARE STILL RETURNED. Those are facts. Only the ratio, which
+ * is an inference, is withheld.
+ */
+const MIN_REFERRALS_FOR_INDEX = 10;
+
 /** Roles that may see discipline aggregates by protected characteristic. */
 const AGGREGATE_ROLES = ["admin", "superadmin", "pbis"];
 
@@ -151,6 +177,7 @@ export const byRace = query({
       const count = referralsBy[code] ?? 0;
       const suppressed = enrolled > 0 && enrolled < SMALL_GROUP;
       if (suppressed) withheld += 1;
+      const tooFewReferrals = count < MIN_REFERRALS_FOR_INDEX;
 
       const shareOfReferrals = counted ? count / counted : 0;
       const shareOfEnrollment = enrolTotal ? enrolled / enrolTotal : 0;
@@ -165,8 +192,15 @@ export const byRace = query({
         shareOfReferrals: suppressed ? null : shareOfReferrals,
         shareOfEnrollment: suppressed ? null : shareOfEnrollment,
         index:
-          suppressed || !shareOfEnrollment ? null : shareOfReferrals / shareOfEnrollment,
+          suppressed || tooFewReferrals || !shareOfEnrollment
+            ? null
+            : shareOfReferrals / shareOfEnrollment,
         suppressed,
+        // Distinct from `suppressed` because the two say different things to a
+        // reader: one is "we will not show you this", the other is "there is
+        // not enough here yet to say anything". A suppressed row reports false
+        // rather than leaking a second fact about how small it is.
+        tooFewReferrals: suppressed ? false : tooFewReferrals,
       };
     }).sort((a, b) => (b.count ?? -1) - (a.count ?? -1));
 
@@ -187,6 +221,7 @@ export const byRace = query({
       unmappedStudents: restricted.filter((r) =>
         reportedCategories(r).unmapped.length > 0).length,
       smallGroupThreshold: SMALL_GROUP,
+      minReferralsForIndex: MIN_REFERRALS_FOR_INDEX,
       hispanicLabel: HISPANIC_LABEL,
       viewedAs: { role: staff.role },
     };

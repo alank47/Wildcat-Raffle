@@ -135,6 +135,21 @@ console.log("\nThe aggregate query uses the rollup, and verification is admin-on
     !/raceVerification[\s\S]*?AGGREGATE_ROLES/.test(agg));
   check("byRace still returns rows without any student identifier",
     !/studentNumber:\s*num,[\s\S]{0,200}count:/.test(agg));
+
+  // The server serves the race index, so the minimum-referral rule has to
+  // live here too. Enforcing it only in the browser would leave the real
+  // number in the network response for anyone who looked.
+  check("an index is withheld below the minimum referral count",
+    /const MIN_REFERRALS_FOR_INDEX = 10;/.test(agg) &&
+    /suppressed \|\| tooFewReferrals \|\| !shareOfEnrollment/.test(agg));
+  check("that is reported separately from privacy suppression",
+    /tooFewReferrals: suppressed \? false : tooFewReferrals/.test(agg));
+  check("and the threshold is returned so the UI can name it",
+    /minReferralsForIndex: MIN_REFERRALS_FOR_INDEX/.test(agg));
+  // Counts and shares are facts; only the ratio is an inference.
+  check("counts and shares are still returned at low volume",
+    /count: suppressed \? null : count/.test(agg) &&
+    !/count: tooFewReferrals/.test(agg));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

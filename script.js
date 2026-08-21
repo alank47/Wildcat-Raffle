@@ -27074,6 +27074,8 @@
                                     <td>${r.shareOfEnrollment === null ? '—' : Math.round(r.shareOfEnrollment * 100) + '%'}</td>
                                     <td>${r.suppressed
                                         ? `<span class="receipt-meta" title="Fewer than ${out.smallGroupThreshold} enrolled: a rate here would be noise and could identify a student.">withheld</span>`
+                                        : r.tooFewReferrals
+                                        ? `<span class="receipt-meta demo-thin" title="An index over ${r.count} referral${r.count === 1 ? '' : 's'} measures the size of the sample, not the school. It appears at ${out.minReferralsForIndex}.">too few</span>`
                                         : (r.index === null ? '—' :
                                            `<span class="${r.index >= 1.5 ? 'demo-over' : ''}">${r.index.toFixed(2)}</span>`)}</td>` : ''}
                             </tr>`).join('')}
@@ -27082,6 +27084,10 @@
                             <p class="receipt-meta demo-legend">
                                 Index 1.00 is proportionate. 2.00 means referred at twice the rate
                                 enrolment predicts. Groups under ${out.smallGroupThreshold} enrolled are withheld.
+                                An index needs at least ${out.minReferralsForIndex} referrals in the group:
+                                below that the ratio measures the size of the sample rather than the
+                                school, so it reads "too few" instead of printing a number nobody
+                                could defend.
                             </p>` : ''}
                         ${dim === 'sex' && resolvedSex ? `
                             <p class="receipt-meta demo-legend">
@@ -27177,6 +27183,8 @@
                             <td>${r.suppressed ? '—' : Math.round(r.shareOfEnrollment * 100) + '%'}</td>
                             <td>${r.suppressed
                                 ? `<span class="receipt-meta" title="Fewer than ${res.smallGroupThreshold} enrolled: withheld by the server.">withheld</span>`
+                                : r.tooFewReferrals
+                                ? `<span class="receipt-meta demo-thin" title="An index over ${r.count} referral${r.count === 1 ? '' : 's'} measures the size of the sample, not the school. It appears at ${res.minReferralsForIndex}.">too few</span>`
                                 : (r.index === null ? '—'
                                    : `<span class="${r.index >= 1.5 ? 'demo-over' : ''}">${r.index.toFixed(2)}</span>`)}</td>
                         </tr>`).join('')}
@@ -27184,7 +27192,10 @@
                     <p class="receipt-meta demo-legend">
                         Index 1.00 is proportionate. 2.00 means referred at twice the rate enrolment
                         predicts. Groups under ${res.smallGroupThreshold} enrolled are withheld by the
-                        server, not hidden by this page. A student of two or more races is
+                        server, not hidden by this page. An index needs at least
+                        ${res.minReferralsForIndex} referrals in the group: below that the ratio
+                        measures how few referrals there are rather than anything about the school.
+                        A student of two or more races is
                         counted under each, so totals can exceed the referral count. Categories
                         are the federal reporting groups; PowerSchool's detailed CALPADS
                         subcodes are rolled up.

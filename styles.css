@@ -6191,6 +6191,10 @@ body:has(#mainApp:not(.hidden)) { padding: 0; margin: 0; }
 /* Over-representation is marked, never colour-coded green/red: this is a
    prompt to look, not a verdict on a group of children. */
 .demo-over { font-weight: 700; color: #8A5A00; }
+
+/* "Too few referrals to say". Deliberately quiet: it is the absence of a
+   finding, and should not draw the eye the way a real ratio does. */
+.demo-thin { font-style: italic; opacity: 0.75; }
 .demo-legend { display: block; margin-top: 10px; }
 
 /* ADMIN VERIFICATION.

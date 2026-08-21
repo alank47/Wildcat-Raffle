@@ -47,6 +47,34 @@
   var SMALL_GROUP = 10;
 
   /**
+   * Minimum REFERRALS in a group before a disproportionality index is computed.
+   *
+   * A DIFFERENT RULE FROM SMALL_GROUP, GUARDING A DIFFERENT AXIS.
+   *
+   * SMALL_GROUP withholds a whole row when few students are ENROLLED, because
+   * a cell that small can identify a child. That is a privacy rule. This one
+   * is a statistical rule: it withholds only the ratio when the group has few
+   * REFERRALS, because a ratio built on one or two incidents is noise reported
+   * to two decimal places.
+   *
+   * WHY IT HAD TO EXIST. With six referrals in the system and one going to a
+   * group that is 7% of the school, the index reads 2.38. With zero it reads
+   * 0.00. There is no value in between: the group cannot score near 1.0 no
+   * matter what is true, because one referral is 17% of all referrals. The
+   * number was reporting the resolution limit of the data as a finding about
+   * children, and "referred at 2.4x their share" is exactly the sentence that
+   * gets photographed off a slide and repeated without its caveat.
+   *
+   * 10 matches the enrolment threshold and the usual floor in federal IDEA
+   * disproportionality work. California uses 30 for its own determinations, so
+   * this is the permissive end of defensible, not the strict end.
+   *
+   * COUNTS AND SHARES ARE STILL REPORTED. Those are facts. Only the ratio,
+   * which is an inference, is withheld.
+   */
+  var MIN_REFERRALS_FOR_INDEX = 10;
+
+  /**
    * The dimensions a referral can be broken down by, and what each needs.
    *
    * `restricted` marks the fields convex/restrictedPolicy.ts denies to every
@@ -238,11 +266,13 @@
       var enrolled = hasDenominator ? (Number(enrollment[value]) || 0) : 0;
       var shareOfEnrollment = hasDenominator && enrolTotal ? enrolled / enrolTotal : null;
 
-      // An index needs a denominator AND a group big enough for a rate to
-      // mean anything. Either missing yields null, never a fabricated 0 or 1.
+      // An index needs a denominator, a group big enough for a rate to mean
+      // anything, AND enough referrals for the ratio to be measuring something.
+      // Any of the three missing yields null, never a fabricated 0 or 1.
       var suppressed = hasDenominator && enrolled > 0 && enrolled < SMALL_GROUP;
+      var tooFewReferrals = count < MIN_REFERRALS_FOR_INDEX;
       var index = null;
-      if (hasDenominator && shareOfEnrollment > 0 && !suppressed) {
+      if (hasDenominator && shareOfEnrollment > 0 && !suppressed && !tooFewReferrals) {
         index = shareOfReferrals / shareOfEnrollment;
       }
 
@@ -253,7 +283,11 @@
         enrolled: hasDenominator ? enrolled : null,
         shareOfEnrollment: shareOfEnrollment,
         index: index,
-        suppressed: suppressed
+        suppressed: suppressed,
+        // Reported separately from `suppressed` because they mean different
+        // things to a reader: one is "we will not show you this", the other is
+        // "there is not enough here to say".
+        tooFewReferrals: tooFewReferrals
       };
     }).sort(function (a, b) { return b.count - a.count; });
 
@@ -264,7 +298,8 @@
       counted: counted,
       missing: tally.missing,
       hasDenominator: hasDenominator,
-      smallGroupThreshold: SMALL_GROUP
+      smallGroupThreshold: SMALL_GROUP,
+      minReferralsForIndex: MIN_REFERRALS_FOR_INDEX
     };
   }
 
@@ -392,6 +427,7 @@
 
   root.WildcatDiscipline = {
     SMALL_GROUP: SMALL_GROUP,
+    MIN_REFERRALS_FOR_INDEX: MIN_REFERRALS_FOR_INDEX,
     DIMENSIONS: DIMENSIONS,
     snapshotDemographics: snapshotDemographics,
     displayValue: displayValue,
