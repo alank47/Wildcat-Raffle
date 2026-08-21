@@ -15781,7 +15781,10 @@
             const studentsWithTicketsBeforeSave = students.filter(s => s.pbisTickets > 0 || s.attendanceTickets > 0 || s.academicTickets > 0).length;
             console.log(`   Students with tickets before save: ${studentsWithTicketsBeforeSave}`);
             
-            await saveData(); // CRITICAL: Wait for save to complete before continuing
+            // Coalesced, but STILL awaited: requestSave resolves only once a
+            // save carrying this award has actually landed, so the guarantee
+            // the old comment describes is unchanged, not traded away.
+            await requestSave('Ticket award');
             
             // Verify after save completes
             setTimeout(() => {
@@ -23214,7 +23217,7 @@
             const sign = behavior.points >= 0 ? '+' : '-';
             showToast(`✅ ${sign}$${Math.abs(behavior.points)} · ${behavior.name}\n${awarded.length} student${awarded.length === 1 ? '' : 's'}`, 'success');
 
-            await saveData();
+            await requestSave('Cash award');
         }
 
         // Update Cash Table
@@ -26193,11 +26196,66 @@
             }
         }
 
+        // ---- Coalesced saves -------------------------------------------
+        //
+        // saveData() writes the whole `main` document in a transaction, and
+        // Firestore sustains roughly ONE write per second to a single
+        // document. With fifty teachers awarding tickets in the same assembly
+        // that document is a contended hotspot: transactions retry, some fail,
+        // and saves stop sticking under exactly the load that matters most.
+        //
+        // Requests are coalesced so a burst becomes one write. The queue lives
+        // in wildcat-savequeue.js with its guarantees and its tests; the short
+        // version is that a caller's promise still settles only when a save
+        // that INCLUDED their change has landed, so the toasts below stay
+        // honest rather than reporting a write that has not happened.
+        //
+        // Built lazily, so a failure to load the module degrades to saving
+        // directly rather than to not saving at all.
+        var _saveQueue = null;
+        function saveQueue() {
+            if (_saveQueue) return _saveQueue;
+            if (!window.WildcatSaveQueue) return null;
+            _saveQueue = window.WildcatSaveQueue.create({
+                save: function () { return saveData(); },
+                onError: function (err, attempt) {
+                    console.error(
+                        `❌ Coalesced save failed (attempt ${attempt}):`,
+                        (err && err.code) || '', (err && err.message) || err);
+                }
+            });
+            return _saveQueue;
+        }
+
+        /** Ask for a save. Resolves once a save including this change lands. */
+        function requestSave(reason) {
+            const q = saveQueue();
+            if (!q) return Promise.resolve(saveData());
+            return q.request(reason);
+        }
+
+        /** Write everything outstanding NOW. For a closing tab, and for the
+         *  actions that must not be deferred: a reset, a year rollover, a role
+         *  change. Those keep calling saveData() directly. */
+        function flushSaves() {
+            return _saveQueue ? _saveQueue.flush() : Promise.resolve(null);
+        }
+
+        // Deferring a write opens a window where work exists only in memory,
+        // so it has to be closed on the way out. visibilitychange is the one
+        // that fires reliably on iOS, where beforeunload frequently does not;
+        // pagehide catches the desktop close. Both are needed and neither is
+        // sufficient alone.
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'hidden') flushSaves();
+        });
+        window.addEventListener('pagehide', function () { flushSaves(); });
+
         function saveInBackground(label) {
             // Fire-and-report. Never blocks the UI.
             // saveData() catches its own errors and resolves either way, so the
             // outcome is read from the returned boolean rather than a rejection.
-            return Promise.resolve(saveData())
+            return requestSave(label)
                 .then(ok => {
                     if (ok === false) {
                         console.error(`❌ ${label} did not save`);
