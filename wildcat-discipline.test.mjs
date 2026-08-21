@@ -119,6 +119,23 @@ console.log("\nSex is labelled for a reader, never rewritten");
     D.snapshotDemographics({ sex: 'F' }).sex === 'F');
 }
 
+console.log("\nBackfilling sex is safe; backfilling grade is not");
+{
+  const script = readFileSync(new URL("./script.js", import.meta.url), "utf8");
+  const block = script.slice(script.indexOf("SEX IS RESOLVED FROM THE ROSTER"),
+                             script.indexOf("el.innerHTML = dims.map"));
+  check("only sex is resolved from the live roster",
+    /demographics: Object\.assign\(\{\}, r\.demographics \|\| \{\}, \{ sex: sex \}\)/.test(block));
+  check("grade is explicitly NOT backfilled the same way",
+    /GRADE IS DELIBERATELY NOT\n\s*\/\/ BACKFILLED THIS WAY/.test(block));
+  check("an existing snapshot is never overwritten",
+    /if \(already\) return r;/.test(block));
+  check("and the referral itself is not mutated",
+    /Object\.assign\(\{\}, r, \{/.test(block));
+  check("how many were resolved is surfaced to the reader",
+    /filed before sex was\n\s*synced from PowerSchool/.test(script));
+}
+
 console.log("\nRates, not counts");
 {
   // 6 of 10 referrals to a group that is 60% of the school is PROPORTIONATE.

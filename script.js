@@ -26994,7 +26994,40 @@
             // below.
             const dims = ['grade', 'school', 'sex', 'iep'];
 
+            // SEX IS RESOLVED FROM THE ROSTER WHEN THE REFERRAL HAS NONE.
+            //
+            // Referrals record demographics AT FILING TIME, and every referral
+            // filed before Students.Gender was synced carries no sex at all.
+            // Left alone, this panel would read 0% coverage for months while
+            // the answer sat in the roster the whole time.
+            //
+            // Safe for sex in a way it would NOT be for grade. Grade is
+            // snapshotted precisely because it changes every August, so reading
+            // it live would relabel last spring's referrals. Sex is not a
+            // point-in-time attribute of an incident, so the current record is
+            // the right answer rather than a guess. GRADE IS DELIBERATELY NOT
+            // BACKFILLED THIS WAY.
+            //
+            // Display only. Nothing is written back to the referral: a stored
+            // snapshot stays whatever was true when it was taken.
+            let resolvedSex = 0;
+            const rows = (all || []).map(r => {
+                const already = r && r.demographics && String(r.demographics.sex || '').trim();
+                if (already) return r;
+                const num = referralStudentNumber(r);
+                const st = (students || []).find(x =>
+                    (num && String(x.studentNumber) === num) ||
+                    String(x.id) === String(r && r.studentId));
+                const sex = st && String(st.sex || st.gender || '').trim();
+                if (!sex) return r;
+                resolvedSex += 1;
+                return Object.assign({}, r, {
+                    demographics: Object.assign({}, r.demographics || {}, { sex: sex })
+                });
+            });
+
             el.innerHTML = dims.map(dim => {
+                const all = rows;
                 const avail = D.availability(all, dim);
 
                 // Unavailable dimensions are SHOWN, with what would unblock
@@ -27049,6 +27082,13 @@
                             <p class="receipt-meta demo-legend">
                                 Index 1.00 is proportionate. 2.00 means referred at twice the rate
                                 enrolment predicts. Groups under ${out.smallGroupThreshold} enrolled are withheld.
+                            </p>` : ''}
+                        ${dim === 'sex' && resolvedSex ? `
+                            <p class="receipt-meta demo-legend">
+                                ${resolvedSex} referral${resolvedSex === 1 ? '' : 's'} filed before sex was
+                                synced from PowerSchool, so ${resolvedSex === 1 ? 'its' : 'their'} value is
+                                read from the student's current record rather than from the referral.
+                                Grade is never filled in this way, because grade changes every year.
                             </p>` : ''}
                     </div>`;
             }).join('');
