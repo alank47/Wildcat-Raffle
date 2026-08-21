@@ -1036,15 +1036,31 @@ textarea {
             display: none !important;
         }
         
-        /* Discipline Mode: show only Settings and System tabs */
+        /* Discipline Mode hides the raffle nav. It does NOT hide the panes.
+           
+           It used to, and that is why every Insights and Admin item in the
+           sidebar did nothing when clicked:
+           
+             body.discipline-mode .content > .tab-content { display: none !important; }
+             body.discipline-mode #disciplineContent      { display: block !important; }
+           
+           switchTab() clears those inline (script.js) so a shared tab can be
+           opened while a mode is selected. An !important stylesheet rule beats
+           an inline style, so the JavaScript ran, marked the pane active, and
+           CSS kept it hidden anyway. Data & Analytics, Audit Log, Students,
+           Teachers, Settings and System Admin were all unreachable from
+           Discipline Mode, with no error to explain it.
+           
+           Claw Pass never had these rules. It hides panes with inline styles
+           from switchSystemMode, exactly as discipline mode also already does,
+           and it has always worked. The rules were redundant as well as
+           harmful, so they are gone rather than patched with a :not(.active).
+           
+           .tabs stays: it hides #modeNav, the raffle button list, which is a
+           different element from the shared sidebar navs (those are
+           .sidebar-nav without .tabs) and must not reappear here. */
         body.discipline-mode .tabs {
             display: none !important;
-        }
-        body.discipline-mode .content > .tab-content {
-            display: none !important;
-        }
-        body.discipline-mode #disciplineContent {
-            display: block !important;
         }
         
         /* ============================================
