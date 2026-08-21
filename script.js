@@ -22303,7 +22303,7 @@
                 const { rows } = getStorageEstimates();
                 const worst = rows.reduce((a, b) => (a.pct > b.pct ? a : b));
                 if (worst.pct >= STORAGE_CRITICAL_AT) {
-                    console.error(`🔴 STORAGE CRITICAL: ${worst.key} is ${(worst.pct*100).toFixed(0)}% of the 1MB limit. Saves may start failing. See Settings → System Admin → Storage Health.`);
+                    console.error(`🔴 STORAGE CRITICAL: ${worst.key} is ${(worst.pct*100).toFixed(0)}% of the 1MB limit. Saves may start failing. Open the System Admin tab, then Storage Health.`);
                 } else if (worst.pct >= STORAGE_ALERT_AT) {
                     console.warn(`🟠 STORAGE HIGH: ${worst.key} is ${(worst.pct*100).toFixed(0)}% of the 1MB limit.`);
                 } else if (worst.pct >= STORAGE_WARN_AT) {
@@ -22343,7 +22343,7 @@
             div.innerHTML = '<strong>Storage warning:</strong> the ' + worst.key +
                 ' document is ' + (worst.pct * 100).toFixed(0) +
                 '% full (limit 1 MB). Saves can start failing when it fills. ' +
-                'Open <em>Settings → System Admin → Storage Health</em> for details.' +
+                'Open <em>System Admin → Storage Health</em> for details.' +
                 '<button class="sh-banner-x" onclick="this.parentElement.remove()">Dismiss</button>';
             body.insertBefore(div, body.firstChild);
         }
