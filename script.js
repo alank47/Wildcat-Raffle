@@ -2039,6 +2039,10 @@
                         // HS split into grade bands; the doc above is legacy (read-only now).
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_hs_910')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_hs_1112')),
+                        // Students whose grade this app cannot classify — mostly
+                        // former students. Their history used to be discarded at
+                        // save time; it is filed here instead.
+                        getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_unknown')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'audit_log')),
                         ...monthlyAuditPromises
@@ -2046,7 +2050,8 @@
                     const [mainSnap, secondarySnap, referralsSnap, schedulesSnap] = _allSnaps;
                     const _cashSnaps = _allSnaps.slice(4, 4 + _cashWeekKeys.length);
                     const [ticketHistoryMsSnap, ticketHistoryHsSnap, ticketHistoryHs910Snap,
-                           ticketHistoryHs1112Snap, ticketHistoryLegacySnap, auditLogLegacySnap] =
+                           ticketHistoryHs1112Snap, ticketHistoryUnknownSnap,
+                           ticketHistoryLegacySnap, auditLogLegacySnap] =
                            _allSnaps.slice(4 + _cashWeekKeys.length);
                     const monthlyAuditSnaps = _allSnaps.slice(4 + _cashWeekKeys.length + 6);
 
@@ -2126,6 +2131,7 @@
                         const hsHistories = ticketHistoryHsSnap.exists() ? (ticketHistoryHsSnap.data().histories || {}) : {};
                         const hs910Histories = ticketHistoryHs910Snap.exists() ? (ticketHistoryHs910Snap.data().histories || {}) : {};
                         const hs1112Histories = ticketHistoryHs1112Snap.exists() ? (ticketHistoryHs1112Snap.data().histories || {}) : {};
+                        const unknownHistories = ticketHistoryUnknownSnap.exists() ? (ticketHistoryUnknownSnap.data().histories || {}) : {};
                         const legacyHistories = ticketHistoryLegacySnap.exists() ? (ticketHistoryLegacySnap.data().histories || {}) : {};
                         const firebaseTicketHistories = {};
                         const allHistoryStudentIds = new Set([
@@ -2133,6 +2139,7 @@
                             ...Object.keys(hsHistories),
                             ...Object.keys(hs910Histories),
                             ...Object.keys(hs1112Histories),
+                            ...Object.keys(unknownHistories),
                             ...Object.keys(legacyHistories)
                         ]);
                         allHistoryStudentIds.forEach(sid => {
@@ -2146,6 +2153,7 @@
                             collect(msHistories[sid]);
                             collect(hs910Histories[sid]);
                             collect(hs1112Histories[sid]);
+                            collect(unknownHistories[sid]);
                             collect(hsHistories[sid]);      // legacy combined HS doc
                             collect(legacyHistories[sid]);
                             const merged = Array.from(byId.values())
@@ -3067,7 +3075,24 @@
                         
                         // Prepare ticket histories (extracted from students)
                         const ticketHistoriesToSave = {};
+                        // Built HERE, from the same pass as the histories, and not
+                        // later from `students`.
+                        //
+                        // `students` is reassigned partway through this save — the
+                        // main transaction splits former students out into
+                        // nonEnrolledStudents, and the Convex roster refresh can
+                        // replace the array outright while the save is still
+                        // running. Building the grade index afterwards indexed a
+                        // SMALLER list than the histories were collected from, so
+                        // every student who had left was missing from it, their
+                        // grade read as undefined, and their ticket history was
+                        // dropped on the floor. Roughly a hundred students per save.
+                        //
+                        // Two maps built from one loop cannot disagree about who is
+                        // in them, which is the actual property needed here.
+                        const studentGradeById = {};
                         students.forEach(s => {
+                            studentGradeById[s.id] = parseInt(s.grade);
                             if (s.ticketHistory && s.ticketHistory.length > 0) {
                                 ticketHistoriesToSave[s.id] = s.ticketHistory;
                             }
@@ -3413,9 +3438,10 @@
                         // The two docs are independent transactions; if one fails, the other
                         // still commits, and the next save retries.
                         //
-                        // Partition local histories by grade
-                        const studentGradeById = {};
-                        students.forEach(s => { studentGradeById[s.id] = parseInt(s.grade); });
+                        // Partition local histories by grade. studentGradeById is
+                        // built at the top of this function, alongside the histories
+                        // themselves — see the note there for why it cannot be built
+                        // from `students` at this point.
                         // HS is split again into 9-10 and 11-12. ticket_history_hs
                         // covers four grades to MS's three and reached 69% of the
                         // 1MB limit partway through a year (263KB in April → 702KB
@@ -3425,6 +3451,11 @@
                         const msHistoriesToSave = {};
                         const hs910HistoriesToSave = {};
                         const hs1112HistoriesToSave = {};
+                        // Students whose grade this code cannot classify: former
+                        // students, mid-year arrivals not yet graded, anyone the SIS
+                        // has no grade level for. Small by design, and read back on
+                        // load like the others.
+                        const unknownHistoriesToSave = {};
                         Object.keys(ticketHistoriesToSave).forEach(sid => {
                             const grade = studentGradeById[sid];
                             if (grade >= 6 && grade <= 8) {
@@ -3434,9 +3465,19 @@
                             } else if (grade >= 11 && grade <= 12) {
                                 hs1112HistoriesToSave[sid] = ticketHistoriesToSave[sid];
                             } else {
-                                // Unknown grade — skip rather than guess. Will be visible
-                                // in console for investigation.
-                                console.warn(`⚠️ Student ${sid} has unknown grade ${grade}, history not saved.`);
+                                // NOT DROPPED. The partition exists to stay under
+                                // Firestore's 1MB per-document limit, not to validate
+                                // grades, so a grade this code cannot read is a reason
+                                // to file the history elsewhere — never a reason to
+                                // throw it away.
+                                //
+                                // Dropping it silently deleted the student's ticket
+                                // history, and because the load path RECOMPUTES
+                                // pbisTickets/attendanceTickets/academicTickets from
+                                // that history, their ticket counts reset to zero on
+                                // the next page load. Tickets a teacher had already
+                                // awarded simply vanished.
+                                unknownHistoriesToSave[sid] = ticketHistoriesToSave[sid];
                             }
                         });
 
@@ -3502,12 +3543,13 @@
                         const historyJobs = [
                             ['ticket_history_ms',        msHistoriesToSave,     'MS'],
                             ['ticket_history_hs_910',    hs910HistoriesToSave,  'HS 9-10'],
-                            ['ticket_history_hs_1112',   hs1112HistoriesToSave, 'HS 11-12']
+                            ['ticket_history_hs_1112',   hs1112HistoriesToSave, 'HS 11-12'],
+                            ['ticket_history_unknown',   unknownHistoriesToSave, 'ungraded']
                         ];
                         const historySettled = await Promise.allSettled(
                             historyJobs.map(([docName, payload]) => commitHistoryDoc(docName, payload))
                         );
-                        const [msSettled, hs910Settled, hs1112Settled] = historySettled;
+                        const [msSettled, hs910Settled, hs1112Settled, unknownSettled] = historySettled;
                         historySettled.forEach((res, idx) => {
                             const [docName, , label] = historyJobs[idx];
                             if (res.status === 'fulfilled') {
@@ -3520,6 +3562,18 @@
                         const msResult     = msSettled.status === 'fulfilled'     ? msSettled.value     : { mergedHistories: {} };
                         const hs910Result  = hs910Settled.status === 'fulfilled'  ? hs910Settled.value  : { mergedHistories: {} };
                         const hs1112Result = hs1112Settled.status === 'fulfilled' ? hs1112Settled.value : { mergedHistories: {} };
+                        const unknownResult = unknownSettled.status === 'fulfilled' ? unknownSettled.value : { mergedHistories: {} };
+                        // Worth saying out loud rather than leaving as a silent
+                        // bucket: a growing number here means grades are not
+                        // reaching the app, and the ticket counts that are derived
+                        // from this history will look wrong to whoever awarded them.
+                        const ungradedCount = Object.keys(unknownResult.mergedHistories || {}).length;
+                        if (ungradedCount) {
+                            console.warn(
+                                `ℹ️ ${ungradedCount} student(s) have ticket history but no readable grade. ` +
+                                'Saved to ticket_history_unknown so nothing is lost. Mostly former students; ' +
+                                'a rising number here means grade levels are not reaching the app.');
+                        }
                         if (historyFailures.length) {
                             console.error(`⚠️ ${historyFailures.length} history document(s) failed: ${historyFailures.join(', ')}. Other documents still saved.`);
                         }
@@ -3529,7 +3583,8 @@
                             mergedHistories: {
                                 ...msResult.mergedHistories,
                                 ...hs910Result.mergedHistories,
-                                ...hs1112Result.mergedHistories
+                                ...hs1112Result.mergedHistories,
+                                ...unknownResult.mergedHistories
                             }
                         };
 
