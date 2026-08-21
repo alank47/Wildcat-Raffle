@@ -22128,15 +22128,39 @@
                 if (s.sections && s.sections.length) schedulesPayload.sections[s.id] = s.sections;
             });
 
+            // MIRRORS THE ACTUAL transaction.set(mainDocRef, ...) PAYLOAD.
+            //
+            // It did not, and the number was wrong in both directions at once:
+            // it counted weeklyWinners, bigRaffleWinners and weeklyHistory,
+            // which live in `secondary`, while omitting schoolBranding,
+            // cycleHistory, entityTombstones and the settings block, which
+            // really are in `main`. A storage screen that measures a different
+            // document than the one being written is worse than no screen.
+            //
+            // If a field is added to the main write, add it here too.
             const mainPayload = {
                 students: studentsForMain,
-                teachers: teachers || [],
                 currentWeek: typeof currentWeek !== 'undefined' ? currentWeek : null,
                 cycleDuration: typeof cycleDuration !== 'undefined' ? cycleDuration : null,
-                weeklyWinners: typeof weeklyWinners !== 'undefined' ? weeklyWinners : [],
-                bigRaffleWinners: typeof bigRaffleWinners !== 'undefined' ? bigRaffleWinners : [],
-                weeklyHistory: typeof weeklyHistory !== 'undefined' ? weeklyHistory : [],
-                currentCycle: typeof currentCycle !== 'undefined' ? currentCycle : null
+                teachers: teachers || [],
+                pbisSubcategories: typeof pbisSubcategories !== 'undefined' ? pbisSubcategories : [],
+                academicSubcategories: typeof academicSubcategories !== 'undefined' ? academicSubcategories : [],
+                lastPowerSchoolSync: typeof lastPowerSchoolSync !== 'undefined' ? lastPowerSchoolSync : null,
+                kickboardSettings: typeof kickboardSettings !== 'undefined' ? kickboardSettings : {},
+                emailJSConfig: typeof emailJSConfig !== 'undefined' ? emailJSConfig : {},
+                passSettings: typeof passSettings !== 'undefined' ? passSettings : {},
+                schoolBranding: typeof schoolBranding !== 'undefined' ? schoolBranding : {},
+                referralIdCounter: typeof referralIdCounter !== 'undefined' ? referralIdCounter : 1,
+                autoWeekEnabled: false,
+                lastAutoResetDate: typeof lastAutoResetDate !== 'undefined' ? lastAutoResetDate : null,
+                lastWeekResetTime: typeof lastWeekResetTime !== 'undefined' ? lastWeekResetTime : null,
+                weekResetDay: typeof weekResetDay !== 'undefined' ? weekResetDay : 1,
+                weekResetHour: typeof weekResetHour !== 'undefined' ? weekResetHour : 6,
+                currentCycle: typeof currentCycle !== 'undefined' ? currentCycle : null,
+                cycleHistory: typeof cycleHistory !== 'undefined' ? cycleHistory : [],
+                cycleStartTimestamp: typeof cycleStartTimestamp !== 'undefined' ? cycleStartTimestamp : null,
+                entityTombstones: typeof entityTombstones !== 'undefined' ? entityTombstones : [],
+                lastSaveTimestamp: 0
             };
 
             const secondaryPayload = {
@@ -22220,7 +22244,6 @@
                 { key: 'secondary',         label: 'Secondary (passes, cash, detentions)', bytes: _byteSize(secondaryPayload) },
                 { key: 'referrals',         label: 'Referrals', bytes: _byteSize(referralsPayload) },
                 { key: 'schedules',         label: 'Class schedules', bytes: _byteSize(schedulesPayload) },
-                { key: 'daily_backup',      label: 'Daily automatic backup (largest slice)', bytes: backupBytes },
                 { key: 'audit_log',         label: 'Audit log (largest week' + (auditWorstMonth ? ': ' + auditWorstMonth.replace('_', '-') : '') + ')', bytes: auditBytes },
                 { key: 'ticket_history_hs_910',  label: 'Ticket history — Grades 9-10', bytes: _byteSize(hs910Hist) },
                 { key: 'ticket_history_hs_1112', label: 'Ticket history — Grades 11-12', bytes: _byteSize(hs1112Hist) },
@@ -22228,7 +22251,6 @@
             ];
             rows.forEach(r => { r.pct = r.bytes / STORAGE_DOC_LIMIT; });
 
-            // What's taking up room inside `main` — the actionable detail
             // What is taking up room inside `main` — the actionable detail.
             //
             // This used to report the per-student cash arrays, which were indeed
@@ -22238,16 +22260,28 @@
             // not produce and send someone chasing space that is already free.
             const detail = [
                 { label: 'Student records (core fields)', bytes: _byteSize(studentsForMain) },
-                { label: 'Teacher records',              bytes: _byteSize(teachers || []) }
+                { label: 'Teacher records',              bytes: _byteSize(teachers || []) },
+                // Listed because it can hold a base64 logo, which is the one
+                // settings field capable of being large enough to matter.
+                { label: 'School branding (incl. logo)',  bytes: _byteSize(typeof schoolBranding !== 'undefined' ? schoolBranding : {}) },
+                { label: 'Cycle history',                bytes: _byteSize(typeof cycleHistory !== 'undefined' ? cycleHistory : []) },
+                { label: 'Deletion records (tombstones)', bytes: _byteSize(typeof entityTombstones !== 'undefined' ? entityTombstones : []) }
             ];
 
-            return { rows, detail };
+            // Automatic backups do NOT run. createAutomaticBackup() returns
+            // early and its slice-writing body is commented out as dead
+            // reference. This screen used to rank that imaginary document
+            // first and call it "the one to fix", which pushed the real
+            // document into second place and sent the reader after nothing.
+            const backupsDisabled = true;
+
+            return { rows, detail, backupsDisabled };
         }
 
         function renderStorageHealth() {
             const host = document.getElementById('storageHealthBars');
             if (!host) return;
-            const { rows, detail } = getStorageEstimates();
+            const { rows, detail, backupsDisabled } = getStorageEstimates();
             const esc = (typeof escapeHtml === 'function') ? escapeHtml : (s => String(s == null ? '' : s));
             const kb = b => (b / 1024).toFixed(0) + ' KB';
 
@@ -22276,6 +22310,18 @@
                     '<div class="sh-note sh-text-' + b + '">' + words[b] + '</div>' +
                 '</div>';
             });
+
+            // Stated first, because "no backup exists" outranks any percentage
+            // on this screen. It was previously invisible: the screen showed a
+            // size for the backup document, which reads as confirmation that
+            // backups are happening.
+            if (backupsDisabled) {
+                html = '<div class="sh-banner sh-banner-crit">' +
+                       '<strong>Automatic backups are OFF.</strong> Nothing is being backed up on ' +
+                       'a schedule. Use <em>Export Backup</em> for a manual copy, and treat that ' +
+                       'as the only backup that exists.' +
+                       '</div>' + html;
+            }
 
             const worst = rows[0];
             if (worst && worst.pct >= STORAGE_WARN_AT) {
