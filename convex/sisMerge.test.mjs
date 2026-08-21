@@ -110,6 +110,16 @@ console.log("\nGender: the SIS owns it, and it is not a restricted field");
   check("an absent one is not fabricated",
     sisFieldsFor({ firstName: "Ana" }).gender === undefined);
 
+  // The write path has THREE places that must agree, and a mismatch is a
+  // hard runtime failure rather than a quiet drop: the sync payload was
+  // rejected outright with "Object contains extra field `gender` that is not
+  // in the validator" until the validator listed it too.
+  const sync = read("sisSync.ts");
+  check("the syncStudents validator accepts gender",
+    /gender: v\.optional\(v\.string\(\)\),/.test(sync));
+  check("and a NEW student is inserted with it, not just patched later",
+    /gender: incoming\.gender,/.test(sync));
+
   // The guarantee this whole file exists for still holds with the new field.
   // mergeStudent returns a PATCH of changed SIS fields, so the assertion is
   // that gender is in it and nothing earned came along.
