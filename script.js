@@ -52,6 +52,27 @@
         // No deploy of Convex is needed to do it, only this line and a cache
         // buster bump, because the fallback path is still fully present.
         // ---------------------------------------------------------------
+        /**
+         * Where the roster on screen came from, and therefore whether a count
+         * of it means anything.
+         *
+         * `enrolled` is computed by Convex's appData:load against the current
+         * psRoster. Firestore student records DO NOT CARRY THE FIELD AT ALL,
+         * and enrolledStudents() tests `s.enrolled !== false`, so every record
+         * in the Firestore fallback reads as enrolled. That is why the
+         * dashboard showed 1393 students on some loads and 631 on others: not
+         * a race in the rendering, but a missing value rendering as a real one,
+         * which is the failure this app has an explicit rule against.
+         *
+         * The fallback roster is still USED — a half-finished migration must
+         * never leave a teacher looking at an empty roster in front of a class.
+         * It is simply not counted as if it were the roll.
+         */
+        let rosterSource = null;    // 'convex' | 'firestore' | null
+
+        /** True when a roster count is a fact rather than a placeholder. */
+        function rosterIsAuthoritative() { return rosterSource === 'convex'; }
+
         const DATA_SOURCE = 'convex';    // 'convex' | 'firestore'
         const DATA_WRITE = 'both';       // 'firestore' | 'both' | 'convex'
 
@@ -2094,8 +2115,10 @@
                                 mainData.students = fresh.students.filter(s => s.enrolled !== false);
                                 nonEnrolledStudents = fresh.students.filter(s => s.enrolled === false);
                                 mainData.teachers = fresh.teachers;
+                                rosterSource = 'convex';
                                 console.log(`✅ Roster from Convex: ${mainData.students.length} enrolled, ${nonEnrolledStudents.length} former, ${fresh.teachers.length} staff`);
                             } catch (err) {
+                                rosterSource = 'firestore';
                                 console.error('[roster] Convex load failed, using the Firestore copy:', err.message);
                             }
                         }
@@ -17225,6 +17248,7 @@
                     }
                 }
 
+                rosterSource = 'convex';
                 console.log(`✅ Roster refreshed from Convex after ${reason}: ${students.length} enrolled, ${nonEnrolledStudents.length} former`);
 
                 // Redraw whatever is on screen. There is no `currentTab` variable
@@ -28951,9 +28975,17 @@
             const tiles = document.getElementById('dashTiles');
             if (tiles) {
                 tiles.innerHTML = [
+                    // An admin's tile counts the WHOLE roster, so it is only a
+                    // fact once the roster is the authoritative one. On the
+                    // Firestore fallback every record reads as enrolled and the
+                    // number is roughly double the school. wcTile already has
+                    // the idiom for this: pass null and say why.
                     wcTile('Your students',
-                        roster === null ? null : roster.length,
-                        { absent: 'no sections assigned',
+                        (roster === null || (isAdmin && !rosterIsAuthoritative()))
+                            ? null : roster.length,
+                        { absent: (isAdmin && !rosterIsAuthoritative())
+                            ? 'roster still loading'
+                            : 'no sections assigned',
                           tone: 'brand',
                           onclick: isAdmin ? "switchTab('students')" : null,
                           arrowLabel: 'Open the student roster' }),

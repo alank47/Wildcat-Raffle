@@ -74,10 +74,15 @@ console.log("\nThe fallback is intact");
   // The Convex read must be inside a try with a catch that does NOT rethrow.
   // If it rethrows, or the catch is removed, a Convex outage stops being a
   // degraded roster and becomes a blank one.
-  const branch = script.slice(
-    script.indexOf("if (DATA_SOURCE === 'convex')"),
-    script.indexOf("if (DATA_SOURCE === 'convex')") + 900,
-  );
+  // Bounded by a STABLE ANCHOR rather than a character count. This slice was
+  // `+ 900`, and adding two lines inside the branch pushed the console.error
+  // past the window: the assertion failed while the code it describes was
+  // correct, which is the worst way for a test to be wrong.
+  const branchStart = script.indexOf("if (DATA_SOURCE === 'convex')");
+  const branchEnd = script.indexOf("const secondaryData = secondarySnap.exists()", branchStart);
+  const branch = script.slice(branchStart, branchEnd);
+  check("the branch is bounded by its real end, not a guessed length",
+    branchStart > 0 && branchEnd > branchStart);
   check("the Convex read is guarded by try", /try\s*\{/.test(branch));
   check("and has a catch", /catch\s*\(/.test(branch), branch.slice(0, 80));
   check(
