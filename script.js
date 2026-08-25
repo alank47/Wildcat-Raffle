@@ -15406,44 +15406,56 @@
                 return;
             }
             
-            if (!currentUser || !currentUser.sections || currentUser.sections.length === 0) {
-                console.log('No sections for this user - hiding period filter');
-                if (periodFilterSection) periodFilterSection.style.display = 'none';
-                return;
-            }
-            
-            // Show filter section
+            // SECTIONS COME FROM THE SIS, NOT FROM currentUser.sections.
+            //
+            // That field is written by exactly one thing: the legacy CSV
+            // import, which matched teachers to schedules BY NAME. Nothing in
+            // the PowerSchool path has ever written it. So it has been empty
+            // for everybody since the CSV era ended, this function took the
+            // early return every time, and the period filter has been hidden
+            // for every user on every load — admin and teacher alike.
+            //
+            // Award Cash was moved onto the SIS roster when a teacher reported
+            // seeing only "All students". This is the same bug in the raffle
+            // tab, and it is fixed the same way, through the same helpers, so
+            // the two screens cannot disagree about what a period is.
+            const sections = window.WildcatRoster.sectionsFrom(activeTeacherRoster());
+            const seesAll = window.WildcatRoster.seesEveryStudent(currentUser && currentUser.role);
+
+            // SHOWN, never hidden. Hiding the control made an unmatched roster
+            // look like a missing feature, which is how this went unnoticed:
+            // there was nothing on screen to report.
             if (periodFilterSection) periodFilterSection.style.display = 'block';
-            
-            // Build dropdown options with proper ordering
+
             if (periodFilter) {
                 const totalStudents = students.length;
-                periodFilter.innerHTML = `<option value="">All Students (${totalStudents})</option>`;
-                
-                // Define correct period order
-                const periodOrder = ['A1', 'P1', 'P2', 'P3', 'P4', 'HPU', 'P5', 'P6', 'A2'];
-                
-                // Sort sections by period order
-                const sortedSections = [...currentUser.sections].sort((a, b) => {
-                    const indexA = periodOrder.indexOf(a.period);
-                    const indexB = periodOrder.indexOf(b.period);
-                    
-                    // If period not in order list, put at end
-                    if (indexA === -1) return 1;
-                    if (indexB === -1) return -1;
-                    
-                    return indexA - indexB;
-                });
-                
-                sortedSections.forEach(section => {
-                    const studentCount = section.students ? section.students.length : 0;
+                periodFilter.innerHTML = seesAll
+                    ? `<option value="">All Students (${totalStudents})</option>`
+                    : (sections.length
+                        ? '<option value="">All my students</option>'
+                        : '<option value="">No classes found</option>');
+
+                // sectionsFrom already classifies and labels each block, so the
+                // list reads "Promise Time" and "Period 3" rather than raw
+                // PowerSchool slot numbers. The hand-written periodOrder array
+                // this replaces listed A1/P1/HPU codes that the SIS does not
+                // use, so it sorted nothing and every section fell to the end.
+                sections.forEach(section => {
                     const option = document.createElement('option');
                     option.value = section.sectionId;
-                    option.textContent = `Period ${section.period} - ${section.courseName} (${studentCount} students)`;
+                    option.textContent = `${section.label} (${(section.students || []).length})`;
                     periodFilter.appendChild(option);
                 });
-                
-                console.log('Dropdown populated with', sortedSections.length, 'periods');
+
+                console.log(`Period filter: ${sections.length} section(s)` +
+                    (seesAll ? ' (you see every student)' : ''));
+            }
+
+            // Paint from cache first, then fetch and repaint. The roster is
+            // only loaded when Award Cash opens, so in Raffle mode it may not
+            // be there yet, and awaiting would leave a blank control.
+            if (!activeTeacherRoster() && sisRosterState === 'idle') {
+                loadTeacherRosterFromSIS().then(() => updatePeriodFilter());
             }
         }
         
@@ -23551,7 +23563,7 @@
             const select = document.getElementById('cashPeriodFilter');
             if (!select) return;
 
-            const sections = window.WildcatRoster.sectionsFrom(sisTeacherRoster);
+            const sections = window.WildcatRoster.sectionsFrom(activeTeacherRoster());
             const seesAll = window.WildcatRoster.seesEveryStudent(currentUser && currentUser.role);
 
             select.innerHTML = seesAll
