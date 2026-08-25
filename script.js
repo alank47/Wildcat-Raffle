@@ -22938,8 +22938,15 @@
         function renderModeSubnav(mode) {
             const subNav = document.getElementById('modeSubNav');
             if (!subNav) return;
-            const items = MODE_SUBTABS[mode];
+            let items = MODE_SUBTABS[mode];
             if (!items) { subNav.style.display = 'none'; subNav.innerHTML = ''; return; }
+            // Discipline is role-gated: a teacher gets Submit and their own
+            // open and closed referrals, nothing else. Hiding the buttons is
+            // the courtesy; switchDisciplineTab refuses the pane as well.
+            if (mode === 'discipline') {
+                const allowed = window.WildcatDiscipline.disciplineTabsFor(currentUser && currentUser.role);
+                items = items.filter(it => allowed.indexOf(it.id) !== -1);
+            }
             subNav.innerHTML = items.map((it, idx) => `
                 <button type="button" class="tab ${idx === 0 ? 'active' : ''}" id="sideSub_${mode}_${it.id}"
                         onclick="sidebarSubTab('${mode}','${it.id}')">${it.label}</button>`).join('');
@@ -25427,6 +25434,18 @@
             const target = PANES[subtab];
             if (!target) { console.warn('switchDisciplineTab: unknown subtab', subtab); return; }
 
+            // CHECKED HERE TOO, not only when the buttons are drawn. A stale
+            // button, a restored tab from a previous session, or a call from
+            // the console must not open Analytics or Student History for a
+            // teacher. Demographics lives inside Analytics, so this is the
+            // check that keeps a child's grade, sex and race breakdown away
+            // from someone who may only file referrals.
+            if (!window.WildcatDiscipline.canOpenDisciplineTab(currentUser && currentUser.role, subtab)) {
+                console.warn(`[discipline] ${subtab} is not available to your access level.`);
+                switchDisciplineTab('submit');
+                return;
+            }
+
             const paneEl = document.getElementById(target.pane);
             if (paneEl) {
                 paneEl.classList.remove('hidden');
@@ -26715,6 +26734,14 @@
                 referredBy: referringStaff,
                 referredByUsername: currentUser.username,
                 filedByUsername: currentUser.username,   // who actually typed it
+                // RECORDED BECAUSE USERNAME NO LONGER EXISTS. The Convex
+                // teacher record has no username field — that is what the
+                // migration off cleartext passwords removed — so both fields
+                // above write undefined for anyone signing in with Microsoft.
+                // Without an email a teacher could not be shown their own
+                // referrals, which is the whole point of the scoping.
+                filedByEmail: (currentUser.email || ''),
+                referredByEmail: (currentUser.email || ''),
                 status: 'open',
                 submittedAt: new Date().toISOString(),
                 // closure
@@ -26774,8 +26801,15 @@
         ];
         const DETENTION_CLOSING_ACTION = 'Assigned the student to mandatory detention';
 
-        function getOpenReferrals()   { return (behaviorReferrals || []).filter(r => r.status !== 'closed'); }
-        function getClosedReferrals() { return (behaviorReferrals || []).filter(r => r.status === 'closed'); }
+        // SCOPED. A teacher sees their own referrals; admin and PBIS see the
+        // school's. These two functions feed every referral table in the app,
+        // so scoping here covers all of them at once rather than at each
+        // render, where one missed call site is a privacy leak.
+        function visibleReferrals() {
+            return window.WildcatDiscipline.visibleReferrals(behaviorReferrals, currentUser);
+        }
+        function getOpenReferrals()   { return visibleReferrals().filter(r => r.status !== 'closed'); }
+        function getClosedReferrals() { return visibleReferrals().filter(r => r.status === 'closed'); }
 
         function updateReferralReviewTable() {
             const tbody = document.getElementById('referralReviewTable');
@@ -27302,7 +27336,12 @@
         }
 
         function renderAnalyticsPane(tab) {
-            const all = behaviorReferrals || [];
+            // Scoped, even though the analytics tab is already closed to
+            // teachers. Two independent reasons a teacher cannot see the
+            // demographic breakdown is the same standard the restricted-field
+            // policy holds itself to, and it costs nothing: for admin and PBIS
+            // this returns every referral.
+            const all = visibleReferrals();
             if (tab === 'trends')       return renderReferralTrend(all);
             if (tab === 'behaviors')    return renderReferralBehaviors(all);
             if (tab === 'demographics') return renderReferralDemographics(all);
@@ -27877,7 +27916,7 @@
             // Severity was dropped; the school tracks its TOP BEHAVIOURS instead,
             // which is more actionable ("Habitual Defiance is our #1") than a
             // Minor/Major/Severe split.
-            const all = behaviorReferrals || [];
+            const all = visibleReferrals();
             const open = getOpenReferrals();
             const now = new Date();
             const weekAgo = new Date(now.getTime() - 7 * 864e5);
@@ -28450,6 +28489,10 @@
         }
 
         function exportReferralReport() {
+            // EXPORTS WHAT THE EXPORTER MAY SEE, not the whole table. A file
+            // leaves the app and gets mailed around, so an unscoped export is
+            // the most durable way to leak a discipline record.
+            const behaviorReferrals = visibleReferrals();
             if (behaviorReferrals.length === 0) {
                 alert('No referral data to export');
                 return;

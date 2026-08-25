@@ -187,6 +187,89 @@
     return v;
   }
 
+  // =====================================================================
+  // WHO SEES WHAT IN DISCIPLINE MODE
+  //
+  // Before this there was NO role gating here at all. Every role reached
+  // every tab, and getOpenReferrals returned every referral in the school, so
+  // any teacher could read the whole school's discipline record and the
+  // demographic breakdowns built from it.
+  //
+  // The rule, set by the app owner on 2026-08-25:
+  //   teacher      submit a referral, and see their OWN open and closed ones
+  //   admin/PBIS   every referral, plus history, detention and analytics
+  //
+  // campusaide is treated as a teacher here. They were not named either way,
+  // and the safe default for a discipline record is the narrower one; say so
+  // and it changes in one line.
+  // =====================================================================
+
+  var DISCIPLINE_ALL_ROLES = ['admin', 'superadmin', 'pbis'];
+
+  /** Roles that read the whole school's discipline record. */
+  function seesAllReferrals(role) {
+    return DISCIPLINE_ALL_ROLES.indexOf(trimmed(role).toLowerCase()) !== -1;
+  }
+
+  /** Subtabs a role may open, in display order. */
+  function disciplineTabsFor(role) {
+    return seesAllReferrals(role)
+      ? ['submit', 'review', 'closed', 'detention', 'history', 'analytics']
+      : ['submit', 'review', 'closed'];
+  }
+
+  function canOpenDisciplineTab(role, subtab) {
+    return disciplineTabsFor(role).indexOf(trimmed(subtab)) !== -1;
+  }
+
+  /**
+   * Is this referral this person's?
+   *
+   * MATCHED ON SEVERAL KEYS, NOT ONE, and that is not belt-and-braces.
+   * Referrals record `referredByUsername` and `filedByUsername`, and the
+   * Convex teacher record HAS NO USERNAME FIELD — deliberately, it is what the
+   * migration away from cleartext passwords removed. So for anyone who signs
+   * in with Microsoft, which is now everyone, those fields were written as
+   * undefined. Matching on username alone would hide a teacher's own referrals
+   * from them, which is the opposite of the requirement.
+   *
+   * `referredBy` is included because it is the ATTRIBUTED staff member, chosen
+   * from a dropdown, and may be someone other than whoever typed it. A teacher
+   * should see a referral raised in their name as well as one they filed.
+   */
+  function ownsReferral(referral, user) {
+    if (!referral || !user) return false;
+    var keys = {};
+    [user.username, user.email, user.name, user.id].forEach(function (k) {
+      var v = trimmed(k).toLowerCase();
+      if (v) keys[v] = true;
+    });
+    if (!Object.keys(keys).length) return false;
+    var fields = [
+      referral.filedByUsername, referral.referredByUsername,
+      referral.filedByEmail, referral.referredByEmail,
+      referral.referredBy
+    ];
+    for (var i = 0; i < fields.length; i++) {
+      var f = trimmed(fields[i]).toLowerCase();
+      if (f && keys[f] === true) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The referrals this person may see. Admin and PBIS get everything.
+   *
+   * A teacher with no identifiers at all gets NOTHING rather than everything:
+   * the failure mode of a broken match must be too little, never the whole
+   * school's discipline record.
+   */
+  function visibleReferrals(referrals, user) {
+    var rows = referrals || [];
+    if (user && seesAllReferrals(user.role)) return rows.slice();
+    return rows.filter(function (r) { return ownsReferral(r, user); });
+  }
+
   /** Read a dimension off a referral, preferring the snapshot taken at filing. */
   function valueOf(referral, dimension) {
     var r = referral || {};
@@ -431,6 +514,12 @@
     DIMENSIONS: DIMENSIONS,
     snapshotDemographics: snapshotDemographics,
     displayValue: displayValue,
+    DISCIPLINE_ALL_ROLES: DISCIPLINE_ALL_ROLES,
+    seesAllReferrals: seesAllReferrals,
+    disciplineTabsFor: disciplineTabsFor,
+    canOpenDisciplineTab: canOpenDisciplineTab,
+    ownsReferral: ownsReferral,
+    visibleReferrals: visibleReferrals,
     valueOf: valueOf,
     availability: availability,
     breakdownBy: breakdownBy,
