@@ -75,12 +75,10 @@ console.log("\nIt loads the roster itself, because Raffle mode never did");
 {
   const f = fn("updatePeriodFilter");
   check("a missing roster triggers a fetch",
-    /if \(!activeTeacherRoster\(\) && sisRosterState === 'idle'\)/.test(f));
+    /if \(!activeTeacherRoster\(\)/.test(f));
   check("and repaints when it lands",
-    /loadTeacherRosterFromSIS\(\)\.then\(\(\) => updatePeriodFilter\(\)\)/.test(f));
-  // Guarded on 'idle' so the repaint cannot loop: the state is 'ready' or
-  // 'failed' by the time the callback runs.
-  check("the guard cannot recurse forever", /sisRosterState === 'idle'/.test(f));
+    /loadTeacherRosterFromSIS\(true\)\.then\(\(\) => updatePeriodFilter\(\)\)/.test(f));
+  // The retry rule itself is asserted below, where it is described.
 }
 
 console.log("\nThe labels come from the shared classifier");
@@ -95,6 +93,68 @@ console.log("\nThe labels come from the shared classifier");
     R.classifySection({ period: "2" }).period === 1);
   check("an empty roster yields no sections rather than throwing",
     Array.isArray(R.sectionsFrom(null)) && R.sectionsFrom(null).length === 0);
+}
+
+console.log("\nEvery helper these screens call is actually defined");
+{
+  // THE BUG THIS EXISTS FOR. A revert removed activeTeacherRoster's definition
+  // while later work kept calling it from three places, so both period pickers
+  // threw ReferenceError in production. Nothing failed, because the tests that
+  // covered the definition were removed by the same revert. "Called implies
+  // defined" survives that, because the call sites are what remain.
+  ["activeTeacherRoster", "isPreviewingTeacher", "periodFilterNote",
+   "loadPreviewRoster", "loadTeacherRosterFromSIS", "resetPeriodFilterFetch"]
+    .forEach((name) => {
+      const defined = new RegExp(`function ${name}\\s*\\(`).test(script);
+      const withoutDefs = script.replace(new RegExp(`function ${name}\\s*\\(`, "g"), "");
+      const called = new RegExp(`[^A-Za-z0-9_.]${name}\\s*\\(`).test(withoutDefs);
+      check(`${name}: not called unless defined`, !called || defined);
+      check(`${name} is defined`, defined);
+    });
+}
+
+console.log("\nEveryone gets the whole school AND their own classes");
+{
+  const raffle = fn("updatePeriodFilter");
+  const cash = fn("updateCashPeriodFilter");
+  // The either/or is what left a superadmin who teaches with no way to narrow
+  // to their own sections.
+  check("the raffle picker no longer branches on seesAll for its options",
+    !/innerHTML = seesAll/.test(code(raffle)));
+  check("nor does the cash picker",
+    !/innerHTML = seesAll/.test(code(cash)));
+  check("both always offer the whole school",
+    /All Students \(\$\{totalStudents\}\)/.test(raffle) &&
+    /All students<\/option>'/.test(cash));
+  check("and both append the caller's own sections unconditionally",
+    /sections\.forEach/.test(raffle) && /sections\.forEach/.test(cash));
+  // scopeStudents honours a chosen section for every role, which is what makes
+  // offering it correct rather than decorative.
+  check("a chosen section wins for every role",
+    /A CHOSEN SECTION ALWAYS WINS, FOR EVERY ROLE/.test(rosterSrc));
+}
+
+console.log("\nAn empty list says which of the three it is");
+{
+  const note = fn("periodFilterNote");
+  check("loading is distinguished", /Loading your classes/.test(note));
+  check("a failed lookup reports its error", /Classes unavailable: /.test(note));
+  check("and no classes names who it looked for",
+    /No classes in PowerSchool for/.test(note));
+  check("the previewed person is named, not 'you'",
+    /isPreviewingTeacher\(\)\s*\n?\s*\?/.test(note));
+  check("a non-empty list adds nothing", /if \(sections && sections\.length\) return '';/.test(note));
+}
+
+console.log("\nA failed roster is retried, once");
+{
+  const f = fn("updatePeriodFilter");
+  check("a failed lookup is retried, not only an idle one",
+    /sisRosterState !== 'loading'/.test(f) && !/sisRosterState === 'idle'/.test(f));
+  check("but only once per context, so a repaint cannot loop",
+    /!periodFilterFetchTried/.test(f) && /periodFilterFetchTried = true;/.test(f));
+  check("and the budget resets when the roster context changes",
+    (script.match(/resetPeriodFilterFetch\(\);/g) || []).length >= 2);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

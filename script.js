@@ -15376,6 +15376,36 @@
             }).join('');
         }
         
+        /**
+         * Why the period list is empty, when it is.
+         *
+         * "All Students" on its own is indistinguishable from a broken lookup,
+         * and that ambiguity cost two rounds of "it still doesn't work". The
+         * dropdown now says which of the three it is, so the next report names
+         * a cause instead of a symptom.
+         */
+        function periodFilterNote(sections) {
+            if (sections && sections.length) return '';
+            if (sisRosterState === 'loading') {
+                return '<option value="" disabled>Loading your classes…</option>';
+            }
+            if (sisRosterState === 'failed') {
+                return '<option value="" disabled>Classes unavailable: ' +
+                    escapeHtml(sisRosterError || 'roster lookup failed') + '</option>';
+            }
+            const who = isPreviewingTeacher()
+                ? ((currentUser && currentUser.name) || 'that person')
+                : 'you';
+            return '<option value="" disabled>No classes in PowerSchool for ' +
+                escapeHtml(who) + '</option>';
+        }
+
+        // Bounded auto-retry. A roster that failed once — which happens when
+        // this runs before Microsoft sign-in resolves — stayed failed for the
+        // whole visit, with the period list empty and no way back.
+        let periodFilterFetchTried = false;
+        function resetPeriodFilterFetch() { periodFilterFetchTried = false; }
+
         function updatePeriodFilter() {
             const periodFilterSection = document.getElementById('periodFilterSection');
             const periodFilter = document.getElementById('periodFilter');
@@ -15429,11 +15459,17 @@
 
             if (periodFilter) {
                 const totalStudents = students.length;
-                periodFilter.innerHTML = seesAll
-                    ? `<option value="">All Students (${totalStudents})</option>`
-                    : (sections.length
-                        ? '<option value="">All my students</option>'
-                        : '<option value="">No classes found</option>');
+                // EVERY ROLE GETS BOTH: the whole school, and their own classes.
+                //
+                // It was either/or, and that is wrong for the most common case
+                // in this school — somebody who teaches AND administers. A
+                // superadmin who teaches three sections got "All Students" and
+                // no way to narrow to their own. scopeStudents already honours
+                // a chosen section for every role, so the only thing missing
+                // was offering it.
+                periodFilter.innerHTML =
+                    `<option value="">All Students (${totalStudents})</option>` +
+                    periodFilterNote(sections);
 
                 // sectionsFrom already classifies and labels each block, so the
                 // list reads "Promise Time" and "Period 3" rather than raw
@@ -15454,8 +15490,14 @@
             // Paint from cache first, then fetch and repaint. The roster is
             // only loaded when Award Cash opens, so in Raffle mode it may not
             // be there yet, and awaiting would leave a blank control.
-            if (!activeTeacherRoster() && sisRosterState === 'idle') {
-                loadTeacherRosterFromSIS().then(() => updatePeriodFilter());
+            // Retries a FAILED roster too, not only an untouched one. The old
+            // guard tested 'idle', so a lookup that failed before sign-in
+            // resolved was never attempted again. At most one retry per
+            // context, so a repaint cannot loop on a broken connection.
+            if (!activeTeacherRoster() && sisRosterState !== 'loading'
+                && !periodFilterFetchTried && !isPreviewingTeacher()) {
+                periodFilterFetchTried = true;
+                loadTeacherRosterFromSIS(true).then(() => updatePeriodFilter());
             }
         }
         
@@ -23587,10 +23629,10 @@
             const sections = window.WildcatRoster.sectionsFrom(activeTeacherRoster());
             const seesAll = window.WildcatRoster.seesEveryStudent(currentUser && currentUser.role);
 
-            select.innerHTML = seesAll
-                ? '<option value="">All students</option>'
-                : (sections.length ? '<option value="">All my students</option>'
-                                   : '<option value="">No classes found</option>');
+            // Same rule as the raffle picker, so the two cannot disagree:
+            // everyone gets the whole school AND their own classes.
+            select.innerHTML = '<option value="">All students</option>'
+                + periodFilterNote(sections);
 
             // sectionsFrom classifies and labels each block, so the dropdown
             // shows "Promise Time" rather than "Period 1 - Promise Time". At
@@ -26435,6 +26477,7 @@
         async function loadPreviewRoster(email) {
             previewRoster = null;
             previewRosterError = null;
+            resetPeriodFilterFetch();
             const auth = window.WildcatAuth;
             // The ADMIN's session, deliberately: the query is admin-gated and
             // the admin is the one asking.
@@ -26481,6 +26524,7 @@
             // re-enabled.
             previewRoster = null;
             previewRosterError = null;
+            resetPeriodFilterFetch();
             if (typeof loadTeacherRosterFromSIS === 'function') {
                 loadTeacherRosterFromSIS(true).catch(() => {});
             }
