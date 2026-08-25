@@ -23312,7 +23312,7 @@
             const scoped = window.WildcatRoster.scopeStudents({
                 students: filteredStudents,
                 role: currentUser && currentUser.role,
-                roster: sisTeacherRoster,
+                roster: activeTeacherRoster(),
                 sectionId: periodFilter || null
             });
             filteredStudents = scoped.students;
@@ -23324,7 +23324,7 @@
             }
 
             // A failed fetch is not an empty roster. Say which happened.
-            if (!sisTeacherRoster && sisRosterState === 'failed'
+            if (!activeTeacherRoster() && sisRosterState === 'failed'
                 && !window.WildcatRoster.seesEveryStudent(currentUser && currentUser.role)) {
                 funnel.scopeReason = 'Could not load your class roster: ' + (sisRosterError || 'unknown error') +
                                      '. Reload the page to try again.';
@@ -23511,7 +23511,28 @@
         let sisRosterState = 'idle';      // idle | loading | ready | failed
         let sisRosterError = null;
 
+        // TEACHER VIEW'S ROSTER LIVES HERE, AND NOWHERE NEAR THE CACHE ABOVE.
+        //
+        // sisTeacherRoster is a module-level cache that every caller reads and
+        // that only refetches when empty or forced. Writing a previewed
+        // teacher's roster into it would leave THAT roster in place after the
+        // preview ended — at which point saving is re-enabled and an admin's
+        // Award Cash would be scoped to somebody else's class with nothing on
+        // screen saying so. Separate variable, and the preview clears it and
+        // forces a refetch on the way out.
+        let previewRoster = null;
+        let previewRosterError = null;
+
+        /** The roster the UI should be showing right now. */
+        function activeTeacherRoster() {
+            return isPreviewingTeacher() ? previewRoster : sisTeacherRoster;
+        }
+
         async function loadTeacherRosterFromSIS(force) {
+            // In teacher view the roster was fetched when the preview started,
+            // by an admin-only query that names the teacher. Falling through
+            // would re-fetch the ADMIN's roster and show it as theirs.
+            if (isPreviewingTeacher()) return previewRoster;
             if (sisRosterState === 'loading') return sisTeacherRoster;
             if (sisTeacherRoster && !force) return sisTeacherRoster;
 
@@ -26399,6 +26420,47 @@
 
             console.log(`👁️ Teacher view: showing the app as ${currentUser.name} (${currentUser.role}). Saves are blocked.`);
             switchTab('tickets');
+
+            // Their ACTUAL class periods, from an admin-only query that names
+            // them. Without this the screen changes role but the roster stays
+            // the admin's, because teacherRoster resolves from the caller's
+            // token and takes no argument — which is exactly the case this
+            // whole feature exists to reproduce.
+            loadPreviewRoster(currentUser.email).then(() => {
+                // Redraw whatever is showing now that the roster has arrived.
+                if (typeof switchTab === 'function') switchTab('tickets');
+            });
+        }
+
+        async function loadPreviewRoster(email) {
+            previewRoster = null;
+            previewRosterError = null;
+            const auth = window.WildcatAuth;
+            // The ADMIN's session, deliberately: the query is admin-gated and
+            // the admin is the one asking.
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) {
+                previewRosterError = 'Teacher view needs a Microsoft sign-in to read the roster.';
+                console.warn('[teacher view] ' + previewRosterError);
+                return null;
+            }
+            if (!email) {
+                previewRosterError = 'That staff member has no email on their record, so their roster cannot be looked up.';
+                console.warn('[teacher view] ' + previewRosterError);
+                return null;
+            }
+            try {
+                previewRoster = await auth.convexQuery(
+                    'views_app:teacherRosterFor', { email: String(email) }, session.idToken);
+                const n = (previewRoster && previewRoster.sectionCount) || 0;
+                console.log(`👁️ Teacher view roster: ${n} section(s), ` +
+                    `${(previewRoster && previewRoster.studentCount) || 0} student(s).` +
+                    (previewRoster && previewRoster.reason ? ' ' + previewRoster.reason : ''));
+            } catch (e) {
+                previewRosterError = (e && e.message) || String(e);
+                console.error('[teacher view] roster lookup failed:', previewRosterError);
+            }
+            return previewRoster;
         }
 
         function endTeacherPreview() {
@@ -26412,6 +26474,16 @@
             const roleEl = document.getElementById('currentUserRole');
             if (nameEl) nameEl.textContent = currentUser.name || '';
             if (roleEl) roleEl.textContent = getFriendlyRoleName(currentUser.role);
+
+            // Cleared, and the real roster is re-read rather than trusted.
+            // This is the belt to the separate-variable braces: if preview code
+            // ever does touch the cache, this still repairs it before saving is
+            // re-enabled.
+            previewRoster = null;
+            previewRosterError = null;
+            if (typeof loadTeacherRosterFromSIS === 'function') {
+                loadTeacherRosterFromSIS(true).catch(() => {});
+            }
 
             console.log('👁️ Teacher view ended. Back as ' + currentUser.name + '.');
             switchTab('teachers');
