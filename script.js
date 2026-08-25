@@ -2988,6 +2988,21 @@
         setInterval(checkWeeklyEmailSchedule, 60 * 60 * 1000); // Check every hour
 
         async function saveData() {
+            // TEACHER VIEW IS READ-ONLY, ENFORCED HERE.
+            //
+            // One guard at the chokepoint rather than at 102 call sites. An
+            // admin looking through a teacher's eyes must not be able to write
+            // anything, because currentUser is that teacher and the write would
+            // carry their name into the audit log, a ticket award or a
+            // referral. In a discipline system a falsified attribution is worse
+            // than a missing feature.
+            //
+            // Returns false, which is the same "did not save" signal every
+            // caller already handles.
+            if (typeof isPreviewingTeacher === 'function' && isPreviewingTeacher()) {
+                console.warn('[teacher view] Save blocked. Exit teacher view to make changes.');
+                return false;
+            }
             let saveSucceeded = false;
             if (typeof showSavingIndicator === 'function') showSavingIndicator(true);
             if (isSyncing) {
@@ -17023,6 +17038,10 @@
                 try { renderTeacherDashboard(); } catch (e) { console.warn('[dashboard]', e); }
             }
 
+            if (tabName === 'teachers' && typeof populatePreviewTeacherSelect === 'function') {
+                populatePreviewTeacherSelect();
+            }
+
             // Populate settings when Settings tab is opened
             if (tabName === 'settings') {
                 populateSettingsFields();
@@ -26274,6 +26293,136 @@
             if (document.visibilityState === 'hidden') flushSaves();
         });
         window.addEventListener('pagehide', function () { flushSaves(); });
+
+        // ================================================================
+        // TEACHER VIEW — admins only, read-only, and honest about its limits.
+        //
+        // WHAT IT IS. An admin loads the app as a member of staff would find
+        // it: their tabs, their class periods, their students. It answers "why
+        // can't Ms Rivera see her periods in Award Cash" without borrowing her
+        // password or waiting on a test account from IT.
+        //
+        // WHAT IT IS NOT, AND THIS MATTERS.
+        //
+        // It is a PREVIEW OF THE SCREEN, not a test of server permissions. The
+        // browser is still holding the ADMIN's Convex token, so anything the
+        // server decides — the race aggregate's small-group guard, restricted
+        // field access — still answers as admin. A teacher hitting the same
+        // screen may see LESS than this shows. Never conclude from this view
+        // that a teacher can see something; conclude only that the layout and
+        // the roster scope look right.
+        //
+        // Client-side role gates DO follow the preview, because they read
+        // currentUser, which is swapped. That is most of the UI.
+        //
+        // READ-ONLY, ENFORCED AT THE CHOKEPOINT. saveData() refuses while a
+        // preview is running. Writing as somebody else would put their name on
+        // an award or a referral in the audit log, and this is a discipline
+        // system: a falsified attribution is worse than a missing feature.
+        // Guarding saveData covers all 102 call sites at once rather than
+        // trusting each of them.
+        //
+        // The preview is NEVER persisted. saveSession() is not called, so a
+        // refresh always lands back as the real admin.
+        // ================================================================
+
+        /** The real signed-in admin while a preview is running, else null. */
+        let realUser = null;
+
+        function isPreviewingTeacher() { return realUser !== null; }
+
+        /** Tab visibility for a role. Only ever narrows or restores; it does
+         *  not touch modes, which the preview deliberately leaves alone. */
+        function applyPreviewVisibility(role) {
+            const narrow = (role === 'teacher' || role === 'campusaide' || role === 'pbis');
+            const superOnly = (role === 'superadmin');
+            document.querySelectorAll('.admin-only')
+                .forEach(t => t.classList.toggle('disabled', narrow));
+            document.querySelectorAll('.super-admin-only')
+                .forEach(t => t.classList.toggle('disabled', !superOnly));
+            const weekControls = document.getElementById('weekControls');
+            if (weekControls) weekControls.style.display = narrow ? 'none' : 'flex';
+        }
+
+        function populatePreviewTeacherSelect() {
+            const sel = document.getElementById('previewTeacherSelect');
+            if (!sel) return;
+            const me = realUser || currentUser;
+            const list = (teachers || [])
+                .filter(t => t && String(t.id) !== String(me && me.id))
+                .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+            sel.innerHTML = list.length
+                ? list.map(t => `<option value="${escapeHtml(String(t.id))}">` +
+                    `${escapeHtml(t.name || t.username || 'Unnamed')} — ` +
+                    `${escapeHtml(getFriendlyRoleName(t.role) || t.role || '')}</option>`).join('')
+                : '<option value="">No other staff to view as</option>';
+        }
+
+        function startTeacherPreview() {
+            // Gated here as well as in the markup. Hiding a control is a
+            // courtesy; this is the check.
+            const me = realUser || currentUser;
+            if (!me || (me.role !== 'admin' && me.role !== 'superadmin')) {
+                showToast('Only administrators can use teacher view.', 'error');
+                return;
+            }
+            if (isPreviewingTeacher()) return;   // never nest a preview
+
+            const sel = document.getElementById('previewTeacherSelect');
+            const id = sel && sel.value;
+            const target = (teachers || []).find(t => String(t.id) === String(id));
+            if (!target) { showToast('Pick a staff member first.', 'error'); return; }
+
+            realUser = me;
+            // A COPY, so nothing done while previewing can reach the real
+            // teacher record in memory.
+            currentUser = Object.assign({}, target);
+            applyPreviewVisibility(currentUser.role);
+            renderPreviewBanner();
+
+            const nameEl = document.getElementById('currentUserName');
+            const roleEl = document.getElementById('currentUserRole');
+            if (nameEl) nameEl.textContent = currentUser.name || '';
+            if (roleEl) roleEl.textContent = getFriendlyRoleName(currentUser.role);
+
+            console.log(`👁️ Teacher view: showing the app as ${currentUser.name} (${currentUser.role}). Saves are blocked.`);
+            switchTab('tickets');
+        }
+
+        function endTeacherPreview() {
+            if (!isPreviewingTeacher()) return;
+            currentUser = realUser;
+            realUser = null;
+            applyPreviewVisibility(currentUser.role);
+            renderPreviewBanner();
+
+            const nameEl = document.getElementById('currentUserName');
+            const roleEl = document.getElementById('currentUserRole');
+            if (nameEl) nameEl.textContent = currentUser.name || '';
+            if (roleEl) roleEl.textContent = getFriendlyRoleName(currentUser.role);
+
+            console.log('👁️ Teacher view ended. Back as ' + currentUser.name + '.');
+            switchTab('teachers');
+        }
+
+        function renderPreviewBanner() {
+            let bar = document.getElementById('wcPreviewBar');
+            if (!isPreviewingTeacher()) { if (bar) bar.remove(); return; }
+            if (!bar) {
+                bar = document.createElement('div');
+                bar.id = 'wcPreviewBar';
+                bar.className = 'wc-preview-bar';
+                document.body.appendChild(bar);
+            }
+            // Deliberately loud and always on screen. An admin who forgets they
+            // are in this view will report bugs that are not bugs, or worse,
+            // conclude a teacher can see something they cannot.
+            bar.innerHTML =
+                '<span>👁️ <strong>Teacher view</strong> — showing the app as ' +
+                escapeHtml(currentUser.name || '') + '. Read-only, and server permissions ' +
+                'still answer as you.</span>' +
+                '<button type="button" class="wc-preview-exit" onclick="endTeacherPreview()">Exit</button>';
+        }
 
         function saveInBackground(label) {
             // Fire-and-report. Never blocks the UI.

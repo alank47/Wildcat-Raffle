@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20260820q">
-    <link rel="icon" href="favicon.ico?v=20260820q" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260820q" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260820q" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20260820r">
+    <link rel="icon" href="favicon.ico?v=20260820r" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260820r" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260820r" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260820q">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260820r">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20260820q">
+    <link rel="stylesheet" href="styles.css?v=20260820r">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260820q">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260820r">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20260820q">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260820r">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20260820q" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20260820r" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -507,7 +507,7 @@
         <header class="app-topbar">
             <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation">☰</button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20260820q" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20260820r" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -3427,6 +3427,27 @@
                     &#43; Invite Staff
                 </button>
 
+                <!-- Teacher view. Admins only, and gated again in script.js:
+                     hiding a control is a courtesy, not a permission. -->
+                <div class="wc-card panel-card admin-only" id="teacherPreviewCard">
+                    <div class="panel-head">
+                        <span class="panel-icon">👁️</span>
+                        <h3>See what a teacher sees</h3>
+                    </div>
+                    <p class="panel-hint" style="margin: 0 0 12px 0;">
+                        Loads the app as that staff member would find it: their tabs, their
+                        class periods, their students. <strong>Read-only</strong> — nothing can be
+                        saved while you are looking, so you cannot award or file anything as
+                        them by accident.
+                    </p>
+                    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                        <select id="previewTeacherSelect" class="wc-input" style="min-width:260px;"></select>
+                        <button type="button" class="btn btn-secondary" onclick="startTeacherPreview()">
+                            👁️ View as this person
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Add New Teacher, moved into a modal 2026-08-12. The form
                      markup is unchanged: same ids, same handlers, same
                      validation. Only where it sits moved, so the teachers list
@@ -5542,16 +5563,16 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260820q"></script>
+    <script src="wildcat-auth.js?v=20260820r"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
-    <script src="wildcat-motion.js?v=20260820q"></script>
-    <script src="wildcat-discipline.js?v=20260820q"></script>
-    <script src="wildcat-merge.js?v=20260820q"></script>
-    <script src="wildcat-savequeue.js?v=20260820q"></script>
-    <script src="wildcat-roster.js?v=20260820q"></script>
-    <script src="wildcat-store.js?v=20260820q"></script>
-    <script src="script.js?v=20260820q"></script>
+    <script src="wildcat-motion.js?v=20260820r"></script>
+    <script src="wildcat-discipline.js?v=20260820r"></script>
+    <script src="wildcat-merge.js?v=20260820r"></script>
+    <script src="wildcat-savequeue.js?v=20260820r"></script>
+    <script src="wildcat-roster.js?v=20260820r"></script>
+    <script src="wildcat-store.js?v=20260820r"></script>
+    <script src="script.js?v=20260820r"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -5561,7 +5582,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20260820q').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20260820r').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {

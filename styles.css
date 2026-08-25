@@ -6266,3 +6266,30 @@ body:has(#mainApp:not(.hidden)) { padding: 0; margin: 0; }
     color: #ffffff;
 }
 .analytics-tab:focus-visible { outline: 2px solid var(--wc-blue); outline-offset: 2px; }
+
+
+/* ============================================
+   TEACHER VIEW BANNER
+   ============================================
+   Fixed and loud on purpose. An admin who forgets they are looking through
+   somebody else's eyes will report bugs that are not bugs, or conclude a
+   teacher can see something they cannot. It is cheaper to be unmissable. */
+.wc-preview-bar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 9999;
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    flex-wrap: wrap;
+    padding: 11px 18px;
+    background: #4B2E83; color: #fff;
+    font-size: 14px; line-height: 1.4;
+    box-shadow: 0 -2px 14px rgba(0, 0, 0, 0.25);
+}
+.wc-preview-bar strong { font-weight: 700; }
+.wc-preview-exit {
+    background: #fff; color: #4B2E83; border: 0;
+    padding: 6px 14px; border-radius: 999px;
+    font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.wc-preview-exit:hover { background: #EDE7F6; }
+/* The bar sits over the bottom of the page, so give the content room to
+   scroll clear of it rather than hiding the last row behind it. */
+body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
