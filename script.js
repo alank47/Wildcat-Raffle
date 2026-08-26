@@ -52,6 +52,27 @@
         // No deploy of Convex is needed to do it, only this line and a cache
         // buster bump, because the fallback path is still fully present.
         // ---------------------------------------------------------------
+        /**
+         * Where the roster on screen came from, and therefore whether a count
+         * of it means anything.
+         *
+         * `enrolled` is computed by Convex's appData:load against the current
+         * psRoster. Firestore student records DO NOT CARRY THE FIELD AT ALL,
+         * and enrolledStudents() tests `s.enrolled !== false`, so every record
+         * in the Firestore fallback reads as enrolled. That is why the
+         * dashboard showed 1393 students on some loads and 631 on others: not
+         * a race in the rendering, but a missing value rendering as a real one,
+         * which is the failure this app has an explicit rule against.
+         *
+         * The fallback roster is still USED — a half-finished migration must
+         * never leave a teacher looking at an empty roster in front of a class.
+         * It is simply not counted as if it were the roll.
+         */
+        let rosterSource = null;    // 'convex' | 'firestore' | null
+
+        /** True when a roster count is a fact rather than a placeholder. */
+        function rosterIsAuthoritative() { return rosterSource === 'convex'; }
+
         const DATA_SOURCE = 'convex';    // 'convex' | 'firestore'
         const DATA_WRITE = 'both';       // 'firestore' | 'both' | 'convex'
 
@@ -300,41 +321,80 @@
         };
         
         // ========================================
-        // VERSION MANAGEMENT & AUTO-UPDATE
+        // VERSION MANAGEMENT & UPDATE PROMPT
         // ========================================
-        // This timestamp is set when the file is loaded - it's unique per deployment
-        const SCRIPT_LOAD_TIME = Date.now();
-        
-        // Check for updates every 5 minutes
-        setInterval(async () => {
+        //
+        // WHAT THIS REPLACES, AND WHY IT MATTERED.
+        //
+        // The previous check compared the deployed file's Last-Modified header
+        // against the moment the PAGE loaded:
+        //
+        //     const SCRIPT_LOAD_TIME = Date.now();
+        //     const timeDiff = Math.abs(serverTime - SCRIPT_LOAD_TIME);
+        //     if (timeDiff > 60000) location.reload(true);
+        //
+        // Those are not the same kind of thing. One is when the file was
+        // deployed, the other is when the user opened the app. Any page opened
+        // more than a minute after the last deploy satisfied that condition,
+        // which is every page, always. And reloading did not help: the reload
+        // reset SCRIPT_LOAD_TIME to now while Last-Modified stayed where it
+        // was, so the next check was equally "stale".
+        //
+        // The result was every session reloading itself every five minutes,
+        // forever, for every user. That is where the submitted referral went:
+        // saveInBackground was still in flight when the page reloaded under
+        // it, and the referral existed only in memory.
+        //
+        // NOW: compare the VERSION, and never reload without being asked.
+        //
+        // index.html carries the deployed version in its ?v= cache buster.
+        // Comparing that to the one this page loaded answers the actual
+        // question. A mismatch shows a bar; the person clicks it when they are
+        // between tasks. Nothing is reloaded out from under a save.
+        const APP_VERSION = (function () {
+            var tag = document.querySelector('script[src*="script.js?v="]');
+            var m = tag && /[?&]v=([^"&]+)/.exec(tag.getAttribute('src'));
+            return m ? m[1] : null;
+        })();
+
+        function showUpdateBar(newVersion) {
+            if (document.getElementById('wcUpdateBar')) return;   // already shown
+            var bar = document.createElement('div');
+            bar.id = 'wcUpdateBar';
+            bar.className = 'wc-update-bar';
+            bar.innerHTML =
+                '<span>A new version of Wildcat Hub is available.</span>' +
+                '<button type="button" class="wc-update-reload">Reload now</button>' +
+                '<button type="button" class="wc-update-later" aria-label="Dismiss">Later</button>';
+            bar.querySelector('.wc-update-reload').addEventListener('click', function () {
+                // Flush anything outstanding first. The whole point of not
+                // reloading unprompted is that a reload can eat unsaved work.
+                Promise.resolve(typeof saveData === 'function' ? saveData() : null)
+                    .catch(function () { /* reload anyway; the user asked */ })
+                    .then(function () { location.reload(); });
+            });
+            bar.querySelector('.wc-update-later').addEventListener('click', function () {
+                bar.remove();
+            });
+            document.body.appendChild(bar);
+            console.log('[update] new version available:', newVersion, 'running:', APP_VERSION);
+        }
+
+        async function checkForAppUpdate() {
+            if (!APP_VERSION) return;   // cannot compare what we cannot read
             try {
-                // Fetch the HTML file to see if script.js has been updated
-                const response = await fetch('script.js?check=' + Date.now(), { method: 'HEAD' });
-                const lastModified = response.headers.get('Last-Modified');
-                
-                if (lastModified) {
-                    const serverTime = new Date(lastModified).getTime();
-                    const timeDiff = Math.abs(serverTime - SCRIPT_LOAD_TIME);
-                    
-                    // If server version is more than 1 minute different, reload
-                    if (timeDiff > 60000) {
-                        console.log('🔄 New version detected on server');
-                        
-                        // Save current state before reloading
-                        if (currentUser || currentStudent) {
-                            saveSession();
-                        }
-                        
-                        // Auto-reload to get fresh code
-                        console.log('Reloading to update...');
-                        location.reload(true);
-                    }
-                }
-            } catch (error) {
-                // Silently fail - don't interrupt user
-                console.log('Update check skipped');
+                const res = await fetch('index.html?vcheck=' + Date.now(), { cache: 'no-store' });
+                if (!res.ok) return;
+                const html = await res.text();
+                const m = /script\.js\?v=([^"&]+)/.exec(html);
+                if (m && m[1] && m[1] !== APP_VERSION) showUpdateBar(m[1]);
+            } catch (e) {
+                // Offline or blocked. Silent: an update prompt is not worth an
+                // error message, and the next check will catch it.
             }
-        }, 300000); // Check every 5 minutes
+        }
+
+        setInterval(checkForAppUpdate, 300000);   // every 5 minutes
         
         // ========================================
         // DATA INITIALIZATION
@@ -2000,6 +2060,10 @@
                         // HS split into grade bands; the doc above is legacy (read-only now).
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_hs_910')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_hs_1112')),
+                        // Students whose grade this app cannot classify — mostly
+                        // former students. Their history used to be discarded at
+                        // save time; it is filed here instead.
+                        getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_unknown')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history')),
                         getDoc(doc(firebaseDb, 'raffle_data', 'audit_log')),
                         ...monthlyAuditPromises
@@ -2007,7 +2071,8 @@
                     const [mainSnap, secondarySnap, referralsSnap, schedulesSnap] = _allSnaps;
                     const _cashSnaps = _allSnaps.slice(4, 4 + _cashWeekKeys.length);
                     const [ticketHistoryMsSnap, ticketHistoryHsSnap, ticketHistoryHs910Snap,
-                           ticketHistoryHs1112Snap, ticketHistoryLegacySnap, auditLogLegacySnap] =
+                           ticketHistoryHs1112Snap, ticketHistoryUnknownSnap,
+                           ticketHistoryLegacySnap, auditLogLegacySnap] =
                            _allSnaps.slice(4 + _cashWeekKeys.length);
                     const monthlyAuditSnaps = _allSnaps.slice(4 + _cashWeekKeys.length + 6);
 
@@ -2050,8 +2115,10 @@
                                 mainData.students = fresh.students.filter(s => s.enrolled !== false);
                                 nonEnrolledStudents = fresh.students.filter(s => s.enrolled === false);
                                 mainData.teachers = fresh.teachers;
+                                rosterSource = 'convex';
                                 console.log(`✅ Roster from Convex: ${mainData.students.length} enrolled, ${nonEnrolledStudents.length} former, ${fresh.teachers.length} staff`);
                             } catch (err) {
+                                rosterSource = 'firestore';
                                 console.error('[roster] Convex load failed, using the Firestore copy:', err.message);
                             }
                         }
@@ -2087,6 +2154,7 @@
                         const hsHistories = ticketHistoryHsSnap.exists() ? (ticketHistoryHsSnap.data().histories || {}) : {};
                         const hs910Histories = ticketHistoryHs910Snap.exists() ? (ticketHistoryHs910Snap.data().histories || {}) : {};
                         const hs1112Histories = ticketHistoryHs1112Snap.exists() ? (ticketHistoryHs1112Snap.data().histories || {}) : {};
+                        const unknownHistories = ticketHistoryUnknownSnap.exists() ? (ticketHistoryUnknownSnap.data().histories || {}) : {};
                         const legacyHistories = ticketHistoryLegacySnap.exists() ? (ticketHistoryLegacySnap.data().histories || {}) : {};
                         const firebaseTicketHistories = {};
                         const allHistoryStudentIds = new Set([
@@ -2094,6 +2162,7 @@
                             ...Object.keys(hsHistories),
                             ...Object.keys(hs910Histories),
                             ...Object.keys(hs1112Histories),
+                            ...Object.keys(unknownHistories),
                             ...Object.keys(legacyHistories)
                         ]);
                         allHistoryStudentIds.forEach(sid => {
@@ -2107,6 +2176,7 @@
                             collect(msHistories[sid]);
                             collect(hs910Histories[sid]);
                             collect(hs1112Histories[sid]);
+                            collect(unknownHistories[sid]);
                             collect(hsHistories[sid]);      // legacy combined HS doc
                             collect(legacyHistories[sid]);
                             const merged = Array.from(byId.values())
@@ -2305,6 +2375,15 @@
                             }
                         }
                         detentions = secondaryData.detentions || [];
+                        // Read the counter back from Firebase, not just localStorage.
+                        // It used to be localStorage-only, and localStorage is never
+                        // consulted when Firebase loads, so it reset to 1 every load
+                        // and new detentions were handed ids that already existed.
+                        // Max, so a tab that has already issued ids this session
+                        // does not go backwards and reissue them.
+                        detentionIdCounter = Math.max(
+                            Number(detentionIdCounter) || 1,
+                            Number(secondaryData.detentionIdCounter) || 1);
                         detentionLocations = secondaryData.detentionLocations || ['Main Office', 'Library', 'Room 101', 'Room 102', 'Cafeteria', 'Gym'];
                         detentionReasons = secondaryData.detentionReasons || ['Disrupting Class', 'Tardiness', 'Dress Code Violation', 'Inappropriate Behavior', 'Defiance/Disrespect', 'Cell Phone Violation', 'Missing Assignment', 'Other'];
                         
@@ -2909,6 +2988,21 @@
         setInterval(checkWeeklyEmailSchedule, 60 * 60 * 1000); // Check every hour
 
         async function saveData() {
+            // TEACHER VIEW IS READ-ONLY, ENFORCED HERE.
+            //
+            // One guard at the chokepoint rather than at 102 call sites. An
+            // admin looking through a teacher's eyes must not be able to write
+            // anything, because currentUser is that teacher and the write would
+            // carry their name into the audit log, a ticket award or a
+            // referral. In a discipline system a falsified attribution is worse
+            // than a missing feature.
+            //
+            // Returns false, which is the same "did not save" signal every
+            // caller already handles.
+            if (typeof isPreviewingTeacher === 'function' && isPreviewingTeacher()) {
+                console.warn('[teacher view] Save blocked. Exit teacher view to make changes.');
+                return false;
+            }
             let saveSucceeded = false;
             if (typeof showSavingIndicator === 'function') showSavingIndicator(true);
             if (isSyncing) {
@@ -3019,7 +3113,24 @@
                         
                         // Prepare ticket histories (extracted from students)
                         const ticketHistoriesToSave = {};
+                        // Built HERE, from the same pass as the histories, and not
+                        // later from `students`.
+                        //
+                        // `students` is reassigned partway through this save — the
+                        // main transaction splits former students out into
+                        // nonEnrolledStudents, and the Convex roster refresh can
+                        // replace the array outright while the save is still
+                        // running. Building the grade index afterwards indexed a
+                        // SMALLER list than the histories were collected from, so
+                        // every student who had left was missing from it, their
+                        // grade read as undefined, and their ticket history was
+                        // dropped on the floor. Roughly a hundred students per save.
+                        //
+                        // Two maps built from one loop cannot disagree about who is
+                        // in them, which is the actual property needed here.
+                        const studentGradeById = {};
                         students.forEach(s => {
+                            studentGradeById[s.id] = parseInt(s.grade);
                             if (s.ticketHistory && s.ticketHistory.length > 0) {
                                 ticketHistoriesToSave[s.id] = s.ticketHistory;
                             }
@@ -3045,7 +3156,18 @@
                             // former students would DELETE them and their
                             // balances. Convex would merely skip them, but
                             // Firestore is still the system of record.
-                            let studentsToSave = students.concat(nonEnrolledStudents);
+                            // Stripped HERE as well as in the merge branch below,
+                            // because this is what gets written when `main` does not
+                            // exist yet. The merge branch replaces studentsToSave
+                            // entirely, so the two paths have to strip independently.
+                            let studentsToSave = students.concat(nonEnrolledStudents).map(s => {
+                                const c = Object.assign({}, s);
+                                delete c.ticketHistory;
+                                delete c.sections;
+                                delete c.wildcatCashTransactions;
+                                delete c.cashTransactions;
+                                return c;
+                            });
                             let teachersToSave = teachers;
                             
                             if (mainDoc.exists()) {
@@ -3137,6 +3259,22 @@
                                         
                                         delete studentData.ticketHistory;
                                         delete studentData.sections;   // stored in the `schedules` document
+                                        // DERIVED, exactly like the two above, and the
+                                        // reason `main` sat at 81% of Firestore's 1MB
+                                        // limit. The authoritative ledger is the
+                                        // cash_tx_* weekly documents;
+                                        // distributeCashTransactions() rebuilds this
+                                        // per-student view from it on every load. Writing
+                                        // it here stored a SECOND complete copy of every
+                                        // cash transaction in the school, sharded across
+                                        // student records, in the one document every
+                                        // teacher loads on open.
+                                        //
+                                        // `cashTransactions` is the retired name for the
+                                        // same thing; ensureCashFields already deletes it
+                                        // from every student on load.
+                                        delete studentData.wildcatCashTransactions;
+                                        delete studentData.cashTransactions;
                                         return studentData;
                                     });
                                 
@@ -3147,6 +3285,8 @@
                                         const studentData = {...localStudent};
                                         delete studentData.ticketHistory;
                                         delete studentData.sections;   // stored in the `schedules` document
+                                        delete studentData.wildcatCashTransactions;  // see above
+                                        delete studentData.cashTransactions;
                                         mergedStudents.push(studentData);
                                     }
                                 });
@@ -3242,6 +3382,12 @@
                         students = savedAll.filter(s => s.enrolled !== false);
                         nonEnrolledStudents = savedAll.filter(s => s.enrolled === false);
                         teachers = mainTransactionResult.teachersToSave;
+                        // The cash view was just stripped out of what was written, and
+                        // ticketHistory/sections are re-attached above from the copies
+                        // taken before the transaction. This one is rebuilt from the
+                        // ledger instead, which is the same thing loadData does. Without
+                        // it "My Cash Activity" empties out until the next refresh.
+                        if (typeof distributeCashTransactions === 'function') distributeCashTransactions();
 
                         console.log(`✅ Main document saved (transaction)`);
 
@@ -3300,13 +3446,56 @@
                         // They used to be written last, after seven other documents,
                         // so any upstream failure meant a referral never persisted.
                         // The document is tiny, so writing it first costs nothing.
+                        //
+                        // MERGED, never replaced. This was a whole-document
+                        // setDoc of whatever this tab held in memory, which is
+                        // last-write-wins: teacher A files a referral, teacher
+                        // B's tab has been open since morning and saves for any
+                        // reason, and A's referral is gone with no error
+                        // anywhere. The five minute auto-reload existed to keep
+                        // that window small; it narrowed the problem instead of
+                        // closing it, and cost a referral when a reload landed
+                        // mid-save. Closing it properly is what lets the reload
+                        // go.
                         try {
-                            await setDoc(doc(firebaseDb, 'raffle_data', 'referrals'), {
-                                behaviorReferrals,
-                                referralIdCounter,
-                                lastSaveTimestamp: timestamp
+                            // Firestore RETRIES this callback on contention, so it
+                            // must not mutate anything outside itself. An earlier
+                            // revision assigned behaviorReferrals in here: safe only
+                            // by accident, because the merge is idempotent, and it
+                            // left the in-memory list claiming rows that were never
+                            // written if the transaction ultimately failed. The
+                            // result is applied once, after the transaction
+                            // resolves, and every attempt merges the ORIGINAL local
+                            // list against freshly read storage.
+                            let mergedReferrals = null;
+                            await runTransaction(firebaseDb, async (transaction) => {
+                                const ref = doc(firebaseDb, 'raffle_data', 'referrals');
+                                const snap = await transaction.get(ref);
+                                const stored = snap.exists() ? (snap.data().behaviorReferrals || []) : [];
+
+                                const merged = window.WildcatMerge.mergeById(stored, behaviorReferrals);
+                                const report = window.WildcatMerge.mergeReport(stored, behaviorReferrals, merged);
+                                if (report.wouldHaveLost.length) {
+                                    console.warn(
+                                        `[referrals] kept ${report.keptFromStorage} referral(s) this tab had not seen: ` +
+                                        report.wouldHaveLost.join(', ') +
+                                        '. A whole-document write would have destroyed them.');
+                                }
+
+                                transaction.set(ref, {
+                                    behaviorReferrals: merged,
+                                    // The counter only ever goes up. Taking the
+                                    // max stops a stale tab handing out an id
+                                    // another tab has already used.
+                                    referralIdCounter: Math.max(
+                                        Number(referralIdCounter) || 1,
+                                        Number(snap.exists() ? snap.data().referralIdCounter : 1) || 1),
+                                    lastSaveTimestamp: timestamp
+                                });
+                                mergedReferrals = merged;
                             });
-                            console.log(`✅ Referrals saved (${(behaviorReferrals || []).length} records)`);
+                            if (mergedReferrals) behaviorReferrals = mergedReferrals;
+                            console.log(`✅ Referrals saved (${(behaviorReferrals || []).length} records, merged)`);
                         } catch (refErr) {
                             console.error('❌ referrals save failed:', refErr?.code, refErr?.message);
                         }
@@ -3322,9 +3511,10 @@
                         // The two docs are independent transactions; if one fails, the other
                         // still commits, and the next save retries.
                         //
-                        // Partition local histories by grade
-                        const studentGradeById = {};
-                        students.forEach(s => { studentGradeById[s.id] = parseInt(s.grade); });
+                        // Partition local histories by grade. studentGradeById is
+                        // built at the top of this function, alongside the histories
+                        // themselves — see the note there for why it cannot be built
+                        // from `students` at this point.
                         // HS is split again into 9-10 and 11-12. ticket_history_hs
                         // covers four grades to MS's three and reached 69% of the
                         // 1MB limit partway through a year (263KB in April → 702KB
@@ -3334,6 +3524,11 @@
                         const msHistoriesToSave = {};
                         const hs910HistoriesToSave = {};
                         const hs1112HistoriesToSave = {};
+                        // Students whose grade this code cannot classify: former
+                        // students, mid-year arrivals not yet graded, anyone the SIS
+                        // has no grade level for. Small by design, and read back on
+                        // load like the others.
+                        const unknownHistoriesToSave = {};
                         Object.keys(ticketHistoriesToSave).forEach(sid => {
                             const grade = studentGradeById[sid];
                             if (grade >= 6 && grade <= 8) {
@@ -3343,9 +3538,19 @@
                             } else if (grade >= 11 && grade <= 12) {
                                 hs1112HistoriesToSave[sid] = ticketHistoriesToSave[sid];
                             } else {
-                                // Unknown grade — skip rather than guess. Will be visible
-                                // in console for investigation.
-                                console.warn(`⚠️ Student ${sid} has unknown grade ${grade}, history not saved.`);
+                                // NOT DROPPED. The partition exists to stay under
+                                // Firestore's 1MB per-document limit, not to validate
+                                // grades, so a grade this code cannot read is a reason
+                                // to file the history elsewhere — never a reason to
+                                // throw it away.
+                                //
+                                // Dropping it silently deleted the student's ticket
+                                // history, and because the load path RECOMPUTES
+                                // pbisTickets/attendanceTickets/academicTickets from
+                                // that history, their ticket counts reset to zero on
+                                // the next page load. Tickets a teacher had already
+                                // awarded simply vanished.
+                                unknownHistoriesToSave[sid] = ticketHistoriesToSave[sid];
                             }
                         });
 
@@ -3411,12 +3616,13 @@
                         const historyJobs = [
                             ['ticket_history_ms',        msHistoriesToSave,     'MS'],
                             ['ticket_history_hs_910',    hs910HistoriesToSave,  'HS 9-10'],
-                            ['ticket_history_hs_1112',   hs1112HistoriesToSave, 'HS 11-12']
+                            ['ticket_history_hs_1112',   hs1112HistoriesToSave, 'HS 11-12'],
+                            ['ticket_history_unknown',   unknownHistoriesToSave, 'ungraded']
                         ];
                         const historySettled = await Promise.allSettled(
                             historyJobs.map(([docName, payload]) => commitHistoryDoc(docName, payload))
                         );
-                        const [msSettled, hs910Settled, hs1112Settled] = historySettled;
+                        const [msSettled, hs910Settled, hs1112Settled, unknownSettled] = historySettled;
                         historySettled.forEach((res, idx) => {
                             const [docName, , label] = historyJobs[idx];
                             if (res.status === 'fulfilled') {
@@ -3429,6 +3635,18 @@
                         const msResult     = msSettled.status === 'fulfilled'     ? msSettled.value     : { mergedHistories: {} };
                         const hs910Result  = hs910Settled.status === 'fulfilled'  ? hs910Settled.value  : { mergedHistories: {} };
                         const hs1112Result = hs1112Settled.status === 'fulfilled' ? hs1112Settled.value : { mergedHistories: {} };
+                        const unknownResult = unknownSettled.status === 'fulfilled' ? unknownSettled.value : { mergedHistories: {} };
+                        // Worth saying out loud rather than leaving as a silent
+                        // bucket: a growing number here means grades are not
+                        // reaching the app, and the ticket counts that are derived
+                        // from this history will look wrong to whoever awarded them.
+                        const ungradedCount = Object.keys(unknownResult.mergedHistories || {}).length;
+                        if (ungradedCount) {
+                            console.warn(
+                                `ℹ️ ${ungradedCount} student(s) have ticket history but no readable grade. ` +
+                                'Saved to ticket_history_unknown so nothing is lost. Mostly former students; ' +
+                                'a rising number here means grade levels are not reaching the app.');
+                        }
                         if (historyFailures.length) {
                             console.error(`⚠️ ${historyFailures.length} history document(s) failed: ${historyFailures.join(', ')}. Other documents still saved.`);
                         }
@@ -3438,7 +3656,8 @@
                             mergedHistories: {
                                 ...msResult.mergedHistories,
                                 ...hs910Result.mergedHistories,
-                                ...hs1112Result.mergedHistories
+                                ...hs1112Result.mergedHistories,
+                                ...unknownResult.mergedHistories
                             }
                         };
 
@@ -3582,28 +3801,123 @@
                             setDoc(doc(firebaseDb, 'raffle_data', 'schedules'), {
                                 sections: sectionsToSave,
                                 lastSaveTimestamp: timestamp
-                            }),
-                            setDoc(doc(firebaseDb, 'raffle_data', 'secondary'), {
-                                weeklyWinners,
-                                bigRaffleWinners,
-                                weeklyHistory,
-                                loginHistory,
-                                hallPasses,
-                                preventionGroups,
-                                detentions,
-                                detentionLocations,
-                                detentionReasons,
-                                lastSaveTimestamp: timestamp
                             })
                         ]);
                         const writeNames = [
                             ...Object.keys(cashByWeek).map(w => `cash_tx_${w}`),
-                            'schedules', 'secondary'
+                            'schedules'
                         ];
                         independentWrites.forEach((res, i) => {
                             if (res.status === 'fulfilled') console.log(`✅ ${writeNames[i]} saved`);
                             else console.error(`❌ ${writeNames[i]} save failed:`, res.reason?.code, res.reason?.message);
                         });
+
+                        // TRANSACTION 3: the secondary document.
+                        //
+                        // MERGED BY ID, never replaced. This was a whole-document
+                        // setDoc of whatever this tab held in memory — the same
+                        // last-write-wins bug that used to eat referrals, still
+                        // live for everything else sharing this document. Teacher
+                        // A assigns a detention, teacher B's tab has been open
+                        // since morning and saves for any reason, and A's
+                        // detention is gone with no error anywhere.
+                        //
+                        // cashReceipts is in this write for the FIRST time. It was
+                        // read from this document on load and written only to
+                        // localStorage, and localStorage is never consulted when
+                        // Firebase loads successfully. So every receipt in the
+                        // school came back as an empty array on every page load.
+                        // Balances were never affected — those live in the
+                        // cash_tx_* documents — but the record of what was bought
+                        // and whether it had been handed over was destroyed each
+                        // time somebody opened the app.
+                        //
+                        // detentionIdCounter is here for the same reason: it was
+                        // saved to localStorage only and never read back from
+                        // Firebase, so it reset to 1 on every load and new
+                        // detentions were handed ids that already existed. Since
+                        // markDetentionDay looks a detention up BY id, that meant
+                        // marking one student's detention served could credit
+                        // another student's record.
+                        try {
+                            let mergedSecondary = null;
+                            await runTransaction(firebaseDb, async (transaction) => {
+                                const ref = doc(firebaseDb, 'raffle_data', 'secondary');
+                                const snap = await transaction.get(ref);
+                                const stored = snap.exists() ? snap.data() : {};
+                                const M = window.WildcatMerge;
+
+                                // Stamp lists are newest-concept-first so rows
+                                // written before `updatedAt` existed still order
+                                // sensibly instead of collapsing to zero.
+                                const lists = {
+                                    detentions: [detentions,
+                                        ['updatedAt', 'completedAt', 'assignedAt']],
+                                    hallPasses: [hallPasses,
+                                        ['updatedAt', 'returnedAt', 'createdAt']],
+                                    preventionGroups: [preventionGroups,
+                                        ['updatedAt', 'createdAt']],
+                                    cashReceipts: [cashReceipts,
+                                        ['updatedAt', 'cancelledAt', 'fulfilledAt', 'purchasedAt']]
+                                };
+
+                                const out = {
+                                    // No ids on these four, so they keep the
+                                    // previous whole-value behaviour. That is
+                                    // unchanged rather than newly introduced;
+                                    // giving them ids is its own change.
+                                    weeklyWinners,
+                                    bigRaffleWinners,
+                                    weeklyHistory,
+                                    loginHistory,
+                                    detentionLocations,
+                                    detentionReasons,
+                                    // The counter only ever goes up, so a stale
+                                    // tab cannot hand out an id another tab has
+                                    // already used. Same rule as referralIdCounter.
+                                    detentionIdCounter: Math.max(
+                                        Number(detentionIdCounter) || 1,
+                                        Number(stored.detentionIdCounter) || 1),
+                                    lastSaveTimestamp: timestamp
+                                };
+
+                                Object.keys(lists).forEach(key => {
+                                    const local = lists[key][0] || [];
+                                    const storedList = stored[key] || [];
+                                    out[key] = M.mergeById(storedList, local,
+                                        { stampFields: lists[key][1] });
+                                    const rep = M.mergeReport(storedList, local, out[key]);
+                                    if (rep.wouldHaveLost.length) {
+                                        console.warn(
+                                            `[secondary] kept ${rep.keptFromStorage} ${key} this tab ` +
+                                            `had not seen: ${rep.wouldHaveLost.join(', ')}. ` +
+                                            'A whole-document write would have destroyed them.');
+                                    }
+                                });
+
+                                transaction.set(ref, out);
+                                mergedSecondary = out;
+                            });
+
+                            // Applied AFTER the transaction resolves, never inside
+                            // it: Firestore retries that callback on contention,
+                            // and a callback that mutates outside itself leaves
+                            // this tab claiming rows that were never written if
+                            // the transaction ultimately fails.
+                            if (mergedSecondary) {
+                                detentions = mergedSecondary.detentions;
+                                hallPasses = mergedSecondary.hallPasses;
+                                preventionGroups = mergedSecondary.preventionGroups;
+                                cashReceipts = mergedSecondary.cashReceipts;
+                                detentionIdCounter = mergedSecondary.detentionIdCounter;
+                                activeHallPasses = hallPasses.filter(p => p.status === 'active');
+                            }
+                            console.log(
+                                `✅ secondary saved (merged: ${(detentions || []).length} detentions, ` +
+                                `${(cashReceipts || []).length} receipts, ${(hallPasses || []).length} passes)`);
+                        } catch (secErr) {
+                            console.error('❌ secondary save failed:', secErr?.code, secErr?.message);
+                        }
                         
                         
                         lastSaveTimestamp = timestamp;
@@ -7026,6 +7340,7 @@
             const roleNames = {
                 'teacher': 'Teacher',
                 'campusaide': 'Campus Aide',
+                'pbis': 'PBIS Team',
                 'admin': 'Admin',
                 'superadmin': 'Super Admin'
             };
@@ -7112,7 +7427,7 @@
             document.getElementById('currentUserRole').textContent = getFriendlyRoleName(teacher.role);
             
             // Force admin, teacher, and campus aide users to Raffle Mode only
-            if (teacher.role === 'teacher' || teacher.role === 'campusaide' || teacher.role === 'admin') {
+            if (teacher.role === 'teacher' || teacher.role === 'campusaide' || teacher.role === 'pbis' || teacher.role === 'admin') {
                 wildcatCashEnabled = false;
                 localStorage.setItem('systemMode', 'raffle');
                 document.body.classList.remove('cash-mode', 'hallpass-mode', 'discipline-mode');
@@ -7141,7 +7456,7 @@
             const adminTabs = document.querySelectorAll('.admin-only');
             const superAdminTabs = document.querySelectorAll('.super-admin-only');
             
-            if (teacher.role === 'teacher' || teacher.role === 'campusaide') {
+            if (teacher.role === 'teacher' || teacher.role === 'campusaide' || teacher.role === 'pbis') {
                 // Teachers and Campus Aides only see basic tabs
                 adminTabs.forEach(tab => tab.classList.add('disabled'));
                 superAdminTabs.forEach(tab => tab.classList.add('disabled'));
@@ -12062,6 +12377,7 @@
                     superadmin: ['Super Admin', 'wu-chip-warn'],
                     admin: ['Admin', ''],
                     campusaide: ['Campus Aide', ''],
+                    pbis: ['PBIS Team', ''],
                     teacher: ['Teacher', '']
                 };
 
@@ -13956,9 +14272,13 @@
                       '</div>';
             }
             
-            // Add behavior referral count if superadmin
+            // Discipline is run by admins and the PBIS team, not only by the
+            // superadmin. Gating a student's referral history to superadmin hid
+            // it from exactly the people who act on it.
             const studentReferrals = behaviorReferrals.filter(r => r.studentId === studentId);
-            if (currentUser && currentUser.role === 'superadmin' && studentReferrals.length > 0) {
+            const canSeeReferralHistory = currentUser &&
+                ['admin', 'superadmin', 'pbis'].indexOf(currentUser.role) !== -1;
+            if (canSeeReferralHistory && studentReferrals.length > 0) {
                 // Add referral count to stats
                 const statsGrid = document.querySelector('#studentProfileModal .content > div:nth-child(2)');
                 if (statsGrid) {
@@ -15056,6 +15376,36 @@
             }).join('');
         }
         
+        /**
+         * Why the period list is empty, when it is.
+         *
+         * "All Students" on its own is indistinguishable from a broken lookup,
+         * and that ambiguity cost two rounds of "it still doesn't work". The
+         * dropdown now says which of the three it is, so the next report names
+         * a cause instead of a symptom.
+         */
+        function periodFilterNote(sections) {
+            if (sections && sections.length) return '';
+            if (sisRosterState === 'loading') {
+                return '<option value="" disabled>Loading your classes…</option>';
+            }
+            if (sisRosterState === 'failed') {
+                return '<option value="" disabled>Classes unavailable: ' +
+                    escapeHtml(sisRosterError || 'roster lookup failed') + '</option>';
+            }
+            const who = isPreviewingTeacher()
+                ? ((currentUser && currentUser.name) || 'that person')
+                : 'you';
+            return '<option value="" disabled>No classes in PowerSchool for ' +
+                escapeHtml(who) + '</option>';
+        }
+
+        // Bounded auto-retry. A roster that failed once — which happens when
+        // this runs before Microsoft sign-in resolves — stayed failed for the
+        // whole visit, with the period list empty and no way back.
+        let periodFilterFetchTried = false;
+        function resetPeriodFilterFetch() { periodFilterFetchTried = false; }
+
         function updatePeriodFilter() {
             const periodFilterSection = document.getElementById('periodFilterSection');
             const periodFilter = document.getElementById('periodFilter');
@@ -15086,44 +15436,68 @@
                 return;
             }
             
-            if (!currentUser || !currentUser.sections || currentUser.sections.length === 0) {
-                console.log('No sections for this user - hiding period filter');
-                if (periodFilterSection) periodFilterSection.style.display = 'none';
-                return;
-            }
-            
-            // Show filter section
+            // SECTIONS COME FROM THE SIS, NOT FROM currentUser.sections.
+            //
+            // That field is written by exactly one thing: the legacy CSV
+            // import, which matched teachers to schedules BY NAME. Nothing in
+            // the PowerSchool path has ever written it. So it has been empty
+            // for everybody since the CSV era ended, this function took the
+            // early return every time, and the period filter has been hidden
+            // for every user on every load — admin and teacher alike.
+            //
+            // Award Cash was moved onto the SIS roster when a teacher reported
+            // seeing only "All students". This is the same bug in the raffle
+            // tab, and it is fixed the same way, through the same helpers, so
+            // the two screens cannot disagree about what a period is.
+            const sections = window.WildcatRoster.sectionsFrom(activeTeacherRoster());
+            const seesAll = window.WildcatRoster.seesEveryStudent(currentUser && currentUser.role);
+
+            // SHOWN, never hidden. Hiding the control made an unmatched roster
+            // look like a missing feature, which is how this went unnoticed:
+            // there was nothing on screen to report.
             if (periodFilterSection) periodFilterSection.style.display = 'block';
-            
-            // Build dropdown options with proper ordering
+
             if (periodFilter) {
                 const totalStudents = students.length;
-                periodFilter.innerHTML = `<option value="">All Students (${totalStudents})</option>`;
-                
-                // Define correct period order
-                const periodOrder = ['A1', 'P1', 'P2', 'P3', 'P4', 'HPU', 'P5', 'P6', 'A2'];
-                
-                // Sort sections by period order
-                const sortedSections = [...currentUser.sections].sort((a, b) => {
-                    const indexA = periodOrder.indexOf(a.period);
-                    const indexB = periodOrder.indexOf(b.period);
-                    
-                    // If period not in order list, put at end
-                    if (indexA === -1) return 1;
-                    if (indexB === -1) return -1;
-                    
-                    return indexA - indexB;
-                });
-                
-                sortedSections.forEach(section => {
-                    const studentCount = section.students ? section.students.length : 0;
+                // EVERY ROLE GETS BOTH: the whole school, and their own classes.
+                //
+                // It was either/or, and that is wrong for the most common case
+                // in this school — somebody who teaches AND administers. A
+                // superadmin who teaches three sections got "All Students" and
+                // no way to narrow to their own. scopeStudents already honours
+                // a chosen section for every role, so the only thing missing
+                // was offering it.
+                periodFilter.innerHTML =
+                    `<option value="">All Students (${totalStudents})</option>` +
+                    periodFilterNote(sections);
+
+                // sectionsFrom already classifies and labels each block, so the
+                // list reads "Promise Time" and "Period 3" rather than raw
+                // PowerSchool slot numbers. The hand-written periodOrder array
+                // this replaces listed A1/P1/HPU codes that the SIS does not
+                // use, so it sorted nothing and every section fell to the end.
+                sections.forEach(section => {
                     const option = document.createElement('option');
                     option.value = section.sectionId;
-                    option.textContent = `Period ${section.period} - ${section.courseName} (${studentCount} students)`;
+                    option.textContent = `${section.label} (${(section.students || []).length})`;
                     periodFilter.appendChild(option);
                 });
-                
-                console.log('Dropdown populated with', sortedSections.length, 'periods');
+
+                console.log(`Period filter: ${sections.length} section(s)` +
+                    (seesAll ? ' (you see every student)' : ''));
+            }
+
+            // Paint from cache first, then fetch and repaint. The roster is
+            // only loaded when Award Cash opens, so in Raffle mode it may not
+            // be there yet, and awaiting would leave a blank control.
+            // Retries a FAILED roster too, not only an untouched one. The old
+            // guard tested 'idle', so a lookup that failed before sign-in
+            // resolved was never attempted again. At most one retry per
+            // context, so a repaint cannot loop on a broken connection.
+            if (!activeTeacherRoster() && sisRosterState !== 'loading'
+                && !periodFilterFetchTried && !isPreviewingTeacher()) {
+                periodFilterFetchTried = true;
+                loadTeacherRosterFromSIS(true).then(() => updatePeriodFilter());
             }
         }
         
@@ -15499,7 +15873,10 @@
             const studentsWithTicketsBeforeSave = students.filter(s => s.pbisTickets > 0 || s.attendanceTickets > 0 || s.academicTickets > 0).length;
             console.log(`   Students with tickets before save: ${studentsWithTicketsBeforeSave}`);
             
-            await saveData(); // CRITICAL: Wait for save to complete before continuing
+            // Coalesced, but STILL awaited: requestSave resolves only once a
+            // save carrying this award has actually landed, so the guarantee
+            // the old comment describes is unchanged, not traded away.
+            await requestSave('Ticket award');
             
             // Verify after save completes
             setTimeout(() => {
@@ -16715,6 +17092,10 @@
                 try { renderTeacherDashboard(); } catch (e) { console.warn('[dashboard]', e); }
             }
 
+            if (tabName === 'teachers' && typeof populatePreviewTeacherSelect === 'function') {
+                populatePreviewTeacherSelect();
+            }
+
             // Populate settings when Settings tab is opened
             if (tabName === 'settings') {
                 populateSettingsFields();
@@ -16940,6 +17321,7 @@
                     }
                 }
 
+                rosterSource = 'convex';
                 console.log(`✅ Roster refreshed from Convex after ${reason}: ${students.length} enrolled, ${nonEnrolledStudents.length} former`);
 
                 // Redraw whatever is on screen. There is no `currentTab` variable
@@ -22201,6 +22583,8 @@
                 const copy = Object.assign({}, s);
                 delete copy.ticketHistory;   // lives in ticket_history_ms / _hs
                 delete copy.sections;        // lives in the schedules document
+                delete copy.wildcatCashTransactions;  // lives in cash_tx_*
+                delete copy.cashTransactions;         // retired name for the same
                 return copy;
             });
 
@@ -22209,15 +22593,39 @@
                 if (s.sections && s.sections.length) schedulesPayload.sections[s.id] = s.sections;
             });
 
+            // MIRRORS THE ACTUAL transaction.set(mainDocRef, ...) PAYLOAD.
+            //
+            // It did not, and the number was wrong in both directions at once:
+            // it counted weeklyWinners, bigRaffleWinners and weeklyHistory,
+            // which live in `secondary`, while omitting schoolBranding,
+            // cycleHistory, entityTombstones and the settings block, which
+            // really are in `main`. A storage screen that measures a different
+            // document than the one being written is worse than no screen.
+            //
+            // If a field is added to the main write, add it here too.
             const mainPayload = {
                 students: studentsForMain,
-                teachers: teachers || [],
                 currentWeek: typeof currentWeek !== 'undefined' ? currentWeek : null,
                 cycleDuration: typeof cycleDuration !== 'undefined' ? cycleDuration : null,
-                weeklyWinners: typeof weeklyWinners !== 'undefined' ? weeklyWinners : [],
-                bigRaffleWinners: typeof bigRaffleWinners !== 'undefined' ? bigRaffleWinners : [],
-                weeklyHistory: typeof weeklyHistory !== 'undefined' ? weeklyHistory : [],
-                currentCycle: typeof currentCycle !== 'undefined' ? currentCycle : null
+                teachers: teachers || [],
+                pbisSubcategories: typeof pbisSubcategories !== 'undefined' ? pbisSubcategories : [],
+                academicSubcategories: typeof academicSubcategories !== 'undefined' ? academicSubcategories : [],
+                lastPowerSchoolSync: typeof lastPowerSchoolSync !== 'undefined' ? lastPowerSchoolSync : null,
+                kickboardSettings: typeof kickboardSettings !== 'undefined' ? kickboardSettings : {},
+                emailJSConfig: typeof emailJSConfig !== 'undefined' ? emailJSConfig : {},
+                passSettings: typeof passSettings !== 'undefined' ? passSettings : {},
+                schoolBranding: typeof schoolBranding !== 'undefined' ? schoolBranding : {},
+                referralIdCounter: typeof referralIdCounter !== 'undefined' ? referralIdCounter : 1,
+                autoWeekEnabled: false,
+                lastAutoResetDate: typeof lastAutoResetDate !== 'undefined' ? lastAutoResetDate : null,
+                lastWeekResetTime: typeof lastWeekResetTime !== 'undefined' ? lastWeekResetTime : null,
+                weekResetDay: typeof weekResetDay !== 'undefined' ? weekResetDay : 1,
+                weekResetHour: typeof weekResetHour !== 'undefined' ? weekResetHour : 6,
+                currentCycle: typeof currentCycle !== 'undefined' ? currentCycle : null,
+                cycleHistory: typeof cycleHistory !== 'undefined' ? cycleHistory : [],
+                cycleStartTimestamp: typeof cycleStartTimestamp !== 'undefined' ? cycleStartTimestamp : null,
+                entityTombstones: typeof entityTombstones !== 'undefined' ? entityTombstones : [],
+                lastSaveTimestamp: 0
             };
 
             const secondaryPayload = {
@@ -22301,7 +22709,6 @@
                 { key: 'secondary',         label: 'Secondary (passes, cash, detentions)', bytes: _byteSize(secondaryPayload) },
                 { key: 'referrals',         label: 'Referrals', bytes: _byteSize(referralsPayload) },
                 { key: 'schedules',         label: 'Class schedules', bytes: _byteSize(schedulesPayload) },
-                { key: 'daily_backup',      label: 'Daily automatic backup (largest slice)', bytes: backupBytes },
                 { key: 'audit_log',         label: 'Audit log (largest week' + (auditWorstMonth ? ': ' + auditWorstMonth.replace('_', '-') : '') + ')', bytes: auditBytes },
                 { key: 'ticket_history_hs_910',  label: 'Ticket history — Grades 9-10', bytes: _byteSize(hs910Hist) },
                 { key: 'ticket_history_hs_1112', label: 'Ticket history — Grades 11-12', bytes: _byteSize(hs1112Hist) },
@@ -22309,20 +22716,37 @@
             ];
             rows.forEach(r => { r.pct = r.bytes / STORAGE_DOC_LIMIT; });
 
-            // What's taking up room inside `main` — the actionable detail
+            // What is taking up room inside `main` — the actionable detail.
+            //
+            // This used to report the per-student cash arrays, which were indeed
+            // the bulk of the problem: a duplicate of the whole cash ledger rode
+            // into `main` on every student record. They are no longer written
+            // there, so reporting them here would measure something the save does
+            // not produce and send someone chasing space that is already free.
             const detail = [
-                { label: 'Cash balances & counters on students', bytes: (students || []).reduce((n, s) => n + _byteSize(s.wildcatCashTransactions || []), 0) },
-                { label: 'Cash transactions on students',       bytes: (students || []).reduce((n, s) => n + _byteSize(s.cashTransactions || []), 0) },
-                { label: 'Teacher records',                     bytes: _byteSize(teachers || []) }
+                { label: 'Student records (core fields)', bytes: _byteSize(studentsForMain) },
+                { label: 'Teacher records',              bytes: _byteSize(teachers || []) },
+                // Listed because it can hold a base64 logo, which is the one
+                // settings field capable of being large enough to matter.
+                { label: 'School branding (incl. logo)',  bytes: _byteSize(typeof schoolBranding !== 'undefined' ? schoolBranding : {}) },
+                { label: 'Cycle history',                bytes: _byteSize(typeof cycleHistory !== 'undefined' ? cycleHistory : []) },
+                { label: 'Deletion records (tombstones)', bytes: _byteSize(typeof entityTombstones !== 'undefined' ? entityTombstones : []) }
             ];
 
-            return { rows, detail };
+            // Automatic backups do NOT run. createAutomaticBackup() returns
+            // early and its slice-writing body is commented out as dead
+            // reference. This screen used to rank that imaginary document
+            // first and call it "the one to fix", which pushed the real
+            // document into second place and sent the reader after nothing.
+            const backupsDisabled = true;
+
+            return { rows, detail, backupsDisabled };
         }
 
         function renderStorageHealth() {
             const host = document.getElementById('storageHealthBars');
             if (!host) return;
-            const { rows, detail } = getStorageEstimates();
+            const { rows, detail, backupsDisabled } = getStorageEstimates();
             const esc = (typeof escapeHtml === 'function') ? escapeHtml : (s => String(s == null ? '' : s));
             const kb = b => (b / 1024).toFixed(0) + ' KB';
 
@@ -22352,6 +22776,18 @@
                 '</div>';
             });
 
+            // Stated first, because "no backup exists" outranks any percentage
+            // on this screen. It was previously invisible: the screen showed a
+            // size for the backup document, which reads as confirmation that
+            // backups are happening.
+            if (backupsDisabled) {
+                html = '<div class="sh-banner sh-banner-crit">' +
+                       '<strong>Automatic backups are OFF.</strong> Nothing is being backed up on ' +
+                       'a schedule. Use <em>Export Backup</em> for a manual copy, and treat that ' +
+                       'as the only backup that exists.' +
+                       '</div>' + html;
+            }
+
             const worst = rows[0];
             if (worst && worst.pct >= STORAGE_WARN_AT) {
                 html = '<div class="sh-banner sh-banner-' + band(worst.pct) + '">' +
@@ -22378,7 +22814,7 @@
                 const { rows } = getStorageEstimates();
                 const worst = rows.reduce((a, b) => (a.pct > b.pct ? a : b));
                 if (worst.pct >= STORAGE_CRITICAL_AT) {
-                    console.error(`🔴 STORAGE CRITICAL: ${worst.key} is ${(worst.pct*100).toFixed(0)}% of the 1MB limit. Saves may start failing. See Settings → System Admin → Storage Health.`);
+                    console.error(`🔴 STORAGE CRITICAL: ${worst.key} is ${(worst.pct*100).toFixed(0)}% of the 1MB limit. Saves may start failing. Open the System Admin tab, then Storage Health.`);
                 } else if (worst.pct >= STORAGE_ALERT_AT) {
                     console.warn(`🟠 STORAGE HIGH: ${worst.key} is ${(worst.pct*100).toFixed(0)}% of the 1MB limit.`);
                 } else if (worst.pct >= STORAGE_WARN_AT) {
@@ -22418,7 +22854,7 @@
             div.innerHTML = '<strong>Storage warning:</strong> the ' + worst.key +
                 ' document is ' + (worst.pct * 100).toFixed(0) +
                 '% full (limit 1 MB). Saves can start failing when it fills. ' +
-                'Open <em>Settings → System Admin → Storage Health</em> for details.' +
+                'Open <em>System Admin → Storage Health</em> for details.' +
                 '<button class="sh-banner-x" onclick="this.parentElement.remove()">Dismiss</button>';
             body.insertBefore(div, body.firstChild);
         }
@@ -22867,8 +23303,15 @@
         function renderModeSubnav(mode) {
             const subNav = document.getElementById('modeSubNav');
             if (!subNav) return;
-            const items = MODE_SUBTABS[mode];
+            let items = MODE_SUBTABS[mode];
             if (!items) { subNav.style.display = 'none'; subNav.innerHTML = ''; return; }
+            // Discipline is role-gated: a teacher gets Submit and their own
+            // open and closed referrals, nothing else. Hiding the buttons is
+            // the courtesy; switchDisciplineTab refuses the pane as well.
+            if (mode === 'discipline') {
+                const allowed = window.WildcatDiscipline.disciplineTabsFor(currentUser && currentUser.role);
+                items = items.filter(it => allowed.indexOf(it.id) !== -1);
+            }
             subNav.innerHTML = items.map((it, idx) => `
                 <button type="button" class="tab ${idx === 0 ? 'active' : ''}" id="sideSub_${mode}_${it.id}"
                         onclick="sidebarSubTab('${mode}','${it.id}')">${it.label}</button>`).join('');
@@ -23243,7 +23686,7 @@
             const sign = behavior.points >= 0 ? '+' : '-';
             showToast(`✅ ${sign}$${Math.abs(behavior.points)} · ${behavior.name}\n${awarded.length} student${awarded.length === 1 ? '' : 's'}`, 'success');
 
-            await saveData();
+            await requestSave('Cash award');
         }
 
         // Update Cash Table
@@ -23283,7 +23726,7 @@
             const scoped = window.WildcatRoster.scopeStudents({
                 students: filteredStudents,
                 role: currentUser && currentUser.role,
-                roster: sisTeacherRoster,
+                roster: activeTeacherRoster(),
                 sectionId: periodFilter || null
             });
             filteredStudents = scoped.students;
@@ -23295,7 +23738,7 @@
             }
 
             // A failed fetch is not an empty roster. Say which happened.
-            if (!sisTeacherRoster && sisRosterState === 'failed'
+            if (!activeTeacherRoster() && sisRosterState === 'failed'
                 && !window.WildcatRoster.seesEveryStudent(currentUser && currentUser.role)) {
                 funnel.scopeReason = 'Could not load your class roster: ' + (sisRosterError || 'unknown error') +
                                      '. Reload the page to try again.';
@@ -23482,7 +23925,28 @@
         let sisRosterState = 'idle';      // idle | loading | ready | failed
         let sisRosterError = null;
 
+        // TEACHER VIEW'S ROSTER LIVES HERE, AND NOWHERE NEAR THE CACHE ABOVE.
+        //
+        // sisTeacherRoster is a module-level cache that every caller reads and
+        // that only refetches when empty or forced. Writing a previewed
+        // teacher's roster into it would leave THAT roster in place after the
+        // preview ended — at which point saving is re-enabled and an admin's
+        // Award Cash would be scoped to somebody else's class with nothing on
+        // screen saying so. Separate variable, and the preview clears it and
+        // forces a refetch on the way out.
+        let previewRoster = null;
+        let previewRosterError = null;
+
+        /** The roster the UI should be showing right now. */
+        function activeTeacherRoster() {
+            return isPreviewingTeacher() ? previewRoster : sisTeacherRoster;
+        }
+
         async function loadTeacherRosterFromSIS(force) {
+            // In teacher view the roster was fetched when the preview started,
+            // by an admin-only query that names the teacher. Falling through
+            // would re-fetch the ADMIN's roster and show it as theirs.
+            if (isPreviewingTeacher()) return previewRoster;
             if (sisRosterState === 'loading') return sisTeacherRoster;
             if (sisTeacherRoster && !force) return sisTeacherRoster;
 
@@ -23534,13 +23998,13 @@
             const select = document.getElementById('cashPeriodFilter');
             if (!select) return;
 
-            const sections = window.WildcatRoster.sectionsFrom(sisTeacherRoster);
+            const sections = window.WildcatRoster.sectionsFrom(activeTeacherRoster());
             const seesAll = window.WildcatRoster.seesEveryStudent(currentUser && currentUser.role);
 
-            select.innerHTML = seesAll
-                ? '<option value="">All students</option>'
-                : (sections.length ? '<option value="">All my students</option>'
-                                   : '<option value="">No classes found</option>');
+            // Same rule as the raffle picker, so the two cannot disagree:
+            // everyone gets the whole school AND their own classes.
+            select.innerHTML = '<option value="">All students</option>'
+                + periodFilterNote(sections);
 
             // sectionsFrom classifies and labels each block, so the dropdown
             // shows "Promise Time" rather than "Period 1 - Promise Time". At
@@ -25335,6 +25799,18 @@
             const target = PANES[subtab];
             if (!target) { console.warn('switchDisciplineTab: unknown subtab', subtab); return; }
 
+            // CHECKED HERE TOO, not only when the buttons are drawn. A stale
+            // button, a restored tab from a previous session, or a call from
+            // the console must not open Analytics or Student History for a
+            // teacher. Demographics lives inside Analytics, so this is the
+            // check that keeps a child's grade, sex and race breakdown away
+            // from someone who may only file referrals.
+            if (!window.WildcatDiscipline.canOpenDisciplineTab(currentUser && currentUser.role, subtab)) {
+                console.warn(`[discipline] ${subtab} is not available to your access level.`);
+                switchDisciplineTab('submit');
+                return;
+            }
+
             const paneEl = document.getElementById(target.pane);
             if (paneEl) {
                 paneEl.classList.remove('hidden');
@@ -25371,6 +25847,7 @@
                 populateHistoryStudentDropdown();
             } else if (subtab === 'analytics') {
                 updateReferralAnalytics();
+                switchAnalyticsTab(analyticsTab);
             }
         }
 
@@ -26221,11 +26698,249 @@
             }
         }
 
+        // ---- Coalesced saves -------------------------------------------
+        //
+        // saveData() writes the whole `main` document in a transaction, and
+        // Firestore sustains roughly ONE write per second to a single
+        // document. With fifty teachers awarding tickets in the same assembly
+        // that document is a contended hotspot: transactions retry, some fail,
+        // and saves stop sticking under exactly the load that matters most.
+        //
+        // Requests are coalesced so a burst becomes one write. The queue lives
+        // in wildcat-savequeue.js with its guarantees and its tests; the short
+        // version is that a caller's promise still settles only when a save
+        // that INCLUDED their change has landed, so the toasts below stay
+        // honest rather than reporting a write that has not happened.
+        //
+        // Built lazily, so a failure to load the module degrades to saving
+        // directly rather than to not saving at all.
+        var _saveQueue = null;
+        function saveQueue() {
+            if (_saveQueue) return _saveQueue;
+            if (!window.WildcatSaveQueue) return null;
+            _saveQueue = window.WildcatSaveQueue.create({
+                save: function () { return saveData(); },
+                onError: function (err, attempt) {
+                    console.error(
+                        `❌ Coalesced save failed (attempt ${attempt}):`,
+                        (err && err.code) || '', (err && err.message) || err);
+                }
+            });
+            return _saveQueue;
+        }
+
+        /** Ask for a save. Resolves once a save including this change lands. */
+        function requestSave(reason) {
+            const q = saveQueue();
+            if (!q) return Promise.resolve(saveData());
+            return q.request(reason);
+        }
+
+        /** Write everything outstanding NOW. For a closing tab, and for the
+         *  actions that must not be deferred: a reset, a year rollover, a role
+         *  change. Those keep calling saveData() directly. */
+        function flushSaves() {
+            return _saveQueue ? _saveQueue.flush() : Promise.resolve(null);
+        }
+
+        // Deferring a write opens a window where work exists only in memory,
+        // so it has to be closed on the way out. visibilitychange is the one
+        // that fires reliably on iOS, where beforeunload frequently does not;
+        // pagehide catches the desktop close. Both are needed and neither is
+        // sufficient alone.
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'hidden') flushSaves();
+        });
+        window.addEventListener('pagehide', function () { flushSaves(); });
+
+        // ================================================================
+        // TEACHER VIEW — admins only, read-only, and honest about its limits.
+        //
+        // WHAT IT IS. An admin loads the app as a member of staff would find
+        // it: their tabs, their class periods, their students. It answers "why
+        // can't Ms Rivera see her periods in Award Cash" without borrowing her
+        // password or waiting on a test account from IT.
+        //
+        // WHAT IT IS NOT, AND THIS MATTERS.
+        //
+        // It is a PREVIEW OF THE SCREEN, not a test of server permissions. The
+        // browser is still holding the ADMIN's Convex token, so anything the
+        // server decides — the race aggregate's small-group guard, restricted
+        // field access — still answers as admin. A teacher hitting the same
+        // screen may see LESS than this shows. Never conclude from this view
+        // that a teacher can see something; conclude only that the layout and
+        // the roster scope look right.
+        //
+        // Client-side role gates DO follow the preview, because they read
+        // currentUser, which is swapped. That is most of the UI.
+        //
+        // READ-ONLY, ENFORCED AT THE CHOKEPOINT. saveData() refuses while a
+        // preview is running. Writing as somebody else would put their name on
+        // an award or a referral in the audit log, and this is a discipline
+        // system: a falsified attribution is worse than a missing feature.
+        // Guarding saveData covers all 102 call sites at once rather than
+        // trusting each of them.
+        //
+        // The preview is NEVER persisted. saveSession() is not called, so a
+        // refresh always lands back as the real admin.
+        // ================================================================
+
+        /** The real signed-in admin while a preview is running, else null. */
+        let realUser = null;
+
+        function isPreviewingTeacher() { return realUser !== null; }
+
+        /** Tab visibility for a role. Only ever narrows or restores; it does
+         *  not touch modes, which the preview deliberately leaves alone. */
+        function applyPreviewVisibility(role) {
+            const narrow = (role === 'teacher' || role === 'campusaide' || role === 'pbis');
+            const superOnly = (role === 'superadmin');
+            document.querySelectorAll('.admin-only')
+                .forEach(t => t.classList.toggle('disabled', narrow));
+            document.querySelectorAll('.super-admin-only')
+                .forEach(t => t.classList.toggle('disabled', !superOnly));
+            const weekControls = document.getElementById('weekControls');
+            if (weekControls) weekControls.style.display = narrow ? 'none' : 'flex';
+        }
+
+        function populatePreviewTeacherSelect() {
+            const sel = document.getElementById('previewTeacherSelect');
+            if (!sel) return;
+            const me = realUser || currentUser;
+            const list = (teachers || [])
+                .filter(t => t && String(t.id) !== String(me && me.id))
+                .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+            sel.innerHTML = list.length
+                ? list.map(t => `<option value="${escapeHtml(String(t.id))}">` +
+                    `${escapeHtml(t.name || t.username || 'Unnamed')} — ` +
+                    `${escapeHtml(getFriendlyRoleName(t.role) || t.role || '')}</option>`).join('')
+                : '<option value="">No other staff to view as</option>';
+        }
+
+        function startTeacherPreview() {
+            // Gated here as well as in the markup. Hiding a control is a
+            // courtesy; this is the check.
+            const me = realUser || currentUser;
+            if (!me || (me.role !== 'admin' && me.role !== 'superadmin')) {
+                showToast('Only administrators can use teacher view.', 'error');
+                return;
+            }
+            if (isPreviewingTeacher()) return;   // never nest a preview
+
+            const sel = document.getElementById('previewTeacherSelect');
+            const id = sel && sel.value;
+            const target = (teachers || []).find(t => String(t.id) === String(id));
+            if (!target) { showToast('Pick a staff member first.', 'error'); return; }
+
+            realUser = me;
+            // A COPY, so nothing done while previewing can reach the real
+            // teacher record in memory.
+            currentUser = Object.assign({}, target);
+            applyPreviewVisibility(currentUser.role);
+            renderPreviewBanner();
+
+            const nameEl = document.getElementById('currentUserName');
+            const roleEl = document.getElementById('currentUserRole');
+            if (nameEl) nameEl.textContent = currentUser.name || '';
+            if (roleEl) roleEl.textContent = getFriendlyRoleName(currentUser.role);
+
+            console.log(`👁️ Teacher view: showing the app as ${currentUser.name} (${currentUser.role}). Saves are blocked.`);
+            switchTab('tickets');
+
+            // Their ACTUAL class periods, from an admin-only query that names
+            // them. Without this the screen changes role but the roster stays
+            // the admin's, because teacherRoster resolves from the caller's
+            // token and takes no argument — which is exactly the case this
+            // whole feature exists to reproduce.
+            loadPreviewRoster(currentUser.email).then(() => {
+                // Redraw whatever is showing now that the roster has arrived.
+                if (typeof switchTab === 'function') switchTab('tickets');
+            });
+        }
+
+        async function loadPreviewRoster(email) {
+            previewRoster = null;
+            previewRosterError = null;
+            resetPeriodFilterFetch();
+            const auth = window.WildcatAuth;
+            // The ADMIN's session, deliberately: the query is admin-gated and
+            // the admin is the one asking.
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) {
+                previewRosterError = 'Teacher view needs a Microsoft sign-in to read the roster.';
+                console.warn('[teacher view] ' + previewRosterError);
+                return null;
+            }
+            if (!email) {
+                previewRosterError = 'That staff member has no email on their record, so their roster cannot be looked up.';
+                console.warn('[teacher view] ' + previewRosterError);
+                return null;
+            }
+            try {
+                previewRoster = await auth.convexQuery(
+                    'views_app:teacherRosterFor', { email: String(email) }, session.idToken);
+                const n = (previewRoster && previewRoster.sectionCount) || 0;
+                console.log(`👁️ Teacher view roster: ${n} section(s), ` +
+                    `${(previewRoster && previewRoster.studentCount) || 0} student(s).` +
+                    (previewRoster && previewRoster.reason ? ' ' + previewRoster.reason : ''));
+            } catch (e) {
+                previewRosterError = (e && e.message) || String(e);
+                console.error('[teacher view] roster lookup failed:', previewRosterError);
+            }
+            return previewRoster;
+        }
+
+        function endTeacherPreview() {
+            if (!isPreviewingTeacher()) return;
+            currentUser = realUser;
+            realUser = null;
+            applyPreviewVisibility(currentUser.role);
+            renderPreviewBanner();
+
+            const nameEl = document.getElementById('currentUserName');
+            const roleEl = document.getElementById('currentUserRole');
+            if (nameEl) nameEl.textContent = currentUser.name || '';
+            if (roleEl) roleEl.textContent = getFriendlyRoleName(currentUser.role);
+
+            // Cleared, and the real roster is re-read rather than trusted.
+            // This is the belt to the separate-variable braces: if preview code
+            // ever does touch the cache, this still repairs it before saving is
+            // re-enabled.
+            previewRoster = null;
+            previewRosterError = null;
+            resetPeriodFilterFetch();
+            if (typeof loadTeacherRosterFromSIS === 'function') {
+                loadTeacherRosterFromSIS(true).catch(() => {});
+            }
+
+            console.log('👁️ Teacher view ended. Back as ' + currentUser.name + '.');
+            switchTab('teachers');
+        }
+
+        function renderPreviewBanner() {
+            let bar = document.getElementById('wcPreviewBar');
+            if (!isPreviewingTeacher()) { if (bar) bar.remove(); return; }
+            if (!bar) {
+                bar = document.createElement('div');
+                bar.id = 'wcPreviewBar';
+                bar.className = 'wc-preview-bar';
+                document.body.appendChild(bar);
+            }
+            // Deliberately loud and always on screen. An admin who forgets they
+            // are in this view will report bugs that are not bugs, or worse,
+            // conclude a teacher can see something they cannot.
+            bar.innerHTML =
+                '<span>👁️ <strong>Teacher view</strong> — showing the app as ' +
+                escapeHtml(currentUser.name || '') + '. Read-only, and server permissions ' +
+                'still answer as you.</span>' +
+                '<button type="button" class="wc-preview-exit" onclick="endTeacherPreview()">Exit</button>';
+        }
+
         function saveInBackground(label) {
             // Fire-and-report. Never blocks the UI.
             // saveData() catches its own errors and resolves either way, so the
             // outcome is read from the returned boolean rather than a rejection.
-            return Promise.resolve(saveData())
+            return requestSave(label)
                 .then(ok => {
                     if (ok === false) {
                         console.error(`❌ ${label} did not save`);
@@ -26361,6 +27076,14 @@
             const referral = {
                 id: `REF${referralIdCounter++}`,
                 studentId: studentId,
+                // SNAPSHOT, like the demographics below. studentId may be a
+                // legacy CSV value, while the SIS is keyed by student number,
+                // so the race breakdown has to resolve one to the other. Doing
+                // that through the live roster works only while the student is
+                // enrolled: once they withdraw they drop off it and their
+                // referrals become permanently unmatchable. Recorded here so
+                // the referral carries its own answer.
+                studentNumber: (student.studentNumber || ''),
                 studentName: `${student.firstName} ${student.lastName}`,
                 studentGrade: student.grade || '',
                 school: (grade >= 9) ? 'High School' : 'Middle School',
@@ -26376,6 +27099,14 @@
                 referredBy: referringStaff,
                 referredByUsername: currentUser.username,
                 filedByUsername: currentUser.username,   // who actually typed it
+                // RECORDED BECAUSE USERNAME NO LONGER EXISTS. The Convex
+                // teacher record has no username field — that is what the
+                // migration off cleartext passwords removed — so both fields
+                // above write undefined for anyone signing in with Microsoft.
+                // Without an email a teacher could not be shown their own
+                // referrals, which is the whole point of the scoping.
+                filedByEmail: (currentUser.email || ''),
+                referredByEmail: (currentUser.email || ''),
                 status: 'open',
                 submittedAt: new Date().toISOString(),
                 // closure
@@ -26387,7 +27118,18 @@
                 loopClosed: false,
                 loopClosedBy: '',
                 loopClosedAt: '',
-                forwardedTo: []
+                forwardedTo: [],
+                // Read by wildcat-merge to decide which copy of a referral is
+                // newer when two tabs both hold one.
+                updatedAt: new Date().toISOString(),
+
+                // SNAPSHOT, for the same reason a receipt records the price
+                // paid. A referral is a record of an incident on a date, and a
+                // student's grade changes every year, so reading it live in
+                // September would silently relabel last spring's referrals.
+                // Fields with no value are absent rather than "Unknown", so a
+                // gap can be measured instead of becoming a category.
+                demographics: window.WildcatDiscipline.snapshotDemographics(student)
             };
 
             const submitBtn = document.querySelector('.btn-referral-submit');
@@ -26424,8 +27166,15 @@
         ];
         const DETENTION_CLOSING_ACTION = 'Assigned the student to mandatory detention';
 
-        function getOpenReferrals()   { return (behaviorReferrals || []).filter(r => r.status !== 'closed'); }
-        function getClosedReferrals() { return (behaviorReferrals || []).filter(r => r.status === 'closed'); }
+        // SCOPED. A teacher sees their own referrals; admin and PBIS see the
+        // school's. These two functions feed every referral table in the app,
+        // so scoping here covers all of them at once rather than at each
+        // render, where one missed call site is a privacy leak.
+        function visibleReferrals() {
+            return window.WildcatDiscipline.visibleReferrals(behaviorReferrals, currentUser);
+        }
+        function getOpenReferrals()   { return visibleReferrals().filter(r => r.status !== 'closed'); }
+        function getClosedReferrals() { return visibleReferrals().filter(r => r.status === 'closed'); }
 
         function updateReferralReviewTable() {
             const tbody = document.getElementById('referralReviewTable');
@@ -26608,6 +27357,7 @@
             }
 
             r.status = 'closed';
+            r.updatedAt = new Date().toISOString();   // so a merge can order this edit
             r.resolutionType = resolution;
             r.closingActions = actions;
             r.adminNotes = notes;
@@ -26734,6 +27484,7 @@
 
             const recipients = Array.from(new Set([r.referredBy, ...picked].filter(Boolean)));
             r.loopClosed = true;
+            r.updatedAt = new Date().toISOString();   // so a merge can order this edit
             r.loopClosedBy = currentUser.name;
             r.loopClosedAt = new Date().toISOString();
             r.forwardedTo = recipients;
@@ -26899,11 +27650,638 @@
             }).join('');
         }
 
+
+        // ============================================================
+        // REFERRAL ANALYTICS TABS
+        //
+        // Each pane answers one question. The demographics pane is the one
+        // that needs care: see wildcat-discipline.js for why every breakdown
+        // there reports a rate against enrolment rather than a raw count.
+        // ============================================================
+        let analyticsTab = 'all';
+        let trendGrain = 'week';
+
+        function switchAnalyticsTab(tab) {
+            analyticsTab = tab;
+            document.querySelectorAll('.analytics-tabs .analytics-tab').forEach(b =>
+                b.classList.toggle('active', b.dataset.atab === tab));
+            document.querySelectorAll('.analytics-pane').forEach(p =>
+                p.classList.toggle('hidden', p.dataset.apane !== tab));
+            renderAnalyticsPane(tab);
+        }
+
+        function setTrendGrain(grain) {
+            trendGrain = grain;
+            const w = document.getElementById('trendGrainWeek');
+            const m = document.getElementById('trendGrainMonth');
+            if (w) w.classList.toggle('active', grain === 'week');
+            if (m) m.classList.toggle('active', grain === 'month');
+            renderAnalyticsPane('trends');
+        }
+
+        /**
+         * Enrolment counts per value, the denominator every demographic rate
+         * needs. Built from the CURRENT roster, which is the right population:
+         * "who is enrolled now" is what a disproportionality figure compares
+         * referrals against.
+         */
+        function enrollmentBy(dimension) {
+            const out = {};
+            enrolledStudents().forEach(s => {
+                let v = null;
+                if (dimension === 'grade') v = s.grade;
+                else if (dimension === 'school') v = s.school;
+                else if (dimension === 'sex') v = s.sex || s.gender;
+                else if (dimension === 'race') v = s.race;
+                else if (dimension === 'iep') v = s.iep;
+                v = String(v == null ? '' : v).trim();
+                if (v) out[v] = (out[v] || 0) + 1;
+            });
+            return out;
+        }
+
+        function renderAnalyticsPane(tab) {
+            // Scoped, even though the analytics tab is already closed to
+            // teachers. Two independent reasons a teacher cannot see the
+            // demographic breakdown is the same standard the restricted-field
+            // policy holds itself to, and it costs nothing: for admin and PBIS
+            // this returns every referral.
+            const all = visibleReferrals();
+            if (tab === 'trends')       return renderReferralTrend(all);
+            if (tab === 'behaviors')    return renderReferralBehaviors(all);
+            if (tab === 'demographics') return renderReferralDemographics(all);
+            if (tab === 'closed')       return renderClosedAnalytics(all);
+        }
+
+        function renderReferralTrend(all) {
+            const el = document.getElementById('referralTrend');
+            if (!el) return;
+            const t = window.WildcatDiscipline.trend(all, trendGrain);
+            if (!t.points.length) {
+                el.innerHTML = '<p class="panel-hint">No referrals yet.</p>';
+                return;
+            }
+            const max = Math.max.apply(null, t.points.map(p => p.count)) || 1;
+            el.innerHTML = `
+                <div class="wc-card">
+                    <table class="wc-table"><thead><tr>
+                        <th>${trendGrain === 'month' ? 'Month' : 'Week'}</th><th>Referrals</th><th></th>
+                    </tr></thead><tbody>
+                    ${t.points.map(p => `
+                        <tr${p.count === 0 ? ' class="trend-quiet"' : ''}>
+                            <td>${escapeHtml(p.key)}</td>
+                            <td><strong>${p.count}</strong></td>
+                            <td style="width:60%;">
+                                <div class="popularity-bar">
+                                    <span style="width:${Math.round((p.count / max) * 100)}%"></span>
+                                </div>
+                            </td>
+                        </tr>`).join('')}
+                    </tbody></table>
+                </div>`;
+        }
+
+        function renderReferralBehaviors(all) {
+            const el = document.getElementById('referralBehaviors');
+            if (!el) return;
+            const rows = window.WildcatDiscipline.behaviorBreakdown(all);
+            if (!rows.length) {
+                el.innerHTML = '<p class="panel-hint">No referrals yet.</p>';
+                return;
+            }
+            const max = rows[0].count || 1;
+            el.innerHTML = `
+                <div class="wc-card">
+                    <table class="wc-table"><thead><tr>
+                        <th>Behavior</th><th>Referrals</th><th>Students</th><th>Share</th><th></th>
+                    </tr></thead><tbody>
+                    ${rows.map(r => `
+                        <tr>
+                            <td>${escapeHtml(r.behavior)}</td>
+                            <td><strong>${r.count}</strong></td>
+                            <td>${r.uniqueStudents}</td>
+                            <td>${Math.round(r.share * 100)}%</td>
+                            <td style="width:40%;">
+                                <div class="popularity-bar">
+                                    <span style="width:${Math.round((r.count / max) * 100)}%"></span>
+                                </div>
+                            </td>
+                        </tr>`).join('')}
+                    </tbody></table>
+                </div>`;
+        }
+
+        // Race comes from the SERVER, cached per open of the tab.
+        let raceAggregate = null;
+
+        // studentNumber, not studentId: a referral's studentId may be a legacy
+        // CSV value, while psRestricted and psRoster are keyed by student
+        // number. Shared by the aggregate and the admin verification view so
+        // the two cannot disagree about which student a referral belongs to.
+        function referralStudentNumber(r) {
+            if (r && r.studentNumber) return String(r.studentNumber);
+            const s = (students || []).find(x => String(x.id) === String(r && r.studentId));
+            return s && s.studentNumber ? String(s.studentNumber) : '';
+        }
+
+        function referralStudentNumbers(referrals) {
+            return (referrals || []).map(referralStudentNumber).filter(Boolean);
+        }
+
+        async function loadRaceAggregate(referrals) {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            // NOT a permissions refusal, and it must not be reported as one.
+            // Username login carries no Convex identity, so every Convex call
+            // 401s. Reporting that as "Not available to you" reads as "your
+            // role is not allowed to see this", which sends an admin off to
+            // check role settings that were never the problem. It cost a round
+            // of debugging already.
+            if (!auth || !session) {
+                return {
+                    allowed: false, needsSignIn: true,
+                    reason: 'Race comes from the SIS, which needs a Microsoft sign-in. ' +
+                            'This session is signed in with a username, so the request ' +
+                            'carries no identity and the server refuses it. Sign in with ' +
+                            'Microsoft to see this breakdown.'
+                };
+            }
+
+            // The join happens on the server, but the server cannot see
+            // referrals: they are still in Firestore and race is in Convex.
+            // So this sends the student NUMBERS it already holds and gets
+            // COUNTS back. No race value ever crosses back to this page.
+            //
+            // studentNumber, not studentId: a referral's studentId may be a
+            // legacy CSV value, and psRestricted is keyed by student number.
+            const numbers = referralStudentNumbers(referrals);
+
+            try {
+                return await auth.convexQuery('disciplineAggregates:byRace',
+                    { studentNumbers: numbers }, session.idToken);
+            } catch (e) {
+                const msg = (e && e.message) || String(e);
+                // A 401 is the same situation as holding no session: a token
+                // that expired or was rejected, not a decision about the role.
+                // Told apart here so the card can say which, because the two
+                // need opposite responses from the reader.
+                if (/\b401\b|unauthor/i.test(msg)) {
+                    return {
+                        allowed: false, needsSignIn: true,
+                        reason: 'The Microsoft sign-in for this session has expired or was ' +
+                                'rejected by the server. Sign out and sign back in with Microsoft.'
+                    };
+                }
+                return { allowed: false, reason: msg };
+            }
+        }
+
+        function renderReferralDemographics(all) {
+            const el = document.getElementById('referralDemographics');
+            if (!el) return;
+            const D = window.WildcatDiscipline;
+            // Race is NOT in this list: it is never derived from referral
+            // snapshots, because a child's race must not be written into the
+            // app blob. It is fetched from the server and rendered separately
+            // below.
+            const dims = ['grade', 'school', 'sex', 'iep'];
+
+            // SEX IS RESOLVED FROM THE ROSTER WHEN THE REFERRAL HAS NONE.
+            //
+            // Referrals record demographics AT FILING TIME, and every referral
+            // filed before Students.Gender was synced carries no sex at all.
+            // Left alone, this panel would read 0% coverage for months while
+            // the answer sat in the roster the whole time.
+            //
+            // Safe for sex in a way it would NOT be for grade. Grade is
+            // snapshotted precisely because it changes every August, so reading
+            // it live would relabel last spring's referrals. Sex is not a
+            // point-in-time attribute of an incident, so the current record is
+            // the right answer rather than a guess. GRADE IS DELIBERATELY NOT
+            // BACKFILLED THIS WAY.
+            //
+            // Display only. Nothing is written back to the referral: a stored
+            // snapshot stays whatever was true when it was taken.
+            let resolvedSex = 0;
+            const rows = (all || []).map(r => {
+                const already = r && r.demographics && String(r.demographics.sex || '').trim();
+                if (already) return r;
+                const num = referralStudentNumber(r);
+                const st = (students || []).find(x =>
+                    (num && String(x.studentNumber) === num) ||
+                    String(x.id) === String(r && r.studentId));
+                const sex = st && String(st.sex || st.gender || '').trim();
+                if (!sex) return r;
+                resolvedSex += 1;
+                return Object.assign({}, r, {
+                    demographics: Object.assign({}, r.demographics || {}, { sex: sex })
+                });
+            });
+
+            el.innerHTML = dims.map(dim => {
+                const all = rows;
+                const avail = D.availability(all, dim);
+
+                // Unavailable dimensions are SHOWN, with what would unblock
+                // them. Hiding them would let a reader conclude the school
+                // does not track this, rather than that it is withheld.
+                if (!avail.available) {
+                    return `
+                        <div class="wc-card demo-card is-unavailable">
+                            <div class="demo-head">
+                                <h3>${escapeHtml(avail.label)}</h3>
+                                <span class="demo-flag">${avail.restricted ? 'Restricted' : 'Not collected yet'}</span>
+                            </div>
+                            <p class="panel-hint">${escapeHtml(avail.unblock || 'No data for this field yet.')}</p>
+                        </div>`;
+                }
+
+                const out = D.breakdownBy(all, dim, enrollmentBy(dim));
+                const coverage = Math.round(avail.coverage * 100);
+                return `
+                    <div class="wc-card demo-card">
+                        <div class="demo-head">
+                            <h3>${escapeHtml(out.label)}</h3>
+                            <span class="receipt-meta">
+                                ${out.counted} of ${avail.total} referrals carry this (${coverage}%)
+                                ${out.missing ? ` &middot; ${out.missing} without a value` : ''}
+                            </span>
+                        </div>
+                        ${!out.hasDenominator ? `
+                            <p class="panel-hint demo-warn">
+                                No enrolment figures for this field, so shares below are counts only.
+                                A count is not a rate: do not read a tall bar as over-representation.
+                            </p>` : ''}
+                        <table class="wc-table"><thead><tr>
+                            <th>${escapeHtml(out.label)}</th><th>Referrals</th>
+                            <th>Share of referrals</th>
+                            ${out.hasDenominator ? '<th>Share of enrolment</th><th>Index</th>' : ''}
+                        </tr></thead><tbody>
+                        ${out.rows.map(r => `
+                            <tr>
+                                <td>${escapeHtml(D.displayValue(dim, r.value))}</td>
+                                <td><strong>${r.count}</strong></td>
+                                <td>${Math.round(r.shareOfReferrals * 100)}%</td>
+                                ${out.hasDenominator ? `
+                                    <td>${r.shareOfEnrollment === null ? '—' : Math.round(r.shareOfEnrollment * 100) + '%'}</td>
+                                    <td>${r.suppressed
+                                        ? `<span class="receipt-meta" title="Fewer than ${out.smallGroupThreshold} enrolled: a rate here would be noise and could identify a student.">withheld</span>`
+                                        : r.tooFewReferrals
+                                        ? `<span class="receipt-meta demo-thin" title="An index over ${r.count} referral${r.count === 1 ? '' : 's'} measures the size of the sample, not the school. It appears at ${out.minReferralsForIndex}.">too few</span>`
+                                        : (r.index === null ? '—' :
+                                           `<span class="${r.index >= 1.5 ? 'demo-over' : ''}">${r.index.toFixed(2)}</span>`)}</td>` : ''}
+                            </tr>`).join('')}
+                        </tbody></table>
+                        ${out.hasDenominator ? `
+                            <p class="receipt-meta demo-legend">
+                                Index 1.00 is proportionate. 2.00 means referred at twice the rate
+                                enrolment predicts. Groups under ${out.smallGroupThreshold} enrolled are withheld.
+                                An index needs at least ${out.minReferralsForIndex} referrals in the group:
+                                below that the ratio measures the size of the sample rather than the
+                                school, so it reads "too few" instead of printing a number nobody
+                                could defend.
+                            </p>` : ''}
+                        ${dim === 'sex' && resolvedSex ? `
+                            <p class="receipt-meta demo-legend">
+                                ${resolvedSex} referral${resolvedSex === 1 ? '' : 's'} filed before sex was
+                                synced from PowerSchool, so ${resolvedSex === 1 ? 'its' : 'their'} value is
+                                read from the student's current record rather than from the referral.
+                                Grade is never filled in this way, because grade changes every year.
+                            </p>` : ''}
+                    </div>`;
+            }).join('');
+
+            // Race, from the server. Rendered after the rest so the panel is
+            // useful immediately rather than waiting on a round trip.
+            const raceHost = document.createElement('div');
+            raceHost.id = 'referralRaceCard';
+            raceHost.innerHTML = '<div class="wc-card demo-card"><p class="panel-hint">Loading race breakdown…</p></div>';
+            el.appendChild(raceHost);
+
+            loadRaceAggregate(all).then(res => {
+                raceAggregate = res;
+                renderRaceCard(raceHost, res, all);
+            });
+        }
+
+        function renderRaceCard(host, res, all) {
+            if (!host) return;
+            const D = window.WildcatDiscipline;
+
+            // Sign-in first, because it is not a permissions answer and the
+            // reader's next action is completely different.
+            if (res && res.needsSignIn) {
+                host.innerHTML = `
+                    <div class="wc-card demo-card is-unavailable">
+                        <div class="demo-head"><h3>Race / Ethnicity</h3>
+                            <span class="demo-flag">Microsoft sign-in needed</span></div>
+                        <p class="panel-hint">${escapeHtml(res.reason || '')}</p>
+                    </div>`;
+                return;
+            }
+
+            if (!res || res.allowed === false) {
+                host.innerHTML = `
+                    <div class="wc-card demo-card is-unavailable">
+                        <div class="demo-head"><h3>Race / Ethnicity</h3>
+                            <span class="demo-flag">Not available to you</span></div>
+                        <p class="panel-hint">${escapeHtml((res && res.reason) || 'Unavailable.')}</p>
+                    </div>`;
+                return;
+            }
+            if (res.tooFew) {
+                host.innerHTML = `
+                    <div class="wc-card demo-card is-unavailable">
+                        <div class="demo-head"><h3>Race / Ethnicity</h3>
+                            <span class="demo-flag">Too few students</span></div>
+                        <p class="panel-hint">${escapeHtml(res.reason || '')}</p>
+                    </div>`;
+                return;
+            }
+            if (res.loaded === false) {
+                host.innerHTML = `
+                    <div class="wc-card demo-card is-unavailable">
+                        <div class="demo-head"><h3>Race / Ethnicity</h3>
+                            <span class="demo-flag">Not loaded</span></div>
+                        <p class="panel-hint">${escapeHtml(res.reason || '')}</p>
+                    </div>`;
+                return;
+            }
+
+            const rows = res.rows || [];
+            const shown = rows.filter(r => !r.suppressed);
+            host.innerHTML = `
+                <div class="wc-card demo-card">
+                    <div class="demo-head">
+                        <h3>Race / Ethnicity</h3>
+                        <span class="receipt-meta">
+                            ${res.counted} referral${res.counted === 1 ? '' : 's'} matched
+                            ${res.unmatched ? ` &middot; ${res.unmatched} with no race record` : ''}
+                            ${res.groupsWithheld ? ` &middot; ${res.groupsWithheld} group(s) withheld` : ''}
+                        </span>
+                    </div>
+                    <p class="panel-hint">
+                        Served by the server as counts only. No student's race is sent to this page.
+                    </p>
+                    <table class="wc-table"><thead><tr>
+                        <th>Race / Ethnicity</th><th>Referrals</th><th>Share of referrals</th>
+                        <th>Share of enrolment</th><th>Index</th>
+                    </tr></thead><tbody>
+                    ${rows.map(r => `
+                        <tr>
+                            <td>${escapeHtml(r.code)}</td>
+                            <td>${r.suppressed ? '<span class="receipt-meta">withheld</span>' : `<strong>${r.count}</strong>`}</td>
+                            <td>${r.suppressed ? '—' : Math.round(r.shareOfReferrals * 100) + '%'}</td>
+                            <td>${r.suppressed ? '—' : Math.round(r.shareOfEnrollment * 100) + '%'}</td>
+                            <td>${r.suppressed
+                                ? `<span class="receipt-meta" title="Fewer than ${res.smallGroupThreshold} enrolled: withheld by the server.">withheld</span>`
+                                : r.tooFewReferrals
+                                ? `<span class="receipt-meta demo-thin" title="An index over ${r.count} referral${r.count === 1 ? '' : 's'} measures the size of the sample, not the school. It appears at ${res.minReferralsForIndex}.">too few</span>`
+                                : (r.index === null ? '—'
+                                   : `<span class="${r.index >= 1.5 ? 'demo-over' : ''}">${r.index.toFixed(2)}</span>`)}</td>
+                        </tr>`).join('')}
+                    </tbody></table>
+                    <p class="receipt-meta demo-legend">
+                        Index 1.00 is proportionate. 2.00 means referred at twice the rate enrolment
+                        predicts. Groups under ${res.smallGroupThreshold} enrolled are withheld by the
+                        server, not hidden by this page. An index needs at least
+                        ${res.minReferralsForIndex} referrals in the group: below that the ratio
+                        measures how few referrals there are rather than anything about the school.
+                        A student of two or more races is
+                        counted under each, so totals can exceed the referral count. Categories
+                        are the federal reporting groups; PowerSchool's detailed CALPADS
+                        subcodes are rolled up.
+                    </p>
+                    ${res.unmappedStudents ? `
+                        <p class="receipt-meta demo-legend">
+                            ${res.unmappedStudents} student${res.unmappedStudents === 1 ? '' : 's'}
+                            carr${res.unmappedStudents === 1 ? 'ies' : 'y'} a race code this app does not
+                            recognise (${(res.unmappedCodes || []).map(escapeHtml).join(', ')}), so
+                            ${res.unmappedStudents === 1 ? 'it is' : 'they are'} not counted above.
+                        </p>` : ''}
+                    ${res.unknownEthnicity ? `
+                        <p class="receipt-meta demo-legend">
+                            ${res.unknownEthnicity} student${res.unknownEthnicity === 1 ? '' : 's'}
+                            ${res.unknownEthnicity === 1 ? 'has' : 'have'} no answer to the
+                            Hispanic/Latino question in the SIS, so
+                            ${res.unknownEthnicity === 1 ? 'it is' : 'they are'} categorised by race
+                            code alone. That is a sync gap, not a finding — a large number here
+                            means the ethnicity field is not coming through.
+                        </p>` : ''}
+                </div>`;
+
+            appendRaceVerification(host, all);
+        }
+
+        // ADMIN ONLY: the per-referral rows behind the chart.
+        //
+        // WHY THIS SHOWS INDIVIDUAL RACE WHEN NOTHING ELSE DOES.
+        //
+        // Asked for on 2026-08-20, for one reason: an aggregate nobody can
+        // check is not trustworthy, and the first version of this chart WAS
+        // wrong — it read race codes and ignored the Hispanic/Latino question,
+        // so a school with no White students reported White. The admin spotted
+        // it from knowing the school and had no way to confirm it.
+        //
+        // Gated twice. This function hides the button for anyone who is not an
+        // admin, and the server refuses the query outright with requireAdmin,
+        // so hiding the button is a courtesy rather than the control. PBIS was
+        // given counts and only counts; this is the permission they were not
+        // given.
+        function appendRaceVerification(host, all) {
+            const role = (currentUser && currentUser.role) || '';
+            if (role !== 'admin' && role !== 'superadmin') return;
+            const card = host.querySelector('.demo-card');
+            if (!card) return;
+
+            const wrap = document.createElement('div');
+            wrap.className = 'race-verify';
+            wrap.innerHTML = `
+                <button type="button" class="btn-secondary race-verify-btn">
+                    Verify these counts
+                </button>
+                <p class="receipt-meta">
+                    Administrators only. Opens the referral-by-referral rows behind the chart,
+                    with each student's race and Hispanic/Latino answer exactly as PowerSchool
+                    holds it, so the totals above can be checked against the roster. Behind a
+                    click because it puts named children's race on screen.
+                </p>
+                <div class="race-verify-out"></div>`;
+            card.appendChild(wrap);
+
+            const btn = wrap.querySelector('.race-verify-btn');
+            const out = wrap.querySelector('.race-verify-out');
+            btn.addEventListener('click', function () {
+                setButtonBusy(btn, true, 'Loading…');
+                out.innerHTML = '<p class="panel-hint">Loading the rows behind the numbers…</p>';
+                loadRaceVerification(all).then(function (v) {
+                    setButtonBusy(btn, false);
+                    renderRaceVerification(out, all, v);
+                });
+            });
+        }
+
+        async function loadRaceVerification(referrals) {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) {
+                return {
+                    allowed: false, needsSignIn: true,
+                    reason: 'This reads the SIS, which needs a Microsoft sign-in. ' +
+                            'A username session carries no identity for the server to check.'
+                };
+            }
+            try {
+                return await auth.convexQuery('disciplineAggregates:raceVerification',
+                    { studentNumbers: referralStudentNumbers(referrals) }, session.idToken);
+            } catch (e) {
+                const msg = (e && e.message) || String(e);
+                if (/\b401\b|unauthor/i.test(msg)) {
+                    return { allowed: false, needsSignIn: true,
+                        reason: 'The Microsoft sign-in for this session has expired. Sign out and back in.' };
+                }
+                return { allowed: false, reason: msg };
+            }
+        }
+
+        function renderRaceVerification(out, referrals, v) {
+            if (!out) return;
+            if (!v || v.allowed === false) {
+                out.innerHTML = `<p class="panel-hint">${escapeHtml((v && v.reason) || 'Unavailable.')}</p>`;
+                return;
+            }
+
+            const byNumber = {};
+            (v.rows || []).forEach(function (r) { byNumber[r.studentNumber] = r; });
+
+            // ONE ROW PER REFERRAL, because the chart counts referrals. A
+            // per-student list would not reconcile against it for any student
+            // with two referrals, which is exactly the case worth checking.
+            const lines = (referrals || []).slice().sort(function (a, b) {
+                return new Date(b.submittedAt) - new Date(a.submittedAt);
+            }).map(function (r) {
+                const num = referralStudentNumber(r);
+                return { referral: r, number: num, info: num ? byNumber[num] : null };
+            });
+
+            // The reconciliation. Counted the same way the server counts: a
+            // referral adds one to EVERY category its student reports under.
+            const tally = {};
+            lines.forEach(function (l) {
+                ((l.info && l.info.reported) || []).forEach(function (c) {
+                    tally[c] = (tally[c] || 0) + 1;
+                });
+            });
+            const noRecord = lines.filter(function (l) { return !l.info || !l.info.reported.length; }).length;
+
+            const why = function (info) {
+                if (!info) return 'No SIS record';
+                if (info.basis === 'ethnicity') return 'Hispanic/Latino — ethnicity is asked first and overrides race';
+                if (info.basis === 'race') return 'Not Hispanic/Latino, so categorised by race code';
+                if (!info.hasRecord) return 'No restricted record synced for this student';
+                return 'No usable race code or ethnicity answer';
+            };
+
+            out.innerHTML = `
+                <div class="wc-card race-verify-card">
+                    <p class="receipt-meta">
+                        ${lines.length} referral${lines.length === 1 ? '' : 's'}
+                        &middot; restricted data, admins only &middot; do not export or screenshot
+                    </p>
+                    <table class="wc-table"><thead><tr>
+                        <th>Referral</th><th>Student</th><th>Gr.</th><th>Status</th>
+                        <th>Counted as</th><th>Hispanic/Latino?</th><th>Race code(s)</th><th>Why</th>
+                    </tr></thead><tbody>
+                    ${lines.map(function (l) {
+                        const i = l.info;
+                        const eth = !i ? '—'
+                            : i.ethnicity === 'hispanic' ? 'Yes'
+                            : i.ethnicity === 'not' ? 'No'
+                            : '<span class="receipt-meta" title="Never answered in the SIS">Not answered</span>';
+                        const codes = i && i.raceCodes.length
+                            ? i.raceCodes.map(function (c, n) {
+                                  const lab = i.raceLabels[n];
+                                  return escapeHtml(c) + (lab ? ' <span class="receipt-meta">(' + escapeHtml(lab) + ')</span>' : '');
+                              }).join(', ')
+                            : '<span class="receipt-meta">none</span>';
+                        return `
+                        <tr${(!i || !i.reported.length) ? ' class="demo-gap"' : ''}>
+                            <td>${escapeHtml(l.referral.id || '')}</td>
+                            <td>${escapeHtml(l.referral.studentName || ((i && (i.firstName + ' ' + i.lastName)) || 'Unknown'))}</td>
+                            <td>${escapeHtml((i && i.gradeLevel) || l.referral.studentGrade || '')}</td>
+                            <td>${l.referral.status === 'closed' ? 'Closed' : '<strong>Open</strong>'}</td>
+                            <td>${i && i.reported.length
+                                    ? i.reported.map(escapeHtml).join(' + ')
+                                    : '<span class="receipt-meta">not counted</span>'}</td>
+                            <td>${eth}</td>
+                            <td>${codes}</td>
+                            <td class="receipt-meta">${escapeHtml(why(i))}</td>
+                        </tr>`;
+                    }).join('')}
+                    </tbody></table>
+
+                    <div class="race-verify-tally">
+                        <div class="sh-detail-head">These rows add up to</div>
+                        ${Object.keys(tally).sort(function (a, b) { return tally[b] - tally[a]; })
+                            .map(function (k) {
+                                return '<div class="sh-detail-row"><span>' + escapeHtml(k) +
+                                       '</span><span>' + tally[k] + '</span></div>';
+                            }).join('')}
+                        ${noRecord ? '<div class="sh-detail-row"><span>Not counted (no race record)</span><span>' +
+                                     noRecord + '</span></div>' : ''}
+                    </div>
+                    <p class="receipt-meta demo-legend">
+                        Compare this list with the chart above: the numbers should match exactly,
+                        except where the chart withheld a group under ${escapeHtml(String(
+                            (raceAggregate && raceAggregate.smallGroupThreshold) || 10))} enrolled.
+                        A student of two or more races adds one to each of their categories, so
+                        the totals here can exceed the referral count.
+                    </p>
+                </div>`;
+        }
+
+        function renderClosedAnalytics(all) {
+            const el = document.getElementById('referralClosedAnalytics');
+            if (!el) return;
+            const closed = all.filter(r => r && r.status === 'closed');
+            if (!closed.length) {
+                el.innerHTML = '<p class="panel-hint">No referrals have been closed yet.</p>';
+                return;
+            }
+            const byResolution = {};
+            let loopClosed = 0;
+            let totalDays = 0, timed = 0;
+            closed.forEach(r => {
+                const res = String(r.resolutionType || '').trim() || 'Not recorded';
+                byResolution[res] = (byResolution[res] || 0) + 1;
+                if (r.loopClosed) loopClosed += 1;
+                const a = new Date(r.submittedAt), b = new Date(r.closedAt);
+                if (!isNaN(a) && !isNaN(b) && b >= a) { totalDays += (b - a) / 864e5; timed += 1; }
+            });
+            const rows = Object.keys(byResolution)
+                .map(k => ({ resolution: k, count: byResolution[k] }))
+                .sort((a, b) => b.count - a.count);
+
+            el.innerHTML = `
+                <div class="receipt-summary">
+                    <span class="receipt-stat"><strong>${closed.length}</strong> closed</span>
+                    <span class="receipt-stat"><strong>${loopClosed}</strong> loop closed</span>
+                    <span class="receipt-stat"><strong>${timed ? (totalDays / timed).toFixed(1) : '—'}</strong> avg days to close</span>
+                </div>
+                <div class="wc-card">
+                    <table class="wc-table"><thead><tr><th>Resolution</th><th>Referrals</th><th>Share</th></tr></thead><tbody>
+                    ${rows.map(r => `
+                        <tr><td>${escapeHtml(r.resolution)}</td><td><strong>${r.count}</strong></td>
+                        <td>${Math.round((r.count / closed.length) * 100)}%</td></tr>`).join('')}
+                    </tbody></table>
+                </div>`;
+        }
+
         function updateReferralAnalytics() {
             // Severity was dropped; the school tracks its TOP BEHAVIOURS instead,
             // which is more actionable ("Habitual Defiance is our #1") than a
             // Minor/Major/Severe split.
-            const all = behaviorReferrals || [];
+            const all = visibleReferrals();
             const open = getOpenReferrals();
             const now = new Date();
             const weekAgo = new Date(now.getTime() - 7 * 864e5);
@@ -27286,6 +28664,10 @@
                 markedBy: currentUser.name,
                 markedAt: new Date().toISOString()
             });
+            // Read by wildcat-merge to decide which copy of a detention is
+            // newer when two tabs both hold one. Without it a stale tab's copy
+            // ties on stamps and can win, undoing this attendance mark.
+            detention.updatedAt = new Date().toISOString();
             
             // Only increment days served if PRESENT
             if (status === 'present') {
@@ -27472,6 +28854,10 @@
         }
 
         function exportReferralReport() {
+            // EXPORTS WHAT THE EXPORTER MAY SEE, not the whole table. A file
+            // leaves the app and gets mailed around, so an unscoped export is
+            // the most durable way to leak a discipline record.
+            const behaviorReferrals = visibleReferrals();
             if (behaviorReferrals.length === 0) {
                 alert('No referral data to export');
                 return;
@@ -28274,9 +29660,17 @@
             const tiles = document.getElementById('dashTiles');
             if (tiles) {
                 tiles.innerHTML = [
+                    // An admin's tile counts the WHOLE roster, so it is only a
+                    // fact once the roster is the authoritative one. On the
+                    // Firestore fallback every record reads as enrolled and the
+                    // number is roughly double the school. wcTile already has
+                    // the idiom for this: pass null and say why.
                     wcTile('Your students',
-                        roster === null ? null : roster.length,
-                        { absent: 'no sections assigned',
+                        (roster === null || (isAdmin && !rosterIsAuthoritative()))
+                            ? null : roster.length,
+                        { absent: (isAdmin && !rosterIsAuthoritative())
+                            ? 'roster still loading'
+                            : 'no sections assigned',
                           tone: 'brand',
                           onclick: isAdmin ? "switchTab('students')" : null,
                           arrowLabel: 'Open the student roster' }),

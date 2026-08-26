@@ -89,6 +89,7 @@ export const inviteStaff = mutation({
     role: v.union(
       v.literal("teacher"),
       v.literal("campusaide"),
+      v.literal("pbis"),
       v.literal("admin"),
       v.literal("superadmin"),
     ),

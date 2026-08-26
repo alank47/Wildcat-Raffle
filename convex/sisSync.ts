@@ -29,6 +29,12 @@ export const syncStudents = internalMutation({
         firstName: v.string(),
         lastName: v.string(),
         grade: v.optional(v.string()),
+        // STUDENTS.GENDER, manifest field 9. Listed here as well as in the
+        // schema because this validator is a closed allowlist: a field the
+        // sync sends that is not named here is rejected outright rather than
+        // dropped, which is how it should be. Adding a SIS-owned field means
+        // touching schema.ts, sisMerge's SIS_OWNED_FIELDS, and this list.
+        gender: v.optional(v.string()),
         email: v.optional(v.string()),
         school: v.optional(v.string()),
       }),
@@ -61,6 +67,11 @@ export const syncStudents = internalMutation({
           firstName: incoming.firstName,
           lastName: incoming.lastName,
           grade: incoming.grade,
+          // Set on INSERT as well as on patch. Without it a brand new student
+          // carried no gender until some later sync noticed the difference and
+          // patched it — self-healing, but only on the second run, and
+          // invisible in the meantime.
+          gender: incoming.gender,
           email: normalizeEmail(incoming.email) || undefined,
           school:
             incoming.school === "middleschool" || incoming.school === "highschool"

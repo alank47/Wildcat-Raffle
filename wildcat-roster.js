@@ -37,8 +37,11 @@
    * campusaide is here for the reason recorded in convex/accessRules.ts: an
    * aide covers hallways, lunch and the yard, so they are the teacher of
    * record for nobody, and scoping them to a roster scopes them to nothing.
+   *
+   * pbis is here for the same reason: a PBIS reviewer reads referrals across
+   * the school. Neither gains any admin power from being on this list.
    */
-  var ALL_STUDENT_ROLES = ['admin', 'superadmin', 'campusaide'];
+  var ALL_STUDENT_ROLES = ['admin', 'superadmin', 'campusaide', 'pbis'];
 
   /**
    * THE DAY, BY EXPRESSION SLOT.

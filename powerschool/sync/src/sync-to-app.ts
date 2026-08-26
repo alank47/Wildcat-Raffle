@@ -105,6 +105,62 @@ const { rows: grades } = await client.namedQuery(`${QUERY_PREFIX}.grades`, {
 console.log(`  attendance   ${attendance.length} rows`);
 console.log(`  grades       ${grades.length} rows`);
 
+// ---- 2b. restricted demographics ---------------------------------------
+//
+// Two queries because the brief keeps them separate: race codes are one to
+// many and live in STUDENTRACE, ethnicity and EL status are columns on the
+// student. Both are behind their own access grant, so a school that is
+// refused one still gets the other rather than losing both.
+//
+// docs/access-gap.md records both as granted on this instance, probed
+// 2026-08-12, with student_race_restricted returning 100 rows.
+const restrictedRows = new Map<string, any>();
+const touch = (num: string) => {
+  if (!restrictedRows.has(num)) restrictedRows.set(num, { studentNumber: num });
+  return restrictedRows.get(num);
+};
+
+let raceCount = 0;
+try {
+  const { rows: races } = await client.namedQuery(
+    `${QUERY_PREFIX}.student_race_restricted`,
+    { schoolid: config.schoolId },
+  );
+  for (const r of races) {
+    const num = str(r.student_number);
+    const code = str(r.race_code);
+    if (!num || !code) continue;
+    const row = touch(num);
+    // One row per code. Never collapsed: a multi-race student is multi-race,
+    // and flattening to "Two or more" is a reporting decision the school has
+    // not made.
+    (row.raceCodes ??= []).push(code);
+    raceCount++;
+  }
+  console.log(`  race         ${races.length} rows, ${raceCount} codes`);
+} catch (e: any) {
+  // Refused access is a FACT to report, not a reason to abort the sync. The
+  // roster matters more than the demographics.
+  console.log(`  race         SKIPPED: ${e?.message ?? e}`);
+}
+
+try {
+  const { rows: restricted } = await client.namedQuery(
+    `${QUERY_PREFIX}.student_restricted`,
+    { schoolid: config.schoolId },
+  );
+  for (const r of restricted) {
+    const num = str(r.student_number);
+    if (!num) continue;
+    const row = touch(num);
+    row.fedEthnicity = str(r.fed_ethnicity);
+    row.elaStatus = str(r.ela_status);
+  }
+  console.log(`  ethnicity    ${restricted.length} rows`);
+} catch (e: any) {
+  console.log(`  ethnicity    SKIPPED: ${e?.message ?? e}`);
+}
+
 const missingPercent = grades.filter((g: any) => !nonEmpty(g.current_percent)).length;
 if (missingPercent) {
   console.log(`               ${missingPercent} with no percent (a GAP, never rendered as 0%)`);
@@ -215,6 +271,28 @@ const emails = emailRows
     isPrimary: r.is_primary ?? null,
   }))
   .filter((r) => r.studentNumber && r.email);
+
+
+// restricted demographics: FULL REPLACE, like grades. A student corrected in
+// PowerSchool from two race codes to one must lose the extra, and a merge
+// cannot express a deletion. Getting this wrong leaves the app permanently
+// more certain about a child's race than the SIS is.
+{
+  const rows = [...restrictedRows.values()];
+  if (!rows.length) {
+    console.log("  restricted   nothing to write (both queries skipped or empty)");
+  } else {
+    const first = convex("sisStats:replaceRestricted", {
+      syncedAt, rows: rows.slice(0, CHUNK), clearFirst: true,
+    });
+    for (let i = CHUNK; i < rows.length; i += CHUNK) {
+      convex("sisStats:replaceRestricted", {
+        syncedAt, rows: rows.slice(i, i + CHUNK), clearFirst: false,
+      });
+    }
+    console.log(`  restricted   ${rows.length} students (cleared ${first.cleared})`);
+  }
+}
 
 for (let i = 0; i < emails.length; i += CHUNK) {
   const res = convex("studentEmail:setStudentEmails", { rows: emails.slice(i, i + CHUNK) });

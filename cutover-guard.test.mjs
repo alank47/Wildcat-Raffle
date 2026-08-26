@@ -74,10 +74,15 @@ console.log("\nThe fallback is intact");
   // The Convex read must be inside a try with a catch that does NOT rethrow.
   // If it rethrows, or the catch is removed, a Convex outage stops being a
   // degraded roster and becomes a blank one.
-  const branch = script.slice(
-    script.indexOf("if (DATA_SOURCE === 'convex')"),
-    script.indexOf("if (DATA_SOURCE === 'convex')") + 900,
-  );
+  // Bounded by a STABLE ANCHOR rather than a character count. This slice was
+  // `+ 900`, and adding two lines inside the branch pushed the console.error
+  // past the window: the assertion failed while the code it describes was
+  // correct, which is the worst way for a test to be wrong.
+  const branchStart = script.indexOf("if (DATA_SOURCE === 'convex')");
+  const branchEnd = script.indexOf("const secondaryData = secondarySnap.exists()", branchStart);
+  const branch = script.slice(branchStart, branchEnd);
+  check("the branch is bounded by its real end, not a guessed length",
+    branchStart > 0 && branchEnd > branchStart);
   check("the Convex read is guarded by try", /try\s*\{/.test(branch));
   check("and has a catch", /catch\s*\(/.test(branch), branch.slice(0, 80));
   check(
@@ -511,6 +516,93 @@ console.log("\nCache busters");
     new Set(tags).size === 1,
     JSON.stringify(tags),
   );
+}
+
+console.log("\nThe app never reloads itself unprompted");
+// This one cost a submitted referral. The old check compared the deployed
+// file's Last-Modified against the moment the PAGE loaded, which are different
+// kinds of thing, so every session past the first minute after a deploy
+// reloaded itself every five minutes forever. A reload mid-save loses whatever
+// saveInBackground was still writing.
+check("no unconditional auto-reload survives in script.js",
+  !/^\s*location\.reload\(true\)/m.test(script));
+check("the update check compares a VERSION, not a timestamp",
+  /script\\.js\\?v=\(\[\^"&\]\+\)/.test(script) || /script\.js\?v=/.test(script));
+// Ignore comment lines: the replacement documents the old broken comparison
+// on purpose, and a guard that forbids naming a bug stops it being explained.
+check("SCRIPT_LOAD_TIME is gone from the CODE (the comment may still explain it)",
+  !script.split("\n").some((l) => /SCRIPT_LOAD_TIME/.test(l) && !/^\s*(\/\/|\*)/.test(l)));
+check("an available update surfaces as a dismissible bar",
+  /wcUpdateBar/.test(script) && /wc-update-later/.test(script));
+check("and the reload button flushes a save before reloading",
+  /saveData\(\)[\s\S]{0,200}location\.reload\(\)/.test(script));
+
+console.log("\nThe referral save merges, and its transaction is side-effect free");
+// referral-save.test.mjs models this path. These assertions keep the model
+// honest: if the real code stops matching it, the model proves nothing.
+//
+// Anchored on `mergedReferrals`, which appears only in the save path. The
+// string 'raffle_data', 'referrals' also matches the LOAD path earlier in the
+// file, and anchoring there silently measured the wrong code.
+{
+  const at = script.indexOf("mergedReferrals");
+  check("the save path is findable at all", at !== -1);
+  const near = script.slice(Math.max(0, at - 2500), at + 2500);
+
+  check("referrals are written in a transaction, not a bare setDoc",
+    /runTransaction/.test(near) && !/setDoc\(\s*doc\([^)]*'referrals'\)/.test(near));
+  check("the stored list is read before writing", /transaction\.get\(/.test(near));
+  check("and merged rather than replaced", /WildcatMerge\.mergeById/.test(near));
+  // Firestore retries the callback. Assigning outer state inside it is safe
+  // only by accident of idempotency, and lies about state if it then fails.
+  check("the in-memory list is assigned AFTER the transaction, not inside it",
+    /if \(mergedReferrals\) behaviorReferrals = mergedReferrals;/.test(near));
+  check("nothing assigns behaviorReferrals inside the callback",
+    !/transaction\.set\([\s\S]{0,400}behaviorReferrals =/.test(near));
+  check("the counter cannot go backwards", /Math\.max\(/.test(near));
+}
+
+console.log("\nAnalytics tabs are not suppressed by the legacy-subtab rule");
+// styles.css has:
+//   #disciplineContent .subtab-button { display: none !important; }
+// written when discipline navigation moved to the sidebar. The analytics tabs
+// live inside #disciplineContent, so using that class made them invisible with
+// no way to override it: present in the DOM, display:none, zero height.
+{
+  const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+  check("the suppression rule still exists (this guard is about it)",
+    /#disciplineContent \.subtab-button\s*\{[^}]*display:\s*none/.test(css));
+  check("no analytics tab uses the suppressed class",
+    !/class="[^"]*\bsubtab-button\b[^"]*"[^>]*data-atab=/.test(html));
+  check("analytics tabs use their own class", /class="analytics-tab/.test(html));
+  check("and that class is actually styled", /\.analytics-tab\s*\{/.test(css));
+  check("the trend grain buttons are not suppressed either",
+    !/class="[^"]*\bsubtab-button\b[^"]*"[^>]*id="trendGrain/.test(html));
+  check("the switcher targets the class the markup uses",
+    script.includes(".analytics-tabs .analytics-tab"));
+}
+
+console.log("\nAnalytics panes live inside the analytics section");
+// A pane inserted by string anchor landed 670 lines away, inside the cash
+// activity table, and the tabs silently did nothing. Structure, not strings.
+{
+  const lines = html.split("\n");
+  const start = lines.findIndex((l) => l.includes('id="behaviorAnalytics"'));
+  let depth = 0, end = -1;
+  for (let i = start; i < lines.length; i++) {
+    depth += (lines[i].match(/<div\b/g) || []).length - (lines[i].match(/<\/div>/g) || []).length;
+    if (depth === 0 && i > start) { end = i; break; }
+  }
+  check("the analytics section is balanced and findable", start !== -1 && end > start);
+
+  const panes = ["all", "trends", "behaviors", "demographics", "closed"];
+  for (const name of panes) {
+    const at = lines.findIndex((l) => l.includes(`data-apane="${name}"`));
+    check(`pane ${name} is inside the analytics section`, at > start && at < end);
+  }
+  for (const name of panes) {
+    check(`tab ${name} has a button`, html.includes(`data-atab="${name}"`));
+  }
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

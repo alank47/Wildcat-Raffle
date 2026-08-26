@@ -27,6 +27,7 @@ export const seedTeachers = internalMutation({
           v.literal("admin"),
           v.literal("superadmin"),
           v.literal("campusaide"),
+      v.literal("pbis"),
         ),
         ticketsAwarded: v.optional(v.number()),
         sections: v.optional(v.array(v.string())),
@@ -263,6 +264,7 @@ export const setStaffRole = internalMutation({
     role: v.union(
       v.literal("teacher"),
       v.literal("campusaide"),
+      v.literal("pbis"),
       v.literal("admin"),
       v.literal("superadmin"),
     ),

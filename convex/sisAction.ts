@@ -192,6 +192,9 @@ export const syncFromPowerSchool = internalAction({
         firstName: s(r.first_name) ?? "",
         lastName: s(r.last_name) ?? "",
         grade: s(r.grade_level),
+        // Already selected by the roster query as S.GENDER AS gender, and
+        // already granted in plugin.xml. Reading it here is the whole change.
+        gender: s(r.gender),
       });
     }
     const students = [...seen.values()];
@@ -259,6 +262,73 @@ export const syncFromPowerSchool = internalAction({
       });
     }
 
+    // ---- restricted demographics ----
+    //
+    // ON THE CRON, not only in the local script, for the same reason student
+    // email is: making it depend on somebody's laptop being awake was the
+    // wrong call. This is the data the discipline disproportionality view
+    // reads, and it goes stale the moment a student's record changes.
+    //
+    // Two queries because the brief keeps them apart: race codes are one to
+    // many and live in STUDENTRACE, ethnicity and EL are columns on the
+    // student. Access is granted separately, so a refusal on one still leaves
+    // the other. docs/access-gap.md records both granted on this instance.
+    //
+    // A refusal is REPORTED and skipped, never fatal. The roster matters more
+    // than the demographics, and a sync that aborts here would take the whole
+    // school's schedule down over a field nobody has looked at yet.
+    const restrictedByNumber = new Map<string, any>();
+    let raceCodeCount = 0;
+    let raceError: string | null = null;
+    let ethnicityError: string | null = null;
+
+    try {
+      const races = await namedQuery(host, tok, `${prefix}.student_race_restricted`, { schoolid });
+      for (const r of races.rows) {
+        const num = s(r.student_number);
+        const code = s(r.race_code);
+        if (!num || !code) continue;
+        const row = restrictedByNumber.get(num) ?? { studentNumber: num };
+        // Appended, never collapsed into "Two or more": that is a reporting
+        // decision this school has not made, and collapsing hides exactly the
+        // students it claims to describe.
+        (row.raceCodes ??= []).push(code);
+        restrictedByNumber.set(num, row);
+        raceCodeCount++;
+      }
+    } catch (e: any) {
+      raceError = String(e?.message ?? e);
+    }
+
+    try {
+      const restricted = await namedQuery(host, tok, `${prefix}.student_restricted`, { schoolid });
+      for (const r of restricted.rows) {
+        const num = s(r.student_number);
+        if (!num) continue;
+        const row = restrictedByNumber.get(num) ?? { studentNumber: num };
+        row.fedEthnicity = s(r.fed_ethnicity);
+        row.elaStatus = s(r.ela_status);
+        restrictedByNumber.set(num, row);
+      }
+    } catch (e: any) {
+      ethnicityError = String(e?.message ?? e);
+    }
+
+    const restrictedRows = [...restrictedByNumber.values()];
+    if (restrictedRows.length) {
+      // Full replace, like grades. A student corrected in PowerSchool from two
+      // race codes to one must LOSE the extra, and a merge cannot express a
+      // deletion. Getting this wrong leaves the app permanently more certain
+      // about a child's race than the SIS is.
+      for (let i = 0; i < restrictedRows.length; i += 200) {
+        await ctx.runMutation(internal.sisStats.replaceRestricted, {
+          syncedAt,
+          rows: restrictedRows.slice(i, i + 200),
+          clearFirst: i === 0,
+        });
+      }
+    }
+
     // ---- student email onto the students table ----
     // The addresses were fetched at the top of this run, because the roster
     // needed them. This writes the same rows onto the student records, which
@@ -288,6 +358,12 @@ export const syncFromPowerSchool = internalAction({
       gradeRows: gradeRows.length,
       gradeRowsMissingPercent: gradeRows.filter((g) => g.currentPercent === undefined).length,
       studentEmailRows: emailRows.length,
+      restrictedStudents: restrictedRows.length,
+      restrictedRaceCodes: raceCodeCount,
+      // Named rather than silently zero: "no race data" and "we were refused"
+      // need different responses, and only one of them is a code problem.
+      restrictedRaceError: raceError,
+      restrictedEthnicityError: ethnicityError,
       studentsWithEmail: emailResult.studentsWithEmail,
       studentsWithoutEmail: emailResult.totalStudents - emailResult.studentsWithEmail,
       durationMs: Date.now() - started,

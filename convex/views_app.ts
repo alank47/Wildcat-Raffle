@@ -1,5 +1,6 @@
 import { query } from "./_generated/server";
-import { requireStaff, requireStudentSelf } from "./identity";
+import { v } from "convex/values";
+import { requireStaff, requireStudentSelf, requireAdmin } from "./identity";
 import { restrictedFor } from "./restrictedPolicy";
 import { sisNumberKey, sisEmailKey, gradeCell } from "./studentPortalRules";
 import { studentView } from "./views";
@@ -82,6 +83,114 @@ export const teacherRoster = query({
         visibleToYou: policy.allowed,
         withheld: policy.denied,
       },
+    };
+  },
+});
+
+/**
+ * ADMIN ONLY: another member of staff's roster, for teacher view.
+ *
+ * WHY THIS DUPLICATES teacherRoster INSTEAD OF SHARING A HELPER.
+ *
+ * teacherRoster answers from the CALLER'S token and takes no arguments, which
+ * is correct: any teacher may run it and none of them may name someone else.
+ * That is also why teacher view could not show a teacher's own students — the
+ * question has no way to say who it is about.
+ *
+ * The obvious move is to extract a shared body and have both call it. That
+ * body is the query every teacher's Award Cash depends on, and this was added
+ * three weeks before launch. A bug introduced while refactoring it would break
+ * the roster for fifty staff on the day, to save forty duplicated lines. When
+ * there is time to verify the extraction properly, do it then; not now.
+ *
+ * requireAdmin, NOT requireStaff with a role check. Get this wrong and any
+ * teacher can read any other teacher's roster.
+ *
+ * NO NEW EXPOSURE. Admins are already campus-wide and see every student. The
+ * shape returned is identical to teacherRoster's, which is an allowlist with
+ * no restricted field in it, and the policy block below is computed for the
+ * ADMIN doing the looking rather than for the teacher being looked at: this is
+ * an admin reading, and saying otherwise would misreport who saw what.
+ */
+export const teacherRosterFor = query({
+  args: { email: v.string() },
+  handler: async (ctx, { email }) => {
+    const admin = await requireAdmin(ctx);
+    const policy = restrictedFor(admin.role);
+
+    const target = String(email ?? "").trim().toLowerCase();
+    if (!target) {
+      return {
+        teacher: { name: null, role: null },
+        sectionCount: 0, studentCount: 0, sections: [],
+        restricted: { visibleToYou: policy.allowed, withheld: policy.denied },
+        viewedBy: { role: admin.role },
+        reason: "No email given for the staff member to look at.",
+      };
+    }
+
+    const staffRow = await ctx.db
+      .query("teachers")
+      .withIndex("by_email", (q) => q.eq("email", target))
+      .unique();
+
+    const rows = await ctx.db
+      .query("psRoster")
+      .withIndex("by_teacherEmail", (q) => q.eq("teacherEmail", target))
+      .collect();
+
+    const numbers = [...new Set(rows.map((r) => r.studentNumber))];
+    const students = new Map<string, any>();
+    for (const num of numbers) {
+      const s = await ctx.db
+        .query("students")
+        .withIndex("by_studentNumber", (q) => q.eq("studentNumber", num))
+        .unique();
+      if (s) students.set(num, s);
+    }
+
+    const sections = new Map<string, any>();
+    for (const r of rows) {
+      const key = r.sectionId ?? `${r.courseNumber}-${r.sectionNumber}`;
+      if (!sections.has(key)) {
+        sections.set(key, {
+          sectionId: key,
+          courseName: r.courseName ?? null,
+          courseNumber: r.courseNumber ?? null,
+          period: r.period ?? r.sectionExpression ?? null,
+          term: r.termAbbreviation ?? null,
+          students: [],
+        });
+      }
+      const s = students.get(r.studentNumber);
+      sections.get(key).students.push({
+        studentNumber: r.studentNumber,
+        firstName: r.firstName,
+        lastName: r.lastName,
+        gradeLevel: r.gradeLevel ?? null,
+        totalTickets: s
+          ? s.pbisTickets + s.attendanceTickets + s.academicTickets
+          : null,
+        wildcatCashBalance: s?.wildcatCashBalance ?? null,
+        hasAppRecord: Boolean(s),
+      });
+    }
+
+    return {
+      teacher: { name: staffRow?.name ?? null, role: staffRow?.role ?? null },
+      sectionCount: sections.size,
+      studentCount: numbers.length,
+      sections: [...sections.values()],
+      restricted: { visibleToYou: policy.allowed, withheld: policy.denied },
+      // Recorded so the browser can label the view honestly: an admin looked,
+      // and the server answered as an admin.
+      viewedBy: { role: admin.role },
+      // A staff member with no roster rows is not an error. It is the usual
+      // reason a teacher reports empty class periods, and it is the answer
+      // teacher view exists to give.
+      reason: rows.length === 0
+        ? "No PowerSchool roster rows for this address. Either they teach no sections this term, or their PowerSchool teacher_email does not match this address."
+        : null,
     };
   },
 });

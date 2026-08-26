@@ -1036,15 +1036,31 @@ textarea {
             display: none !important;
         }
         
-        /* Discipline Mode: show only Settings and System tabs */
+        /* Discipline Mode hides the raffle nav. It does NOT hide the panes.
+           
+           It used to, and that is why every Insights and Admin item in the
+           sidebar did nothing when clicked:
+           
+             body.discipline-mode .content > .tab-content { display: none !important; }
+             body.discipline-mode #disciplineContent      { display: block !important; }
+           
+           switchTab() clears those inline (script.js) so a shared tab can be
+           opened while a mode is selected. An !important stylesheet rule beats
+           an inline style, so the JavaScript ran, marked the pane active, and
+           CSS kept it hidden anyway. Data & Analytics, Audit Log, Students,
+           Teachers, Settings and System Admin were all unreachable from
+           Discipline Mode, with no error to explain it.
+           
+           Claw Pass never had these rules. It hides panes with inline styles
+           from switchSystemMode, exactly as discipline mode also already does,
+           and it has always worked. The rules were redundant as well as
+           harmful, so they are gone rather than patched with a :not(.active).
+           
+           .tabs stays: it hides #modeNav, the raffle button list, which is a
+           different element from the shared sidebar navs (those are
+           .sidebar-nav without .tabs) and must not reappear here. */
         body.discipline-mode .tabs {
             display: none !important;
-        }
-        body.discipline-mode .content > .tab-content {
-            display: none !important;
-        }
-        body.discipline-mode #disciplineContent {
-            display: block !important;
         }
         
         /* ============================================
@@ -6523,3 +6539,142 @@ body:has(#mainApp:not(.hidden)) { padding: 0; margin: 0; }
 
 /* The modal body can outgrow a laptop screen once the picker is open. */
 .modal-content { max-height: 88vh; overflow-y: auto; }
+
+/* Update prompt. Deliberately a bar the user dismisses, never an automatic
+   reload: the reload it replaces was eating in-flight background saves. */
+.wc-update-bar {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+    z-index: 9999;
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px;
+    background: var(--wc-ink, #0E0E0E); color: #fff;
+    border-radius: 12px;
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.4);
+    font-size: 14px;
+    max-width: calc(100vw - 32px);
+}
+.wc-update-bar button {
+    border: none; border-radius: 8px; cursor: pointer;
+    font-size: 13px; font-weight: 700; font-family: inherit;
+    padding: 7px 14px; white-space: nowrap;
+}
+.wc-update-bar .wc-update-reload { background: var(--wc-blue, #2F67A7); color: #fff; }
+.wc-update-bar .wc-update-later  { background: transparent; color: rgba(255,255,255,0.7); padding: 7px 8px; }
+.wc-update-bar .wc-update-later:hover { color: #fff; }
+
+/* ============================================================
+   DISCIPLINE ANALYTICS
+   ============================================================ */
+.analytics-tabs { margin-bottom: 18px; }
+.analytics-pane.hidden { display: none; }
+
+.trend-quiet td { color: var(--wc-gray-text); }
+
+.demo-card { margin-bottom: 18px; }
+.demo-card.is-unavailable { background: #FAFBFC; border-style: dashed; }
+.demo-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap; margin-bottom: 8px;
+}
+.demo-head h3 { margin: 0; font-size: 15px; color: var(--wc-ink); }
+.demo-flag {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: #8A5A00; background: #FFF6E5; padding: 3px 9px; border-radius: 999px;
+}
+
+/* A count presented where a rate belongs is the failure mode this whole
+   panel is designed against, so saying so is not decoration. */
+.demo-warn {
+    background: #FFF6E5; border-left: 3px solid #C08A2E;
+    padding: 9px 12px; border-radius: 8px; color: #8A5A00;
+}
+
+/* Over-representation is marked, never colour-coded green/red: this is a
+   prompt to look, not a verdict on a group of children. */
+.demo-over { font-weight: 700; color: #8A5A00; }
+
+/* "Too few referrals to say". Deliberately quiet: it is the absence of a
+   finding, and should not draw the eye the way a real ratio does. */
+.demo-thin { font-style: italic; opacity: 0.75; }
+.demo-legend { display: block; margin-top: 10px; }
+
+/* ADMIN VERIFICATION.
+   Deliberately set apart from the chart above it. This block puts named
+   children's race on screen, which nothing else in the app does, and it should
+   not read as just another table. The rule and the tint are the signal that
+   the reader has crossed into restricted data. */
+.race-verify {
+    margin-top: 16px; padding-top: 14px;
+    border-top: 2px solid var(--wc-line, #E4E8EE);
+}
+.race-verify .btn-secondary { margin-bottom: 6px; }
+.race-verify-card {
+    margin-top: 12px;
+    background: #FFFBF3;
+    border: 1px solid #E8D9B8;
+}
+.race-verify-card .wc-table { font-size: 13px; }
+.race-verify-card .wc-table th { white-space: nowrap; }
+
+/* A referral whose student has no race record. Marked so the gap is visible:
+   these are the rows that make the chart's total lower than the referral
+   count, and they are the first thing to check when the numbers disagree. */
+.demo-gap td { background: #FAFBFC; color: var(--wc-gray-text); }
+
+.race-verify-tally {
+    margin-top: 14px; padding-top: 10px;
+    border-top: 1px dashed #E8D9B8;
+}
+
+/* Analytics tabs carry their own class, deliberately NOT .subtab-button.
+   #disciplineContent .subtab-button is display:none !important, because the
+   discipline navigation moved to the sidebar and the old in-content rows were
+   suppressed wholesale. These tabs are CONTENT inside a pane, not navigation,
+   so reusing that class made them invisible with no way to override it. */
+.analytics-tab {
+    padding: 9px 18px;
+    background: #ffffff;
+    color: var(--wc-gray-text);
+    border: 1px solid #d7dde5;
+    border-radius: 9px;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 13px;
+    font-family: inherit;
+    white-space: nowrap;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.analytics-tab:hover { border-color: var(--wc-blue); color: var(--wc-blue); }
+.analytics-tab.active {
+    background: var(--wc-blue);
+    border-color: var(--wc-blue);
+    color: #ffffff;
+}
+.analytics-tab:focus-visible { outline: 2px solid var(--wc-blue); outline-offset: 2px; }
+
+
+/* ============================================
+   TEACHER VIEW BANNER
+   ============================================
+   Fixed and loud on purpose. An admin who forgets they are looking through
+   somebody else's eyes will report bugs that are not bugs, or conclude a
+   teacher can see something they cannot. It is cheaper to be unmissable. */
+.wc-preview-bar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 9999;
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    flex-wrap: wrap;
+    padding: 11px 18px;
+    background: #4B2E83; color: #fff;
+    font-size: 14px; line-height: 1.4;
+    box-shadow: 0 -2px 14px rgba(0, 0, 0, 0.25);
+}
+.wc-preview-bar strong { font-weight: 700; }
+.wc-preview-exit {
+    background: #fff; color: #4B2E83; border: 0;
+    padding: 6px 14px; border-radius: 999px;
+    font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.wc-preview-exit:hover { background: #EDE7F6; }
+/* The bar sits over the bottom of the page, so give the content room to
+   scroll clear of it rather than hiding the last row behind it. */
+body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }

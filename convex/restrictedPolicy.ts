@@ -39,9 +39,33 @@ export type RestrictedField = (typeof RESTRICTED_FIELDS)[number];
  */
 export const ALLOWED_BY_ROLE: Record<string, RestrictedField[]> = {
   teacher: [],
+  // EMPTY, deliberately, and this is the point of the pbis role.
+  //
+  // PBIS reviews discipline patterns, which needs COUNTS BY RACE, not any
+  // child's race. Those are different permissions and only the first was
+  // asked for. Aggregates come from disciplineAggregates.ts, which never
+  // returns a student row, so PBIS needs nothing here to do its job.
+  //
+  // Decided 2026-08-19 with the app owner, who was explicit: "I am not
+  // looking to see an individual child's race."
+  //
+  // NOTE: admin and superadmin below WERE later widened, for verification.
+  // That does not extend to pbis, and the gap is the whole design.
+  pbis: [],
   campusaide: [],
-  admin: [],
-  superadmin: [],
+  // WIDENED 2026-08-19 by Alan K (app owner). Recorded in
+  // docs/field-sourcing-approval.md, which is what the note above asks for.
+  //
+  // The stated decision it informs: verifying that the aggregate breakdown is
+  // counting and displaying correctly. An aggregate nobody can check against a
+  // source is a number taken on faith, and this one is used to make claims
+  // about how the school disciplines children by race.
+  //
+  // This is genuinely WIDER than the aggregate-only grant that preceded it.
+  // Deliberately still excludes teacher, campusaide and pbis: PBIS reviews
+  // patterns and asked for counts, not children.
+  admin: ["fedEthnicity", "raceCodes"],
+  superadmin: ["fedEthnicity", "raceCodes"],
 };
 
 export type Decision = {
