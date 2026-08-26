@@ -625,3 +625,46 @@ registration (client `0f22dd11-7c0a-4356-93d7-0abf07642001`, tenant
 `afc1d09c-9f9b-4d45-9643-198f7dc264c4`) under Mobile and desktop applications.
 The matching `CFBundleURLSchemes` entry is already scripted in
 `configure-ios.mjs`. Both halves are required and neither works alone.
+
+## Scope addition 2026-08-26: one iOS app for staff AND students
+
+Directed by the user: "lets make an iOS app of this too so both staff and
+students can download; alternatively android can use the url for now. We need
+iOS to have access to the NFC functions writing and reading. Students are read
+only. Staff can read and write."
+
+### What this changes, and what it does not
+
+- The `mobile/` Capacitor shell (scope addition 2026-08-17) was described as
+  the STUDENT app. It never was only that: it wraps `index.html`, which holds
+  both sign-ins (Microsoft for staff, Google for students), so one install
+  serves both roles. The app is now understood and named as the Wildcat Hub
+  app for everyone on iOS. No second app.
+- NFC roles need no new gate. Reading (a scan session that resolves a tag to a
+  check-in) is the student flow and is what a signed-in student can reach.
+  Writing (the tag programmer) lives in the staff portal behind the staff
+  session and `tapLocations` mutations are `requireStaff` on the server, so a
+  student cannot reach a write path even by hand. The native plugin exposes
+  both; the page decides who sees which.
+- Android stays on the URL (Chrome has Web NFC for reading; programming from
+  Android Chrome already works). The Android project is not built now.
+
+### Decisions
+
+27. The app icon is `assets/app-icon-source.png` (the Westbrook mark on black),
+    supplied 2026-08-26. `configure-ios` writes it into the regenerated catalog
+    at 1024x1024 with no alpha; nothing is placed in `ios/` by hand.
+28. `sync-web` reads the file list off `index.html` rather than keeping one,
+    because the hand-kept list had fallen six scripts behind and the staff
+    portal would have 404'd inside the bundle.
+29. Distribution stays private (TestFlight, then Apple School Manager if the
+    school wants managed installs). Public App Store review for a minors app
+    is not the plan.
+
+### Open questions
+
+30. TestFlight needs an Apple Distribution certificate; this Mac has only
+    Apple Development identities. Xcode can create one from the signed-in
+    account; that is a click in Xcode, not a script.
+31. Nothing has read or written a physical tag yet, on any platform. The
+    first device install is where that gets proven, with one blank NTAG sticker.
