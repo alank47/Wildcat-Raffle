@@ -41,6 +41,7 @@ const lifted = [
 ].join("\n");
 const api = new Function("document", "window", "currentUser", "wcActiveBoard",
   "let wcActiveBoardState = wcActiveBoard;\n" +
+  "const wcIcon = (n) => '<svg data-icon=\"' + n + '\"></svg>';\n" +
   lifted.replace("function wcDrawActiveBoard()", "function wcDrawActiveBoard(){ wcActiveBoard = wcActiveBoardState; return _draw(); }\nfunction _draw()") +
   "\nreturn { wcNoteBadgeHtml, wcDrawPassDetail, wcDrawActiveBoard, wpEsc };",
 );

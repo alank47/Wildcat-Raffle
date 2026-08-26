@@ -625,3 +625,55 @@ registration (client `0f22dd11-7c0a-4356-93d7-0abf07642001`, tenant
 `afc1d09c-9f9b-4d45-9643-198f7dc264c4`) under Mobile and desktop applications.
 The matching `CFBundleURLSchemes` entry is already scripted in
 `configure-ios.mjs`. Both halves are required and neither works alone.
+
+## Scope addition 2026-08-26: teacher portal UI overhaul
+
+Directed by the user: "look at every page button and component in the teacher
+portal and clean up all the UI with animations and hover triggers. Replace
+emojis with actual icons. Leverage the reactbits pro account and create pixel
+perfect components that work for the design."
+
+### Facts the plan rests on
+
+- The teacher portal is the legacy no-build app (`index.html`, `script.js`,
+  `styles.css`). It cannot import React. `hub/` is the React STUDENT app.
+- Foundation already in place: `wildcat-ui.css` (`.wu-*` primitives),
+  `wildcat-motion.css` + `wildcat-motion.js` (`window.wcMotion`), and
+  `docs/design-reference.md` (the Notasnet school dashboard system, chosen 08-15),
+  which is the quality bar every screen is judged against.
+- Scale: about 984 emoji glyphs used as icons, 225 buttons, 33 sub-tab buttons,
+  24 modals.
+- React Bits Pro is bought; the key lives in 1Password and in `hub/.env.local`
+  (gitignored; the repo is public). Pro components are React, so on the teacher
+  side they are REFERENCES: install the `-JS-CSS` variant, port keyframes, curves
+  and layering into `wildcat-motion.css`. This is the precedent `hub/REACTBITS.md`
+  records, not a new decision.
+
+### Decisions
+
+1. Port, do not rebuild. The 30k-line app stays; its surface is re-skinned in
+   place, one mode at a time, so every PR is shippable and reviewable.
+2. Icons: one inline SVG sprite built from `@untitledui/icons` (raw SVG, no
+   dependency), `<svg><use href="#wc-icon-name">`. Emoji are retired from every
+   button, tab, panel head and sidebar item in the teacher UI. Student-facing
+   copy is out of scope here.
+3. Motion: hover, press, focus-visible and disabled states on every interactive
+   element through tokens in `wildcat-ui.css`; entrances, staggers and count-ups
+   through `wcMotion`; `prefers-reduced-motion` honoured everywhere.
+4. Order: Claw Pass mode first (it is what is being tested this week), then
+   Wildcat Cash, Raffle, Discipline, Settings.
+5. Every screen goes through a gauntlet loop against the design reference with
+   before/after screenshots at 1440 and 390 wide.
+
+### Non-goals
+
+- Moving the teacher portal into React.
+- Changing any behaviour, data shape, or server function.
+- Touching the student portal or `hub/`.
+
+### Open questions
+
+25. Which React Bits Pro blocks exist (the catalogue is behind the licence; list
+    it before naming any).
+26. Whether the sidebar's mode sub-nav should collapse to icon-only on narrow
+    screens once every item has an icon.
