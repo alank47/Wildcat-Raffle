@@ -349,8 +349,28 @@ if (existsSync(spmPackage)) {
   } else {
     let done = false;
     try {
+      // PURE BLACK AND WHITE, on request: the mark's edge pixels come out grey
+      // after resampling, and grey reads as a smudge on a tile this small.
+      // Everything not white becomes black. Light appearance: mark in black
+      // on white. Dark appearance (iOS 18+ Dark / Tinted home screens): the
+      // same mark in white on black, so the system does not dim a light tile
+      // into the grey the owner complained about.
       execFileSync('magick', [source, '-background', 'white', '-alpha', 'remove', '-alpha', 'off',
-        '-negate', '-resize', '1024x1024!', '-strip', target], { stdio: 'pipe' });
+        '-negate', '-resize', '1024x1024!', '-colorspace', 'Gray', '-threshold', '92%', '-strip', target], { stdio: 'pipe' });
+      const dark = join(iconset, 'AppIcon-512@2x-dark.png');
+      execFileSync('magick', [target, '-negate', '-strip', dark], { stdio: 'pipe' });
+      // Register the dark variant in the catalog (idempotent).
+      const contentsPath = join(iconset, 'Contents.json');
+      const contents = JSON.parse(readFileSync(contentsPath, 'utf8'));
+      const hasDark = (contents.images || []).some((i) => i.filename === 'AppIcon-512@2x-dark.png');
+      if (!hasDark) {
+        contents.images.push({
+          filename: 'AppIcon-512@2x-dark.png', idiom: 'universal', platform: 'ios', size: '1024x1024',
+          appearances: [{ appearance: 'luminosity', value: 'dark' }],
+        });
+        writeFileSync(contentsPath, JSON.stringify(contents, null, 2) + '\n');
+        console.log('[configure-ios] app icon: dark appearance registered');
+      }
       done = true;
     } catch (e) { /* no ImageMagick here */ }
     if (!done) {

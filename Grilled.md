@@ -668,3 +668,23 @@ only. Staff can read and write."
     account; that is a click in Xcode, not a script.
 31. Nothing has read or written a physical tag yet, on any platform. The
     first device install is where that gets proven, with one blank NTAG sticker.
+
+### Decision 32 (2026-08-26): in the native app, the tag is the button
+
+Directed by the user: "I need the NFC tag to auto activate on the app, not
+require to push a check in button."
+
+In the native app: arriving on a tag URL (iOS background tag read, or the
+in-app session reading a tag) checks in immediately; the confirm screen still
+paints, and every refusal reads as before, only the affirmative case runs on
+its own. And the scanner arms itself when a running pass is painted on screen
+and every time the app returns to the foreground with one running, so the
+student opens the app at the door and holds it to the tag. A cancelled or
+timed-out session returns to the pass quietly.
+
+In a browser the button stays. A link opened in Safari or Chrome has no tag
+behind it, and Web NFC cannot start a scan without a gesture; the press is the
+one thing that says a person did this rather than a forwarded message. The
+trade the native app makes is accepted knowingly: a forwarded link opened in
+the app also checks in, which the static-tag deterrent note above already
+covers, and every tap is attributed and visible to the teacher.
