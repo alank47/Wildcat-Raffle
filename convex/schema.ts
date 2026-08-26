@@ -97,6 +97,11 @@ export default defineSchema({
     // deleted: a transferred student still has a balance, and a roster gap
     // is not proof a person ceased to exist.
     archivedAt: v.optional(v.string()),
+    // A CAP THIS CHILD ALONE HAS, on top of the school-wide one. Set from
+    // Student Snapshot. Absent means "only the school-wide cap applies", and 0
+    // means "no passes at all", which is a real answer a school gives, so the
+    // two are kept distinct rather than collapsed into a falsy check.
+    dailyPassLimit: v.optional(v.number()),
   })
     .index("by_email", ["email"])
     .index("by_studentNumber", ["studentNumber"]),

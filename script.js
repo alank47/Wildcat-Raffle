@@ -9393,61 +9393,100 @@
             await saveData();
         }
 
-        function updatePassHistory(keepPage) {
-            const searchTerm = document.getElementById('passHistorySearch').value.toLowerCase();
-            const filterDest = document.getElementById('passHistoryFilter').value;
-            
-            let filtered = [...hallPasses].reverse(); // Most recent first
-            
-            if (searchTerm) {
-                filtered = filtered.filter(p => 
-                    p.studentName.toLowerCase().includes(searchTerm) ||
-                    p.studentId.toLowerCase().includes(searchTerm)
-                );
-            }
-            
-            if (filterDest !== 'all') {
-                filtered = filtered.filter(p => p.destination === filterDest);
-            }
-            
-            const tbody = document.getElementById('passHistoryTable');
-            tbody.innerHTML = '';
+        /* ---- Pass History: the record ------------------------------------
+           SAME STORY AS THE HALL MONITOR. This table read the browser's
+           pre-Convex `hallPasses` array, so it has been showing pre-migration
+           rows and nothing since. It reads hallPasses:history now, which pages
+           on the server: a school year is tens of thousands of passes and the
+           search runs there rather than shipping a year to the browser to find
+           one child.
 
-            if (filtered.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 40px; color: #999;">No passes found</td></tr>';
-                renderPager('passHistory', 'passHistoryTable', { pages: 1 });
+           PAGED BY CURSOR, NOT BY OFFSET. New passes arrive at the top all day;
+           an offset would shuffle a page under someone mid-read. The cursor is
+           the creation time of the last row of the page before it. */
+        let wcHistory = { passes: [], cursor: null, more: false, stack: [] };
+
+        async function updatePassHistory(keepPage) {
+            const tbody = document.getElementById('passHistoryTable');
+            if (!tbody) return;
+            const ctx = wcBellSession();
+            if (!ctx) {
+                tbody.innerHTML = '<tr><td colspan="8" style="padding:24px;color:#b3392f;">Sign in with Microsoft to see pass history.</td></tr>';
                 return;
             }
-
-            // Detail list: fewer, taller rows read better at 25 a page. Search
-            // and destination filter narrowed `filtered` above; this pages it.
-            const passView = paginate('passHistory', filtered, keepPage);
-            renderPager('passHistory', 'passHistoryTable', passView);
-
-            passView.slice.forEach(pass => {
-                const row = document.createElement('tr');
-                const statusColor = pass.status === 'returned' ? '#2E7D52' : 
-                                   pass.status === 'overtime' ? '#B3392F' : 
-                                   pass.status === 'active' ? '#4facfe' : '#B7791F';
-                const statusText = pass.status === 'returned' ? '✅ Returned' :
-                                  pass.status === 'overtime' ? '⏱️ Overtime' : 
-                                  pass.status === 'active' ? '🟢 Active' : '⚠️ Expiring';
-                
-                row.innerHTML = `
-                    <td>${new Date(pass.createdAt).toLocaleString()}</td>
-                    <td>${pass.studentName}</td>
-                    <td>${pass.grade}</td>
-                    <td style="color: #667eea; font-weight: 600;">${pass.currentPeriod || '-'}</td>
-                    <td>${pass.currentTeacher || '-'}</td>
-                    <td style="font-size: 13px;">${pass.currentClass || '-'}</td>
-                    <td>${getDestinationDisplay(pass.destination)}</td>
-                    <td>${pass.duration} min</td>
-                    <td style="color: ${statusColor}; font-weight: 600;">${statusText}</td>
-                    <td>${pass.notes || '-'}</td>
-                `;
-                tbody.appendChild(row);
-            });
+            if (!keepPage) wcHistory.stack = [];
+            const search = ((document.getElementById('passHistorySearch') || {}).value || '').trim();
+            const dest = (document.getElementById('passHistoryFilter') || {}).value || 'all';
+            tbody.innerHTML = '<tr><td colspan="8" style="padding:24px;color:#666;">Loading…</td></tr>';
+            try {
+                const res = await ctx.auth.convexQuery('hallPasses:history', {
+                    limit: 100,
+                    ...(keepPage && wcHistory.cursor ? { before: wcHistory.cursor } : {}),
+                    ...(search ? { search: search } : {}),
+                }, ctx.session.idToken);
+                wcHistory.passes = res.passes || [];
+                wcHistory.cursor = res.cursor;
+                wcHistory.more = !!res.more;
+                wcHistory.truncated = !!res.truncated;
+            } catch (e) {
+                tbody.innerHTML = '<tr><td colspan="8" style="padding:24px;color:#b3392f;">' + wpEsc(e.message) + '</td></tr>';
+                return;
+            }
+            drawPassHistory(dest);
         }
+
+        function drawPassHistory(dest) {
+            const tbody = document.getElementById('passHistoryTable');
+            if (!tbody) return;
+            const esc = wpEsc;
+            const rows = (wcHistory.passes || []).filter(function (p) {
+                if (!dest || dest === 'all') return true;
+                const where = String(p.destination || p.reason || '').toLowerCase();
+                const want = dest === 'bathroom' ? 'restroom' : dest;
+                return where.indexOf(want) !== -1 || (want === 'restroom' && where.indexOf('bathroom') !== -1);
+            });
+            if (!rows.length) {
+                tbody.innerHTML = '<tr><td colspan="8" style="padding:24px;color:#999;">No passes found.</td></tr>';
+                return;
+            }
+            const when = function (iso) {
+                if (!iso) return '';
+                try {
+                    const d = new Date(iso);
+                    return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
+                           d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                } catch (e) { return ''; }
+            };
+            tbody.innerHTML = rows.map(function (p) {
+                const state = String(p.state || '').toLowerCase();
+                const mins = (p.elapsedMinutes === null || p.elapsedMinutes === undefined) ? null : Math.round(p.elapsedMinutes);
+                const tone = p.overdue ? '#B3392F' : (state === 'returned' ? '#0F7A48' : '#666');
+                return '<tr class="wc-row-open" style="cursor:pointer;" onclick="openPassDetail(\'' + esc(p.id) + '\')">' +
+                  '<td><b>' + esc(p.studentName) + '</b>' +
+                    (p.studentNumber ? '<div style="font-size:12px;color:#666;">' + esc(p.studentNumber) + '</div>' : '') + '</td>' +
+                  '<td style="font-size:12.5px;">' + esc(p.grade || '') + '</td>' +
+                  '<td style="font-size:12.5px;">' + esc(p.origin || '') +
+                    (p.teacherName ? '<div style="font-size:12px;color:#666;">' + esc(p.teacherName) + '</div>' : '') + '</td>' +
+                  '<td style="font-size:12.5px;">' + esc(p.destination || p.reason || '—') + '</td>' +
+                  '<td style="font-size:12.5px;">' + esc(p.period || '') + '</td>' +
+                  '<td style="font-size:12.5px;">' + esc(when(p.requestedAt)) + '</td>' +
+                  '<td style="font-size:12.5px;">' + (mins === null ? '<span style="color:#999;">never started</span>' : mins + ' min') + '</td>' +
+                  '<td style="font-size:12.5px;color:' + tone + ';font-weight:600;">' + esc(state) +
+                    (p.overdue ? ' · overdue' : '') + '</td>' +
+                '</tr>';
+            }).join('') +
+            (wcHistory.more
+                ? '<tr><td colspan="8" style="padding:14px;text-align:center;">' +
+                  '<button type="button" class="btn" style="font-size:12.5px;padding:8px 16px;" onclick="updatePassHistory(true)">Show older passes</button>' +
+                  '</td></tr>'
+                : '') +
+            (wcHistory.truncated
+                ? '<tr><td colspan="8" style="padding:10px 14px;color:#B3392F;font-size:12.5px;">' +
+                  'This reached the search limit, so older passes are not included. Narrow the search.</td></tr>'
+                : '');
+        }
+        window.updatePassHistory = updatePassHistory;
+
 
         function filterPassHistory() {
             updatePassHistory();
@@ -9526,213 +9565,150 @@
             updateHallMonitor();
         }
 
-        function updateHallMonitor() {
+        /* ---- Hall Monitor: the school's live board ----------------------
+           WHAT THIS USED TO READ, AND WHY IT SHOWED NOTHING. Every number and
+           card on this screen came off the pre-Convex `hallPasses` array in
+           the browser, which was filled by the Student Kiosk. The kiosk is
+           gone, so the array is never written by real use: the front office
+           has been watching a screen that could only ever show pre-migration
+           rows (all of them permanently overtime, since their duration expired
+           months ago) or nothing at all, while every real pass lived unseen in
+           Convex. It reads hallPasses:liveBoard now, which is the same query
+           and the same sort the dashboard and Active Passes already use, so
+           the three cannot disagree about which child to look at first.
+
+           The filters, the four stat boxes and the campus radio are unchanged
+           in behaviour; what moved is where the rows come from. */
+        let wcMonitorBoard = null;
+        let wcMonitorTimer = null;
+        const WC_MONITOR_MS = 10000;
+
+        function stopHallMonitor() {
+            if (wcMonitorTimer) { clearInterval(wcMonitorTimer); wcMonitorTimer = null; }
+        }
+
+        async function updateHallMonitor() {
+            const grid = document.getElementById('activePassesGrid');
+            if (!grid) return;
+            const ctx = wcBellSession();
+            if (!ctx) {
+                grid.innerHTML = '<div class="wc-card panel-card" style="grid-column:1/-1;">' +
+                    '<p style="margin:0;color:#b3392f;">Sign in with Microsoft to see live passes.</p></div>';
+                return;
+            }
             try {
-                const now = new Date();
-                const searchTerm = document.getElementById('monitorSearch')?.value.toLowerCase() || '';
-                const destFilter = document.getElementById('monitorDestinationFilter')?.value || 'all';
-                const statusFilter = document.getElementById('monitorStatusFilter')?.value || 'active';
-            
-            // Get all passes and categorize them
-            let allPasses = hallPasses.map(pass => {
-                const createdTime = new Date(pass.createdAt);
-                const expirationTime = new Date(createdTime.getTime() + pass.duration * 60000);
-                const timeRemaining = (expirationTime - now) / 60000; // minutes
-                
-                let status;
-                // Check pass.status first (returned or overtime)
-                if (pass.status === 'returned') {
-                    status = 'returned';
-                } else if (pass.status === 'overtime') {
-                    status = 'overtime';
-                } else if (timeRemaining <= 0) {
-                    status = 'overtime'; // Time expired but not marked yet
-                } else if (timeRemaining <= 2) {
-                    status = 'expiring';
-                } else {
-                    status = 'active';
+                wcMonitorBoard = await ctx.auth.convexQuery('hallPasses:liveBoard', {}, ctx.session.idToken);
+            } catch (e) {
+                grid.innerHTML = '<div class="wc-card panel-card" style="grid-column:1/-1;">' +
+                    '<p style="margin:0;color:#b3392f;">' + wpEsc(e.message) + '</p></div>';
+                return;
+            }
+            drawHallMonitor();
+            if (!wcMonitorTimer) {
+                wcMonitorTimer = setInterval(function () {
+                    const tab = document.getElementById('hallMonitorTab');
+                    if (!tab || tab.style.display === 'none') { stopHallMonitor(); return; }
+                    updateHallMonitor();
+                }, WC_MONITOR_MS);
+            }
+        }
+
+        /* Which of the four boxes a pass belongs in. `expiring` is the warning
+           lead the student's own card uses, so the office and the child agree
+           about when time is short rather than each having their own idea. */
+        function wcMonitorBucket(p) {
+            if (p.overdue) return 'expired';
+            const limit = p.timerCleared ? null : p.expiresAfterMinutes;
+            const mins = (p.elapsedMinutes === null || p.elapsedMinutes === undefined) ? null : p.elapsedMinutes;
+            if (limit && mins !== null && (limit - mins) <= Math.max(2, limit * 0.25)) return 'expiring';
+            return 'active';
+        }
+
+        function drawHallMonitor() {
+            const grid = document.getElementById('activePassesGrid');
+            if (!grid || !wcMonitorBoard) return;
+            const esc = wpEsc;
+            const all = wcMonitorBoard.passes || [];
+            const search = (document.getElementById('monitorSearch') || {}).value || '';
+            const dest = (document.getElementById('monitorDestinationFilter') || {}).value || 'all';
+            const status = (document.getElementById('monitorStatusFilter') || {}).value || 'all';
+            const needle = String(search).trim().toLowerCase();
+
+            // The four figures are counted over EVERY live pass, never over the
+            // filtered set: a box that changed when you typed in the search
+            // would be answering a different question from the one it asks.
+            const counts = { active: 0, expiring: 0, expired: 0 };
+            all.forEach(function (p) { counts[wcMonitorBucket(p)]++; });
+            const setNum = function (id, n) { const el = document.getElementById(id); if (el) el.textContent = n; };
+            setNum('totalActivePasses', counts.active);
+            setNum('expiringSoonPasses', counts.expiring);
+            setNum('expiredPasses', counts.expired);
+            setNum('todayTotalPasses', all.length);
+
+            const rows = all.filter(function (p) {
+                const bucket = wcMonitorBucket(p);
+                if (status !== 'all' && status !== bucket) return false;
+                if (dest !== 'all') {
+                    const where = String(p.assignedDestination || p.reason || '').toLowerCase();
+                    const want = dest === 'bathroom' ? 'restroom' : dest;
+                    if (where.indexOf(want) === -1 && !(want === 'restroom' && where.indexOf('bathroom') !== -1)) return false;
                 }
-                
-                return { ...pass, timeRemaining, currentStatus: status };
-            });
-            
-            // FILTER BY SCHOOL - Only show passes from current school context
-            allPasses = allPasses.filter(pass => {
-                // If pass has no school tag, auto-detect from grade
-                const passSchool = pass.school || getSchoolFromGrade(pass.grade);
-                return passSchool === passSettings.currentSchool;
-            });
-            
-            // AUTO-HIDE returned passes older than 2 minutes
-            allPasses = allPasses.filter(pass => {
-                if (pass.status === 'returned' && pass.returnedAt) {
-                    const returnedTime = new Date(pass.returnedAt);
-                    const minutesSinceReturn = (now - returnedTime) / 1000 / 60;
-                    
-                    // Hide if returned more than 2 minutes ago
-                    if (minutesSinceReturn > 2) {
-                        return false;
-                    }
+                if (needle) {
+                    const hay = (String(p.studentName || '') + ' ' + String(p.studentNumber || '')).toLowerCase();
+                    if (hay.indexOf(needle) === -1) return false;
                 }
                 return true;
             });
-            
-            // Apply filters
-            let filtered = allPasses;
-            
-            if (searchTerm) {
-                filtered = filtered.filter(p => 
-                    p.studentName.toLowerCase().includes(searchTerm) ||
-                    p.studentId.toLowerCase().includes(searchTerm)
-                );
-            }
-            
-            if (destFilter !== 'all') {
-                filtered = filtered.filter(p => p.destination === destFilter);
-            }
-            
-            if (statusFilter === 'active') {
-                filtered = filtered.filter(p => p.currentStatus === 'active' || p.currentStatus === 'expiring');
-            } else if (statusFilter === 'expiring') {
-                filtered = filtered.filter(p => p.currentStatus === 'expiring');
-            } else if (statusFilter === 'expired') {
-                filtered = filtered.filter(p => p.currentStatus === 'overtime');
-            }
-            // if 'all', don't filter by status
-            
-            // Update summary stats
-            const activeCount = allPasses.filter(p => p.currentStatus === 'active' || p.currentStatus === 'expiring').length;
-            const expiringCount = allPasses.filter(p => p.currentStatus === 'expiring').length;
-            const overtimeCount = allPasses.filter(p => p.currentStatus === 'overtime').length;
-            
-            // Count today's passes
-            const todayStart = new Date();
-            todayStart.setHours(0, 0, 0, 0);
-            const todayCount = allPasses.filter(p => new Date(p.createdAt) >= todayStart).length;
-            
-            // Update stats with null checks
-            const totalActiveEl = document.getElementById('totalActivePasses');
-            const expiringSoonEl = document.getElementById('expiringSoonPasses');
-            const expiredEl = document.getElementById('expiredPasses');
-            const todayTotalEl = document.getElementById('todayTotalPasses');
-            
-            if (totalActiveEl) totalActiveEl.textContent = activeCount;
-            if (expiringSoonEl) expiringSoonEl.textContent = expiringCount;
-            if (expiredEl) expiredEl.textContent = overtimeCount;
-            if (todayTotalEl) todayTotalEl.textContent = todayCount;
-            
-            // Update passes grid
-            const grid = document.getElementById('activePassesGrid');
-            grid.innerHTML = '';
-            
-            if (filtered.length === 0) {
-                grid.innerHTML = `
-                    <div style="grid-column: 1/-1; text-align: center; padding: 60px 20px; color: #999; background: white; border-radius: 12px;">
-                        <div style="font-size: 48px; margin-bottom: 15px;">🎫</div>
-                        <p style="font-size: 18px; margin: 0;">No passes match your filters</p>
-                    </div>
-                `;
+
+            if (!rows.length) {
+                grid.innerHTML = '<div class="wc-card panel-card" style="grid-column:1/-1;text-align:center;padding:34px 20px;">' +
+                    (window.wcIcon ? wcIcon('walk', 'wc-icon-lg') : '') +
+                    '<h3 style="margin:10px 0 4px;">' + (all.length ? 'Nothing matches those filters' : 'Nobody is out right now') + '</h3>' +
+                    '<p style="margin:0;color:#666;font-size:13.5px;">' +
+                      (all.length ? 'Clear the search or the filters to see the ' + all.length + ' open pass' + (all.length === 1 ? '' : 'es') + '.'
+                                  : 'Passes appear here the moment a teacher approves one.') +
+                    '</p></div>';
                 return;
             }
-            
-            // Sort by time remaining (most urgent first)
-            filtered.sort((a, b) => a.timeRemaining - b.timeRemaining);
-            
-            filtered.forEach(pass => {
-                const card = document.createElement('div');
-                
-                // Determine color based on status
-                let gradient, statusBadge, timerColor;
-                if (pass.currentStatus === 'overtime') {
-                    gradient = 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)';
-                    statusBadge = '⏱️ OVERTIME';
-                    timerColor = '#B3392F';
-                } else if (pass.currentStatus === 'expiring') {
-                    gradient = 'linear-gradient(135deg, #ffd89b 0%, #f59e0b 100%)';
-                    statusBadge = '⚠️ EXPIRING SOON';
-                    timerColor = '#f59e0b';
-                } else if (pass.currentStatus === 'returned') {
-                    gradient = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
-                    statusBadge = '✅ RETURNED';
-                    timerColor = '#2E7D52';
-                } else {
-                    gradient = 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)';
-                    statusBadge = '🟢 ACTIVE';
-                    timerColor = '#4facfe';
-                }
-                
-                const timeDisplay = pass.timeRemaining > 0 
-                    ? `${Math.floor(pass.timeRemaining)} min remaining` 
-                    : 'OVERTIME';
-                
-                card.innerHTML = `
-                    <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-left: 6px solid; border-left-color: ${timerColor};">
-                        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px;">
-                            <div>
-                                <h3 style="margin: 0 0 5px 0; font-size: 20px; color: #333;">${pass.studentName}</h3>
-                                <p style="margin: 0; color: #666; font-size: 14px;">ID: ${pass.studentId} | Grade ${pass.grade}</p>
-                            </div>
-                            <span style="padding: 6px 12px; background: ${gradient}; color: white; border-radius: 20px; font-size: 12px; font-weight: 600; white-space: nowrap;">
-                                ${statusBadge}
-                            </span>
-                        </div>
-                        
-                        <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
-                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 14px;">
-                                <div>
-                                    <div style="color: #666; margin-bottom: 5px;">Destination</div>
-                                    <div style="font-weight: 600; color: #333;">${getDestinationDisplay(pass.destination)}</div>
-                                </div>
-                                <div>
-                                    <div style="color: #666; margin-bottom: 5px;">Duration</div>
-                                    <div style="font-weight: 600; color: #333;">${pass.duration} minutes</div>
-                                </div>
-                                ${pass.currentPeriod ? `
-                                <div>
-                                    <div style="color: #666; margin-bottom: 5px;">From Period</div>
-                                    <div style="font-weight: 600; color: #667eea;">${pass.currentPeriod}</div>
-                                </div>
-                                <div>
-                                    <div style="color: #666; margin-bottom: 5px;">Teacher</div>
-                                    <div style="font-weight: 600; color: #333;">${pass.currentTeacher || 'N/A'}</div>
-                                </div>
-                                ` : ''}
-                                ${pass.currentClass ? `
-                                <div style="grid-column: 1/-1;">
-                                    <div style="color: #666; margin-bottom: 5px;">Class</div>
-                                    <div style="font-weight: 600; color: #333;">${pass.currentClass}</div>
-                                </div>
-                                ` : ''}
-                                <div>
-                                    <div style="color: #666; margin-bottom: 5px;">Created</div>
-                                    <div style="font-weight: 600; color: #333; font-size: 13px;">${new Date(pass.createdAt).toLocaleTimeString()}</div>
-                                </div>
-                                <div>
-                                    <div style="color: #666; margin-bottom: 5px;">Time Left</div>
-                                    <div style="font-weight: 700; color: ${timerColor}; font-size: 16px;">${timeDisplay}</div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        ${pass.notes ? `<div style="padding: 10px; background: #fff3cd; border-radius: 6px; font-size: 13px; color: #856404; margin-bottom: 10px;">
-                            <strong>Note:</strong> ${pass.notes}
-                        </div>` : ''}
-                        
-                        ${pass.currentStatus !== 'returned' ? `
-                            <button class="btn ${pass.currentStatus === 'overtime' ? 'btn-warning' : 'btn-success'}" onclick="markPassReturned('${pass.id}')" style="width: 100%; padding: 12px;">
-                                ${pass.currentStatus === 'overtime' ? '⚠️ Mark Overtime Return' : '✅ Mark as Returned'}
-                            </button>
-                        ` : ''}
-                    </div>
-                `;
-                
-                grid.appendChild(card);
-            });
-            
-            } catch (error) {
-                console.error('ERROR in Hall Monitor:', error);
-            }
+
+            grid.innerHTML = rows.map(function (p) {
+                const bucket = wcMonitorBucket(p);
+                const mins = (p.elapsedMinutes === null || p.elapsedMinutes === undefined) ? null : Math.round(p.elapsedMinutes);
+                const tone = bucket === 'expired' ? '#B3392F' : (bucket === 'expiring' ? '#A65A08' : '#2F67A7');
+                const where = [
+                    p.courseName || '',
+                    p.period ? 'period ' + p.period : '',
+                    p.teacherName ? 'with ' + p.teacherName : '',
+                ].filter(Boolean).join('  ·  ');
+                return '<div class="wc-card wc-row-open" onclick="openPassDetail(\'' + esc(p.id) + '\')" ' +
+                    'style="cursor:pointer;border-left:3px solid ' + tone + ';">' +
+                  '<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">' +
+                    '<div><b style="font-size:15px;">' + esc(p.studentName) + '</b>' +
+                      '<div style="font-size:12px;color:#666;">' +
+                        esc([p.grade ? 'Grade ' + p.grade : '', p.studentNumber || ''].filter(Boolean).join('  ·  ')) +
+                      '</div></div>' +
+                    '<span style="white-space:nowrap;font-weight:800;color:' + tone + ';font-size:13px;">' +
+                      (mins === null ? 'not started' : mins + ' min') +
+                      (p.overdue ? ' · overdue' : (p.timerCleared ? ' · no limit' : '')) +
+                    '</span>' +
+                  '</div>' +
+                  '<div style="margin-top:8px;font-size:13px;">' +
+                    esc(p.origin || 'class') + ' &rarr; ' + esc(p.assignedDestination || p.reason || 'not said') +
+                  '</div>' +
+                  (where ? '<div style="margin-top:3px;font-size:12px;color:#666;">' + esc(where) + '</div>' : '') +
+                  (p.notes && p.notes.count ? '<div style="margin-top:8px;">' + wcNoteBadgeHtml(p.notes) + '</div>' : '') +
+                  '<div style="margin-top:10px;display:flex;gap:8px;">' +
+                    '<button type="button" class="btn" style="font-size:12px;padding:6px 12px;" ' +
+                      'onclick="event.stopPropagation(); openPassDetail(\'' + esc(p.id) + '\')">Open</button>' +
+                    '<button type="button" style="font-size:12px;padding:6px 12px;border:1px solid #ddd;border-radius:6px;background:#fff;cursor:pointer;color:#B3392F;" ' +
+                      'onclick="event.stopPropagation(); closeClassPass(\'' + esc(p.id) + '\').then(updateHallMonitor)">Close</button>' +
+                  '</div>' +
+                '</div>';
+            }).join('');
         }
+        window.updateHallMonitor = updateHallMonitor;
+        window.stopHallMonitor = stopHallMonitor;
+
 
         async function savePassSettings() {
             passSettings.bathroom = parseInt(document.getElementById('bathroomDuration').value);
@@ -10778,63 +10754,81 @@
         }
         
         // Update all snapshot data
-        function updateSnapshotData() {
+        /* ---- Student Snapshot: this child's passes ------------------------
+           EVERY FIGURE HERE USED TO BE ZERO. The counters read the browser's
+           pre-Convex `hallPasses` array, so a child could take a pass every
+           period all week and this screen would show 0 passes, 0 minutes out,
+           0 overtimes, next to a pass limit nothing enforced. It reads
+           hallPasses:history for that one student now, through the by_student
+           index, so it is a walk of their rows rather than a scan of the
+           school's.
+
+           MINUTES OUT IS MEASURED, NOT PROMISED. The old code summed
+           `pass.duration`, which is how long a pass was ALLOWED to run; two
+           children who took the same pass and came back at very different
+           times counted identically. elapsedMinutes is how long it actually
+           ran. */
+        let wcSnapshotPasses = null;
+
+        async function updateSnapshotData() {
             if (!selectedSnapshotStudent) return;
-            
+            const ctx = wcBellSession();
+            const setText = function (id, v) { const el = document.getElementById(id); if (el) el.textContent = v; };
+            if (!ctx) {
+                ['snapshotPassesToday', 'snapshotPassesWeek', 'snapshotPassesMonth', 'snapshotTotalTime', 'snapshotOvertime']
+                    .forEach(function (id) { setText(id, '—'); });
+                return;
+            }
+            const number = String(selectedSnapshotStudent.studentNumber || selectedSnapshotStudent.id || '');
+            try {
+                const res = await ctx.auth.convexQuery('hallPasses:history',
+                    { studentNumber: number, limit: 200 }, ctx.session.idToken);
+                wcSnapshotPasses = res.passes || [];
+            } catch (e) {
+                ['snapshotPassesToday', 'snapshotPassesWeek', 'snapshotPassesMonth', 'snapshotTotalTime', 'snapshotOvertime']
+                    .forEach(function (id) { setText(id, '—'); });
+                console.warn('[snapshot] history failed:', e && e.message);
+                return;
+            }
+            drawSnapshotStats();
+        }
+
+        function drawSnapshotStats() {
+            const passes = wcSnapshotPasses || [];
             const now = new Date();
             const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
             const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
             const monthStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-            const yearStart = new Date(now.getFullYear(), 7, 1); // Aug 1st (school year start)
-            
-            // Get student's passes
-            const studentPasses = hallPasses.filter(p => p.studentId === selectedSnapshotStudent.id);
-            
-            // Calculate stats for different periods
-            const passesToday = studentPasses.filter(p => new Date(p.createdAt) >= todayStart).length;
-            const passesWeek = studentPasses.filter(p => new Date(p.createdAt) >= weekStart).length;
-            const passesMonth = studentPasses.filter(p => new Date(p.createdAt) >= monthStart).length;
-            
-            // Get passes for selected period
-            let periodPasses;
-            switch(snapshotPeriod) {
-                case 'today':
-                    periodPasses = studentPasses.filter(p => new Date(p.createdAt) >= todayStart);
-                    break;
-                case 'week':
-                    periodPasses = studentPasses.filter(p => new Date(p.createdAt) >= weekStart);
-                    break;
-                case 'month':
-                    periodPasses = studentPasses.filter(p => new Date(p.createdAt) >= monthStart);
-                    break;
-                case 'year':
-                    periodPasses = studentPasses.filter(p => new Date(p.createdAt) >= yearStart);
-                    break;
-            }
-            
-            // Calculate total time and overtime
+            // The school year starts in August, so "this year" means since the
+            // most recent 1 August, not since January.
+            const yearStart = new Date(now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1, 7, 1);
+            const since = function (d) {
+                return passes.filter(function (p) { return new Date(p.requestedAt) >= d; });
+            };
+            const windows = { today: todayStart, week: weekStart, month: monthStart, year: yearStart };
+            const periodPasses = since(windows[snapshotPeriod] || todayStart);
+
             let totalTime = 0;
             let overtimeCount = 0;
-            periodPasses.forEach(pass => {
-                totalTime += pass.duration;
-                if (pass.status === 'overtime') overtimeCount++;
+            periodPasses.forEach(function (p) {
+                if (typeof p.elapsedMinutes === 'number' && isFinite(p.elapsedMinutes)) {
+                    totalTime += p.elapsedMinutes;
+                }
+                if (p.overdue) overtimeCount++;
             });
-            
-            // Update summary stats
-            document.getElementById('snapshotPassesToday').textContent = passesToday;
-            document.getElementById('snapshotPassesWeek').textContent = passesWeek;
-            document.getElementById('snapshotPassesMonth').textContent = passesMonth;
-            document.getElementById('snapshotTotalTime').textContent = totalTime;
-            document.getElementById('snapshotOvertime').textContent = overtimeCount;
-            
-            // Check pass limit
+
+            const setText = function (id, v) { const el = document.getElementById(id); if (el) el.textContent = v; };
+            setText('snapshotPassesToday', since(todayStart).length);
+            setText('snapshotPassesWeek', since(weekStart).length);
+            setText('snapshotPassesMonth', since(monthStart).length);
+            setText('snapshotTotalTime', Math.round(totalTime));
+            setText('snapshotOvertime', overtimeCount);
+
             updatePassLimitStatus();
-            
-            // Update per-period breakdown
             updatePeriodBreakdown(periodPasses);
         }
-        
-        // Update pass limit status
+
+
         function updatePassLimitStatus() {
             if (!selectedSnapshotStudent) return;
             
@@ -10879,7 +10873,7 @@
             const periodStats = {};
             
             passes.forEach(pass => {
-                const period = pass.currentPeriod || 'Unknown';
+                const period = pass.period || 'Unknown';
                 if (!periodStats[period]) {
                     periodStats[period] = {
                         passes: 0,
@@ -10973,70 +10967,41 @@
         }
         
         async function executeClawPassReset() {
-            const confirmation = document.getElementById('resetConfirmationInput').value;
-            
-            // Check confirmation
+            // WHAT THIS CAN AND CANNOT DO, said plainly, because it used to
+            // claim otherwise. It offered to "permanently delete all hall pass
+            // history" and then emptied the browser's pre-Convex array, which
+            // since the kiosk was deleted holds nothing anybody can see. The
+            // real record lives in Convex; a pass is a record of where a child
+            // was, and there is deliberately no button that erases the school's
+            // in one press. What is actually clearable from here is the
+            // simulator and the per-student daily limits.
+            const confirmation = (document.getElementById('resetConfirmationInput') || {}).value;
             if (confirmation !== 'DELETE') {
-                alert('❌ Incorrect confirmation.\n\nPlease type DELETE (in all caps) to proceed.');
+                alert('Type DELETE (in capitals) to confirm.');
                 return;
             }
-            
-            // Double-check with native confirm dialog
-            const finalConfirm = await showConfirm(
-                `⚠️ FINAL WARNING ⚠️\n\n` +
-                `You are about to PERMANENTLY DELETE:\n` +
-                `• ${hallPasses.length} hall passes\n` +
-                `• All pass limits\n` +
-                `• All ClawPass statistics\n\n` +
-                `This CANNOT be undone!\n\n` +
-                `Click OK to proceed, or Cancel to abort.`
+            const ok = await showConfirm(
+                'This clears the Encounter Prevention simulator and the pre-Convex ' +
+                'leftovers in this browser.\n\n' +
+                'It does NOT delete the hall pass record. Passes are kept on the ' +
+                'server as the account of where a child was; Pass History reads ' +
+                'them and nothing here can erase them.\n\n' +
+                'Continue?'
             );
-            
-            if (!finalConfirm) {
-                closeClawPassResetModal();
-                return;
-            }
-            
-            // Perform the reset
+            if (!ok) { closeClawPassResetModal(); return; }
             try {
-                console.log('🗑️ Starting ClawPass data reset...');
-                console.log('Deleting', hallPasses.length, 'hall passes');
-                
-                // Clear all hall passes
+                const leftovers = Array.isArray(hallPasses) ? hallPasses.length : 0;
                 hallPasses = [];
-                
-                // Remove daily pass limits from all students
-                students.forEach(student => {
-                    if (student.dailyPassLimit) {
-                        delete student.dailyPassLimit;
-                    }
-                });
-                
-                console.log('✅ ClawPass data reset complete');
-                
-                // Save to database
+                if (typeof wcSimPasses !== 'undefined') { wcSimPasses = []; wcSimStudents = []; }
+                if (typeof detectedPatterns !== 'undefined') detectedPatterns = [];
                 await saveData();
-                
-                // Close modal
                 closeClawPassResetModal();
-                
-                // Refresh displays
-                updateHallMonitor();
-                updatePassHistory();
-                
-                // Success message
-                alert(
-                    `✅ ClawPass Data Reset Complete!\n\n` +
-                    `All hall pass data has been permanently deleted.\n\n` +
-                    `• Hall passes: Cleared\n` +
-                    `• Pass limits: Removed\n` +
-                    `• Statistics: Reset\n\n` +
-                    `All other data (students, tickets, cash) remains intact.`
-                );
-                
-            } catch (error) {
-                console.error('Error resetting ClawPass data:', error);
-                alert('❌ Error resetting data. Please try again or contact support.');
+                alert('Cleared the simulator and ' + leftovers + ' pre-Convex leftover' +
+                      (leftovers === 1 ? '' : 's') + ' from this browser.\n\n' +
+                      'The hall pass record on the server is untouched.');
+                if (typeof updatePassHistory === 'function') updatePassHistory();
+            } catch (e) {
+                alert('Could not finish: ' + e.message);
             }
         }
 
@@ -11115,6 +11080,23 @@
         }
         
         // Generate random test data
+        /* ---- Encounter Prevention's simulator --------------------------
+           THE GENERATORS USED TO WRITE INTO THE REAL ROSTER. `students.push(
+           ...testStudents)` put a dozen invented children into the array the
+           whole app shares, and `hallPasses.push(...)` put fifty invented
+           passes beside them; neither called saveData, so nothing persisted
+           immediately, and then the next unrelated save from anywhere in the
+           app (awarding a ticket, saving a group, setting a pass limit) wrote
+           the lot to Firestore. Test mode is ON by default, so the button that
+           did this was two clicks from a live roster.
+
+           The simulator keeps its own store now. Nothing here is in `students`
+           or in `hallPasses`, so nothing can be saved by anything, and
+           clearing it is genuinely a clear rather than a clear-until-the-next-
+           save. */
+        let wcSimStudents = [];
+        let wcSimPasses = [];
+
         function generateTestData() {
             const testStudents = [];
             const testPasses = [];
@@ -11144,7 +11126,7 @@
             }
             
             // Add test students to main array
-            students.push(...testStudents);
+            wcSimStudents = wcSimStudents.concat(testStudents);
             
             // Generate 50 passes with patterns
             const now = new Date();
@@ -11156,7 +11138,7 @@
                 const baseTime = new Date(date);
                 baseTime.setHours(14, 10 + i, 0, 0);
                 
-                hallPasses.push({
+                wcSimPasses.push({
                     id: `testpass_${Date.now()}_${i}_a`,
                     studentId: testStudents[0].id,
                     studentName: `${testStudents[0].firstName} ${testStudents[0].lastName}`,
@@ -11172,7 +11154,7 @@
                 
                 // Second student 2 minutes later
                 const time2 = new Date(baseTime.getTime() + 2 * 60000);
-                hallPasses.push({
+                wcSimPasses.push({
                     id: `testpass_${Date.now()}_${i}_b`,
                     studentId: testStudents[1].id,
                     studentName: `${testStudents[1].firstName} ${testStudents[1].lastName}`,
@@ -11194,7 +11176,7 @@
                 baseTime.setHours(13, 30 + i * 5, 0, 0);
                 const dest = i % 2 === 0 ? 'bathroom' : 'wellness';
                 
-                hallPasses.push({
+                wcSimPasses.push({
                     id: `testpass_${Date.now()}_med_${i}_a`,
                     studentId: testStudents[2].id,
                     studentName: `${testStudents[2].firstName} ${testStudents[2].lastName}`,
@@ -11209,7 +11191,7 @@
                 });
                 
                 const time2 = new Date(baseTime.getTime() + 4 * 60000);
-                hallPasses.push({
+                wcSimPasses.push({
                     id: `testpass_${Date.now()}_med_${i}_b`,
                     studentId: testStudents[3].id,
                     studentName: `${testStudents[3].firstName} ${testStudents[3].lastName}`,
@@ -11232,7 +11214,7 @@
                 const date = new Date(now.getTime() - (daysAgo * 24 * 60 * 60 * 1000));
                 date.setHours(Math.floor(Math.random() * 7) + 9, Math.floor(Math.random() * 60), 0, 0);
                 
-                hallPasses.push({
+                wcSimPasses.push({
                     id: `testpass_noise_${i}`,
                     studentId: testStudents[studentIdx].id,
                     studentName: `${testStudents[studentIdx].firstName} ${testStudents[studentIdx].lastName}`,
@@ -11301,7 +11283,7 @@
                 }
             ];
             
-            students.push(...testStudents);
+            wcSimStudents = wcSimStudents.concat(testStudents);
             
             const now = new Date();
             
@@ -11311,7 +11293,7 @@
                 const baseTime = new Date(date);
                 baseTime.setHours(14, 15, 0, 0);
                 
-                hallPasses.push({
+                wcSimPasses.push({
                     id: `vapetest_${i}_a`,
                     studentId: testStudents[0].id,
                     studentName: `${testStudents[0].firstName} ${testStudents[0].lastName}`,
@@ -11326,7 +11308,7 @@
                 });
                 
                 const time2 = new Date(baseTime.getTime() + (1 + Math.random()) * 60000); // 1-2 min later
-                hallPasses.push({
+                wcSimPasses.push({
                     id: `vapetest_${i}_b`,
                     studentId: testStudents[1].id,
                     studentName: `${testStudents[1].firstName} ${testStudents[1].lastName}`,
@@ -11352,23 +11334,16 @@
         
         // Clear all test data
         function clearTestData() {
-            const originalStudentCount = students.length;
-            const originalPassCount = hallPasses.length;
-            
-            students = students.filter(s => !s.isTestData);
-            hallPasses = hallPasses.filter(p => !p.isTestData);
-            preventionGroups = preventionGroups.filter(g => !g.isTestData);
-            
-            const removedStudents = originalStudentCount - students.length;
-            const removedPasses = originalPassCount - hallPasses.length;
-            
-            alert(`✅ Test Data Cleared!\n\n` +
-                  `• ${removedStudents} test students removed\n` +
-                  `• ${removedPasses} test passes removed\n` +
-                  `• Test prevention groups removed`);
-            
-            analyzeEncounterPatterns();
-            updatePreventionGroupsDisplay();
+            // The simulator's own store, and nothing else. It never reached the
+            // roster or the pass record, so there is nothing else to undo.
+            const hadStudents = wcSimStudents.length;
+            const hadPasses = wcSimPasses.length;
+            wcSimStudents = [];
+            wcSimPasses = [];
+            detectedPatterns = [];
+            if (typeof analyzeEncounterPatterns === 'function') analyzeEncounterPatterns();
+            alert('Cleared ' + hadPasses + ' simulated pass' + (hadPasses === 1 ? '' : 'es') +
+                  ' and ' + hadStudents + ' simulated student' + (hadStudents === 1 ? '' : 's') + '.');
         }
         
         // Analyze encounter patterns
@@ -11380,13 +11355,40 @@
             cutoffDate.setDate(cutoffDate.getDate() - timeRange);
             
             // Get passes in time range
-            let passesToAnalyze = hallPasses.filter(p => new Date(p.createdAt) >= cutoffDate);
-            
-            // Filter by test mode
+            // TEST MODE READS THE SIMULATOR; LIVE MODE READS THE REAL RECORD.
+            // Live mode used to filter the browser's pre-Convex array for rows
+            // that were not test data, which since the kiosk was deleted is
+            // always none: the screen said "No Patterns Detected" whatever the
+            // school actually did. It reads hallPasses:history now, mapped onto
+            // the shape the analysis below expects.
+            let passesToAnalyze;
             if (encounterTestMode) {
-                passesToAnalyze = passesToAnalyze.filter(p => p.isTestData);
+                passesToAnalyze = wcSimPasses.filter(p => new Date(p.createdAt) >= cutoffDate);
             } else {
-                passesToAnalyze = passesToAnalyze.filter(p => !p.isTestData);
+                const ctx = wcBellSession();
+                if (!ctx) {
+                    document.getElementById('patternAnalysisStatus').textContent =
+                        'Sign in with Microsoft to analyse real passes.';
+                    return;
+                }
+                try {
+                    const res = await ctx.auth.convexQuery('hallPasses:history',
+                        { limit: 200, sinceIso: cutoffDate.toISOString() }, ctx.session.idToken);
+                    passesToAnalyze = (res.passes || []).map(function (p) {
+                        return {
+                            id: p.id,
+                            studentId: p.studentNumber,
+                            studentName: p.studentName,
+                            destination: p.destination || p.reason || 'unknown',
+                            createdAt: p.requestedAt,
+                            status: p.state,
+                            isTestData: false,
+                        };
+                    });
+                } catch (e) {
+                    document.getElementById('patternAnalysisStatus').textContent = e.message;
+                    return;
+                }
             }
             
             // Find overlaps

@@ -40,6 +40,8 @@ import {
   summarizeNotes,
   type NoteLevel,
   passClock,
+  passLimitFor,
+  passesTakenOnDay,
 } from "./hallPassRules";
 import { normalizeSlug } from "./tapSlug";
 
@@ -514,14 +516,14 @@ export const requestMine = mutation({
       // three times before being told "you already have a pass open" is being
       // sent on an errand. Asked with a present origin so that those two checks
       // are what it answers.
-      const studentSide = canRequest(existing, { active: true }, now);
+      const studentSide = canRequest(existing, { active: true }, now, passLimitFor(student));
       if (!studentSide.ok) throw new ConvexError(studentSide.reason);
       throw new ConvexError(origin.reason);
     }
 
     // The same rule again, now with the real tag, so a retired classroom tag or
     // a future edit to canRequest cannot be skipped by this call site.
-    const verdict = canRequest(existing, origin.tag, now);
+    const verdict = canRequest(existing, origin.tag, now, passLimitFor(student));
     if (!verdict.ok) throw new ConvexError(verdict.reason);
 
     const clean = trimReason(reason);
@@ -656,6 +658,21 @@ export const openForStudent = mutation({
       .take(PASS_HISTORY_WINDOW);
     if (hasLivePass(existing as any)) {
       throw new ConvexError("This student already has a pass open.");
+    }
+    // THE CHILD'S OWN DAILY CAP APPLIES TO A TEACHER-OPENED PASS TOO, because a
+    // cap any adult can walk past by using a different screen is not a cap. It
+    // refuses and says the number; a school that means to override raises the
+    // number on the student, which leaves a record of the decision.
+    {
+      const own = passLimitFor(student);
+      const takenToday = passesTakenOnDay(existing as any, now);
+      if (typeof own === "number" && takenToday >= own) {
+        throw new ConvexError(
+          own === 0
+            ? `${student.firstName} ${student.lastName} is set to no hall passes. Change the limit on their Student Snapshot to open one.`
+            : `${student.firstName} ${student.lastName} has used their ${own} pass${own === 1 ? "" : "es"} for today. Raise the limit on their Student Snapshot to open another.`,
+        );
+      }
     }
 
     // Validated before anything is written, for the reason validatePassMinutes
@@ -1284,6 +1301,12 @@ export const tap = mutation({
  * used as a chat, and the board shows the newest and the count either way.
  */
 const NOTES_PER_PASS = 50;
+// One page of history, and the widest walk behind it. The scan cap is the
+// bound that keeps this a query rather than a table read: it is generous
+// enough that a day's filtering is exact, and it says so when it truncates
+// rather than quietly reporting a short year.
+const HISTORY_PAGE_MAX = 200;
+const HISTORY_SCAN_MAX = 2000;
 async function noteSummaries(
   ctx: QueryCtx,
   passIds: Id<"hallPasses">[],
@@ -1514,6 +1537,145 @@ export const myClassBoard = query({
  * grade. Nothing restricted, nothing from the student record the pass did
  * not already name.
  */
+/**
+ * EVERY PASS, NEWEST FIRST: the record, for the screens that read it rather
+ * than act on it (Pass History, a student's snapshot, the pattern analysis).
+ *
+ * THIS EXISTS BECAUSE THOSE SCREENS WERE READING A TABLE NOTHING WRITES ANY
+ * MORE. Hall Monitor, Pass History, Student Snapshot and Encounter Prevention
+ * all read the pre-Convex `hallPasses` ARRAY in the browser, which was filled
+ * by the Student Kiosk. The kiosk is gone, so those screens have been showing
+ * a graveyard of pre-migration rows (all of them permanently "overtime",
+ * because their duration expired months ago) or nothing at all, while every
+ * real pass since the migration lived in this table unseen.
+ *
+ * PAGED, AND BOUNDED. A school year is tens of thousands of passes and this is
+ * a query, so it takes a window and says whether it filled it. `before` is the
+ * creation time of the last row of the previous page, which is stable under
+ * inserts in a way an offset is not: new passes arrive at the top and cannot
+ * shuffle a page the caller has already read.
+ *
+ * The optional filters are applied HERE rather than in the browser so a search
+ * across a year does not have to ship a year to the client to find one child.
+ */
+export const history = query({
+  args: {
+    limit: v.optional(v.number()),
+    before: v.optional(v.number()),
+    studentNumber: v.optional(v.string()),
+    search: v.optional(v.string()),
+    state: v.optional(v.string()),
+    sinceIso: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await requireStaff(ctx);
+    const now = new Date().toISOString();
+    const limit = Math.max(1, Math.min(args.limit ?? 100, HISTORY_PAGE_MAX));
+    const needle = String(args.search ?? "").trim().toLowerCase();
+    const wantState = String(args.state ?? "").trim().toLowerCase();
+    const sinceMs = args.sinceIso ? Date.parse(args.sinceIso) : NaN;
+
+    // One student's own history reads through by_student, which is an indexed
+    // walk of that child's rows rather than a scan of the school's.
+    let rows: Doc<"hallPasses">[];
+    if (args.studentNumber) {
+      const student = await ctx.db
+        .query("students")
+        .withIndex("by_studentNumber", (q) => q.eq("studentNumber", args.studentNumber!))
+        .unique();
+      if (!student) return { passes: [], more: false, generatedAt: now };
+      rows = await ctx.db
+        .query("hallPasses")
+        .withIndex("by_student", (q) => q.eq("studentId", student._id))
+        .order("desc")
+        .take(HISTORY_SCAN_MAX);
+    } else {
+      let q = ctx.db.query("hallPasses").order("desc");
+      rows = await q.take(HISTORY_SCAN_MAX);
+    }
+
+    // The page window, then the filters. Filtering after the cursor keeps the
+    // cursor meaning "where the last page ended" rather than "where the last
+    // page ended for these filters", which is what makes changing a filter
+    // safe mid-browse.
+    const windowed = rows.filter((p) => (args.before ? p._creationTime < args.before : true));
+    const matched = windowed.filter((p) => {
+      if (wantState && String(p.state).toLowerCase() !== wantState) return false;
+      if (!Number.isNaN(sinceMs) && Date.parse(p.requestedAt) < sinceMs) return false;
+      return true;
+    });
+
+    const page = matched.slice(0, limit + 1);
+    const more = page.length > limit;
+    const take = more ? page.slice(0, limit) : page;
+
+    const names = await teacherNames(ctx, take.map((p) => p.originTeacherEmail));
+    const decorated = await Promise.all(
+      take.map(async (p) => {
+        const student = await ctx.db.get(p.studentId);
+        const origin = p.originLocationId ? await ctx.db.get(p.originLocationId) : null;
+        const assigned = p.assignedDestinationLocationId
+          ? await ctx.db.get(p.assignedDestinationLocationId)
+          : null;
+        const tapped = p.destinationLocationId ? await ctx.db.get(p.destinationLocationId) : null;
+        const teacherEmail = p.originTeacherEmail ?? null;
+        return {
+          id: p._id,
+          at: p._creationTime,
+          state: p.state,
+          terminal: isTerminal(p.state),
+          studentName: student ? `${student.firstName} ${student.lastName}`.trim() : "(unknown)",
+          studentNumber: p.studentNumber ?? student?.studentNumber ?? null,
+          grade: student?.grade ?? null,
+          origin: origin?.name ?? null,
+          // Where they were SENT, or failing that where they actually tapped.
+          // A student-requested pass has no assigned destination until the tap.
+          destination: assigned?.name ?? tapped?.name ?? null,
+          reason: p.reason ?? null,
+          period: p.originPeriod ?? null,
+          courseName: p.originCourseName ?? null,
+          teacherName: teacherEmail ? (names.get(teacherEmail) ?? null) : null,
+          requestedAt: p.requestedAt,
+          approvedAt: p.approvedAt ?? null,
+          outAt: p.outAt ?? null,
+          returnedAt: p.returnedAt ?? null,
+          closedAt: p.closedAt ?? null,
+          closedReason: p.closedReason ?? null,
+          expiresAfterMinutes: p.expiresAfterMinutes,
+          timerCleared: p.timerCleared ?? false,
+          // Minutes the pass RAN, which for a closed pass is its whole life and
+          // for a live one is how long it has been going. Null when it never
+          // started, and null is not zero: see elapsedMinutes.
+          elapsedMinutes: elapsedMinutes(p as any, now),
+          overdue: isOverdue(p as any, now),
+        };
+      }),
+    );
+
+    // The name search is applied last, on the decorated rows, because the name
+    // lives on the student record rather than on the pass.
+    const found = needle
+      ? decorated.filter(
+          (r) =>
+            r.studentName.toLowerCase().includes(needle) ||
+            String(r.studentNumber ?? "").toLowerCase().includes(needle),
+        )
+      : decorated;
+
+    return {
+      passes: found,
+      more,
+      // The cursor for the next page: the creation time of the last row READ,
+      // not the last row shown, or a page whose rows were all filtered out
+      // would hand back the cursor it was given and loop for ever.
+      cursor: take.length ? take[take.length - 1]._creationTime : null,
+      scanned: rows.length,
+      truncated: rows.length === HISTORY_SCAN_MAX,
+      generatedAt: now,
+    };
+  },
+});
+
 export const passDetail = query({
   args: { passId: v.id("hallPasses") },
   handler: async (ctx, { passId }) => {
