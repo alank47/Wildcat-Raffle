@@ -954,3 +954,69 @@ export function canCancel(
       "classroom you left to close it.",
   };
 }
+
+/* ------------------------------------------------------------------ */
+/* Notes on a pass                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The three weights a note can carry, and they are the only three: a fourth
+ * would be a fourth colour on the teacher's board for nobody to learn.
+ *
+ *   info     "Seen at the library, on their way."  Nothing to do.
+ *   concern  "Says they feel sick."                 Look at this soon.
+ *   urgent   "Not where the pass says, will not say where they were."
+ *            Look at this now, and the push says so.
+ */
+export const NOTE_LEVELS = ["info", "concern", "urgent"] as const;
+export type NoteLevel = (typeof NOTE_LEVELS)[number];
+export const MAX_NOTE_LENGTH = 240;
+
+/**
+ * Whether this note may be written on this pass, and the note as it will be
+ * stored. Refused on a terminal pass: the teacher is not watching a pass that
+ * has closed, and a note nobody will read is a note that was never delivered
+ * while looking as though it was. Empty text is refused for the same reason a
+ * force-close with no reason is: a note with nothing in it is a ping, and the
+ * push it sends would wake a teacher to read nothing.
+ */
+export function canNotePass(
+  pass: { state: PassState },
+  level: unknown,
+  text: unknown,
+): Verdict & { level?: NoteLevel; text?: string } {
+  if (isTerminal(pass.state)) {
+    return { ok: false, reason: `This pass is already ${pass.state}, so nobody is watching it.` };
+  }
+  if (typeof level !== "string" || !(NOTE_LEVELS as readonly string[]).includes(level)) {
+    return { ok: false, reason: `Pick one of: ${NOTE_LEVELS.join(", ")}.` };
+  }
+  const clean = typeof text === "string" ? text.replace(/\s+/g, " ").trim() : "";
+  if (!clean) {
+    return { ok: false, reason: "Say what you saw, in a sentence. The teacher reads this on their board." };
+  }
+  if (clean.length > MAX_NOTE_LENGTH) {
+    return { ok: false, reason: `Keep it under ${MAX_NOTE_LENGTH} characters; this is read on a phone in a corridor.` };
+  }
+  return { ok: true, reason: "", level: level as NoteLevel, text: clean };
+}
+
+/**
+ * The one line a board shows for a pass's notes: the newest, plus how many
+ * there are. Newest by `at`, not by insertion, so a note written from a phone
+ * whose clock was set back still sorts by when it says it happened rather
+ * than silently taking over the badge.
+ */
+export function summarizeNotes<T extends { at: string; level: NoteLevel }>(
+  notes: T[],
+): { count: number; latest: T | null; highest: NoteLevel | null } {
+  if (!Array.isArray(notes) || notes.length === 0) return { count: 0, latest: null, highest: null };
+  const rank: Record<NoteLevel, number> = { info: 0, concern: 1, urgent: 2 };
+  let latest = notes[0];
+  let highest: NoteLevel = notes[0].level;
+  for (const n of notes) {
+    if (Date.parse(n.at) > Date.parse(latest.at)) latest = n;
+    if (rank[n.level] > rank[highest]) highest = n.level;
+  }
+  return { count: notes.length, latest, highest };
+}

@@ -7504,7 +7504,7 @@
                         btn.style.display = '';
                     });
                     
-                    switchHallPassTab('kiosk');
+                    switchHallPassTab('myClass');
                 } else {
                     wildcatCashEnabled = false;
                     document.body.classList.remove('cash-mode', 'hallpass-mode');
@@ -8780,8 +8780,7 @@
                 tabElement.style.display = 'block';
             }
             
-            const btnId = tabName === 'kiosk' ? 'kioskTabBtn' :
-                          tabName === 'myClass' ? 'myClassTabBtn' :
+            const btnId = tabName === 'myClass' ? 'myClassTabBtn' :
                           tabName === 'hallMonitor' ? 'hallMonitorTabBtn' :
                           tabName === 'snapshot' ? 'snapshotTabBtn' :
                           tabName === 'encounterPrevention' ? 'encounterPreventionTabBtn' :
@@ -8795,6 +8794,8 @@
             // the single thing it must never be.
             if (tabName === 'myClass' && typeof renderMyClassBoard === 'function') {
                 renderMyClassBoard();
+            } else if (typeof wcStopActiveBoard === 'function') {
+                wcStopActiveBoard();
             }
 
             // Load data for the tab
@@ -9208,13 +9209,7 @@
             
             document.getElementById('activePassModal').classList.add('hidden');
             
-            // Return to kiosk or main app depending on mode
-            if (window.kioskOnlyMode) {
-                // Return to kiosk
-                document.getElementById('mainApp').classList.remove('hidden');
-            } else {
-                document.getElementById('mainApp').classList.remove('hidden');
-            }
+            document.getElementById('mainApp').classList.remove('hidden');
             
             if (currentPassTimer) {
                 clearInterval(currentPassTimer);
@@ -9456,102 +9451,6 @@
 
         function filterPassHistory() {
             updatePassHistory();
-        }
-
-        // Open Student Kiosk from login screen
-        function openStudentKiosk() {
-            // Hide login screen
-            document.getElementById('loginScreen').classList.add('hidden');
-            
-            // Show main app
-            document.getElementById('mainApp').classList.remove('hidden');
-            
-            // Hide ALL tabs - students don't need to see any tabs
-            const tabsContainer = document.querySelector('.tabs');
-            if (tabsContainer) tabsContainer.style.display = 'none';
-            
-            // Hide ALL tab content
-            document.querySelectorAll('.tab-content').forEach(tab => {
-                tab.style.display = 'none';
-            });
-            
-            // Show ONLY the ClawPass content
-            const clawPassContent = document.getElementById('clawPassContent');
-            if (clawPassContent) {
-                clawPassContent.style.display = 'block';
-            }
-            
-            // Hide the ClawPass tabs ONLY for students (not admins/teachers)
-            // Students should only see the kiosk view
-            document.querySelectorAll('.subtab-button').forEach(btn => {
-                btn.style.display = 'none';
-            });
-            
-            // Hide all hall pass tabs first
-            document.querySelectorAll('.hall-pass-tab').forEach(tab => {
-                tab.style.display = 'none';
-            });
-            
-            // Show ONLY the kiosk tab
-            const kioskTab = document.getElementById('kioskTab');
-            if (kioskTab) {
-                kioskTab.style.display = 'block';
-            }
-            
-            // Set body class for styling
-            document.body.classList.remove('raffle-mode', 'cash-mode');
-            document.body.classList.add('hallpass-mode');
-            
-            // Set a flag so we know we're in kiosk-only mode
-            window.kioskOnlyMode = true;
-            
-            // Clear any previous kiosk data
-            document.getElementById('kioskStudentId').value = '';
-            document.getElementById('passRequestForm').style.display = 'none';
-            
-            // Add a "Back to Login" button to the kiosk
-            addKioskBackButton();
-        }
-
-        function addKioskBackButton() {
-            // Check if back button already exists
-            if (document.getElementById('kioskBackButton')) return;
-            
-            const kioskTab = document.getElementById('kioskTab');
-            if (!kioskTab) return;
-            
-            // Create back button
-            const backButton = document.createElement('div');
-            backButton.id = 'kioskBackButton';
-            backButton.innerHTML = `
-                <button class="btn btn-secondary" onclick="exitKioskMode()" style="position: fixed; top: 20px; left: 20px; z-index: 1000; padding: 12px 24px;">
-                    ← Back to Login
-                </button>
-            `;
-            kioskTab.insertBefore(backButton, kioskTab.firstChild);
-        }
-
-        function exitKioskMode() {
-            // Clear kiosk flag
-            window.kioskOnlyMode = false;
-            
-            // Remove back button
-            const backButton = document.getElementById('kioskBackButton');
-            if (backButton) backButton.remove();
-            
-            // Hide main app
-            document.getElementById('mainApp').classList.add('hidden');
-            
-            // Show login screen
-            document.getElementById('loginScreen').classList.remove('hidden');
-            
-            // Reset body classes
-            document.body.classList.remove('hallpass-mode');
-            
-            // Clear any kiosk data
-            document.getElementById('kioskStudentId').value = '';
-            document.getElementById('passRequestForm').style.display = 'none';
-            selectedKioskStudent = null;
         }
 
         // Update Hall Monitor display with real-time monitoring
@@ -21490,9 +21389,329 @@
         let wcClassRoster = null;
         let wcClassTags = null;
 
+
+        /* ---- pass board by role ---- */
+
+        /**
+         * WHICH BOARD "MY CLASS" IS, for the person signed in.
+         *
+         * A teacher's board is their own lessons' passes: the three that are
+         * theirs, not the building. A campus aide or a PBIS lead has no lessons
+         * and the whole building is their beat, so the same place in the nav is
+         * the school-wide list, called what it is. Admins keep the class board:
+         * they carry rosters, they preview teachers, and the building-wide view
+         * is already the dashboard's "Out right now".
+         *
+         * Pure, so the rule is asserted by pass-nav.test.mjs rather than found
+         * by an aide staring at an empty class list.
+         */
+        function wcPassBoardFor(role) {
+            const r = String(role || '').trim().toLowerCase();
+            if (r === 'campusaide' || r === 'pbis') {
+                return {
+                    board: 'campus',
+                    label: '🚶 Active Passes',
+                    title: 'Every pass open right now',
+                    hint: 'School-wide, newest trouble first. Open a row to see the whole pass, adjust its clock, close it, or tell the teacher something.',
+                };
+            }
+            return {
+                board: 'class',
+                label: '🧑‍🏫 My Class',
+                title: 'Waiting on you, and out of your room',
+                hint: '',
+            };
+        }
+
+        /* ---- end pass board by role ---- */
+
+        /** The signed-in member of staff's role, from the token session first. */
+        function wcStaffRole() {
+            const ctx = wcBellSession();
+            const me = ctx && ctx.session && ctx.session.me;
+            if (me && me.kind === 'staff' && me.role) return me.role;
+            return (currentUser && currentUser.role) || '';
+        }
+        function wcPassNavLabel() { return wcPassBoardFor(wcStaffRole()).label; }
+        /** The tab button and the sidebar item wear the role's name for the board. */
+        function wcSyncPassNavLabel() {
+            const label = wcPassNavLabel();
+            const btn = document.getElementById('myClassTabBtn');
+            if (btn && btn.innerHTML.trim() !== label) btn.innerHTML = label;
+            const side = document.getElementById('sideSub_hallpass_myClass');
+            if (side && side.innerHTML.trim() !== label) side.innerHTML = label;
+        }
+
+        /* ---- the campus board ---- */
+        let wcActiveBoard = null;
+        let wcActiveBoardTimer = null;
+        const WC_ACTIVE_BOARD_MS = 10000;
+
+        function wcStopActiveBoard() {
+            if (wcActiveBoardTimer) { clearInterval(wcActiveBoardTimer); wcActiveBoardTimer = null; }
+        }
+
+        /**
+         * Every live pass in the school, for staff whose work is the building.
+         * hallPasses:liveBoard is the same query the dashboard's "Out right now"
+         * reads, sorted the same way (overdue first, then longest out), so the
+         * two never disagree about which child to look at first. Refreshed on a
+         * timer while the tab is open, and stopped the moment it is not.
+         */
+        async function renderActivePassesBoard() {
+            const host = document.getElementById('myClassHost');
+            if (!host) return;
+            const ctx = wcBellSession();
+            if (!ctx) {
+                host.innerHTML = '<div class="wc-card panel-card"><p style="margin:0;color:#b3392f;">' +
+                    'Sign in with Microsoft to see active passes.</p></div>';
+                return;
+            }
+            try {
+                wcActiveBoard = await ctx.auth.convexQuery('hallPasses:liveBoard', {}, ctx.session.idToken);
+            } catch (e) {
+                host.innerHTML = '<div class="wc-card panel-card"><p style="margin:0;color:#b3392f;">' +
+                    wpEsc(e.message) + '</p></div>';
+                return;
+            }
+            wcDrawActiveBoard();
+            if (!wcActiveBoardTimer) {
+                wcActiveBoardTimer = setInterval(function () {
+                    const tab = document.getElementById('myClassTab');
+                    if (!tab || tab.style.display === 'none') { wcStopActiveBoard(); return; }
+                    renderActivePassesBoard();
+                }, WC_ACTIVE_BOARD_MS);
+            }
+        }
+
+        /** The one-line badge a row wears for its notes. Empty when there are none. */
+        function wcNoteBadgeHtml(notes) {
+            if (!notes || !notes.count) return '';
+            const level = notes.highest || (notes.latest && notes.latest.level) || 'info';
+            const text = notes.latest ? notes.latest.text : '';
+            const who = notes.latest ? notes.latest.authorName : '';
+            return '<span class="wc-note-badge is-' + wpEsc(level) + '" title="' + wpEsc((who ? who + ': ' : '') + text) + '">' +
+                '<i aria-hidden="true"></i>' + (notes.count > 1 ? notes.count + ' notes' : 'note') + '</span>' +
+                (text ? '<div class="wc-note-peek">' + wpEsc(text) + '</div>' : '');
+        }
+
+        function wcDrawActiveBoard() {
+            const host = document.getElementById('myClassHost');
+            if (!host || !wcActiveBoard) return;
+            const esc = wpEsc;
+            const nav = wcPassBoardFor(wcStaffRole());
+            const rows = (wcActiveBoard.passes || []).map(function (p) {
+                const state = String(p.state || '').toLowerCase();
+                const mins = (p.elapsedMinutes === null || p.elapsedMinutes === undefined) ? null : p.elapsedMinutes;
+                const from = [
+                    p.courseName || '',
+                    p.period ? 'period ' + p.period : '',
+                    p.teacherName ? 'with ' + p.teacherName : '',
+                ].filter(Boolean).join('  ·  ');
+                const to = p.assignedDestination
+                    ? esc(p.assignedDestination)
+                    : (p.reason ? '<span style="color:#666;">' + esc(p.reason) + '</span>' : '<span style="color:#999;">not said</span>');
+                return '<tr class="wc-row-open" onclick="openPassDetail(\'' + esc(p.id) + '\')" style="cursor:pointer;' +
+                    (p.overdue ? 'background:rgba(179,57,47,.07);' : '') + '">' +
+                  '<td><b>' + esc(p.studentName) + '</b>' +
+                    '<div style="font-size:12px;color:#666;">' + esc([p.grade ? 'Grade ' + p.grade : '', p.studentNumber || ''].filter(Boolean).join('  ·  ')) + '</div></td>' +
+                  '<td style="font-size:12.5px;">' + (esc(from) || '<span style="color:#999;">no teacher on this pass</span>') + '</td>' +
+                  '<td style="font-size:12.5px;">' + to + '</td>' +
+                  '<td>' + esc(state) + (p.overdue ? ' <b style="color:#B3392F;">overdue</b>' : '') +
+                      (p.timerCleared ? ' <b style="color:#2F67A7;">no limit</b>' : '') + '</td>' +
+                  '<td>' + (mins === null ? '<span style="color:#999;">not started</span>' : esc(Math.round(mins)) + ' min') + '</td>' +
+                  '<td>' + wcNoteBadgeHtml(p.notes) + '</td>' +
+                  '<td style="white-space:nowrap;"><button type="button" class="btn" style="font-size:12px;padding:6px 12px;" ' +
+                      'onclick="event.stopPropagation(); openPassDetail(\'' + esc(p.id) + '\')">Open</button></td>' +
+                '</tr>';
+            }).join('');
+            const cap = (wcActiveBoard.truncatedStates || []).length
+                ? '<p style="margin:0;padding:12px 20px;color:#B3392F;font-size:12.5px;">This list hit its limit for: ' +
+                  esc(wcActiveBoard.truncatedStates.join(', ')) + '. Some passes are not shown.</p>'
+                : '';
+            host.innerHTML =
+                '<div class="wc-card panel-card" style="padding:0;overflow:hidden;">' +
+                  '<div style="padding:18px 20px 0;">' +
+                    '<div class="panel-head"><span class="panel-icon">&#128694;</span><h3>' + esc(nav.title) + '</h3>' +
+                      '<span class="wc-live-count">' + (wcActiveBoard.passes || []).length + ' open</span></div>' +
+                    '<p class="panel-hint" style="margin:0 0 12px;">' + esc(nav.hint) + '</p>' +
+                  '</div>' +
+                  '<div style="overflow-x:auto;">' +
+                    '<table class="wc-table"><thead><tr><th>Student</th><th>From</th><th>To</th><th>State</th><th>Out for</th><th>Notes</th><th></th></tr></thead>' +
+                    '<tbody>' + (rows || '<tr><td colspan="7" style="padding:24px;color:#999;">Nobody is out right now.</td></tr>') + '</tbody></table>' +
+                  '</div>' + cap +
+                '</div>';
+        }
+
+        /* ---- one pass, in full ---- */
+        let wcDetailPassId = null;
+
+        function wcClockAt(iso) {
+            if (!iso) return '';
+            try {
+                return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            } catch (e) { return ''; }
+        }
+
+        async function openPassDetail(passId) {
+            const modal = document.getElementById('passDetailModal');
+            const box = document.getElementById('passDetailContent');
+            if (!modal || !box) return;
+            const ctx = wcBellSession();
+            if (!ctx) return;
+            wcDetailPassId = passId;
+            modal.classList.remove('hidden');
+            if (!box.innerHTML) box.innerHTML = '<p style="color:#666;">Loading the pass…</p>';
+            let d;
+            try {
+                d = await ctx.auth.convexQuery('hallPasses:passDetail', { passId: passId }, ctx.session.idToken);
+            } catch (e) {
+                box.innerHTML = '<p style="color:#b3392f;">' + wpEsc(e.message) + '</p>' +
+                    '<div class="wc-detail-actions"><button type="button" class="btn btn-secondary" onclick="closePassDetail()">Close</button></div>';
+                return;
+            }
+            if (wcDetailPassId !== passId) return; // a newer open won
+            wcDrawPassDetail(d);
+        }
+
+        function closePassDetail() {
+            const modal = document.getElementById('passDetailModal');
+            if (modal) modal.classList.add('hidden');
+            wcDetailPassId = null;
+        }
+
+        function wcDrawPassDetail(d) {
+            const box = document.getElementById('passDetailContent');
+            if (!box) return;
+            const esc = wpEsc;
+            const state = String(d.state || '').toLowerCase();
+            const mins = (d.elapsedMinutes === null || d.elapsedMinutes === undefined) ? null : Math.round(d.elapsedMinutes);
+            const statePill = '<span class="wc-state-pill is-' + esc(state) + (d.overdue ? ' is-overdue' : '') + '">' +
+                esc(state) + (d.overdue ? ' · overdue' : '') + (d.timerCleared ? ' · no limit' : '') + '</span>';
+            const route = (d.assignedDestination || d.tappedDestination)
+                ? esc(d.assignedDestination || d.tappedDestination) + ' → ' + esc(d.origin || 'class')
+                : (d.origin ? 'back to ' + esc(d.origin) : '—');
+            const from = [d.courseName || '', d.period ? 'period ' + d.period : ''].filter(Boolean).join(', ');
+            const teacher = d.teacherName
+                ? esc(d.teacherName) + (d.isOwnClass ? ' (you)' : '')
+                : (d.teacherEmail ? esc(d.teacherEmail) : '<span style="color:#999;">no teacher on this pass</span>');
+            const facts = [
+                ['From', (esc(from) || '—') + (teacher ? '<div class="wc-sub">' + teacher + '</div>' : '')],
+                ['Route', route],
+                ['Reason', d.reason ? esc(d.reason) : '<span style="color:#999;">none given</span>'],
+                ['Requested', wcClockAt(d.requestedAt) + (d.requestedVia ? '<div class="wc-sub">' + esc(d.requestedVia === 'teacher' ? 'opened by a teacher' : 'from the student’s timetable') + '</div>' : '')],
+                ['Approved', d.approvedAt ? wcClockAt(d.approvedAt) + (d.approvedByName ? '<div class="wc-sub">by ' + esc(d.approvedByName) + '</div>' : '') : '<span style="color:#999;">not yet</span>'],
+                ['Out since', d.outAt ? wcClockAt(d.outAt) : '<span style="color:#999;">has not tapped in yet</span>'],
+                ['Clock', mins === null ? '<span style="color:#999;">not running</span>'
+                    : mins + ' min' + (d.timerCleared ? ', no limit' : (d.clockLimitMinutes ? ' of ' + esc(d.clockLimitMinutes) : ''))],
+            ];
+            if (d.terminal) {
+                facts.push(['Closed', wcClockAt(d.closedAt || d.returnedAt) +
+                    (d.closedByName ? '<div class="wc-sub">by ' + esc(d.closedByName) + (d.closedReason ? ': ' + esc(d.closedReason) : '') + '</div>' : '')]);
+            }
+            const dl = '<dl class="wc-detail-facts">' + facts.map(function (f) {
+                return '<dt>' + f[0] + '</dt><dd>' + f[1] + '</dd>';
+            }).join('') + '</dl>';
+
+            const notes = (d.notes || []).length
+                ? '<ul class="wc-notes">' + d.notes.map(function (n) {
+                    return '<li class="wc-note is-' + esc(n.level) + '"><i aria-hidden="true"></i><div>' +
+                        '<div class="wc-note-text">' + esc(n.text) + '</div>' +
+                        '<div class="wc-note-meta">' + esc(n.authorName) + (n.mine ? ' (you)' : '') + ' · ' + esc(n.level) + ' · ' + wcClockAt(n.at) + '</div>' +
+                    '</div></li>';
+                }).join('') + '</ul>'
+                : '<p class="wc-sub" style="margin:0 0 6px;">Nothing written on this pass yet.</p>';
+
+            const ghostBtn = 'padding:8px 12px;font-size:12.5px;border:1px solid #ddd;border-radius:6px;background:#fff;cursor:pointer;';
+            let actions = '';
+            if (!d.terminal) {
+                if (state === 'requested') {
+                    actions += '<button type="button" class="btn" style="font-size:12.5px;padding:8px 14px;" onclick="wcDetailAction(approveClassPass)">Approve</button> ' +
+                               '<button type="button" style="' + ghostBtn + '" onclick="wcDetailAction(denyClassPass)">Deny</button> ';
+                } else {
+                    actions += (d.timerCleared
+                        ? '<button type="button" style="' + ghostBtn + '" onclick="wcDetailAction(resetClassPassTimer)">Restore timer</button> '
+                        : '<button type="button" style="' + ghostBtn + '" onclick="wcDetailAction(resetClassPassTimer)">Reset timer</button> ' +
+                          '<button type="button" style="' + ghostBtn + '" onclick="wcDetailAction(clearClassPassTimer)">No limit</button> ');
+                }
+                actions += '<button type="button" style="' + ghostBtn + 'color:#B3392F;" onclick="wcDetailAction(closeClassPass)">Close pass</button>';
+            }
+
+            const noteForm = d.terminal ? '' :
+                '<form class="wc-note-form" onsubmit="submitPassNote(event)">' +
+                  '<div class="wc-note-form-head">' + (d.isOwnClass ? 'Add a note to this pass' : 'Tell ' + (d.teacherName ? esc(d.teacherName) : 'the teacher') + ' something') + '</div>' +
+                  '<div class="wc-note-levels">' +
+                    '<label><input type="radio" name="wcNoteLevel" value="info" checked> Just so you know</label>' +
+                    '<label><input type="radio" name="wcNoteLevel" value="concern"> Concern</label>' +
+                    '<label><input type="radio" name="wcNoteLevel" value="urgent"> Urgent</label>' +
+                  '</div>' +
+                  '<div class="wc-note-row">' +
+                    '<input type="text" id="wcNoteText" maxlength="240" autocomplete="off" placeholder="What did you see? One sentence." required>' +
+                    '<button type="submit" class="btn" style="font-size:12.5px;padding:9px 14px;white-space:nowrap;">' + (d.isOwnClass ? 'Add note' : 'Send') + '</button>' +
+                  '</div>' +
+                  '<p class="wc-sub" id="wcNoteStatus" style="margin:6px 0 0;">' +
+                    (d.teacherEmail && !d.isOwnClass ? 'Goes on the pass and to the teacher’s device.' : (d.isOwnClass ? 'Goes on the pass for whoever opens it next.' : 'This pass has no teacher on it; the note stays on the pass.')) +
+                  '</p>' +
+                '</form>';
+
+            box.innerHTML =
+                '<div class="wc-detail-head">' +
+                  '<div><h2 style="margin:0;">' + esc(d.student.name) + '</h2>' +
+                    '<div class="wc-sub">' + esc([d.student.grade ? 'Grade ' + d.student.grade : '', d.student.number ? '#' + d.student.number : ''].filter(Boolean).join('  ·  ')) + '</div></div>' +
+                  statePill +
+                '</div>' +
+                dl +
+                '<h3 class="wc-detail-h3">Notes</h3>' + notes + noteForm +
+                '<div class="wc-detail-actions">' + actions +
+                  '<button type="button" class="btn btn-secondary" style="margin-left:auto;" onclick="closePassDetail()">Done</button>' +
+                '</div>';
+        }
+
+        /** Run one of the class-board actions on the open pass, then re-read it. */
+        async function wcDetailAction(fn) {
+            const id = wcDetailPassId;
+            if (!id || typeof fn !== 'function') return;
+            await fn(id);
+            if (wcDetailPassId === id) await openPassDetail(id);
+        }
+
+        async function submitPassNote(ev) {
+            if (ev && ev.preventDefault) ev.preventDefault();
+            const id = wcDetailPassId;
+            const ctx = wcBellSession();
+            const input = document.getElementById('wcNoteText');
+            const status = document.getElementById('wcNoteStatus');
+            if (!id || !ctx || !input) return;
+            const levelEl = document.querySelector('input[name="wcNoteLevel"]:checked');
+            const level = levelEl ? levelEl.value : 'info';
+            const text = input.value;
+            try {
+                if (status) status.textContent = 'Sending…';
+                const res = await ctx.auth.convexMutation('hallPasses:addNote', { passId: id, level: level, text: text }, ctx.session.idToken);
+                input.value = '';
+                if (status) status.textContent = res && res.note ? res.note : 'Saved.';
+                await openPassDetail(id);
+                if (typeof renderMyClassBoard === 'function') renderMyClassBoard();
+            } catch (e) {
+                if (status) { status.textContent = e.message; status.style.color = '#B3392F'; }
+            }
+        }
+        window.openPassDetail = openPassDetail;
+        window.closePassDetail = closePassDetail;
+        window.submitPassNote = submitPassNote;
+        window.wcDetailAction = wcDetailAction;
+        window.wcStopActiveBoard = wcStopActiveBoard;
+
         async function renderMyClassBoard() {
             const host = document.getElementById('myClassHost');
             if (!host) return;
+            wcSyncPassNavLabel();
+            // The same nav slot is the campus board for staff whose work is the
+            // building rather than a class list. See wcPassBoardFor.
+            if (wcPassBoardFor(wcStaffRole()).board === 'campus') {
+                return renderActivePassesBoard();
+            }
+            wcStopActiveBoard();
             const ctx = wcBellSession();
             if (!ctx) {
                 host.innerHTML = '<div class="wc-card panel-card"><p style="margin:0;color:#b3392f;">' +
@@ -21561,7 +21780,11 @@
                   '<td>' + esc(state) + (p.overdue ? ' <b style="color:#B3392F;">overdue</b>' : '') +
                       (p.timerCleared ? ' <b style="color:#2F67A7;">no limit</b>' : '') + '</td>' +
                   '<td>' + (mins === null ? '<span style="color:#999;">not started</span>' : esc(mins) + ' min') + '</td>' +
-                  '<td style="white-space:nowrap;">' + actions + '</td>' +
+                  // What an aide wrote on it, on the row the teacher already
+                  // watches. Empty for most rows most of the time.
+                  '<td>' + wcNoteBadgeHtml(p.notes) + '</td>' +
+                  '<td style="white-space:nowrap;">' + actions +
+                    ' <button type="button" onclick="openPassDetail(\'' + esc(p.id) + '\')" style="margin-left:6px;' + ghostBtn + '">Open</button></td>' +
                 '</tr>';
             }).join('');
 
@@ -21577,8 +21800,8 @@
                     '</p>' +
                   '</div>' +
                   '<div style="overflow-x:auto;">' +
-                    '<table class="wc-table"><thead><tr><th>Student</th><th>From</th><th>State</th><th>Out for</th><th></th></tr></thead>' +
-                    '<tbody>' + (rows || '<tr><td colspan="5" style="padding:24px;color:#999;">' +
+                    '<table class="wc-table"><thead><tr><th>Student</th><th>From</th><th>State</th><th>Out for</th><th>Notes</th><th></th></tr></thead>' +
+                    '<tbody>' + (rows || '<tr><td colspan="6" style="padding:24px;color:#999;">' +
                       'Nothing right now. Requests from your own lessons land here.</td></tr>') + '</tbody></table>' +
                   '</div>' +
                   (wcClassBoard.truncated
@@ -22052,7 +22275,20 @@
         // device for push so the alert reaches a closed app.
         window.addEventListener('wildcat-auth-signin', function (e) {
             const me = e && e.detail;
-            if (me && me.kind === 'staff') { wcStartPassAlertPolling(); wcSetupPush(); }
+            if (me && me.kind === 'staff') {
+                wcStartPassAlertPolling();
+                wcSetupPush();
+                // A push about a note carries the pass it is about. The teacher
+                // tapped it to see that pass, not to land on a dashboard and go
+                // looking, so it opens straight into the detail.
+                try {
+                    const passId = new URLSearchParams(location.search).get('pass');
+                    if (passId && typeof openPassDetail === 'function') {
+                        setTimeout(function () { openPassDetail(passId); }, 600);
+                        history.replaceState(null, '', location.pathname);
+                    }
+                } catch (err) { /* an odd URL is not fatal */ }
+            }
         });
 
         // The dashboard's "Your day" strip used to read a hardcoded legacy block
@@ -22619,7 +22855,7 @@
                             if (tabsContainer) tabsContainer.style.display = 'none';
                             if (clawPassContent) clawPassContent.style.display = 'block';
                             updateModeToggleUI();
-                            switchHallPassTab('kiosk');
+                            switchHallPassTab('myClass');
                         } else if (savedMode === 'discipline') {
                             wildcatCashEnabled = false;
                             disciplineModeEnabled = true;
@@ -23428,7 +23664,6 @@
         const MODE_SUBTABS = {
             hallpass: [
                 { id: 'myClass',              fn: 'switchHallPassTab',   label: '🧑‍🏫 My Class' },
-                { id: 'kiosk',                fn: 'switchHallPassTab',   label: '🖥️ Student Kiosk' },
                 { id: 'hallMonitor',          fn: 'switchHallPassTab',   label: '👁️ Hall Monitor' },
                 { id: 'snapshot',             fn: 'switchHallPassTab',   label: '📊 Student Snapshot' },
                 { id: 'encounterPrevention',  fn: 'switchHallPassTab',   label: '🚨 Encounter Prevention' },
@@ -23468,7 +23703,7 @@
             }
             subNav.innerHTML = items.map((it, idx) => `
                 <button type="button" class="tab ${idx === 0 ? 'active' : ''}" id="sideSub_${mode}_${it.id}"
-                        onclick="sidebarSubTab('${mode}','${it.id}')">${it.label}</button>`).join('');
+                        onclick="sidebarSubTab('${mode}','${it.id}')">${(mode === 'hallpass' && it.id === 'myClass' && typeof wcPassNavLabel === 'function') ? wcPassNavLabel() : it.label}</button>`).join('');
             subNav.style.display = 'flex';
         }
 
@@ -23656,14 +23891,14 @@
                 if (disciplineContent) disciplineContent.style.display = 'none';
                 
                 // IMPORTANT: Make sure subtab buttons are visible for admins/teachers
-                // (openStudentKiosk hides them for students, but admins need them)
+                // (a role branch may have hidden some; the mode shows the full set)
                 document.querySelectorAll('.subtab-button').forEach(btn => {
                     btn.style.display = '';
                 });
                 
                 if (typeof removeCashTabButtons === 'function') removeCashTabButtons();
                 if (typeof renderModeSubnav === 'function') renderModeSubnav('hallpass');
-                switchHallPassTab('kiosk'); // Default to kiosk view
+                switchHallPassTab('myClass'); // Default to the class board
             } else {
                 // Show raffle/cash tabs and content, hide Claw Pass and Discipline
                 if (tabsContainer) tabsContainer.style.display = 'flex';

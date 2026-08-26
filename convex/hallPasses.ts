@@ -36,6 +36,10 @@ import {
   DEFAULT_REACH_MINUTES,
   TAP_INTENT_TTL_SECONDS,
   MAX_TAP_INTENTS_PER_WINDOW,
+  canNotePass,
+  summarizeNotes,
+  type NoteLevel,
+  passClock,
 } from "./hallPassRules";
 import { normalizeSlug } from "./tapSlug";
 
@@ -1274,6 +1278,49 @@ export const tap = mutation({
  * path in the repo to recover with. psSync.ts:83-85 is the same failure already
  * having happened here once.
  */
+/**
+ * The notes on a set of passes, as the one line a board shows for each.
+ * Bounded per pass; a pass with more than a screen of notes is a pass being
+ * used as a chat, and the board shows the newest and the count either way.
+ */
+const NOTES_PER_PASS = 50;
+async function noteSummaries(
+  ctx: QueryCtx,
+  passIds: Id<"hallPasses">[],
+): Promise<Map<string, { count: number; highest: NoteLevel | null; latest: { level: NoteLevel; text: string; authorName: string; at: string } | null }>> {
+  const out = new Map();
+  for (const id of passIds) {
+    const notes = await ctx.db
+      .query("hallPassNotes")
+      .withIndex("by_pass", (q) => q.eq("passId", id))
+      .take(NOTES_PER_PASS);
+    const sum = summarizeNotes(notes);
+    out.set(String(id), {
+      count: sum.count,
+      highest: sum.highest,
+      latest: sum.latest
+        ? { level: sum.latest.level, text: sum.latest.text, authorName: sum.latest.authorName, at: sum.latest.at }
+        : null,
+    });
+  }
+  return out;
+}
+
+/** Staff names for a set of emails, one bounded read per distinct address. */
+async function teacherNames(ctx: QueryCtx, emails: Array<string | null | undefined>): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  for (const raw of emails) {
+    const email = String(raw ?? "").trim().toLowerCase();
+    if (!email || out.has(email)) continue;
+    const t = await ctx.db
+      .query("teachers")
+      .withIndex("by_email", (q) => q.eq("email", email))
+      .unique();
+    if (t) out.set(email, t.name);
+  }
+  return out;
+}
+
 export const liveBoard = query({
   args: {},
   handler: async (ctx) => {
@@ -1304,16 +1351,35 @@ export const liveBoard = query({
       live.push(...rows);
     }
 
+    // THE CAMPUS BOARD READS THIS TOO, and an aide acting on a row needs what
+    // a teacher's own board already carries: where the pass came from and who
+    // owns it, by name, where it was sent, and whether anyone has written on
+    // it. One bounded read per distinct teacher and per pass, never a scan.
+    const names = await teacherNames(ctx, live.map((p) => p.originTeacherEmail));
+    const notes = await noteSummaries(ctx, live.map((p) => p._id));
     const rows = await Promise.all(
       live.map(async (p) => {
         const student = await ctx.db.get(p.studentId);
+        const origin = p.originLocationId ? await ctx.db.get(p.originLocationId) : null;
+        const destination = p.assignedDestinationLocationId
+          ? await ctx.db.get(p.assignedDestinationLocationId)
+          : null;
+        const teacherEmail = p.originTeacherEmail ?? null;
         return {
           id: p._id,
           state: p.state,
           studentName: student ? `${student.firstName} ${student.lastName}`.trim() : "(unknown)",
           studentNumber: p.studentNumber,
+          grade: student?.grade ?? null,
           elapsedMinutes: elapsedMinutes(p as any, now),
           overdue: isOverdue(p as any, now),
+          reason: p.reason ?? null,
+          origin: origin?.name ?? null,
+          assignedDestination: destination?.name ?? null,
+          teacherName: teacherEmail ? (names.get(teacherEmail) ?? null) : null,
+          timerCleared: p.timerCleared ?? false,
+          expiresAfterMinutes: p.expiresAfterMinutes,
+          notes: notes.get(String(p._id)) ?? { count: 0, highest: null, latest: null },
           requestedAt: p.requestedAt,
           /*
            * The timestamps the board COUNTS from. elapsedMinutes is correct
@@ -1383,6 +1449,10 @@ export const myClassBoard = query({
       .take(CLASS_BOARD_WINDOW);
 
     const live = rows.filter((p) => !isTerminal(p.state));
+    // What an aide has written on these, so the badge is on the row the
+    // teacher already looks at rather than on a screen they would have to
+    // know to open.
+    const notes = await noteSummaries(ctx, live.map((p) => p._id));
 
     const decorated = await Promise.all(
       live.map(async (p) => {
@@ -1393,6 +1463,7 @@ export const myClassBoard = query({
         return {
           id: p._id,
           state: p.state,
+          notes: notes.get(String(p._id)) ?? { count: 0, highest: null, latest: null },
           studentName: student ? `${student.firstName} ${student.lastName}`.trim() : "(unknown)",
           studentNumber: p.studentNumber ?? null,
           reason: p.reason ?? null,
@@ -1428,6 +1499,152 @@ export const myClassBoard = query({
       // Told rather than hidden, for the same reason liveBoard reports its cap.
       truncated: rows.length === CLASS_BOARD_WINDOW,
       generatedAt: now,
+    };
+  },
+});
+
+/**
+ * ONE PASS, IN FULL, FOR THE STAFF SCREEN THAT OPENS IT.
+ *
+ * The boards carry a row; this carries the pass: who, where from and to, who
+ * approved it and when, both clocks, and every note written on it, oldest
+ * first so it reads as what happened. Any member of staff may open any live
+ * pass, which is the same rule liveBoard already applies to the row, and the
+ * student fields are the ones the row already shows: a name, a number, a
+ * grade. Nothing restricted, nothing from the student record the pass did
+ * not already name.
+ */
+export const passDetail = query({
+  args: { passId: v.id("hallPasses") },
+  handler: async (ctx, { passId }) => {
+    const me = await requireStaff(ctx);
+    const pass = await ctx.db.get(passId);
+    if (!pass) throw new ConvexError("No such pass.");
+    const now = new Date().toISOString();
+    const student = await ctx.db.get(pass.studentId);
+    const origin = pass.originLocationId ? await ctx.db.get(pass.originLocationId) : null;
+    const destination = pass.assignedDestinationLocationId
+      ? await ctx.db.get(pass.assignedDestinationLocationId)
+      : null;
+    const tapped = pass.destinationLocationId ? await ctx.db.get(pass.destinationLocationId) : null;
+    const names = await teacherNames(ctx, [pass.originTeacherEmail, pass.approvedByEmail, pass.closedByEmail]);
+    const notes = await ctx.db
+      .query("hallPassNotes")
+      .withIndex("by_pass", (q) => q.eq("passId", passId))
+      .take(NOTES_PER_PASS);
+    notes.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+    const clock = passClock(pass as any);
+    return {
+      id: pass._id,
+      state: pass.state,
+      terminal: isTerminal(pass.state),
+      student: student
+        ? { name: `${student.firstName} ${student.lastName}`.trim(), number: student.studentNumber ?? pass.studentNumber ?? null, grade: student.grade ?? null }
+        : { name: "(unknown)", number: pass.studentNumber ?? null, grade: null },
+      reason: pass.reason ?? null,
+      requestedVia: pass.requestedVia ?? null,
+      origin: origin?.name ?? null,
+      assignedDestination: destination?.name ?? null,
+      tappedDestination: tapped?.name ?? null,
+      courseName: pass.originCourseName ?? null,
+      period: pass.originPeriod ?? null,
+      teacherEmail: pass.originTeacherEmail ?? null,
+      teacherName: pass.originTeacherEmail ? (names.get(pass.originTeacherEmail) ?? null) : null,
+      approvedByName: pass.approvedByEmail ? (names.get(pass.approvedByEmail) ?? pass.approvedByEmail) : null,
+      closedByName: pass.closedByEmail ? (names.get(pass.closedByEmail) ?? pass.closedByEmail) : null,
+      closedReason: pass.closedReason ?? null,
+      requestedAt: pass.requestedAt,
+      approvedAt: pass.approvedAt ?? null,
+      outAt: pass.outAt ?? null,
+      returnedAt: pass.returnedAt ?? null,
+      closedAt: pass.closedAt ?? null,
+      expiresAfterMinutes: pass.expiresAfterMinutes,
+      reachMinutes: pass.reachMinutes ?? null,
+      timerCleared: pass.timerCleared ?? false,
+      clockStartAt: clock.startAt,
+      clockLimitMinutes: clock.limitMinutes,
+      elapsedMinutes: elapsedMinutes(pass as any, now),
+      overdue: isOverdue(pass as any, now),
+      notes: notes.map((n) => ({
+        id: n._id,
+        level: n.level,
+        text: n.text,
+        authorName: n.authorName,
+        authorRole: n.authorRole,
+        mine: n.authorEmail === me.email,
+        at: n.at,
+      })),
+      // Whether the caller is the teacher this pass belongs to, so the screen
+      // can say "your class" rather than name them to themselves.
+      isOwnClass: !!pass.originTeacherEmail && pass.originTeacherEmail === me.email,
+      serverTime: now,
+    };
+  },
+});
+
+/**
+ * A NOTE FROM WHOEVER MET THE CHILD, TO THE TEACHER WHO LET THEM GO.
+ *
+ * Any member of staff may write one; a campus aide is the reason it exists. It
+ * is stored against the pass, shows on the owning teacher's board and on the
+ * pass itself, and is pushed to the teacher's device unless the author IS that
+ * teacher, who does not need telling what they just wrote. A pass with no
+ * origin teacher (one opened before requests carried a teacher) still takes
+ * the note, for the record and for whoever opens the pass next; there is
+ * nobody to push to and the caller is told so rather than left to assume.
+ */
+export const addNote = mutation({
+  args: {
+    passId: v.id("hallPasses"),
+    level: v.string(),
+    text: v.string(),
+  },
+  handler: async (ctx, { passId, level, text }) => {
+    const me = await requireStaff(ctx);
+    const pass = await ctx.db.get(passId);
+    if (!pass) throw new ConvexError("No such pass.");
+    const verdict = canNotePass(pass, level, text);
+    if (!verdict.ok || !verdict.level || !verdict.text) throw new ConvexError(verdict.reason);
+    const now = new Date().toISOString();
+    const student = await ctx.db.get(pass.studentId);
+    const studentName = student ? `${student.firstName} ${student.lastName}`.trim() : "A student";
+    const teacherEmail = pass.originTeacherEmail ?? undefined;
+
+    const id = await ctx.db.insert("hallPassNotes", {
+      passId,
+      studentId: pass.studentId,
+      ...(teacherEmail ? { teacherEmail } : {}),
+      authorEmail: me.email,
+      authorName: me.name,
+      authorRole: me.role,
+      level: verdict.level,
+      text: verdict.text,
+      at: now,
+    });
+
+    let notified = false;
+    if (teacherEmail && teacherEmail !== me.email) {
+      try {
+        const lead = verdict.level === "urgent" ? "URGENT: " : verdict.level === "concern" ? "Concern: " : "";
+        await ctx.scheduler.runAfter(0, internal.pushSend.sendToTeacher, {
+          teacherEmail,
+          title: `${lead}${studentName}'s hall pass`,
+          body: `${me.name}: ${verdict.text}`,
+          url: `/?source=push&pass=${String(passId)}`,
+        });
+        notified = true;
+      } catch (e) {
+        console.error("[push] could not schedule note notification:", e);
+      }
+    }
+    return {
+      id,
+      at: now,
+      notified,
+      teacherEmail: teacherEmail ?? null,
+      note: teacherEmail
+        ? (notified ? "Sent to the teacher's device." : "Stored on the pass; you wrote it on your own class.")
+        : "Stored on the pass. This pass has no teacher on it, so nobody was pushed; the note is here for whoever opens it.",
     };
   },
 });

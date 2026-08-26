@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20260826u">
-    <link rel="icon" href="favicon.ico?v=20260826u" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260826u" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260826u" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20260826w">
+    <link rel="icon" href="favicon.ico?v=20260826w" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260826w" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260826w" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260826u">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260826w">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20260826u">
+    <link rel="stylesheet" href="styles.css?v=20260826w">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260826u">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260826w">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20260826u">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260826w">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20260826u" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20260826w" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -133,15 +133,6 @@
             </p>
 
             <!-- HIDDEN FOR LAUNCH - BETA FEATURE -->
-            <!--
-            <div style="text-align: center; margin: 20px 0; padding: 20px 0; border-top: 2px solid #e0e0e0; border-bottom: 2px solid #e0e0e0;">
-                <p style="color: #666; margin-bottom: 15px; font-size: 14px;">Need a hall pass?</p>
-                <button class="btn" style="width: 100%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); font-size: 18px; padding: 18px;" onclick="openStudentKiosk()">
-                    🎫 Student Kiosk - Request Hall Pass
-                </button>
-                <p style="color: #999; font-size: 12px; margin-top: 10px;">No login required</p>
-            </div>
-            -->
             
             <div id="studentLoginError" class="error-message" style="text-align: center; margin-top: 12px;"></div>
         </div>
@@ -537,7 +528,7 @@
         <header class="app-topbar">
             <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation">☰</button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20260826u" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20260826w" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -4147,16 +4138,18 @@
 
                 <!-- Hall Pass Tabs -->
                 <div style="display: flex; gap: 10px; margin-bottom: 30px; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px; flex-wrap: wrap;">
-                    <!-- THE CONVEX-BACKED HALF. Every other tab here runs on the
-                         old Firestore hallPasses array; this one is the passes
-                         that come from a student's timetable and go to one
-                         teacher. Kept beside them rather than replacing them,
-                         because the old kiosk is still what the office uses. -->
-                    <button class="subtab-button" onclick="switchHallPassTab('myClass')" id="myClassTabBtn">
+                    <!-- THE CONVEX-BACKED HALF. Every other tab here still runs
+                         on the old Firestore hallPasses array; this one is the
+                         passes that come from a student's timetable and go to one
+                         teacher. The Student Kiosk that used to sit beside it is
+                         gone: it wrote passes into the old array where no board
+                         on this side could see them, and a student with no phone
+                         gets a pass from their teacher here instead. -->
+                    <!-- Called "Active Passes" for campus aides and PBIS staff, who have
+                         no class list and whose beat is the building; wcSyncPassNavLabel
+                         writes the name. -->
+                    <button class="subtab-button active" onclick="switchHallPassTab('myClass')" id="myClassTabBtn">
                         🧑‍🏫 My Class
-                    </button>
-                    <button class="subtab-button active" onclick="switchHallPassTab('kiosk')" id="kioskTabBtn">
-                        🖥️ Student Kiosk
                     </button>
                     <button class="subtab-button" onclick="switchHallPassTab('hallMonitor')" id="hallMonitorTabBtn">
                         👁️ Hall Monitor
@@ -4185,65 +4178,6 @@
                     </div>
                 </div>
 
-                <!-- Student Kiosk Tab -->
-                <div id="kioskTab" class="hall-pass-tab">
-                    <div style="max-width: 900px; margin: 0 auto;">
-                        <!-- The kiosk is a shared screen a child walks up to, so it keeps ONE
-                             subject and one action. The slab that used to sit above it
-                             repeated the page title at 48px and pushed the only thing
-                             anybody comes here to do below the fold. -->
-                        <div class="wu-panel wu-kiosk">
-                            <div class="wu-panel-head">
-                                <p class="wu-eyebrow">Student kiosk</p>
-                                <h2 class="wu-panel-title">Enter your student ID</h2>
-                            </div>
-                            <div class="wu-panel-body">
-                                <input type="text" id="kioskStudentId" class="wu-kiosk-input"
-                                       placeholder="Student ID" inputmode="numeric" autocomplete="off"
-                                       onkeypress="if(event.key==='Enter') loadStudentForPass()">
-                                <button class="wu-btn wu-btn-primary wu-kiosk-go" onclick="loadStudentForPass()">Continue</button>
-                            </div>
-                        </div>
-
-                                <!-- Destination Selection -->
-                                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px;">
-                                    <button class="destination-btn" onclick="selectDestination('bathroom')" style="padding: 30px; background: #2F67A7; color: white; border: none; border-radius: 12px; font-size: 18px; font-weight: 600; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 12px rgba(79, 172, 254, 0.3);">
-                                        🚻 Bathroom<br><span style="font-size: 14px; font-weight: 400;">5 minutes</span>
-                                    </button>
-                                    <button class="destination-btn" onclick="selectDestination('office')" style="padding: 30px; background: #2F67A7; color: white; border: none; border-radius: 12px; font-size: 18px; font-weight: 600; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 12px rgba(240, 147, 251, 0.3);">
-                                        🏢 Office<br><span style="font-size: 14px; font-weight: 400;">10 minutes</span>
-                                    </button>
-                                    <button class="destination-btn" onclick="selectDestination('classroom')" style="padding: 30px; background: #2F67A7; color: white; border: none; border-radius: 12px; font-size: 18px; font-weight: 600; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 12px rgba(47, 103, 167, 0.3);">
-                                        📚 Classroom<br><span style="font-size: 14px; font-weight: 400;">15 minutes</span>
-                                    </button>
-                                    <button class="destination-btn" onclick="selectDestination('wellness')" style="padding: 30px; background: #2F67A7; color: white; border: none; border-radius: 12px; font-size: 18px; font-weight: 600; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 12px rgba(67, 233, 123, 0.3);">
-                                        💚 Wellness<br><span style="font-size: 14px; font-weight: 400;">20 minutes</span>
-                                    </button>
-                                </div>
-
-                                <input type="hidden" id="selectedDestination">
-                                <input type="hidden" id="selectedDuration">
-
-                                <!-- Optional Notes -->
-                                <div style="margin-bottom: 25px;">
-                                    <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #333;">Additional Notes (Optional)</label>
-                                    <input type="text" id="passNotes" placeholder="e.g., Meeting with Ms. Smith" style="width: 100%; padding: 15px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 16px;">
-                                </div>
-
-                                <div style="display: flex; gap: 15px;">
-                                    <button class="btn" onclick="createHallPass()" style="flex: 1; padding: 18px; font-size: 18px; background: #10b981;">
-                                        ✅ Create Pass
-                                    </button>
-                                    <button class="btn btn-secondary" onclick="cancelPassRequest()" style="flex: 1; padding: 18px; font-size: 18px;">
-                                        Cancel
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Active Passes Tab -->
                 <!-- Hall Monitor Tab -->
                 <div id="hallMonitorTab" class="hall-pass-tab" style="display: none;">
                     <h2 style="margin-bottom: 20px;">👁️ Hall Monitor - Live Pass Tracking</h2>
@@ -4329,7 +4263,7 @@
                         <div style="grid-column: 1/-1; text-align: center; padding: 60px 20px; color: #999; background: white; border-radius: 12px;">
                             <div style="font-size: 48px; margin-bottom: 15px;">🎫</div>
                             <p style="font-size: 18px; margin: 0;">No active passes to monitor</p>
-                            <p style="font-size: 14px; margin: 10px 0 0 0;">Passes will appear here when students create them from the kiosk</p>
+                            <p style="font-size: 14px; margin: 10px 0 0 0;">Passes will appear here as they are opened</p>
                         </div>
                     </div>
                 </div>
@@ -4552,7 +4486,7 @@
                                 <div style="background: #e0e7ff; padding: 15px; border-radius: 8px; border-left: 4px solid #667eea;">
                                     <strong style="color: #3730a3;">💡 Testing Tip:</strong>
                                     <p style="margin: 8px 0 0 0; color: #3730a3; font-size: 14px;">
-                                        After generating test data, go to Student Kiosk and enter any test ID (TEST1001-TEST1010 or TEST2001-TEST2002) to create overlapping test passes and see blocking in action!
+                                        After generating test data, open a pass for any test student from My Class (TEST1001-TEST1010 or TEST2001-TEST2002) to create overlapping test passes and see blocking in action!
                                     </p>
                                 </div>
 
@@ -4804,6 +4738,14 @@
     </div>
 
     <!-- Edit Teacher Modal -->
+    <!-- One hall pass, in full: who, where, both clocks, every note on it, and
+         what a member of staff can do about it. Opened from a row on My Class,
+         Active Passes, or a push notification about a note. Filled by
+         wcDrawPassDetail. -->
+    <div id="passDetailModal" class="modal hidden" onclick="if (event.target === this) closePassDetail()">
+        <div class="modal-content wc-pass-detail" style="max-width: 640px;" id="passDetailContent"></div>
+    </div>
+
     <div id="editTeacherModal" class="modal hidden">
         <div class="modal-content" style="max-width: 500px;">
             <h2>✏️ Edit Teacher</h2>
@@ -5593,16 +5535,16 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260826u"></script>
+    <script src="wildcat-auth.js?v=20260826w"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
-    <script src="wildcat-motion.js?v=20260826u"></script>
-    <script src="wildcat-discipline.js?v=20260826u"></script>
-    <script src="wildcat-merge.js?v=20260826u"></script>
-    <script src="wildcat-savequeue.js?v=20260826u"></script>
-    <script src="wildcat-roster.js?v=20260826u"></script>
-    <script src="wildcat-store.js?v=20260826u"></script>
-    <script src="script.js?v=20260826u"></script>
+    <script src="wildcat-motion.js?v=20260826w"></script>
+    <script src="wildcat-discipline.js?v=20260826w"></script>
+    <script src="wildcat-merge.js?v=20260826w"></script>
+    <script src="wildcat-savequeue.js?v=20260826w"></script>
+    <script src="wildcat-roster.js?v=20260826w"></script>
+    <script src="wildcat-store.js?v=20260826w"></script>
+    <script src="script.js?v=20260826w"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -5612,7 +5554,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20260826u').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20260826w').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {

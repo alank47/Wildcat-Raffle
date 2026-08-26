@@ -6811,3 +6811,58 @@ body:has(#mainApp:not(.hidden)) { padding: 0; margin: 0; }
 /* The bar sits over the bottom of the page, so give the content room to
    scroll clear of it rather than hiding the last row behind it. */
 body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
+
+/* ---- Hall pass notes, the campus board, and the pass detail ---------
+   A note is what an aide saw, written against the pass. It shows as a
+   badge on the row the teacher already watches, weighted by the heaviest
+   thing anyone has said, and in full on the pass. */
+.wc-note-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 9px 3px 7px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 700; letter-spacing: .01em; white-space: nowrap;
+    background: rgba(47, 103, 167, .10); color: #2F67A7;
+}
+.wc-note-badge i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.wc-note-badge.is-concern { background: rgba(214, 122, 20, .13); color: #A65A08; }
+.wc-note-badge.is-urgent  { background: rgba(179, 57, 47, .13);  color: #B3392F; }
+.wc-note-peek { margin-top: 3px; font-size: 12px; color: #555; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wc-live-count { margin-left: auto; font-size: 12.5px; font-weight: 700; color: #666; }
+.wc-row-open:hover td { background: rgba(47, 103, 167, .05); }
+
+.wc-pass-detail .wc-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+.wc-pass-detail .wc-sub { font-size: 12.5px; color: #666; margin-top: 2px; }
+.wc-state-pill {
+    display: inline-block; padding: 6px 12px; border-radius: 999px; white-space: nowrap;
+    font-size: 12.5px; font-weight: 700; text-transform: capitalize;
+    background: rgba(47, 103, 167, .10); color: #2F67A7;
+}
+.wc-state-pill.is-requested { background: rgba(0, 0, 0, .07); color: #444; }
+.wc-state-pill.is-overdue,
+.wc-state-pill.is-expired, .wc-state-pill.is-denied { background: rgba(179, 57, 47, .12); color: #B3392F; }
+.wc-state-pill.is-returned { background: rgba(16, 122, 72, .12); color: #0F7A48; }
+.wc-detail-facts {
+    display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px;
+    margin: 0 0 18px; padding: 14px 16px; border-radius: 10px; background: #F6F7F9;
+    font-size: 13.5px;
+}
+.wc-detail-facts dt { color: #666; font-weight: 600; }
+.wc-detail-facts dd { margin: 0; }
+.wc-detail-h3 { margin: 0 0 8px; font-size: 14px; letter-spacing: .02em; text-transform: uppercase; color: #666; }
+.wc-notes { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.wc-note { display: flex; gap: 10px; padding: 10px 12px; border-radius: 10px; background: #F6F7F9; font-size: 13.5px; }
+.wc-note i { flex: 0 0 auto; width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: #2F67A7; }
+.wc-note.is-concern i { background: #D67A14; }
+.wc-note.is-urgent  { background: rgba(179, 57, 47, .08); }
+.wc-note.is-urgent i { background: #B3392F; }
+.wc-note-meta { margin-top: 3px; font-size: 12px; color: #666; }
+.wc-note-form { margin: 6px 0 16px; padding: 12px 14px; border: 1px solid #E3E6EB; border-radius: 10px; }
+.wc-note-form-head { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+.wc-note-levels { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 8px; font-size: 13px; }
+.wc-note-levels label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.wc-note-row { display: flex; gap: 8px; }
+.wc-note-row input[type="text"] { flex: 1 1 auto; min-width: 0; padding: 9px 11px; border: 1px solid #CFD4DC; border-radius: 8px; font: inherit; font-size: 13.5px; }
+.wc-detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 6px; }
+@media (max-width: 560px) {
+    .wc-detail-facts { grid-template-columns: 1fr; gap: 2px 0; }
+    .wc-detail-facts dt { margin-top: 8px; }
+}
