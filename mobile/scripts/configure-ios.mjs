@@ -325,12 +325,14 @@ if (existsSync(spmPackage)) {
 // on black, as supplied 2026-08-26). ON THE HOME SCREEN IT IS INVERTED: a black
 // tile disappears against a dark wallpaper and reads as a hole, so the iOS icon
 // is the black mark on WHITE. The source stays as it is (the PWA and the site
-// use it as supplied); the inversion happens here. Apple requires exactly
-// 1024x1024 with NO alpha, so the image is flattened onto black first (any
-// transparent corner becomes background), then negated, so white and black
-// swap and nothing else changes. ImageMagick does it in one call; the sips
-// fallback cannot negate, so it stops with a clear message rather than ship a
-// black tile quietly.
+// use it as supplied). The source is the black shapes with the strokes
+// TRANSPARENT (what looks white on a light viewer is no pixel at all), so
+// "on white" is one operation: flatten onto white, which paints the strokes
+// white and leaves the black exactly as drawn. No negate; negating a mark
+// whose strokes are transparent erases it, which is what shipped for ten
+// minutes on 2026-08-26. Apple requires exactly 1024x1024 with NO alpha.
+// ImageMagick does it in one call; without it the step stops with a message
+// rather than ship the wrong tile quietly.
 {
   const rootPointer = join(mobile, '.wildcat-repo-root');
   const root = existsSync(rootPointer) ? readFileSync(rootPointer, 'utf8').trim() : resolve(mobile, '..');
@@ -344,12 +346,12 @@ if (existsSync(spmPackage)) {
   } else {
     let done = false;
     try {
-      execFileSync('magick', [source, '-background', 'black', '-alpha', 'remove', '-alpha', 'off',
-        '-negate', '-resize', '1024x1024!', '-strip', target], { stdio: 'pipe' });
+      execFileSync('magick', [source, '-background', 'white', '-alpha', 'remove', '-alpha', 'off',
+        '-resize', '1024x1024!', '-strip', target], { stdio: 'pipe' });
       done = true;
     } catch (e) { /* no ImageMagick here */ }
     if (!done) {
-      console.error('[configure-ios] app icon needs ImageMagick (brew install imagemagick) to invert the mark onto white');
+      console.error('[configure-ios] app icon needs ImageMagick (brew install imagemagick) to flatten the mark onto white');
       process.exit(1);
     }
     const info = execFileSync('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', '-g', 'hasAlpha', target], { encoding: 'utf8' });
