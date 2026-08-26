@@ -317,6 +317,48 @@ if (existsSync(spmPackage)) {
   }
 }
 
+// 5. THE APP ICON, from the one source file the repo keeps.
+//
+// ios/ is regenerated per machine, so an icon dropped into the asset catalog by
+// hand is gone on the next clone, and Capacitor's placeholder ships instead. The
+// source is assets/app-icon-source.png in the repo (the Westbrook mark on black,
+// as supplied 2026-08-26). Apple requires exactly 1024x1024 with NO alpha
+// channel, so it is flattened onto black on the way in: ImageMagick if it is
+// installed, otherwise sips through a JPEG round-trip, which drops alpha for
+// free on a flat two-colour mark.
+{
+  const rootPointer = join(mobile, '.wildcat-repo-root');
+  const root = existsSync(rootPointer) ? readFileSync(rootPointer, 'utf8').trim() : resolve(mobile, '..');
+  const source = join(root, 'assets', 'app-icon-source.png');
+  const iconset = join(appDir, 'Assets.xcassets', 'AppIcon.appiconset');
+  const target = join(iconset, 'AppIcon-512@2x.png');
+  if (!existsSync(source)) {
+    console.warn('[configure-ios] app icon: assets/app-icon-source.png missing, placeholder kept');
+  } else if (!existsSync(iconset)) {
+    console.warn('[configure-ios] app icon: no AppIcon.appiconset in ios/App/App/Assets.xcassets');
+  } else {
+    let done = false;
+    try {
+      execFileSync('magick', [source, '-background', 'black', '-alpha', 'remove', '-alpha', 'off',
+        '-resize', '1024x1024!', '-strip', target], { stdio: 'pipe' });
+      done = true;
+    } catch (e) { /* no ImageMagick here */ }
+    if (!done) {
+      const tmp = join(iconset, 'AppIcon-tmp.jpg');
+      execFileSync('sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '100', source, '--out', tmp], { stdio: 'pipe' });
+      execFileSync('sips', ['-s', 'format', 'png', '-z', '1024', '1024', tmp, '--out', target], { stdio: 'pipe' });
+      execFileSync('rm', ['-f', tmp]);
+    }
+    const info = execFileSync('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', '-g', 'hasAlpha', target], { encoding: 'utf8' });
+    const w = /pixelWidth: (\d+)/.exec(info)?.[1], h = /pixelHeight: (\d+)/.exec(info)?.[1], a = /hasAlpha: (\w+)/.exec(info)?.[1];
+    if (w !== '1024' || h !== '1024' || a !== 'no') {
+      console.error(`[configure-ios] app icon came out ${w}x${h} alpha=${a}; Apple needs 1024x1024 with no alpha`);
+      process.exit(1);
+    }
+    console.log('[configure-ios] app icon: 1024x1024, no alpha, from assets/app-icon-source.png');
+  }
+}
+
 console.log('[configure-ios] done. Verify in Xcode: Signing & Capabilities should list');
 console.log('[configure-ios]   "Near Field Communication Tag Reading" and "Associated Domains".');
 console.log('[configure-ios] If Associated Domains is absent, add it once in Xcode so the');
