@@ -321,11 +321,16 @@ if (existsSync(spmPackage)) {
 //
 // ios/ is regenerated per machine, so an icon dropped into the asset catalog by
 // hand is gone on the next clone, and Capacitor's placeholder ships instead. The
-// source is assets/app-icon-source.png in the repo (the Westbrook mark on black,
-// as supplied 2026-08-26). Apple requires exactly 1024x1024 with NO alpha
-// channel, so it is flattened onto black on the way in: ImageMagick if it is
-// installed, otherwise sips through a JPEG round-trip, which drops alpha for
-// free on a flat two-colour mark.
+// source is assets/app-icon-source.png in the repo (the Westbrook mark, white
+// on black, as supplied 2026-08-26). ON THE HOME SCREEN IT IS INVERTED: a black
+// tile disappears against a dark wallpaper and reads as a hole, so the iOS icon
+// is the black mark on WHITE. The source stays as it is (the PWA and the site
+// use it as supplied); the inversion happens here. Apple requires exactly
+// 1024x1024 with NO alpha, so the image is flattened onto black first (any
+// transparent corner becomes background), then negated, so white and black
+// swap and nothing else changes. ImageMagick does it in one call; the sips
+// fallback cannot negate, so it stops with a clear message rather than ship a
+// black tile quietly.
 {
   const rootPointer = join(mobile, '.wildcat-repo-root');
   const root = existsSync(rootPointer) ? readFileSync(rootPointer, 'utf8').trim() : resolve(mobile, '..');
@@ -340,14 +345,12 @@ if (existsSync(spmPackage)) {
     let done = false;
     try {
       execFileSync('magick', [source, '-background', 'black', '-alpha', 'remove', '-alpha', 'off',
-        '-resize', '1024x1024!', '-strip', target], { stdio: 'pipe' });
+        '-negate', '-resize', '1024x1024!', '-strip', target], { stdio: 'pipe' });
       done = true;
     } catch (e) { /* no ImageMagick here */ }
     if (!done) {
-      const tmp = join(iconset, 'AppIcon-tmp.jpg');
-      execFileSync('sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '100', source, '--out', tmp], { stdio: 'pipe' });
-      execFileSync('sips', ['-s', 'format', 'png', '-z', '1024', '1024', tmp, '--out', target], { stdio: 'pipe' });
-      execFileSync('rm', ['-f', tmp]);
+      console.error('[configure-ios] app icon needs ImageMagick (brew install imagemagick) to invert the mark onto white');
+      process.exit(1);
     }
     const info = execFileSync('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', '-g', 'hasAlpha', target], { encoding: 'utf8' });
     const w = /pixelWidth: (\d+)/.exec(info)?.[1], h = /pixelHeight: (\d+)/.exec(info)?.[1], a = /hasAlpha: (\w+)/.exec(info)?.[1];
