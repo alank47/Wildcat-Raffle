@@ -17300,6 +17300,14 @@
         let wpFromBoot = false;
         let wpWired = false;
         let wpFitObserver = null;
+        // THE TAKEOVER. The key of the pass the student sent back to the wallet
+        // with "Show my other cards", and the pass the layer is currently
+        // painted from. See wpTakeoverKey for what a key is.
+        let wpFullDismissed = '';
+        let wpFullHp = null;
+        // When the overdue buzz last played, so a screen that stays red keeps
+        // nudging a child once a minute rather than once ever or every second.
+        let wpLastOverBuzz = 0;
         /** The slug a student arrived with, held in memory rather than acted on. */
         let wpTapSlug = null;
         /**
@@ -17768,6 +17776,81 @@
             wpSelected = Math.max(0, Math.min(selectIndex || 0, cards.length - 1));
             wpLayout(false);
             wpDecorate();
+        }
+
+        /**
+         * Paint the pass over the wallet, or take it down.
+         *
+         * Built from the SAME card object wpHallPassCard just handed wpRender,
+         * so the layer cannot say something the card does not: same face, same
+         * ring markup (the ticker finds it by data-wp-clock wherever it lives),
+         * same route and tracker, same tap prompt. The card stays in the stack
+         * underneath, laid out as ever, so putting the wallet back is a class
+         * toggle and not a re-render.
+         *
+         * Idempotent and safe after every load: the poll re-renders on a state
+         * change and lands here again, which is how a dismissed layer returns
+         * once the pass moves on.
+         */
+        function wpRenderFull(card, hp) {
+            const view = wpById('studentPassView');
+            const full = wpById('wpFull');
+            if (!view || !full) return;
+            wpFullHp = hp || null;
+            const on = !!card && wpPassTakesOver(hp, wpFullDismissed);
+            if (!on) {
+                full.innerHTML = '';
+                full.hidden = true;
+                full.removeAttribute('style');
+                full.removeAttribute('data-wp-phase');
+                view.classList.remove('wp-is-full');
+                return;
+            }
+            full.setAttribute('style', card.face || '');
+            full.innerHTML =
+                '<div class="wp-full-head">' +
+                  '<span class="wp-label">' + wpEsc(card.label || 'Hall Pass') + '</span>' +
+                  (card.status || '') +
+                '</div>' +
+                '<div class="wp-body wp-full-body">' + (card.body || '') + '</div>' +
+                '<div class="wp-full-under">' + (card.under || '') +
+                  '<button type="button" class="wp-btn wp-btn-ghost wp-full-cards" onclick="wpDismissFull()">' +
+                  'Show my other cards</button>' +
+                '</div>';
+            full.hidden = false;
+            full.scrollTop = 0;
+            view.classList.add('wp-is-full');
+            view.scrollTop = 0;
+            // The layer's phase colour is written by the ticker off the ring it
+            // now contains; run one tick so it is right on the first paint
+            // rather than a second later.
+            wpTickClocks();
+        }
+
+        /** "Show my other cards". Remembered per pass state, see wpTakeoverKey. */
+        function wpDismissFull() {
+            wpFullDismissed = wpTakeoverKey(wpFullHp);
+            wpRenderFull(null, wpFullHp);
+            // The shell was measured while hidden from view but never from
+            // layout, so the stack geometry is still right; one more pass over
+            // it costs nothing and covers a resize that landed meanwhile.
+            wpLayout(false);
+        }
+
+        /**
+         * The web half of the nudge. The native app plays Apple's warning and
+         * error haptics from wcNativeHaptic; a browser on Android has
+         * navigator.vibrate and nothing else, and Safari on an iPhone has no
+         * vibration API at all, so there the red screen is the whole signal.
+         * Gated on NOT native so a phone never buzzes twice for one crossing.
+         */
+        function wpWebVibrate(phase) {
+            try {
+                if (window.WC_NATIVE) return;
+                if (!navigator.vibrate) return;
+                if (phase === 'warn') navigator.vibrate([120, 80, 120]);
+                else if (phase === 'over') navigator.vibrate([320, 120, 320, 120, 320]);
+            } catch (e) { /* not fatal, and not every browser allows it */ }
         }
 
         /**
@@ -18571,6 +18654,43 @@
            category leader's timer will not tell a student at all.
            ============================================================ */
 
+        /* ---- pass takeover ---- */
+
+        /**
+         * WHICH PASS OWNS THE SCREEN, as one string, or nothing.
+         *
+         * A pass takes the whole screen from the moment a teacher approves it
+         * to the moment it closes: `active`, `out`, and the approved-but-untimed
+         * state a cleared timer leaves behind. Not while it is only `requested`,
+         * because a student waiting on a teacher still wants their wallet, and
+         * never once it is terminal, because there is nothing left to do.
+         *
+         * THE KEY CARRIES THE STATE AND THE LATENESS, and that is what lets a
+         * dismissal be polite without being permanent. "Show my other cards"
+         * remembers this key; the layer stays down while the key is unchanged
+         * and comes straight back when the pass moves on (a destination tap,
+         * a fresh return window) or goes overdue, because a child who put the
+         * wallet back to read a lunch barcode has not asked to miss the moment
+         * their time ran out.
+         */
+        function wpTakeoverKey(hp) {
+            if (!hp || !hp.available) return '';
+            const state = String(hp.state || 'none').toLowerCase();
+            if (state === 'none' || state === 'requested' || state === 'pending') return '';
+            if (state === 'returned' || state === 'expired' || state === 'cancelled' ||
+                state === 'canceled' || state === 'denied') return '';
+            return String(hp.id || '') + '|' + state + (hp.overdue ? '|overdue' : '');
+        }
+
+        /** True when the layer should be painted over the wallet right now. */
+        function wpPassTakesOver(hp, dismissedKey) {
+            const key = wpTakeoverKey(hp);
+            if (!key) return false;
+            return key !== String(dismissedKey || '');
+        }
+
+        /* ---- end pass takeover ---- */
+
         /* ---- pass clock arithmetic ---- */
 
         /** mm:ss, and h:mm:ss only if a pass has somehow run past an hour. */
@@ -18900,6 +19020,10 @@
            buzzing once. */
         function wpTickClocks() {
             var nodes = document.querySelectorAll('[data-wp-clock]');
+            // Two rings can carry one clock now (the card in the stack and the
+            // takeover over it), and they cross a phase on the same tick. One
+            // buzz per tick, or a crossing would be felt twice.
+            var buzzed = false;
             for (var i = 0; i < nodes.length; i++) {
                 var node = nodes[i];
                 var rawStart = node.getAttribute('data-start');
@@ -19003,6 +19127,14 @@
                 if (host && host.getAttribute && host.getAttribute('data-wp-phase') !== face.phase) {
                     host.setAttribute('data-wp-phase', face.phase);
                 }
+                // THE WHOLE SCREEN WEARS IT when the pass has taken over: amber
+                // while time is short, red and flashing once it is over. Styled
+                // off this attribute in styles.css, so a child sees the colour
+                // change across the room before reading a single digit.
+                var full = node.closest ? node.closest('.wp-full') : null;
+                if (full && full.getAttribute('data-wp-phase') !== face.phase) {
+                    full.setAttribute('data-wp-phase', face.phase);
+                }
                 // A STATE CHANGE A CHILD NOTICES WITHOUT READING, on a device
                 // that can do it. Warning on the way in, error at the crossing,
                 // matching Apple's documented meanings for the two rather than
@@ -19013,9 +19145,25 @@
                 // carries its phase in the markup, so it compares equal and stays
                 // silent. Nothing buzzes at a child to tell them about a deadline
                 // that passed before they opened the app.
-                if (prevPhase && prevPhase !== face.phase) {
+                if (prevPhase && prevPhase !== face.phase && !buzzed) {
+                    buzzed = true;
                     if (face.phase === 'warn') wcNativeHaptic('warning');
                     if (face.phase === 'over') wcNativeHaptic('error');
+                    wpWebVibrate(face.phase);
+                    if (face.phase === 'over') wpLastOverBuzz = Date.now();
+                }
+                // AND KEEPS NUDGING, once a minute, while the screen is red and
+                // the pass has the screen. Not from a card in the wallet: a
+                // student who chose to look at their lunch barcode has the
+                // colour, and a phone that buzzes every minute in a pocket is
+                // how the app gets closed. Only on a device that can buzz at
+                // all, which the two helpers decide for themselves.
+                if (full && face.phase === 'over' && !buzzed &&
+                    wpLastOverBuzz && (Date.now() - wpLastOverBuzz) >= 60000) {
+                    buzzed = true;
+                    wpLastOverBuzz = Date.now();
+                    wcNativeHaptic('error');
+                    wpWebVibrate('over');
                 }
 
                 // Sweep the ring so the depleting gold arc matches the digits to
@@ -19114,6 +19262,9 @@
 
             wpCards = [];
             wpSelected = 0;
+            wpFullDismissed = '';
+            wpLastOverBuzz = 0;
+            wpRenderFull(null, null);
             const stack = wpById('wpStack');
             if (stack) { stack.innerHTML = ''; stack.style.height = ''; }
             // A body parked in the wide layout's panel outlives the stack
@@ -19275,6 +19426,9 @@
                 ? preferIndex
                 : ((pass.hallPass && pass.hallPass.available) ? hallPassIdx : studentIdIdx);
             wpRender(cards, open);
+            // Over the wallet while the pass is running. Same card object, so the
+            // two cannot disagree; see wpRenderFull.
+            wpRenderFull(cards[hallPassIdx], pass.hallPass);
 
             if (pass.studentId && pass.studentId.available && window.JsBarcode) {
                 try {

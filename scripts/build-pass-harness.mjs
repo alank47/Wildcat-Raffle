@@ -73,7 +73,8 @@ function between(startMarker, endMarker) {
 // that consts must be declared before they run, and nothing here runs on load.
 const PIECES = [
   'let wpCards = []; let wpSelected = 0; let wpDragged = false; let wpWired = false;' +
-    ' let wpLastOrigin = ""; let wpFitObserver = null;',
+    ' let wpLastOrigin = ""; let wpFitObserver = null;' +
+    ' let wpFullDismissed = ""; let wpFullHp = null; let wpLastOverBuzz = 0;',
   block('function wpById('),
   block('function wpEsc('),
   block('function wpEmpty('),
@@ -97,6 +98,13 @@ const PIECES = [
   block('function wpWireStack('),
   block('function wpRender('),
   block('function wpDecorate('),
+  // The takeover: the pass over the wallet while it runs, and the rule that
+  // says when. See wpRenderFull.
+  block('function wpTakeoverKey('),
+  block('function wpPassTakesOver('),
+  block('function wpRenderFull('),
+  block('function wpDismissFull('),
+  block('function wpWebVibrate('),
 ];
 
 const lifted = PIECES.join('\n\n');
@@ -201,6 +209,9 @@ function paintPhone(idx, sel) {
     document.getElementById('wpAvatar').textContent = 'TS';
     document.getElementById('wpAsOf').textContent = 'PowerSchool data as of Aug 17 at 6:00 AM';
     wpRender(cards, sel === null ? 2 : sel);
+    // ?full=1 paints the takeover over the wallet, as the app does for a
+    // running pass. Off by default so every card panel still measures the card.
+    if (qs.full === '1') wpRenderFull(cards[2], s.hp);
     wpTickClocks();
     setInterval(wpTickClocks, 1000);
     // Two frames, so the clamps have resolved and the barcode-less stack has
@@ -270,13 +281,30 @@ function paintIndex() {
         title: 'Short phone (SE)', i: 0, w: 375, h: 667, tag: '375x667',
         note: 'The tightest screen in the building. The pass card keeps every line; what it loses is air between them, and the stack scrolls rather than clipping.',
     });
+    // THE TAKEOVER. The same states, with the pass owning the screen, which is
+    // what a student holding a phone in a corridor actually sees from approval
+    // to the return tap. The card panels above still exist because the card is
+    // still dealt underneath and still measured.
+    [
+        { i: 0, title: 'Takeover: out, heading back', note: 'The pass over the wallet. Ring, due time, route, tracker, approver, the tap prompt and the way back to the cards, all on one screen with nothing clipped.' },
+        { i: 1, title: 'Takeover: approved, heading there', note: 'The reach leg. Calm blue, the same face the card wears.' },
+        { i: 2, title: 'Takeover: nearly out of time', note: 'The screen goes amber inside the warning lead, and the phone buzzes once at the crossing where it can.' },
+        { i: 3, title: 'Takeover: overtime', note: 'Red, and flashing (opacity on an overlay, so it composites). Buzzes at the crossing and once a minute after. Reduced motion keeps the red and drops the flash.' },
+        { i: 4, title: 'Takeover: no time limit', note: 'Counts up, stays calm, never flashes: a pass with no deadline is never late.' },
+    ].forEach(function (p) {
+        panels.push({ title: p.title, note: p.note, i: p.i, full: 1, w: 414, h: 852, tag: 'iPhone 414x852' });
+    });
+    panels.push({
+        title: 'Takeover on a short phone (SE)', i: 0, full: 1, w: 375, h: 667, tag: '375x667',
+        note: 'The ring gives way first; every word stays.',
+    });
     panels.push({
         title: 'The desk composition', i: 0, w: 1180, h: 820, tag: '1180x820',
         note: 'From 1000px the open card body MOVES into the detail panel and the card goes back to card height, so nothing here is a tall empty box. The gold bar stays under the stack column.',
     });
 
     document.getElementById('hGrid').innerHTML = panels.map(function (p, n) {
-        var q = '?state=' + p.i + (p.sel === undefined ? '' : '&sel=' + p.sel);
+        var q = '?state=' + p.i + (p.sel === undefined ? '' : '&sel=' + p.sel) + (p.full ? '&full=1' : '');
         return '<section class="h-panel" style="width:' + p.w + 'px">' +
             '<h2 class="h-title">' + p.title + '<span class="h-tag">' + p.tag + '</span></h2>' +
             '<p class="h-note">' + p.note + '</p>' +
@@ -435,6 +463,7 @@ const page = `<!doctype html>
         <p class="wp-asof" id="wpAsOf"></p>
         <div class="wp-note" id="wpError"></div>
     </div>
+    <section class="wp-full" id="wpFull" hidden></section>
 </div>
 
 <script>
