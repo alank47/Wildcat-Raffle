@@ -3368,6 +3368,61 @@ body.wp-open { overflow: hidden; }
     --wp-strip: clamp(48px, 7.4svh, 60px);
     --wp-card-h: clamp(196px, 32vh, 262px);
     --wp-card-h: clamp(196px, 32svh, 262px);
+
+    /* THE RUNNING HALL PASS IS A TALLER CARD, and it is the only one.
+       Every other card in this wallet is a name and a value: a barcode, a
+       PIN, a row of grades. A pass with a clock on it is a ring big enough
+       to read across a corridor, the hour it is due, the route, a three
+       step tracker and the teacher who approved it, and that is simply not
+       the same box.
+
+       Same viewport-relative shape as --wp-card-h so it shrinks with
+       everything else on a short screen, and read back by wpMetrics
+       through its own ruler. The stack reserves this height whatever card
+       is open, so nothing under the stack moves when a card is tapped.
+
+       In the desk composition it collapses back to --wp-card-h: over there
+       the body has moved into the detail panel and the card is a card.
+
+       TALLER THAN IT IS WIDE, AND BY A MEASURED AMOUNT. The reference this
+       card is judged against is portrait: its height is 1.12 times its own
+       width, and its ring spans 0.61 of that width. At the old 366px ceiling
+       the card was 0.94 of its own width, and the ring could not exceed 0.39
+       of it whatever the ring's own rule said, because there was nowhere for
+       it to go. Both numbers below are therefore written as ratios against
+       --wp-cardw, the width the card actually gets, rather than as pixel
+       guesses at what that width will turn out to be.
+
+       WHY IT IS A min() AND NOT ONLY A RATIO. The proportion is what the card
+       wants; svh is what the screen can afford, and on a narrow tall phone
+       (390 by 844) they disagree by 23px in the screen's favour. Taking the
+       smaller of the two keeps the card's shape right on wide screens and
+       keeps the whole wallet on screen on tall narrow ones, where a purely
+       proportional card was 1.18 of its width and pushed the stack past the
+       fold. The clamp is the floor and ceiling either can hit. */
+    --wp-cardw: calc(min(var(--wp-col), 100vw) - 2 * var(--wp-gutter));
+    --wp-pass-h: clamp(306px, min(calc(var(--wp-cardw) * 1.12), 51vh), 436px);
+    --wp-pass-h: clamp(306px, min(calc(var(--wp-cardw) * 1.12), 51svh), 436px);
+
+    /* THE RING'S IDEAL DIAMETER, and the one number this whole card is about.
+       0.611 of the card's width is what the reference spends on it; the ring
+       gets exactly that whenever the card has the height for it, and less
+       when it does not (see .wp-ring-wrap). The 268px ceiling is for the desk
+       panel, where --wp-col becomes 1120px and the ratio alone would ask for
+       a 655px circle. */
+    --wp-ring-ideal: min(268px, calc(var(--wp-cardw) * 0.611));
+
+    /* The one saturated colour on this surface. It means TIME, and it is
+       spent on the ring, on the arc of the trip a student has finished,
+       and on the single control that ends the pass. Nowhere else. */
+    --wp-gold: #F5A623;
+    --wp-gold-lit: #FFD98A;
+
+    /* For the one line on the pass that is a record rather than a status:
+       who approved it and at what hour. The system mono stack, so it is
+       the face the student's own device already uses for a receipt. */
+    --wp-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+               "Liberation Mono", monospace;
     /* Raised from 17px on 2026-08-15 with the rest of the app. The
        radius is the ONLY geometry number in this block that moved:
        --wp-strip, --wp-card-h and the tuck in wildcat-motion.css are
@@ -3548,6 +3603,7 @@ body.wp-open { overflow: hidden; }
 }
 .wp-metric-strip { height: var(--wp-strip); }
 .wp-metric-card { height: var(--wp-card-h); }
+.wp-metric-pass { height: var(--wp-pass-h); }
 
 .wp-stack {
     position: relative;
@@ -3719,6 +3775,53 @@ body.wp-open { overflow: hidden; }
     opacity: .88;
 }
 .wp-lead.is-quiet { font-weight: 400; font-size: 14px; opacity: .55; }
+
+/* ---- The open hall pass's header ----------------------------
+   COLLAPSED, THE PASS CARD IS A WALLET CARD LIKE ANY OTHER: its name at
+   reading size and its one value, "Hall Pass   07:32 left", which is the
+   whole point of a strip and the only line a student sees without opening
+   anything. None of that changes.
+
+   OPEN, the ring below is the value, at four times the size, and repeating
+   the same mm:ss in the strip put two clocks on one card. So the open pass
+   card trades them: the name drops to an eyebrow, and the strip's slot
+   carries the STATE instead of the number. Nothing is deleted and nothing
+   moves position; the ticker goes on writing the strip either way, so the
+   collapsed line and the VoiceOver label are exactly what they were. */
+.wp-card-pass.is-open .wp-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.19em;
+    text-transform: uppercase;
+    opacity: .52;
+}
+.wp-status {
+    display: none;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 12px 6px 10px;
+    border-radius: 999px;
+    background: rgba(245, 166, 35, 0.13);
+    color: var(--wp-gold-lit);
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: -0.005em;
+    white-space: nowrap;
+}
+.wp-status i {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+}
+/* A request nobody has answered is not the same state as a running pass,
+   and it does not get to wear the colour that means time. */
+.wp-status.is-wait {
+    background: rgba(255, 255, 255, 0.10);
+    color: rgba(255, 255, 255, 0.72);
+}
+.wp-card-pass.is-open .wp-status { display: inline-flex; }
+.wp-card-pass.is-open .wp-lead { display: none; }
 
 /* ---- Card body --------------------------------------------- */
 
@@ -3906,39 +4009,139 @@ body.wp-open { overflow: hidden; }
    conic-gradient), with a route, an Approved/Out/Back tracker, the approver,
    and a tap button where a device can scan. wp-ink carries the card's text
    colour so this all works on the navy live face and the red overdue one. */
+/* THE ONE THING ON THIS CARD THAT IS ALLOWED TO GIVE WAY.
+   ------------------------------------------------------------
+   The ring used to be sized off three ceilings of its own: a px cap, a share
+   of the card's width, and a share of the VIEWPORT height. The last of those
+   was the honest attempt at the right idea and it was aimed at the wrong box.
+   The ring has to fit inside the CARD, and the card's height is a clamp
+   against the viewport, so a second clamp against the viewport was a guess at
+   the first one's output. It guessed low: 152px in a 388px card, 0.39 of the
+   card's width where the reference spends 0.61, with 49px of card left empty
+   underneath it. The number a student reads across a corridor arrived at
+   medallion scale and the room to fix it was already there, unspent.
+
+   So the ring is now sized by the SPACE THAT IS ACTUALLY LEFT. This wrapper
+   is the only item in the body's flex column that may shrink; everything
+   below it is a word, and words do not shrink. The basis is the size the
+   reference asks for, and flex takes back whatever a shorter card cannot
+   afford, which is exactly what the old svh term was trying to say. The floor
+   is where the digits stop being legible, and below that the card clips as it
+   always did rather than drawing a ring nobody can read.
+
+   BOTH ENDS ARE THE SAME TOKEN, and that is what makes the ring EXACTLY the
+   proportion the reference sets rather than approximately it. The basis is the
+   ideal, so a card with the room draws it; the max-height is the same ideal,
+   so a card with room to spare cannot inflate it past the proportion. Ideal
+   and leash being one number is the point: it can only ever be right or
+   smaller, never bigger.
+
+   The ring's WIDTH follows its height through aspect-ratio, so a diameter
+   wider than the card would push the circle out through the card's sides.
+   --wp-ring-ideal is 0.611 of the card's own width, so it cannot. */
+.wp-ring-wrap {
+    /* Grows as well as shrinks, and both directions are deliberate. Shrink is
+       the short screen. Grow is the 49px of empty card the old ring left
+       underneath itself: if the words below ever cost a few pixels less than
+       the card set aside for them, that surplus goes into the number rather
+       than sitting at the bottom as air. The max-height is the leash on that,
+       so a card with an unexpected amount of room cannot inflate the ring
+       past the proportion the reference sets. */
+    flex: 1 1 var(--wp-ring-ideal);
+    max-height: var(--wp-ring-ideal);
+    min-height: 108px;
+    min-width: 0;
+    margin: 2px 0 9px;
+    display: grid;
+    place-items: center;
+}
+
 .wp-ring {
-    width: min(178px, 56%);
+    /* Driven by the wrapper, not by a ceiling of its own: as tall as the box
+       above allows, and as wide as it is tall. */
+    height: 100%;
+    width: auto;
     aspect-ratio: 1 / 1;
     border-radius: 50%;
-    margin: 2px auto 4px;
     display: grid;
     place-items: center;
     position: relative;
-    background: conic-gradient(#F5A623 0turn, #FFD98A .75turn, rgba(255,255,255,.10) .75turn 1turn);
+    /* ONE ARC, NOT A DIAL.
+       The track behind the gold used to be white at 10%, which on a near
+       black card reads as a second ring: the eye caught a full circle with
+       a lighter section rather than an arc that is running out, and the
+       one thing this shape has to say at a glance is HOW MUCH IS LEFT.
+       At 4% the track is still there for the arc to be measured against,
+       and it is no longer a competing object. The ticker rewrites this
+       whole declaration every second; these are the values it starts from
+       and the ones a card with no clock keeps. */
+    background: conic-gradient(var(--wp-gold) 0turn, var(--wp-gold-lit) .75turn, rgba(255,255,255,.045) .75turn 1turn);
+    /* The bloom off the arc, so gold on black is warm rather than sharp.
+       Overridden entirely by the warn and overtime states below, which
+       spend box-shadow on saying something more important. */
+    box-shadow: 0 0 22px -10px rgba(245, 166, 35, 0.75);
 }
+/* The hole in the middle of the ring, and it has to be a HOLE rather than
+   a disc. It used to repaint the card's own 158deg gradient inside a
+   150px circle, which is not the same colour as the same gradient painted
+   across a 388px card: the middle of the ring came out visibly lighter
+   than the card around it, so the eye read a pale disc sitting behind the
+   digits instead of an arc drawn on the card. --wp-core is that gradient's
+   colour AT THE POINT THE RING SITS, flat, so the seam disappears. The
+   face is the fallback, which is the old behaviour, so a card face that
+   has not declared a core is exactly what it was. */
 .wp-ring::before {
     content: "";
     position: absolute;
-    inset: 11px;
+    /* A SHARE, NOT A LENGTH, and that is the whole of this change. The arc's
+       thickness is the one proportion of this shape that was already right:
+       13px inside a 152px ring is 8.5%, and the reference draws the same arc
+       at very nearly the same fraction of its own diameter. Left at 13px it
+       would have become 5.5% of the ring the line above it now draws, so
+       growing the circle would have quietly thinned the arc into a hairline
+       and lost the thing that was correct. The ring is square, so one
+       percentage does both axes. */
+    inset: 8.5%;
     border-radius: 50%;
-    background: var(--wp-face, #101E3B);
+    background: var(--wp-core, var(--wp-face, #101E3B));
 }
 .wp-ring-in { position: relative; text-align: center; line-height: 1; }
+/* THE NUMBER, at the size the number deserves.
+   Measured off the reference the same way the ring was: its digits stand
+   about 0.114 of the card's width tall, ours stood at 0.074. A cap height is
+   roughly 0.71 of a font size in this face, so 0.114 of a 388px card is a
+   60px type size, not the 40px this was ceilinged at. The vw term is what
+   carries it down on a narrow phone; the ring shrinks with the card and the
+   digits shrink with the screen, and the two stay in proportion because both
+   are ultimately a share of the same width.
+
+   Why 60 and not 62: the widest thing this ever prints is an overtime clock
+   with a sign on it, "+12:34", and that has to sit inside the hole rather
+   than in the arc. 60px leaves it about a character of room. An hours field
+   is wider still and does not fit, exactly as it did not fit before; a pass
+   that has run for an hour has a bigger problem than its kerning. */
 .wp-ring .wp-clock-value {
     display: block;
-    font-size: clamp(34px, 11vw, 44px);
+    font-size: clamp(34px, 14.8vw, 60px);
     font-weight: 800;
-    letter-spacing: -0.03em;
+    letter-spacing: -0.035em;
     font-variant-numeric: tabular-nums;
 }
+/* The caption names the errand, so it has to fit inside the ring at two
+   or three words ("TO GET BACK", "TIME OUT OF CLASS"). Wrapped rather
+   than clipped, and narrow enough that it never touches the gold. */
 .wp-ring .wp-clock-unit {
     display: block;
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: 0.16em;
+    max-width: 15ch;
+    margin: 9px auto 0;
+    /* Up from 9.5px with the digits above it. It is the same share of the
+       ring it always was; the ring is half as big again. */
+    font-size: 11px;
+    line-height: 1.25;
+    font-weight: 700;
+    letter-spacing: 0.15em;
     text-transform: uppercase;
-    opacity: .6;
-    margin-top: 7px;
+    opacity: .58;
 }
 /* ---- The pass clock's three states ---------------------------
    What changes when a pass runs low, and when it runs out, is COLOUR and
@@ -4007,50 +4210,170 @@ body.wp-open { overflow: hidden; }
    against the clock on the corridor wall. */
 .wp-due {
     text-align: center;
-    margin: 0 0 10px;
-    font-size: 13px;
+    margin: 0 0 8px;
+    /* Quieter and smaller than it was. It is the second read: the ring says
+       how much, this says by when, and with the ring now at the size the
+       card's job needs, this line must not read as a second headline
+       underneath the first one. */
+    font-size: 12.5px;
     font-weight: 500;
     letter-spacing: 0.01em;
-    opacity: .78;
+    opacity: .70;
 }
+
+/* THE TWO MARGINS THAT WERE BEING THROWN AWAY IN SILENCE.
+   -----------------------------------------------------------------
+   Both of these lines are <p> elements, and the reset near the top of this
+   file is written as `#studentPassView p { margin: 0; padding: 0 }`. An id
+   beats a class however late the class is declared, so the 10px under the
+   due line and the 12px above the approver were both read as zero: the trip
+   tracker and the approver ran together as one crushed block with no gap
+   between them at all, which is exactly what a measurement of the shipped
+   card found.
+
+   Written as MARGIN ONLY, at id weight, and nothing else. Putting the whole
+   rule behind the id would have outranked `.wp-body[data-wp-phase="warn"]
+   .wp-due` two rules below and frozen the due line's opacity through the
+   warning and the overrun, which is the phase change the ticker exists to
+   make visible. So the id appears here and only here, carrying only the
+   property the reset was eating.
+
+   Every other margin a class asks for on a paragraph inside this surface is
+   still being eaten the same way. That is a real bug and it is bigger than
+   this card; it is named in the notes handed up with this change rather than
+   fixed blind here, because unblocking all of them at once moves things on
+   screens this change has no business moving. */
+#studentPassView .wp-due { margin: 0 0 8px; }
+#studentPassView .wp-appby { margin: 14px 0 0; }
 .wp-due b { font-weight: 800; opacity: 1; font-variant-numeric: tabular-nums; }
 /* The open-ended pass says what is true about it instead of a time. */
 .wp-due-open { font-size: 12.5px; font-weight: 400; opacity: .6; }
 .wp-body[data-wp-phase="warn"] .wp-due { opacity: .95; }
 .wp-body[data-wp-phase="over"] .wp-due { opacity: 1; color: #FFD9D4; }
 
-.wp-route { display: flex; justify-content: center; align-items: center; gap: 8px; margin: 6px 0 10px; flex-wrap: wrap; }
-.wp-route .wp-r { background: rgba(255,255,255,.11); padding: 5px 12px; border-radius: 9px; font-weight: 600; font-size: 13px; }
-.wp-route .wp-arw { opacity: .7; font-weight: 800; }
-.wp-trip { display: flex; align-items: center; gap: 7px; margin: 0 2px; }
-.wp-trip .wp-step { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 650; opacity: .46; white-space: nowrap; }
+/* The route, as two places and the direction between them. A student
+   reads it as a sentence: where they are going, then where they owe
+   themselves back. The arrow is gold because it is the only part of the
+   line that is about the trip rather than about a room. */
+/* 14px rather than 12px under the route, because the reference puts clear
+   air between the trip a student is on and the marks that say how far
+   through it they are. This is a div, so its margin was never eaten. */
+.wp-route { display: flex; justify-content: center; align-items: center; gap: 9px; margin: 0 0 14px; flex-wrap: wrap; }
+.wp-route .wp-r {
+    background: rgba(255,255,255,.10);
+    box-shadow: 0 0 0 1px rgba(255,255,255,.07) inset;
+    padding: 7px 14px;
+    border-radius: 11px;
+    font-weight: 700;
+    font-size: 13.5px;
+    letter-spacing: -0.008em;
+}
+.wp-route .wp-arw { color: var(--wp-gold); font-weight: 800; font-size: 15px; }
+
+/* ---- The trip, as three marks ------------------------------
+   Approved, Out, Back. Two of them have already happened by the time a
+   student is reading this, and the point of the row is that they can see
+   WHICH, without counting.
+
+   THE REACHED ONES ARE GOLD. An earlier pass filled them in ink on the
+   argument that gold belonged to the timer alone, and that was right while
+   the tap button was also gold and sitting on this same card: three gold
+   objects competing for one glance. The button has since moved off the
+   card entirely, and gold now says one consistent thing everywhere it
+   appears on this surface, which is TIME: the arc still to run, and the
+   legs already run. An 8px dot cannot compete with a 158px ring, and the
+   opacity jump on the labels carries the distinction a second time for
+   anyone who cannot separate the two hues at all. */
+.wp-trip { display: flex; align-items: center; gap: 8px; margin: 0 2px; }
+.wp-trip .wp-step { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; opacity: .42; white-space: nowrap; }
 .wp-trip .wp-step.done { opacity: 1; }
 .wp-trip .wp-step i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: .4; }
-/* THE STEPPER FILLS IN INK, NOT IN A SECOND GOLD. Gold on this card is the
-   live timer and nothing else; a stepper wearing the ring's own colour put a
-   second gold object under it, competing for the one glance a student gives
-   this card at a doorway. Done is already carried by the opacity jump above,
-   which is the same distinction without spending the hue twice. */
-.wp-trip .wp-step.done i { background: currentColor; opacity: 1; }
-.wp-trip .wp-seg { flex: 1; height: 2px; border-radius: 2px; background: rgba(255,255,255,.16); }
-.wp-trip .wp-seg.done { background: rgba(255,255,255,.55); }
-.wp-appby { text-align: center; font-size: 11px; opacity: .56; margin: 10px 0 0; }
-.wp-appby b { opacity: .9; font-weight: 600; }
-/* THE BUTTON IS THE WAY TO DO THE THING, NOT THE THING. A full-bleed gold
-   gradient under a gold glow made this the loudest object on a card whose
-   whole subject is the timer above it, and it spent the ring's colour a
-   third time. Same size, same place, same words: glass instead of gold, so
-   the only saturated object left on the card is the one that is counting. */
-.wp-tap-cta {
-    display: flex; align-items: center; justify-content: center; gap: 9px;
-    width: 100%; margin-top: 13px;
-    background: rgba(255,255,255,.13);
-    color: inherit; border: 1px solid rgba(255,255,255,.20); border-radius: 14px; padding: 12px;
-    font-size: 15px; font-weight: 800; letter-spacing: -0.01em; cursor: pointer;
+.wp-trip .wp-step.done i { background: var(--wp-gold); opacity: 1; box-shadow: 0 0 10px -1px rgba(245,166,35,.55); }
+.wp-trip .wp-seg { flex: 1; height: 2px; border-radius: 2px; background: rgba(255,255,255,.14); }
+.wp-trip .wp-seg.done { background: var(--wp-gold); }
+/* Past the deadline the trip is not a gold story any more. Same marks, the
+   colour the rest of the card has already turned. */
+.wp-body[data-wp-phase="over"] .wp-trip .wp-step.done i { background: #FFD9D4; box-shadow: none; }
+.wp-body[data-wp-phase="over"] .wp-trip .wp-seg.done { background: rgba(255,217,212,.75); }
+
+/* WHO SAID YES, AND WHEN. Set in mono, and that is not decoration: it is
+   the one line on the card that is a RECORD rather than a status, the line
+   a student holds up when a second adult asks what they are doing in the
+   corridor. Mono is how every other receipt they have ever been handed is
+   set, and the tabular figures line the time up with the due time above it. */
+.wp-appby {
+    text-align: center;
+    /* Restored at id weight a few rules up: the paragraph reset was eating
+       it, and the record sat welded to the bottom of the tracker. */
+    margin: 14px 0 0;
+    font-family: var(--wp-mono);
+    font-size: 11px;
+    letter-spacing: -0.01em;
+    opacity: .5;
+    font-variant-numeric: tabular-nums;
 }
-.wp-tap-cta:active { transform: translateY(1px); background: rgba(255,255,255,.19); }
+.wp-appby b { opacity: 1; font-weight: 700; }
+.wp-appby .wp-appat { opacity: .85; }
 
 /* ---- Under the stack --------------------------------------- */
+
+/* THE ONE THING TO DO NEXT, under the wallet rather than on a card.
+   ------------------------------------------------------------
+   A card says what a thing IS. Closing a pass is not a property of the
+   pass, it is the errand, and it belongs where a thumb already is: full
+   width, at the bottom, in front of whichever card the student happens to
+   have open. Three things follow from moving it off the card and all
+   three are the reason:
+
+     - it can no longer be clipped. Inside the card it lived below a ring,
+       a due time, a route, a tracker and an approver, in a box sized for a
+       barcode, so on a short screen the control that ENDS the pass was the
+       first thing to fall off the bottom;
+     - it survives the student flipping to their ID barcode, which is a
+       thing they do at exactly the moment a pass is running;
+     - it can be gold again. The argument against gold was that a gold
+       button on the card made three gold objects fight over one glance.
+       Off the card there is no fight: the ring owns the card, this owns
+       the page, and gold means the same thing in both places.
+
+   Empty for every student who does not have a running pass, and an empty
+   bar takes no room at all. */
+.wp-passbar { padding: 16px 2px 0; }
+.wp-passbar:empty { display: none; }
+
+.wp-tap-cta {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    padding: 15px 16px;
+    border: 0;
+    border-radius: 16px;
+    background: linear-gradient(180deg, var(--wp-gold-lit) 0%, var(--wp-gold) 100%);
+    color: #241A03;
+    font-family: inherit;
+    font-size: 16px;
+    font-weight: 800;
+    letter-spacing: -0.014em;
+    cursor: pointer;
+    box-shadow: 0 10px 26px -14px rgba(245, 166, 35, 0.9);
+    -webkit-tap-highlight-color: transparent;
+    transition: transform .14s ease, filter .14s ease;
+}
+.wp-tap-cta:active { transform: translateY(1px) scale(.995); filter: brightness(.96); }
+
+/* The sentence under the button names the PLACE. "Hold your phone near
+   the tag" is an instruction; "at the Nurse" is the half that makes it
+   followable, and it is quiet because it is the second read, not the
+   first. */
+.wp-passbar .wp-foot {
+    padding-top: 12px;
+    text-align: center;
+    font-size: 12.5px;
+    line-height: 1.45;
+    opacity: .58;
+}
 
 .wp-asof {
     padding: 22px 4px 0;
@@ -4162,10 +4485,11 @@ body.wp-open { overflow: hidden; }
         display: grid;
         grid-template-columns: 430px minmax(0, 1fr);
         grid-template-areas:
-            "top    top"
-            "stack  detail"
-            "asof   detail"
-            "note   detail";
+            "top      top"
+            "stack    detail"
+            "passbar  detail"
+            "asof     detail"
+            "note     detail";
         column-gap: 44px;
         align-content: start;
         padding: calc(env(safe-area-inset-top, 0px) + 40px) var(--wp-gutter)
@@ -4173,6 +4497,10 @@ body.wp-open { overflow: hidden; }
     }
     .wp-wide .wp-top    { grid-area: top; padding: 0 2px 30px; }
     .wp-wide .wp-stage  { grid-area: stack; }
+    /* Still under the stack, still full width of the stack column: the
+       control belongs to the pass, not to the panel the pass is being
+       read in. */
+    .wp-wide .wp-passbar { grid-area: passbar; padding: 18px 2px 0; }
     .wp-wide .wp-asof   { grid-area: asof; text-align: left; padding: 20px 2px 0; }
     .wp-wide .wp-note   { grid-area: note; text-align: left; padding: 14px 2px 0; }
 
@@ -4540,6 +4868,26 @@ body.wp-open { overflow: hidden; }
     .wp-plate svg { height: 56px; }
     .wp-big { font-size: 52px; }
     .wp-asof { padding-top: 16px; }
+
+    /* The pass card on an SE. The ring now shrinks on its own, because
+       wp-ring-wrap is the one flexible item in the body's column and takes
+       the whole shortfall; what does not shrink on its own is the air
+       between the five things under it, and on this screen that air is the
+       difference between the approver line being on the card and being
+       clipped off the bottom of it. Every value below is a gap, never a type
+       size: the card loses breathing room here, it does not lose words.
+
+       Tighter gaps here BUY RING. Each pixel taken out of these five is a
+       pixel the wrapper does not have to shrink by, so on the smallest
+       screen in the building the number stays as big as this card can
+       possibly make it. That is the right way round: the air is what an SE
+       cannot afford, the number is what it cannot do without. */
+    .wp-ring-wrap { margin-bottom: 7px; }
+    #studentPassView .wp-due { margin-bottom: 6px; }
+    .wp-due { font-size: 12px; }
+    .wp-route { margin-bottom: 9px; }
+    .wp-route .wp-r { padding: 5px 11px; font-size: 12.5px; }
+    #studentPassView .wp-appby { margin-top: 9px; }
 }
 
 /* ---- Bigger screens ---------------------------------------- */
@@ -4559,10 +4907,37 @@ body.wp-open { overflow: hidden; }
         --wp-strip: clamp(46px, 8.4svh, 68px);
         --wp-card-h: clamp(196px, 36vh, 300px);
         --wp-card-h: clamp(196px, 36svh, 300px);
+        /* The pass card grows with the rest of the wallet, and it has to be
+           set HERE rather than only in the block above, because this block
+           comes later in the file and would otherwise leave the pass card
+           at its phone height inside a stack of 300px cards. */
+        /* Same portrait proportion, written the same way: the reference's
+           1.12 against whatever width the card gets here, never more than
+           the screen can afford. Only 700 to 999 ever sees it, because at
+           1000 the body moves into the detail panel and the block at the
+           bottom of this file takes the tall card back off entirely. */
+        --wp-pass-h: clamp(330px, min(calc(var(--wp-cardw) * 1.12), 57vh), 470px);
+        --wp-pass-h: clamp(330px, min(calc(var(--wp-cardw) * 1.12), 57svh), 470px);
         --wp-radius: 26px;
         --wp-col: 468px;
         --wp-gutter: 24px;
     }
+    /* The ring needs no override here at all any more: --wp-ring-ideal is
+       already a share of --wp-cardw, and --wp-col and --wp-gutter both change
+       in this block, so the ring follows the wider card on its own. What does
+       need saying is the digits, because their clamp is against the VIEWPORT
+       width and this composition puts a much wider viewport around the same
+       sized card: a share of the width, ceilinged where an overtime clock
+       stops fitting inside the hole. */
+    /* HEIGHT, NOT WIDTH, and that is the difference between this block and the
+       phone one. Over here the card is a constant 420px wide at every viewport
+       width in this range, so a vw term tracks nothing: at 820px wide it drew
+       46px digits inside a 213px hole, which is the ring's own complaint all
+       over again one composition along. What actually varies here is the
+       SCREEN'S HEIGHT, because that is what the card's height clamp reads and
+       therefore what the ring shrinks with. So the digits shrink with the same
+       thing the ring does, and cannot outgrow the hole on a short window. */
+    .wp-ring .wp-clock-value { font-size: clamp(30px, 7.4svh, 60px); }
     .wp-shell { padding: 30px var(--wp-gutter) 28px; }
     .wp-name { font-size: 33px; }
     .wp-meta { font-size: 14.5px; }
@@ -4574,6 +4949,16 @@ body.wp-open { overflow: hidden; }
     .wp-rowtitle { font-size: 15px; }
     .wp-big { font-size: clamp(52px, 9vh, 76px); }
     .wp-asof { padding-top: 18px; }
+}
+
+/* THE DESK TAKES THE TALL CARD BACK OFF, and this block has to sit after
+   the one above it to do that: at 1000px the open card's body moves into
+   the detail panel, so a pass-sized card box over there would be an empty
+   pass-sized box with a ring in another column. Written as a reference to
+   --wp-card-h rather than a number, so it cannot drift from whatever that
+   block decides a card is. */
+@media (min-width: 1000px) {
+    #studentPassView { --wp-pass-h: var(--wp-card-h); }
 }
 
 /* ---- Motion ------------------------------------------------ */

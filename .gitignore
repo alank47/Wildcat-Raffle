@@ -13,3 +13,7 @@ powerschool/out/
 
 node_modules/
 *.log
+
+# Generated dev harness: every state of the student pass card, side by side
+# against the real stylesheet. Rebuild with node scripts/build-pass-harness.mjs.
+pass-card-harness.html
