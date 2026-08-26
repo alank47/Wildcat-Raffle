@@ -1739,3 +1739,123 @@ body.wc-loading { overflow: hidden; }
   background: var(--wu-surface);
 }
 .wu-kiosk-go { width: 100%; padding: 14px; font-size: 16px; justify-content: center; }
+
+/* ==================================================================
+   ICONS. One sprite (wildcat-icons.js, generated from Untitled UI),
+   drawn with currentColor at the size of the text beside it. An icon
+   in a tile (rail, page head, panel head, mode card) gets the tile's
+   own size; everywhere else it is a slightly-large glyph in the line.
+   ================================================================== */
+.wc-icon {
+    width: 1.15em;
+    height: 1.15em;
+    flex: none;
+    vertical-align: -0.2em;
+    color: inherit;
+    pointer-events: none;
+}
+.wu-rail-icon .wc-icon,
+.page-ico .wc-icon,
+.panel-icon .wc-icon,
+.panel-icon-sq .wc-icon,
+.mode-card-icon .wc-icon,
+.mode-dd-icon .wc-icon { width: 17px; height: 17px; vertical-align: 0; }
+.page-ico .wc-icon, .panel-icon .wc-icon, .panel-icon-sq .wc-icon { width: 18px; height: 18px; }
+.mode-dd-icon { display: inline-grid; place-items: center; width: 22px; height: 22px; }
+.mode-card-chev .wc-icon { width: 16px; height: 16px; transition: transform var(--wu-dur-ui) var(--wu-ease); }
+.mode-switcher.is-open .mode-card-chev .wc-icon { transform: rotate(180deg); }
+.sidebar-toggle .wc-icon { width: 20px; height: 20px; }
+.btn .wc-icon, .btn-secondary .wc-icon, .wu-btn .wc-icon, .subtab-button .wc-icon, .btn-topbar .wc-icon {
+    width: 16px; height: 16px; margin-right: 7px; vertical-align: -3px;
+}
+h2 > .wc-icon, h3 > .wc-icon { margin-right: 8px; vertical-align: -0.16em; color: var(--wu-blue-deep, #0C447C); }
+h2 > .wc-icon { width: 1em; height: 1em; }
+.mode-empty-icon .wc-icon { width: 36px; height: 36px; color: var(--wu-blue, #2F67A7); }
+/* An icon that is the whole button (the small circular actions). */
+.wc-icon-btn {
+    display: inline-grid; place-items: center;
+    width: 34px; height: 34px; padding: 0; border: 1px solid var(--wu-hair);
+    border-radius: 50%; background: var(--wu-surface); color: var(--wu-fg-dim); cursor: pointer;
+    transition: background-color var(--wu-dur-ui) ease, color var(--wu-dur-ui) ease, transform var(--wu-dur-press) var(--wu-ease);
+}
+.wc-icon-btn .wc-icon { width: 16px; height: 16px; margin: 0; vertical-align: 0; }
+
+/* ==================================================================
+   INTERACTION. Every control the teacher portal has, in four states:
+   rest, hover (mouse only, per the rule), pressed, and focused from a
+   keyboard. The durations are the tokens above, so the whole app moves
+   at one speed. Nothing here decides visibility, and nothing here runs
+   on the one control used hundreds of times a day (Award), which keeps
+   its plain press and nothing else.
+   ================================================================== */
+@media (hover: hover) and (pointer: fine) {
+    .wu-rail-item:hover { background: var(--wu-surface-sunk); color: var(--wu-fg); }
+    .wu-rail-item:hover .wu-rail-icon { background: var(--wu-blue-mist); color: var(--wu-blue-deep); }
+    .wu-rail-item[aria-current="page"]:hover { background: var(--wu-blue-mist); }
+    .wu-rail-item[aria-current="page"]:hover .wu-rail-icon { background: var(--wu-blue); color: #fff; }
+
+    .subtab-button:hover {
+        border-color: var(--wu-blue, #2F67A7);
+        color: var(--wu-blue-deep, #0C447C);
+        transform: translateY(-1px);
+        box-shadow: var(--wu-shadow-1);
+    }
+    .subtab-button.active:hover { color: #fff; transform: none; }
+
+    .btn:hover { filter: brightness(1.06); box-shadow: 0 6px 16px -10px rgba(12, 68, 124, .7); transform: translateY(-1px); }
+    .btn-secondary:hover { filter: none; background: var(--wu-surface-sunk); border-color: var(--wu-hair-strong); }
+    .btn-topbar:hover { transform: translateY(-1px); }
+    .wc-icon-btn:hover { background: var(--wu-ink-900, #0E0E0E); color: #fff; border-color: transparent; }
+
+    .mode-card:hover { box-shadow: var(--wu-shadow-1); transform: translateY(-1px); }
+    .mode-dd-item:hover { background: var(--wu-blue-mist); color: var(--wu-blue-deep); }
+
+    .wc-table tbody tr:hover td { background: rgba(47, 103, 167, .05); }
+    .panel-card.is-link:hover, .wc-card.is-link:hover { box-shadow: var(--wu-shadow-2); transform: translateY(-2px); }
+}
+.subtab-button, .btn, .btn-secondary, .btn-topbar, .mode-card, .mode-dd-item, .panel-card, .wc-card {
+    transition:
+        background-color var(--wu-dur-ui) ease, border-color var(--wu-dur-ui) ease, color var(--wu-dur-ui) ease,
+        box-shadow var(--wu-dur-ui) ease, transform var(--wu-dur-press) var(--wu-ease), filter var(--wu-dur-ui) ease;
+}
+.subtab-button:active, .btn:active, .btn-secondary:active, .btn-topbar:active, .mode-card:active, .wc-icon-btn:active,
+.wu-rail-item:active { transform: scale(.97); }
+
+/* Keyboard focus, one ring everywhere, never on a mouse click. */
+.btn:focus-visible, .btn-secondary:focus-visible, .btn-topbar:focus-visible, .subtab-button:focus-visible,
+.wu-btn:focus-visible, .wu-rail-item:focus-visible, .mode-card:focus-visible, .mode-dd-item:focus-visible,
+.wc-icon-btn:focus-visible, .wc-row-open:focus-visible, .wc-field:focus-visible, .wu-field:focus-visible {
+    outline: 2px solid var(--wu-blue, #2F67A7);
+    outline-offset: 2px;
+}
+
+/* Panes and modals arrive; they do not pop. The pane is the hall-pass
+   sub-tab content: display is toggled by script.js, and an animation on
+   display:none -> block replays on every switch, which is exactly the
+   entrance wanted. Ported from React Bits' modal-cards curve. */
+@keyframes wuPaneIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: none; }
+}
+@keyframes wuModalIn {
+    from { opacity: 0; transform: translateY(10px) scale(.975); }
+    to   { opacity: 1; transform: none; }
+}
+@keyframes wuScrimIn { from { opacity: 0; } to { opacity: 1; } }
+.hall-pass-tab { animation: wuPaneIn var(--wu-dur-panel) var(--wu-ease) both; }
+.modal:not(.hidden) { animation: wuScrimIn var(--wu-dur-ui) ease both; }
+.modal:not(.hidden) .modal-content { animation: wuModalIn var(--wu-dur-panel) var(--wu-ease) both; }
+.mode-dropdown { animation: wuPaneIn var(--wu-dur-ui) var(--wu-ease) both; }
+
+@media (prefers-reduced-motion: reduce) {
+    .hall-pass-tab, .modal:not(.hidden), .modal:not(.hidden) .modal-content, .mode-dropdown { animation: none; }
+    .subtab-button, .btn, .btn-secondary, .btn-topbar, .mode-card, .mode-dd-item, .panel-card, .wc-card, .wc-icon-btn,
+    .mode-card-chev .wc-icon { transition: none; }
+}
+
+/* Icon modifiers used in markup: a large decorative one in an empty state,
+   and the two tints a list of "what this deletes / keeps" needs. */
+.wc-icon-lg { width: 36px; height: 36px; color: var(--wu-blue, #2F67A7); }
+.wc-icon-good { color: #0F7A48; }
+.wc-icon-bad { color: #B3392F; }
+li > .wc-icon { margin-right: 6px; vertical-align: -0.2em; }

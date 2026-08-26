@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20260826w">
-    <link rel="icon" href="favicon.ico?v=20260826w" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260826w" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260826w" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20260826y">
+    <link rel="icon" href="favicon.ico?v=20260826y" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260826y" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260826y" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260826w">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260826y">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20260826w">
+    <link rel="stylesheet" href="styles.css?v=20260826y">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260826w">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260826y">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20260826w">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260826y">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20260826w" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20260826y" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -526,9 +526,9 @@
     <div id="mainApp" class="container hidden">
         <!-- ============ APP SHELL: TOP BAR ============ -->
         <header class="app-topbar">
-            <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation">☰</button>
+            <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-menu"></use></svg></button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20260826w" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20260826y" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -551,10 +551,10 @@
         <div id="legacyModeToggle" style="display: none;">
             <div class="admin-only" id="modeToggleContainer">
                 <p id="modeDescription">Currently in Raffle Ticket Mode</p>
-                <button id="raffleModeBtn" onclick="switchSystemMode('raffle')">🎟️ Raffle Mode</button>
-                <button id="cashModeBtn" onclick="switchSystemMode('cash')">💰 Wildcat Cash Mode</button>
-                <button id="hallPassModeBtn" onclick="switchSystemMode('hallpass')">🎫 Claw Pass</button>
-                <button id="disciplineModeBtn" onclick="switchSystemMode('discipline')">📋 Discipline Mode</button>
+                <button id="raffleModeBtn" onclick="switchSystemMode('raffle')">Raffle Mode</button>
+                <button id="cashModeBtn" onclick="switchSystemMode('cash')">Wildcat Cash Mode</button>
+                <button id="hallPassModeBtn" onclick="switchSystemMode('hallpass')">Claw Pass</button>
+                <button id="disciplineModeBtn" onclick="switchSystemMode('discipline')">Discipline Mode</button>
             </div>
         </div>
 
@@ -574,41 +574,41 @@
                      action in the app. -->
                 <div class="sidebar-label">Overview</div>
                 <nav class="sidebar-nav">
-                    <button class="tab" id="dashboardTab" onclick="switchTab('dashboard')">🏫 Dashboard</button>
+                    <button class="tab" id="dashboardTab" onclick="switchTab('dashboard')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-dashboard"></use></svg> Dashboard</button>
                 </nav>
 
                 <div class="sidebar-label">Active mode</div>
                 <div class="mode-switcher">
                     <button class="mode-card" id="modeCard" type="button" onclick="toggleModeDropdown()">
                         <span class="mode-card-inner" id="modeCardInner">Choose a mode</span>
-                        <span class="mode-card-chev" id="modeCardChev">▾</span>
+                        <span class="mode-card-chev" id="modeCardChev"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-chevron-down"></use></svg></span>
                     </button>
                     <div class="mode-dropdown" id="modeDropdown" style="display: none;"></div>
                 </div>
 
                 <div class="sidebar-label mode-nav-label" id="modeNavLabel" style="display: none;"></div>
                 <nav class="tabs sidebar-nav" id="modeNav">
-                    <button class="tab active" id="ticketsTab" onclick="switchTab('tickets')">🎟️ Award Tickets</button>
-                    <button class="tab" id="myActivityTab" onclick="switchTab('myActivity')">📝 My Activity</button>
-                    <button class="tab" id="leaderboardTab" onclick="switchTab('leaderboard')">🏆 Leaderboard</button>
-                    <button class="tab admin-only" id="raffleTab" onclick="switchTab('raffle')">🎲 Run Raffle</button>
-                    <button class="tab admin-only" id="bigRaffleTab" onclick="switchTab('bigRaffle')">🎊 Wildcat Jackpot</button>
+                    <button class="tab active" id="ticketsTab" onclick="switchTab('tickets')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-ticket"></use></svg> Award Tickets</button>
+                    <button class="tab" id="myActivityTab" onclick="switchTab('myActivity')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-activity"></use></svg> My Activity</button>
+                    <button class="tab" id="leaderboardTab" onclick="switchTab('leaderboard')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-leaderboard"></use></svg> Leaderboard</button>
+                    <button class="tab admin-only" id="raffleTab" onclick="switchTab('raffle')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-dice"></use></svg> Run Raffle</button>
+                    <button class="tab admin-only" id="bigRaffleTab" onclick="switchTab('bigRaffle')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-jackpot"></use></svg> Wildcat Jackpot</button>
                 </nav>
                 <nav class="sidebar-nav" id="modeSubNav" style="display: none;"></nav>
 
                 <div class="sidebar-label">Insights</div>
                 <nav class="sidebar-nav">
-                    <button class="tab" id="dataTab" onclick="switchTab('data')">📊 Data &amp; Analytics</button>
-                    <button class="tab admin-only" id="auditTab" onclick="switchTab('audit')">📋 Audit Log</button>
+                    <button class="tab" id="dataTab" onclick="switchTab('data')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-analytics"></use></svg> Data &amp; Analytics</button>
+                    <button class="tab admin-only" id="auditTab" onclick="switchTab('audit')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-audit"></use></svg> Audit Log</button>
                 </nav>
 
                 <div class="sidebar-label admin-only">Admin</div>
                 <nav class="sidebar-nav">
-                    <button class="tab admin-only" id="studentsTab" onclick="switchTab('students')">👥 Students</button>
-                    <button class="tab admin-only" id="teachersTab" onclick="switchTab('teachers')">👨‍🏫 Teachers</button>
-                    <button class="tab admin-only" id="settingsTab" onclick="switchTab('settings')">⚙️ Settings</button>
-                    <button class="tab super-admin-only" id="loginActivityTab" onclick="switchTab('loginActivity')">🔐 Login Activity</button>
-                    <button class="tab super-admin-only tab-danger" id="systemTab" onclick="switchTab('system')">🔒 System Admin</button>
+                    <button class="tab admin-only" id="studentsTab" onclick="switchTab('students')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-students"></use></svg> Students</button>
+                    <button class="tab admin-only" id="teachersTab" onclick="switchTab('teachers')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-teachers"></use></svg> Teachers</button>
+                    <button class="tab admin-only" id="settingsTab" onclick="switchTab('settings')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-settings"></use></svg> Settings</button>
+                    <button class="tab super-admin-only" id="loginActivityTab" onclick="switchTab('loginActivity')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-key"></use></svg> Login Activity</button>
+                    <button class="tab super-admin-only tab-danger" id="systemTab" onclick="switchTab('system')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-lock"></use></svg> System Admin</button>
                 </nav>
               </div>
 
@@ -627,7 +627,7 @@
             <main class="app-content">
                 <div id="modeEmptyState" style="display: none;">
                     <div class="mode-empty-inner">
-                        <div class="mode-empty-icon">🧭</div>
+                        <div class="mode-empty-icon"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-compass"></use></svg></div>
                         <h2>Choose a mode to begin</h2>
                         <p>Pick Raffle, Wildcat Cash, Claw Pass, or Discipline from the sidebar to get started.</p>
                     </div>
@@ -650,7 +650,7 @@
             <div id="dashboard" class="tab-content">
                 <div class="page-header">
                     <div>
-                        <h2 class="page-title">🏫 Dashboard</h2>
+                        <h2 class="page-title"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-dashboard"></use></svg> Dashboard</h2>
                         <p class="page-subtitle">Today at Westbrook Academy</p>
                     </div>
                     <span class="mode-pill"></span>
@@ -1039,7 +1039,7 @@
                 </div>
 
                 <div class="search-bar">
-                    <input type="text" id="searchTickets" placeholder="🔍 Search students..." onkeyup="searchTicketsTable()">
+                    <input type="text" id="searchTickets" placeholder="Search students..." onkeyup="searchTicketsTable()">
                 </div>
 
                 <!-- Student table -->
@@ -1096,7 +1096,7 @@
 
                 <div class="search-bar">
                     <input type="text" id="searchMyActivity"
-                           placeholder="🔍 Search by student name, category, or reason..."
+                           placeholder="Search by student name, category, or reason..."
                            onkeyup="searchMyActivity()">
                 </div>
 
@@ -1392,7 +1392,7 @@
                 </details>
 
                 <div class="search-bar">
-                    <input type="text" id="searchAudit" placeholder="🔍 Search by student, teacher, or category..." onkeyup="searchAuditLog()">
+                    <input type="text" id="searchAudit" placeholder="Search by student, teacher, or category..." onkeyup="searchAuditLog()">
                 </div>
 
                 <div class="wc-card table-card wu-scroll-x">
@@ -1433,7 +1433,7 @@
                 <div class="wc-card filter-card">
                     <div class="filter-row">
                         <div>
-                            <h3 class="filter-title">📅 Time Period</h3>
+                            <h3 class="filter-title"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-calendar"></use></svg> Time Period</h3>
                             <p class="filter-sub">Filter data by date range</p>
                         </div>
                         <div class="filter-btns">
@@ -2585,7 +2585,7 @@
                                 Allow negative balances
                             </label>
                         </div>
-                        <button class="btn" onclick="saveCashSettings()">💾 Save Settings</button>
+                        <button class="btn" onclick="saveCashSettings()"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-save"></use></svg> Save Settings</button>
                         
                         <!-- Start of year. Separated from the Danger Zone below
                              because it is a planned, routine action with a backup
@@ -2660,7 +2660,7 @@
                     <div style="background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); padding: 25px; margin-bottom: 30px;">
                         <h3 style="margin: 0 0 5px 0; color: #333;">🎟️ Find &amp; Fix Tickets</h3>
                         <p style="margin: 0 0 15px 0; color: #666; font-size: 13px;">Search a student, then edit a ticket's week/cycle or remove it entirely.</p>
-                        <input type="text" id="correctionStudentSearch" placeholder="🔍 Type a student's name..."
+                        <input type="text" id="correctionStudentSearch" placeholder="Type a student's name..."
                                onkeyup="correctionSearchStudents()"
                                style="width: 100%; max-width: 400px; padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px;">
                         <div id="correctionStudentResults" style="margin-top: 12px;"></div>
@@ -2884,9 +2884,9 @@
                  ======================================== -->
             
             <div id="disciplineContent" style="display: none;">
-                <h2 style="margin-bottom: 20px; color: #f59e0b;">📋 Discipline Mode - Behavior Referral System</h2>
+                <h2 style="margin-bottom: 20px; color: #f59e0b;">Discipline Mode - Behavior Referral System</h2>
                 <p style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; border-radius: 4px; margin-bottom: 25px;">
-                    <strong>📋 Discipline Mode:</strong> Comprehensive behavior tracking, referral management, and student discipline analytics.
+                    <strong>Discipline Mode:</strong> Comprehensive behavior tracking, referral management, and student discipline analytics.
                 </p>
 
                 <!-- Discipline Subtabs -->
@@ -3128,7 +3128,7 @@
                         </div>
                         <p class="panel-hint" style="margin: 0 0 12px 0;">All referrals that have been closed and resolved.</p>
                         <div class="search-bar" style="margin-bottom: 0;">
-                            <input type="text" id="searchClosedReferrals" placeholder="🔍 Search by student name or ID..."
+                            <input type="text" id="searchClosedReferrals" placeholder="Search by student name or ID..."
                                    onkeyup="updateClosedReferralsList()">
                         </div>
                     </div>
@@ -3621,8 +3621,8 @@
                         <div class="panel-head"><span class="panel-icon">🎯</span><h3>Behavior</h3></div>
                         <select id="cashBehaviorType" onchange="updateCashBehaviorOptions()" class="wc-select" class="wc-select">
                             <option value="">Select Type...</option>
-                            <option value="positive">✅ Positive Behaviors</option>
-                            <option value="negative">❌ Negative Behaviors</option>
+                            <option value="positive">Positive Behaviors</option>
+                            <option value="negative">Negative Behaviors</option>
                         </select>
                         <select id="cashBehaviorSelect" class="wc-select" class="wc-select">
                             <option value="">Select behavior...</option>
@@ -3824,7 +3824,7 @@
                     </div>
                     
                     <div style="flex: 1; min-width: 300px;">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">🔍 Search Students:</label>
+                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-search"></use></svg> Search Students:</label>
                         <input type="text" id="accountSearch" placeholder="Search by name or ID..." onkeyup="filterStudentAccounts()" class="wc-input">
                     </div>
                 </div>
@@ -4101,7 +4101,7 @@
                 <p style="margin: 15px 0 25px 0; color: #666;">Track all cash awards, deductions, and reward redemptions</p>
 
                 <div class="search-bar">
-                    <input type="text" id="searchCashAudit" placeholder="🔍 Search by student, teacher, or behavior..." onkeyup="searchCashAuditLog()">
+                    <input type="text" id="searchCashAudit" placeholder="Search by student, teacher, or behavior..." onkeyup="searchCashAuditLog()">
                 </div>
 
                 <div class="wc-card table-card wu-scroll-x">
@@ -4149,22 +4149,22 @@
                          no class list and whose beat is the building; wcSyncPassNavLabel
                          writes the name. -->
                     <button class="subtab-button active" onclick="switchHallPassTab('myClass')" id="myClassTabBtn">
-                        🧑‍🏫 My Class
+                        <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-class"></use></svg> My Class
                     </button>
                     <button class="subtab-button" onclick="switchHallPassTab('hallMonitor')" id="hallMonitorTabBtn">
-                        👁️ Hall Monitor
+                        <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-monitor"></use></svg> Hall Monitor
                     </button>
                     <button class="subtab-button" onclick="switchHallPassTab('snapshot')" id="snapshotTabBtn">
-                        📊 Student Snapshot
+                        <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-snapshot"></use></svg> Student Snapshot
                     </button>
                     <button class="subtab-button" onclick="switchHallPassTab('encounterPrevention')" id="encounterPreventionTabBtn">
-                        🚨 Encounter Prevention
+                        <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-alert"></use></svg> Encounter Prevention
                     </button>
                     <button class="subtab-button" onclick="switchHallPassTab('history')" id="historyTabBtn">
-                        📋 Pass History
+                        <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-history"></use></svg> Pass History
                     </button>
                     <button class="subtab-button" onclick="switchHallPassTab('passSettings')" id="passSettingsTabBtn">
-                        ⚙️ Pass Settings
+                        <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-sliders"></use></svg> Pass Settings
                     </button>
                 </div>
 
@@ -4180,7 +4180,7 @@
 
                 <!-- Hall Monitor Tab -->
                 <div id="hallMonitorTab" class="hall-pass-tab" style="display: none;">
-                    <h2 style="margin-bottom: 20px;">👁️ Hall Monitor - Live Pass Tracking</h2>
+                    <h2 style="margin-bottom: 20px;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-monitor"></use></svg> Hall Monitor - Live Pass Tracking</h2>
                     <p style="color: #666; margin-bottom: 25px;">Monitor all active hall passes in real-time. Automatically refreshes every 30 seconds.</p>
                     
                     <!-- Summary Stats -->
@@ -4189,36 +4189,36 @@
                             <div id="statBoxActive" onclick="filterByStatBox('active')" style="text-align: center; padding: 20px; background: #2F67A7; border-radius: 10px; cursor: pointer; transition: all 0.3s; position: relative; border: 3px solid transparent;">
                                 <div style="font-size: 36px; font-weight: 700; color: white;" id="totalActivePasses">0</div>
                                 <div style="color: white; font-size: 14px; margin-top: 5px;">Active Now</div>
-                                <div id="checkActive" style="display: none; position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.3); border-radius: 50%; width: 30px; height: 30px; line-height: 30px; font-size: 18px;">✓</div>
+                                <div id="checkActive" style="display: none; position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.3); border-radius: 50%; width: 30px; height: 30px; line-height: 30px; font-size: 18px;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-check"></use></svg></div>
                             </div>
                             <div id="statBoxExpiring" onclick="filterByStatBox('expiring')" style="text-align: center; padding: 20px; background: #C08A2E; border-radius: 10px; cursor: pointer; transition: all 0.3s; position: relative; border: 3px solid transparent;">
                                 <div style="font-size: 36px; font-weight: 700; color: white;" id="expiringSoonPasses">0</div>
-                                <div style="color: white; font-size: 14px; margin-top: 5px;">⚠️ Expiring Soon</div>
-                                <div id="checkExpiring" style="display: none; position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.3); border-radius: 50%; width: 30px; height: 30px; line-height: 30px; font-size: 18px;">✓</div>
+                                <div style="color: white; font-size: 14px; margin-top: 5px;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-warning"></use></svg> Expiring Soon</div>
+                                <div id="checkExpiring" style="display: none; position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.3); border-radius: 50%; width: 30px; height: 30px; line-height: 30px; font-size: 18px;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-check"></use></svg></div>
                             </div>
                             <div id="statBoxExpired" onclick="filterByStatBox('expired')" style="text-align: center; padding: 20px; background: #b3392f; border-radius: 10px; cursor: pointer; transition: all 0.3s; position: relative; border: 3px solid transparent;">
                                 <div style="font-size: 36px; font-weight: 700; color: white;" id="expiredPasses">0</div>
-                                <div style="color: white; font-size: 14px; margin-top: 5px;">🔴 Overtime</div>
-                                <div id="checkExpired" style="display: none; position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.3); border-radius: 50%; width: 30px; height: 30px; line-height: 30px; font-size: 18px;">✓</div>
+                                <div style="color: white; font-size: 14px; margin-top: 5px;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-alert-circle"></use></svg> Overtime</div>
+                                <div id="checkExpired" style="display: none; position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.3); border-radius: 50%; width: 30px; height: 30px; line-height: 30px; font-size: 18px;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-check"></use></svg></div>
                             </div>
                             <div id="statBoxAll" onclick="filterByStatBox('all')" style="text-align: center; padding: 20px; background: #2F67A7; border-radius: 10px; cursor: pointer; transition: all 0.3s; position: relative; border: 3px solid transparent;">
                                 <div style="font-size: 36px; font-weight: 700; color: white;" id="todayTotalPasses">0</div>
                                 <div style="color: white; font-size: 14px; margin-top: 5px;">All Passes Today</div>
-                                <div id="checkAll" style="display: none; position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.3); border-radius: 50%; width: 30px; height: 30px; line-height: 30px; font-size: 18px;">✓</div>
+                                <div id="checkAll" style="display: none; position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.3); border-radius: 50%; width: 30px; height: 30px; line-height: 30px; font-size: 18px;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-check"></use></svg></div>
                             </div>
                         </div>
                     </div>
 
                     <!-- School Campus Selector -->
                     <div class="wc-card panel-card">
-                        <h3 style="margin-bottom: 15px;">🏫 School Campus</h3>
+                        <h3 style="margin-bottom: 15px;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-campus"></use></svg> School Campus</h3>
                         <p style="color: #666; margin-bottom: 15px;">Select which school's passes to monitor. This filters the passes shown below.</p>
                         
                         <div style="display: flex; gap: 15px;">
                             <label style="flex: 1; cursor: pointer;">
                                 <input type="radio" name="monitorSchoolCampus" value="highschool" onclick="switchSchool('highschool')" style="display: none;">
                                 <div id="monitorHsSchoolCard" style="border: 3px solid #2F67A7; background: #2F67A7; color: white; padding: 20px; border-radius: 12px; text-align: center; transition: all 0.3s;">
-                                    <div style="font-size: 32px; margin-bottom: 10px;">🎓</div>
+                                    <div style="font-size: 32px; margin-bottom: 10px;"><svg class="wc-icon wc-icon-lg" aria-hidden="true" focusable="false"><use href="#wci-teachers"></use></svg></div>
                                     <div style="font-weight: 600; font-size: 18px;">High School</div>
                                     <div style="font-size: 14px; opacity: 0.9; margin-top: 5px;">Grades 9-12</div>
                                 </div>
@@ -4227,7 +4227,7 @@
                             <label style="flex: 1; cursor: pointer;">
                                 <input type="radio" name="monitorSchoolCampus" value="middleschool" onclick="switchSchool('middleschool')" style="display: none;">
                                 <div id="monitorMsSchoolCard" style="border: 3px solid #e0e0e0; background: white; color: #666; padding: 20px; border-radius: 12px; text-align: center; transition: all 0.3s;">
-                                    <div style="font-size: 32px; margin-bottom: 10px;">📚</div>
+                                    <div style="font-size: 32px; margin-bottom: 10px;"><svg class="wc-icon wc-icon-lg" aria-hidden="true" focusable="false"><use href="#wci-book"></use></svg></div>
                                     <div style="font-weight: 600; font-size: 18px;">Middle School</div>
                                     <div style="font-size: 14px; opacity: 0.7; margin-top: 5px;">Grades 6-8</div>
                                 </div>
@@ -4238,22 +4238,22 @@
                     <!-- Filters and Search -->
                     <div class="wc-card panel-card">
                         <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: center;">
-                            <input type="text" id="monitorSearch" placeholder="🔍 Search student name or ID..." onkeyup="updateHallMonitor()" style="flex: 1; min-width: 250px; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
+                            <input type="text" id="monitorSearch" placeholder="Search student name or ID..." onkeyup="updateHallMonitor()" style="flex: 1; min-width: 250px; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
                             <select id="monitorDestinationFilter" onchange="updateHallMonitor()" style="padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
                                 <option value="all">All Destinations</option>
-                                <option value="bathroom">🚻 Bathroom</option>
-                                <option value="office">🏢 Office</option>
-                                <option value="classroom">📚 Classroom</option>
-                                <option value="wellness">💚 Wellness</option>
+                                <option value="bathroom">Bathroom</option>
+                                <option value="office">Office</option>
+                                <option value="classroom">Classroom</option>
+                                <option value="wellness">Wellness</option>
                             </select>
                             <select id="monitorStatusFilter" onchange="syncStatBoxes(); updateHallMonitor();" style="padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
                                 <option value="all">All Statuses</option>
-                                <option value="active">✅ Active Only</option>
-                                <option value="expiring">⚠️ Expiring Soon</option>
+                                <option value="active">Active Only</option>
+                                <option value="expiring">Expiring Soon</option>
                                 <option value="expired">⏱️ Overtime</option>
                             </select>
                             <button class="btn" onclick="updateHallMonitor()" style="padding: 12px 20px;">
-                                🔄 Refresh
+                                <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-refresh"></use></svg> Refresh
                             </button>
                         </div>
                     </div>
@@ -4261,7 +4261,7 @@
                     <!-- Active Passes Grid -->
                     <div id="activePassesGrid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 20px;">
                         <div style="grid-column: 1/-1; text-align: center; padding: 60px 20px; color: #999; background: white; border-radius: 12px;">
-                            <div style="font-size: 48px; margin-bottom: 15px;">🎫</div>
+                            <div style="font-size: 48px; margin-bottom: 15px;"><svg class="wc-icon wc-icon-lg" aria-hidden="true" focusable="false"><use href="#wci-pass"></use></svg></div>
                             <p style="font-size: 18px; margin: 0;">No active passes to monitor</p>
                             <p style="font-size: 14px; margin: 10px 0 0 0;">Passes will appear here as they are opened</p>
                         </div>
@@ -4270,11 +4270,11 @@
 
                 <!-- Student Snapshot Tab -->
                 <div id="snapshotTab" class="hall-pass-tab" style="display: none;">
-                    <h2 style="margin-bottom: 20px;">📊 Student Snapshot</h2>
+                    <h2 style="margin-bottom: 20px;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-snapshot"></use></svg> Student Snapshot</h2>
                     
                     <!-- Student Search -->
                     <div class="wc-card panel-card">
-                        <h3 style="margin-bottom: 15px;">🔍 Search Student</h3>
+                        <h3 style="margin-bottom: 15px;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-search"></use></svg> Search Student</h3>
                         <div style="position: relative;">
                             <input type="text" 
                                    id="snapshotStudentSearch" 
@@ -4286,7 +4286,7 @@
                             <!-- Search Results Dropdown -->
                             <div id="snapshotSearchResults" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 2px solid #667eea; border-top: none; border-radius: 0 0 8px 8px; max-height: 300px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"></div>
                         </div>
-                        <small style="color: #666; display: block; margin-top: 8px;">💡 Start typing to see matching students, then click or press Enter</small>
+                        <small style="color: #666; display: block; margin-top: 8px;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-bulb"></use></svg> Start typing to see matching students, then click or press Enter</small>
                     </div>
 
                     <!-- Snapshot Content (hidden until student selected) -->
@@ -4304,7 +4304,7 @@
                                 </div>
                                 <div>
                                     <button class="btn" onclick="openPassLimitModal()" style="background: rgba(255,255,255,0.2); backdrop-filter: blur(10px); border: 2px solid white;">
-                                        🚦 Set Pass Limit
+                                        <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-limit"></use></svg> Set Pass Limit
                                     </button>
                                 </div>
                             </div>
@@ -4312,7 +4312,7 @@
 
                         <!-- Time Period Filter -->
                         <div class="wc-card panel-card">
-                            <h3 style="margin-bottom: 15px;">📅 Time Period</h3>
+                            <h3 style="margin-bottom: 15px;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-calendar"></use></svg> Time Period</h3>
                             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                                 <button class="btn" onclick="setSnapshotPeriod('today')" id="snapshotToday" style="background: #2F67A7; color: white;">Today</button>
                                 <button class="btn btn-secondary" onclick="setSnapshotPeriod('week')" id="snapshotWeek">Last 7 Days</button>
@@ -4359,7 +4359,7 @@
 
                         <!-- Per-Period Breakdown -->
                         <div class="wc-card panel-card">
-                            <h3 style="margin-bottom: 20px;">📚 Time Missed by Class Period</h3>
+                            <h3 style="margin-bottom: 20px;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-book"></use></svg> Time Missed by Class Period</h3>
                             <div style="overflow-x: auto;">
                                 <table class="student-table">
                                     <thead style="background: #2F67A7;">
@@ -4391,30 +4391,30 @@
                     <!-- Test Mode Banner -->
                     <div id="testModeBanner" style="background: #C08A2E; color: white; padding: 20px; border-radius: 12px; margin-bottom: 25px; display: none;">
                         <div style="display: flex; align-items: center; gap: 15px;">
-                            <div style="font-size: 36px;">🧪</div>
+                            <div style="font-size: 36px;"><svg class="wc-icon wc-icon-lg" aria-hidden="true" focusable="false"><use href="#wci-flask"></use></svg></div>
                             <div style="flex: 1;">
                                 <h3 style="margin: 0 0 5px 0;">Test Mode Active</h3>
                                 <p style="margin: 0; opacity: 0.9; font-size: 14px;">You are using simulated data. No real students are affected.</p>
                             </div>
                             <button class="btn" onclick="toggleEncounterTestMode()" style="background: rgba(255,255,255,0.2); border: 2px solid white;">
-                                🔴 Switch to Live Mode
+                                <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-zap"></use></svg> Switch to Live Mode
                             </button>
                         </div>
                     </div>
 
-                    <h2 style="margin-bottom: 20px;">🚨 Encounter Prevention System</h2>
+                    <h2 style="margin-bottom: 20px;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-alert"></use></svg> Encounter Prevention System</h2>
                     <p style="color: #666; margin-bottom: 25px;">Detect patterns of coordinated hall pass usage and prevent unwanted student encounters.</p>
 
                     <!-- Sub-tabs -->
                     <div style="display: flex; gap: 10px; margin-bottom: 25px; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px;">
                         <button class="encounter-subtab active" onclick="switchEncounterTab('patterns')" id="patternsSubtabBtn" style="padding: 10px 20px; background: #2F67A7; color: white; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
-                            📊 Pattern Detection
+                            <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-analytics"></use></svg> Pattern Detection
                         </button>
                         <button class="encounter-subtab" onclick="switchEncounterTab('groups')" id="groupsSubtabBtn" style="padding: 10px 20px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
-                            🛡️ Prevention Groups
+                            <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-shield"></use></svg> Prevention Groups
                         </button>
                         <button class="encounter-subtab" onclick="switchEncounterTab('test')" id="testSubtabBtn" style="padding: 10px 20px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
-                            🧪 Test Mode
+                            <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-flask"></use></svg> Test Mode
                         </button>
                     </div>
 
@@ -4430,7 +4430,7 @@
                                     <option value="90">Last 90 Days</option>
                                 </select>
                                 <button class="btn" onclick="analyzeEncounterPatterns()" style="padding: 12px 20px; background: #2F67A7;">
-                                    🔍 Analyze Patterns
+                                    <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-search"></use></svg> Analyze Patterns
                                 </button>
                                 <div id="patternAnalysisStatus" style="color: #666; font-size: 14px;"></div>
                             </div>
@@ -4445,7 +4445,7 @@
                             <div style="display: flex; justify-content: space-between; align-items: center;">
                                 <h3 style="margin: 0;">Active Prevention Groups</h3>
                                 <button class="btn" onclick="openCreateGroupModal()" style="padding: 12px 20px; background: #10b981;">
-                                    ➕ Create New Group
+                                    <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-plus"></use></svg> Create New Group
                                 </button>
                             </div>
                         </div>
@@ -4456,7 +4456,7 @@
                     <!-- Test Mode Subtab -->
                     <div id="testSubtab" class="encounter-subtab-content" style="display: none;">
                         <div class="wc-card panel-card">
-                            <h3 style="margin-bottom: 20px;">🧪 Test Mode Controls</h3>
+                            <h3 style="margin-bottom: 20px;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-flask"></use></svg> Test Mode Controls</h3>
                             
                             <div style="background: #fef3c7; padding: 20px; border-radius: 8px; border-left: 4px solid #fbbf24; margin-bottom: 25px;">
                                 <p style="margin: 0; color: #92400e;">
@@ -4467,7 +4467,7 @@
                             <div style="display: grid; gap: 20px;">
                                 <div>
                                     <button class="btn" onclick="generateTestData()" style="width: 100%; padding: 15px; background: #3b82f6;">
-                                        🎲 Generate Random Test Patterns
+                                        <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-dice"></use></svg> Generate Random Test Patterns
                                     </button>
                                     <small style="color: #666; display: block; margin-top: 5px;">
                                         Creates 10 fake students (IDs: TEST1001-TEST1010) and 50 passes with 3-5 suspicious patterns
@@ -4476,7 +4476,7 @@
 
                                 <div>
                                     <button class="btn" onclick="generateVapingScenario()" style="width: 100%; padding: 15px; background: #8b5cf6;">
-                                        💨 Generate Vaping Scenario
+                                        <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-wind"></use></svg> Generate Vaping Scenario
                                     </button>
                                     <small style="color: #666; display: block; margin-top: 5px;">
                                         Creates 2 students (IDs: TEST2001, TEST2002) with 7 bathroom overlaps (high suspicion)
@@ -4484,7 +4484,7 @@
                                 </div>
                                 
                                 <div style="background: #e0e7ff; padding: 15px; border-radius: 8px; border-left: 4px solid #667eea;">
-                                    <strong style="color: #3730a3;">💡 Testing Tip:</strong>
+                                    <strong style="color: #3730a3;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-bulb"></use></svg> Testing Tip:</strong>
                                     <p style="margin: 8px 0 0 0; color: #3730a3; font-size: 14px;">
                                         After generating test data, open a pass for any test student from My Class (TEST1001-TEST1010 or TEST2001-TEST2002) to create overlapping test passes and see blocking in action!
                                     </p>
@@ -4492,7 +4492,7 @@
 
                                 <div>
                                     <button class="btn" onclick="clearTestData()" style="width: 100%; padding: 15px; background: #ef4444;">
-                                        🗑️ Clear All Test Data
+                                        <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-trash"></use></svg> Clear All Test Data
                                     </button>
                                     <small style="color: #666; display: block; margin-top: 5px;">
                                         Removes all test students, passes, and patterns
@@ -4502,11 +4502,11 @@
                                 <div style="border-top: 2px solid #e0e0e0; padding-top: 20px;">
                                     <div style="background: #e0e7ff; padding: 20px; border-radius: 8px; margin-bottom: 15px;">
                                         <p style="margin: 0; color: #3730a3;">
-                                            <strong>Current Mode:</strong> <span id="currentModeDisplay">🧪 Test Mode</span>
+                                            <strong>Current Mode:</strong> <span id="currentModeDisplay"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-flask"></use></svg> Test Mode</span>
                                         </p>
                                     </div>
                                     <button class="btn" onclick="toggleEncounterTestMode()" id="modeToggleBtn" style="width: 100%; padding: 15px; background: #dc2626;">
-                                        🔴 Switch to Live Mode
+                                        <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-zap"></use></svg> Switch to Live Mode
                                     </button>
                                     <small style="color: #666; display: block; margin-top: 5px;">
                                         Live mode uses real student data for pattern detection
@@ -4519,10 +4519,10 @@
 
                 <!-- Pass History Tab -->
                 <div id="historyTab" class="hall-pass-tab" style="display: none;">
-                    <h2 style="margin-bottom: 20px;">📋 Hall Pass History</h2>
+                    <h2 style="margin-bottom: 20px;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-history"></use></svg> Hall Pass History</h2>
                     
                     <div style="display: flex; gap: 20px; margin-bottom: 20px; flex-wrap: wrap;">
-                        <input type="text" id="passHistorySearch" placeholder="🔍 Search by student name or ID..." onkeyup="filterPassHistory()" style="flex: 1; min-width: 300px; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
+                        <input type="text" id="passHistorySearch" placeholder="Search by student name or ID..." onkeyup="filterPassHistory()" style="flex: 1; min-width: 300px; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
                         <select id="passHistoryFilter" onchange="filterPassHistory()" style="padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
                             <option value="all">All Destinations</option>
                             <option value="bathroom">Bathroom</option>
@@ -4561,16 +4561,16 @@
 
                 <!-- Pass Settings Tab -->
                 <div id="passSettingsTab" class="hall-pass-tab" style="display: none;">
-                    <h2 style="margin-bottom: 20px;">⚙️ Hall Pass Settings</h2>
+                    <h2 style="margin-bottom: 20px;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-sliders"></use></svg> Hall Pass Settings</h2>
                     
                     <!-- Bell Schedule Configuration -->
                     <div class="wc-card panel-card">
-                        <h3 style="margin-bottom: 15px;">📅 Bell Schedule Configuration</h3>
+                        <h3 style="margin-bottom: 15px;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-calendar"></use></svg> Bell Schedule Configuration</h3>
                         <p style="color: #666; margin-bottom: 20px;">Configure which schedule is active today. The system will auto-detect which period students are in when they create a pass.</p>
                         
                         <div style="background: #f0f9ff; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #667eea;">
                             <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-                                <span style="font-size: 24px;">📍</span>
+                                <span style="font-size: 24px;"><svg class="wc-icon wc-icon-lg" aria-hidden="true" focusable="false"><use href="#wci-pin"></use></svg></span>
                                 <div>
                                     <div style="font-weight: 600; color: #333;">Current Period Detection</div>
                                     <div style="font-size: 13px; color: #666;">Students' current teacher and class will be auto-filled based on their schedule</div>
@@ -4581,18 +4581,18 @@
                         <div style="margin-bottom: 20px;">
                             <label style="display: block; margin-bottom: 8px; font-weight: 600;">Today's Active Schedule</label>
                             <select id="activeScheduleSelect" onchange="updateActiveSchedule()" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 16px;">
-                                <option value="auto">🤖 Auto-Detect (Recommended)</option>
+                                <option value="auto">Auto-Detect (Recommended)</option>
                                 <optgroup label="── Block Schedules ──">
-                                    <option value="mondayBlock1">📅 Monday - Block 1</option>
-                                    <option value="tuesdayBlock2">📅 Tuesday - Block 2</option>
-                                    <option value="wednesdayAll">📅 Wednesday - All Periods</option>
-                                    <option value="thursdayBlock1">📅 Thursday - Block 1</option>
-                                    <option value="fridayBlock2">📅 Friday - Block 2</option>
+                                    <option value="mondayBlock1">Monday - Block 1</option>
+                                    <option value="tuesdayBlock2">Tuesday - Block 2</option>
+                                    <option value="wednesdayAll">Wednesday - All Periods</option>
+                                    <option value="thursdayBlock1">Thursday - Block 1</option>
+                                    <option value="fridayBlock2">Friday - Block 2</option>
                                 </optgroup>
                                 <optgroup label="── Special Schedules ──">
                                     <option value="minimumDayBlock1">⏰ Minimum Day - Block 1</option>
                                     <option value="minimumDayBlock2">⏰ Minimum Day - Block 2</option>
-                                    <option value="assembly">🎤 Assembly Schedule</option>
+                                    <option value="assembly">Assembly Schedule</option>
                                 </optgroup>
                                 <optgroup label="── Custom Schedules ──" id="customSchedulesOptgroupSettings">
                                     <!-- Custom schedules will be added here dynamically -->
@@ -4611,10 +4611,10 @@
                         
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
                             <button class="btn" onclick="viewScheduleDetails()" style="width: 100%; padding: 12px; background: #4facfe;">
-                                👁️ View Schedule
+                                <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-monitor"></use></svg> View Schedule
                             </button>
                             <button class="btn" onclick="openScheduleEditor()" style="width: 100%; padding: 12px; background: #2F67A7;">
-                                ✏️ Edit Schedules
+                                <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-edit"></use></svg> Edit Schedules
                             </button>
                         </div>
                     </div>
@@ -4625,39 +4625,39 @@
                         
                         <div style="display: grid; gap: 20px;">
                             <div>
-                                <label style="display: block; margin-bottom: 8px; font-weight: 600;">🚻 Bathroom Pass Duration (minutes)</label>
+                                <label style="display: block; margin-bottom: 8px; font-weight: 600;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-user"></use></svg> Bathroom Pass Duration (minutes)</label>
                                 <input type="number" id="bathroomDuration" value="5" min="1" max="30" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
                             </div>
                             
                             <div>
-                                <label style="display: block; margin-bottom: 8px; font-weight: 600;">🏢 Office Pass Duration (minutes)</label>
+                                <label style="display: block; margin-bottom: 8px; font-weight: 600;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-office"></use></svg> Office Pass Duration (minutes)</label>
                                 <input type="number" id="officeDuration" value="10" min="1" max="30" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
                             </div>
                             
                             <div>
-                                <label style="display: block; margin-bottom: 8px; font-weight: 600;">📚 Classroom Pass Duration (minutes)</label>
+                                <label style="display: block; margin-bottom: 8px; font-weight: 600;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-book"></use></svg> Classroom Pass Duration (minutes)</label>
                                 <input type="number" id="classroomDuration" value="15" min="1" max="30" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
                             </div>
                             
                             <div>
-                                <label style="display: block; margin-bottom: 8px; font-weight: 600;">💚 Wellness Center Duration (minutes)</label>
+                                <label style="display: block; margin-bottom: 8px; font-weight: 600;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-heart"></use></svg> Wellness Center Duration (minutes)</label>
                                 <input type="number" id="wellnessDuration" value="20" min="1" max="60" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
                             </div>
                         </div>
 
                         <button class="btn" onclick="savePassSettings()" style="width: 100%; margin-top: 25px; padding: 15px; font-size: 16px; background: #2F67A7;">
-                            💾 Save Settings
+                            <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-save"></use></svg> Save Settings
                         </button>
                     </div>
                     
                     <!-- Data Management (Beta Testing) -->
                     <div class="wc-card panel-card">
-                        <h3 style="margin-bottom: 15px; color: #ef4444;">🗑️ Data Management</h3>
+                        <h3 style="margin-bottom: 15px; color: #ef4444;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-trash"></use></svg> Data Management</h3>
                         <p style="color: #666; margin-bottom: 20px;">Use these options to reset ClawPass data after beta testing or at the end of a school year.</p>
                         
                         <div style="background: #fee2e2; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #ef4444;">
                             <div style="display: flex; align-items: start; gap: 10px;">
-                                <span style="font-size: 24px;">⚠️</span>
+                                <span style="font-size: 24px;"><svg class="wc-icon wc-icon-lg" aria-hidden="true" focusable="false"><use href="#wci-warning"></use></svg></span>
                                 <div>
                                     <div style="font-weight: 600; color: #991b1b; margin-bottom: 8px;">Warning: This Cannot Be Undone!</div>
                                     <div style="font-size: 14px; color: #991b1b;">
@@ -4670,23 +4670,23 @@
                         <div style="background: #f9fafb; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
                             <h4 style="margin-bottom: 15px; color: #333;">What will be deleted:</h4>
                             <ul style="margin: 0; padding-left: 20px; color: #666;">
-                                <li style="margin-bottom: 8px;">❌ All hall pass history (active, returned, overtime)</li>
-                                <li style="margin-bottom: 8px;">❌ All student daily pass limits</li>
-                                <li style="margin-bottom: 8px;">❌ Pass statistics and analytics data</li>
+                                <li style="margin-bottom: 8px;"><svg class="wc-icon wc-icon-bad" aria-hidden="true" focusable="false"><use href="#wci-x-circle"></use></svg> All hall pass history (active, returned, overtime)</li>
+                                <li style="margin-bottom: 8px;"><svg class="wc-icon wc-icon-bad" aria-hidden="true" focusable="false"><use href="#wci-x-circle"></use></svg> All student daily pass limits</li>
+                                <li style="margin-bottom: 8px;"><svg class="wc-icon wc-icon-bad" aria-hidden="true" focusable="false"><use href="#wci-x-circle"></use></svg> Pass statistics and analytics data</li>
                             </ul>
                             
                             <h4 style="margin: 20px 0 15px 0; color: #333;">What will be preserved:</h4>
                             <ul style="margin: 0; padding-left: 20px; color: #10b981; font-weight: 600;">
-                                <li style="margin-bottom: 8px;">✅ Student information and schedules</li>
-                                <li style="margin-bottom: 8px;">✅ Teacher accounts and class rosters</li>
-                                <li style="margin-bottom: 8px;">✅ All raffle tickets and history</li>
-                                <li style="margin-bottom: 8px;">✅ All Wildcat Cash balances and transactions</li>
-                                <li style="margin-bottom: 8px;">✅ Bell schedules and settings</li>
+                                <li style="margin-bottom: 8px;"><svg class="wc-icon wc-icon-good" aria-hidden="true" focusable="false"><use href="#wci-check-circle"></use></svg> Student information and schedules</li>
+                                <li style="margin-bottom: 8px;"><svg class="wc-icon wc-icon-good" aria-hidden="true" focusable="false"><use href="#wci-check-circle"></use></svg> Teacher accounts and class rosters</li>
+                                <li style="margin-bottom: 8px;"><svg class="wc-icon wc-icon-good" aria-hidden="true" focusable="false"><use href="#wci-check-circle"></use></svg> All raffle tickets and history</li>
+                                <li style="margin-bottom: 8px;"><svg class="wc-icon wc-icon-good" aria-hidden="true" focusable="false"><use href="#wci-check-circle"></use></svg> All Wildcat Cash balances and transactions</li>
+                                <li style="margin-bottom: 8px;"><svg class="wc-icon wc-icon-good" aria-hidden="true" focusable="false"><use href="#wci-check-circle"></use></svg> Bell schedules and settings</li>
                             </ul>
                         </div>
                         
                         <button class="btn" onclick="confirmClawPassReset()" style="width: 100%; padding: 15px; font-size: 16px; background: #ef4444; color: white;">
-                            🗑️ Reset All ClawPass Data
+                            <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-trash"></use></svg> Reset All ClawPass Data
                         </button>
                     </div>
                 </div>
@@ -4700,7 +4700,7 @@
     <!-- Active Hall Pass Display Modal -->
     <div id="activePassModal" class="login-container hidden" style="margin-top: 50px; max-width: 500px;">
         <div style="text-align: center; padding: 30px; background: #2F67A7; border-radius: 12px 12px 0 0; margin: -30px -30px 20px -30px;">
-            <h1 style="color: white; font-size: 36px; margin: 0 0 10px 0;">✅ Pass Created!</h1>
+            <h1 style="color: white; font-size: 36px; margin: 0 0 10px 0;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-check-circle"></use></svg> Pass Created!</h1>
             <div style="background: rgba(255,255,255,0.2); backdrop-filter: blur(10px); padding: 15px; border-radius: 10px; margin-top: 20px;">
                 <div id="passTimerDisplay" style="font-size: 48px; font-weight: 700; color: white;">5:00</div>
                 <div style="color: white; font-size: 14px; margin-top: 5px;">Time Remaining</div>
@@ -4748,7 +4748,7 @@
 
     <div id="editTeacherModal" class="modal hidden">
         <div class="modal-content" style="max-width: 500px;">
-            <h2>✏️ Edit Teacher</h2>
+            <h2><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-edit"></use></svg> Edit Teacher</h2>
             <p style="color: #666; margin-bottom: 20px;">Update teacher information</p>
             
             <div class="form-group">
@@ -4778,7 +4778,7 @@
             </div>
             
             <div style="display: flex; gap: 10px; margin-top: 20px;">
-                <button class="btn" onclick="saveTeacherEdit()" style="flex: 1;">💾 Save Changes</button>
+                <button class="btn" onclick="saveTeacherEdit()" style="flex: 1;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-save"></use></svg> Save Changes</button>
                 <button class="btn btn-secondary" onclick="closeEditTeacherModal()" style="flex: 1;">Cancel</button>
             </div>
         </div>
@@ -4787,7 +4787,7 @@
     <!-- Pass Limit Modal -->
     <div id="passLimitModal" class="modal hidden">
         <div class="modal-content" style="max-width: 500px;">
-            <h2>🚦 Set Daily Pass Limit</h2>
+            <h2><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-limit"></use></svg> Set Daily Pass Limit</h2>
             <p style="color: #666; margin-bottom: 20px;">Set a maximum number of passes this student can create per day.</p>
             
             <div style="margin-bottom: 20px;">
@@ -4809,7 +4809,7 @@
             
             <div style="display: flex; gap: 10px;">
                 <button class="btn" onclick="savePassLimit()" style="flex: 1; background: #10b981;">
-                    💾 Save Limit
+                    <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-save"></use></svg> Save Limit
                 </button>
                 <button class="btn btn-secondary" onclick="closePassLimitModal()" style="flex: 1;">
                     Cancel
@@ -4821,7 +4821,7 @@
     <!-- ClawPass Data Reset Confirmation Modal -->
     <div id="clawPassResetModal" class="modal hidden">
         <div class="modal-content" style="max-width: 600px;">
-            <h2 style="color: #ef4444;">⚠️ Reset ClawPass Data</h2>
+            <h2 style="color: #ef4444;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-warning"></use></svg> Reset ClawPass Data</h2>
             <p style="color: #666; margin-bottom: 20px;">You are about to permanently delete all ClawPass data. This action cannot be undone!</p>
             
             <div style="background: #fee2e2; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #ef4444;">
@@ -4836,10 +4836,10 @@
             <div style="background: #d1fae5; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #10b981;">
                 <h3 style="color: #065f46; margin-bottom: 15px;">The following will be preserved:</h3>
                 <ul style="margin: 0; padding-left: 20px; color: #065f46;">
-                    <li style="margin-bottom: 8px;">✅ All student information and schedules</li>
-                    <li style="margin-bottom: 8px;">✅ All raffle tickets and history</li>
-                    <li style="margin-bottom: 8px;">✅ All Wildcat Cash balances and transactions</li>
-                    <li style="margin-bottom: 8px;">✅ Bell schedules and settings</li>
+                    <li style="margin-bottom: 8px;"><svg class="wc-icon wc-icon-good" aria-hidden="true" focusable="false"><use href="#wci-check-circle"></use></svg> All student information and schedules</li>
+                    <li style="margin-bottom: 8px;"><svg class="wc-icon wc-icon-good" aria-hidden="true" focusable="false"><use href="#wci-check-circle"></use></svg> All raffle tickets and history</li>
+                    <li style="margin-bottom: 8px;"><svg class="wc-icon wc-icon-good" aria-hidden="true" focusable="false"><use href="#wci-check-circle"></use></svg> All Wildcat Cash balances and transactions</li>
+                    <li style="margin-bottom: 8px;"><svg class="wc-icon wc-icon-good" aria-hidden="true" focusable="false"><use href="#wci-check-circle"></use></svg> Bell schedules and settings</li>
                 </ul>
             </div>
             
@@ -4855,7 +4855,7 @@
             
             <div style="display: flex; gap: 10px;">
                 <button class="btn" onclick="executeClawPassReset()" style="flex: 1; background: #ef4444; color: white;">
-                    🗑️ Yes, Delete All ClawPass Data
+                    <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-trash"></use></svg> Yes, Delete All ClawPass Data
                 </button>
                 <button class="btn btn-secondary" onclick="closeClawPassResetModal()" style="flex: 1;">
                     Cancel
@@ -4884,7 +4884,7 @@
                     <option value="">Select student to add...</option>
                 </select>
                 <button class="btn btn-secondary" onclick="addStudentToGroup()" style="width: 100%;">
-                    ➕ Add Student
+                    <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-plus"></use></svg> Add Student
                 </button>
             </div>
             
@@ -4900,19 +4900,19 @@
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
                         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                             <input type="checkbox" class="groupLocation" value="bathroom" checked>
-                            <span>🚻 Bathroom</span>
+                            <span><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-user"></use></svg> Bathroom</span>
                         </label>
                         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                             <input type="checkbox" class="groupLocation" value="wellness" checked>
-                            <span>💚 Wellness</span>
+                            <span><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-heart"></use></svg> Wellness</span>
                         </label>
                         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                             <input type="checkbox" class="groupLocation" value="office" checked>
-                            <span>🏢 Office</span>
+                            <span><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-office"></use></svg> Office</span>
                         </label>
                         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                             <input type="checkbox" class="groupLocation" value="classroom" checked>
-                            <span>📚 Classroom</span>
+                            <span><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-book"></use></svg> Classroom</span>
                         </label>
                     </div>
                 </div>
@@ -4921,7 +4921,7 @@
             <div style="margin-bottom: 20px;">
                 <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
                     <input type="checkbox" id="monitorOnlyMode" style="width: 20px; height: 20px;">
-                    <span style="font-weight: 600;">👁️ Monitor Only (Don't Actually Block)</span>
+                    <span style="font-weight: 600;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-monitor"></use></svg> Monitor Only (Don't Actually Block)</span>
                 </label>
                 <small style="color: #666; display: block; margin-top: 5px; margin-left: 30px;">
                     Log what would be blocked without actually denying passes
@@ -4935,7 +4935,7 @@
             
             <div style="display: flex; gap: 10px;">
                 <button class="btn" onclick="savePreventionGroup()" style="flex: 1; background: #10b981;">
-                    💾 Save Group
+                    <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-save"></use></svg> Save Group
                 </button>
                 <button class="btn btn-secondary" onclick="closePreventionGroupModal()" style="flex: 1;">
                     Cancel
@@ -4947,7 +4947,7 @@
     <!-- Schedule Editor Modal -->
     <div id="scheduleEditorModal" class="modal hidden">
         <div class="modal-content" style="max-width: 800px; max-height: 90vh; overflow-y: auto;">
-            <h2>✏️ Edit Bell Schedules</h2>
+            <h2><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-edit"></use></svg> Edit Bell Schedules</h2>
             <p style="color: #666; margin-bottom: 20px;">Customize the start and end times for each period. Times must be in 24-hour format (HH:MM).</p>
             
             <!-- Schedule Selector -->
@@ -4956,30 +4956,30 @@
                 <div style="display: flex; gap: 10px;">
                     <select id="scheduleEditorSelect" onchange="loadScheduleForEditing()" style="flex: 1; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 16px;">
                         <optgroup label="── High School Schedules ──">
-                            <option value="hs_mondayBlock1">🎓 HS Monday - Block 1</option>
-                            <option value="hs_tuesdayBlock2">🎓 HS Tuesday - Block 2</option>
-                            <option value="hs_wednesdayAll">🎓 HS Wednesday - All Periods</option>
-                            <option value="hs_thursdayBlock1">🎓 HS Thursday - Block 1</option>
-                            <option value="hs_fridayBlock2">🎓 HS Friday - Block 2</option>
+                            <option value="hs_mondayBlock1">HS Monday - Block 1</option>
+                            <option value="hs_tuesdayBlock2">HS Tuesday - Block 2</option>
+                            <option value="hs_wednesdayAll">HS Wednesday - All Periods</option>
+                            <option value="hs_thursdayBlock1">HS Thursday - Block 1</option>
+                            <option value="hs_fridayBlock2">HS Friday - Block 2</option>
                         </optgroup>
                         <optgroup label="── Middle School Schedules ──">
-                            <option value="ms_mondayBlock1">📚 MS Monday - Block 1</option>
-                            <option value="ms_tuesdayBlock2">📚 MS Tuesday - Block 2</option>
-                            <option value="ms_wednesdayAll">📚 MS Wednesday - All Periods</option>
-                            <option value="ms_thursdayBlock1">📚 MS Thursday - Block 1</option>
-                            <option value="ms_fridayBlock2">📚 MS Friday - Block 2</option>
+                            <option value="ms_mondayBlock1">MS Monday - Block 1</option>
+                            <option value="ms_tuesdayBlock2">MS Tuesday - Block 2</option>
+                            <option value="ms_wednesdayAll">MS Wednesday - All Periods</option>
+                            <option value="ms_thursdayBlock1">MS Thursday - Block 1</option>
+                            <option value="ms_fridayBlock2">MS Friday - Block 2</option>
                         </optgroup>
                         <optgroup label="── Special Schedules ──">
                             <option value="minimumDayBlock1">⏰ Minimum Day - Block 1</option>
                             <option value="minimumDayBlock2">⏰ Minimum Day - Block 2</option>
-                            <option value="assembly">🎤 Assembly Schedule</option>
+                            <option value="assembly">Assembly Schedule</option>
                         </optgroup>
                         <optgroup label="── Custom Schedules ──" id="customSchedulesOptgroup">
                             <!-- Custom schedules will be added here dynamically -->
                         </optgroup>
                     </select>
                     <button class="btn" onclick="openCreateScheduleModal()" style="padding: 12px 20px; background: #10b981; white-space: nowrap;">
-                        ➕ Create New
+                        <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-plus"></use></svg> Create New
                     </button>
                 </div>
             </div>
@@ -4991,13 +4991,13 @@
             
             <div style="display: flex; gap: 10px;">
                 <button class="btn" onclick="saveScheduleEdits()" style="flex: 1; background: #10b981;">
-                    💾 Save Schedule
+                    <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-save"></use></svg> Save Schedule
                 </button>
                 <button class="btn" onclick="resetScheduleToDefaults()" style="flex: 1; background: #f59e0b;">
-                    🔄 Reset to Defaults
+                    <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-refresh"></use></svg> Reset to Defaults
                 </button>
                 <button id="deleteScheduleBtn" class="btn" onclick="deleteCustomSchedule()" style="flex: 1; background: #ef4444; display: none;">
-                    🗑️ Delete Schedule
+                    <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-trash"></use></svg> Delete Schedule
                 </button>
                 <button class="btn btn-secondary" onclick="closeScheduleEditor()" style="flex: 1;">
                     Cancel
@@ -5009,7 +5009,7 @@
     <!-- Create Schedule Modal -->
     <div id="createScheduleModal" class="modal hidden">
         <div class="modal-content" style="max-width: 600px;">
-            <h2>➕ Create New Schedule</h2>
+            <h2><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-plus"></use></svg> Create New Schedule</h2>
             <p style="color: #666; margin-bottom: 20px;">Create a custom bell schedule with your own periods and times.</p>
             
             <div style="margin-bottom: 20px;">
@@ -5031,19 +5031,19 @@
                 <select id="copyFromSchedule" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
                     <option value="">Start with blank schedule</option>
                     <optgroup label="── High School ──">
-                        <option value="hs_mondayBlock1">🎓 HS Monday - Block 1</option>
-                        <option value="hs_tuesdayBlock2">🎓 HS Tuesday - Block 2</option>
-                        <option value="hs_wednesdayAll">🎓 HS Wednesday - All Periods</option>
+                        <option value="hs_mondayBlock1">HS Monday - Block 1</option>
+                        <option value="hs_tuesdayBlock2">HS Tuesday - Block 2</option>
+                        <option value="hs_wednesdayAll">HS Wednesday - All Periods</option>
                     </optgroup>
                     <optgroup label="── Middle School ──">
-                        <option value="ms_mondayBlock1">📚 MS Monday - Block 1</option>
-                        <option value="ms_tuesdayBlock2">📚 MS Tuesday - Block 2</option>
-                        <option value="ms_wednesdayAll">📚 MS Wednesday - All Periods</option>
+                        <option value="ms_mondayBlock1">MS Monday - Block 1</option>
+                        <option value="ms_tuesdayBlock2">MS Tuesday - Block 2</option>
+                        <option value="ms_wednesdayAll">MS Wednesday - All Periods</option>
                     </optgroup>
                     <optgroup label="── Special ──">
                         <option value="minimumDayBlock1">⏰ Minimum Day - Block 1</option>
                         <option value="minimumDayBlock2">⏰ Minimum Day - Block 2</option>
-                        <option value="assembly">🎤 Assembly Schedule</option>
+                        <option value="assembly">Assembly Schedule</option>
                     </optgroup>
                 </select>
                 <small style="color: #666; display: block; margin-top: 5px;">You can modify the period names and times after creation</small>
@@ -5057,13 +5057,13 @@
             
             <div style="background: #e3f2fd; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
                 <p style="margin: 0; font-size: 14px; color: #1976d2;">
-                    💡 <strong>Tip:</strong> After creating the schedule, you'll be able to edit both the period names (P1, P2, HPU, PT, etc.) and times in the schedule editor.
+                    <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-bulb"></use></svg> <strong>Tip:</strong> After creating the schedule, you'll be able to edit both the period names (P1, P2, HPU, PT, etc.) and times in the schedule editor.
                 </p>
             </div>
             
             <div style="display: flex; gap: 10px;">
                 <button class="btn" onclick="createNewSchedule()" style="flex: 1; background: #10b981;">
-                    ✅ Create Schedule
+                    <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-check"></use></svg> Create Schedule
                 </button>
                 <button class="btn btn-secondary" onclick="closeCreateScheduleModal()" style="flex: 1;">
                     Cancel
@@ -5261,7 +5261,7 @@
                         <small style="color: #666;">For positive behaviors, enter positive numbers. For negative, they'll automatically be made negative.</small>
                     </div>
                     <div style="display: flex; gap: 10px; margin-top: 20px;">
-                        <button class="btn" onclick="addNewBehavior()" style="flex: 1;">💾 Add Behavior</button>
+                        <button class="btn" onclick="addNewBehavior()" style="flex: 1;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-save"></use></svg> Add Behavior</button>
                         <button class="btn btn-secondary" onclick="closeAddBehaviorModal()" style="flex: 1;">Cancel</button>
                     </div>
                 </div>
@@ -5292,7 +5292,7 @@
                         <input type="number" id="newRewardStock" placeholder="Unlimited" min="0" step="1">
                     </div>
                     <div style="display: flex; gap: 10px; margin-top: 20px;">
-                        <button class="btn" onclick="addNewReward()" style="flex: 1;">💾 Add Reward</button>
+                        <button class="btn" onclick="addNewReward()" style="flex: 1;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-save"></use></svg> Add Reward</button>
                         <button class="btn btn-secondary" onclick="closeAddRewardModal()" style="flex: 1;">Cancel</button>
                     </div>
                 </div>
@@ -5535,16 +5535,19 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260826w"></script>
+    <script src="wildcat-auth.js?v=20260826y"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
-    <script src="wildcat-motion.js?v=20260826w"></script>
-    <script src="wildcat-discipline.js?v=20260826w"></script>
-    <script src="wildcat-merge.js?v=20260826w"></script>
-    <script src="wildcat-savequeue.js?v=20260826w"></script>
-    <script src="wildcat-roster.js?v=20260826w"></script>
-    <script src="wildcat-store.js?v=20260826w"></script>
-    <script src="script.js?v=20260826w"></script>
+    <!-- The icon sprite. Injected at load, before anything renders, so an
+         icon is never a blank square for a frame. -->
+    <script src="wildcat-icons.js?v=20260826y"></script>
+    <script src="wildcat-motion.js?v=20260826y"></script>
+    <script src="wildcat-discipline.js?v=20260826y"></script>
+    <script src="wildcat-merge.js?v=20260826y"></script>
+    <script src="wildcat-savequeue.js?v=20260826y"></script>
+    <script src="wildcat-roster.js?v=20260826y"></script>
+    <script src="wildcat-store.js?v=20260826y"></script>
+    <script src="script.js?v=20260826y"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -5554,7 +5557,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20260826w').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20260826y').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {

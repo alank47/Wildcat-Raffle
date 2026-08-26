@@ -1892,13 +1892,13 @@
                 schoolColor = '#ff9800';
                 schoolGradient1 = '#ff9800';
                 schoolGradient2 = '#f57c00';
-                schoolName = '🎓 Middle School (Grades 6-8)';
+                schoolName = 'Middle School (Grades 6-8)';
                 levelElement.style.color = '#ff9800';
             } else if (isHighSchool) {
                 schoolColor = '#3b82f6';
                 schoolGradient1 = '#3b82f6';
                 schoolGradient2 = '#2563eb';
-                schoolName = '🏫 High School (Grades 9-12)';
+                schoolName = 'High School (Grades 9-12)';
                 levelElement.style.color = '#3b82f6';
             }
             levelElement.textContent = schoolName;
@@ -10162,11 +10162,11 @@
             const blockOptgroup = select.querySelector('optgroup[label*="Block Schedules"]');
             if (blockOptgroup) {
                 blockOptgroup.innerHTML = `
-                    <option value="${prefix}mondayBlock1">📅 ${schoolPrefix} Monday - Block 1</option>
-                    <option value="${prefix}tuesdayBlock2">📅 ${schoolPrefix} Tuesday - Block 2</option>
-                    <option value="${prefix}wednesdayAll">📅 ${schoolPrefix} Wednesday - All Periods</option>
-                    <option value="${prefix}thursdayBlock1">📅 ${schoolPrefix} Thursday - Block 1</option>
-                    <option value="${prefix}fridayBlock2">📅 ${schoolPrefix} Friday - Block 2</option>
+                    <option value="${prefix}mondayBlock1">${schoolPrefix} Monday - Block 1</option>
+                    <option value="${prefix}tuesdayBlock2">${schoolPrefix} Tuesday - Block 2</option>
+                    <option value="${prefix}wednesdayAll">${schoolPrefix} Wednesday - All Periods</option>
+                    <option value="${prefix}thursdayBlock1">${schoolPrefix} Thursday - Block 1</option>
+                    <option value="${prefix}fridayBlock2">${schoolPrefix} Friday - Block 2</option>
                 `;
             }
         }
@@ -21486,14 +21486,14 @@
             if (r === 'campusaide' || r === 'pbis') {
                 return {
                     board: 'campus',
-                    label: '🚶 Active Passes',
+                    label: wcIcon('walk') + ' Active Passes',
                     title: 'Every pass open right now',
                     hint: 'School-wide, newest trouble first. Open a row to see the whole pass, adjust its clock, close it, or tell the teacher something.',
                 };
             }
             return {
                 board: 'class',
-                label: '🧑‍🏫 My Class',
+                label: wcIcon('class') + ' My Class',
                 title: 'Waiting on you, and out of your room',
                 hint: '',
             };
@@ -21608,7 +21608,7 @@
             host.innerHTML =
                 '<div class="wc-card panel-card" style="padding:0;overflow:hidden;">' +
                   '<div style="padding:18px 20px 0;">' +
-                    '<div class="panel-head"><span class="panel-icon">&#128694;</span><h3>' + esc(nav.title) + '</h3>' +
+                    '<div class="panel-head"><span class="panel-icon">' + wcIcon('walk') + '</span><h3>' + esc(nav.title) + '</h3>' +
                       '<span class="wc-live-count">' + (wcActiveBoard.passes || []).length + ' open</span></div>' +
                     '<p class="panel-hint" style="margin:0 0 12px;">' + esc(nav.hint) + '</p>' +
                   '</div>' +
@@ -21867,7 +21867,7 @@
             const board =
                 '<div class="wc-card panel-card" style="padding:0;overflow:hidden;">' +
                   '<div style="padding:18px 20px 0;">' +
-                    '<div class="panel-head"><span class="panel-icon">&#128100;</span><h3>Waiting on you, and out of your room</h3></div>' +
+                    '<div class="panel-head"><span class="panel-icon">' + wcIcon('class') + '</span><h3>Waiting on you, and out of your room</h3></div>' +
                     '<p class="panel-hint" style="margin:0 0 12px;">' +
                       'These arrived here because the app worked out which of your lessons the ' +
                       'student was in when they asked. Passes opened before requests carried a ' +
@@ -21934,7 +21934,7 @@
 
             const opener =
                 '<div class="wc-card panel-card">' +
-                  '<div class="panel-head"><span class="panel-icon">&#9995;</span><h3>Start a pass for a student</h3></div>' +
+                  '<div class="panel-head"><span class="panel-icon">' + wcIcon('hand') + '</span><h3>Start a pass for a student</h3></div>' +
                   '<p class="panel-hint" style="margin:0 0 14px;">' +
                     'Pick the child and where they are going. It appears on their phone straight ' +
                     'away, and they still have to tap the tag at that place to start it and the ' +
@@ -22441,7 +22441,7 @@
             const nowCard =
                 '<div class="wc-card panel-card" style="border-left:4px solid ' +
                 (nowOk ? '#2e7d32' : '#B3392F') + ';">' +
-                  '<div class="panel-head"><span class="panel-icon">&#128340;</span><h3>Right now</h3></div>' +
+                  '<div class="panel-head"><span class="panel-icon">' + wcIcon('clock') + '</span><h3>Right now</h3></div>' +
                   '<p style="margin:0;font-size:14px;line-height:1.6;">' + nowBody + '</p>' +
                   '<p class="panel-hint" style="margin:10px 0 0;">' +
                     'A student asking at this moment would ' +
@@ -22461,7 +22461,7 @@
 
             const clockCard =
                 '<div class="wc-card panel-card">' +
-                  '<div class="panel-head"><span class="panel-icon">&#127758;</span><h3>School clock</h3></div>' +
+                  '<div class="panel-head"><span class="panel-icon">' + wcIcon('globe') + '</span><h3>School clock</h3></div>' +
                   '<p class="panel-hint" style="margin:0 0 14px;">' +
                     'Times are stored in UTC, so the app has to be told where the school is. ' +
                     'A zone name rather than an offset, because an offset is wrong for half the ' +
@@ -22515,7 +22515,7 @@
             const schedulesCard =
                 '<div class="wc-card panel-card">' +
                   '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">' +
-                    '<div><div class="panel-head" style="margin-bottom:4px;"><span class="panel-icon">&#128276;</span><h3>Schedules</h3></div>' +
+                    '<div><div class="panel-head" style="margin-bottom:4px;"><span class="panel-icon">' + wcIcon('bell') + '</span><h3>Schedules</h3></div>' +
                     '<p class="panel-hint" style="margin:0;">Period names must match what PowerSchool calls them: ' +
                     'a section written <code>1(A-E)</code> is period <b>1</b>, not &ldquo;Period 1&rdquo;.</p></div>' +
                     '<button class="btn" onclick="editBellSchedule(null)" style="font-size:13px;padding:8px 14px;">+ Add schedule</button>' +
@@ -22543,7 +22543,7 @@
 
             const daysCard =
                 '<div class="wc-card panel-card">' +
-                  '<div class="panel-head"><span class="panel-icon">&#128197;</span><h3>Days that are different</h3></div>' +
+                  '<div class="panel-head"><span class="panel-icon">' + wcIcon('calendar') + '</span><h3>Days that are different</h3></div>' +
                   '<p class="panel-hint" style="margin:0 0 14px;">' +
                     'Minimum days, assemblies, holidays and which cycle day it is. Nothing anywhere ' +
                     'can be asked what today is, so it is marked here or it is not known, and not ' +
@@ -22626,7 +22626,7 @@
 
             host.innerHTML =
                 '<div class="wc-card panel-card" style="border:2px solid var(--wc-blue-deep);">' +
-                  '<div class="panel-head"><span class="panel-icon">&#9998;</span><h3>' +
+                  '<div class="panel-head"><span class="panel-icon">' + wcIcon('edit') + '</span><h3>' +
                     (d.id ? 'Edit schedule' : 'New schedule') + '</h3></div>' +
                   '<label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Name</label>' +
                   '<input type="text" id="wcSchedName" value="' + esc(d.name) + '" maxlength="40" ' +
@@ -23700,10 +23700,13 @@
         // ============================================================
 
         const MODE_META = {
-            raffle:     { label: 'Raffle',       icon: '🎟️' },
-            cash:       { label: 'Wildcat Cash', icon: '💰' },
-            hallpass:   { label: 'Claw Pass',    icon: '🎫' },
-            discipline: { label: 'Discipline',   icon: '📋' }
+            // Icons are sprite markup (wildcat-icons.js), written into the
+            // mode card and the dropdown as HTML. wcIcon is a global; the
+            // fallback keeps the label readable if the sprite failed to load.
+            raffle:     { label: 'Raffle',       icon: window.wcIcon ? wcIcon('ticket') : '' },
+            cash:       { label: 'Wildcat Cash', icon: window.wcIcon ? wcIcon('cash') : '' },
+            hallpass:   { label: 'Claw Pass',    icon: window.wcIcon ? wcIcon('pass') : '' },
+            discipline: { label: 'Discipline',   icon: window.wcIcon ? wcIcon('discipline') : '' }
         };
 
         let _sidebarModeApplied = false; // reset on logout
@@ -23739,30 +23742,36 @@
 
         const MODE_SUBTABS = {
             hallpass: [
-                { id: 'myClass',              fn: 'switchHallPassTab',   label: '🧑‍🏫 My Class' },
-                { id: 'hallMonitor',          fn: 'switchHallPassTab',   label: '👁️ Hall Monitor' },
-                { id: 'snapshot',             fn: 'switchHallPassTab',   label: '📊 Student Snapshot' },
-                { id: 'encounterPrevention',  fn: 'switchHallPassTab',   label: '🚨 Encounter Prevention' },
-                { id: 'history',              fn: 'switchHallPassTab',   label: '📋 Pass History' },
-                { id: 'passSettings',         fn: 'switchHallPassTab',   label: '⚙️ Pass Settings' }
+                { id: 'myClass',              fn: 'switchHallPassTab',   label: wcIcon('class') + ' My Class' },
+                { id: 'hallMonitor',          fn: 'switchHallPassTab',   label: wcIcon('monitor') + ' Hall Monitor' },
+                { id: 'snapshot',             fn: 'switchHallPassTab',   label: wcIcon('snapshot') + ' Student Snapshot' },
+                { id: 'encounterPrevention',  fn: 'switchHallPassTab',   label: wcIcon('alert') + ' Encounter Prevention' },
+                { id: 'history',              fn: 'switchHallPassTab',   label: wcIcon('history') + ' Pass History' },
+                { id: 'passSettings',         fn: 'switchHallPassTab',   label: wcIcon('sliders') + ' Pass Settings' }
             ],
             discipline: [
-                { id: 'submit',    fn: 'switchDisciplineTab', label: '✍️ Submit Referral' },
-                { id: 'review',    fn: 'switchDisciplineTab', label: '👁️ Open Referrals' },
-                { id: 'closed',    fn: 'switchDisciplineTab', label: '📁 Closed Referrals' },
-                { id: 'detention', fn: 'switchDisciplineTab', label: '⏰ Detention Tracker' },
-                { id: 'history',   fn: 'switchDisciplineTab', label: '📚 Student History' },
-                { id: 'analytics', fn: 'switchDisciplineTab', label: '📊 Analytics' }
+                { id: 'submit',    fn: 'switchDisciplineTab', label: wcIcon('edit') + ' Submit Referral' },
+                { id: 'review',    fn: 'switchDisciplineTab', label: wcIcon('monitor') + ' Open Referrals' },
+                { id: 'closed',    fn: 'switchDisciplineTab', label: wcIcon('audit') + ' Closed Referrals' },
+                { id: 'detention', fn: 'switchDisciplineTab', label: wcIcon('stopwatch') + ' Detention Tracker' },
+                { id: 'history',   fn: 'switchDisciplineTab', label: wcIcon('book') + ' Student History' },
+                { id: 'analytics', fn: 'switchDisciplineTab', label: wcIcon('analytics') + ' Analytics' }
             ]
         };
 
         function toggleModeDropdown(forceOpen) {
             const dd = document.getElementById('modeDropdown');
-            const chev = document.getElementById('modeCardChev');
+            // The chevron turns with the menu (CSS keys on this class).
+            const sw = dd && dd.closest('.mode-switcher');
+            if (sw) {
+                const willOpen = forceOpen === true || (forceOpen !== false && dd.style.display === 'none');
+                sw.classList.toggle('is-open', willOpen);
+            }
             if (!dd) return;
             const open = (typeof forceOpen === 'boolean') ? forceOpen : dd.style.display === 'none';
             dd.style.display = open ? 'block' : 'none';
-            if (chev) chev.textContent = open ? '▴' : '▾';
+            // The chevron is the sprite icon and turns through
+            // .mode-switcher.is-open above; nothing rewrites its glyph.
         }
 
         function renderModeSubnav(mode) {
@@ -29516,6 +29525,28 @@
          */
         function wcSplitLeadingEmoji(el, iconClass, labelClass) {
             if (!el || el.dataset.wcSplit === '1') return;
+            // A SPRITE ICON IN FRONT OF THE WORDS is the new shape of every
+            // shell button: <svg class="wc-icon"> then text. It gets the same
+            // tile the emoji used to, so the rail's geometry does not change
+            // with the glyph set. Checked first, because textContent cannot
+            // see an <svg> and the emoji match below would find nothing.
+            const lead = el.firstElementChild;
+            if (lead && lead.tagName === 'svg' && lead.classList.contains('wc-icon')) {
+                const words = (el.textContent || '').trim();
+                if (!words) return;
+                el.dataset.wcSplit = '1';
+                el.textContent = '';
+                const tile = document.createElement('span');
+                tile.className = iconClass;
+                tile.setAttribute('aria-hidden', 'true');
+                tile.appendChild(lead);
+                const label = document.createElement('span');
+                label.className = labelClass;
+                label.textContent = words;
+                el.appendChild(tile);
+                el.appendChild(label);
+                return;
+            }
             const raw = el.textContent || '';
             const m = raw.match(WC_LEAD_EMOJI);
             el.dataset.wcSplit = '1';
