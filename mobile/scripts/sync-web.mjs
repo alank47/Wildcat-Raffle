@@ -21,20 +21,25 @@ const root = existsSync(rootPointer)
   : resolve(mobile, '..');
 const www = join(mobile, 'www');
 
-// The student portal's files. index.html defaults to the Student tab, so it is a
-// valid student entry as-is; the native bridge below adds Core NFC on top.
-const FILES = [
-  'index.html',
-  'script.js',
-  'styles.css',
-  'wildcat-ui.css',
-  'wildcat-motion.css',
-  'wildcat-motion.js',
-  'wildcat-auth.js',
-  'manifest.json',
-  'sw.js',
-  'favicon.ico',
-];
+// THE PORTAL'S FILES, READ OFF index.html RATHER THAN LISTED HERE.
+//
+// This used to be a hand-kept list, and it was six scripts behind the page it
+// shipped: main had grown wildcat-roster.js, wildcat-store.js, wildcat-merge.js,
+// wildcat-savequeue.js, wildcat-discipline.js and wildcat-icons.js, none of
+// which the app copied, so a staff member opening the native shell would have
+// got a page whose <script> tags 404 inside the bundle. index.html is the one
+// place that already knows every local file it needs, so it is the source: every
+// same-origin <script src> and stylesheet <link href> is copied, plus the few
+// files the page reaches for by other means (the manifest, the service worker,
+// the favicon, the assets folder). Both sign-ins live in this one page, so this
+// is the staff app and the student app alike.
+const indexSrc = readFileSync(join(root, 'index.html'), 'utf8');
+const local = (url) => /^(?!https?:|\/\/|data:)[^\s"'?#]+/.test(url) ? url.split('?')[0].split('#')[0] : null;
+const referenced = new Set();
+for (const m of indexSrc.matchAll(/<script[^>]+src="([^"]+)"/g)) { const f = local(m[1]); if (f) referenced.add(f); }
+for (const m of indexSrc.matchAll(/<link[^>]+rel="stylesheet"[^>]+href="([^"]+)"/g)) { const f = local(m[1]); if (f) referenced.add(f); }
+const FILES = ['index.html', ...referenced, 'manifest.json', 'sw.js', 'favicon.ico']
+  .filter((f, i, a) => a.indexOf(f) === i && !f.startsWith('assets/'));
 const DIRS = ['assets'];
 
 await rm(www, { recursive: true, force: true });

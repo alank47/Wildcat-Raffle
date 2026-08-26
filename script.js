@@ -17821,6 +17821,9 @@
             full.scrollTop = 0;
             view.classList.add('wp-is-full');
             view.scrollTop = 0;
+            // In the native app the scanner arms itself the moment a running
+            // pass is on screen. See wcAutoArmKey.
+            if (typeof wcNativeAutoArmScan === 'function') wcNativeAutoArmScan(hp, 'paint');
             // The layer's phase colour is written by the ticker off the ring it
             // now contains; run one tick so it is right on the first paint
             // rather than a second later.
@@ -20042,6 +20045,20 @@
                   action +
                 '</div>' +
               '</div>';
+            // IN THE NATIVE APP, ARRIVING IS CHECKING IN. The URL that brought the
+            // app here came off a tag the phone was held against (iOS background
+            // tag reading, or the tag the in-app session just read), and a child
+            // standing at a doorway should not have to find a button after that.
+            // The screen above still paints first, so a refusal (unknown tag, no
+            // pass, still waiting) reads exactly as it did; only the case that
+            // would have offered "Check in" now does it. In a browser the button
+            // stays: a link in Safari has no tag behind it, and the press is the
+            // one thing that says a person, not a forwarded message, did this.
+            if (action && wcNativeNfcAvailable()) {
+                const go = wpById('wpTapGo');
+                if (go) { go.disabled = true; go.textContent = 'Checking in…'; }
+                confirmTapCheckIn();
+            }
         }
 
         /**
@@ -20317,6 +20334,18 @@
                 // error haptic on every Android scan the app ever attempted. On
                 // iOS startScan is the call that raises the system sheet, and
                 // the listener has to exist before the sheet can deliver.
+                // The session's END, as well as its tag. iOS ends a session on
+                // Cancel and on its own 60 second timeout; without listening for
+                // that, the "hold your phone near the tag" screen sat there over
+                // a scanner that had already stopped. On end: stop cleanly and
+                // go back to the pass, silently, which is the right answer for a
+                // session the app started by itself and for one the student
+                // cancelled on purpose.
+                window._wcNfcErrorListener = await NFC.addListener('nfcError', async function () {
+                    if (wpBusy) return;
+                    await wcNativeNfcStop();
+                    if (typeof closeTapResult === 'function') closeTapResult();
+                });
                 window._wcNfcListener = await NFC.addListener('nfcTag', async function (data) {
                     if (wpBusy) return;
                     var slug = wcNativeSlugFromTag(data);
@@ -20361,6 +20390,8 @@
                 var NFC = window.Capacitor.Plugins.NFC;
                 if (window._wcNfcListener && window._wcNfcListener.remove) await window._wcNfcListener.remove();
                 window._wcNfcListener = null;
+                if (window._wcNfcErrorListener && window._wcNfcErrorListener.remove) await window._wcNfcErrorListener.remove();
+                window._wcNfcErrorListener = null;
                 // cancelScan is iOS only and a no-op on Android, which is why it
                 // is safe to call on both without a platform test.
                 if (NFC && NFC.cancelScan) await NFC.cancelScan();
@@ -20634,6 +20665,9 @@
                 // Android does not fire resume on FIRST launch, which is fine:
                 // opening the portal already primes the watch.
                 await App.addListener('resume', function () {
+                    // Back in the foreground with a pass running: listen for the
+                    // tag, before anything else. See wcAutoArmKey.
+                    if (typeof wpFullHp !== 'undefined' && wpFullHp) wcNativeAutoArmScan(wpFullHp, 'resume');
                     // THE CLOCKS FIRST, and synchronously. wpPollPassOnce is a
                     // network query that only re-renders when the pass CHANGES
                     // STATE, so on the ordinary return it does nothing visible
@@ -20668,6 +20702,48 @@
             }
         }
         wcNativeInitAppLifecycle();
+
+        /* ---- nfc auto-arm ---- */
+
+        /**
+         * WHEN THE APP SHOULD START LISTENING FOR A TAG BY ITSELF.
+         *
+         * A student with a running pass should be able to open the app at the
+         * door and hold it to the tag, with nothing to press. So the native app
+         * arms its scanner on its own at the two moments that mean "I am about
+         * to tap": when a running pass is painted on screen (approval just
+         * landed, or the app opened onto it), and every time the app comes back
+         * to the foreground while one is running. Never for a request still
+         * waiting on a teacher, never for a closed pass, and never while a
+         * session is already open or a tap is mid-flight.
+         *
+         * Returns the KEY the arming is remembered under, or '' for "do not".
+         * 'paint' arms once per pass state, so a re-render does not restart a
+         * session the student just cancelled; 'resume' arms every time, because
+         * every return to the app is a fresh intent.
+         */
+        function wcAutoArmKey(hp, why, now) {
+            if (!hp || !hp.available) return '';
+            const state = String(hp.state || '').toLowerCase();
+            if (state !== 'active' && state !== 'out') return '';
+            if (why === 'resume') return String(hp.id || '') + '|' + state + '|resume|' + String(now || 0);
+            if (why === 'paint') return String(hp.id || '') + '|' + state + '|paint';
+            return '';
+        }
+
+        /* ---- end nfc auto-arm ---- */
+
+        let wcAutoArmedFor = '';
+        function wcNativeAutoArmScan(hp, why) {
+            if (!wcNativeNfcAvailable()) return;
+            if (document.visibilityState !== 'visible') return;
+            if (window._wcNfcListener || wpBusy) return;
+            const key = wcAutoArmKey(hp, why, Date.now());
+            if (!key || key === wcAutoArmedFor) return;
+            wcAutoArmedFor = key;
+            wcNativeNfcTap();
+        }
+        window.wcNativeAutoArmScan = wcNativeAutoArmScan;
 
         async function wcStudentNfcScan() {
             // In the native app, Core NFC works on iPhone too; route there first.

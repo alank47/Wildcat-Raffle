@@ -317,6 +317,76 @@ if (existsSync(spmPackage)) {
   }
 }
 
+// 5. THE APP ICON, from the one source file the repo keeps.
+//
+// ios/ is regenerated per machine, so an icon dropped into the asset catalog by
+// hand is gone on the next clone, and Capacitor's placeholder ships instead. The
+// source is assets/app-icon-source.png in the repo (the Westbrook mark, white
+// on black, as supplied 2026-08-26). ON THE HOME SCREEN IT IS INVERTED: a black
+// tile disappears against a dark wallpaper and reads as a hole, so the iOS icon
+// is the black mark on WHITE. The source stays as it is (the PWA and the site
+// use it as supplied). The source is black shapes that run to the edges with
+// the strokes of the mark TRANSPARENT (what looks white on a light viewer is
+// no pixel at all). So "the mark on white" is two operations, in this order:
+// flatten onto white, which paints the transparent strokes white; then negate,
+// which turns the black field white and the now-white strokes black. The
+// result is the mark drawn in black on a white tile. Either step alone is
+// wrong: flatten-onto-black-then-negate erased the mark (everything black,
+// then everything white), and flatten-onto-white alone is still a black tile.
+// Apple requires exactly 1024x1024 with NO alpha. ImageMagick does it in one
+// call; without it the step stops with a message rather than ship the wrong
+// tile quietly.
+{
+  const rootPointer = join(mobile, '.wildcat-repo-root');
+  const root = existsSync(rootPointer) ? readFileSync(rootPointer, 'utf8').trim() : resolve(mobile, '..');
+  const source = join(root, 'assets', 'app-icon-source.png');
+  const iconset = join(appDir, 'Assets.xcassets', 'AppIcon.appiconset');
+  const target = join(iconset, 'AppIcon-512@2x.png');
+  if (!existsSync(source)) {
+    console.warn('[configure-ios] app icon: assets/app-icon-source.png missing, placeholder kept');
+  } else if (!existsSync(iconset)) {
+    console.warn('[configure-ios] app icon: no AppIcon.appiconset in ios/App/App/Assets.xcassets');
+  } else {
+    let done = false;
+    try {
+      // PURE BLACK AND WHITE, on request: the mark's edge pixels come out grey
+      // after resampling, and grey reads as a smudge on a tile this small.
+      // Everything not white becomes black. Light appearance: mark in black
+      // on white. Dark appearance (iOS 18+ Dark / Tinted home screens): the
+      // same mark in white on black, so the system does not dim a light tile
+      // into the grey the owner complained about.
+      execFileSync('magick', [source, '-background', 'white', '-alpha', 'remove', '-alpha', 'off',
+        '-negate', '-resize', '1024x1024!', '-colorspace', 'Gray', '-threshold', '92%', '-strip', target], { stdio: 'pipe' });
+      const dark = join(iconset, 'AppIcon-512@2x-dark.png');
+      execFileSync('magick', [target, '-negate', '-strip', dark], { stdio: 'pipe' });
+      // Register the dark variant in the catalog (idempotent).
+      const contentsPath = join(iconset, 'Contents.json');
+      const contents = JSON.parse(readFileSync(contentsPath, 'utf8'));
+      const hasDark = (contents.images || []).some((i) => i.filename === 'AppIcon-512@2x-dark.png');
+      if (!hasDark) {
+        contents.images.push({
+          filename: 'AppIcon-512@2x-dark.png', idiom: 'universal', platform: 'ios', size: '1024x1024',
+          appearances: [{ appearance: 'luminosity', value: 'dark' }],
+        });
+        writeFileSync(contentsPath, JSON.stringify(contents, null, 2) + '\n');
+        console.log('[configure-ios] app icon: dark appearance registered');
+      }
+      done = true;
+    } catch (e) { /* no ImageMagick here */ }
+    if (!done) {
+      console.error('[configure-ios] app icon needs ImageMagick (brew install imagemagick) to flatten the mark onto white');
+      process.exit(1);
+    }
+    const info = execFileSync('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', '-g', 'hasAlpha', target], { encoding: 'utf8' });
+    const w = /pixelWidth: (\d+)/.exec(info)?.[1], h = /pixelHeight: (\d+)/.exec(info)?.[1], a = /hasAlpha: (\w+)/.exec(info)?.[1];
+    if (w !== '1024' || h !== '1024' || a !== 'no') {
+      console.error(`[configure-ios] app icon came out ${w}x${h} alpha=${a}; Apple needs 1024x1024 with no alpha`);
+      process.exit(1);
+    }
+    console.log('[configure-ios] app icon: 1024x1024, no alpha, from assets/app-icon-source.png');
+  }
+}
+
 console.log('[configure-ios] done. Verify in Xcode: Signing & Capabilities should list');
 console.log('[configure-ios]   "Near Field Communication Tag Reading" and "Associated Domains".');
 console.log('[configure-ios] If Associated Domains is absent, add it once in Xcode so the');
