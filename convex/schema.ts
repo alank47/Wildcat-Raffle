@@ -649,6 +649,36 @@ export default defineSchema({
   // A refused tap is the interesting one: a student tapping the classroom tag
   // on the way out, or tapping a tag with no approved pass, is exactly what a
   // teacher wants to see. Recording only successful taps would erase it.
+  /**
+   * A NOTE ON A LIVE PASS, from one member of staff to the teacher who owns it.
+   *
+   * A campus aide sees every live pass in the building and none of the
+   * classrooms they came from. When they meet a child in a corridor who is
+   * unwell, lost, or somewhere the pass does not say, the person who needs to
+   * know is the teacher whose lesson the pass left, and until this table that
+   * teacher could only be found by walking. A note is written HERE, against the
+   * pass, so it is read on the pass, in the board that teacher already watches,
+   * and it is pushed to their device the moment it lands.
+   *
+   * Append only. A note is an account of what someone saw, and an account that
+   * can be edited afterwards is not one. teacherEmail is copied off the pass at
+   * the moment of writing so a pass whose origin is later force-closed still
+   * knows who was told.
+   */
+  hallPassNotes: defineTable({
+    passId: v.id("hallPasses"),
+    studentId: v.id("students"),
+    teacherEmail: v.optional(v.string()), // the pass's origin teacher, if it has one
+    authorEmail: v.string(),
+    authorName: v.string(),
+    authorRole: v.string(),
+    level: v.union(v.literal("info"), v.literal("concern"), v.literal("urgent")),
+    text: v.string(),
+    at: v.string(),
+  })
+    .index("by_pass", ["passId"])
+    .index("by_teacherEmail", ["teacherEmail"]),
+
   tapEvents: defineTable({
     passId: v.optional(v.id("hallPasses")),
     studentId: v.optional(v.id("students")),
