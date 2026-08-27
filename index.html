@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20260826z">
-    <link rel="icon" href="favicon.ico?v=20260826z" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260826z" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260826z" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20260827a">
+    <link rel="icon" href="favicon.ico?v=20260827a" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260827a" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260827a" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260826z">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260827a">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20260826z">
+    <link rel="stylesheet" href="styles.css?v=20260827a">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260826z">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260827a">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20260826z">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260827a">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20260826z" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20260827a" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -528,7 +528,7 @@
         <header class="app-topbar">
             <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-menu"></use></svg></button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20260826z" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20260827a" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -4348,9 +4348,11 @@
                         <!-- Pass Limit Status (if set) -->
                         <div id="passLimitStatus" style="display: none; background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; border-radius: 8px; margin-bottom: 25px;">
                             <div style="display: flex; justify-content: space-between; align-items: center;">
-                                <div>
-                                    <strong>Daily Pass Limit:</strong> <span id="passLimitCurrent"></span> / <span id="passLimitMax"></span> passes used today
-                                </div>
+                                <!-- Written by wcRenderPassLimit. A cap of 0 is
+                                     a real setting meaning no passes at all, and
+                                     "0 / 0 passes used today" is not how to say
+                                     that, so the sentence is chosen there. -->
+                                <div id="passLimitText"></div>
                                 <button class="btn btn-secondary" onclick="openPassLimitModal()" style="padding: 8px 16px;">
                                     Edit Limit
                                 </button>
@@ -4795,18 +4797,22 @@
             
             <div style="margin-bottom: 20px;">
                 <label style="display: block; margin-bottom: 8px; font-weight: 600;">Daily Pass Limit</label>
-                <input type="number" id="passLimitInput" min="0" max="20" value="3" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
-                <small style="color: #666; display: block; margin-top: 5px;">Set to 0 to remove the limit</small>
+                <input type="number" id="passLimitInput" min="0" max="50" placeholder="No limit" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;">
+                <!-- BLANK AND 0 ARE DIFFERENT ANSWERS. This box used to say
+                     "set to 0 to remove the limit", and under the rule the
+                     server enforces, 0 means the opposite: no passes at all. -->
+                <small style="color: #666; display: block; margin-top: 5px;">Leave blank for no personal limit (the school-wide cap still applies). <strong>0 means this student may not take passes at all.</strong></small>
+                <small id="passLimitMsg" class="sp-edit-msg"></small>
             </div>
-            
+
             <div style="background: #e3f2fd; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
                 <p style="margin: 0; font-size: 14px; color: #1976d2;">
-                    <strong>Note:</strong> This limit resets daily at midnight. Students will not be able to create passes once they reach this limit.
+                    <strong>Note:</strong> This limit resets before school each morning. It applies to a pass a teacher opens as well as one the student asks for.
                 </p>
             </div>
-            
+
             <div style="display: flex; gap: 10px;">
-                <button class="btn" onclick="savePassLimit()" style="flex: 1; background: #10b981;">
+                <button class="btn" id="passLimitSaveBtn" onclick="savePassLimit()" style="flex: 1; background: #10b981;">
                     <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-save"></use></svg> Save Limit
                 </button>
                 <button class="btn btn-secondary" onclick="closePassLimitModal()" style="flex: 1;">
@@ -5533,19 +5539,19 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260826z"></script>
+    <script src="wildcat-auth.js?v=20260827a"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
     <!-- The icon sprite. Injected at load, before anything renders, so an
          icon is never a blank square for a frame. -->
-    <script src="wildcat-icons.js?v=20260826z"></script>
-    <script src="wildcat-motion.js?v=20260826z"></script>
-    <script src="wildcat-discipline.js?v=20260826z"></script>
-    <script src="wildcat-merge.js?v=20260826z"></script>
-    <script src="wildcat-savequeue.js?v=20260826z"></script>
-    <script src="wildcat-roster.js?v=20260826z"></script>
-    <script src="wildcat-store.js?v=20260826z"></script>
-    <script src="script.js?v=20260826z"></script>
+    <script src="wildcat-icons.js?v=20260827a"></script>
+    <script src="wildcat-motion.js?v=20260827a"></script>
+    <script src="wildcat-discipline.js?v=20260827a"></script>
+    <script src="wildcat-merge.js?v=20260827a"></script>
+    <script src="wildcat-savequeue.js?v=20260827a"></script>
+    <script src="wildcat-roster.js?v=20260827a"></script>
+    <script src="wildcat-store.js?v=20260827a"></script>
+    <script src="script.js?v=20260827a"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -5555,7 +5561,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20260826z').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20260827a').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {
