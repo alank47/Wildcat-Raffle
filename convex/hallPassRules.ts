@@ -724,10 +724,24 @@ export function sortLiveBoard<T extends { overdue: boolean; elapsedMinutes: numb
  * pass blocks every later request, so a live pass is always among the newest
  * rows, and the day count only ever looks at today.
  */
+/**
+ * THIS CHILD'S OWN CAP, if somebody set one. Absent means only the school-wide
+ * cap applies; ZERO means no passes at all, which is a thing a school decides
+ * and therefore must survive a falsy check. Anything not a finite number >= 0
+ * is treated as absent rather than trusted, because it reached here off a
+ * record a person typed into.
+ */
+export function passLimitFor(student: { dailyPassLimit?: number | null }): number | null {
+  const raw = student?.dailyPassLimit;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) return null;
+  return Math.floor(raw);
+}
+
 export function canRequest(
   existing: Array<{ state: PassState; requestedAt: string; approvedAt?: string }>,
   origin: { active: boolean } | null,
   now: string,
+  ownLimit?: number | null,
 ): Verdict {
   if (hasLivePass(existing)) {
     return {
@@ -746,6 +760,18 @@ export function canRequest(
   // teacher denied cost them no time out of class and must not cost them an
   // allowance, or cancelling, the documented escape hatch, becomes a penalty.
   const today = passesTakenOnDay(existing, now);
+  // The child's own cap first, because it is the tighter and more specific
+  // answer and it is the one a person set deliberately.
+  if (typeof ownLimit === "number" && today >= ownLimit) {
+    return {
+      ok: false,
+      reason:
+        ownLimit === 0
+          ? "You are not able to take hall passes at the moment. Speak to your teacher."
+          : `You have used your ${ownLimit} pass${ownLimit === 1 ? "" : "es"} for today. ` +
+            "Speak to your teacher if you need to leave the room.",
+    };
+  }
   if (today >= MAX_PASSES_PER_SCHOOL_DAY) {
     return {
       ok: false,

@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20260826y">
-    <link rel="icon" href="favicon.ico?v=20260826y" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260826y" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260826y" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20260826z">
+    <link rel="icon" href="favicon.ico?v=20260826z" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260826z" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260826z" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260826y">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260826z">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20260826y">
+    <link rel="stylesheet" href="styles.css?v=20260826z">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260826y">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260826z">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20260826y">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260826z">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20260826y" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20260826z" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -528,7 +528,7 @@
         <header class="app-topbar">
             <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-menu"></use></svg></button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20260826y" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20260826z" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -4534,18 +4534,16 @@
 
                     <div style="overflow-x: auto; background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
                         <table class="student-table">
-                            <thead style="background: #2F67A7;">
+                            <thead>
                                 <tr>
-                                    <th style="color: white;">Date/Time</th>
-                                    <th style="color: white;">Student</th>
-                                    <th style="color: white;">Grade</th>
-                                    <th style="color: white;">Period</th>
-                                    <th style="color: white;">Teacher</th>
-                                    <th style="color: white;">Class</th>
-                                    <th style="color: white;">Destination</th>
-                                    <th style="color: white;">Duration</th>
-                                    <th style="color: white;">Status</th>
-                                    <th style="color: white;">Notes</th>
+                                    <th>Student</th>
+                                    <th>Grade</th>
+                                    <th>From</th>
+                                    <th>Going to</th>
+                                    <th>Period</th>
+                                    <th>Asked at</th>
+                                    <th>Out for</th>
+                                    <th>State</th>
                                 </tr>
                             </thead>
                             <tbody id="passHistoryTable">
@@ -4821,14 +4819,14 @@
     <!-- ClawPass Data Reset Confirmation Modal -->
     <div id="clawPassResetModal" class="modal hidden">
         <div class="modal-content" style="max-width: 600px;">
-            <h2 style="color: #ef4444;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-warning"></use></svg> Reset ClawPass Data</h2>
+            <h2 style="color: #ef4444;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-warning"></use></svg> Clear local ClawPass leftovers</h2>
             <p style="color: #666; margin-bottom: 20px;">You are about to permanently delete all ClawPass data. This action cannot be undone!</p>
             
             <div style="background: #fee2e2; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #ef4444;">
                 <h3 style="color: #991b1b; margin-bottom: 15px;">The following will be deleted:</h3>
                 <ul style="margin: 0; padding-left: 20px; color: #991b1b;">
                     <li style="margin-bottom: 8px;">All hall pass history (current count: <span id="resetPassCount">0</span> passes)</li>
-                    <li style="margin-bottom: 8px;">All student daily pass limits</li>
+                    <li style="margin-bottom: 8px;">Pre-Convex leftovers held in this browser</li>
                     <li style="margin-bottom: 8px;">All ClawPass statistics</li>
                 </ul>
             </div>
@@ -4855,7 +4853,7 @@
             
             <div style="display: flex; gap: 10px;">
                 <button class="btn" onclick="executeClawPassReset()" style="flex: 1; background: #ef4444; color: white;">
-                    <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-trash"></use></svg> Yes, Delete All ClawPass Data
+                    <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-trash"></use></svg> Clear local leftovers
                 </button>
                 <button class="btn btn-secondary" onclick="closeClawPassResetModal()" style="flex: 1;">
                     Cancel
@@ -5535,19 +5533,19 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260826y"></script>
+    <script src="wildcat-auth.js?v=20260826z"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
     <!-- The icon sprite. Injected at load, before anything renders, so an
          icon is never a blank square for a frame. -->
-    <script src="wildcat-icons.js?v=20260826y"></script>
-    <script src="wildcat-motion.js?v=20260826y"></script>
-    <script src="wildcat-discipline.js?v=20260826y"></script>
-    <script src="wildcat-merge.js?v=20260826y"></script>
-    <script src="wildcat-savequeue.js?v=20260826y"></script>
-    <script src="wildcat-roster.js?v=20260826y"></script>
-    <script src="wildcat-store.js?v=20260826y"></script>
-    <script src="script.js?v=20260826y"></script>
+    <script src="wildcat-icons.js?v=20260826z"></script>
+    <script src="wildcat-motion.js?v=20260826z"></script>
+    <script src="wildcat-discipline.js?v=20260826z"></script>
+    <script src="wildcat-merge.js?v=20260826z"></script>
+    <script src="wildcat-savequeue.js?v=20260826z"></script>
+    <script src="wildcat-roster.js?v=20260826z"></script>
+    <script src="wildcat-store.js?v=20260826z"></script>
+    <script src="script.js?v=20260826z"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -5557,7 +5555,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20260826y').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20260826z').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {

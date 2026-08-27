@@ -220,3 +220,53 @@ export const setMealPin = mutation({
     return { ok: true, studentNumber: asked, mealPin: clean || null };
   },
 });
+
+/**
+ * THIS CHILD'S OWN DAILY PASS CAP, set from Student Snapshot.
+ *
+ * It used to be written into the browser's roster array and saved to the old
+ * Firestore document, where the only thing that ever read it was the deleted
+ * kiosk. A teacher could set "2 passes a day", see it saved, and watch the
+ * child take eight. It lives on the student record now and canRequest enforces
+ * it on both the student's own request and a teacher-opened pass.
+ *
+ * null CLEARS it (back to the school-wide cap only). 0 is a real value meaning
+ * no passes at all, so the two cannot be the same argument.
+ */
+export const setPassLimit = mutation({
+  args: { studentNumber: v.string(), limit: v.union(v.number(), v.null()) },
+  handler: async (ctx, { studentNumber, limit }) => {
+    const staff = await requireStaff(ctx);
+    // KEYED ON THE NUMBER, not on a Convex id: the teacher portal's roster is
+    // loaded through appData and carries the student NUMBER, not the row id,
+    // so an id argument could only ever be filled in by guessing.
+    const key = String(studentNumber ?? "").trim();
+    const matches = await ctx.db
+      .query("students")
+      .withIndex("by_studentNumber", (q) => q.eq("studentNumber", key))
+      .take(2);
+    if (matches.length === 0) throw new ConvexError(`No student has the number ${key}.`);
+    if (matches.length > 1) {
+      throw new ConvexError(
+        `More than one student record has the number ${key}, so the limit was not set. ` +
+          `Fix the duplicate first.`,
+      );
+    }
+    const student = matches[0];
+    const studentId = student._id;
+    if (limit !== null) {
+      if (!Number.isFinite(limit) || limit < 0 || limit > 50 || Math.floor(limit) !== limit) {
+        throw new ConvexError("A daily limit is a whole number from 0 to 50, or blank to clear it.");
+      }
+    }
+    await ctx.db.patch(studentId, {
+      dailyPassLimit: limit === null ? undefined : limit,
+    });
+    return {
+      ok: true,
+      studentNumber: student.studentNumber ?? null,
+      limit: limit,
+      setBy: staff.email,
+    };
+  },
+});
