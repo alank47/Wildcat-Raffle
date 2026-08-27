@@ -6865,6 +6865,7 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 @media (max-width: 560px) {
     .wc-detail-facts { grid-template-columns: 1fr; gap: 2px 0; }
     .wc-detail-facts dt { margin-top: 8px; }
+}
 
 /* The severity escape hatch on the referral form.
    Set apart from the intervention checklist because it is not one of them: it
