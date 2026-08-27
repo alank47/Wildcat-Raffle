@@ -18599,26 +18599,51 @@
             const total = num(pts && pts.total);
             const entries = num(pts && pts.bigRaffleEntries);
 
-            const row = function (title, sub, value, noneText) {
-                const end = value === null
-                    ? '<span class="wp-rowend is-none">' + wpEsc(noneText || 'Not available') + '</span>'
-                    : '<span class="wp-rowend">' + wpEsc(String(value)) + '</span>';
-                return '<div class="wp-row">' +
+            // NESTED, BECAUSE THEY ARE NOT FIVE SEPARATE THINGS.
+            //
+            // PBIS, attendance and academics are the three WAYS to earn a
+            // raffle ticket, and they sum to the total above them. Jackpot
+            // entries are what those tickets build toward: one per week the
+            // student qualified. Listing all five as siblings made a hierarchy
+            // read as a list of unrelated balances, which is how a student
+            // ends up thinking "academics" is its own currency.
+            const sub = function (title, sub2, value) {
+                return '<div class="wp-row wp-row-nested">' +
                     '<span class="wp-rowmain">' +
                       '<span class="wp-rowtitle">' + wpEsc(title) + '</span>' +
-                      (sub ? '<span class="wp-rowsub">' + wpEsc(sub) + '</span>' : '') +
+                      (sub2 ? '<span class="wp-rowsub">' + wpEsc(sub2) + '</span>' : '') +
                     '</span>' +
-                    '<span class="wp-rowmain" style="flex:0 0 auto;text-align:right;">' + end + '</span>' +
-                    '</div>';
+                    '<span class="wp-rowmain" style="flex:0 0 auto;text-align:right;">' +
+                      (value === null
+                        ? '<span class="wp-rowend is-none">—</span>'
+                        : '<span class="wp-rowend">' + wpEsc(String(value)) + '</span>') +
+                    '</span></div>';
             };
 
-            const body = '<div class="wp-rows">' +
-                row('Raffle tickets', 'this cycle', total) +
-                row('Being a Wildcat', 'PBIS', pbis) +
-                row('Attendance', 'here and on time', att) +
-                row('Academics', 'work and progress', acad) +
-                (entries === null ? '' : row('Jackpot entries', 'earned by qualifying weeks', entries)) +
-                '</div>';
+            const body =
+                '<div class="wp-group">' +
+                  '<div class="wp-group-head">' +
+                    '<span class="wp-group-title">Raffle tickets</span>' +
+                    (total === null
+                      ? '<span class="wp-group-num is-none">—</span>'
+                      : '<span class="wp-group-num">' + wpEsc(String(total)) + '</span>') +
+                  '</div>' +
+                  '<div class="wp-rows wp-rows-nested">' +
+                    sub('Being a Wildcat', 'PBIS', pbis) +
+                    sub('Attendance', 'here and on time', att) +
+                    sub('Academics', 'work and progress', acad) +
+                  '</div>' +
+                  '<p class="wp-groupnote">Three ways to earn one thing. Every ticket is an entry in this cycle\'s raffle.</p>' +
+                '</div>' +
+                (entries === null ? '' :
+                  '<div class="wp-group wp-group-tail">' +
+                    '<div class="wp-group-head">' +
+                      '<span class="wp-group-title">Wildcat Jackpot</span>' +
+                      '<span class="wp-group-num">' + wpEsc(String(entries)) +
+                        '<span class="wp-group-unit">' + (entries === 1 ? 'entry' : 'entries') + '</span></span>' +
+                    '</div>' +
+                    '<p class="wp-groupnote">One entry for every week your tickets qualified you.</p>' +
+                  '</div>');
 
             // Said out loud, because a screen of zeroes looks identical to a
             // screen that failed to load, and a child reading it deserves to

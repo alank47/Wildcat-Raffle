@@ -34,12 +34,14 @@ console.log("\nA real balance is shown as money");
   const c = build({ wildcatCash: { balance: 42 }, points: { pbis: 3, attendance: 2, academic: 1, total: 6, bigRaffleEntries: 2 } });
   check("the lead is the balance", c.lead === "$42");
   check("it is not marked quiet", c.quiet !== true);
-  check("tickets are totalled", /Raffle tickets[\s\S]*?>6</.test(c.body));
+  check("tickets are totalled", /Raffle tickets<\/span><span class="wp-group-num">6</.test(c.body));
   check("and broken down, so a student knows what is still earnable",
     /Being a Wildcat[\s\S]*?>3</.test(c.body) &&
     /Attendance[\s\S]*?>2</.test(c.body) &&
     /Academics[\s\S]*?>1</.test(c.body));
-  check("jackpot entries appear when there are any", /Jackpot entries/.test(c.body));
+  check("the jackpot is its own group, not a fourth ticket source",
+    /wp-group-title">Wildcat Jackpot/.test(c.body));
+  check("with entries counted", /Wildcat Jackpot[\s\S]*?wp-group-num">2/.test(c.body));
   check("no 'nothing yet' note when there is something", !/Nothing yet this cycle/.test(c.body));
 }
 
@@ -69,7 +71,7 @@ console.log("\nMissing pieces degrade one at a time");
 {
   const c = build({ wildcatCash: { balance: 12 }, points: { pbis: 3, attendance: null, academic: 1, total: null } });
   check("a missing ticket total says so rather than showing 0",
-    /Raffle tickets[\s\S]*?is-none/.test(c.body));
+    /Raffle tickets<\/span><span class="wp-group-num is-none">/.test(c.body));
   check("but the balance still shows", c.lead === "$12");
   check("and the categories that ARE known still show", /Being a Wildcat[\s\S]*?>3</.test(c.body));
 
@@ -77,6 +79,36 @@ console.log("\nMissing pieces degrade one at a time");
   check("no data at all is an explicit failure, not an empty card",
     none.quiet === true && /could not be loaded/.test(none.body));
   check("and it does not claim a balance", !/\$/.test(none.lead));
+}
+
+console.log("\nThe three sources read as parts of one total, not as peers");
+{
+  // The complaint this restructure answers: five sibling rows made a
+  // hierarchy look like five unrelated balances, and a student could come away
+  // thinking "Academics" was its own currency.
+  const c = build({ wildcatCash: { balance: 5 },
+    points: { pbis: 3, attendance: 2, academic: 1, total: 6, bigRaffleEntries: 2 } });
+
+  check("the total is a heading, not a row", /wp-group-head/.test(c.body));
+  check("the three sources are nested under it",
+    (c.body.match(/wp-row-nested/g) || []).length === 3);
+  check("and they sit inside the raffle group, before the jackpot one",
+    c.body.indexOf("wp-row-nested") < c.body.indexOf("Wildcat Jackpot"));
+  check("the arithmetic is stated in words too",
+    /Three ways to earn one thing/.test(c.body));
+  check("and the jackpot's relationship to tickets is explained",
+    /One entry for every week your tickets qualified you/.test(c.body));
+
+  // Singular/plural, because "1 entries" on a child's card is sloppy.
+  const one = build({ wildcatCash: { balance: 5 },
+    points: { pbis: 1, attendance: 0, academic: 0, total: 1, bigRaffleEntries: 1 } });
+  check("one entry reads 'entry'", /wp-group-unit">entry</.test(one.body));
+  check("two read 'entries'", /wp-group-unit">entries</.test(c.body));
+
+  // The nesting must be structural, not just indentation in the copy.
+  const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+  check("the indent is carried by CSS, so it survives a copy edit",
+    /\.wp-row-nested \{[\s\S]*?border-left/.test(css));
 }
 
 console.log("\nIt is wired into the student wallet");
