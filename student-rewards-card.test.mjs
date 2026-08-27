@@ -34,7 +34,7 @@ console.log("\nA real balance is shown as money");
   const c = build({ wildcatCash: { balance: 42 }, points: { pbis: 3, attendance: 2, academic: 1, total: 6, bigRaffleEntries: 2 } });
   check("the lead is the balance", c.lead === "$42");
   check("it is not marked quiet", c.quiet !== true);
-  check("tickets are totalled", /Raffle tickets<\/span><span class="wp-group-num">6</.test(c.body));
+  check("tickets are totalled", /Raffle Tickets<\/span><span class="wp-group-num">6</.test(c.body));
   check("and broken down, so a student knows what is still earnable",
     /Being a Wildcat[\s\S]*?>3</.test(c.body) &&
     /Attendance[\s\S]*?>2</.test(c.body) &&
@@ -71,7 +71,7 @@ console.log("\nMissing pieces degrade one at a time");
 {
   const c = build({ wildcatCash: { balance: 12 }, points: { pbis: 3, attendance: null, academic: 1, total: null } });
   check("a missing ticket total says so rather than showing 0",
-    /Raffle tickets<\/span><span class="wp-group-num is-none">/.test(c.body));
+    /Raffle Tickets<\/span><span class="wp-group-num is-none">/.test(c.body));
   check("but the balance still shows", c.lead === "$12");
   check("and the categories that ARE known still show", /Being a Wildcat[\s\S]*?>3</.test(c.body));
 

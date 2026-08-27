@@ -18623,15 +18623,15 @@
             const body =
                 '<div class="wp-group">' +
                   '<div class="wp-group-head">' +
-                    '<span class="wp-group-title">Raffle tickets</span>' +
+                    '<span class="wp-group-title">Raffle Tickets</span>' +
                     (total === null
                       ? '<span class="wp-group-num is-none">—</span>'
                       : '<span class="wp-group-num">' + wpEsc(String(total)) + '</span>') +
                   '</div>' +
                   '<div class="wp-rows wp-rows-nested">' +
-                    sub('Being a Wildcat', 'PBIS', pbis) +
-                    sub('Attendance', 'here and on time', att) +
-                    sub('Academics', 'work and progress', acad) +
+                    sub('Being a Wildcat', 'PBIS points', pbis) +
+                    sub('Attendance', 'Here and on time', att) +
+                    sub('Academics', 'Work and progress', acad) +
                   '</div>' +
                   '<p class="wp-groupnote">Three ways to earn one thing. Every ticket is an entry in this cycle\'s raffle.</p>' +
                 '</div>' +
@@ -18652,7 +18652,7 @@
             const foot = bal === null
                 ? wpFoot('Your cash balance has not reached your account yet. This is not a balance of $0.')
                 : (allZero
-                    ? wpFoot('Nothing yet this cycle. These both start at zero and go up when staff award them.')
+                    ? wpFoot('Nothing yet this cycle. Both start at zero and go up when staff award them.')
                     : '');
 
             return {
