@@ -165,29 +165,6 @@ export async function bellContext(ctx: QueryCtx, nowIso: string): Promise<BellCo
   };
 }
 
-/**
- * What period is it right now. Staff-facing, for the settings screen and for a
- * teacher who wants to know what the app currently believes.
- *
- * Deliberately NOT student-facing on its own: a student gets this folded into
- * hallPasses.myCurrentClass, which also names their teacher. Two endpoints
- * answering overlapping questions is how two answers appear.
- */
-export const currentPeriod = query({
-  args: {},
-  handler: async (ctx) => {
-    await requireStaff(ctx);
-    const now = new Date().toISOString();
-    const context = await bellContext(ctx, now);
-    return {
-      ...context,
-      periodLabel: context.period?.label ?? null,
-      startsAt: context.period ? formatClock(context.period.startMinute) : null,
-      endsAt: context.period ? formatClock(context.period.endMinute) : null,
-      serverTime: now,
-    };
-  },
-});
 
 /**
  * Everything the admin screen renders: the schedules, the settings, the marked

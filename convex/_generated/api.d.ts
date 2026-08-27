@@ -46,7 +46,6 @@ import type * as studentDetail from "../studentDetail.js";
 import type * as studentEmail from "../studentEmail.js";
 import type * as studentPortalRules from "../studentPortalRules.js";
 import type * as studentProfileRules from "../studentProfileRules.js";
-import type * as students from "../students.js";
 import type * as syncLog from "../syncLog.js";
 import type * as tapLocations from "../tapLocations.js";
 import type * as tapSlug from "../tapSlug.js";
@@ -98,7 +97,6 @@ declare const fullApi: ApiFromModules<{
   studentEmail: typeof studentEmail;
   studentPortalRules: typeof studentPortalRules;
   studentProfileRules: typeof studentProfileRules;
-  students: typeof students;
   syncLog: typeof syncLog;
   tapLocations: typeof tapLocations;
   tapSlug: typeof tapSlug;

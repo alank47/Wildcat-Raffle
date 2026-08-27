@@ -1069,7 +1069,6 @@
         
         // Claw Pass (Digital Hall Pass) System Variables
         let hallPasses = []; // All hall passes (active and historical)
-        let activeHallPasses = []; // Currently active passes
         let hallMonitorInterval = null; // Auto-refresh interval for Hall Monitor
         let passSettings = {
             bathroom: 5,      // minutes
@@ -1127,9 +1126,6 @@
             activeSchedule: "normal", // Which schedule is active today
             enableAutoDetection: true // Auto-detect period from schedule
         };
-        let currentPassTimer = null; // Timer for active pass display
-        let selectedKioskStudent = null; // Student creating pass at kiosk
-        let currentActivePass = null; // Currently displayed pass in modal
         
         // Kickboard Point Conversion Settings
         let kickboardSettings = {
@@ -1320,704 +1316,13 @@
             if (typeof openStudentPortal === 'function') openStudentPortal(student);
         }
         
-        function updateStudentDashboard() {
-            const s = currentStudent;
-            
-            // Header info
-            document.getElementById('studentDashName').textContent = `${s.firstName} ${s.lastName}`;
-            document.getElementById('studentDashInfo').textContent = `Grade ${s.grade} • ID: ${s.id}`;
-            
-            // Current week tickets
-            document.getElementById('studentDashPBIS').textContent = s.pbisTickets || 0;
-            document.getElementById('studentDashAttendance').textContent = s.attendanceTickets || 0;
-            document.getElementById('studentDashAcademic').textContent = s.academicTickets || 0;
-            
-            // Jackpot status
-            const hasAllThree = (s.pbisTickets > 0) && (s.attendanceTickets > 0) && (s.academicTickets > 0);
-            const isQualified = isQualifiedForJackpot(s);
-            const entries = s.weeksQualified || 0;
-            
-            if (isQualified || hasAllThree) {
-                // Show qualified box
-                document.getElementById('studentQualifiedBox').classList.remove('hidden');
-                document.getElementById('studentNotQualifiedBox').classList.add('hidden');
-                document.getElementById('studentJackpotEntries').textContent = entries;
-            } else {
-                // Show not qualified box
-                document.getElementById('studentQualifiedBox').classList.add('hidden');
-                document.getElementById('studentNotQualifiedBox').classList.remove('hidden');
-                
-                // Build checklist
-                let checklist = '';
-                if ((s.pbisTickets || 0) === 0) {
-                    checklist += '<div style="margin-bottom: 8px;">❌ Need PBIS tickets</div>';
-                } else {
-                    checklist += '<div style="margin-bottom: 8px;">✅ PBIS tickets earned</div>';
-                }
-                
-                if ((s.attendanceTickets || 0) === 0) {
-                    checklist += '<div style="margin-bottom: 8px;">❌ Need Attendance tickets</div>';
-                } else {
-                    checklist += '<div style="margin-bottom: 8px;">✅ Attendance tickets earned</div>';
-                }
-                
-                if ((s.academicTickets || 0) === 0) {
-                    checklist += '<div>❌ Need Academic tickets</div>';
-                } else {
-                    checklist += '<div>✅ Academic tickets earned</div>';
-                }
-                
-                document.getElementById('studentNeedsChecklist').innerHTML = checklist;
-            }
-            
-            // Lifetime stats
-            const lifetimeTickets = (s.ticketHistory || []).reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
-            document.getElementById('studentLifetimeTickets').textContent = lifetimeTickets;
-            document.getElementById('studentWeeksQualified').textContent = entries;
-            
-            // Populate ticket history
-            const historyEl = document.getElementById('studentTicketHistory');
-            const history = s.ticketHistory || [];
-            
-            if (history.length === 0) {
-                historyEl.innerHTML = '<div style="text-align: center; padding: 30px; color: #999;">No tickets awarded yet</div>';
-            } else {
-                // Sort by date (newest first)
-                const sortedHistory = [...history].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-                
-                let historyHtml = '<div style="display: flex; flex-direction: column; gap: 12px;">';
-                
-                sortedHistory.forEach(entry => {
-                    const date = new Date(entry.timestamp);
-                    const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                    const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-                    
-                    let categoryColor = '#667eea';
-                    let categoryIcon = '🎯';
-                    if (entry.category === 'Attendance') {
-                        categoryColor = '#2E7D52';
-                        categoryIcon = '📅';
-                    } else if (entry.category === 'Academic' || entry.category === 'Academics') {
-                        categoryColor = '#3b82f6';
-                        categoryIcon = '📚';
-                    }
-                    
-                    const ticketCount = entry.tickets || entry.amount || 0;
-                    
-                    historyHtml += `
-                        <div style="background: #f9fafb; padding: 15px; border-radius: 8px; border-left: 4px solid ${categoryColor};">
-                            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
-                                <div>
-                                    <div style="font-weight: 600; color: #333; font-size: 14px; margin-bottom: 4px;">
-                                        ${categoryIcon} ${entry.category}
-                                    </div>
-                                    <div style="font-size: 13px; color: #666;">
-                                        Awarded by ${entry.teacher || 'Unknown'}
-                                    </div>
-                                </div>
-                                <div style="background: ${categoryColor}; color: white; padding: 6px 12px; border-radius: 6px; font-weight: 700; font-size: 14px;">
-                                    +${ticketCount} 🎫
-                                </div>
-                            </div>
-                            ${entry.reason ? `<div style="font-size: 13px; color: #666; font-style: italic; margin-bottom: 6px;">"${entry.reason}"</div>` : ''}
-                            <div style="font-size: 12px; color: #999;">
-                                ${dateStr} at ${timeStr}
-                            </div>
-                        </div>
-                    `;
-                });
-                
-                historyHtml += '</div>';
-                historyEl.innerHTML = historyHtml;
-            }
-            
-            // Populate jackpot entry history from audit log
-            const jackpotHistoryEl = document.getElementById('studentJackpotHistory');
-            const jackpotEntries = auditLog.filter(entry => 
-                entry.studentId === s.id && 
-                (entry.action === 'Qualified for Wildcat Jackpot' || entry.action === 'Weekly Leaderboard Bonus')
-            );
-            
-            if (jackpotEntries.length === 0) {
-                jackpotHistoryEl.innerHTML = '<div style="text-align: center; padding: 20px; color: #999;">No jackpot entries yet. Qualify by earning all 3 ticket types in a week!</div>';
-            } else {
-                // Sort by date (newest first)
-                const sortedJackpot = [...jackpotEntries].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-                
-                let jackpotHtml = '<div style="display: flex; flex-direction: column; gap: 10px;">';
-                
-                sortedJackpot.forEach(entry => {
-                    const date = new Date(entry.timestamp);
-                    const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                    const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-                    
-                    let icon = '🎰';
-                    let title = '';
-                    let description = '';
-                    let bgColor = '#fef3c7';
-                    
-                    if (entry.action === 'Qualified for Wildcat Jackpot') {
-                        icon = '✅';
-                        title = 'Qualified for Jackpot';
-                        description = 'Earned tickets in all 3 categories';
-                        bgColor = '#d1fae5';
-                    } else if (entry.action === 'Weekly Leaderboard Bonus') {
-                        icon = '🏆';
-                        title = 'Bonus Jackpot Entry!';
-                        description = entry.notes || 'Top performer bonus';
-                        bgColor = '#fef3c7';
-                    }
-                    
-                    jackpotHtml += `
-                        <div style="background: ${bgColor}; padding: 12px 15px; border-radius: 8px; border-left: 4px solid #f59e0b;">
-                            <div style="display: flex; justify-content: between; align-items: start; margin-bottom: 6px;">
-                                <div style="flex: 1;">
-                                    <div style="font-weight: 700; color: #92400e; font-size: 14px; margin-bottom: 3px;">
-                                        ${icon} ${title}
-                                    </div>
-                                    <div style="font-size: 13px; color: #78350f;">
-                                        ${description}
-                                    </div>
-                                </div>
-                                <div style="background: #f59e0b; color: white; padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 13px; white-space: nowrap; margin-left: 10px;">
-                                    +1 🎰
-                                </div>
-                            </div>
-                            <div style="font-size: 11px; color: #92400e;">
-                                Week ${entry.week || '?'} • ${dateStr} at ${timeStr}
-                            </div>
-                        </div>
-                    `;
-                });
-                
-                jackpotHtml += '</div>';
-                jackpotHistoryEl.innerHTML = jackpotHtml;
-            }
-            
-            // Populate student leaderboard
-            updateStudentLeaderboard();
-        }
         
-        function updateStudentLeaderboard() {
-            const s = currentStudent;
-            
-            // Calculate tickets for CURRENT WEEK ONLY (not cumulative)
-            // CYCLE-SCOPED: only count history entries from the current cycle.
-            // Otherwise old entries with the same week number would pollute the leaderboard.
-            const studentsWithTotals = students.map(student => {
-                const history = student.ticketHistory || [];
-                const currentWeekHistory = history.filter(h => 
-                    h.week === currentWeek && entryBelongsToCurrentCycle(h)
-                );
-                
-                const pbis = currentWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
-                const attendance = currentWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
-                const academic = currentWeekHistory.filter(h => h.category === 'Academic' || h.category === 'Academics').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
-                
-                return {
-                    id: student.id,
-                    name: `${student.firstName} ${student.lastName}`,
-                    grade: student.grade,
-                    totalTickets: pbis + attendance + academic,
-                    pbis: pbis,
-                    attendance: attendance,
-                    academic: academic
-                };
-            });
-            
-            // Sort by total tickets (descending)
-            const sorted = studentsWithTotals
-                .filter(st => st.totalTickets > 0)
-                .sort((a, b) => b.totalTickets - a.totalTickets);
-            
-            // Find current student's rank
-            const myRank = sorted.findIndex(st => st.id === s.id) + 1;
-            const totalWithTickets = sorted.length;
-            
-            // Update my rank display
-            const myRankEl = document.getElementById('studentMyRank');
-            if (myRank > 0) {
-                let rankEmoji = '';
-                let rankColor = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
-                
-                if (myRank === 1) {
-                    rankEmoji = '🥇';
-                    rankColor = 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)';
-                } else if (myRank === 2) {
-                    rankEmoji = '🥈';
-                    rankColor = 'linear-gradient(135deg, #9ca3af 0%, #6b7280 100%)';
-                } else if (myRank === 3) {
-                    rankEmoji = '🥉';
-                    rankColor = 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)';
-                }
-                
-                myRankEl.style.background = rankColor;
-                myRankEl.innerHTML = `
-                    <div style="font-size: 14px; opacity: 0.9; margin-bottom: 5px;">Your Rank</div>
-                    <div style="font-size: 36px; font-weight: 700;">${rankEmoji} #${myRank}</div>
-                    <div style="font-size: 13px; opacity: 0.8;">out of <span id="studentTotalCount">${totalWithTickets}</span> students</div>
-                `;
-            } else {
-                myRankEl.innerHTML = `
-                    <div style="font-size: 14px; opacity: 0.9; margin-bottom: 5px;">Your Rank</div>
-                    <div style="font-size: 36px; font-weight: 700;">-</div>
-                    <div style="font-size: 13px; opacity: 0.8;">Earn tickets to get ranked!</div>
-                `;
-            }
-            
-            // Build top 10 + students near current student
-            const leaderboardList = document.getElementById('studentLeaderboardList');
-            let html = '';
-            
-            if (sorted.length === 0) {
-                html = '<div style="text-align: center; padding: 30px; color: #999;">No students have earned tickets yet</div>';
-            } else {
-                // Show top 10
-                const top10 = sorted.slice(0, 10);
-                
-                top10.forEach((student, index) => {
-                    const rank = index + 1;
-                    const isMe = student.id === s.id;
-                    
-                    let bgColor = '#f9fafb';
-                    let borderColor = '#e5e7eb';
-                    let medal = '';
-                    
-                    if (rank === 1) {
-                        bgColor = 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)';
-                        borderColor = '#fbbf24';
-                        medal = '🥇';
-                    } else if (rank === 2) {
-                        bgColor = 'linear-gradient(135deg, #e5e7eb 0%, #d1d5db 100%)';
-                        borderColor = '#9ca3af';
-                        medal = '🥈';
-                    } else if (rank === 3) {
-                        bgColor = 'linear-gradient(135deg, #fed7aa 0%, #fdba74 100%)';
-                        borderColor = '#f97316';
-                        medal = '🥉';
-                    }
-                    
-                    if (isMe) {
-                        bgColor = 'linear-gradient(135deg, #ddd6fe 0%, #c4b5fd 100%)';
-                        borderColor = '#8b5cf6';
-                    }
-                    
-                    html += `
-                        <div style="background: ${bgColor}; padding: 12px 15px; border-radius: 8px; border-left: 4px solid ${borderColor}; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
-                            <div style="display: flex; align-items: center; gap: 12px;">
-                                <div style="font-size: 20px; font-weight: 700; color: #666; min-width: 30px; text-align: center;">
-                                    ${medal || rank}
-                                </div>
-                                <div>
-                                    <div style="font-weight: 600; color: #333; font-size: 14px;">
-                                        ${student.name}${isMe ? ' (You!)' : ''}
-                                    </div>
-                                    <div style="font-size: 12px; color: #666;">Grade ${student.grade}</div>
-                                </div>
-                            </div>
-                            <div style="text-align: right;">
-                                <div style="font-weight: 700; font-size: 18px; color: #667eea;">${student.totalTickets} 🎫</div>
-                                <div style="font-size: 11px; color: #666;">
-                                    ${student.pbis}P • ${student.attendance}A • ${student.academic}C
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                });
-                
-                // If current student is not in top 10, show students near them
-                if (myRank > 10) {
-                    html += '<div style="text-align: center; padding: 15px; color: #999; font-size: 13px;">...</div>';
-                    
-                    // Show 2 above and 2 below current student
-                    const startIndex = Math.max(0, myRank - 3);
-                    const endIndex = Math.min(sorted.length, myRank + 2);
-                    const nearMe = sorted.slice(startIndex, endIndex);
-                    
-                    nearMe.forEach((student, index) => {
-                        const rank = startIndex + index + 1;
-                        const isMe = student.id === s.id;
-                        
-                        let bgColor = isMe ? 'linear-gradient(135deg, #ddd6fe 0%, #c4b5fd 100%)' : '#f9fafb';
-                        let borderColor = isMe ? '#8b5cf6' : '#e5e7eb';
-                        
-                        html += `
-                            <div style="background: ${bgColor}; padding: 12px 15px; border-radius: 8px; border-left: 4px solid ${borderColor}; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
-                                <div style="display: flex; align-items: center; gap: 12px;">
-                                    <div style="font-size: 20px; font-weight: 700; color: #666; min-width: 30px; text-align: center;">
-                                        ${rank}
-                                    </div>
-                                    <div>
-                                        <div style="font-weight: 600; color: #333; font-size: 14px;">
-                                            ${student.name}${isMe ? ' (You!)' : ''}
-                                        </div>
-                                        <div style="font-size: 12px; color: #666;">Grade ${student.grade}</div>
-                                    </div>
-                                </div>
-                                <div style="text-align: right;">
-                                    <div style="font-weight: 700; font-size: 18px; color: #667eea;">${student.totalTickets} 🎫</div>
-                                    <div style="font-size: 11px; color: #666;">
-                                        ${student.pbis}P • ${student.attendance}A • ${student.academic}C
-                                    </div>
-                                </div>
-                            </div>
-                        `;
-                    });
-                }
-            }
-            
-            leaderboardList.innerHTML = html;
-        }
         
-        function studentLogout() {
-            currentStudent = null;
-            document.getElementById('studentDashboard').classList.add('hidden');
-            document.getElementById('loginScreen').classList.remove('hidden');
-            // #studentLoginId went away with the name lookup on 2026-08-14.
-            // Reading .value off the null it now returns threw a TypeError
-            // here, which aborted the rest of the function.
-            const err = document.getElementById('studentLoginError');
-            if (err) err.textContent = '';
-            // A student leaving lands on the Student tab, never on the Teacher
-            // tab with its "Sign in with Microsoft" button.
-            if (typeof showStudentLogin === 'function') showStudentLogin();
-        }
 
-        function updateStudentView() {
-            document.getElementById('studentViewName').textContent = `${currentStudent.firstName} ${currentStudent.lastName}`;
-            document.getElementById('studentViewId').textContent = currentStudent.id;
-            
-            // Calculate tickets for CURRENT WEEK ONLY (current cycle only)
-            const history = currentStudent.ticketHistory || [];
-            const currentWeekHistory = history.filter(h => h.week === currentWeek && entryBelongsToCurrentCycle(h));
-            
-            const pbisTickets = currentWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
-            const attendanceTickets = currentWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
-            const academicTickets = currentWeekHistory.filter(h => h.category === 'Academic' || h.category === 'Academics').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
-            
-            document.getElementById('studentPbisTickets').textContent = pbisTickets;
-            document.getElementById('studentAttendanceTickets').textContent = attendanceTickets;
-            document.getElementById('studentAcademicTickets').textContent = academicTickets;
 
-            // Show qualified banner - check BOTH if already qualified OR if currently has all 3 ticket types
-            const hasAllThreeTickets = pbisTickets > 0 && attendanceTickets > 0 && academicTickets > 0;
-            
-            if (isQualifiedForJackpot(currentStudent) || hasAllThreeTickets) {
-                document.getElementById('qualifiedBanner').classList.remove('hidden');
-            } else {
-                document.getElementById('qualifiedBanner').classList.add('hidden');
-            }
-            
-            // Update student leaderboards (this will set the level text and color)
-            updateStudentLeaderboards();
 
-            // Update ticket history (use existing history variable)
-            const tbody = document.getElementById('studentHistoryTable');
 
-            if (history.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 40px; color: #999;">No tickets received yet. Keep up the good work!</td></tr>';
-            } else {
-                tbody.innerHTML = [...history].reverse().map(h => {
-                    const date = new Date(h.timestamp);
-                    return `
-                        <tr>
-                            <td>${date.toLocaleDateString()}</td>
-                            <td>${h.category}</td>
-                            <td>${h.tickets}</td>
-                            <td>${h.reason || '-'}</td>
-                            <td>${h.teacher}</td>
-                        </tr>
-                    `;
-                }).join('');
-            }
 
-            // Update Wildcat Cash tab
-            updateStudentCashView();
-            
-            // Update Claw Pass tab
-            updateStudentPassView();
-        }
-
-        function switchStudentTab(tabName) {
-            // Hide all tabs
-            document.querySelectorAll('.student-tab-content').forEach(tab => tab.style.display = 'none');
-            document.querySelectorAll('.student-tab-button').forEach(btn => {
-                btn.style.background = '#f5f5f5';
-                btn.style.color = '#333';
-                btn.classList.remove('active');
-            });
-            
-            // Show selected tab
-            document.getElementById(tabName + 'Tab').style.display = 'block';
-            const btnId = tabName === 'raffleTickets' ? 'studentRaffleTabBtn' : 
-                          tabName === 'wildcatCash' ? 'studentCashTabBtn' : 'studentPassTabBtn';
-            const btn = document.getElementById(btnId);
-            btn.style.background = '#667eea';
-            btn.style.color = 'white';
-            btn.classList.add('active');
-            
-            // Refresh data for the selected tab
-            if (tabName === 'wildcatCash') {
-                updateStudentCashView();
-            } else if (tabName === 'clawPass') {
-                updateStudentPassView();
-            }
-        }
-
-        function updateStudentCashView() {
-            if (!currentStudent) return;
-            
-            // Initialize if needed
-            if (currentStudent.wildcatCashBalance === undefined) {
-                currentStudent.wildcatCashBalance = STARTING_BALANCE;
-                currentStudent.wildcatCashEarned = 0;
-                currentStudent.wildcatCashSpent = 0;
-                currentStudent.wildcatCashDeducted = 0;
-                currentStudent.wildcatCashTransactions = [];
-            }
-            
-            // Update balance
-            document.getElementById('studentCashBalance').textContent = '$' + currentStudent.wildcatCashBalance;
-            document.getElementById('studentCashEarned').textContent = '$' + currentStudent.wildcatCashEarned;
-            document.getElementById('studentCashSpent').textContent = '$' + currentStudent.wildcatCashSpent;
-            document.getElementById('studentCashDeducted').textContent = '$' + currentStudent.wildcatCashDeducted;
-            
-            // Update transactions
-            const transactionsContainer = document.getElementById('studentCashTransactions');
-            const transactions = (currentStudent.wildcatCashTransactions || []).slice().reverse().slice(0, 10); // Last 10 transactions
-            
-            if (transactions.length === 0) {
-                transactionsContainer.innerHTML = '<p style="text-align: center; color: #999; padding: 40px;">No transactions yet</p>';
-                return;
-            }
-            
-            transactionsContainer.innerHTML = transactions.map(txn => {
-                const date = new Date(txn.timestamp);
-                const color = txn.amount > 0 ? '#2E7D52' : '#B3392F';
-                const sign = txn.amount > 0 ? '+' : '';
-                return `
-                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 15px; border-bottom: 1px solid #e0e0e0;">
-                        <div>
-                            <div style="font-weight: 600; color: #333; margin-bottom: 4px;">${txn.behaviorName}</div>
-                            <div style="font-size: 13px; color: #999;">${date.toLocaleDateString()} ${date.toLocaleTimeString()}</div>
-                            ${txn.notes ? `<div style="font-size: 13px; color: #666; margin-top: 4px;">${txn.notes}</div>` : ''}
-                        </div>
-                        <div style="font-size: 24px; font-weight: 700; color: ${color};">${sign}$${Math.abs(txn.amount)}</div>
-                    </div>
-                `;
-            }).join('');
-        }
-
-        function updateStudentPassView() {
-            if (!currentStudent) return;
-            
-            const studentPasses = hallPasses.filter(p => p.studentId === currentStudent.id);
-            const activePasses = studentPasses.filter(p => p.status === 'active' && new Date(p.expiresAt) > new Date());
-            
-            // Update active pass section
-            const activePassContainer = document.getElementById('studentActivePass');
-            if (activePasses.length > 0) {
-                const pass = activePasses[0]; // Show first active pass
-                const now = new Date();
-                const remaining = new Date(pass.expiresAt) - now;
-                const minutes = Math.floor(remaining / 60000);
-                const seconds = Math.floor((remaining % 60000) / 1000);
-                const timeColor = minutes === 0 ? '#B7791F' : '#2E7D52';
-                
-                activePassContainer.innerHTML = `
-                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3); color: white; text-align: center;">
-                        <h3 style="margin: 0 0 20px 0; font-size: 24px;">🎫 Active Pass</h3>
-                        <div style="font-size: 48px; font-weight: 700; color: ${timeColor}; margin-bottom: 10px;">${minutes}:${seconds.toString().padStart(2, '0')}</div>
-                        <div style="font-size: 16px; margin-bottom: 20px;">Time Remaining</div>
-                        <div style="background: rgba(255,255,255,0.2); padding: 15px; border-radius: 8px;">
-                            <div style="margin-bottom: 8px;"><strong>Destination:</strong> ${getDestinationDisplay(pass.destination)}</div>
-                            <div style="margin-bottom: 8px;"><strong>Started:</strong> ${new Date(pass.createdAt).toLocaleTimeString()}</div>
-                            <div><strong>Expires:</strong> ${new Date(pass.expiresAt).toLocaleTimeString()}</div>
-                        </div>
-                    </div>
-                `;
-            } else {
-                activePassContainer.innerHTML = '';
-            }
-            
-            // Update pass history
-            const historyTable = document.getElementById('studentPassHistory');
-            if (studentPasses.length === 0) {
-                historyTable.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 40px; color: #999;">No hall passes yet</td></tr>';
-                return;
-            }
-            
-            historyTable.innerHTML = studentPasses.slice().reverse().map(pass => {
-                const statusColor = pass.status === 'returned' ? '#2E7D52' : 
-                                   pass.status === 'expired' ? '#B3392F' : '#B7791F';
-                const statusText = pass.status === 'returned' ? '✅ Returned' :
-                                  pass.status === 'expired' ? '⏰ Expired' : '🟡 Active';
-                
-                return `
-                    <tr>
-                        <td style="padding: 12px;">${new Date(pass.createdAt).toLocaleString()}</td>
-                        <td style="padding: 12px;">${getDestinationDisplay(pass.destination)}</td>
-                        <td style="padding: 12px;">${pass.duration} min</td>
-                        <td style="padding: 12px; color: ${statusColor}; font-weight: 600;">${statusText}</td>
-                    </tr>
-                `;
-            }).join('');
-        }
-
-        function updateStudentLeaderboards() {
-            // Determine if current student is MS (6-8) or HS (9-12)
-            const currentGrade = parseInt(currentStudent.grade);
-            const isMiddleSchool = currentGrade >= 6 && currentGrade <= 8;
-            const isHighSchool = currentGrade >= 9 && currentGrade <= 12;
-            
-            // Filter students to only show same level (MS or HS)
-            let relevantStudents = enrolledStudents();
-            if (isMiddleSchool) {
-                relevantStudents = enrolledStudents().filter(s => {
-                    const grade = parseInt(s.grade);
-                    return grade >= 6 && grade <= 8;
-                });
-            } else if (isHighSchool) {
-                relevantStudents = students.filter(s => {
-                    const grade = parseInt(s.grade);
-                    return grade >= 9 && grade <= 12;
-                });
-            }
-            
-            // Set the school level header text and color
-            const levelElement = document.getElementById('studentLeaderboardLevel');
-            let schoolColor, schoolGradient1, schoolGradient2, schoolName;
-            
-            if (isMiddleSchool) {
-                schoolColor = '#ff9800';
-                schoolGradient1 = '#ff9800';
-                schoolGradient2 = '#f57c00';
-                schoolName = 'Middle School (Grades 6-8)';
-                levelElement.style.color = '#ff9800';
-            } else if (isHighSchool) {
-                schoolColor = '#3b82f6';
-                schoolGradient1 = '#3b82f6';
-                schoolGradient2 = '#2563eb';
-                schoolName = 'High School (Grades 9-12)';
-                levelElement.style.color = '#3b82f6';
-            }
-            levelElement.textContent = schoolName;
-            
-            // Calculate overall leader (total of all tickets)
-            const overallTop = [...relevantStudents]
-                .map(s => ({
-                    ...s,
-                    totalTickets: (s.pbisTickets || 0) + (s.attendanceTickets || 0) + (s.academicTickets || 0)
-                }))
-                .filter(s => s.totalTickets > 0)
-                .sort((a, b) => b.totalTickets - a.totalTickets)
-                .slice(0, 10);
-            
-            // Get top student for each category
-            const pbisTop = [...relevantStudents]
-                .filter(s => (s.pbisTickets || 0) > 0)
-                .sort((a, b) => (b.pbisTickets || 0) - (a.pbisTickets || 0));
-            
-            const attendanceTop = [...relevantStudents]
-                .filter(s => (s.attendanceTickets || 0) > 0)
-                .sort((a, b) => (b.attendanceTickets || 0) - (a.attendanceTickets || 0));
-            
-            const academicTop = [...relevantStudents]
-                .filter(s => (s.academicTickets || 0) > 0)
-                .sort((a, b) => (b.academicTickets || 0) - (a.academicTickets || 0));
-
-            // Build the complete leaderboard HTML matching the new design
-            const leaderboardHTML = `
-                <div style="background: linear-gradient(135deg, ${schoolGradient1} 0%, ${schoolGradient2} 100%); padding: 4px; border-radius: 16px; box-shadow: 0 6px 20px rgba(${isMiddleSchool ? '255, 152, 0' : '59, 130, 246'}, 0.3);">
-                    <div style="background: white; border-radius: 12px; padding: 25px;">
-                        
-                        <!-- Overall Leader Card -->
-                        <div style="background: linear-gradient(135deg, ${schoolGradient1} 0%, ${schoolGradient2} 100%); padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(${isMiddleSchool ? '255, 152, 0' : '59, 130, 246'}, 0.2);">
-                            <h4 style="color: white; margin: 0 0 15px 0; text-align: center; font-size: 18px; font-weight: 600;">🏆 Overall Leader</h4>
-                            <div style="background: rgba(255,255,255,0.95); border-radius: 8px; padding: 15px;">
-                                <table style="width: 100%;">
-                                    <thead>
-                                        <tr style="border-bottom: 2px solid ${schoolColor};">
-                                            <th style="text-align: left; padding: 8px; color: #333; font-weight: 600; font-size: 13px;">Rank</th>
-                                            <th style="text-align: left; padding: 8px; color: #333; font-weight: 600; font-size: 13px;">Student</th>
-                                            <th style="text-align: right; padding: 8px; color: #333; font-weight: 600; font-size: 13px;">Total</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        ${overallTop.length === 0 ? 
-                                            '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #999;">No tickets awarded yet</td></tr>' :
-                                            overallTop.map((s, i) => {
-                                                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-                                                const isCurrentStudent = s.id === currentStudent.id;
-                                                const highlightStyle = isCurrentStudent ? 'background: #fff3cd; font-weight: bold;' : '';
-                                                return `
-                                                    <tr style="${highlightStyle}">
-                                                        <td style="padding: 8px; font-size: 16px;">${medal}</td>
-                                                        <td style="padding: 8px; font-weight: 600;">${s.firstName} ${s.lastName.charAt(0)}.${isCurrentStudent ? ' (You!)' : ''}</td>
-                                                        <td style="padding: 8px; text-align: right; font-weight: bold; color: ${schoolColor}; font-size: 16px;">${s.totalTickets} 🎫</td>
-                                                    </tr>
-                                                `;
-                                            }).join('')
-                                        }
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                        
-                        <!-- Category Leaders -->
-                        <div style="display: grid; gap: 15px;">
-                            <!-- PBIS -->
-                            <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; border-left: 4px solid #ef4444;">
-                                <h5 style="margin: 0 0 10px 0; color: #ef4444; font-size: 15px; font-weight: 600;">🎯 PBIS Leader</h5>
-                                <div style="color: #333; font-size: 14px;">
-                                    ${pbisTop.length === 0 ? 
-                                        '<span style="color: #999; font-style: italic;">No tickets yet</span>' :
-                                        (() => {
-                                            const top = pbisTop[0];
-                                            const isYou = top.id === currentStudent.id;
-                                            return `<strong>${top.firstName} ${top.lastName.charAt(0)}.</strong> - ${top.pbisTickets} 🎫${isYou ? ' <span style="color: #ef4444; font-weight: 700;">(You!)</span>' : ''}`;
-                                        })()
-                                    }
-                                </div>
-                            </div>
-                            
-                            <!-- Attendance -->
-                            <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; border-left: 4px solid #10b981;">
-                                <h5 style="margin: 0 0 10px 0; color: #10b981; font-size: 15px; font-weight: 600;">📅 Attendance Leader</h5>
-                                <div style="color: #333; font-size: 14px;">
-                                    ${attendanceTop.length === 0 ? 
-                                        '<span style="color: #999; font-style: italic;">No tickets yet</span>' :
-                                        (() => {
-                                            const top = attendanceTop[0];
-                                            const isYou = top.id === currentStudent.id;
-                                            return `<strong>${top.firstName} ${top.lastName.charAt(0)}.</strong> - ${top.attendanceTickets} 🎫${isYou ? ' <span style="color: #10b981; font-weight: 700;">(You!)</span>' : ''}`;
-                                        })()
-                                    }
-                                </div>
-                            </div>
-                            
-                            <!-- Academic -->
-                            <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; border-left: 4px solid #3b82f6;">
-                                <h5 style="margin: 0 0 10px 0; color: #3b82f6; font-size: 15px; font-weight: 600;">📚 Academic Leader</h5>
-                                <div style="color: #333; font-size: 14px;">
-                                    ${academicTop.length === 0 ? 
-                                        '<span style="color: #999; font-style: italic;">No tickets yet</span>' :
-                                        (() => {
-                                            const top = academicTop[0];
-                                            const isYou = top.id === currentStudent.id;
-                                            return `<strong>${top.firstName} ${top.lastName.charAt(0)}.</strong> - ${top.academicTickets} 🎫${isYou ? ' <span style="color: #3b82f6; font-weight: 700;">(You!)</span>' : ''}`;
-                                        })()
-                                    }
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-            
-            // Inject the HTML into the container
-            document.getElementById('studentLeaderboardContainer').innerHTML = leaderboardHTML;
-        }
 
         // Cloud Sync Functions
         async function loadData() {
@@ -2414,7 +1719,6 @@
                         ensureBellSchedulesExist();
                         
                         // Update active hall passes
-                        activeHallPasses = hallPasses.filter(p => p.status === 'active');
                         
                         // Initialize EmailJS if configured
                         if (emailJSConfig.publicKey && typeof emailjs !== 'undefined') {
@@ -2518,7 +1822,6 @@
                 ensureBellSchedulesExist();
                 
                 // Update active hall passes
-                activeHallPasses = hallPasses.filter(p => p.status === 'active');
                 
                 // Initialize EmailJS if configured
                 if (emailJSConfig.publicKey && typeof emailjs !== 'undefined') {
@@ -2543,61 +1846,12 @@
         // KICKBOARD & EMAILJS FUNCTIONS
         // ========================================
         
-        async function saveCycleDuration() {
-            const durEl = document.getElementById('cycleDurationInput');
-            if (!durEl) return;
-            const newDuration = parseInt(durEl.value);
-            
-            if (!newDuration || newDuration < 1 || newDuration > 10) {
-                alert('⚠️ Please enter a valid cycle duration between 1 and 10 weeks');
-                return;
-            }
-            
-            // Warn if current week exceeds new duration
-            if (currentWeek > newDuration) {
-                if (!await showConfirm(`⚠️ WARNING: Current week (${currentWeek}) is greater than new cycle duration (${newDuration}).\n\nThis means you're already past the end of the cycle with this new setting.\n\nYou should probably:\n1. Run the Wildcat Jackpot now\n2. Click "End Week" to reset to Week 1\n3. Then set your new cycle duration\n\nDo you still want to change the cycle duration to ${newDuration} weeks?`)) {
-                    return;
-                }
-            }
-            
-            cycleDuration = newDuration;
-            const durDisp = document.getElementById('cycleDurationDisplay');
-            if (durDisp) durDisp.textContent = cycleDuration;
-            
-            saveData();
-            updateAllDisplays();
-            
-            alert(`✅ Cycle duration updated to ${cycleDuration} weeks!\n\nThis change is now active for the current cycle.\n\nCurrent status: Week ${currentWeek} of ${cycleDuration}`);
-        }
         
         // ========================================
         // AUTO-WEEK SYSTEM SETTINGS
         // ========================================
         
-        function toggleAutoWeek() {
-            autoWeekEnabled = document.getElementById('autoWeekToggle').checked;
-            const settingsDiv = document.getElementById('autoWeekSettings');
-            
-            if (autoWeekEnabled) {
-                settingsDiv.style.display = 'block';
-                console.log('✅ Auto-week system enabled');
-            } else {
-                settingsDiv.style.display = 'none';
-                console.log('⚠️ Auto-week system disabled - you must manually complete weeks');
-            }
-            
-            saveData();
-        }
         
-        function saveAutoWeekSettings() {
-            weekResetDay = parseInt(document.getElementById('weekResetDaySelect').value);
-            weekResetHour = parseInt(document.getElementById('weekResetHourSelect').value);
-            
-            updateAutoResetDisplay();
-            saveData();
-            
-            console.log(`✅ Auto-week reset configured for ${getDayName(weekResetDay)} at ${weekResetHour}:00`);
-        }
         
         function updateAutoResetDisplay() {
             // Safety check: These elements were removed when auto-week tab was disabled
@@ -2624,33 +1878,6 @@
             }
         }
         
-        function saveCycleConfiguration() {
-            const cycleName = document.getElementById('cycleNameInput').value || 'Cycle 1';
-            const startDate = document.getElementById('cycleStartDate').value;
-            const endDate = document.getElementById('cycleEndDate').value;
-            
-            if (!startDate || !endDate) {
-                alert('⚠️ Please set both start and end dates for the cycle');
-                return;
-            }
-            
-            if (new Date(startDate) >= new Date(endDate)) {
-                alert('⚠️ End date must be after start date');
-                return;
-            }
-            
-            currentCycle = {
-                name: cycleName,
-                startDate: startDate,
-                endDate: endDate,
-                cycleNumber: (currentCycle.cycleNumber || 0) + 1
-            };
-            
-            updateCycleDisplay();
-            saveData();
-            
-            alert(`✅ Jackpot Cycle configured!\n\n${cycleName}\nStart: ${new Date(startDate).toLocaleDateString()}\nEnd: ${new Date(endDate).toLocaleDateString()}`);
-        }
         
         function updateCycleDisplay() {
             const cycleNameEl = document.getElementById('currentCycleName');
@@ -2699,50 +1926,6 @@
             alert('✅ EmailJS configuration saved!');
         }
         
-        async function testEmailJS() {
-            if (typeof emailjs === 'undefined') {
-                alert('⚠️ EmailJS library not loaded.\n\nPlease refresh the page.');
-                return;
-            }
-            
-            if (!emailJSConfig.serviceId || !emailJSConfig.templateId || !emailJSConfig.publicKey) {
-                alert('⚠️ Please configure EmailJS settings first');
-                return;
-            }
-            
-            // Refresh current user data from teachers array
-            const updatedUser = teachers.find(t => t.id === currentUser.id);
-            if (updatedUser) {
-                currentUser = updatedUser;
-            }
-            
-            if (!currentUser.email || currentUser.email === '') {
-                alert('⚠️ Current user has no email address.\n\nPlease add an email to your account first.\n\nGo to Teachers tab → Click Edit on your account → Add email.');
-                return;
-            }
-            
-            try {
-                const testReport = generateWeeklyReport(currentUser);
-                
-                await emailjs.send(
-                    emailJSConfig.serviceId,
-                    emailJSConfig.templateId,
-                    {
-                        to_email: currentUser.email,
-                        to_name: currentUser.name,
-                        subject: kickboardSettings.emailSubject,
-                        week_number: currentWeek,
-                        report_content: testReport
-                    },
-                    emailJSConfig.publicKey
-                );
-                
-                alert(`✅ Test email sent to ${currentUser.email}!\n\nCheck your inbox.`);
-            } catch (error) {
-                console.error('Email test failed:', error);
-                alert(`❌ Failed to send test email:\n\n${error.text || error.message}\n\nPlease check your EmailJS configuration.`);
-            }
-        }
         
         function generateWeeklyReport(teacher) {
             // Get tickets awarded in the CURRENT RAFFLE WEEK only (current cycle only)
@@ -2908,13 +2091,6 @@
             return report;
         }
         
-        function getWeekStartDate() {
-            // Get Monday of current week
-            const now = new Date();
-            const day = now.getDay();
-            const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Adjust when day is Sunday
-            return new Date(now.setDate(diff));
-        }
         
         async function sendWeeklyReportsNow() {
             if (!emailJSConfig.serviceId || !emailJSConfig.templateId || !emailJSConfig.publicKey) {
@@ -3910,7 +3086,6 @@
                                 preventionGroups = mergedSecondary.preventionGroups;
                                 cashReceipts = mergedSecondary.cashReceipts;
                                 detentionIdCounter = mergedSecondary.detentionIdCounter;
-                                activeHallPasses = hallPasses.filter(p => p.status === 'active');
                             }
                             console.log(
                                 `✅ secondary saved (merged: ${(detentions || []).length} detentions, ` +
@@ -4292,121 +3467,7 @@
             }
         }
 
-        // PowerSchool API Functions
-        async function fetchFromPowerSchool(endpoint) {
-            try {
-                const response = await fetch(POWERSCHOOL_BASE_URL + endpoint, {
-                    headers: {
-                        'X-API-Key': POWERSCHOOL_API_KEY
-                    }
-                });
 
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
-
-                return await response.json();
-            } catch (error) {
-                console.error(`PowerSchool API error (${endpoint}):`, error);
-                throw error;
-            }
-        }
-
-        async function syncFromPowerSchool() {
-            if (!currentUser || (currentUser.role !== 'admin' && currentUser.role !== 'superadmin')) {
-                alert('Only admins can sync with PowerSchool');
-                return;
-            }
-
-            const syncButton = document.getElementById('powerSchoolSyncBtn');
-            if (syncButton) {
-                syncButton.disabled = true;
-                syncButton.textContent = '🔄 Syncing...';
-            }
-
-            try {
-                // Fetch all data from PowerSchool
-                const [psStudents, psTeachers, psSections, psEnrollments] = await Promise.all([
-                    fetchFromPowerSchool('students.jsp'),
-                    fetchFromPowerSchool('teachers.jsp'),
-                    fetchFromPowerSchool('sections.jsp'),
-                    fetchFromPowerSchool('enrollments.jsp')
-                ]);
-
-                // Update students
-                psStudents.forEach(psStudent => {
-                    let student = students.find(s => s.id === psStudent.id);
-                    
-                    if (!student) {
-                        // New student from PowerSchool
-                        students.push({
-                            id: psStudent.id,
-                            firstName: psStudent.firstName,
-                            lastName: psStudent.lastName,
-                            grade: psStudent.grade,
-                            pbisTickets: 0,
-                            attendanceTickets: 0,
-                            academicTickets: 0,
-                            bigRaffleQualified: [],
-                            ticketHistory: []
-                        });
-                    } else {
-                        // Update existing student info
-                        student.firstName = psStudent.firstName;
-                        student.lastName = psStudent.lastName;
-                        student.grade = psStudent.grade;
-                    }
-                });
-
-                // Build teacher-section mappings
-                teachers.forEach(teacher => {
-                    // Find matching PowerSchool teacher
-                    const psTeacher = psTeachers.find(pt => 
-                        pt.firstName.toLowerCase() === teacher.name.split(' ')[0].toLowerCase() ||
-                        pt.lastName.toLowerCase() === teacher.name.split(' ').pop().toLowerCase()
-                    );
-
-                    if (psTeacher) {
-                        teacher.powerSchoolId = psTeacher.id;
-
-                        // Find sections this teacher teaches
-                        const teacherSections = psSections.filter(s => s.teacherId === psTeacher.id);
-
-                        teacher.sections = teacherSections.map(section => {
-                            // Find students enrolled in this section
-                            const sectionEnrollments = psEnrollments.filter(e => e.sectionId === section.sectionId);
-                            const studentIds = sectionEnrollments.map(e => e.studentId);
-
-                            return {
-                                sectionId: section.sectionId,
-                                period: section.period || 'N/A',
-                                courseName: section.courseName,
-                                students: studentIds
-                            };
-                        });
-                    } else {
-                        teacher.sections = [];
-                    }
-                });
-
-                // Save synced data
-                lastPowerSchoolSync = new Date().toISOString();
-                await saveData();
-                
-                updateAllDisplays();
-                
-                alert(`✅ PowerSchool sync complete!\n\n${psStudents.length} students\n${psTeachers.length} teachers\n${psSections.length} sections\n${psEnrollments.length} enrollments`);
-
-            } catch (error) {
-                console.error('PowerSchool sync error:', error);
-                alert('❌ PowerSchool sync failed!\n\n' + error.message + '\n\nPlease check:\n- PowerSchool plugin is installed\n- API credentials are correct\n- Network connection is working');
-            } finally {
-                if (syncButton) {
-                    syncButton.disabled = false;
-                    syncButton.textContent = '🔄 Sync with PowerSchool Now';
-                }
-            }
-        }
 
         async function createCloudBin() {
             if (JSONBIN_API_KEY === 'YOUR_API_KEY_HERE') {
@@ -6705,44 +5766,6 @@
             }
         }
 
-        function updateProgramDataTable() {
-            const tbody = document.getElementById('programDataTable');
-            if (!tbody) return;
-
-            // Enrolled only. A qualification RATE over the raw array divides by
-            // 738 instead of 623 and reports the programme as less effective
-            // than it is, which is the kind of number that gets a programme cut.
-            const roster = enrolledStudents();
-            const currentQualified = roster.filter(s => isQualifiedForJackpot(s)).length;
-            const currentTotal = roster.length;
-            const currentRate = currentTotal > 0 ? Math.round(currentQualified/currentTotal*100) : 0;
-
-            // Placeholder for previous cycle data - would be stored in database
-            const prevQualified = 0;
-            const prevTotal = 0;
-            const prevRate = 0;
-
-            tbody.innerHTML = `
-                <tr>
-                    <td>Total Students</td>
-                    <td>${currentTotal}</td>
-                    <td>${prevTotal}</td>
-                    <td>${currentTotal - prevTotal > 0 ? '+' : ''}${currentTotal - prevTotal}</td>
-                </tr>
-                <tr>
-                    <td>Qualified for Wildcat Jackpot</td>
-                    <td>${currentQualified}</td>
-                    <td>${prevQualified}</td>
-                    <td>${currentQualified - prevQualified > 0 ? '+' : ''}${currentQualified - prevQualified}</td>
-                </tr>
-                <tr>
-                    <td>Qualification Rate</td>
-                    <td>${currentRate}%</td>
-                    <td>${prevRate}%</td>
-                    <td>${currentRate - prevRate > 0 ? '+' : ''}${currentRate - prevRate}%</td>
-                </tr>
-            `;
-        }
 
         function exportAnalyticsData() {
             // Create workbook
@@ -7211,80 +6234,19 @@
         }
 
         function backToLogin() {
+            // #connectSchoolScreen went with the "connect to a school by id"
+            // onboarding, which nothing could reach: showConnectSchool() was
+            // its only opener and nothing called that. Reading .textContent off
+            // the null a deleted element returns would throw here and abort the
+            // rest of the function, which is how #studentLoginId broke this
+            // same function on 2026-08-14.
             document.getElementById('createAdminScreen').classList.add('hidden');
-            document.getElementById('connectSchoolScreen').classList.add('hidden');
             document.getElementById('loginScreen').classList.remove('hidden');
-            document.getElementById('adminError').textContent = '';
-            document.getElementById('connectError').textContent = '';
+            const adminErr = document.getElementById('adminError');
+            if (adminErr) adminErr.textContent = '';
         }
 
-        function showConnectSchool() {
-            document.getElementById('loginScreen').classList.add('hidden');
-            document.getElementById('connectSchoolScreen').classList.remove('hidden');
-        }
 
-        async function connectToSchool() {
-            const schoolId = document.getElementById('schoolIdInput').value.trim();
-            const errorDiv = document.getElementById('connectError');
-
-            if (!schoolId) {
-                errorDiv.textContent = 'Please enter a School ID';
-                return;
-            }
-
-            if (JSONBIN_API_KEY === 'YOUR_API_KEY_HERE') {
-                errorDiv.textContent = 'Cloud sync not configured. Please follow setup instructions.';
-                return;
-            }
-
-            // Try to load data from this bin ID
-            try {
-                const response = await fetch(`https://api.jsonbin.io/v3/b/${schoolId}/latest`, {
-                    headers: {
-                        'X-Master-Key': JSONBIN_API_KEY
-                    }
-                });
-
-                if (response.ok) {
-                    const result = await response.json();
-                    const data = result.record;
-                    
-                    // Verify this is a valid school (has teachers)
-                    if (!data.teachers || data.teachers.length === 0) {
-                        errorDiv.textContent = 'Invalid School ID. Please check and try again.';
-                        return;
-                    }
-
-                    // Save the bin ID
-                    binId = schoolId;
-                    localStorage.setItem('schoolBinId', schoolId);
-                    
-                    // Load the data
-                    students = data.students || [];
-                    currentWeek = data.currentWeek || 1;
-                    weeklyWinners = data.weeklyWinners || [];
-                    bigRaffleWinners = data.bigRaffleWinners || [];
-                    teachers = data.teachers || [];
-                    auditLog = data.auditLog || [];
-                    
-                    saveData(); // Save locally
-                    
-                    alert('✅ Successfully connected to school!\n\nYou can now log in with your teacher credentials.');
-                    backToLogin();
-                    
-                    // Hide create admin button since school exists
-                    const createAdminSection = document.getElementById('createAdminSection');
-                    if (createAdminSection) {
-                        createAdminSection.style.display = 'none';
-                    }
-                } else {
-                    errorDiv.textContent = 'Invalid School ID. Please check and try again.';
-                }
-            } catch (error) {
-                console.error('Connection error:', error);
-                errorDiv.textContent = 'Connection failed. Please check your internet and try again.';
-            }
-        }
 
         function createAdminAccount() {
             const name = document.getElementById('adminName').value.trim();
@@ -8239,81 +7201,6 @@
             updateCashAuditLogTable();
         }
 
-        function addTeacher() {
-            if (currentUser.role !== 'admin' && currentUser.role !== 'superadmin') {
-                alert('Only admins can add teachers');
-                return;
-            }
-
-            const name = document.getElementById('newTeacherName').value.trim();
-            const username = document.getElementById('newTeacherUsername').value.trim();
-            const email = document.getElementById('newTeacherEmail').value.trim();
-            const password = document.getElementById('newTeacherPassword').value;
-            const role = document.getElementById('newTeacherRole').value;
-
-            if (!name || !username || !password) {
-                alert('Please fill in all required fields');
-                return;
-            }
-            
-            if (email && !email.includes('@')) {
-                alert('Please enter a valid email address');
-                return;
-            }
-
-            if (teachers.find(t => t.username === username)) {
-                alert('Username already exists');
-                return;
-            }
-
-            // Generate unique ID based on highest existing ID, not array length
-            let maxId = 0;
-            teachers.forEach(t => {
-                const num = parseInt(t.id.substring(1)); // Extract number from 'T001'
-                if (num > maxId) maxId = num;
-            });
-            const newId = 'T' + String(maxId + 1).padStart(3, '0');
-            
-            const newTeacher = {
-                id: newId,
-                name: name,
-                username: username,
-                email: email || '',
-                password: password,
-                role: role,
-                ticketsAwarded: 0,
-                createdDate: new Date().toISOString(),
-                sections: []
-            };
-            
-            // Try to match with CSV data
-            const matched = matchTeacherToSections(newTeacher);
-            
-            teachers.push(newTeacher);
-
-            saveData();
-            updateTeachersTable();
-            
-            document.getElementById('newTeacherName').value = '';
-            document.getElementById('newTeacherUsername').value = '';
-            document.getElementById('newTeacherEmail').value = '';
-            document.getElementById('newTeacherPassword').value = '';
-
-            // Only after the teacher is actually in the array and saved. Closing
-            // on click would dismiss the form on a validation failure too, and
-            // take the half-typed record with it.
-            closeAddTeacherModal();
-
-            if (matched) {
-                alert(`✅ Teacher added successfully!\n\n` +
-                      `${newTeacher.sections.length} class sections auto-assigned from CSV.\n` +
-                      `${name} can now use period filtering!`);
-            } else {
-                alert(`Teacher added successfully!\n\n` +
-                      `Note: No matching schedule found in CSV for "${name}".\n` +
-                      `Make sure the name matches exactly as it appears in PowerSchool.`);
-            }
-        }
 
         let editingTeacherId = null;
         
@@ -8867,193 +7754,8 @@
         // did nothing. It has been removed; the live version is below, near
         // the other discipline functions.
 
-        function loadStudentForPass() {
-            const studentId = document.getElementById('kioskStudentId').value.trim();
-            if (!studentId) {
-                alert('Please enter your Student ID');
-                return;
-            }
-            
-            console.log('=== LOAD STUDENT FOR PASS ===');
-            console.log('Looking for student ID:', studentId);
-            console.log('Total students in array:', students.length);
-            
-            const student = students.find(s => s.id.toLowerCase() === studentId.toLowerCase());
-            
-            if (!student) {
-                alert('Student ID not found. Please try again.');
-                document.getElementById('kioskStudentId').value = '';
-                return;
-            }
-            
-            console.log('Found student:', student);
-            console.log('Student sections:', student.sections);
-            if (student.sections) {
-                console.log('  Number of sections:', student.sections.length);
-            }
-            
-            selectedKioskStudent = student;
-            
-            // Detect student's school from grade
-            const studentSchool = getSchoolFromGrade(student.grade);
-            
-            // Temporarily set school context for period detection
-            const previousSchool = passSettings.currentSchool;
-            passSettings.currentSchool = studentSchool;
-            
-            // Detect current period and show to student
-            let displayName = `<div style="font-size: 24px; font-weight: 600; margin-bottom: 10px;">${student.firstName} ${student.lastName}</div>`;
-            
-            if (passSettings.enableAutoDetection) {
-                const periodInfo = detectCurrentPeriod(student, new Date());
-                if (periodInfo && periodInfo.period) {
-                    if (periodInfo.period !== 'Outside Class Time') {
-                        displayName += `<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; border-radius: 8px; margin-top: 10px;">`;
-                        displayName += `<div style="font-size: 14px; opacity: 0.9; margin-bottom: 5px;">Currently in:</div>`;
-                        displayName += `<div style="font-size: 20px; font-weight: 600;">${periodInfo.period}`;
-                        if (periodInfo.teacher && periodInfo.teacher !== 'No Class') {
-                            displayName += ` - ${periodInfo.teacher}`;
-                        }
-                        displayName += `</div>`;
-                        if (periodInfo.className && periodInfo.className !== 'No Class') {
-                            displayName += `<div style="font-size: 14px; opacity: 0.9; margin-top: 5px;">${periodInfo.className}</div>`;
-                        }
-                        displayName += `</div>`;
-                    } else {
-                        displayName += `<div style="background: #f0f9ff; color: #1976d2; padding: 15px; border-radius: 8px; margin-top: 10px; border-left: 3px solid var(--wc-blue);">`;
-                        displayName += `<div style="font-size: 16px; font-weight: 600;">Outside Class Time</div>`;
-                        displayName += `<div style="font-size: 14px; margin-top: 5px;">Not currently in a scheduled period</div>`;
-                        displayName += `</div>`;
-                    }
-                }
-            }
-            
-            // Restore previous school context
-            passSettings.currentSchool = previousSchool;
-            
-            document.getElementById('kioskStudentName').innerHTML = displayName;
-            document.getElementById('kioskStudentId').value = '';
-            document.getElementById('passRequestForm').style.display = 'block';
-        }
 
-        function selectDestination(destination) {
-            // Remove selection from all buttons
-            document.querySelectorAll('.destination-btn').forEach(btn => {
-                btn.style.transform = 'scale(1)';
-                btn.style.border = 'none';
-            });
-            
-            // Highlight selected button
-            event.target.style.transform = 'scale(1.05)';
-            event.target.style.border = '3px solid white';
-            
-            document.getElementById('selectedDestination').value = destination;
-            document.getElementById('selectedDuration').value = passSettings[destination];
-        }
 
-        async function createHallPass() {
-            // SYNC WITH CLOUD FIRST to get any new passes from other devices
-            // This ensures we have the latest pass data before checking for conflicts
-            console.log('🔄 Syncing with cloud before creating pass...');
-            await loadData();
-            console.log('✅ Cloud sync complete - checking for conflicts...');
-            
-            const destination = document.getElementById('selectedDestination').value;
-            const duration = parseInt(document.getElementById('selectedDuration').value);
-            const notes = document.getElementById('passNotes').value.trim();
-            
-            if (!destination) {
-                alert('Please select a destination');
-                return;
-            }
-            
-            if (!selectedKioskStudent) {
-                alert('Error: No student selected');
-                return;
-            }
-            
-            // Check if student has reached their daily pass limit
-            if (selectedKioskStudent.dailyPassLimit && selectedKioskStudent.dailyPassLimit > 0) {
-                const todayStart = new Date();
-                todayStart.setHours(0, 0, 0, 0);
-                const passesToday = hallPasses.filter(p => 
-                    p.studentId === selectedKioskStudent.id && 
-                    new Date(p.createdAt) >= todayStart
-                ).length;
-                
-                if (passesToday >= selectedKioskStudent.dailyPassLimit) {
-                    alert(`❌ Pass Limit Reached\n\nYou have reached your daily pass limit of ${selectedKioskStudent.dailyPassLimit} passes.\n\nPlease speak with your teacher or administrator.`);
-                    return;
-                }
-            }
-            
-            // CHECK ENCOUNTER PREVENTION
-            console.log('=== ENCOUNTER PREVENTION CHECK ===');
-            console.log('Student ID:', selectedKioskStudent.id);
-            console.log('Destination:', destination);
-            console.log('Test Mode:', encounterTestMode);
-            console.log('Prevention Groups:', preventionGroups);
-            
-            const encounterCheck = checkEncounterPrevention(selectedKioskStudent.id, destination);
-            console.log('Encounter Check Result:', encounterCheck);
-            
-            if (encounterCheck && encounterCheck.blocked) {
-                console.log('🚨 BLOCKING PASS!');
-                alert(`❌ Pass Request Denied\n\nYou cannot create a pass to this location at this time.\n\nPlease see an administrator if you need assistance.`);
-                return;
-            }
-            console.log('✅ Pass allowed - no blocking');
-            
-            const now = new Date();
-            const expiresAt = new Date(now.getTime() + (duration * 60 * 1000));
-            
-            // DETECT SCHOOL FROM STUDENT GRADE (ClawPass only)
-            const studentSchool = getSchoolFromGrade(selectedKioskStudent.grade);
-            
-            // Temporarily set school context for period detection
-            const previousSchool = passSettings.currentSchool;
-            passSettings.currentSchool = studentSchool;
-            
-            // AUTO-DETECT CURRENT PERIOD AND TEACHER (ClawPass only)
-            let currentPeriodInfo = null;
-            if (passSettings.enableAutoDetection) {
-                currentPeriodInfo = detectCurrentPeriod(selectedKioskStudent, now);
-            }
-            
-            // Restore previous school context
-            passSettings.currentSchool = previousSchool;
-            
-            const hallPass = {
-                id: 'pass_' + Date.now(),
-                studentId: selectedKioskStudent.id,
-                studentName: `${selectedKioskStudent.firstName} ${selectedKioskStudent.lastName}`,
-                grade: selectedKioskStudent.grade,
-                school: studentSchool, // Tag pass with school
-                destination: destination,
-                duration: duration,
-                notes: notes,
-                createdAt: now.toISOString(),
-                expiresAt: expiresAt.toISOString(),
-                status: 'active',
-                returnedAt: null,
-                // Period detection fields (ClawPass only)
-                currentPeriod: currentPeriodInfo ? currentPeriodInfo.period : null,
-                currentTeacher: currentPeriodInfo ? currentPeriodInfo.teacher : null,
-                currentClass: currentPeriodInfo ? currentPeriodInfo.className : null,
-                teacherId: currentPeriodInfo ? currentPeriodInfo.teacherId : null
-            };
-            
-            hallPasses.push(hallPass);
-            activeHallPasses.push(hallPass);
-            
-            await saveData();
-            
-            // Show pass confirmation
-            showActivePass(hallPass);
-            
-            // Reset form
-            cancelPassRequest();
-        }
 
         // Detect current period and teacher based on schedule (ClawPass only)
         function detectCurrentPeriod(student, currentTime) {
@@ -9135,263 +7837,15 @@
             };
         }
 
-        function showActivePass(pass) {
-            currentActivePass = pass; // Store reference to current pass
-            const modal = document.getElementById('activePassModal');
-            document.getElementById('passStudentName').textContent = pass.studentName;
-            document.getElementById('passDestination').textContent = getDestinationDisplay(pass.destination);
-            document.getElementById('passStartTime').textContent = new Date(pass.createdAt).toLocaleTimeString();
-            
-            // Show period and teacher info if available
-            const periodInfoDiv = document.getElementById('passPeriodInfo');
-            if (pass.currentPeriod && pass.currentPeriod !== 'Outside Class Time') {
-                document.getElementById('passCurrentPeriod').textContent = pass.currentPeriod;
-                document.getElementById('passCurrentTeacher').textContent = pass.currentTeacher || 'N/A';
-                document.getElementById('passCurrentClass').textContent = pass.currentClass || 'N/A';
-                periodInfoDiv.style.display = 'block';
-            } else {
-                periodInfoDiv.style.display = 'none';
-            }
-            
-            // Start countdown timer
-            startPassTimer(pass);
-            
-            document.getElementById('mainApp').classList.add('hidden');
-            modal.classList.remove('hidden');
-        }
 
-        function startPassTimer(pass) {
-            const timerDisplay = document.getElementById('passTimerDisplay');
-            const expiresAt = new Date(pass.expiresAt);
-            
-            // Clear any existing timer
-            if (currentPassTimer) {
-                clearInterval(currentPassTimer);
-            }
-            
-            currentPassTimer = setInterval(() => {
-                const now = new Date();
-                const remaining = expiresAt - now;
-                
-                if (remaining <= 0) {
-                    clearInterval(currentPassTimer);
-                    timerDisplay.textContent = '0:00';
-                    timerDisplay.style.color = '#B3392F';
-                    
-                    // Auto-expire the pass
-                    expirePass(pass.id);
-                    return;
-                }
-                
-                const minutes = Math.floor(remaining / 60000);
-                const seconds = Math.floor((remaining % 60000) / 1000);
-                timerDisplay.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-                
-                // Change color when under 1 minute
-                if (minutes === 0) {
-                    timerDisplay.style.color = '#B7791F';
-                }
-            }, 1000);
-        }
 
-        async function closeActivePassModal() {
-            // Mark pass as returned when student clicks "Done"
-            if (currentActivePass) {
-                const pass = hallPasses.find(p => p.id === currentActivePass.id);
-                if (pass && pass.status === 'active') {
-                    pass.status = 'returned';
-                    pass.returnedAt = new Date().toISOString();
-                    await saveData();
-                    console.log('Pass marked as returned:', pass.id);
-                }
-                currentActivePass = null;
-            }
-            
-            document.getElementById('activePassModal').classList.add('hidden');
-            
-            document.getElementById('mainApp').classList.remove('hidden');
-            
-            if (currentPassTimer) {
-                clearInterval(currentPassTimer);
-                currentPassTimer = null;
-            }
-        }
 
-        function cancelPassRequest() {
-            selectedKioskStudent = null;
-            document.getElementById('passRequestForm').style.display = 'none';
-            document.getElementById('selectedDestination').value = '';
-            document.getElementById('selectedDuration').value = '';
-            document.getElementById('passNotes').value = '';
-            
-            // Reset destination button styles
-            document.querySelectorAll('.destination-btn').forEach(btn => {
-                btn.style.transform = 'scale(1)';
-                btn.style.border = 'none';
-            });
-        }
 
-        async function markPassReturned(passId) {
-            const pass = hallPasses.find(p => p.id === passId);
-            if (!pass) return;
-            
-            pass.status = 'returned';
-            pass.returnedAt = new Date().toISOString();
-            
-            await saveData();
-            updateHallMonitor();
-            
-            // Show brief confirmation
-            const card = event.target.closest('div[style*="background: white"]');
-            if (card) {
-                card.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
-                card.style.color = 'white';
-                card.innerHTML = `
-                    <div style="text-align: center; padding: 40px;">
-                        <div style="font-size: 48px; margin-bottom: 15px;">✅</div>
-                        <h3 style="margin: 0; color: white;">Pass Marked as Returned</h3>
-                    </div>
-                `;
-                
-                setTimeout(() => {
-                    updateHallMonitor();
-                }, 1500);
-            }
-        }
 
-        function updateActivePassesDisplay() {
-            // Update stats
-            const now = new Date();
-            const active = hallPasses.filter(p => p.status === 'active' && new Date(p.expiresAt) > now);
-            const expiringSoon = active.filter(p => {
-                const remaining = new Date(p.expiresAt) - now;
-                return remaining < 2 * 60 * 1000; // Less than 2 minutes
-            });
-            const today = hallPasses.filter(p => {
-                const created = new Date(p.createdAt);
-                return created.toDateString() === now.toDateString();
-            });
-            
-            document.getElementById('totalActivePasses').textContent = active.length;
-            document.getElementById('expiringSoonPasses').textContent = expiringSoon.length;
-            document.getElementById('todayTotalPasses').textContent = today.length;
-            
-            // Display active passes
-            const grid = document.getElementById('activePassesGrid');
-            grid.innerHTML = '';
-            
-            if (active.length === 0) {
-                grid.innerHTML = '<p style="text-align: center; color: #999; padding: 40px; grid-column: 1/-1;">No active passes at this time</p>';
-                return;
-            }
-            
-            active.sort((a, b) => new Date(a.expiresAt) - new Date(b.expiresAt));
-            
-            active.forEach(pass => {
-                const card = createActivePassCard(pass);
-                grid.appendChild(card);
-            });
-            
-            // Auto-refresh every 5 seconds.
-            // NOTE: this used to check #activePassesTab, an element that does not
-            // exist (renamed to #hallMonitorTab long ago), so the dereference threw
-            // inside the timer and silently killed the refresh loop — active pass
-            // timers went stale until the user re-navigated. offsetParent is null
-            // whenever the element or any ancestor is hidden, which also stops the
-            // loop when the user leaves Claw Pass mode entirely.
-            setTimeout(() => {
-                const monitorTab = document.getElementById('hallMonitorTab');
-                if (monitorTab && monitorTab.offsetParent !== null) {
-                    updateActivePassesDisplay();
-                }
-            }, 5000);
-        }
 
-        function createActivePassCard(pass) {
-            const card = document.createElement('div');
-            card.style.cssText = 'background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border-left: 5px solid #667eea;';
-            
-            const now = new Date();
-            const remaining = new Date(pass.expiresAt) - now;
-            const minutes = Math.floor(remaining / 60000);
-            const seconds = Math.floor((remaining % 60000) / 1000);
-            const timeColor = minutes === 0 ? '#B7791F' : '#2E7D52';
-            
-            card.innerHTML = `
-                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px;">
-                    <div>
-                        <h3 style="margin: 0 0 5px 0; color: #333;">${pass.studentName}</h3>
-                        <div style="color: #999; font-size: 14px;">Grade ${pass.grade} • ID: ${pass.studentId}</div>
-                    </div>
-                    <div style="text-align: right;">
-                        <div style="font-size: 24px; font-weight: 700; color: ${timeColor};">${minutes}:${seconds.toString().padStart(2, '0')}</div>
-                        <div style="color: #999; font-size: 12px;">Remaining</div>
-                    </div>
-                </div>
-                
-                <div style="background: #f0f9ff; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
-                    <div style="display: grid; grid-template-columns: auto 1fr; gap: 10px; font-size: 14px;">
-                        <strong>Destination:</strong>
-                        <span>${getDestinationDisplay(pass.destination)}</span>
-                        
-                        <strong>Started:</strong>
-                        <span>${new Date(pass.createdAt).toLocaleTimeString()}</span>
-                        
-                        <strong>Expires:</strong>
-                        <span>${new Date(pass.expiresAt).toLocaleTimeString()}</span>
-                        
-                        ${pass.notes ? `<strong>Notes:</strong><span>${pass.notes}</span>` : ''}
-                    </div>
-                </div>
-                
-                <button onclick="returnPass('${pass.id}')" style="width: 100%; padding: 12px; background: #10b981; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer;">
-                    ✅ Mark as Returned
-                </button>
-            `;
-            
-            return card;
-        }
 
-        function getDestinationDisplay(dest) {
-            const map = {
-                'bathroom': '🚻 Bathroom',
-                'office': '🏢 Office',
-                'classroom': '📚 Classroom',
-                'wellness': '💚 Wellness Center'
-            };
-            return map[dest] || dest;
-        }
 
-        async function returnPass(passId) {
-            const pass = hallPasses.find(p => p.id === passId);
-            if (!pass) return;
-            
-            pass.status = 'returned';
-            pass.returnedAt = new Date().toISOString();
-            
-            // Remove from active passes
-            activeHallPasses = activeHallPasses.filter(p => p.id !== passId);
-            
-            await saveData();
-            updateActivePassesDisplay();
-        }
 
-        async function expirePass(passId) {
-            const pass = hallPasses.find(p => p.id === passId);
-            if (!pass) return;
-            
-            // Only mark as overtime if not already returned
-            if (pass.status === 'active') {
-                pass.status = 'overtime';
-                pass.expiredAt = new Date().toISOString();
-                console.log('Pass marked as overtime:', pass.id);
-            }
-            
-            // Remove from active passes
-            activeHallPasses = activeHallPasses.filter(p => p.id !== passId);
-            
-            await saveData();
-        }
 
         /* ---- Pass History: the record ------------------------------------
            SAME STORY AS THE HALL MONITOR. This table read the browser's
@@ -10079,16 +8533,6 @@
             return passSettings.bellSchedules[scheduleName];
         }
 
-        // Helper: Determine school from student grade
-        function getSchoolFromGrade(grade) {
-            const gradeNum = parseInt(grade);
-            if (gradeNum >= 6 && gradeNum <= 8) {
-                return 'middleschool';
-            } else if (gradeNum >= 9 && gradeNum <= 12) {
-                return 'highschool';
-            }
-            return 'highschool'; // default
-        }
 
         // Switch between High School and Middle School
         async function switchSchool(school) {
@@ -10692,15 +9136,7 @@
             loadStudentSnapshot();
         }
         
-        // Initialize (no longer needed but keeping for compatibility)
-        function initializeSnapshotStudents() {
-            // Not needed anymore - search is dynamic
-        }
         
-        // Filter (no longer needed but keeping for compatibility)
-        function filterSnapshotStudents() {
-            // Not needed anymore - using showSnapshotSearchResults instead
-        }
         
         // Load student snapshot
         function loadStudentSnapshot() {
@@ -11961,111 +10397,6 @@
             alert(`✅ Prevention group "${group.name}" deleted.`);
         }
         
-        // Check if pass should be blocked by prevention groups
-        function checkEncounterPrevention(studentId, destination) {
-            console.log('>>> checkEncounterPrevention called');
-            console.log('>>> studentId:', studentId);
-            console.log('>>> destination:', destination);
-            
-            const now = new Date();
-            
-            // Check if this student is test data
-            const student = students.find(s => s.id === studentId);
-            console.log('>>> Found student:', student);
-            
-            if (!student) {
-                console.log('>>> Student not found - returning null');
-                return null;
-            }
-            
-            const isTestStudent = student.isTestData === true;
-            console.log('>>> Is test student:', isTestStudent);
-            console.log('>>> encounterTestMode:', encounterTestMode);
-            
-            // Test Mode: Only check test students (ignore real students)
-            // Live Mode: Only check real students (ignore test students)
-            if (encounterTestMode && !isTestStudent) {
-                console.log('>>> Test mode but not a test student - returning null');
-                return null;
-            }
-            if (!encounterTestMode && isTestStudent) {
-                console.log('>>> Live mode but is a test student - returning null');
-                return null;
-            }
-            
-            console.log('>>> Checking prevention groups...');
-            console.log('>>> Total prevention groups:', preventionGroups.length);
-            
-            // Find all groups this student is in (matching test/live mode)
-            const studentGroups = preventionGroups.filter(g => {
-                console.log('>>> Checking group:', g.name);
-                console.log('>>>   - active:', g.active);
-                console.log('>>>   - includes student:', g.students.includes(studentId));
-                console.log('>>>   - isTestData:', g.isTestData);
-                
-                if (!g.active) return false;
-                if (!g.students.includes(studentId)) return false;
-                // In test mode, only use test groups; in live mode, only use live groups
-                if (encounterTestMode && !g.isTestData) return false;
-                if (!encounterTestMode && g.isTestData) return false;
-                return true;
-            });
-            
-            console.log('>>> Student groups found:', studentGroups.length);
-            
-            for (const group of studentGroups) {
-                console.log('>>> Processing group:', group.name);
-                console.log('>>>   - locations:', group.rules.locations);
-                console.log('>>>   - destination match:', group.rules.locations.includes(destination));
-                
-                // Check if destination applies
-                if (!group.rules.locations.includes(destination)) continue;
-                
-                console.log('>>> Checking other students in group...');
-                // Check for other students in group with recent/active passes
-                for (const otherStudentId of group.students) {
-                    if (otherStudentId === studentId) continue;
-                    
-                    console.log('>>>   - Checking student:', otherStudentId);
-                    
-                    // Find recent passes from other student
-                    const otherPasses = hallPasses.filter(p => 
-                        p.studentId === otherStudentId &&
-                        (p.status === 'active' || p.status === 'expiring') &&
-                        p.destination === destination
-                    );
-                    
-                    console.log('>>>   - Other student passes:', otherPasses);
-                    
-                    if (otherPasses.length > 0) {
-                        console.log('>>> 🚨 CONFLICT FOUND! Blocking...');
-                        const otherStudent = students.find(s => s.id === otherStudentId);
-                        
-                        // Log the block
-                        if (!group.blockLog) group.blockLog = [];
-                        group.blockLog.push({
-                            timestamp: now.toISOString(),
-                            blockedStudent: students.find(s => s.id === studentId)?.firstName + ' ' + students.find(s => s.id === studentId)?.lastName,
-                            activeStudent: otherStudent?.firstName + ' ' + otherStudent?.lastName,
-                            location: destination,
-                            groupId: group.id
-                        });
-                        
-                        saveData();
-                        
-                        return {
-                            blocked: !group.monitorOnly,
-                            group: group,
-                            conflictingStudent: otherStudent,
-                            monitorOnly: group.monitorOnly
-                        };
-                    }
-                }
-            }
-            
-            console.log('>>> No conflicts found - returning null');
-            return null;
-        }
         
         // Dismiss pattern (placeholder)
         function dismissPattern() {
@@ -12822,32 +11153,6 @@
             return false;
         }
         
-        // Rematch all existing teachers to CSV data
-        function rematchAllTeachers() {
-            if (csvScheduleData.size === 0) {
-                alert('No CSV schedule data loaded!\n\nPlease upload a PowerSchool schedule CSV first.');
-                return;
-            }
-            
-            let matched = 0;
-            let unmatched = 0;
-            
-            teachers.forEach(teacher => {
-                if (matchTeacherToSections(teacher)) {
-                    matched++;
-                } else {
-                    unmatched++;
-                }
-            });
-            
-            saveData();
-            updateAllDisplays();
-            
-            alert(`✅ Re-matching complete!\n\n` +
-                  `Matched: ${matched} teachers\n` +
-                  `No match: ${unmatched} teachers\n\n` +
-                  `Unmatched teachers may have name mismatches with CSV.`);
-        }
         
         // Update CSV schedule status display
         function updateCSVScheduleStatus() {
@@ -15029,228 +13334,7 @@
         }
         
         
-        function setStudentView(viewType) {
-            currentStudentView = viewType;
-            
-            // Update button styles
-            const gradeBtn = document.getElementById('viewByGradeBtn');
-            const allBtn = document.getElementById('viewAllBtn');
-            
-            if (viewType === 'grade') {
-                gradeBtn.style.background = '#667eea';
-                gradeBtn.classList.remove('btn-secondary');
-                allBtn.style.background = '#6c757d';
-                allBtn.classList.add('btn-secondary');
-                
-                document.getElementById('studentsGroupedView').style.display = 'block';
-                document.getElementById('studentsTableView').style.display = 'none';
-                updateGroupedStudentView();
-            } else {
-                allBtn.style.background = '#667eea';
-                allBtn.classList.remove('btn-secondary');
-                gradeBtn.style.background = '#6c757d';
-                gradeBtn.classList.add('btn-secondary');
-                
-                document.getElementById('studentsGroupedView').style.display = 'none';
-                document.getElementById('studentsTableView').style.display = 'block';
-                updateStudentsTable();
-            }
-        }
         
-        function updateGroupedStudentView() {
-            const container = document.getElementById('studentsGroupedView');
-            
-            if (students.length === 0) {
-                container.innerHTML = '<p style="text-align: center; padding: 40px; color: #999;">No students loaded. Upload a file to get started!</p>';
-                return;
-            }
-            
-            // Group students by grade and period
-            const gradeGroups = {};
-            
-            students.forEach(student => {
-                const grade = parseInt(student.grade) || 'Unknown';
-                
-                if (!gradeGroups[grade]) {
-                    gradeGroups[grade] = {
-                        students: [],
-                        periods: {}
-                    };
-                }
-                
-                // Find which periods/classes this student is in
-                let studentPeriods = [];
-                teachers.forEach(teacher => {
-                    if (teacher.sections) {
-                        teacher.sections.forEach(section => {
-                            if (section.students && section.students.some(s => s.id === student.id)) {
-                                const periodKey = `Period ${section.period} - ${section.courseName}`;
-                                studentPeriods.push({
-                                    key: periodKey,
-                                    period: section.period,
-                                    course: section.courseName
-                                });
-                            }
-                        });
-                    }
-                });
-                
-                // Add student to each period they're in
-                if (studentPeriods.length === 0) {
-                    // Student not in any period - add to "No Period Assigned"
-                    const noPeriodKey = 'No Period Assigned';
-                    if (!gradeGroups[grade].periods[noPeriodKey]) {
-                        gradeGroups[grade].periods[noPeriodKey] = [];
-                    }
-                    gradeGroups[grade].periods[noPeriodKey].push(student);
-                } else {
-                    studentPeriods.forEach(periodInfo => {
-                        if (!gradeGroups[grade].periods[periodInfo.key]) {
-                            gradeGroups[grade].periods[periodInfo.key] = [];
-                        }
-                        gradeGroups[grade].periods[periodInfo.key].push(student);
-                    });
-                }
-                
-                gradeGroups[grade].students.push(student);
-            });
-            
-            // Handle mixed-grade classes
-            // Find all classes and determine their primary grade
-            const allClasses = {};
-            teachers.forEach(teacher => {
-                if (teacher.sections) {
-                    teacher.sections.forEach(section => {
-                        const classKey = `Period ${section.period} - ${section.courseName}`;
-                        if (!allClasses[classKey]) {
-                            allClasses[classKey] = {
-                                period: section.period,
-                                course: section.courseName,
-                                grades: {}
-                            };
-                        }
-                        
-                        // Count students by grade in this class
-                        section.students.forEach(sectionStudent => {
-                            const student = students.find(s => s.id === sectionStudent.id);
-                            if (student) {
-                                const grade = parseInt(student.grade) || 'Unknown';
-                                allClasses[classKey].grades[grade] = (allClasses[classKey].grades[grade] || 0) + 1;
-                            }
-                        });
-                    });
-                }
-            });
-            
-            // Sort grades
-            let sortedGrades = Object.keys(gradeGroups).sort((a, b) => {
-                if (a === 'Unknown') return 1;
-                if (b === 'Unknown') return -1;
-                return parseInt(a) - parseInt(b);
-            });
-            
-            // Filter by selected grade if not "all"
-            if (currentGradeFilter !== 'all') {
-                sortedGrades = sortedGrades.filter(grade => grade === currentGradeFilter);
-            }
-            
-            // Build HTML
-            let html = '';
-            
-            if (sortedGrades.length === 0) {
-                html = '<p style="text-align: center; padding: 40px; color: #999;">No students found for the selected grade level.</p>';
-                container.innerHTML = html;
-                return;
-            }
-            
-            sortedGrades.forEach(grade => {
-                const gradeData = gradeGroups[grade];
-                const gradeLabel = grade === 'Unknown' ? 'Unknown Grade' : `Grade ${grade}`;
-                const gradeColor = grade === '6' ? '#2196F3' : 
-                                  grade === '7' ? '#4CAF50' : 
-                                  grade === '8' ? '#FF9800' :
-                                  grade === '9' ? '#9C27B0' :
-                                  grade === '10' ? '#F44336' :
-                                  grade === '11' ? '#00BCD4' :
-                                  grade === '12' ? '#FF5722' : '#607D8B';
-                
-                html += `
-                    <div style="margin-bottom: 30px; border: 2px solid ${gradeColor}; border-radius: 8px; overflow: hidden;">
-                        <div style="background: ${gradeColor}; color: white; padding: 15px;">
-                            <h3 style="margin: 0; display: flex; justify-content: space-between; align-items: center;">
-                                <span>📚 ${gradeLabel}</span>
-                                <span style="font-size: 16px; font-weight: normal;">${gradeData.students.length} student${gradeData.students.length !== 1 ? 's' : ''}</span>
-                            </h3>
-                        </div>
-                        <div style="padding: 20px; background: white;">
-                `;
-                
-                // Sort periods
-                const sortedPeriods = Object.keys(gradeData.periods).sort((a, b) => {
-                    if (a === 'No Period Assigned') return 1;
-                    if (b === 'No Period Assigned') return -1;
-                    return a.localeCompare(b);
-                });
-                
-                sortedPeriods.forEach(periodKey => {
-                    const periodStudents = gradeData.periods[periodKey];
-                    
-                    html += `
-                        <div style="margin-bottom: 20px;">
-                            <h4 style="color: #666; margin-bottom: 10px; padding: 8px; background: #f5f5f5; border-radius: 4px;">
-                                ${periodKey} <span style="font-weight: normal; font-size: 14px;">(${periodStudents.length} student${periodStudents.length !== 1 ? 's' : ''})</span>
-                            </h4>
-                            <div style="overflow-x: auto;">
-                                <table style="width: 100%; border-collapse: collapse;">
-                                    <thead>
-                                        <tr style="background: #f9f9f9; border-bottom: 2px solid #ddd;">
-                                            <th style="padding: 8px; text-align: left;">Student ID</th>
-                                            <th style="padding: 8px; text-align: left;">Name</th>
-                                            <th style="padding: 8px; text-align: center;">PBIS</th>
-                                            <th style="padding: 8px; text-align: center;">Attendance</th>
-                                            <th style="padding: 8px; text-align: center;">Academic</th>
-                                            <th style="padding: 8px; text-align: center;">Jackpot</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                    `;
-                    
-                    // Sort students alphabetically
-                    periodStudents.sort((a, b) => {
-                        const nameA = `${a.lastName}, ${a.firstName}`.toLowerCase();
-                        const nameB = `${b.lastName}, ${b.firstName}`.toLowerCase();
-                        return nameA.localeCompare(nameB);
-                    });
-                    
-                    periodStudents.forEach(student => {
-                        html += `
-                            <tr style="border-bottom: 1px solid #eee;">
-                                <td style="padding: 8px;">${student.id}</td>
-                                <td style="padding: 8px;">${student.firstName} ${student.lastName}</td>
-                                <td style="padding: 8px; text-align: center; font-weight: bold; color: #667eea;">${student.pbisTickets}</td>
-                                <td style="padding: 8px; text-align: center; font-weight: bold; color: #28a745;">${student.attendanceTickets}</td>
-                                <td style="padding: 8px; text-align: center; font-weight: bold; color: #ffc107;">${student.academicTickets}</td>
-                                <td style="padding: 8px; text-align: center;">${isQualifiedForJackpot(student) ? '<span style="color: #28a745; font-weight: bold;">✓ Qualified</span>' : '<span style="color: #999;">-</span>'}</td>
-                            </tr>
-                        `;
-                    });
-                    
-                    html += `
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    `;
-                });
-                
-                html += `
-                        </div>
-                    </div>
-                `;
-            });
-            
-            container.innerHTML = html;
-        }
 
         function updateTicketsTable(keepPage) {
             const tbody = document.getElementById('ticketsTableBody');
@@ -16344,36 +14428,6 @@
             }
         }
         
-        function displayAllGradeWinners(winners, categoryName) {
-            const display = document.getElementById('winnerDisplay');
-            
-            let html = '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-top: 20px;">';
-            
-            winners.forEach(({ grade, winner }) => {
-                const schoolLabel = grade >= 6 && grade <= 8 ? 'Middle School' : 'High School';
-                const bgColor = grade >= 6 && grade <= 8 ? 
-                    'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' : 
-                    'linear-gradient(135deg, #10b981 0%, #059669 100%)';
-                
-                html += `
-                    <div style="background: ${bgColor}; color: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center;">
-                        <div style="background: rgba(255,255,255,0.2); padding: 6px 12px; border-radius: 15px; display: inline-block; margin-bottom: 10px; font-size: 12px;">
-                            🏫 ${schoolLabel}
-                        </div>
-                        <h3 style="color: white; margin: 10px 0; font-size: 20px;">Grade ${grade} Winner</h3>
-                        <div style="background: white; color: #333; padding: 15px; border-radius: 8px; margin: 10px 0;">
-                            <div style="font-size: 22px; font-weight: 700;">${winner.firstName} ${winner.lastName}</div>
-                            <div style="font-size: 12px; color: #666; margin-top: 5px;">ID: ${winner.id}</div>
-                        </div>
-                        <div style="font-size: 14px; opacity: 0.9;">Category: ${categoryName}</div>
-                        <div style="font-size: 12px; opacity: 0.8; margin-top: 5px;">${new Date().toLocaleDateString()}</div>
-                    </div>
-                `;
-            });
-            
-            html += '</div>';
-            display.innerHTML = html;
-        }
         
         // Animated raffle spinner with school label
         function showRaffleSpinner(eligibleStudents, schoolName, callback) {
@@ -16478,21 +14532,6 @@
             `;
         }
 
-        function displayWinner(winner, category) {
-            const display = document.getElementById('winnerDisplay');
-            display.innerHTML = `
-                <div class="winner-box animate-slide-in" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 40px; border-radius: 16px; box-shadow: 0 8px 30px rgba(16, 185, 129, 0.4); text-align: center;">
-                    <div style="font-size: 64px; margin-bottom: 20px;">🎉</div>
-                    <h2 style="color: white; font-size: 36px; margin: 0 0 15px 0;">🏆 WINNER! 🏆</h2>
-                    <div style="background: white; color: #10b981; padding: 20px; border-radius: 12px; margin: 20px 0; font-size: 32px; font-weight: 700;">
-                        ${winner.firstName} ${winner.lastName}
-                    </div>
-                    <p style="color: white; font-size: 18px; margin: 10px 0;">Student ID: ${winner.id}</p>
-                    <p style="color: white; font-size: 18px; margin: 10px 0;">Category: ${category}</p>
-                    <p style="color: rgba(255,255,255,0.9); margin-top: 20px; font-size: 14px;">Drawn on ${new Date().toLocaleDateString()}</p>
-                </div>
-            `;
-        }
 
         function updateWinnersList() {
             const list = document.getElementById('winnersList');
@@ -16668,24 +14707,7 @@
             triggerConfetti();
         }
 
-        async function nextWeek() {
-            if (currentWeek >= cycleDuration) {
-                if (await showConfirm(`You've completed ${cycleDuration} weeks! Run the Wildcat Jackpot before starting a new cycle?`)) {
-                    return;
-                }
-            }
-            currentWeek++;
-            await saveData();
-            updateAllDisplays();
-        }
 
-        async function previousWeek() {
-            if (currentWeek > 1) {
-                currentWeek--;
-                await saveData();
-                updateAllDisplays();
-            }
-        }
 
         // ========================================
         // AUTOMATIC WEEK DETECTION & RESET SYSTEM
@@ -16881,10 +14903,6 @@
             }
         }
         
-        function getDayName(dayNumber) {
-            const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-            return days[dayNumber];
-        }
 
         async function completeWeek() {
             if (!await showConfirm('⚠️ END OF WEEK PROCESS\n\nThis will:\n• Save this week\'s ticket data\n• Qualify eligible students for Wildcat Jackpot\n• Reset all ticket counts to 0\n• Move to next week\n\nOnly do this when the school week is over!\n\nContinue?')) return;
@@ -22424,6 +20442,43 @@
         }
         window.wcSetupPush = wcSetupPush;
 
+        /**
+         * AND THE OTHER HALF: give the device back on the way out.
+         *
+         * wcSetupPush registers this browser against the signed-in teacher, and
+         * nothing ever undid it. push:unsubscribe existed on the server from the
+         * day the feature shipped and had no caller, so a teacher who signed out
+         * of a shared Chromebook kept receiving that school's hall-pass alerts —
+         * on somebody else's device, about children who are not theirs, with no
+         * way to stop short of clearing site data.
+         *
+         * It runs on the signout event, AFTER the session is gone, which is why
+         * push:unsubscribe takes an endpoint and no token: the endpoint is what
+         * this browser knows about itself, and by then there is nothing left to
+         * authenticate with. The local subscription goes too — leaving it would
+         * let the next sign-in reuse a registration the server has forgotten,
+         * and getSubscription() returning it means wcSetupPush would skip the
+         * re-register and think it was done.
+         */
+        window.addEventListener('wildcat-auth-signout', async function () {
+            _wcPushTried = false; // the next person on this device registers again
+            try {
+                if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+                const reg = await navigator.serviceWorker.ready;
+                const sub = await reg.pushManager.getSubscription();
+                if (!sub) return;
+                const endpoint = sub.endpoint;
+                await sub.unsubscribe().catch(function () { /* the server still forgets it */ });
+                const auth = window.WildcatAuth;
+                if (auth && auth.convexMutation && endpoint) {
+                    await auth.convexMutation('push:unsubscribe', { endpoint: endpoint }, null);
+                }
+                console.log('[push] device unsubscribed on sign-out');
+            } catch (e) {
+                console.warn('[push] unsubscribe failed:', e && e.message);
+            }
+        });
+
         // Start the live alert for staff on sign-in; a student session is ignored
         // (it has no class board). The poller itself re-checks the session every
         // tick, so it goes quiet by itself if the session ends. Also register the
@@ -26754,26 +24809,6 @@
             return { balance: bal, earned, spent, deducted, count: txs.length };
         }
 
-        function reconcileCashBalances(applyFix) {
-            const report = [];
-            (students || []).forEach(s => {
-                const calc = recalculateCashBalance(s);
-                if (calc.balance !== s.wildcatCashBalance) {
-                    report.push({
-                        id: s.id, name: `${s.firstName} ${s.lastName}`,
-                        stored: s.wildcatCashBalance, calculated: calc.balance,
-                        difference: calc.balance - s.wildcatCashBalance
-                    });
-                    if (applyFix) {
-                        s.wildcatCashBalance = calc.balance;
-                        s.wildcatCashEarned = calc.earned;
-                        s.wildcatCashSpent = calc.spent;
-                        s.wildcatCashDeducted = calc.deducted;
-                    }
-                }
-            });
-            return report;
-        }
 
         // Rebuild the per-student view from the single source of truth.
         function distributeCashTransactions() {
@@ -29719,17 +27754,23 @@
          * the last request is answered is worse than none.
          */
         function wcRenderRailDots() {
-            const passes = Array.isArray(hallPasses) ? hallPasses : [];
-            const mine = passes.filter(p => {
-                if (!p) return false;
-                const state = String(p.status || '').toLowerCase();
-                if (state !== 'requested' && state !== 'pending') return false;
-                // A teacher only sees the ones routed to them. Anybody with a
-                // wider role sees the school's.
-                if (currentUser && currentUser.role === 'teacher') {
-                    return String(p.teacherId || '') === String(currentUser.id || '');
-                }
-                return true;
+            // THE DOT NEVER LIT. It counted `hallPasses`, the pre-Convex array
+            // the deleted Student Kiosk used to fill, on a `status` field that
+            // Convex does not write either (the column is `state`). So the one
+            // indicator in the app that says "a child is waiting on you" could
+            // not light for any real request, and a teacher only found out by
+            // opening the mode and looking.
+            //
+            // wcPassBoard.rows is the live board, already scoped: a teacher's
+            // own classes for a teacher, the school for anybody wider. That
+            // scoping is done once, on the server, by whichever of liveBoard /
+            // myClassBoard was asked — doing it a second time here off
+            // currentUser.id was the other half of the bug, since a Convex row
+            // carries the teacher's EMAIL and never a legacy roster id.
+            const board = (typeof wcPassBoard === 'object' && wcPassBoard) ? wcPassBoard : {};
+            const rows = Array.isArray(board.rows) ? board.rows : [];
+            const mine = rows.filter(function (p) {
+                return p && String(p.state || '').toLowerCase() === 'requested';
             }).length;
 
             // The place a request is answered is Claw Pass -> My Class. When
@@ -30135,6 +28176,20 @@
                 wcPassBoard.truncated = (school && school.truncatedStates) || [];
                 wcPassBoard.at = fetchedAt;
                 wcRenderPassRows();
+                // Everything else drawn from this board, refreshed on the same
+                // twenty seconds. The nav dot is the signal that a child is
+                // waiting on an answer, so it has to move when the board does,
+                // not only when the chrome happens to be redrawn.
+                try { wcRenderRailDots(); } catch (e) { /* cosmetic only */ }
+                // The dashboard's day timeline reads the same rows. Redrawn
+                // only while it is on screen: off screen it is rebuilt on the
+                // way in anyway, and this runs all day behind every mode.
+                try {
+                    var tlEl = document.getElementById('dashTimeline');
+                    if (tlEl && tlEl.offsetParent !== null && typeof renderTeacherDashboard === 'function') {
+                        renderTeacherDashboard();
+                    }
+                } catch (e) { console.warn('[dashboard refresh]', e); }
             } catch (err) {
                 /*
                  * A board that hides itself on any failure cannot be told from
@@ -30467,13 +28522,40 @@
 
                 // Open hall passes. A pass is an event with a start, a duration
                 // and a state, which is exactly the shape of a timeline card.
-                const open = (Array.isArray(hallPasses) ? hallPasses : [])
-                    .filter(p => p && p.status === 'active' && wcIsoDay(p.createdAt) === selected);
+                //
+                // THESE CARDS NEVER APPEARED. They were built from `hallPasses`,
+                // the pre-Convex array the deleted Student Kiosk used to fill,
+                // and filtered on `status === 'active'` — a field name Convex
+                // does not use either. A teacher's day timeline could not show
+                // a hall pass no matter how many children were out.
+                //
+                // wcPassBoard is the live board: hallPasses:liveBoard every
+                // twenty seconds, already scoped by role (a teacher's own
+                // classes in `rows`, the rest of the school in `elsewhere`).
+                // The dashboard shows both, because a pass out of somebody
+                // else's room still crossed this teacher's day.
+                //
+                // ONLY TODAY. The live board holds open passes and nothing
+                // else, so it cannot answer for a past day; a silent empty
+                // stretch would read as "nobody was out", which is a claim
+                // this screen is not entitled to make. Past days say so below.
+                const board = (typeof wcPassBoard === 'object' && wcPassBoard) ? wcPassBoard : {};
+                const live = selected === todayIso
+                    ? [].concat(Array.isArray(board.rows) ? board.rows : [],
+                                Array.isArray(board.elsewhere) ? board.elsewhere : [])
+                    : [];
+                const open = live.filter(p => p && String(p.state || '').toLowerCase() !== 'requested');
                 open.forEach(p => {
-                    const created = new Date(p.createdAt);
-                    const expires = new Date(p.expiresAt);
-                    const overdue = !isNaN(expires) && expires.getTime() < Date.now();
-                    const left = isNaN(expires) ? null : Math.round((expires.getTime() - Date.now()) / 60000);
+                    // The clock starts when the pass was APPROVED, not when it
+                    // was asked for: a request that waited ten minutes for a
+                    // teacher did not have the child out of class for ten
+                    // minutes. elapsedMinutes on the row is the server's own
+                    // measure of how long it has been running.
+                    const created = new Date(p.approvedAt || p.outAt || p.requestedAt);
+                    const allowed = Number(p.expiresAfterMinutes);
+                    const ran = Number(p.elapsedMinutes);
+                    const overdue = Boolean(p.overdue);
+                    const left = (isNaN(allowed) || isNaN(ran)) ? null : Math.round(allowed - ran);
                     rows.push({
                         sort: isNaN(created) ? 9999 : created.getHours() * 60 + created.getMinutes(),
                         html: `
@@ -30488,7 +28570,7 @@
                                     <span class="wu-tl-icon ${overdue ? 'wu-tl-icon-bad' : 'wu-tl-icon-warn'}" aria-hidden="true">&#127915;</span>
                                     <div class="wu-tl-body">
                                         <div class="wu-tl-title">${escapeHtml(p.studentName || 'Student')}</div>
-                                        <div class="wu-tl-sub">Out to ${escapeHtml(p.destination || 'unknown')} &middot; ${
+                                        <div class="wu-tl-sub">Out to ${escapeHtml(p.assignedDestination || 'somewhere not recorded')} &middot; ${
                                             left === null ? '<span class="wu-absent">no return time recorded</span>'
                                             : overdue ? `${Math.abs(left)} min overdue`
                                             : `${left} min left`}</div>
@@ -30503,9 +28585,14 @@
                 tl.innerHTML = rows.length
                     ? rows.map(r => r.html).join('')
                     : (!isToday
-                        ? '<p class="wu-absent">No passes were open on this day.</p>'
+                        // A PAST DAY CANNOT SAY "no passes". The live board
+                        // holds open passes only, so silence about a past day
+                        // is ignorance, not evidence. Pass History is where a
+                        // finished day is answered, and it is named here rather
+                        // than left as a shrug.
+                        ? '<p class="wu-absent">Nothing scheduled. Passes for a past day are in Pass History.</p>'
                         : (dow === 0 || dow === 6)
-                            ? '<p class="wu-absent">Not a school day. Nothing was scheduled and no passes were open.</p>'
+                            ? '<p class="wu-absent">Not a school day. Nothing was scheduled and no passes are open.</p>'
                             : schedule
                                 ? '<p class="wu-absent">Nothing scheduled and no passes open.</p>'
                                 : '<p class="wu-absent">No bell schedule has been set, so the day cannot be laid out.</p>');
