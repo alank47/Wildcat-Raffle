@@ -6865,4 +6865,26 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 @media (max-width: 560px) {
     .wc-detail-facts { grid-template-columns: 1fr; gap: 2px 0; }
     .wc-detail-facts dt { margin-top: 8px; }
+
+/* The severity escape hatch on the referral form.
+   Set apart from the intervention checklist because it is not one of them: it
+   is the statement that none applied. Amber rather than red — this is a
+   legitimate, expected path, not an error or a warning about the teacher. */
+.check-item.severe-bypass {
+    display: flex; gap: 10px; align-items: flex-start;
+    margin: 0 0 12px 0; padding: 12px 14px;
+    background: #FFF6E5; border: 1px solid #E8D9B8; border-radius: 8px;
+    line-height: 1.45;
+}
+.check-item.severe-bypass input { margin-top: 3px; flex: 0 0 auto; }
+.intervention-banner-severe {
+    background: #FFF6E5; color: #8A5A00; border-left: 3px solid #C08A2E;
+}
+
+/* A zero that means "emergency" must not read like a zero that means
+   "skipped the step". Same amber as the form control that produced it. */
+.count-pill-severe { background: #FFF6E5; color: #8A5A00; font-weight: 700; }
+.severe-flag {
+    background: #FFF6E5; border-left: 3px solid #C08A2E;
+    padding: 9px 12px; border-radius: 8px; color: #8A5A00; margin-bottom: 8px;
 }

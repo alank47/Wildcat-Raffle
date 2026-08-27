@@ -26568,9 +26568,14 @@
   <div class="sec">
     <div class="sec-title">Interventions Prior to Referral</div>
     <div class="block">
+      ${r.severeBypass
+        ? '<div class="severe-flag"><strong>Too severe for classroom interventions.</strong> ' +
+          'Immediate removal was warranted.</div>' : ''}
       ${interventions.length
         ? `<ul class="list">${interventions.map(i => `<li>${esc(i)}</li>`).join('')}</ul>`
-        : '<span class="none">None recorded</span>'}
+        : (r.severeBypass
+            ? '<span class="none">None attempted, by design.</span>'
+            : '<span class="none">None recorded</span>')}
     </div>
   </div>
 
@@ -27570,6 +27575,19 @@
             const n = document.querySelectorAll('.referral-intervention:checked').length;
             const el = document.getElementById('interventionCount');
             if (!el) return;
+
+            // Severity answers the expectation; it does not fail it. The
+            // banner says so plainly, because a teacher who has just removed a
+            // violent student should not be reading "2 more expected".
+            const severe = !!(document.getElementById('referralSevereBypass') || {}).checked;
+            if (severe) {
+                el.textContent = n
+                    ? `✓ Immediate removal recorded — ${n} intervention${n === 1 ? '' : 's'} also logged`
+                    : '✓ Immediate removal recorded — the 3-intervention expectation does not apply';
+                el.className = 'intervention-banner intervention-banner-severe';
+                return;
+            }
+
             if (n === 0) {
                 el.textContent = 'Select at least 3 interventions below';
                 el.className = 'intervention-banner';
@@ -27589,6 +27607,8 @@
                 if (el) el.value = '';
             });
             document.querySelectorAll('.referral-intervention').forEach(cb => { cb.checked = false; });
+            const severeBox = document.getElementById('referralSevereBypass');
+            if (severeBox) severeBox.checked = false;
             updateInterventionCount();
             const d = document.getElementById('referralDate');
             if (d) d.value = new Date().toISOString().split('T')[0];
@@ -27614,6 +27634,7 @@
                 }
             }
             const interventions = Array.from(document.querySelectorAll('.referral-intervention:checked')).map(cb => cb.value);
+            const severeBypass = !!(document.getElementById('referralSevereBypass') || {}).checked;
 
             // Required: student, date, behaviour, description, referring staff.
             if (!studentId)       { alert('⚠️ Please select a student'); return; }
@@ -27648,6 +27669,13 @@
                 behaviorType: behavior,   // legacy alias so older readers keep working
                 description: description,
                 interventions: interventions,
+                // WHY there were no interventions, which the count alone
+                // cannot say. Zero used to be ambiguous: a teacher who skipped
+                // the step and a teacher who removed a student mid-fight
+                // produced identical records, and the analytics counted both
+                // as "filed with none logged". They are different facts and
+                // only one of them is a practice problem.
+                severeBypass: severeBypass,
                 additionalActions: additionalActions,
                 referredBy: referringStaff,
                 referredByUsername: currentUser.username,
@@ -27764,7 +27792,9 @@
                         <div class="cell-sub">filed ${d.toLocaleDateString()}</div>
                     </td>
                     <td class="cell-center">
-                        <span class="count-pill${ivCount >= 3 ? ' count-pill-on' : ''}" title="Interventions attempted before referring">${ivCount}</span>
+                        ${r.severeBypass
+                            ? `<span class="count-pill count-pill-severe" title="Too severe for classroom interventions — immediate removal">severe</span>`
+                            : `<span class="count-pill${ivCount >= 3 ? ' count-pill-on' : ''}" title="Interventions attempted before referring">${ivCount}</span>`}
                     </td>
                     <td>
                         <button class="btn btn-sm-blue" onclick="viewReferralDetails('${r.id}')">View</button>
@@ -28893,12 +28923,20 @@
                         <h4 class="chart-title">Intervention practice</h4>
                         ${(() => {
                             if (!all.length) return '<p class="cell-empty">No data yet</p>';
-                            const withThree = all.filter(r => (r.interventions || []).length >= 3).length;
-                            const none = all.filter(r => !(r.interventions || []).length).length;
-                            const pct = Math.round(withThree / all.length * 100);
+                            // Severe removals are EXCLUDED from the denominator,
+                            // not counted as failures. Judging a teacher who
+                            // removed a violent student against a three-step
+                            // expectation that could not apply makes the figure
+                            // a measure of how many emergencies happened.
+                            const severe = all.filter(r => r.severeBypass).length;
+                            const eligible = all.filter(r => !r.severeBypass);
+                            const withThree = eligible.filter(r => (r.interventions || []).length >= 3).length;
+                            const none = eligible.filter(r => !(r.interventions || []).length).length;
+                            const pct = eligible.length ? Math.round(withThree / eligible.length * 100) : null;
                             return `<div class="mini-grid">
-                                <div class="mini-tile"><div class="mini-label">Met the 3-intervention expectation</div><div class="mini-num">${pct}%</div></div>
+                                <div class="mini-tile"><div class="mini-label">Met the 3-intervention expectation</div><div class="mini-num">${pct === null ? '—' : pct + '%'}</div></div>
                                 <div class="mini-tile${none ? ' mini-tile-warn' : ''}"><div class="mini-label">Filed with none logged</div><div class="mini-num">${none}</div></div>
+                                <div class="mini-tile"><div class="mini-label">Too severe for interventions</div><div class="mini-num">${severe}</div></div>
                                 <div class="mini-tile"><div class="mini-label">Closed &amp; loop closed</div><div class="mini-num">${all.filter(r => r.loopClosed).length}</div></div>
                             </div>`;
                         })()}
@@ -29427,6 +29465,7 @@
                 'Student Name': r.studentName,
                 'Behavior Type': r.behaviorType,
                 'Interventions Attempted': (r.interventions || []).length,
+                'Too Severe For Interventions': r.severeBypass ? 'Yes' : 'No',
                 'Resolution': r.resolutionType === 'no_action' ? 'No action required' : (r.status === 'closed' ? 'Action taken' : ''),
                 'Closing Actions': (r.closingActions || []).join('; '),
                 'Loop Closed': r.loopClosed ? 'Yes' : 'No',

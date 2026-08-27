@@ -3018,6 +3018,20 @@
                                 <strong class="guidance-strong">attempt three interventions prior to referring a student to an administrator.</strong>
                                 What interventions did you implement to address the undesired behavior?
                             </p>
+                            <!-- The severity escape hatch.
+                                 A three-intervention expectation that cannot be
+                                 bypassed for violence is one that gets faked: a
+                                 teacher who removed a student mid-fight will tick
+                                 three boxes to make the form go away, and the data
+                                 then says interventions were tried when they were
+                                 not. This records the real answer instead. -->
+                            <label class="check-item severe-bypass">
+                                <input type="checkbox" id="referralSevereBypass"
+                                       onchange="updateInterventionCount()">
+                                <span><strong>This incident was too severe for classroom interventions.</strong>
+                                Immediate removal was warranted — violence, a threat to safety, or similar.
+                                Describe what happened below.</span>
+                            </label>
                             <div class="intervention-banner" id="interventionCount">Select at least 3 interventions below</div>
                             <div class="check-grid">
                                 <label class="check-item">
