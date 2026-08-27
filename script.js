@@ -18763,7 +18763,14 @@
         function wpRewardsOpen(which) {
             const acc = document.getElementById('wpRewardsAcc');
             if (!acc) return;
-            acc.setAttribute('data-open', which === 'tickets' ? 'tickets' : 'cash');
+            const key = which === 'tickets' ? 'tickets' : 'cash';
+            // CLICKING THE OPEN ONE CLOSES IT. A control that only ever swaps
+            // sideways teaches the wrong thing about itself: a student presses
+            // the heading they are already reading, nothing happens, and it
+            // stops looking like a button. Closing both is a legitimate state
+            // and leaves the two headings side by side.
+            const next = acc.getAttribute('data-open') === key ? 'none' : key;
+            acc.setAttribute('data-open', next);
             Array.prototype.forEach.call(acc.querySelectorAll('.wp-acc-sec'), function (sec) {
                 const head = sec.querySelector('.wp-acc-head');
                 if (head) head.setAttribute('aria-expanded',

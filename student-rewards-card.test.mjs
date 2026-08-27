@@ -126,10 +126,57 @@ console.log("\nOne half open at a time");
   // Hiding is CSS on the container, so it survives a re-render and does not
   // depend on JS state that a refresh would drop.
   const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+  // Rewritten when closing BOTH became possible: the rule is now "hide every
+  // body, show the one that matches", which "hide the other half" could not
+  // express. Still CSS on the container, still survives a re-render.
   check("the closed half is hidden by CSS, not by omitting it",
-    /\.wp-acc\[data-open="cash"\][\s\S]*?\.wp-acc-body \{ display: none; \}/.test(css));
+    /\.wp-acc-body \{ display: none; \}/.test(css) &&
+    /\.wp-acc\[data-open="cash"\][\s\S]{0,200}display: block;/.test(css));
   check("both headings stay visible when closed",
     /Wildcat Cash/.test(c.body) && /Raffle Tickets/.test(c.body));
+}
+
+console.log("\nThe headings behave like buttons");
+{
+  // Run the toggle against a minimal DOM stand-in, so the behaviour is tested
+  // rather than the markup that hints at it.
+  const toggleSrc = script.slice(script.indexOf("function wpRewardsOpen"),
+                                 script.indexOf("function wpMealCard"));
+  const el = {
+    attrs: { "data-open": "cash" },
+    getAttribute(k) { return this.attrs[k]; },
+    setAttribute(k, v) { this.attrs[k] = v; },
+    querySelectorAll() { return []; },
+  };
+  const doc = { getElementById: (id) => (id === "wpRewardsAcc" ? el : null) };
+  const toggle = new Function("document", toggleSrc + "\nreturn wpRewardsOpen;")(doc);
+
+  toggle("tickets");
+  check("clicking the closed half opens it", el.attrs["data-open"] === "tickets");
+  toggle("tickets");
+  check("clicking it AGAIN closes it", el.attrs["data-open"] === "none");
+  toggle("tickets");
+  check("and clicking once more reopens it", el.attrs["data-open"] === "tickets");
+  toggle("cash");
+  check("opening the other half swaps, it does not stack",
+    el.attrs["data-open"] === "cash");
+  toggle("cash");
+  check("so both can be closed at once", el.attrs["data-open"] === "none");
+  toggle("nonsense");
+  check("an unknown key falls back to cash rather than breaking",
+    el.attrs["data-open"] === "cash");
+
+  const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+  // "Hide the other one" cannot express both-closed; "show the match" can.
+  check("bodies are hidden by default and shown by match",
+    /\.wp-acc-body \{ display: none; \}/.test(css) &&
+    /data-sec="cash"\]    \.wp-acc-body,[\s\S]{0,120}display: block;/.test(css));
+  check("the heading is filled and bordered, so it reads as pressable",
+    /\.wp-acc-head \{[\s\S]*?background: var\(--wp-pill/.test(css) &&
+    /\.wp-acc-head \{[\s\S]*?border-radius: 12px;/.test(css));
+  check("and it gives on press", /\.wp-acc-head:active \{ transform: translateY\(1px\); \}/.test(css));
+  check("the open half is distinguished from the closed one",
+    /data-open="none"\] \.wp-acc-head[\s\S]{0,200}background: transparent;/.test(css));
 }
 
 console.log("\nThe cash half explains the balance");
