@@ -18032,6 +18032,10 @@
             grades:   '--wp-face:linear-gradient(158deg,#F5F2E9 0%,#DFD8C6 100%);--wp-ink:#14171C;' +
                       '--wp-rule:rgba(20,23,28,.13);--wp-pill:rgba(20,23,28,.08)',
             lunch:    '--wp-face:linear-gradient(158deg,#E28C3E 0%,#B4571B 100%);--wp-ink:#FFFFFF',
+            rewards:  '--wp-face:linear-gradient(158deg,#2E7D52 0%,#14512F 100%);--wp-ink:#FFFFFF;' +
+                      '--wp-rule:rgba(255,255,255,.12);--wp-pill:rgba(255,255,255,.14)',
+            rewardsOff: '--wp-face:linear-gradient(158deg,#3A3E46 0%,#22252B 100%);--wp-ink:#E7E5E0;' +
+                      '--wp-rule:rgba(255,255,255,.10);--wp-pill:rgba(255,255,255,.10)',
             clever:   '--wp-face:linear-gradient(158deg,#4C74F8 0%,#2A2F9E 100%);--wp-ink:#FFFFFF',
             /* --wp-core fills the HOLE in the timer ring, and it is the card's
                own gradient resampled for the ring's much smaller box rather than
@@ -18561,6 +18565,80 @@
         // the live meal so a student glancing at it knows whether it is lunch; the
         // barcode is what the register reads. When no meal window is open the card
         // says so, and still carries the barcode for whenever the line opens.
+        /**
+         * What a student has earned: Wildcat Cash and raffle tickets.
+         *
+         * A ZERO AND AN UNKNOWN ARE NOT THE SAME NUMBER, and this is the card
+         * where that matters most. myStudentView returns the balance as null
+         * when it has no record, precisely so the app cannot show a child $0
+         * that actually means "we could not tell". A real zero is shown as $0
+         * and said out loud as a real zero; a missing one says so instead.
+         *
+         * Tickets are shown broken down as well as totalled, because the total
+         * alone does not tell a student which of the three they could still
+         * earn this week, which is the only actionable thing on the card.
+         */
+        function wpRewardsCard(mine) {
+            const cash = (mine && mine.wildcatCash) || null;
+            const pts = (mine && mine.points) || null;
+
+            if (!mine || (!cash && !pts)) {
+                return {
+                    label: 'Wildcat Cash', lead: 'Unavailable', quiet: true, face: WP_FACE.rewardsOff,
+                    body: wpEmpty('Your balance could not be loaded just now. Reload the page to try again.'),
+                };
+            }
+
+            const bal = cash && cash.balance !== null && cash.balance !== undefined
+                ? Number(cash.balance) : null;
+            const num = function (v) {
+                return (v === null || v === undefined) ? null : Number(v);
+            };
+            const pbis = num(pts && pts.pbis), att = num(pts && pts.attendance),
+                  acad = num(pts && pts.academic);
+            const total = num(pts && pts.total);
+            const entries = num(pts && pts.bigRaffleEntries);
+
+            const row = function (title, sub, value, noneText) {
+                const end = value === null
+                    ? '<span class="wp-rowend is-none">' + wpEsc(noneText || 'Not available') + '</span>'
+                    : '<span class="wp-rowend">' + wpEsc(String(value)) + '</span>';
+                return '<div class="wp-row">' +
+                    '<span class="wp-rowmain">' +
+                      '<span class="wp-rowtitle">' + wpEsc(title) + '</span>' +
+                      (sub ? '<span class="wp-rowsub">' + wpEsc(sub) + '</span>' : '') +
+                    '</span>' +
+                    '<span class="wp-rowmain" style="flex:0 0 auto;text-align:right;">' + end + '</span>' +
+                    '</div>';
+            };
+
+            const body = '<div class="wp-rows">' +
+                row('Raffle tickets', 'this cycle', total) +
+                row('Being a Wildcat', 'PBIS', pbis) +
+                row('Attendance', 'here and on time', att) +
+                row('Academics', 'work and progress', acad) +
+                (entries === null ? '' : row('Jackpot entries', 'earned by qualifying weeks', entries)) +
+                '</div>';
+
+            // Said out loud, because a screen of zeroes looks identical to a
+            // screen that failed to load, and a child reading it deserves to
+            // know which one they are looking at.
+            const allZero = total === 0 && bal === 0;
+            const foot = bal === null
+                ? wpFoot('Your cash balance has not reached your account yet. This is not a balance of $0.')
+                : (allZero
+                    ? wpFoot('Nothing yet this cycle. These both start at zero and go up when staff award them.')
+                    : '');
+
+            return {
+                label: 'Wildcat Cash',
+                lead: bal === null ? 'Balance unavailable' : '$' + bal,
+                quiet: bal === null,
+                face: bal === null ? WP_FACE.rewardsOff : WP_FACE.rewards,
+                body: body + foot,
+            };
+        }
+
         function wpMealCard(meal) {
             const nowMeal = meal && meal.currentMeal ? meal.currentMeal : null;
             const lead = nowMeal
@@ -19490,6 +19568,7 @@
                 cards.push(wpScheduleCard(sched));
                 cards.push(wpGradesCard(grades, !mine));
             }
+            cards.push(wpRewardsCard(mine));
             cards.push(wpMealCard(pass.meal || pass.lunchId));
             cards.push(wpReasonCard('Clever', pass.cleverBadge, WP_FACE.clever, WP_FACE.cleverOff));
             const hallPassIdx = cards.length;
