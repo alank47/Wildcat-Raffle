@@ -20,6 +20,9 @@ import { studentView } from "./views";
  * a student with no gradebook percent must not appear to have 0%.
  */
 
+/** How many cash movements a student's own card carries. */
+const RECENT_CASH = 15;
+
 /** Staff: my sections, my students, with their totals. */
 export const teacherRoster = query({
   args: {},
@@ -284,6 +287,37 @@ export const myStudentView = query({
         balance: student.wildcatCashBalance ?? null,
         earned: student.wildcatCashEarned ?? null,
         spent: student.wildcatCashSpent ?? null,
+
+        /**
+         * The last few movements, so a balance is explainable.
+         *
+         * A number with no history is one a child cannot question. "It says
+         * $30 and I thought I had $40" has no answer without this, and the
+         * answer is usually a deduction they did not know about.
+         *
+         * FIELD BY FIELD, NOT THE STORED ROW. A transaction carries
+         * teacherId, teacherUsername, studentGrade and school, none of which
+         * belong in a student's own view. teacherName stays, because "who
+         * gave me this" is the first thing they will ask and hiding it helps
+         * nobody.
+         *
+         * Newest first, capped: this is a card on a phone, not a ledger.
+         */
+        recent: (student.wildcatCashTransactions ?? [])
+          .slice(-RECENT_CASH)
+          .reverse()
+          .map((t: any) => ({
+            at: t?.timestamp ?? null,
+            kind: t?.kind ?? null,
+            amount: typeof t?.amount === "number" ? t.amount : null,
+            // What it was for. behaviorName is the award reason; notes is what
+            // the adult typed. Both are shown, because "Being Responsible" and
+            // "helped a new student find C wing" say different things.
+            reason: t?.behaviorName || null,
+            note: t?.notes || null,
+            by: t?.teacherName || null,
+            balanceAfter: typeof t?.balanceAfter === "number" ? t.balanceAfter : null,
+          })),
       },
 
       grades: {

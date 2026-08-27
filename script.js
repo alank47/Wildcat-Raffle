@@ -3414,8 +3414,37 @@
                                 const auth = window.WildcatAuth;
                                 const session = auth && auth.getSession();
                                 if (!session) throw new Error('Not signed in to Convex.');
+                                // THE CASH LEDGER GOES TO CONVEX, THOUGH NOT TO
+                                // FIRESTORE'S `main`.
+                                //
+                                // studentsToSave has wildcatCashTransactions
+                                // stripped, because `main` is ONE document
+                                // against a 1MB ceiling and a duplicate ledger
+                                // sharded across every student is what pushed it
+                                // to 81%. Convex stores each student as a ROW, so
+                                // that ceiling does not apply, and the student's
+                                // own card needs the history to explain a balance.
+                                //
+                                // Re-attached from the in-memory view, which
+                                // distributeCashTransactions rebuilds on load from
+                                // the authoritative cash_tx_* documents. Capped:
+                                // a phone card shows a handful, and an unbounded
+                                // array on a row still grows forever.
+                                const byId = {};
+                                (students || []).concat(nonEnrolledStudents || [])
+                                    .forEach(st => { if (st) byId[String(st.id)] = st; });
+                                const studentsForConvex = mainTransactionResult.studentsToSave
+                                    .map(st => {
+                                        const live = byId[String(st.id)];
+                                        const tx = live && live.wildcatCashTransactions;
+                                        if (!Array.isArray(tx) || !tx.length) return st;
+                                        return Object.assign({}, st, {
+                                            wildcatCashTransactions: tx.slice(-40)
+                                        });
+                                    });
+
                                 const result = await auth.convexMutation('appData:save', {
-                                    students: mainTransactionResult.studentsToSave,
+                                    students: studentsForConvex,
                                     teachers: mainTransactionResult.teachersToSave,
                                     settings: {
                                         currentWeek, cycleDuration, pbisSubcategories,
@@ -18620,30 +18649,89 @@
                     '</span></div>';
             };
 
-            const body =
-                '<div class="wp-group">' +
-                  '<div class="wp-group-head">' +
-                    '<span class="wp-group-title">Raffle Tickets</span>' +
-                    (total === null
-                      ? '<span class="wp-group-num is-none">—</span>'
-                      : '<span class="wp-group-num">' + wpEsc(String(total)) + '</span>') +
-                  '</div>' +
-                  '<div class="wp-rows wp-rows-nested">' +
-                    sub('Being a Wildcat', 'PBIS points', pbis) +
-                    sub('Attendance', 'Here and on time', att) +
-                    sub('Academics', 'Work and progress', acad) +
-                  '</div>' +
-                  '<p class="wp-groupnote">Three ways to earn one thing. Every ticket is an entry in this cycle\'s raffle.</p>' +
+            // ---- The two halves, one open at a time -----------------
+            //
+            // Asked for as an accordion rather than two cards: a student
+            // opening "Wildcat Cash" wants the balance AND why it is that
+            // number, and the ticket breakdown underneath pushes the history
+            // off the screen. Only one body is visible, so whichever they
+            // picked gets the room.
+            const money = function (n) {
+                return (n < 0 ? '-$' : '+$') + Math.abs(n);
+            };
+            const when = function (iso) {
+                if (!iso) return '';
+                const d = new Date(iso);
+                if (isNaN(d.getTime())) return '';
+                return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+            };
+            // What a movement was for, when nobody typed a reason. The kind is
+            // always known, so the row is never blank.
+            const KIND = { award: 'Wildcat Cash awarded', deduct: 'Wildcat Cash deducted',
+                           redeem: 'Reward purchase' };
+
+            const hist = (cash && Array.isArray(cash.recent)) ? cash.recent : [];
+            const txRows = hist.map(function (t) {
+                const amt = (t && typeof t.amount === 'number') ? t.amount : null;
+                const title = (t && t.reason) || KIND[t && t.kind] || 'Wildcat Cash';
+                const meta = [(t && t.by) || '', when(t && t.at)].filter(Boolean).join('  \u00b7  ');
+                return '<div class="wp-tx">' +
+                    '<span class="wp-tx-main">' +
+                      '<span class="wp-tx-title">' + wpEsc(title) + '</span>' +
+                      (meta ? '<span class="wp-tx-sub">' + wpEsc(meta) + '</span>' : '') +
+                      // The note the adult typed, shown as theirs rather than
+                      // as the app's own words.
+                      (t && t.note ? '<span class="wp-tx-note">' + wpEsc(t.note) + '</span>' : '') +
+                    '</span>' +
+                    '<span class="wp-tx-amt' + (amt === null ? '' : (amt < 0 ? ' is-minus' : ' is-plus')) + '">' +
+                      (amt === null ? '&mdash;' : wpEsc(money(amt))) +
+                    '</span></div>';
+            }).join('');
+
+            // An empty list has two meanings and they need different sentences:
+            // nothing has happened yet, or the history has not reached this
+            // account. A balance with no history is the second one.
+            const cashBody = txRows
+                ? '<div class="wp-txs">' + txRows + '</div>'
+                : wpEmpty(bal ? 'Your history has not reached your account yet. Your balance above is current.'
+                              : 'No activity yet. This fills in as staff award and you spend.');
+
+            const ticketBody =
+                '<div class="wp-rows wp-rows-nested">' +
+                  sub('Being a Wildcat', 'PBIS points', pbis) +
+                  sub('Attendance', 'Here and on time', att) +
+                  sub('Academics', 'Work and progress', acad) +
                 '</div>' +
+                '<p class="wp-groupnote">Three ways to earn one thing. Every ticket is an entry in this cycle\'s raffle.</p>' +
                 (entries === null ? '' :
-                  '<div class="wp-group wp-group-tail">' +
-                    '<div class="wp-group-head">' +
-                      '<span class="wp-group-title">Wildcat Jackpot</span>' +
-                      '<span class="wp-group-num">' + wpEsc(String(entries)) +
-                        '<span class="wp-group-unit">' + (entries === 1 ? 'entry' : 'entries') + '</span></span>' +
-                    '</div>' +
-                    '<p class="wp-groupnote">One entry for every week your tickets qualified you.</p>' +
-                  '</div>');
+                  '<div class="wp-jackpot">' +
+                    '<span class="wp-group-title">Wildcat Jackpot</span>' +
+                    '<span class="wp-group-num">' + wpEsc(String(entries)) +
+                      '<span class="wp-group-unit">' + (entries === 1 ? 'entry' : 'entries') + '</span></span>' +
+                  '</div>' +
+                  '<p class="wp-groupnote">One entry for every week your tickets qualified you.</p>');
+
+            const section = function (key, title, figure, inner, open) {
+                return '<section class="wp-acc-sec" data-sec="' + key + '">' +
+                    '<button type="button" class="wp-acc-head" aria-expanded="' + (open ? 'true' : 'false') +
+                      '" onclick="wpRewardsOpen(\'' + key + '\')">' +
+                      '<span class="wp-acc-title">' + wpEsc(title) + '</span>' +
+                      '<span class="wp-acc-num">' + figure + '</span>' +
+                      '<span class="wp-acc-chev" aria-hidden="true">&#9662;</span>' +
+                    '</button>' +
+                    '<div class="wp-acc-body">' + inner + '</div>' +
+                  '</section>';
+            };
+
+            const body =
+                '<div class="wp-acc" id="wpRewardsAcc" data-open="cash">' +
+                  section('cash', 'Wildcat Cash',
+                    bal === null ? '<span class="is-none">Unavailable</span>' : '$' + wpEsc(String(bal)),
+                    cashBody, true) +
+                  section('tickets', 'Raffle Tickets',
+                    total === null ? '<span class="is-none">&mdash;</span>' : wpEsc(String(total)),
+                    ticketBody, false) +
+                '</div>';
 
             // Said out loud, because a screen of zeroes looks identical to a
             // screen that failed to load, and a child reading it deserves to
@@ -18662,6 +18750,25 @@
                 face: bal === null ? WP_FACE.rewardsOff : WP_FACE.rewards,
                 body: body + foot,
             };
+        }
+
+        /**
+         * Open one half of the rewards card and collapse the other.
+         *
+         * Which one is open lives in a data attribute rather than in JS state,
+         * so it survives the card being re-rendered by a refresh, and CSS does
+         * the showing and hiding. aria-expanded is kept in step because the
+         * heading is a real button and a screen reader is entitled to know.
+         */
+        function wpRewardsOpen(which) {
+            const acc = document.getElementById('wpRewardsAcc');
+            if (!acc) return;
+            acc.setAttribute('data-open', which === 'tickets' ? 'tickets' : 'cash');
+            Array.prototype.forEach.call(acc.querySelectorAll('.wp-acc-sec'), function (sec) {
+                const head = sec.querySelector('.wp-acc-head');
+                if (head) head.setAttribute('aria-expanded',
+                    sec.getAttribute('data-sec') === acc.getAttribute('data-open') ? 'true' : 'false');
+            });
         }
 
         function wpMealCard(meal) {

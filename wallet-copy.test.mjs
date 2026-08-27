@@ -51,8 +51,15 @@ console.log("\nCard labels are Title Case");
 
 console.log("\nGroup headings are Title Case, and agree with each other");
 {
-  const titles = grab(/wp-group-title">([^<]+)</g);
-  check("headings were found", titles.length >= 2);
+  // BOTH heading classes, and headings passed as ARGUMENTS as well as written
+  // inline. "Raffle Tickets" moved into the accordion head when the card became
+  // collapsible, where it is a parameter — so a regex reading the markup
+  // captured the template expression rather than the words, and the rule
+  // stopped covering the very heading that prompted it.
+  const titles = grab(/wp-(?:group|acc)-title">([^<]+)</g)
+    .filter((t) => !/wpEsc|\+/.test(t))
+    .concat(grab(/section\('[a-z]+', '([^']+)'/g));
+  check("headings were found, including the ones passed in", titles.length >= 3);
   titles.forEach((t) => check(`"${t}"`, isTitleCase(t)));
   // The specific regression: two headings on one card in different styles.
   check("Raffle Tickets and Wildcat Jackpot match",
