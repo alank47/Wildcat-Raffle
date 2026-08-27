@@ -1577,18 +1577,41 @@ export const history = query({
 
     // One student's own history reads through by_student, which is an indexed
     // walk of that child's rows rather than a scan of the school's.
+    //
+    // WHEN IT IS ONE CHILD, THE CAP COMES BACK WITH THEM. Student Snapshot
+    // shows "2 of 3 passes today" beside a Set Pass Limit button, and it used
+    // to derive both halves in the browser: the limit off the appData roster
+    // (which does not carry the field) and the count off the pre-Convex array
+    // (which nothing writes), so the row was two zeroes wearing a number's
+    // clothes. Both are computed HERE now, by the same two functions canRequest
+    // uses, so the figure a teacher reads and the rule a child hits cannot
+    // disagree. `passesTakenOnDay` counts approved passes on the school day,
+    // which is not the same as "rows since midnight" — the rollover minutes and
+    // the approval test both live in that function and nowhere else.
     let rows: Doc<"hallPasses">[];
+    let cap: { limit: number | null; takenToday: number } | null = null;
     if (args.studentNumber) {
       const student = await ctx.db
         .query("students")
         .withIndex("by_studentNumber", (q) => q.eq("studentNumber", args.studentNumber!))
         .unique();
-      if (!student) return { passes: [], more: false, generatedAt: now };
+      if (!student) {
+        return {
+          passes: [],
+          more: false,
+          cursor: null,
+          scanned: 0,
+          truncated: false,
+          cap: null,
+          generatedAt: now,
+        };
+      }
       rows = await ctx.db
         .query("hallPasses")
         .withIndex("by_student", (q) => q.eq("studentId", student._id))
         .order("desc")
         .take(HISTORY_SCAN_MAX);
+      cap = { limit: passLimitFor(student), takenToday: passesTakenOnDay(rows, now) };
     } else {
       let q = ctx.db.query("hallPasses").order("desc");
       rows = await q.take(HISTORY_SCAN_MAX);
@@ -1671,6 +1694,9 @@ export const history = query({
       cursor: take.length ? take[take.length - 1]._creationTime : null,
       scanned: rows.length,
       truncated: rows.length === HISTORY_SCAN_MAX,
+      // Null when the caller asked for the whole school: there is no one
+      // child's cap to report, and a zero here would read as one.
+      cap,
       generatedAt: now,
     };
   },

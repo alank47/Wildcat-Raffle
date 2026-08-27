@@ -10769,6 +10769,9 @@
            times counted identically. elapsedMinutes is how long it actually
            ran. */
         let wcSnapshotPasses = null;
+        // The child's cap AS THE SERVER HAS IT: { limit, takenToday }, or null
+        // before the first load. Never derived here; see wcRenderPassLimit.
+        let wcSnapshotCap = null;
 
         async function updateSnapshotData() {
             if (!selectedSnapshotStudent) return;
@@ -10784,7 +10787,9 @@
                 const res = await ctx.auth.convexQuery('hallPasses:history',
                     { studentNumber: number, limit: 200 }, ctx.session.idToken);
                 wcSnapshotPasses = res.passes || [];
+                wcSnapshotCap = res.cap || null;
             } catch (e) {
+                wcSnapshotCap = null;
                 ['snapshotPassesToday', 'snapshotPassesWeek', 'snapshotPassesMonth', 'snapshotTotalTime', 'snapshotOvertime']
                     .forEach(function (id) { setText(id, '—'); });
                 console.warn('[snapshot] history failed:', e && e.message);
@@ -10829,34 +10834,87 @@
         }
 
 
-        function updatePassLimitStatus() {
-            if (!selectedSnapshotStudent) return;
-            
-            const passLimit = selectedSnapshotStudent.dailyPassLimit || 0;
-            
-            if (passLimit > 0) {
-                const todayStart = new Date();
-                todayStart.setHours(0, 0, 0, 0);
-                const passesToday = hallPasses.filter(p => 
-                    p.studentId === selectedSnapshotStudent.id && 
-                    new Date(p.createdAt) >= todayStart
-                ).length;
-                
-                document.getElementById('passLimitStatus').style.display = 'block';
-                document.getElementById('passLimitCurrent').textContent = passesToday;
-                document.getElementById('passLimitMax').textContent = passLimit;
-                
-                // Change color if over limit
-                if (passesToday >= passLimit) {
-                    document.getElementById('passLimitStatus').style.background = '#fee2e2';
-                    document.getElementById('passLimitStatus').style.borderLeftColor = '#B3392F';
-                } else {
-                    document.getElementById('passLimitStatus').style.background = '#fff3cd';
-                    document.getElementById('passLimitStatus').style.borderLeftColor = '#B7791F';
-                }
-            } else {
-                document.getElementById('passLimitStatus').style.display = 'none';
+        /* ---- pass limit: this child's own cap -----------------------------
+           WHAT WAS WRONG. The cap became a server rule (canRequest reads
+           students.dailyPassLimit through passLimitFor) and this screen was
+           never connected to it, so all three halves lied independently:
+
+           - THE SAVE went nowhere. It set dailyPassLimit on the browser's
+             roster object and called saveData(), and appData:save does not
+             carry that field — it is not in STUDENT_WRITABLE, deliberately,
+             because a cap a browser can write through a settings blob is not a
+             cap. A teacher set "2 passes a day", saw "Saved", and the number
+             the server enforced stayed whatever it had always been.
+           - THE COUNT came off `hallPasses`, the pre-Convex array the deleted
+             kiosk used to fill, so "0 of 3 today" was 0 for a child who had
+             been out five times.
+           - THE LIMIT came off the roster, which does not carry the field, so
+             the row hid itself: `|| 0` then `> 0` meant a real cap of 0 (no
+             passes at all) rendered as no cap at all, the exact inversion.
+
+           WHY THE FIGURES COME FROM THE SERVER. Both now arrive as `cap` on
+           hallPasses:history, computed by the same functions canRequest uses.
+           Counting here would mean copying passesTakenOnDay's two rules — the
+           school-day rollover and "only approved passes count" — into a second
+           place, and a display that re-derives a rule is a display that drifts
+           from it.
+
+           BLANK AND 0 ARE DIFFERENT ANSWERS, and this is the sharp edge. Blank
+           clears the personal cap back to the school-wide one. 0 means this
+           child takes no passes at all. The old modal said "set to 0 to remove
+           the limit", which under the server rule would have banned the child
+           from every pass instead of freeing them. */
+        function wcRenderPassLimit(cap, el) {
+            if (!el) return null;
+            const limit = cap && typeof cap.limit === 'number' ? cap.limit : null;
+            if (limit === null) {
+                el.style.display = 'none';
+                return null;
             }
+            const taken = (cap && typeof cap.takenToday === 'number') ? cap.takenToday : 0;
+            const text = document.getElementById('passLimitText');
+            if (text) {
+                text.innerHTML = limit === 0
+                    ? '<strong>Daily Pass Limit:</strong> this student may not take hall passes.'
+                    : '<strong>Daily Pass Limit:</strong> ' + taken + ' / ' + limit + ' passes used today';
+            }
+            el.style.display = 'block';
+            // Reached, INCLUDING a cap of zero, which is reached before the day
+            // starts and should read as the stop it is.
+            if (taken >= limit) {
+                el.style.background = '#fee2e2';
+                el.style.borderLeftColor = '#B3392F';
+            } else {
+                el.style.background = '#fff3cd';
+                el.style.borderLeftColor = '#B7791F';
+            }
+            return { limit: limit, taken: taken, reached: taken >= limit };
+        }
+
+        // What goes in the modal's box: blank for "no personal cap", the number
+        // otherwise, and "0" for a cap of zero rather than an empty box.
+        function wcPassLimitInputValue(cap) {
+            const limit = cap && typeof cap.limit === 'number' ? cap.limit : null;
+            return limit === null ? '' : String(limit);
+        }
+
+        // What the box means when Save is pressed. Blank clears; anything else
+        // must be a whole number the server will accept, and is rejected here
+        // rather than sent, so the teacher is told which box is wrong.
+        function wcPassLimitArg(raw) {
+            const text = String(raw == null ? '' : raw).trim();
+            if (text === '') return { ok: true, limit: null };
+            if (!/^\d+$/.test(text)) {
+                return { ok: false, message: 'A daily limit is a whole number, or blank to clear it.' };
+            }
+            const n = Number(text);
+            if (n > 50) return { ok: false, message: 'A daily limit cannot be more than 50.' };
+            return { ok: true, limit: n };
+        }
+        /* ---- end pass limit ---- */
+
+        function updatePassLimitStatus() {
+            wcRenderPassLimit(wcSnapshotCap, document.getElementById('passLimitStatus'));
         }
         
         // Update per-period breakdown
@@ -10910,40 +10968,59 @@
         // Open pass limit modal
         function openPassLimitModal() {
             if (!selectedSnapshotStudent) return;
-            
-            document.getElementById('passLimitStudentName').textContent = 
+
+            document.getElementById('passLimitStudentName').textContent =
                 `${selectedSnapshotStudent.firstName} ${selectedSnapshotStudent.lastName}`;
-            document.getElementById('passLimitInput').value = selectedSnapshotStudent.dailyPassLimit || 0;
+            // The server's number, not the roster's: the roster has never
+            // carried this field, so the old prefill was always 0 and offered
+            // to overwrite a real cap with one nobody chose.
+            document.getElementById('passLimitInput').value = wcPassLimitInputValue(wcSnapshotCap);
+            const msg = document.getElementById('passLimitMsg');
+            if (msg) { msg.textContent = ''; msg.className = 'sp-edit-msg'; }
             document.getElementById('passLimitModal').classList.remove('hidden');
         }
-        
+
         // Close pass limit modal
         function closePassLimitModal() {
             document.getElementById('passLimitModal').classList.add('hidden');
         }
-        
-        // Save pass limit
+
+        // Save pass limit. studentDetail:setPassLimit is the ONLY writer of
+        // dailyPassLimit; nothing about this number travels through saveData().
         async function savePassLimit() {
             if (!selectedSnapshotStudent) return;
-            
-            const limit = parseInt(document.getElementById('passLimitInput').value);
-            
-            if (limit < 0) {
-                alert('Pass limit cannot be negative');
+            const msg = document.getElementById('passLimitMsg');
+            const say = function (text, kind) {
+                if (!msg) { if (text) alert(text); return; }
+                msg.textContent = text;
+                msg.className = 'sp-edit-msg' + (kind ? ' sp-edit-msg--' + kind : '');
+            };
+
+            const parsed = wcPassLimitArg((document.getElementById('passLimitInput') || {}).value);
+            if (!parsed.ok) { say(parsed.message, 'err'); return; }
+
+            const ctx = wcBellSession();
+            if (!ctx) { say(wcNeedsMicrosoftMessage(), 'err'); return; }
+
+            const number = String(selectedSnapshotStudent.studentNumber || selectedSnapshotStudent.id || '');
+            const btn = document.getElementById('passLimitSaveBtn');
+            if (btn) { btn.disabled = true; }
+            say('Saving…');
+            try {
+                await ctx.auth.convexMutation('studentDetail:setPassLimit',
+                    { studentNumber: number, limit: parsed.limit }, ctx.session.idToken);
+            } catch (e) {
+                say((e && e.message) || 'Could not save the limit.', 'err');
                 return;
+            } finally {
+                if (btn) { btn.disabled = false; }
             }
-            
-            selectedSnapshotStudent.dailyPassLimit = limit;
-            await saveData();
-            
+
             closePassLimitModal();
-            updatePassLimitStatus();
-            
-            if (limit === 0) {
-                alert(`✅ Pass limit removed for ${selectedSnapshotStudent.firstName} ${selectedSnapshotStudent.lastName}`);
-            } else {
-                alert(`✅ Daily pass limit set to ${limit} for ${selectedSnapshotStudent.firstName} ${selectedSnapshotStudent.lastName}`);
-            }
+            // Re-read rather than patch a local copy: the count that sits beside
+            // the limit comes from the server too, and one of the two being
+            // fresh is how the pair started disagreeing in the first place.
+            await updateSnapshotData();
         }
 
         // ============================================
