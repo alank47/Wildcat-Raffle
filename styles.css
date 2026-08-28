@@ -4617,12 +4617,19 @@ body.wp-open { overflow: hidden; }
     .wp-wide .wp-shell {
         display: grid;
         grid-template-columns: 430px minmax(0, 1fr);
+        /* `dash` spans both columns and sits under everything. The wallet and
+           the card being read are the top half of a desk; the dashboard is
+           what the student came to the desk to look at, and it needs the
+           whole width for six panels. Without a named area it would auto
+           place into the detail column and read as a second, narrower
+           sidebar. */
         grid-template-areas:
             "top      top"
             "stack    detail"
             "passbar  detail"
             "asof     detail"
-            "note     detail";
+            "note     detail"
+            "dash     dash";
         column-gap: 44px;
         align-content: start;
         padding: calc(env(safe-area-inset-top, 0px) + 40px) var(--wp-gutter)
@@ -6865,4 +6872,136 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 @media (max-width: 560px) {
     .wc-detail-facts { grid-template-columns: 1fr; gap: 2px 0; }
     .wc-detail-facts dt { margin-top: 8px; }
+}
+
+/* ===========================================================================
+   THE DESK DASHBOARD
+   ---------------------------------------------------------------------------
+   Off on a phone, and off is the default: a student in a corridor is holding
+   the device for the pass, the barcode or the lunch number, and the wallet
+   above is the whole product there. It appears under .wp-wide, the class
+   wpSyncWide toggles at 1000px against the view's own width, so there is one
+   definition of "wide" in the app rather than a media query here and a
+   different number in script.js.
+
+   Because it is a class rather than a load-time decision, a Chromebook lid
+   opening or a window being dragged wider brings it in without a reload.
+   =========================================================================== */
+.wp-dash { display: none; }
+
+#studentPassView.wp-wide .wp-dash {
+    /* grid-area is declared with the rest of the wide shell, up where the
+       template lives, so the layout is readable in one place. */
+    grid-area: dash;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(268px, 1fr));
+    /* Each panel is as tall as what is in it. Stretching them to the tallest
+       in the row left a third of the Tickets panel empty, which reads as
+       something failing to load rather than as a panel with three figures
+       in it. */
+    align-items: start;
+    gap: 14px;
+    margin-top: 34px;
+    padding-top: 30px;
+    border-top: 1px solid var(--wp-hair);
+}
+
+.wp-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: 16px 18px 18px;
+    border: 1px solid var(--wp-hair);
+    border-radius: 16px;
+    /* A shade off the ground rather than a lift: the wallet above owns the
+       depth on this screen, and two competing elevations read as two apps. */
+    background: rgba(255, 255, 255, 0.028);
+}
+
+.wp-panel-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.wp-panel-title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 650;
+    letter-spacing: 0.01em;
+    color: var(--wp-fg);
+}
+
+.wp-panel-lead {
+    font-size: 12px;
+    color: var(--wp-dim);
+    white-space: nowrap;
+}
+
+/* A panel's rows scroll on their own rather than growing the panel, so a
+   student with fourteen classes does not push Attendance off the screen. */
+.wp-panel .wp-rows { max-height: 300px; }
+
+.wp-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px 26px;
+}
+
+.wp-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 74px;
+}
+
+.wp-stat-n {
+    font-size: 26px;
+    font-weight: 680;
+    line-height: 1.05;
+    font-variant-numeric: tabular-nums;
+    color: var(--wp-fg);
+}
+
+/* NOT ON FILE IS NOT ZERO, and it must not look like a number. Same size as
+   the label rather than the figure, because a small grey "not on file" reads
+   as an absence and a big one reads as a score. */
+.wp-stat.is-none .wp-stat-n {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--wp-dim);
+    /* Holds the row's baseline so a panel with one missing figure does not
+       sit its numbers at two different heights. */
+    padding-top: 9px;
+    padding-bottom: 4px;
+}
+
+.wp-stat-l {
+    font-size: 11.5px;
+    font-weight: 550;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--wp-dim);
+}
+
+.wp-stat-s {
+    font-size: 11.5px;
+    color: var(--wp-dim);
+}
+
+.wp-rowright {
+    flex: 0 0 auto;
+    text-align: right;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    #studentPassView.wp-wide .wp-panel {
+        animation: wp-panel-in 260ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+    }
+    @keyframes wp-panel-in {
+        from { opacity: 0; transform: translateY(6px); }
+        to   { opacity: 1; transform: none; }
+    }
 }

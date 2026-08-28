@@ -16148,109 +16148,180 @@
             };
         }
 
-        function wpScheduleCard(section) {
-            const rows = section.rows;
-            if (!section.available || !rows.length) {
-                return {
-                    label: 'Schedule',
-                    lead: 'Not connected',
-                    quiet: true,
-                    face: WP_FACE.schedule,
-                    // The server's own sentence, whenever it sent one. That is
-                    // the whole point of the available/reason envelope: a
-                    // student whose schedule is genuinely missing gets told
-                    // why, instead of a blank panel that looks identical to a
-                    // broken one.
-                    body: wpEmpty(section.reason ||
-                        'Your classes are not linked to your account yet. The office has to ' +
-                        'send your school email address to PowerSchool before your schedule ' +
-                        'can find you.'),
-                };
-            }
-            const sorted = rows.slice().sort(function (a, b) {
-                return wpPeriodRank(a.period) - wpPeriodRank(b.period);
-            });
-            const body = '<div class="wp-rows">' + sorted.map(function (r) {
-                const sub = [r.teacher || 'Teacher not listed', r.term].filter(Boolean).join('  ·  ');
-                return '<div class="wp-row">' +
-                    '<span class="wp-pill">' + wpEsc(r.period || '-') + '</span>' +
-                    '<span class="wp-rowmain">' +
-                      '<span class="wp-rowtitle">' + wpEsc(r.courseName || 'Course') + '</span>' +
-                      '<span class="wp-rowsub">' + wpEsc(sub) + '</span>' +
-                    '</span>' +
-                    '</div>';
-            }).join('') + '</div>';
+        /* ---- the desk dashboard -------------------------------------------
+           WHAT THIS IS FOR. A phone in a corridor and a Chromebook on a desk
+           are not the same errand. On a phone the student is holding it for
+           one thing (the pass, the barcode, the lunch number) and the wallet
+           IS the product. On a Chromebook they are sitting down, and the
+           question is "where do I stand": tickets, what they have earned,
+           what they are timetabled for, what has been posted.
 
-            return {
-                label: 'Schedule',
-                lead: sorted.length === 1 ? '1 class' : sorted.length + ' classes',
-                face: WP_FACE.schedule,
-                body: body,
-            };
+           So the wallet stays exactly as measured on a phone, and everything
+           data-dense moves HERE, on a wide screen only. Schedule and Grades
+           used to be two more cards in the stack above 900px, which put a
+           timetable and a report card inside a swipeable box the size of a
+           barcode. They are panels now.
+
+           ONE DEFINITION OF WIDE. This renders unconditionally and CSS shows
+           it under .wp-wide, the class wpSyncWide already toggles at 1000px
+           against the view's own width. The old card gate measured
+           window.innerWidth at 900 instead, which left 901 to 999 as a dead
+           band with the cards gone and nothing in their place.
+
+           NULL IS NOT ZERO, and this screen is the one where that costs a
+           child something. views_app is emphatic about it: weeksQualified,
+           the cash figures and every attendance count are OPTIONAL in the
+           schema, and a field a sync dropped renders as an absence here, never
+           as a 0 a student would read as "you have earned nothing". */
+        function wpStat(label, value, sub) {
+            const known = value !== null && value !== undefined && value !== '';
+            return '<div class="wp-stat' + (known ? '' : ' is-none') + '">' +
+                '<span class="wp-stat-n">' + (known ? wpEsc(String(value)) : 'not on file') + '</span>' +
+                '<span class="wp-stat-l">' + wpEsc(label) + '</span>' +
+                (sub ? '<span class="wp-stat-s">' + wpEsc(sub) + '</span>' : '') +
+                '</div>';
         }
 
-        function wpGradesCard(section, failed) {
-            const grades = section.rows;
-            if (failed || !section.available) {
-                return {
-                    label: 'Grades', lead: 'Unavailable', quiet: true, face: WP_FACE.gradesOff,
-                    body: wpEmpty(section.reason ||
-                        'Grades could not be loaded just now. Reload the page to try again.'),
-                };
-            }
-            if (!grades.length) {
-                return {
-                    label: 'Grades', lead: 'None yet', quiet: true, face: WP_FACE.gradesOff,
-                    body: wpEmpty(section.reason ||
-                        'No gradebook entries have reached your account yet. An empty grade ' +
-                        'is not a zero, and nothing here is counting against you.'),
-                };
+        function wpPanel(title, lead, inner) {
+            return '<article class="wp-panel">' +
+                '<header class="wp-panel-head">' +
+                    '<h3 class="wp-panel-title">' + wpEsc(title) + '</h3>' +
+                    (lead ? '<span class="wp-panel-lead">' + wpEsc(lead) + '</span>' : '') +
+                '</header>' + inner + '</article>';
+        }
+
+        /** Money, or an honest absence. Never "$0" for a figure nobody sent. */
+        function wpMoney(v) {
+            return (v === null || v === undefined) ? null : '$' + Number(v).toFixed(2);
+        }
+
+        function wpDashboard(mine, sched, grades) {
+            if (!mine) {
+                return wpPanel('Your year', '', wpEmpty(
+                    'Your stats could not be loaded just now. Your pass, ID and lunch ' +
+                    'number above are unaffected. Reload the page to try again.'));
             }
 
-            // A grade that is absent is absent. It is never shown as 0 and never
-            // shown as an F: a student with no gradebook entry must not read as
-            // failing. That is the one rule this card exists to keep.
-            const posted = grades.filter(function (g) {
-                return g.currentGrade !== null && g.currentGrade !== undefined
-                    || g.currentPercent !== null && g.currentPercent !== undefined;
+            const p = mine.points || {};
+            const cash = mine.wildcatCash || {};
+            const att = mine.attendance || {};
+
+            // ---- stats ----------------------------------------------------
+            const tickets = wpPanel('Tickets',
+                (p.total === null || p.total === undefined) ? '' : p.total + ' in total',
+                '<div class="wp-stats">' +
+                    wpStat('PBIS', p.pbis) +
+                    wpStat('Attendance', p.attendance) +
+                    wpStat('Academic', p.academic) +
+                '</div>');
+
+            const money = wpPanel('Wildcat Cash',
+                cash.balance === null || cash.balance === undefined ? '' : 'balance',
+                '<div class="wp-stats">' +
+                    wpStat('Balance', wpMoney(cash.balance)) +
+                    wpStat('Earned', wpMoney(cash.earned)) +
+                    wpStat('Spent', wpMoney(cash.spent)) +
+                '</div>' +
+                wpFoot('Earned is everything you have ever been given. Balance is what is left to spend.'));
+
+            // ---- awards ----------------------------------------------------
+            // Framed as what a student HAS, not as a scoreboard against other
+            // children: this portal is their own and nobody is ranked on it.
+            const entries = p.bigRaffleEntries;
+            const weeks = p.weeksQualified;
+            const awards = wpPanel('What you have earned', '',
+                '<div class="wp-stats">' +
+                    wpStat('Weeks qualified', weeks) +
+                    wpStat('Jackpot entries', entries) +
+                '</div>' +
+                ((entries === 0 || entries === null || entries === undefined)
+                    ? wpFoot('Qualify in a week and your name goes in the jackpot draw for it. ' +
+                             'Nothing here is counting against you.')
+                    : wpFoot('One entry for every week you qualified. They stay in for the year.')));
+
+            // ---- attendance --------------------------------------------------
+            // Three states, exactly as the server sends them: unavailable is not
+            // the same as "looked it up and found nothing", and neither is zero.
+            const attendance = !att.available
+                ? wpPanel('Attendance', 'Unavailable',
+                    wpEmpty(att.reason || 'Attendance could not be looked up just now.'))
+                : wpPanel('Attendance', '',
+                    '<div class="wp-stats">' +
+                        wpStat('Absent this term', att.daysAbsentTerm) +
+                        wpStat('Absent this year', att.daysAbsentYtd) +
+                        wpStat('Tardy this term', att.daysTardyTerm) +
+                    '</div>');
+
+            // ---- schedule ----------------------------------------------------
+            const schedRows = (sched && sched.rows) || [];
+            const schedule = (!sched || !sched.available)
+                ? wpPanel('Schedule', 'Unavailable',
+                    wpEmpty((sched && sched.reason) || 'Your schedule could not be loaded just now.'))
+                : !schedRows.length
+                    ? wpPanel('Schedule', 'None yet',
+                        wpEmpty('No classes have reached your account yet.'))
+                    : wpPanel('Schedule', schedRows.length + ' classes',
+                        // In the order the day runs, not the order the server
+                        // happened to return. wpPeriodRank sorts an unparseable
+                        // period to the end rather than to the front, so a
+                        // lunch or a Promise Time block does not open the list.
+                        '<div class="wp-rows">' + schedRows.slice().sort(function (a, b) {
+                            return wpPeriodRank(a.period) - wpPeriodRank(b.period);
+                        }).map(function (r) {
+                            const period = r.period ? 'Period ' + r.period : '';
+                            const sub = [period, r.teacher, r.term].filter(Boolean).join('  ·  ');
+                            return '<div class="wp-row">' +
+                                '<span class="wp-rowmain">' +
+                                    '<span class="wp-rowtitle">' + wpEsc(r.courseName || 'Class') + '</span>' +
+                                    (sub ? '<span class="wp-rowsub">' + wpEsc(sub) + '</span>' : '') +
+                                '</span></div>';
+                        }).join('') + '</div>');
+
+            // ---- grades ------------------------------------------------------
+            // The same rule as the card it replaces: an absent grade is absent.
+            // Never a 0, never an F. A student with nothing posted has not failed.
+            const gradeRows = (grades && grades.rows) || [];
+            const posted = gradeRows.filter(function (g) {
+                return (g.currentGrade !== null && g.currentGrade !== undefined) ||
+                       (g.currentPercent !== null && g.currentPercent !== undefined);
             }).length;
+            const gradePanel = (!grades || !grades.available)
+                ? wpPanel('Grades', 'Unavailable',
+                    wpEmpty((grades && grades.reason) || 'Grades could not be loaded just now.'))
+                : !gradeRows.length
+                    ? wpPanel('Grades', 'None yet',
+                        wpEmpty('No gradebook entries have reached your account yet. ' +
+                                'An empty grade is not a zero, and nothing here is counting against you.'))
+                    : wpPanel('Grades', posted + ' of ' + gradeRows.length + ' posted',
+                        '<div class="wp-rows">' + gradeRows.slice().sort(function (a, b) {
+                            return String(a.courseName || '').localeCompare(String(b.courseName || ''));
+                        }).map(function (g) {
+                            const letter = (g.currentGrade === null || g.currentGrade === undefined)
+                                ? '' : String(g.currentGrade);
+                            const pct = (g.currentPercent === null || g.currentPercent === undefined)
+                                ? null : Math.round(g.currentPercent);
+                            const has = letter !== '' || pct !== null;
+                            const end = has
+                                ? '<span class="wp-rowend">' + wpEsc(letter || (pct + '%')) + '</span>' +
+                                  (letter && pct !== null ? '<span class="wp-rowpct">' + pct + '%</span>' : '')
+                                : '<span class="wp-rowend is-none">Not posted</span>';
+                            return '<div class="wp-row">' +
+                                '<span class="wp-rowmain">' +
+                                    '<span class="wp-rowtitle">' + wpEsc(g.courseName || 'Course') + '</span>' +
+                                    (g.courseNumber ? '<span class="wp-rowsub">' + wpEsc(g.courseNumber) + '</span>' : '') +
+                                '</span>' +
+                                '<span class="wp-rowmain wp-rowright">' + end + '</span>' +
+                                '</div>';
+                        }).join('') + '</div>' +
+                        (posted === 0
+                            ? wpFoot('Nothing has been posted yet. An empty grade is not a zero.')
+                            : ''));
 
-            const body = '<div class="wp-rows">' + grades.slice().sort(function (a, b) {
-                return String(a.courseName || '').localeCompare(String(b.courseName || ''));
-            }).map(function (g) {
-                const letter = g.currentGrade === null || g.currentGrade === undefined ? '' : String(g.currentGrade);
-                const pct = g.currentPercent === null || g.currentPercent === undefined
-                    ? null : Math.round(g.currentPercent);
-                const has = letter !== '' || pct !== null;
-                const end = has
-                    ? '<span class="wp-rowend">' + wpEsc(letter || (pct + '%')) + '</span>' +
-                      (letter && pct !== null ? '<span class="wp-rowpct">' + pct + '%</span>' : '')
-                    : '<span class="wp-rowend is-none">Not posted</span>';
-                return '<div class="wp-row">' +
-                    '<span class="wp-rowmain">' +
-                      '<span class="wp-rowtitle">' + wpEsc(g.courseName || 'Course') + '</span>' +
-                      (g.courseNumber ? '<span class="wp-rowsub">' + wpEsc(g.courseNumber) + '</span>' : '') +
-                    '</span>' +
-                    '<span class="wp-rowmain" style="flex:0 0 auto;text-align:right;">' + end + '</span>' +
-                    '</div>';
-            }).join('') + '</div>';
-
-            return {
-                label: 'Grades',
-                lead: posted === 0 ? 'None posted' : posted + ' of ' + grades.length + ' posted',
-                quiet: posted === 0,
-                face: WP_FACE.grades,
-                // The only light surface in the stack, so its spotlight
-                // pool has to be blue rather than white to be visible.
-                cls: 'wp-card-light',
-                // Said out loud when there is nothing yet, because a column of
-                // "Not posted" is exactly what a broken screen would look like
-                // too. This is the sentence that separates the two.
-                body: body + (posted === 0
-                    ? wpFoot('Nothing has been posted yet. An empty grade is not a zero.')
-                    : ''),
-            };
+            return tickets + awards + money + gradePanel + schedule + attendance;
         }
+        /* ---- end desk dashboard ---- */
+
+
 
         /**
          * The hall pass card has three faces, and which one a student sees is
@@ -17494,20 +17565,23 @@
                 });
             }
 
-            // On a phone the student does not get the Schedule and Grades cards.
-            // Those two are the data-dense cards, and the ask is for them to be
-            // off for students on mobile; the wallet a student holds on a phone
-            // is Lunch, Clever, the hall pass and their ID. On a larger screen
-            // (a Chromebook) they still appear. This function is the student's
-            // OWN portal — staff view a student through a different surface — so
-            // gating on width here only ever hides them from the student.
-            const onMobile = window.innerWidth <= 900;
-
+            // THE WALLET IS THE SAME EVERYWHERE NOW. Lunch, Clever, the hall
+            // pass and the ID: the four things a student opens this for while
+            // standing up. Schedule and Grades are no longer cards at all.
+            //
+            // They used to be pushed here when window.innerWidth was over 900,
+            // which had two problems. A timetable and a report card were being
+            // read inside a swipeable box sized for a barcode; and the width
+            // was measured once, at load, against a different number from the
+            // 1000px the wide layout itself uses, so a window between 901 and
+            // 999 got neither the cards nor a desk to put them on, and a
+            // student who resized kept whichever answer they had loaded with.
+            //
+            // Both now live in the dashboard below, which is rendered every
+            // time and shown by CSS under .wp-wide. One definition of wide,
+            // and it follows a resize because it is a media query rather than
+            // a decision taken once.
             const cards = [];
-            if (!onMobile) {
-                cards.push(wpScheduleCard(sched));
-                cards.push(wpGradesCard(grades, !mine));
-            }
             cards.push(wpMealCard(pass.meal || pass.lunchId));
             cards.push(wpReasonCard('Clever', pass.cleverBadge, WP_FACE.clever, WP_FACE.cleverOff));
             const hallPassIdx = cards.length;
@@ -17526,6 +17600,16 @@
                 ? preferIndex
                 : ((pass.hallPass && pass.hallPass.available) ? hallPassIdx : studentIdIdx);
             wpRender(cards, open);
+
+            // The desk dashboard. Built every time and shown by CSS on a wide
+            // screen, so a student who opens a Chromebook lid or turns a tablet
+            // gets it without a reload. Built from `mine`, which is settled
+            // separately from `pass`: a grades outage must not blank the ID
+            // card a student is standing at a scanner holding, and the reverse
+            // holds too, so this is outside the !pass return above.
+            const dash = wpById('wpDash');
+            if (dash) dash.innerHTML = wpDashboard(mine, sched, grades);
+
             // Over the wallet while the pass is running. Same card object, so the
             // two cannot disagree; see wpRenderFull.
             wpRenderFull(cards[hallPassIdx], pass.hallPass);
