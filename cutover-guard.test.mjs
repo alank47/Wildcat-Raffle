@@ -249,7 +249,11 @@ console.log("\nStudents page shows the enrolled roster only");
   );
   check(
     "SAVING still carries every student",
-    /studentsToSave = students\.concat\(nonEnrolledStudents\)/.test(script),
+    // Was `let studentsToSave = students.concat(...)` inside the Firestore
+    // transaction. That transaction moved to Convex on 2026-08-31 and this is
+    // now a property on the object the save payload is built from. The rule it
+    // guards is unchanged and is the whole reason it is asserted.
+    /studentsToSave: students\.concat\(nonEnrolledStudents\)/.test(script),
     "saving only the enrolled would drop the 88 prior-year records and their balances",
   );
 }
@@ -544,29 +548,49 @@ check("an available update surfaces as a dismissible bar",
 check("and the reload button flushes a save before reloading",
   /saveData\(\)[\s\S]{0,200}location\.reload\(\)/.test(script));
 
-console.log("\nThe referral save merges, and its transaction is side-effect free");
+console.log("\nThe referral save merges, and the merge is atomic");
 // referral-save.test.mjs models this path. These assertions keep the model
 // honest: if the real code stops matching it, the model proves nothing.
 //
-// Anchored on `mergedReferrals`, which appears only in the save path. The
-// string 'raffle_data', 'referrals' also matches the LOAD path earlier in the
-// file, and anchoring there silently measured the wrong code.
+// MECHANISM CHANGED 2026-08-31, PROPERTY UNCHANGED. This used to assert a
+// Firestore runTransaction that read the stored list, merged with
+// WildcatMerge.mergeById, and assigned the in-memory list only AFTER the
+// callback returned — because Firestore RETRIES that callback, so assigning
+// outer state inside it lies about state when a later attempt fails.
+//
+// The merge now happens inside legacyData:mergeSlice. A Convex mutation IS the
+// transaction and does not retry a client callback, so the whole class of
+// side-effect-in-a-retried-callback bug is gone along with the callback. What
+// still has to hold, and what these assert, is that the client never does the
+// merge itself: reading, merging locally and writing the result back would look
+// identical and silently drop the guarantee, because the tab merges against
+// what it fetched and cannot see a write that landed in between.
 {
-  const at = script.indexOf("mergedReferrals");
+  const at = script.indexOf("mergeLegacySlice('referrals'");
   check("the save path is findable at all", at !== -1);
-  const near = script.slice(Math.max(0, at - 2500), at + 2500);
+  // Tight window on purpose: +-2500 reaches the ticket-history transaction,
+  // which still has its own transaction.get, and this block would then fail for
+  // code it does not describe.
+  const near = script.slice(Math.max(0, at - 900), at + 400);
 
-  check("referrals are written in a transaction, not a bare setDoc",
-    /runTransaction/.test(near) && !/setDoc\(\s*doc\([^)]*'referrals'\)/.test(near));
-  check("the stored list is read before writing", /transaction\.get\(/.test(near));
-  check("and merged rather than replaced", /WildcatMerge\.mergeById/.test(near));
-  // Firestore retries the callback. Assigning outer state inside it is safe
-  // only by accident of idempotency, and lies about state if it then fails.
-  check("the in-memory list is assigned AFTER the transaction, not inside it",
-    /if \(mergedReferrals\) behaviorReferrals = mergedReferrals;/.test(near));
-  check("nothing assigns behaviorReferrals inside the callback",
-    !/transaction\.set\([\s\S]{0,400}behaviorReferrals =/.test(near));
-  check("the counter cannot go backwards", /Math\.max\(/.test(near));
+  check("referrals are merged server-side, not replaced",
+    /mergeLegacySlice\('referrals', 'behaviorReferrals', behaviorReferrals, 'id'\)/.test(near));
+  // CODE only. The comment above the call names the mechanism it replaced, and
+  // a raw regex over the slice matches that prose and fails on a correct file.
+  // Same trick the SCRIPT_LOAD_TIME check above uses.
+  const nearCode = near.split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
+  check("the client no longer reads the stored list to merge it",
+    !/transaction\.get\(/.test(nearCode) && !/WildcatMerge\.mergeById/.test(nearCode),
+    "a client-side merge cannot see a write that landed after its own load",
+  );
+  check("and no bare slice-replace is used for referrals",
+    !/saveLegacySlice\('referrals'/.test(near),
+    "replace would destroy a referral this tab never saw",
+  );
+  check("the mutation is the one that dedupes",
+    /dedupeField/.test(readFileSync(new URL("./convex/legacyData.ts", import.meta.url), "utf8")));
+  check("and the stored copy wins a collision, because this tab may be hours old",
+    /stored wins/.test(readFileSync(new URL("./convex/legacyData.ts", import.meta.url), "utf8")));
 }
 
 console.log("\nAnalytics tabs are not suppressed by the legacy-subtab rule");

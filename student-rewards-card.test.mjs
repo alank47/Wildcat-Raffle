@@ -246,8 +246,14 @@ console.log("\nThe ledger reaches Convex even though it is stripped from main");
     /wildcatCashTransactions: tx\.slice\(-40\)/.test(script));
   check("and appData:save is sent that, not the stripped list",
     /appData:save', \{\s*\n\s*students: studentsForConvex,/.test(script));
-  check("main is still written without it",
-    /delete studentData\.wildcatCashTransactions;/.test(script));
+  // The stripped list is what the save payload is built from. This asserted
+  // `delete studentData.…` while three separate paths each stripped their own
+  // copy; the Firestore transaction went to Convex on 2026-08-31 and the one
+  // remaining path names its variable `c`. The property under test is unchanged:
+  // the ledger is stripped from the student records the save sends, and
+  // re-attached only for Convex.
+  check("the save payload is still built without it",
+    /delete c\.wildcatCashTransactions;/.test(script));
   check("the reason both are true is recorded",
     /Convex stores each student as a ROW, so\n\s*\/\/ that ceiling does not apply/.test(script));
 }

@@ -1447,6 +1447,29 @@
             return { exists: () => Boolean(d), data: () => d || {} };
         }
 
+        /**
+         * Union a slice into Convex, atomically, deduped on `dedupeField`.
+         *
+         * This is the replacement for the four Firestore runTransaction blocks.
+         * The merge happens INSIDE the mutation, which is the whole point: doing
+         * it here and then calling saveLegacySlice would read, merge against a
+         * copy that may already be stale, and write the result over whatever
+         * landed in between. Firestore retried those transactions on conflict
+         * and that retry was the only thing stopping two teachers saving at the
+         * same moment from erasing each other.
+         */
+        async function mergeLegacySlice(docName, collection, value, dedupeField) {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+            if (!session) throw new Error('Not signed in to Convex.');
+            const rows = Array.isArray(value)
+                ? (value || []).map(payload => ({ payload }))
+                : Object.entries(value || {}).map(([key, payload]) => ({ key: String(key), payload }));
+            return auth.convexMutation('legacyData:mergeSlice', {
+                doc: docName, collection, rows, dedupeField
+            }, session.idToken);
+        }
+
         // Cloud Sync Functions
         async function loadData() {
             {
@@ -2494,226 +2517,48 @@
                         });
                         
                         // TRANSACTION 1: Main Document (students + teachers + metadata)
-                        const mainDocRef = doc(firebaseDb, 'raffle_data', 'main');
-                        const mainTransactionResult = await runTransaction(firebaseDb, async (transaction) => {
-                            const mainDoc = await transaction.get(mainDocRef);
-                            
-                            // Every record, not just the enrolled. The Firestore
-                            // document is a wholesale replace, so omitting the
-                            // former students would DELETE them and their
-                            // balances. Convex would merely skip them, but
-                            // Firestore is still the system of record.
-                            // Stripped HERE as well as in the merge branch below,
-                            // because this is what gets written when `main` does not
-                            // exist yet. The merge branch replaces studentsToSave
-                            // entirely, so the two paths have to strip independently.
-                            let studentsToSave = students.concat(nonEnrolledStudents).map(s => {
+                        // TRANSACTION 1 IS GONE. Convex is the store now.
+                        //
+                        // What stood here was a 219 line Firestore transaction
+                        // that read `main`, merged the local students and
+                        // teachers into whatever the server held, and wrote the
+                        // whole document back. Every line of that merge already
+                        // exists, server side and per field, in
+                        // convex/appDataShape.ts — including the rule the 38
+                        // wiped staff emails bought: an empty local value must
+                        // never erase a real remote one, because absence in a
+                        // stale tab is not a value.
+                        //
+                        // Running both was not belt and braces. It was two
+                        // implementations of one merge, and the client copy is
+                        // the weaker of the two: it merges against what the tab
+                        // fetched, so it cannot see a write that landed in
+                        // between, while the Convex mutation is one transaction
+                        // and sees the row it is about to replace.
+                        //
+                        // So the client now sends what it HAS and the server
+                        // decides what of it counts. appData:save allowlists the
+                        // earned value fields, ignores identity and enrollment,
+                        // and refuses to create a student it has never seen.
+                        //
+                        // Every record, not just the enrolled. The former
+                        // students are concatenated back on because `students`
+                        // holds enrolled only; sending the enrolled alone would
+                        // present the rest as absent. ticketHistory, sections and
+                        // the cash ledger are stripped because each has its own
+                        // document and shipping them here would write a second,
+                        // diverging copy.
+                        const mainTransactionResult = {
+                            studentsToSave: students.concat(nonEnrolledStudents).map(s => {
                                 const c = Object.assign({}, s);
                                 delete c.ticketHistory;
                                 delete c.sections;
                                 delete c.wildcatCashTransactions;
                                 delete c.cashTransactions;
                                 return c;
-                            });
-                            let teachersToSave = teachers;
-                            
-                            if (mainDoc.exists()) {
-                                const firebaseMain = mainDoc.data();
-                                const firebaseStudents = firebaseMain.students || [];
-                                const firebaseTeachers = firebaseMain.teachers || [];
-                                const firebaseEntityTombstones = firebaseMain.entityTombstones || [];
-                                
-                                // Union of entity tombstones (append-only, dedup by entity key)
-                                const entityTombMap = new Map();
-                                firebaseEntityTombstones.forEach(t => entityTombMap.set(t.key, t));
-                                entityTombstones.forEach(t => {
-                                    if (!entityTombMap.has(t.key)) entityTombMap.set(t.key, t);
-                                });
-                                const mergedEntityTombstones = Array.from(entityTombMap.values());
-                                const tombstonedTeacherIds = new Set(
-                                    mergedEntityTombstones.filter(t => t.type === 'teacher').map(t => t.id)
-                                );
-                                const tombstonedStudentIds = new Set(
-                                    mergedEntityTombstones.filter(t => t.type === 'student').map(t => t.id)
-                                );
-                                entityTombstones = mergedEntityTombstones;
-                                
-                                // MERGE STUDENTS (skip tombstoned)
-                                const mergedStudents = firebaseStudents
-                                    .filter(fs => !tombstonedStudentIds.has(fs.id))
-                                    .map(firebaseStudent => {
-                                        const localStudent = students.find(s => s.id === firebaseStudent.id);
-                                        
-                                        if (!localStudent) {
-                                            return firebaseStudent;
-                                        }
-                                        
-                                        // Check if we recently reset
-                                        const recentlyReset = lastWeekResetTime && (Date.now() - lastWeekResetTime) < 10000;
-                                        
-                                        // Calculate current week tickets from ticket history
-                                        let pbisValue, attendanceValue, academicValue;
-                                        const localHistory = localStudent.ticketHistory || [];
-                                        
-                                        if (recentlyReset) {
-                                            pbisValue = localStudent.pbisTickets || 0;
-                                            attendanceValue = localStudent.attendanceTickets || 0;
-                                            academicValue = localStudent.academicTickets || 0;
-                                        } else {
-                                            // Tombstone-aware recalc: exclude any entry whose entryId is tombstoned.
-                                            // This prevents a stale tab from resurrecting deleted tickets via counters.
-                                            // CYCLE-SCOPED: only count current-cycle entries.
-                                            const tombstonedIds = new Set((localTombstones || []).map(t => t.entryId));
-                                            const currentWeekHistory = localHistory.filter(h => 
-                                                h.week === currentWeek && 
-                                                !tombstonedIds.has(ensureEntryId(h)) &&
-                                                entryBelongsToCurrentCycle(h)
-                                            );
-                                            pbisValue = currentWeekHistory.filter(h => h.category === 'PBIS').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
-                                            attendanceValue = currentWeekHistory.filter(h => h.category === 'Attendance').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
-                                            academicValue = currentWeekHistory.filter(h => h.category === 'Academic' || h.category === 'Academics').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
-                                        }
-                                        
-                                        // Return student WITHOUT ticketHistory (stored separately)
-                                        // FIELD-LEVEL MERGE RULES:
-                                        // - Local wins on: profile fields (name, grade, sections) - teacher edits
-                                        // - Qualification arrays (bigRaffleQualified): UNION of both sides
-                                        //   so that neither stale tab nor week-end reset can erase entries.
-                                        //   We also respect tombstones on qualification weeks if present.
-                                        // - weeksQualified: MAX of both sides - monotonically increasing counter.
-                                        // - Counters (pbisTickets etc.): recomputed from history (authoritative).
-                                        const fbQualified = Array.isArray(firebaseStudent.bigRaffleQualified) 
-                                            ? firebaseStudent.bigRaffleQualified 
-                                            : (firebaseStudent.bigRaffleQualified === true ? [1] : []);
-                                        const localQualified = Array.isArray(localStudent.bigRaffleQualified) 
-                                            ? localStudent.bigRaffleQualified 
-                                            : (localStudent.bigRaffleQualified === true ? [1] : []);
-                                        const unionQualified = Array.from(new Set([...fbQualified, ...localQualified]))
-                                            .sort((a, b) => a - b);
-                                        
-                                        const studentData = {
-                                            ...firebaseStudent,
-                                            ...localStudent,
-                                            bigRaffleQualified: unionQualified,
-                                            weeksQualified: Math.max(
-                                                firebaseStudent.weeksQualified || 0,
-                                                localStudent.weeksQualified || 0
-                                            ),
-                                            pbisTickets: pbisValue,
-                                            attendanceTickets: attendanceValue,
-                                            academicTickets: academicValue
-                                        };
-                                        
-                                        delete studentData.ticketHistory;
-                                        delete studentData.sections;   // stored in the `schedules` document
-                                        // DERIVED, exactly like the two above, and the
-                                        // reason `main` sat at 81% of Firestore's 1MB
-                                        // limit. The authoritative ledger is the
-                                        // cash_tx_* weekly documents;
-                                        // distributeCashTransactions() rebuilds this
-                                        // per-student view from it on every load. Writing
-                                        // it here stored a SECOND complete copy of every
-                                        // cash transaction in the school, sharded across
-                                        // student records, in the one document every
-                                        // teacher loads on open.
-                                        //
-                                        // `cashTransactions` is the retired name for the
-                                        // same thing; ensureCashFields already deletes it
-                                        // from every student on load.
-                                        delete studentData.wildcatCashTransactions;
-                                        delete studentData.cashTransactions;
-                                        return studentData;
-                                    });
-                                
-                                // Add new students only in local (skip tombstoned)
-                                students.forEach(localStudent => {
-                                    if (tombstonedStudentIds.has(localStudent.id)) return;
-                                    if (!firebaseStudents.find(s => s.id === localStudent.id)) {
-                                        const studentData = {...localStudent};
-                                        delete studentData.ticketHistory;
-                                        delete studentData.sections;   // stored in the `schedules` document
-                                        delete studentData.wildcatCashTransactions;  // see above
-                                        delete studentData.cashTransactions;
-                                        mergedStudents.push(studentData);
-                                    }
-                                });
-                                
-                                studentsToSave = mergedStudents;
-                                
-                                // MERGE TEACHERS (skip tombstoned)
-                                const mergedTeachers = firebaseTeachers
-                                    .filter(ft => !tombstonedTeacherIds.has(ft.id))
-                                    .map(firebaseTeacher => {
-                                        const localTeacher = teachers.find(t => t.id === firebaseTeacher.id);
-                                        
-                                        if (!localTeacher) {
-                                            return firebaseTeacher;
-                                        }
-                                        
-                                        // Local wins field by field, EXCEPT that an
-                                        // empty local value must never erase a real
-                                        // remote one. A tab loaded before a field was
-                                        // populated still holds "" for it, and the
-                                        // spread below would push that blank over the
-                                        // top. That is how 38 staff email addresses
-                                        // were wiped minutes after being written:
-                                        // absence in a stale tab is not a value.
-                                        const keepIfLocalBlank = ['email', 'name', 'username', 'role'];
-                                        const preserved = {};
-                                        keepIfLocalBlank.forEach(k => {
-                                            const localVal = (localTeacher[k] ?? '').toString().trim();
-                                            const remoteVal = (firebaseTeacher[k] ?? '').toString().trim();
-                                            if (!localVal && remoteVal) preserved[k] = firebaseTeacher[k];
-                                        });
-
-                                        return {
-                                            ...firebaseTeacher,
-                                            ...localTeacher,
-                                            ...preserved,
-                                            ticketsAwarded: Math.max(localTeacher.ticketsAwarded || 0, firebaseTeacher.ticketsAwarded || 0)
-                                        };
-                                    });
-                                
-                                // Add new teachers only in local (skip tombstoned)
-                                teachers.forEach(localTeacher => {
-                                    if (tombstonedTeacherIds.has(localTeacher.id)) return;
-                                    if (!firebaseTeachers.find(t => t.id === localTeacher.id)) {
-                                        mergedTeachers.push(localTeacher);
-                                    }
-                                });
-                                
-                                teachersToSave = mergedTeachers;
-                            }
-                            
-                            // Write merged data atomically
-                            transaction.set(mainDocRef, {
-                                students: studentsToSave,
-                                currentWeek,
-                                cycleDuration,
-                                teachers: teachersToSave,
-                                pbisSubcategories,
-                                academicSubcategories,
-                                lastPowerSchoolSync,
-                                kickboardSettings,
-                                emailJSConfig,
-                                passSettings,
-                                schoolBranding,
-                                referralIdCounter,
-                                autoWeekEnabled,
-                                lastAutoResetDate,
-                                lastWeekResetTime,
-                                weekResetDay,
-                                weekResetHour,
-                                currentCycle,
-                                cycleHistory,
-                                cycleStartTimestamp,
-                                entityTombstones: entityTombstones, // NEW: persist entity tombstones
-                                lastSaveTimestamp: timestamp
-                            });
-                            
-                            // Return merged data to update after transaction completes
-                            return { studentsToSave, teachersToSave };
-                        });
+                            }),
+                            teachersToSave: teachers,
+                        };
                         
                         // Update local references AFTER transaction completes
                         // Re-split. studentsToSave is every record, including the
@@ -2853,34 +2698,20 @@
                             // result is applied once, after the transaction
                             // resolves, and every attempt merges the ORIGINAL local
                             // list against freshly read storage.
-                            let mergedReferrals = null;
-                            await runTransaction(firebaseDb, async (transaction) => {
-                                const ref = doc(firebaseDb, 'raffle_data', 'referrals');
-                                const snap = await transaction.get(ref);
-                                const stored = snap.exists() ? (snap.data().behaviorReferrals || []) : [];
-
-                                const merged = window.WildcatMerge.mergeById(stored, behaviorReferrals);
-                                const report = window.WildcatMerge.mergeReport(stored, behaviorReferrals, merged);
-                                if (report.wouldHaveLost.length) {
-                                    console.warn(
-                                        `[referrals] kept ${report.keptFromStorage} referral(s) this tab had not seen: ` +
-                                        report.wouldHaveLost.join(', ') +
-                                        '. A whole-document write would have destroyed them.');
-                                }
-
-                                transaction.set(ref, {
-                                    behaviorReferrals: merged,
-                                    // The counter only ever goes up. Taking the
-                                    // max stops a stale tab handing out an id
-                                    // another tab has already used.
-                                    referralIdCounter: Math.max(
-                                        Number(referralIdCounter) || 1,
-                                        Number(snap.exists() ? snap.data().referralIdCounter : 1) || 1),
-                                    lastSaveTimestamp: timestamp
-                                });
-                                mergedReferrals = merged;
-                            });
-                            if (mergedReferrals) behaviorReferrals = mergedReferrals;
+                            // MOVED OFF FIRESTORE 2026-08-31. The union that
+                            // WildcatMerge.mergeById did here now happens inside
+                            // legacyData:mergeSlice, which IS a transaction, so
+                            // the protection this block existed for is kept
+                            // rather than approximated: a referral another tab
+                            // wrote between this tab's load and its save is
+                            // still not destroyed.
+                            //
+                            // referralIdCounter rides along in the settings that
+                            // appData:save writes, and it is taken as a max
+                            // there for the same reason it was taken as a max
+                            // here — the counter only ever goes up, or a stale
+                            // tab hands out an id another tab already used.
+                            await mergeLegacySlice('referrals', 'behaviorReferrals', behaviorReferrals, 'id');
                             console.log(`✅ Referrals saved (${(behaviorReferrals || []).length} records, merged)`);
                         } catch (refErr) {
                             console.error('❌ referrals save failed:', refErr?.code, refErr?.message);

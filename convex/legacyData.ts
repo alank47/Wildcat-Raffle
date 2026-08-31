@@ -131,6 +131,93 @@ export const loadDoc = query({
  */
 const MAX_ROWS_PER_SLICE = 20000;
 
+/**
+ * Union an incoming slice into the stored one, inside a single transaction.
+ *
+ * WHAT THIS REPLACES, AND WHY IT IS NOT `saveSlice`. Four Firestore
+ * `runTransaction` blocks did read-modify-write on referrals, ticket history,
+ * the audit months and `secondary`. Firestore retried them on conflict, and
+ * that retry is the only reason two teachers saving at the same moment did not
+ * erase each other. Rewriting them as a client-side read followed by
+ * `saveSlice` would look identical and quietly drop that guarantee: the tab
+ * merges against what it fetched, so a write that lands in between is gone.
+ *
+ * A Convex mutation IS the transaction, so doing the merge in here restores
+ * the property rather than approximating it. The handler reads the row it is
+ * about to replace.
+ *
+ * UNION, NEVER REPLACE. Entries are deduped on `dedupeField` (entryId for
+ * history and audit, id for referrals) and the STORED copy wins a collision,
+ * because the incoming one comes from a tab that may have been open for hours.
+ * An entry present on the server and absent locally is not a deletion — that is
+ * what tombstones are for, and treating absence as intent is exactly how a
+ * stale tab deletes another teacher's work.
+ */
+export const mergeSlice = mutation({
+  args: {
+    doc: v.string(),
+    collection: v.string(),
+    rows: v.array(v.object({ key: v.optional(v.string()), payload: v.any() })),
+    dedupeField: v.string(),
+  },
+  handler: async (ctx, { doc, collection, rows, dedupeField }) => {
+    await requireStaff(ctx);
+
+    if (rows.length > MAX_ROWS_PER_SLICE) {
+      throw new Error(
+        `legacyData:mergeSlice refused ${rows.length} rows for ${doc}.${collection}; the cap is ${MAX_ROWS_PER_SLICE}.`,
+      );
+    }
+
+    const existing = await ctx.db
+      .query("legacyMirror")
+      .withIndex("by_doc_collection", (q) =>
+        q.eq("doc", doc).eq("collection", collection),
+      )
+      .collect();
+
+    const idOf = (p: unknown) =>
+      p && typeof p === "object" ? (p as Record<string, unknown>)[dedupeField] : undefined;
+
+    // Keyed slices (histories, keyed by student) merge WITHIN a key; unkeyed
+    // slices merge across the whole list. Mixing the two loses rows silently.
+    const keyed = existing.some((r) => typeof r.key === "string")
+      || rows.some((r) => typeof r.key === "string");
+
+    const seen = new Set<string>();
+    const keep: Array<{ key?: string; payload: unknown }> = [];
+    const push = (r: { key?: string; payload: unknown }) => {
+      const id = idOf(r.payload);
+      // A row with no dedupe value cannot be compared, so it is kept rather
+      // than dropped. Losing an entry because it lacks an id is worse than
+      // keeping a duplicate an admin can see and remove.
+      const token = id === undefined || id === null
+        ? `__nokey__${keep.length}`
+        : `${keyed ? r.key ?? "" : ""} ${String(id)}`;
+      if (seen.has(token)) return;
+      seen.add(token);
+      keep.push({ key: r.key, payload: r.payload });
+    };
+
+    for (const r of existing) push({ key: r.key, payload: r.payload }); // stored wins
+    for (const r of rows) push(r);
+
+    for (const r of existing) await ctx.db.delete(r._id);
+    const mirroredAt = new Date().toISOString();
+    for (const r of keep) {
+      await ctx.db.insert("legacyMirror", {
+        doc,
+        collection,
+        key: r.key,
+        payload: r.payload,
+        mirroredAt,
+      });
+    }
+
+    return { doc, collection, stored: keep.length, incoming: rows.length };
+  },
+});
+
 export const saveSlice = mutation({
   args: {
     doc: v.string(),
