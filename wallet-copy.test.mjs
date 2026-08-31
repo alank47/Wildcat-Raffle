@@ -69,7 +69,11 @@ console.log("\nGroup headings are Title Case, and agree with each other");
 console.log("\nLeads are sentence case and carry no full stop");
 {
   const leads = grab(/lead: '([^']+)'/g);
-  check("leads were found", leads.length >= 5);
+  // FOUR, NOT FIVE. Schedule and Grades left the wallet when the desk
+  // dashboard took them, and they carried a lead each. The number here is
+  // only a guard that the regex matched real code rather than nothing; it is
+  // not a claim about how many cards the wallet should have.
+  check("leads were found", leads.length >= 4);
   leads.forEach((l) => {
     check(`"${l}" starts capitalised`, isSentenceCase(l));
     check(`"${l}" has no trailing period`, !/\.$/.test(l.trim()));

@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20260827i">
-    <link rel="icon" href="favicon.ico?v=20260827i" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260827i" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260827i" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20260831a">
+    <link rel="icon" href="favicon.ico?v=20260831a" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260831a" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260831a" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260827i">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260831a">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20260827i">
+    <link rel="stylesheet" href="styles.css?v=20260831a">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260827i">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260831a">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20260827i">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260831a">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20260827i" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20260831a" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -213,6 +213,19 @@
                 </div>
             </aside>
 
+            <!-- THE DESK DASHBOARD. Empty and display:none on a phone, where
+                 the wallet above is the whole product: a student in a corridor
+                 is holding the device for the pass, the barcode or the lunch
+                 number. On a Chromebook they are sitting down and the question
+                 is where they stand, so tickets, what they have earned, grades,
+                 schedule and attendance are panels here rather than cards in a
+                 swipeable stack sized for a barcode.
+
+                 Shown by CSS under .wp-wide, the class wpSyncWide toggles at
+                 1000px against the view's own width. Filled by wpDashboard()
+                 on every load, so resizing needs no reload. -->
+            <section class="wp-dash" id="wpDash" aria-label="Your year so far"></section>
+
             <p class="wp-asof" id="wpAsOf"></p>
             <div class="wp-note" id="wpError" role="status" aria-live="polite"></div>
         </div>
@@ -273,124 +286,6 @@
          reason the portal is. -->
     <div id="tapResultView" class="wp-root hidden"></div>
 
-    <!-- Student Dashboard Screen.
-         DEAD as of the portal rebuild. Nothing shows this any more:
-         establishStudentSession() now opens #studentPassView, and it was the
-         only caller. Left in place rather than deleted because the surrounding
-         file is 4800 lines of shared markup and a blind deletion is a worse
-         risk than a dead div. Do not wire anything new to it. -->
-    <div id="studentDashboard" class="login-container hidden" style="max-width: 600px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <h1 style="margin: 0;">My Wildcat Hub</h1>
-            <button class="btn-logout" onclick="studentLogout()" style="padding: 8px 16px; font-size: 13px;">Logout</button>
-        </div>
-        
-        <!-- Student Info -->
-        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; text-align: center;">
-            <div style="font-size: 24px; font-weight: 700; margin-bottom: 5px;" id="studentDashName">Student Name</div>
-            <div style="font-size: 14px; opacity: 0.9;" id="studentDashInfo">Grade • ID</div>
-        </div>
-        
-        <!-- Current Week Tickets -->
-        <div style="margin-bottom: 25px;">
-            <h3 style="margin-bottom: 15px; color: #333;">📊 This Week's Tickets</h3>
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;">
-                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; border-radius: 10px; text-align: center;">
-                    <div style="font-size: 28px; font-weight: 700;" id="studentDashPBIS">0</div>
-                    <div style="font-size: 12px; opacity: 0.9;">PBIS</div>
-                </div>
-                <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 15px; border-radius: 10px; text-align: center;">
-                    <div style="font-size: 28px; font-weight: 700;" id="studentDashAttendance">0</div>
-                    <div style="font-size: 12px; opacity: 0.9;">Attendance</div>
-                </div>
-                <div style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; padding: 15px; border-radius: 10px; text-align: center;">
-                    <div style="font-size: 28px; font-weight: 700;" id="studentDashAcademic">0</div>
-                    <div style="font-size: 12px; opacity: 0.9;">Academic</div>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Jackpot Status -->
-        <div style="margin-bottom: 25px;">
-            <h3 style="margin-bottom: 15px; color: #333;">🏆 Wildcat Jackpot Status</h3>
-            
-            <!-- Qualified Status -->
-            <div id="studentQualifiedBox" class="hidden" style="background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%); color: white; padding: 20px; border-radius: 12px; text-align: center;">
-                <div style="font-size: 48px; margin-bottom: 10px;">🎉</div>
-                <div style="font-size: 20px; font-weight: 700; margin-bottom: 8px;">YOU'RE QUALIFIED!</div>
-                <div style="font-size: 16px; opacity: 0.95; margin-bottom: 15px;">You've earned tickets in all 3 categories</div>
-                <div style="background: rgba(255,255,255,0.2); padding: 15px; border-radius: 8px;">
-                    <div style="font-size: 14px; opacity: 0.9; margin-bottom: 5px;">Jackpot Entries</div>
-                    <div style="font-size: 36px; font-weight: 700;" id="studentJackpotEntries">0</div>
-                </div>
-            </div>
-            
-            <!-- Not Qualified Status -->
-            <div id="studentNotQualifiedBox" class="hidden" style="background: #f3f4f6; padding: 20px; border-radius: 12px; border: 2px dashed #d1d5db;">
-                <div style="text-align: center; margin-bottom: 15px;">
-                    <div style="font-size: 36px; margin-bottom: 10px;">🎯</div>
-                    <div style="font-size: 18px; font-weight: 600; color: #666; margin-bottom: 8px;">Not Qualified Yet</div>
-                    <div style="font-size: 14px; color: #999;">Earn tickets in ALL 3 categories to qualify for the Wildcat Jackpot!</div>
-                </div>
-                <div style="background: white; padding: 15px; border-radius: 8px;">
-                    <div style="font-size: 13px; font-weight: 600; color: #333; margin-bottom: 10px;">What you need:</div>
-                    <div id="studentNeedsChecklist" style="font-size: 14px; color: #666;"></div>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Lifetime Stats -->
-        <div style="background: #f9fafb; padding: 20px; border-radius: 12px; margin-bottom: 20px;">
-            <h3 style="margin-bottom: 15px; color: #333;">📈 All-Time Stats</h3>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                <div>
-                    <div style="font-size: 12px; color: #666; margin-bottom: 5px;">Total Tickets Earned</div>
-                    <div style="font-size: 24px; font-weight: 700; color: #667eea;" id="studentLifetimeTickets">0</div>
-                </div>
-                <div>
-                    <div style="font-size: 12px; color: #666; margin-bottom: 5px;">Weeks Qualified</div>
-                    <div style="font-size: 24px; font-weight: 700; color: #f59e0b;" id="studentWeeksQualified">0</div>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Student Leaderboard -->
-        <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 20px;">
-            <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px;">🏆 Leaderboard</h3>
-            
-            <!-- My Rank -->
-            <div id="studentMyRank" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; border-radius: 10px; margin-bottom: 20px; text-align: center;">
-                <div style="font-size: 14px; opacity: 0.9; margin-bottom: 5px;">Your Rank</div>
-                <div style="font-size: 36px; font-weight: 700;">-</div>
-                <div style="font-size: 13px; opacity: 0.8;">out of <span id="studentTotalCount">0</span> students</div>
-            </div>
-            
-            <!-- Top 10 -->
-            <div id="studentLeaderboardList" style="max-height: 400px; overflow-y: auto;">
-                <!-- Populated by JS -->
-            </div>
-        </div>
-        
-        <!-- Ticket History -->
-        <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 20px;">
-            <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px;">🎫 My Ticket History</h3>
-            <div id="studentTicketHistory" style="max-height: 400px; overflow-y: auto;">
-                <!-- Populated by JS -->
-            </div>
-        </div>
-        
-        <!-- Jackpot Entry History -->
-        <div style="background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%); padding: 25px; border-radius: 12px; box-shadow: 0 4px 12px rgba(251, 191, 36, 0.3); margin-bottom: 20px;">
-            <h3 style="margin: 0 0 20px 0; color: white; font-size: 18px;">🎰 My Jackpot Entry History</h3>
-            <div id="studentJackpotHistory" style="background: white; border-radius: 8px; padding: 15px; max-height: 300px; overflow-y: auto;">
-                <!-- Populated by JS -->
-            </div>
-        </div>
-        
-        <div style="text-align: center; padding-top: 15px; border-top: 1px solid #e5e7eb;">
-            <p style="font-size: 13px; color: #999;">Keep earning tickets to qualify for the Wildcat Jackpot!</p>
-        </div>
-    </div>
 
     <!-- Create Admin Screen -->
     <div id="createAdminScreen" class="login-container hidden">
@@ -422,21 +317,6 @@
         <div id="adminError" class="error-message" style="text-align: center;"></div>
     </div>
 
-    <!-- Connect to School Screen -->
-    <div id="connectSchoolScreen" class="login-container hidden">
-        <h1>Connect to School</h1>
-        <p style="text-align: center; color: #666; margin-bottom: 20px;">Enter your school's ID to access the shared rewards system</p>
-        
-        <div class="form-group">
-            <label>School ID</label>
-            <input type="text" id="schoolIdInput" placeholder="e.g., 6578abc123def456">
-        </div>
-        
-        <button class="btn" style="width: 100%; margin-bottom: 10px;" onclick="connectToSchool()">Connect</button>
-        <button class="btn btn-secondary" style="width: 100%;" onclick="backToLogin()">Back to Login</button>
-        
-        <div id="connectError" class="error-message" style="text-align: center;"></div>
-    </div>
 
     <!-- Change Password Modal -->
     <div id="changePasswordModal" class="login-container hidden" style="margin-top: 50px;">
@@ -528,7 +408,7 @@
         <header class="app-topbar">
             <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-menu"></use></svg></button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20260827i" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20260831a" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -4711,45 +4591,6 @@
         </div><!-- /app-body -->
     </div>
 
-    <!-- Active Hall Pass Display Modal -->
-    <div id="activePassModal" class="login-container hidden" style="margin-top: 50px; max-width: 500px;">
-        <div style="text-align: center; padding: 30px; background: #2F67A7; border-radius: 12px 12px 0 0; margin: -30px -30px 20px -30px;">
-            <h1 style="color: white; font-size: 36px; margin: 0 0 10px 0;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-check-circle"></use></svg> Pass Created!</h1>
-            <div style="background: rgba(255,255,255,0.2); backdrop-filter: blur(10px); padding: 15px; border-radius: 10px; margin-top: 20px;">
-                <div id="passTimerDisplay" style="font-size: 48px; font-weight: 700; color: white;">5:00</div>
-                <div style="color: white; font-size: 14px; margin-top: 5px;">Time Remaining</div>
-            </div>
-        </div>
-        
-        <div style="background: #f0f9ff; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
-            <div style="display: grid; grid-template-columns: auto 1fr; gap: 15px; align-items: center;">
-                <div style="font-weight: 600; color: #666;">Student:</div>
-                <div id="passStudentName" style="font-weight: 700; color: #333;"></div>
-                
-                <div style="font-weight: 600; color: #666;">Destination:</div>
-                <div id="passDestination" style="font-weight: 700; color: #2F67A7;"></div>
-                
-                <div style="font-weight: 600; color: #666;">Started:</div>
-                <div id="passStartTime" style="color: #333;"></div>
-            </div>
-        </div>
-        
-        <!-- Period and Teacher Info (if detected) -->
-        <div id="passPeriodInfo" style="background: #2F67A7; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; display: none;">
-            <div style="font-size: 14px; opacity: 0.9; margin-bottom: 5px;">Coming From:</div>
-            <div style="font-size: 20px; font-weight: 700; margin-bottom: 10px;" id="passCurrentPeriod"></div>
-            <div style="display: grid; grid-template-columns: auto 1fr; gap: 10px; font-size: 14px; opacity: 0.95;">
-                <div>Teacher:</div>
-                <div id="passCurrentTeacher" style="font-weight: 600;"></div>
-                <div>Class:</div>
-                <div id="passCurrentClass" style="font-weight: 600;"></div>
-            </div>
-        </div>
-
-        <button class="btn" onclick="closeActivePassModal()" style="width: 100%; padding: 18px; font-size: 18px; background: #10b981;">
-            Done
-        </button>
-    </div>
 
     <!-- Edit Teacher Modal -->
     <!-- One hall pass, in full: who, where, both clocks, every note on it, and
@@ -5090,171 +4931,6 @@
         </div>
     </div>
 
-    <!-- Student View.
-         DEAD as of the portal rebuild. The boot sequence used to show this
-         when a legacy student session was restored from sessionStorage; it
-         now opens #studentPassView instead. Left in place for the same reason
-         #studentDashboard is. Do not wire anything new to it. -->
-    <div id="studentApp" class="container hidden">
-        <div class="header">
-            <h1>🎟️ Wildcat Hub</h1>
-            <p>Track your raffle tickets and see where you rank!</p>
-        </div>
-
-        <div class="user-info">
-            <span>👤 Student: <strong id="studentViewName"></strong> (ID: <strong id="studentViewId"></strong>)</span>
-            <button class="btn-logout" onclick="logout()">Logout</button>
-        </div>
-
-        <!-- Student Tabs -->
-        <div style="display: flex; gap: 10px; margin: 20px 0; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px; flex-wrap: wrap;">
-            <button class="student-tab-button active" onclick="switchStudentTab('raffleTickets')" id="studentRaffleTabBtn" style="padding: 12px 24px; background: #667eea; color: white; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
-                🎟️ Raffle Tickets
-            </button>
-            <!-- HIDDEN FOR LAUNCH - BETA FEATURES -->
-            <!--
-            <button class="student-tab-button" onclick="switchStudentTab('wildcatCash')" id="studentCashTabBtn" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
-                💰 Wildcat Cash
-            </button>
-            <button class="student-tab-button" onclick="switchStudentTab('clawPass')" id="studentPassTabBtn" style="padding: 12px 24px; background: #f5f5f5; color: #333; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600;">
-                🎫 My Passes
-            </button>
-            -->
-        </div>
-
-        <div class="content">
-            <!-- Raffle Tickets Tab -->
-            <div id="raffleTicketsTab" class="student-tab-content">
-                <!-- Sleek Side-by-Side Ticket Counters -->
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 30px;">
-                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3); text-align: center;">
-                        <div style="font-size: 48px; font-weight: 700; color: white;" id="studentPbisTickets">0</div>
-                        <div style="color: rgba(255,255,255,0.95); font-size: 14px; font-weight: 600; margin-top: 8px;">PBIS Tickets</div>
-                    </div>
-                    <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(240, 147, 251, 0.3); text-align: center;">
-                        <div style="font-size: 48px; font-weight: 700; color: white;" id="studentAttendanceTickets">0</div>
-                        <div style="color: rgba(255,255,255,0.95); font-size: 14px; font-weight: 600; margin-top: 8px;">Attendance Tickets</div>
-                    </div>
-                    <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(79, 172, 254, 0.3); text-align: center;">
-                        <div style="font-size: 48px; font-weight: 700; color: white;" id="studentAcademicTickets">0</div>
-                        <div style="color: rgba(255,255,255,0.95); font-size: 14px; font-weight: 600; margin-top: 8px;">Academic Tickets</div>
-                    </div>
-                </div>
-
-                <div id="qualifiedBanner" class="hidden" style="background: #d4edda; border: 2px solid #28a745; border-radius: 8px; padding: 20px; text-align: center; margin-bottom: 20px;">
-                    <h2 style="color: #155724; margin-bottom: 10px;">🏆 Congratulations!</h2>
-                    <p style="color: #155724; font-size: 18px;">You're qualified for the Wildcat Jackpot!</p>
-                </div>
-
-                <!-- Student Leaderboard -->
-                <div style="margin-bottom: 40px;">
-                    <h2 style="margin-bottom: 15px;">🏆 This Week's Leaderboard</h2>
-                    <p style="color: #666; margin-bottom: 10px;">See where you rank against your peers!</p>
-                    <p id="studentLeaderboardLevel" style="font-weight: bold; margin-bottom: 20px;"></p>
-
-                    <!-- Single School Leaderboard (MS or HS based on student's grade) -->
-                    <div id="studentLeaderboardContainer" style="max-width: 700px; margin: 0 auto;">
-                        <!-- This will be populated dynamically based on student's school level -->
-                    </div>
-                </div>
-
-                <h2 style="margin-top: 40px; margin-bottom: 15px;">📜 Ticket History</h2>
-                
-                <div style="overflow-x: auto;">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Date</th>
-                                <th>Category</th>
-                                <th>Tickets</th>
-                                <th>Reason</th>
-                                <th>Awarded By</th>
-                            </tr>
-                        </thead>
-                        <tbody id="studentHistoryTable">
-                            <tr>
-                                <td colspan="5" style="text-align: center; padding: 40px; color: #999;">
-                                    No tickets received yet. Keep up the good work!
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- Wildcat Cash Tab -->
-            <div id="wildcatCashTab" class="student-tab-content" style="display: none;">
-                <div style="max-width: 800px; margin: 0 auto;">
-                    <!-- Cash Balance Card -->
-                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px; border-radius: 16px; box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3); text-align: center; margin-bottom: 30px;">
-                        <h2 style="color: white; margin: 0 0 10px 0; font-size: 20px;">💰 Your Wildcat Cash Balance</h2>
-                        <div style="font-size: 64px; font-weight: 700; color: white; margin: 20px 0;" id="studentCashBalance">$0</div>
-                        <div style="color: rgba(255,255,255,0.9); font-size: 16px;">Current Balance</div>
-                    </div>
-
-                    <!-- Cash Stats Grid -->
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px;">
-                        <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center;">
-                            <div style="font-size: 32px; font-weight: 700; color: #10b981;" id="studentCashEarned">$0</div>
-                            <div style="color: #666; margin-top: 8px;">Total Earned</div>
-                        </div>
-                        <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center;">
-                            <div style="font-size: 32px; font-weight: 700; color: #f093fb;" id="studentCashSpent">$0</div>
-                            <div style="color: #666; margin-top: 8px;">Total Spent</div>
-                        </div>
-                        <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center;">
-                            <div style="font-size: 32px; font-weight: 700; color: #ef4444;" id="studentCashDeducted">$0</div>
-                            <div style="color: #666; margin-top: 8px;">Total Deducted</div>
-                        </div>
-                    </div>
-
-                    <!-- Recent Transactions -->
-                    <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-                        <h2 style="margin: 0 0 20px 0;">📊 Recent Transactions</h2>
-                        <div id="studentCashTransactions">
-                            <p style="text-align: center; color: #999; padding: 40px;">No transactions yet</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Claw Pass Tab -->
-            <div id="clawPassTab" class="student-tab-content" style="display: none;">
-                <div style="max-width: 800px; margin: 0 auto;">
-                    <h2 style="margin-bottom: 20px;">🎫 My Hall Passes</h2>
-
-                    <!-- Active Pass (if any) -->
-                    <div id="studentActivePass" style="margin-bottom: 30px;">
-                        <!-- Will be populated if student has an active pass -->
-                    </div>
-
-                    <!-- Pass History -->
-                    <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-                        <h3 style="margin: 0 0 20px 0;">📋 Pass History</h3>
-                        <div style="overflow-x: auto;">
-                            <table style="width: 100%;">
-                                <thead style="background: #f5f5f5;">
-                                    <tr>
-                                        <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e0e0e0;">Date/Time</th>
-                                        <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e0e0e0;">Destination</th>
-                                        <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e0e0e0;">Duration</th>
-                                        <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e0e0e0;">Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="studentPassHistory">
-                                    <tr>
-                                        <td colspan="4" style="text-align: center; padding: 40px; color: #999;">
-                                            No hall passes yet
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
 
 
             <!-- Modals for Cash System -->
@@ -5553,19 +5229,19 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260827i"></script>
+    <script src="wildcat-auth.js?v=20260831a"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
     <!-- The icon sprite. Injected at load, before anything renders, so an
          icon is never a blank square for a frame. -->
-    <script src="wildcat-icons.js?v=20260827i"></script>
-    <script src="wildcat-motion.js?v=20260827i"></script>
-    <script src="wildcat-discipline.js?v=20260827i"></script>
-    <script src="wildcat-merge.js?v=20260827i"></script>
-    <script src="wildcat-savequeue.js?v=20260827i"></script>
-    <script src="wildcat-roster.js?v=20260827i"></script>
-    <script src="wildcat-store.js?v=20260827i"></script>
-    <script src="script.js?v=20260827i"></script>
+    <script src="wildcat-icons.js?v=20260831a"></script>
+    <script src="wildcat-motion.js?v=20260831a"></script>
+    <script src="wildcat-discipline.js?v=20260831a"></script>
+    <script src="wildcat-merge.js?v=20260831a"></script>
+    <script src="wildcat-savequeue.js?v=20260831a"></script>
+    <script src="wildcat-roster.js?v=20260831a"></script>
+    <script src="wildcat-store.js?v=20260831a"></script>
+    <script src="script.js?v=20260831a"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -5575,7 +5251,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20260827i').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20260831a').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {

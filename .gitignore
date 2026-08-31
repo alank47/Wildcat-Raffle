@@ -17,3 +17,7 @@ node_modules/
 # Generated dev harness: every state of the student pass card, side by side
 # against the real stylesheet. Rebuild with node scripts/build-pass-harness.mjs.
 pass-card-harness.html
+
+# Generated dev harness: the student's desk dashboard in real viewports,
+# against the real stylesheet. Rebuild with node scripts/build-dashboard-harness.mjs.
+dashboard-harness.html
