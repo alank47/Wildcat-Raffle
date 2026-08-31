@@ -477,6 +477,22 @@
        back to a section, so it is not joined here. The consumer must treat a
        weighted section as unprojectable and say so rather than guess.
        See docs/gradebook-sourcing.md.
+
+       ⚠️ THE YEAR FILTER GOES THROUGH TERMS, NOT ASSIGNMENTSECTION.YEARID.
+       That column is granted and EMPTY on every row in this instance, and the
+       first cut of this query filtered on it: the query registered, returned
+       HTTP 200, and gave zero rows forever. A filter on a blank column is the
+       worst kind of wrong, because nothing errors and an empty card reads as
+       "you have no missing work".
+
+       The scope has to come from somewhere, because ASSIGNMENTSECTION holds a
+       decade of history: due dates in this table go back to 2016. Without a
+       year filter a student is shown ten years of missing work.
+
+       Verified path, 2026-08-31:
+         AssignmentSection.SECTIONSDCID -> Sections.DCID
+         Sections.TERMID                -> Terms.ID (3601, S1)
+         Terms.YEARID                   -> 36 (2026-2027)
        ================================================================== -->
   <query name="com.lapromisefund.wildcathub.missing_work" coreTable="students" flattened="true">
     <description>
@@ -485,7 +501,7 @@
     </description>
     <args>
       <arg name="schoolid" required="true" type="primitive" description="Schools.School_Number for the school being read" />
-      <arg name="yearid" required="true" type="primitive" description="AssignmentSection.YearID for the school year being read" />
+      <arg name="yearid" required="true" type="primitive" description="Terms.Yearid for the school year being read" />
     </args>
     <columns>
       <column column="STUDENTS.ID">student_id</column>
@@ -520,6 +536,8 @@
         JOIN STUDENTS S            ON S.DCID = SCORE.STUDENTSDCID
         JOIN ASSIGNMENTSECTION ASEC ON ASEC.ASSIGNMENTSECTIONID = SCORE.ASSIGNMENTSECTIONID
         JOIN SECTIONS SEC          ON SEC.DCID = ASEC.SECTIONSDCID
+        JOIN TERMS T               ON T.ID       = SEC.TERMID
+                                  AND T.SCHOOLID = SEC.SCHOOLID
         LEFT JOIN COURSES C        ON C.COURSE_NUMBER = SEC.COURSE_NUMBER
                                   AND (C.SCHOOLID = SEC.SCHOOLID OR C.SCHOOLID = 0)
         LEFT JOIN ASSIGNMENTCATEGORYASSOC ACA
@@ -527,7 +545,7 @@
         LEFT JOIN TEACHERCATEGORY TC
                                    ON TC.TEACHERCATEGORYID = ACA.TEACHERCATEGORYID
         WHERE S.SCHOOLID              = :schoolid
-          AND ASEC.YEARID             = :yearid
+          AND T.YEARID                = :yearid
           AND S.ENROLL_STATUS         = 0
           AND SCORE.ISMISSING         = 1
           AND ASEC.ISCOUNTEDINFINALGRADE = 1
