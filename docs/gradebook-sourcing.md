@@ -1,7 +1,10 @@
-# Where the gradebook is, and why the missing-work card is not buildable
+# Where the gradebook actually lives
 
-Measured 2026-08-31 against `lapf.powerschool.com` (production, read only) with
-`powerschool/sync/src/probe-gradebook.ts`. 39 requests, GET only.
+Measured 2026-08-31 against `lapf.powerschool.com` (production, read only) by
+three probes in `powerschool/sync/src/`: `probe-gradebook.ts` (columns on the
+PSM_ names), `probe-gradebook-tables.ts` (a wide row-count sweep, which is what
+found the real tables), and `probe-gradebook-columns.ts` (columns on those).
+GET only throughout; no score or student record was read.
 
 Re-run with:
 
@@ -17,90 +20,101 @@ env -u OP_SERVICE_ACCOUNT_TOKEN -u X_BEARER_TOKEN -u X_API_KEY \
 
 ## The answer
 
-**The card cannot be built, and the blocker is not permissions.** There are no
-assignments in this PowerSchool instance.
+**The gradebook is fully populated and the card IS buildable.** The first two
+probes asked the wrong tables.
 
-| Table | Rows | Verdict |
+| Table | Rows | |
 |---|---:|---|
-| `PSM_AssignmentScore` | **0** | exists, empty |
-| `PSM_Assignment` | **0** | exists, empty |
-| `PSM_AssignmentCategory` | 428 | exists, populated |
-| `PSM_AssignmentSection` | — | **no such table** |
-| `PSM_SectionGradeWeighting` | — | **no such table** |
-| `PSM_CategoryWeighting` | — | **no such table** |
-| `PSM_TermWeighting` | — | **no such table** |
-| `PSM_SectionGradeCalcFormula` | — | **no such table** |
-| `Assignments` / `AssignmentScores` / `AssignmentCategory` (classic gradebook) | — | **no such table** |
+| `AssignmentScore` | **1,374,093** | the scores, with both keys |
+| `AssignmentSection` | 79,880 | name, due date, point value |
+| `Assignment` | 44,237 | nearly bare here; key only |
+| `AssignmentCategoryAssoc` | 79,880 | work to category |
+| `TeacherCategory` | 937 | category names |
+| `GradeCalculationType` | 2,032 | total-points vs weighted |
+| `PSM_AssignmentScore` | **0** | empty stub — do not use |
+| `PSM_Assignment` | **0** | empty stub — do not use |
+| `PSM_AssignmentSection` | absent | — |
 
-Counts come from `/ws/schema/table/<t>/count`, which answers **without** a
-grant. The parser was validated in the same run against tables whose size is
-known independently: `students` 2,107, `sections` 3,456, `PGFinalGrades`
-166,495. So the zeroes are real readings, not a parse failure or a permission
-artifact.
+### The trap, written down so nobody falls in it a third time
 
-428 categories exist with nothing filed under them. Teachers have set up their
-gradebook structure; the assignments themselves are not in the SIS.
+This instance carries **both** schema generations. The `PSM_`-prefixed tables
+exist and are **empty**; the real gradebook is in the **singular, unprefixed**
+tables.
 
-## The correction this doc exists to record
+Two separate probes concluded "this school does not use assignments":
 
-An earlier session concluded the card was blocked because
-`PSM_ASSIGNMENTSCORE` returns a score with no student key and no assignment
-key. A later session (mine) pushed back on that, arguing the 400s were an
-artifact of probing a table with **zero** grants in `plugin.xml`, since the
-400-versus-403 rule was established for tables inside the access request, and
-`docs/access-gap.md` already records the table endpoint lying about `TEACHERS`.
+1. The first asked `PSM_Assignment` / `PSM_AssignmentScore` — both real, both 0 rows.
+2. The same probe also tried the unprefixed names as **`Assignments`** and
+   **`AssignmentScores`** — plural, and both 404.
 
-**That pushback was wrong, and the probe is what settles it.** On the same
-ungranted table, in the same run:
+`Assignment` and `AssignmentScore` are singular. **One letter separated "this
+school has no gradebook data" from 1.37 million scores.**
+
+The lesson: a 0-row count on a table that exists is evidence about *that table*,
+not about what the school does. Ask what else could hold the data before
+reporting an absence.
+
+### The three facts a missing-work card needs
+
+| Need | Column | Confirmed |
+|---|---|---|
+| Which work is missing | `AssignmentScore.IsMissing` | 403 |
+| Whose it is | `AssignmentScore.StudentsDCID` | 403 |
+| What it is worth | `AssignmentSection.ScoreEntryPoints` | 403 |
+
+`PointsPossible` does **not** exist on `AssignmentSection` (400). The column is
+`ScoreEntryPoints`, with `TotalPointValue` beside it.
+
+The join:
 
 ```
-EXISTS/no grant  id                    (403)
-EXISTS/no grant  ismissing             (403)
-no such column   studentsdcid          (400)
-no such column   studentid             (400)
-no such column   assignmentsectionid   (400)
-no such column   scorepoints           (400)
+AssignmentScore.STUDENTSDCID        -> Students.DCID
+AssignmentScore.ASSIGNMENTSECTIONID -> AssignmentSection.ASSIGNMENTSECTIONID
+AssignmentSection.SECTIONSDCID      -> Sections.DCID
 ```
 
-403 and 400 both appear on one ungranted table, so the endpoint **does**
-distinguish there. The original finding was right: `PSM_AssignmentScore` really
-does carry no student key and no assignment key. The `TEACHERS` precedent is a
-405 (endpoint closed for the whole table), which is a different signal and does
-not generalise to this case.
+`AssignmentSection`, not `Assignment`, carries the readable content — name,
+description, due date, point value. The `Assignment` table is nearly bare in
+this instance (`AssignmentID`, `YearID`, two audit columns).
 
-## What IS grantable, and why it was not granted
+### The half that is still not answerable
 
-These answered 403 — they exist and are simply not in the access request:
+**No weight column exists on `TeacherCategory` under any spelling probed.**
+`GradeCalculationType.Type` says whether a section is total-points or weighted,
+but carries no key back to a section, so it cannot be joined.
 
-- `PSM_AssignmentScore`: `id`, `ismissing`
-- `PSM_Assignment`: `id`, `name`, `abbreviation`, `description`,
-  `assignmentcategoryid`, `pointspossible`
-- `PSM_AssignmentCategory`: `id`, `name`, `abbreviation`
+So for a **total-points** section the projection is exact arithmetic. For a
+**weighted** section this data says which work is missing but not what handing
+it in would do to the grade. The card must refuse to project there and say why,
+rather than guess. That is a product decision, not a data-access one.
 
-**Nothing was added to `plugin.xml`.** Granting them would buy read access to
-student assignment scores and return zero rows, because the tables are empty.
-The access request's own rule is that a field needs a named operational use
-case or it comes out; access with no working feature behind it is the thing
-that rule exists to prevent. When assignments start appearing in the SIS, these
-nine fields are pre-confirmed and the edit is mechanical.
+## Shipped at plugin 1.3.0
 
-Note also that `PSM_AssignmentScore.ismissing` exists, which is the exact flag
-a missing-work card would key on. The shape of the feature is fine. The data is
-not there.
+`powerschool/out/wildcat-hub-sync-1.3.0.zip` — 165 fields, all `ViewOnly`, plus
+the `com.lapromisefund.wildcathub.missing_work` PowerQuery. Every field
+answered 403 first; nothing on a 400 was written.
 
-## Two things to settle before anyone tries again
+## The earlier correction, kept
 
-1. **Do Westbrook teachers enter assignments in PowerTeacher Pro at all?**
-   428 categories and zero assignments suggests the gradebook was configured
-   and then not used, or that grades are entered directly as final percentages.
-   `PGFinalGrades` holds 166,495 rows, so final grades ARE being recorded. Ask
-   the SIS admin which workflow teachers actually follow.
-2. **There is no weighting table in this instance, under any spelling tried.**
-   Even with assignments present, "how much would handing this in help" is not
-   computable from the SIS: nothing says whether a section is total-points or
-   category-weighted, or what any category is worth. A projection engine would
-   have to refuse rather than guess for every weighted gradebook. That is a
-   product decision, not a data-access one.
+An earlier session concluded the card was blocked because `PSM_ASSIGNMENTSCORE`
+has no student key. I argued that was an artifact of probing an ungranted
+table. **Both of us were wrong, in different directions.**
+
+The 403/400 distinction *does* work on an ungranted table — `PSM_AssignmentScore`
+returned 403 for `id` and 400 for `studentsdcid` in one run, so my objection was
+unfounded. But the original conclusion was also wrong, because that table is an
+empty stub. `AssignmentScore` carries `StudentsDCID` and `AssignmentSectionID`
+and 1.37 million rows.
+
+## What the SIS admin still needs to confirm
+
+Only one thing, and it is narrow. **Category weights.** No weight column was
+found on `TeacherCategory`, and `GradeCalculationType` carries no key back to a
+section. Either the weights live somewhere not yet probed, or this instance
+stores them outside the tables the API exposes.
+
+Everything else is settled: teachers do create and score assignments, 1.37
+million scores prove it, and `IsMissing` is populated.
 
 ## Why `op run` fails, and why it is not a PowerSchool problem
 
