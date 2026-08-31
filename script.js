@@ -46,11 +46,33 @@
         // write can move one at a time and either can be reverted alone.
         //
         //   DATA_SOURCE  where students and teachers are READ from.
-        //   DATA_WRITE   where they are WRITTEN. Not yet used; stage 2.
+        //   DATA_WRITE   where they are WRITTEN.
         //
         // Set DATA_SOURCE back to 'firestore' to revert the read instantly.
         // No deploy of Convex is needed to do it, only this line and a cache
         // buster bump, because the fallback path is still fully present.
+        //
+        // ⚠️ WHAT THESE SWITCHES DO NOT COVER, measured 2026-08-31.
+        // They govern the STUDENT AND TEACHER ARRAYS and nothing else. Six
+        // other data families still live in Firestore with no Convex reader
+        // at all: ticket history (six partitioned documents), the audit log
+        // (monthly plus legacy), referrals, schedules, the per-week cash
+        // transaction ledgers, and `secondary`.
+        //
+        // And one more that is easy to miss because the code looks finished:
+        // loadRosterFromConvex() RETURNS `settings` and the caller throws it
+        // away. currentWeek, cycleDuration, kickboardSettings, passSettings
+        // and schoolBranding are still read off the Firestore `main`
+        // document, while appData:save has been writing them to Convex all
+        // along. Flipping DATA_WRITE to 'convex' before the read side
+        // consumes those settings would freeze every one of them at its last
+        // Firestore value, silently and with no error anywhere.
+        //
+        // So the order of the remaining work is: consume Convex settings in
+        // loadData, THEN cut the main-document write, THEN port the six
+        // families. See docs/superpowers/plans/2026-08-12-convex-cutover.md
+        // Task 5, which assumed appData:load/save covered the whole document
+        // and did not account for the read side only ever taking the roster.
         // ---------------------------------------------------------------
         /**
          * Where the roster on screen came from, and therefore whether a count
@@ -565,24 +587,31 @@
         // ============================================================
         // PERSISTENT TOMBSTONES (isolated document — old code can't wipe)
         // ============================================================
-        // Tombstones live in raffle_data/tombstones, a document that only
-        // this new code knows about. Old code (stale tabs) cannot wipe it
-        // because it doesn't read or write this document. Once written,
-        // a tombstone survives any save from any tab running any version.
+        // Tombstones live in the Convex `tombstones` table, which the app
+        // reaches only through two authenticated functions. Once written,
+        // a tombstone survives any save from any tab running any version,
+        // because no save path writes that table.
         //
         // Loaded tombstones are applied as a DISPLAY FILTER: the ticket
         // history and audit log in memory will have tombstoned entries
         // filtered out after load, so the UI never shows them even if
-        // old code saves them back into ticket_history or audit_log.
+        // an older tab saves them back into ticket_history or audit_log.
+        //
+        // MOVED OFF FIRESTORE 2026-08-31. The old document was world writable
+        // to anyone holding the project id, which shipped in the page source,
+        // so a deletion could be undone by a stranger. Two behaviours changed
+        // with the store, both deliberately:
+        //   - The old arrayUnion de-duplicated by whole-object equality, so
+        //     deleting the same entry twice with a different reason wrote two
+        //     rows and the array grew without bound. `tombstones:record`
+        //     upserts on entryId.
+        //   - The old code fell back to memory-only when Firebase was down and
+        //     said so in a console warning nobody reads. A memory-only
+        //     tombstone is lost on reload and the entry comes back. It still
+        //     falls back, because refusing the delete outright is worse, but
+        //     it now returns the failure so the caller can surface it.
         // ============================================================
         async function persistTombstone(entryId, deletedBy, reason, type = 'event') {
-            if (!firebaseInitialized || !firebaseDb) {
-                console.warn('persistTombstone: Firebase not available, storing locally only');
-                localTombstones.push({ entryId, deletedAt: new Date().toISOString(), deletedBy, reason, type });
-                return;
-            }
-            const { doc, setDoc, getDoc, updateDoc, arrayUnion } = window.firebaseModules;
-            const tombstoneRef = doc(firebaseDb, 'raffle_data', 'tombstones');
             const tombstone = {
                 entryId,
                 deletedAt: new Date().toISOString(),
@@ -590,40 +619,35 @@
                 reason: reason || '',
                 type
             };
-            try {
-                // Try arrayUnion first (atomic append — safe against concurrent writers)
-                await updateDoc(tombstoneRef, { entries: arrayUnion(tombstone) });
-            } catch (e) {
-                // Doc might not exist yet; create it
-                try {
-                    const snap = await getDoc(tombstoneRef);
-                    if (snap.exists()) {
-                        const existing = snap.data().entries || [];
-                        if (!existing.some(t => t.entryId === entryId)) {
-                            existing.push(tombstone);
-                        }
-                        await setDoc(tombstoneRef, { entries: existing, lastUpdated: Date.now() });
-                    } else {
-                        await setDoc(tombstoneRef, { entries: [tombstone], lastUpdated: Date.now() });
-                    }
-                } catch (e2) {
-                    console.error('persistTombstone: failed to write tombstone', e2);
-                }
-            }
-            // Also keep in local memory for immediate use
+            // Local memory first, so the filter applies to this tab immediately
+            // whether or not the write lands.
             if (!localTombstones.some(t => t.entryId === entryId)) {
                 localTombstones.push(tombstone);
+            }
+
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+            if (!session) {
+                console.warn('persistTombstone: not signed in, this deletion is local to this tab and will not survive a reload');
+                return { persisted: false, reason: 'not signed in' };
+            }
+            try {
+                await auth.convexMutation('tombstones:record', {
+                    entryId, type, deletedBy: tombstone.deletedBy, reason: tombstone.reason
+                }, session.idToken);
+                return { persisted: true };
+            } catch (e) {
+                console.error('persistTombstone: failed to write tombstone', e);
+                return { persisted: false, reason: e && e.message };
             }
         }
 
         async function loadPersistentTombstones() {
-            if (!firebaseInitialized || !firebaseDb) return [];
-            const { doc, getDoc } = window.firebaseModules;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+            if (!session) return [];
             try {
-                const snap = await getDoc(doc(firebaseDb, 'raffle_data', 'tombstones'));
-                if (snap.exists()) {
-                    return snap.data().entries || [];
-                }
+                return await auth.convexQuery('tombstones:list', {}, session.idToken) || [];
             } catch (e) {
                 console.error('loadPersistentTombstones failed:', e);
             }
@@ -927,31 +951,39 @@
         let _weekWatchdogInterval = null;
         function startWeekStalenessWatchdog() {
             if (_weekWatchdogInterval) return; // already running
-            if (!firebaseInitialized || !firebaseDb) return;
 
+            // MOVED OFF FIRESTORE 2026-08-31. This used to fetch the whole
+            // main document once a minute to read two integers off it;
+            // `appData:freshness` returns just those two. It also used to
+            // bail out entirely when Firebase was not initialised, which meant
+            // the guard silently did not exist for any tab that failed to
+            // connect. Now the poll starts regardless and each tick is a no-op
+            // until a session exists, so a late sign-in gets the watchdog too.
             const CHECK_INTERVAL_MS = 60000; // 1 minute
             _weekWatchdogInterval = setInterval(async () => {
                 try {
-                    const { doc, getDoc } = window.firebaseModules || {};
-                    if (!doc || !getDoc) return;
-                    const snap = await getDoc(doc(firebaseDb, 'raffle_data', 'main'));
-                    if (!snap.exists()) return;
-                    const data = snap.data();
-                    const fbWeek = data.currentWeek;
-                    const fbCycleNum = data.currentCycle?.cycleNumber;
+                    const auth = window.WildcatAuth;
+                    const session = auth && auth.getSession();
+                    if (!session) return;
+                    const remote = await auth.convexQuery('appData:freshness', {}, session.idToken);
+                    if (!remote) return;
+                    // Nulls mean "no answer", never "week zero". Only a server
+                    // that is genuinely AHEAD may reload the tab.
+                    const svWeek = remote.currentWeek;
+                    const svCycleNum = remote.cycleNumber;
                     const localCycleNum = currentCycle?.cycleNumber;
-                    
+
                     // Cycle drift detection — takes priority over week drift
-                    if (typeof fbCycleNum === 'number' && typeof localCycleNum === 'number' && fbCycleNum > localCycleNum) {
-                        console.warn(`🐶 Cycle watchdog: Firebase cycle (${fbCycleNum}) is ahead of local (${localCycleNum}). This tab is stale — reloading data.`);
+                    if (typeof svCycleNum === 'number' && typeof localCycleNum === 'number' && svCycleNum > localCycleNum) {
+                        console.warn(`Cycle watchdog: server cycle (${svCycleNum}) is ahead of local (${localCycleNum}). This tab is stale — reloading data.`);
                         await loadData();
                         return;
                     }
-                    
+
                     // Week drift detection (only enforced within same cycle)
-                    const sameCycle = (fbCycleNum === localCycleNum) || (typeof fbCycleNum !== 'number' && typeof localCycleNum !== 'number');
-                    if (sameCycle && typeof fbWeek === 'number' && typeof currentWeek === 'number' && fbWeek > currentWeek) {
-                        console.warn(`🐶 Week watchdog: Firebase currentWeek (${fbWeek}) is ahead of local (${currentWeek}). This tab is stale — reloading data.`);
+                    const sameCycle = (svCycleNum === localCycleNum) || (typeof svCycleNum !== 'number' && typeof localCycleNum !== 'number');
+                    if (sameCycle && typeof svWeek === 'number' && typeof currentWeek === 'number' && svWeek > currentWeek) {
+                        console.warn(`Week watchdog: server currentWeek (${svWeek}) is ahead of local (${currentWeek}). This tab is stale — reloading data.`);
                         await loadData();
                     }
                 } catch (e) {

@@ -97,6 +97,49 @@ export const load = query({
 });
 
 /**
+ * The two numbers the stale-tab watchdog compares against, and nothing else.
+ *
+ * WHAT IT GUARDS. A teacher leaves the Hub open on Friday. Another teacher ends
+ * the week. The first tab still holds last week's `currentWeek`, and its next
+ * save writes that stale number back over the new one. The watchdog in
+ * script.js polls this every minute and reloads the tab when the server has
+ * moved ahead.
+ *
+ * WHY IT IS ITS OWN QUERY AND NOT `load`. It runs once a minute in every open
+ * tab, forever. `load` reads every student, every teacher and the whole roster
+ * to answer it, which is a few hundred kilobytes to compare two integers. This
+ * reads one settings row.
+ *
+ * WHY IT RETURNS NULLS RATHER THAN ZEROS. A fresh deployment has no settings
+ * row. Zero would read as "the server is on week 0", which is behind every tab
+ * and therefore silent; null says "no answer" and the caller does nothing. The
+ * watchdog only ever acts on the server being AHEAD, so an absent answer must
+ * never look like a low one.
+ */
+export const freshness = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireStaff(ctx);
+
+    const settingsRow = await ctx.db
+      .query("appState")
+      .withIndex("by_key", (q) => q.eq("key", SETTINGS_KEY))
+      .unique();
+
+    const settings = (settingsRow?.value as Record<string, unknown>) ?? {};
+    const cycle = settings.currentCycle as { cycleNumber?: unknown } | undefined;
+
+    const num = (x: unknown) => (typeof x === "number" ? x : null);
+
+    return {
+      currentWeek: num(settings.currentWeek),
+      cycleNumber: num(cycle?.cycleNumber),
+      serverTime: new Date().toISOString(),
+    };
+  },
+});
+
+/**
  * What `load` WOULD return, as counts and totals only.
  *
  * internalQuery, so it is unreachable from a browser and needs the deploy key.

@@ -612,5 +612,42 @@ console.log("\nAnalytics panes live inside the analytics section");
   }
 }
 
+console.log("\nTombstones and the watchdog are off Firestore");
+// Both moved to Convex on 2026-08-31. Both fail SILENTLY if they regress: a
+// tombstone that does not persist lets a deleted entry come back on the next
+// load, and a watchdog that never fires lets a stale tab write last week's
+// currentWeek over this week's. Neither throws, so only the call site can say.
+{
+  const persist = fnBody(script, "async function persistTombstone");
+  check("persistTombstone calls Convex", /convexMutation\('tombstones:record'/.test(persist));
+  check("and no longer touches Firestore", !/firebaseDb|arrayUnion|firebaseModules/.test(persist));
+  check(
+    "it still records locally before the write, so the filter applies either way",
+    persist.indexOf("localTombstones.push") < persist.indexOf("convexMutation"),
+  );
+  check(
+    "a failed write is reported rather than returning as success",
+    /persisted: false/.test(persist),
+  );
+
+  const load = fnBody(script, "async function loadPersistentTombstones");
+  check("loadPersistentTombstones reads Convex", /convexQuery\('tombstones:list'/.test(load));
+  check("and no longer touches Firestore", !/firebaseDb|firebaseModules/.test(load));
+
+  const dog = fnBody(script, "function startWeekStalenessWatchdog");
+  check("the watchdog reads appData:freshness", /convexQuery\('appData:freshness'/.test(dog));
+  check("and no longer reads raffle_data/main", !/firebaseDb|raffle_data/.test(dog));
+  check(
+    "it no longer refuses to start when Firebase is absent",
+    !/firebaseInitialized/.test(dog),
+    "that guard meant a tab which failed to reach Firebase silently had no watchdog at all",
+  );
+  check(
+    "it still only acts when the server is AHEAD",
+    /svCycleNum > localCycleNum/.test(dog) && /svWeek > currentWeek/.test(dog),
+    "a null must never read as week zero and reload every tab in the school",
+  );
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
