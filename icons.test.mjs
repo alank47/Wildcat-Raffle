@@ -5,6 +5,9 @@
 // does not carry draws NOTHING (an <svg><use> to a missing id is blank, not an
 // error), and an emoji creeping back into the shell or the Claw Pass tabs looks
 // fine on one machine and like a tofu box on another. Both are pinned here.
+//
+// Section 3 grows one mode at a time, in the order the overhaul takes them
+// (Grilled.md decision 4): the shell and Claw Pass first, Wildcat Cash next.
 
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
@@ -55,6 +58,12 @@ const shell = between(html, 'id="mainApp"', 'id="modeEmptyState"');
 check("no emoji in the app shell (topbar, sidebar)", !emoji.test(shell));
 const tabs = between(html, "<!-- Hall Pass Tabs -->", 'id="myClassTab"');
 check("no emoji in the Claw Pass tab bar", !emoji.test(tabs));
+const cash = between(html, "WILDCAT CASH MODE TABS", 'id="clawPassContent"');
+check("no emoji anywhere in Wildcat Cash mode", !emoji.test(cash));
+// Panel heads and the class header are containers sized for a 30px glyph, so an
+// icon dropped in without its own size rule renders wrong rather than missing.
+check("the class header carries an icon, not a glyph", /class-header-icon"><svg class="wc-icon"/.test(cash));
+check("and the stylesheet sizes it", /\.class-header-icon \.wc-icon\s*\{/.test(read("wildcat-ui.css")));
 const modes = between(js, "const MODE_META = {", "};");
 check("no emoji in the mode table", !emoji.test(modes));
 const subtabs = between(js, "const MODE_SUBTABS = {", "};");
