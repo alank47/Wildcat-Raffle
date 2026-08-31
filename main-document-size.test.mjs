@@ -19,9 +19,11 @@ const script = readFileSync(new URL("./script.js", import.meta.url), "utf8");
 let pass = 0, fail = 0;
 const check = (n, c) => { c ? (pass++, console.log(`  PASS  ${n}`)) : (fail++, console.log(`  FAIL  ${n}`)); };
 
-// The three independent paths that build what `main` receives. Each one has to
-// strip on its own: the merge branch REPLACES studentsToSave wholesale, so a
-// strip in one path does not protect the others.
+// The path that builds what the save receives. There were three of them while
+// the Firestore transaction hand-rolled its own merge, and each had to strip on
+// its own because the merge branch REPLACED studentsToSave wholesale. That
+// transaction moved to Convex on 2026-08-31, where the merge is server side and
+// per field, so there is one path now and one place to forget.
 const saveStart = script.indexOf("🔵 Saving with transactions");
 const saveEnd = script.indexOf("✅ Main document saved (transaction)");
 const save = script.slice(saveStart, saveEnd);
@@ -31,22 +33,31 @@ console.log("\nDerived data is never written into main");
   const stripCount = (field) =>
     (save.match(new RegExp("delete (studentData|c)\\." + field + ";", "g")) || []).length;
 
-  check("the cash ledger view is stripped on every path that writes students",
-    stripCount("wildcatCashTransactions") === 3);
-  check("so is its retired name", stripCount("cashTransactions") === 3);
-  // These two were already correct and must stay that way.
-  check("ticket history is still stripped", stripCount("ticketHistory") === 3);
-  check("sections are still stripped", stripCount("sections") === 3);
+  // The count was 3 while the Firestore transaction existed: a create path, a
+  // merge path for records the server already had, and a second merge path for
+  // records only the tab had. Each stripped independently, and each was a place
+  // to forget. The transaction went to Convex on 2026-08-31 and there is now
+  // ONE path, so the number to assert is 1 — and the reason it is not 3 is that
+  // the duplication is gone, not that a strip is missing.
+  check("the cash ledger view is stripped on the path that writes students",
+    stripCount("wildcatCashTransactions") === 1);
+  check("so is its retired name", stripCount("cashTransactions") === 1);
+  check("ticket history is still stripped", stripCount("ticketHistory") === 1);
+  check("sections are still stripped", stripCount("sections") === 1);
 }
 
-console.log("\nThe first-write path strips too, not just the merge path");
+console.log("\nThere is one write path, and it strips");
 {
-  // `main` not existing is the one case where studentsToSave is used as built,
-  // and it previously carried everything.
   check("students.concat(nonEnrolledStudents) is mapped, not passed through",
     /students\.concat\(nonEnrolledStudents\)\.map\(s => \{/.test(save));
-  check("and the reason the two paths strip separately is recorded",
-    /the two paths have to strip independently/.test(save));
+  // What used to be here demanded a comment explaining why two paths stripped
+  // separately. There are no longer two paths. What has to stay recorded is the
+  // reason the former students are concatenated back on at all: `students` holds
+  // the enrolled only, so sending it alone presents everyone else as absent.
+  check("the reason former students are sent too is recorded",
+    /sending the enrolled alone would\s*\n\s*\/\/ present the rest as absent/.test(save),
+    "omitting them is how a roster silently loses its former students",
+  );
 }
 
 console.log("\nThe per-student view is rebuilt after the save");
@@ -84,10 +95,12 @@ console.log("\nThe authoritative copy is untouched");
   // The point of the change is that nothing is LOST: cash_tx_* is the ledger
   // and it is written independently of main.
   check("weekly cash documents are still written",
-    /raffle_data', `cash_tx_\$\{wk\}`/.test(script));
+    /saveLegacySlice\(`cash_tx_\$\{wk\}`, 'transactions', txs\)/.test(script));
+  // Reads moved to Convex on 2026-08-31. The assertion is unchanged in intent:
+  // every known cash week is still fetched on load, one document per week, and
+  // the ledger is never folded back into `main`.
   check("and still read on load",
-    /'raffle_data', `cash_tx_\$\{wk\}`\)\)\)/.test(script) ||
-    /getKnownCashWeekKeys\(\)\.map\(wk => getDoc/.test(script));
+    /_cashWeekKeys\.map\(wk => snapOf\(`cash_tx_\$\{wk\}`\)\)/.test(script));
   check("distributeCashTransactions still rebuilds from that ledger",
     /\(cashTransactions \|\| \[\]\)\.forEach\(t => \{/.test(script));
 }

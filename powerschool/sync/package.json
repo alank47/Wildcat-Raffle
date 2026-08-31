@@ -16,6 +16,7 @@
     "sync": "node --env-file=.env src/sync-to-app.ts",
     "validate:queries": "node scripts/validate-queries.mjs",
     "probe:logtypes": "node --env-file=.env src/probe-logtypes.ts",
-    "staff:match": "node --env-file=.env src/staff-match.ts"
+    "staff:match": "node --env-file=.env src/staff-match.ts",
+    "probe:gradebook": "op run --env-file=.env -- node src/probe-gradebook.ts"
   }
 }

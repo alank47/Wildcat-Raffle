@@ -88,9 +88,18 @@ console.log("\nThe unknown document is a real document, not a black hole");
 {
   check("it is written", /\['ticket_history_unknown',\s+unknownHistoriesToSave/.test(script));
   check("it is fetched on load",
-    /getDoc\(doc\(firebaseDb, 'raffle_data', 'ticket_history_unknown'\)\)/.test(script));
-  check("it is destructured in position, so the slice still lines up",
-    /ticketHistoryHs1112Snap, ticketHistoryUnknownSnap,\s*\n\s*ticketHistoryLegacySnap, auditLogLegacySnap\]/.test(script));
+    /ticketHistoryUnknownSnap = snapOf\('ticket_history_unknown'\)/.test(script));
+  // The check that used to sit here asserted this document was destructured at
+  // the right INDEX of a twenty-two element Promise.all, because the reads were
+  // positional and a document inserted in the middle silently shifted every
+  // snapshot after it onto the wrong variable. The reads moved to Convex on
+  // 2026-08-31 and are now bound by name through snapOf(), so that entire class
+  // of bug cannot occur: there is no ordering to get wrong. Asserting the name
+  // binding above is what replaces it. Do not reinstate a positional check.
+  check("nothing reads these documents by position any more",
+    !/_allSnaps\.slice\(/.test(script),
+    "a positional slice is what made inserting a document a silent corruption",
+  );
   check("its entries are merged back into each student's history",
     /collect\(unknownHistories\[sid\]\);/.test(script));
   check("and its student ids are in the set that drives that merge",

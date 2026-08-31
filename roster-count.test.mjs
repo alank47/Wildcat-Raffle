@@ -41,7 +41,11 @@ console.log("\nThe app records where the roster came from");
 {
   check("there is a provenance flag", /let rosterSource = null;/.test(script));
   check("the Convex load path sets it", /rosterSource = 'convex';\s*\n\s*console\.log\(`✅ Roster from Convex/.test(script));
-  check("the fallback path sets it", /rosterSource = 'firestore';/.test(script));
+  // There is no fallback path to set it any more, and that is the point: the
+  // flag has exactly two states now, 'convex' and null, so anything that is not
+  // a successful Convex load leaves the count unclaimed. A third value would be
+  // a third thing to remember to check at every call site.
+  check("and nothing else does", !/rosterSource = '(?!convex)/.test(script));
   check("and so does the post-sign-in refresh",
     /rosterSource = 'convex';\s*\n\s*console\.log\(`✅ Roster refreshed from Convex/.test(script));
   check("with a predicate the UI can ask",
@@ -60,14 +64,31 @@ console.log("\nThe dashboard refuses to print a count it cannot stand behind");
     /: 'no sections assigned'/.test(script));
 }
 
-console.log("\nThe fallback roster is still used, just not counted");
+console.log("\nA failed load degrades, and never lies about the count");
 {
-  // Suppressing the number must never become suppressing the roster: a
-  // half-finished migration cannot leave a teacher with an empty screen.
-  check("the Firestore copy still populates the app",
-    /\[roster\] Convex load failed, using the Firestore copy/.test(script));
-  check("and the reason is written down next to the code",
-    /never leave a teacher looking at an empty roster in front of a class/.test(script));
+  // This block used to assert that a Convex failure fell back to the FIRESTORE
+  // copy, because a half-finished migration must not leave a teacher with an
+  // empty screen. Firestore was removed on 2026-08-31, so there is no second
+  // copy to fall back to and the assertion cannot be kept as written.
+  //
+  // The rule it protected still holds, by a different route: the roster read
+  // rethrows, loadData()'s own catch takes over, and the tab is populated from
+  // localStorage. What must NOT happen is the old fallback's real failure —
+  // Firestore records carry no `enrolled` field, enrolledStudents() tests
+  // `enrolled !== false`, so every one of them counted as enrolled. That is the
+  // 1393-students-then-631 flap, a missing value rendering as a real one.
+  check("a failed roster read is not swallowed",
+    /console\.error\('\[roster\] Convex load failed:'[\s\S]{0,200}throw err;/.test(script),
+    "swallowing it leaves rosterSource set and the count claimed as a fact",
+  );
+  check("the tab still gets data, from localStorage",
+    /console\.error\('Server load error:'[\s\S]{0,200}loadDataLocal\(\);/.test(script));
+  check("and the count stays unclaimed, because rosterSource is never set",
+    /rosterSource = 'convex';/.test(script) && !/rosterSource = 'firestore'/.test(script));
+  check("the reason is written down next to the code",
+    /that is the 1393\n\s*\/\/ students the dashboard used to show/.test(script),
+    "without it, someone reinstates a fallback that counts departed students as enrolled",
+  );
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

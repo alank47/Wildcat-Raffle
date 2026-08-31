@@ -26,10 +26,53 @@ import { execFileSync } from "node:child_process";
 const FIRESTORE =
   "https://firestore.googleapis.com/v1/projects/wildcat-hub-94025/databases/(default)/documents/raffle_data";
 
+/**
+ * The ISO-week key script.js writes cash ledgers under, and the month/week
+ * keys it writes audit documents under. Both are reproduced here EXACTLY,
+ * because a mirror that computes a key differently from the app copies a
+ * document nobody wrote and misses the one that exists — and it reconciles
+ * fine, because both sides are counting zero.
+ */
+function cashWeekKey(iso) {
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  const day = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+  return `${d.getUTCFullYear()}_W${String(week).padStart(2, "0")}`;
+}
+
+const now = new Date();
+const auditKeys = new Set();
+// Weekly audit docs, 60 weeks back, same window as getKnownAuditMonthKeys().
+for (let i = 0; i < 60; i++) {
+  const k = cashWeekKey(new Date(now.getTime() - i * 7 * 86400000).toISOString());
+  if (k) auditKeys.add(k);
+}
+// Legacy MONTHLY audit docs, 14 months back.
+for (let i = 0; i < 14; i++) {
+  const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+  auditKeys.add(`${d.getFullYear()}_${String(d.getMonth() + 1).padStart(2, "0")}`);
+}
+const cashKeys = new Set();
+for (let i = 0; i < 60; i++) {
+  const k = cashWeekKey(new Date(now.getTime() - i * 7 * 86400000).toISOString());
+  if (k) cashKeys.add(k);
+}
+
+// ADDED 2026-08-31, and these were the gap that would have made a Firebase
+// cutover lose data silently. ticket_history_unknown is READ by loadData and
+// was never mirrored; so were the per-month audit documents and every weekly
+// cash ledger. The mirror reconciled on the documents it knew about and said
+// nothing about the ones it did not.
 const DOCS = [
   "main", "audit", "audit_log", "tombstones", "secondary", "schedules",
   "referrals", "ticket_history", "ticket_history_ms", "ticket_history_hs",
-  "ticket_history_hs_910", "ticket_history_hs_1112",
+  "ticket_history_hs_910", "ticket_history_hs_1112", "ticket_history_unknown",
+  ...[...auditKeys].map((k) => `audit_log_${k}`),
+  ...[...cashKeys].map((k) => `cash_tx_${k}`),
 ];
 
 function unwrap(v) {

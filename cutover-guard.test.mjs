@@ -69,11 +69,9 @@ console.log("\nConvex cutover switches");
   );
 }
 
-console.log("\nThe fallback is intact");
+console.log("\nA failed roster read is loud, not silent");
 {
-  // The Convex read must be inside a try with a catch that does NOT rethrow.
-  // If it rethrows, or the catch is removed, a Convex outage stops being a
-  // degraded roster and becomes a blank one.
+  // The Convex read must be inside a try whose catch reports and rethrows.
   // Bounded by a STABLE ANCHOR rather than a character count. This slice was
   // `+ 900`, and adding two lines inside the branch pushed the console.error
   // past the window: the assertion failed while the code it describes was
@@ -85,9 +83,17 @@ console.log("\nThe fallback is intact");
     branchStart > 0 && branchEnd > branchStart);
   check("the Convex read is guarded by try", /try\s*\{/.test(branch));
   check("and has a catch", /catch\s*\(/.test(branch), branch.slice(0, 80));
+  // INVERTED 2026-08-31, and the inversion is the whole cutover. While Firestore
+  // was still there, the catch had to SWALLOW so a Convex outage degraded to the
+  // Firestore roster instead of a blank one. Firestore is gone, so swallowing is
+  // now the bug: it would leave the app holding a half-applied load with
+  // rosterSource unset but mainData already overwritten, and the count claimed
+  // as a fact. Rethrowing hands the failure to loadData's own catch, which falls
+  // back to localStorage — the tab still gets data, and nothing pretends the
+  // roster is authoritative.
   check(
-    "the catch does not rethrow, so Firestore still answers",
-    !/catch\s*\([^)]*\)\s*\{[^}]*\bthrow\b/.test(branch),
+    "the catch rethrows, because there is no second store to answer",
+    /catch\s*\([^)]*\)\s*\{[\s\S]*?\bthrow err;/.test(branch),
   );
   check(
     "the failure is reported rather than swallowed silently",
@@ -249,7 +255,11 @@ console.log("\nStudents page shows the enrolled roster only");
   );
   check(
     "SAVING still carries every student",
-    /studentsToSave = students\.concat\(nonEnrolledStudents\)/.test(script),
+    // Was `let studentsToSave = students.concat(...)` inside the Firestore
+    // transaction. That transaction moved to Convex on 2026-08-31 and this is
+    // now a property on the object the save payload is built from. The rule it
+    // guards is unchanged and is the whole reason it is asserted.
+    /studentsToSave: students\.concat\(nonEnrolledStudents\)/.test(script),
     "saving only the enrolled would drop the 88 prior-year records and their balances",
   );
 }
@@ -544,29 +554,49 @@ check("an available update surfaces as a dismissible bar",
 check("and the reload button flushes a save before reloading",
   /saveData\(\)[\s\S]{0,200}location\.reload\(\)/.test(script));
 
-console.log("\nThe referral save merges, and its transaction is side-effect free");
+console.log("\nThe referral save merges, and the merge is atomic");
 // referral-save.test.mjs models this path. These assertions keep the model
 // honest: if the real code stops matching it, the model proves nothing.
 //
-// Anchored on `mergedReferrals`, which appears only in the save path. The
-// string 'raffle_data', 'referrals' also matches the LOAD path earlier in the
-// file, and anchoring there silently measured the wrong code.
+// MECHANISM CHANGED 2026-08-31, PROPERTY UNCHANGED. This used to assert a
+// Firestore runTransaction that read the stored list, merged with
+// WildcatMerge.mergeById, and assigned the in-memory list only AFTER the
+// callback returned — because Firestore RETRIES that callback, so assigning
+// outer state inside it lies about state when a later attempt fails.
+//
+// The merge now happens inside legacyData:mergeSlice. A Convex mutation IS the
+// transaction and does not retry a client callback, so the whole class of
+// side-effect-in-a-retried-callback bug is gone along with the callback. What
+// still has to hold, and what these assert, is that the client never does the
+// merge itself: reading, merging locally and writing the result back would look
+// identical and silently drop the guarantee, because the tab merges against
+// what it fetched and cannot see a write that landed in between.
 {
-  const at = script.indexOf("mergedReferrals");
+  const at = script.indexOf("mergeLegacySlice('referrals'");
   check("the save path is findable at all", at !== -1);
-  const near = script.slice(Math.max(0, at - 2500), at + 2500);
+  // Tight window on purpose: +-2500 reaches the ticket-history transaction,
+  // which still has its own transaction.get, and this block would then fail for
+  // code it does not describe.
+  const near = script.slice(Math.max(0, at - 900), at + 400);
 
-  check("referrals are written in a transaction, not a bare setDoc",
-    /runTransaction/.test(near) && !/setDoc\(\s*doc\([^)]*'referrals'\)/.test(near));
-  check("the stored list is read before writing", /transaction\.get\(/.test(near));
-  check("and merged rather than replaced", /WildcatMerge\.mergeById/.test(near));
-  // Firestore retries the callback. Assigning outer state inside it is safe
-  // only by accident of idempotency, and lies about state if it then fails.
-  check("the in-memory list is assigned AFTER the transaction, not inside it",
-    /if \(mergedReferrals\) behaviorReferrals = mergedReferrals;/.test(near));
-  check("nothing assigns behaviorReferrals inside the callback",
-    !/transaction\.set\([\s\S]{0,400}behaviorReferrals =/.test(near));
-  check("the counter cannot go backwards", /Math\.max\(/.test(near));
+  check("referrals are merged server-side, not replaced",
+    /mergeLegacySlice\('referrals', 'behaviorReferrals', behaviorReferrals, 'id'\)/.test(near));
+  // CODE only. The comment above the call names the mechanism it replaced, and
+  // a raw regex over the slice matches that prose and fails on a correct file.
+  // Same trick the SCRIPT_LOAD_TIME check above uses.
+  const nearCode = near.split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
+  check("the client no longer reads the stored list to merge it",
+    !/transaction\.get\(/.test(nearCode) && !/WildcatMerge\.mergeById/.test(nearCode),
+    "a client-side merge cannot see a write that landed after its own load",
+  );
+  check("and no bare slice-replace is used for referrals",
+    !/saveLegacySlice\('referrals'/.test(near),
+    "replace would destroy a referral this tab never saw",
+  );
+  check("the mutation is the one that dedupes",
+    /dedupeField/.test(readFileSync(new URL("./convex/legacyData.ts", import.meta.url), "utf8")));
+  check("and the stored copy wins a collision, because this tab may be hours old",
+    /stored wins/.test(readFileSync(new URL("./convex/legacyData.ts", import.meta.url), "utf8")));
 }
 
 console.log("\nAnalytics tabs are not suppressed by the legacy-subtab rule");
@@ -610,6 +640,43 @@ console.log("\nAnalytics panes live inside the analytics section");
   for (const name of panes) {
     check(`tab ${name} has a button`, html.includes(`data-atab="${name}"`));
   }
+}
+
+console.log("\nTombstones and the watchdog are off Firestore");
+// Both moved to Convex on 2026-08-31. Both fail SILENTLY if they regress: a
+// tombstone that does not persist lets a deleted entry come back on the next
+// load, and a watchdog that never fires lets a stale tab write last week's
+// currentWeek over this week's. Neither throws, so only the call site can say.
+{
+  const persist = fnBody(script, "async function persistTombstone");
+  check("persistTombstone calls Convex", /convexMutation\('tombstones:record'/.test(persist));
+  check("and no longer touches Firestore", !/firebaseDb|arrayUnion|firebaseModules/.test(persist));
+  check(
+    "it still records locally before the write, so the filter applies either way",
+    persist.indexOf("localTombstones.push") < persist.indexOf("convexMutation"),
+  );
+  check(
+    "a failed write is reported rather than returning as success",
+    /persisted: false/.test(persist),
+  );
+
+  const load = fnBody(script, "async function loadPersistentTombstones");
+  check("loadPersistentTombstones reads Convex", /convexQuery\('tombstones:list'/.test(load));
+  check("and no longer touches Firestore", !/firebaseDb|firebaseModules/.test(load));
+
+  const dog = fnBody(script, "function startWeekStalenessWatchdog");
+  check("the watchdog reads appData:freshness", /convexQuery\('appData:freshness'/.test(dog));
+  check("and no longer reads raffle_data/main", !/firebaseDb|raffle_data/.test(dog));
+  check(
+    "it no longer refuses to start when Firebase is absent",
+    !/firebaseInitialized/.test(dog),
+    "that guard meant a tab which failed to reach Firebase silently had no watchdog at all",
+  );
+  check(
+    "it still only acts when the server is AHEAD",
+    /svCycleNum > localCycleNum/.test(dog) && /svWeek > currentWeek/.test(dog),
+    "a null must never read as week zero and reload every tab in the school",
+  );
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

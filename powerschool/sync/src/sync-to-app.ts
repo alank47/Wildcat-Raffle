@@ -10,6 +10,7 @@
  *   enrollment    roster       -> psRoster (student x section) and students
  *   statistics    attendance   -> psAttendance   (days absent, tardies)
  *                 grades       -> psGrades       (current grade / percent)
+ *                 missing_work -> psMissingWork  (work a teacher marked missing)
  *   demographics  roster       -> gender, grade level on the student record
  *
  * WHAT IT DELIBERATELY DOES NOT SYNC
@@ -102,8 +103,16 @@ const { rows: grades } = await client.namedQuery(`${QUERY_PREFIX}.grades`, {
   finalgradename: config.finalGradeName,
   storecode: config.storeCode,
 });
+// Work a teacher MARKED missing. Scoped by year through Terms, never by
+// AssignmentSection.YearID, which is blank on every row in this instance and
+// which silently returned zero rows for the whole of plugin 1.3.0.
+const { rows: missingWork } = await client.namedQuery(`${QUERY_PREFIX}.missing_work`, {
+  schoolid: config.schoolId,
+  yearid: config.yearId,
+});
 console.log(`  attendance   ${attendance.length} rows`);
 console.log(`  grades       ${grades.length} rows`);
+console.log(`  missing work ${missingWork.length} rows`);
 
 // ---- 2b. restricted demographics ---------------------------------------
 //
@@ -257,6 +266,44 @@ for (let i = 0; i < gradeRows.length; i += CHUNK) {
   });
 }
 console.log(`    psGrades      ${gradeRows.length} rows`);
+
+// PowerSchool returns every column as a STRING, including the numbers and the
+// booleans. num() already guards the first; is_late needs the second, because
+// Boolean("0") is true and every assignment would be reported as late.
+const missingRows = missingWork.map((m: any) => ({
+  studentNumber: str(m.student_number) ?? "",
+  assignmentSectionId: str(m.assignment_section_id) ?? "",
+  assignmentName: str(m.assignment_name),
+  dueDate: str(m.due_date),
+  // undefined stays undefined, never 0. A section can score by something other
+  // than points, and a 0 here renders to a student as work that does not count.
+  pointsPossible: num(m.points_possible),
+  sectionId: str(m.section_id),
+  courseName: str(m.course_name),
+  categoryName: str(m.category_name),
+  isLate: String(m.is_late) === "1",
+})).filter((m) => m.studentNumber && m.assignmentSectionId);
+for (let i = 0; i < missingRows.length; i += CHUNK) {
+  if (i === 0) {
+    for (let pass = 0; pass < 20; pass++) {
+      const r = convex("sisStats:replaceMissingWork", { syncedAt, rows: [], clearFirst: true });
+      if (r.remaining !== "some") break;
+    }
+  }
+  convex("sisStats:replaceMissingWork", {
+    syncedAt, rows: missingRows.slice(i, i + CHUNK), clearFirst: false,
+  });
+}
+// A sync that finds NOTHING missing still has to clear the table, or every
+// student keeps yesterday's list forever. The loop above does not run when
+// missingRows is empty, so the clear is done explicitly here.
+if (missingRows.length === 0) {
+  for (let pass = 0; pass < 20; pass++) {
+    const r = convex("sisStats:replaceMissingWork", { syncedAt, rows: [], clearFirst: true });
+    if (r.remaining !== "some") break;
+  }
+}
+console.log(`    psMissingWork ${missingRows.length} rows`);
 
 // ---- 3b. student email, the sign-in join key ------------------------------
 // Separate from the roster on purpose: identity is not enrollment, and a

@@ -256,6 +256,37 @@ export default defineSchema({
     .index("by_section", ["sectionId"]),
 
   /**
+   * Work a teacher has MARKED missing, one row per student per assignment.
+   *
+   * WHAT IT IS NOT. Not "unscored". An assignment with no score may be ungraded
+   * yet, excused, or not collected, and showing those to a child as work they
+   * owe is worse than showing nothing. Only AssignmentScore.ISMISSING = 1 lands
+   * here, which is a flag a teacher set on purpose.
+   *
+   * pointsPossible is OPTIONAL and must stay that way. A section can score by
+   * something other than points, and an assignment with no point value is still
+   * missing; rendering it as worth 0 would tell a student it does not matter.
+   *
+   * Replaced wholesale on every sync, like psGrades: a row that stops being
+   * missing must DISAPPEAR, and an append would leave a student looking at work
+   * they already handed in.
+   */
+  psMissingWork: defineTable({
+    studentNumber: v.string(),
+    assignmentSectionId: v.string(),
+    assignmentName: v.optional(v.string()),
+    dueDate: v.optional(v.string()),
+    pointsPossible: v.optional(v.number()),
+    sectionId: v.optional(v.string()),
+    courseName: v.optional(v.string()),
+    categoryName: v.optional(v.string()),
+    isLate: v.optional(v.boolean()),
+    syncedAt: v.string(),
+  })
+    .index("by_studentNumber", ["studentNumber"])
+    .index("by_section", ["sectionId"]),
+
+  /**
    * RESTRICTED demographics: federal ethnicity, federal race, English Learner.
    *
    * A SEPARATE TABLE, never blended into a student view, per Grilled.md

@@ -2289,13 +2289,14 @@
                             🤖 Automatic Backups
                         </h3>
                         <p style="color: #666; margin-bottom: 15px;">
-                            The system automatically creates daily backups to Firebase cloud storage. These backups:
+                            Automatic backups are <strong>off</strong>, and have been since the data
+                            outgrew the old storage limit. Use <strong>Export Backup</strong> below to
+                            download a full copy whenever you want one. That download is the backup.
                         </p>
                         <ul style="color: #666; line-height: 1.8; margin-bottom: 15px;">
-                            <li>Run once per day when anyone logs in</li>
-                            <li>Store in Firebase (separate from main data)</li>
-                            <li>Keep last 30 days of backups</li>
-                            <li>Protect against accidental deletions</li>
+                            <li>Nothing is written on a schedule</li>
+                            <li>An export is a file on your computer, not a copy in the cloud</li>
+                            <li>Keep the ones that matter somewhere you control</li>
                         </ul>
                         <p style="color: #10b981; font-weight: 600; margin: 0; padding: 15px; background: #f0fdf4; border-radius: 8px;">
                             ✅ Automatic backups are enabled and running
@@ -2697,8 +2698,11 @@
                         <h3>Storage Health</h3>
                     </div>
                     <p class="panel-hint" style="margin: 0 0 14px 0;">
-                        Firebase allows <strong>1 MB per document</strong>. If one fills up, saves start failing.
-                        This shows how full each one is right now. Green is fine — you only need to act on orange or red.
+                        A rough size for each part of the data. The hard 1 MB per-document
+                        ceiling this panel was built to warn about was a limit of the old
+                        storage and no longer applies, so these bars are a health reading
+                        rather than a countdown to failure. Orange or red still means
+                        something has grown faster than expected and is worth a look.
                     </p>
                     <div id="storageHealthBars"></div>
                     <div style="margin-top: 14px;">

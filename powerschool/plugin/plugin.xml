@@ -19,7 +19,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://plugin.powerschool.pearson.com plugin.xsd"
         name="Wildcat Hub Sync"
-        version="1.2.0"
+        version="1.3.1"
         description="Read only student and staff data sync for the Wildcat Hub teacher and admin dashboard at Westbrook Academy.">
 
   <publisher name="LA Promise Fund">
@@ -242,6 +242,103 @@
       <field table="Schools" field="School_Number" access="ViewOnly"/>
       <field table="Schools" field="Name"         access="ViewOnly"/>
       <field table="Schools" field="Abbreviation" access="ViewOnly"/>
+
+      <!-- ================================================================
+           MANIFEST 20: the gradebook. Added at 1.3.0.
+
+           WHAT IT IS FOR. A student's own portal card answering "which work am
+           I missing, and what is it worth". AssignmentScore.ISMISSING is the
+           flag a teacher sets in PowerTeacher; nothing here infers it.
+
+           EVERY FIELD BELOW ANSWERED 403 ON 2026-08-31, which is this repo's
+           standard of proof that a column exists. Probed by
+           sync/src/probe-gradebook-columns.ts. Nothing on a 400 is here.
+
+           ⚠️ THE TABLE NAMES ARE SINGULAR AND UNPREFIXED, AND THAT IS THE WHOLE
+           TRAP. This instance carries BOTH generations of the schema:
+
+             PSM_Assignment         exists, 0 rows        Assignment         44,236
+             PSM_AssignmentScore    exists, 0 rows        AssignmentScore 1,374,093
+             PSM_AssignmentSection  absent                AssignmentSection  79,879
+
+           The PSM_ tables are empty stubs. Two separate probes concluded this
+           school does not use assignments at all, once from the PSM_ names and
+           once from the PLURAL unprefixed names (Assignments, AssignmentScores)
+           which both 404. A single letter separated "no gradebook data" from
+           1.37 million scores. Do not re-point any of this at a PSM_ table.
+
+           THE JOIN, and why it needs three tables:
+
+             AssignmentScore.STUDENTSDCID        -> Students.DCID
+             AssignmentScore.ASSIGNMENTSECTIONID -> AssignmentSection.ASSIGNMENTSECTIONID
+             AssignmentSection.SECTIONSDCID      -> Sections.DCID
+
+           AssignmentSection, not Assignment, is where the readable content
+           lives: NAME, DESCRIPTION, DUEDATE and the point value are all on it.
+           The Assignment table is nearly bare here (ASSIGNMENTID, YEARID and
+           two audit columns), so it is requested only as the key that ties a
+           multi-section assignment together.
+
+           POINTS POSSIBLE IS `SCOREENTRYPOINTS`. `POINTSPOSSIBLE` answered 400
+           on this table; it does not exist. TOTALPOINTVALUE is requested beside
+           it because which one a section uses depends on its scoring type.
+
+           WEIGHTING IS ONLY HALF ANSWERABLE, and the card must respect that.
+           GradeCalculationType.TYPE says whether a section is total points or
+           weighted. No weight column was found on TeacherCategory under any
+           spelling tried, so for a WEIGHTED section this data can say which
+           work is missing but NOT what handing it in would do to the grade.
+           The card must refuse to project in that case rather than guess. See
+           docs/gradebook-sourcing.md.
+
+           DELIBERATELY ABSENT: every comment and free-text field on a score.
+           WHOMODIFIEDID and WHENMODIFIED are not requested either; who edited a
+           grade is a teacher-supervision question, and this is a student view.
+           ================================================================ -->
+      <field table="AssignmentScore" field="AssignmentSectionID" access="ViewOnly"/>
+      <field table="AssignmentScore" field="StudentsDCID"        access="ViewOnly"/>
+      <field table="AssignmentScore" field="ScorePoints"         access="ViewOnly"/>
+      <field table="AssignmentScore" field="ScorePercent"        access="ViewOnly"/>
+      <field table="AssignmentScore" field="ScoreLetterGrade"    access="ViewOnly"/>
+      <field table="AssignmentScore" field="ScoreEntryDate"      access="ViewOnly"/>
+      <field table="AssignmentScore" field="IsMissing"           access="ViewOnly"/>
+      <field table="AssignmentScore" field="IsLate"              access="ViewOnly"/>
+      <field table="AssignmentScore" field="IsExempt"            access="ViewOnly"/>
+      <field table="AssignmentScore" field="IsAbsent"            access="ViewOnly"/>
+      <field table="AssignmentScore" field="IsCollected"         access="ViewOnly"/>
+
+      <field table="AssignmentSection" field="AssignmentSectionID"   access="ViewOnly"/>
+      <field table="AssignmentSection" field="AssignmentID"          access="ViewOnly"/>
+      <field table="AssignmentSection" field="SectionsDCID"          access="ViewOnly"/>
+      <field table="AssignmentSection" field="Name"                  access="ViewOnly"/>
+      <field table="AssignmentSection" field="Description"           access="ViewOnly"/>
+      <field table="AssignmentSection" field="DueDate"               access="ViewOnly"/>
+      <field table="AssignmentSection" field="ScoreEntryPoints"      access="ViewOnly"/>
+      <field table="AssignmentSection" field="TotalPointValue"       access="ViewOnly"/>
+      <field table="AssignmentSection" field="Weight"                access="ViewOnly"/>
+      <field table="AssignmentSection" field="ExtraCreditPoints"     access="ViewOnly"/>
+      <field table="AssignmentSection" field="IsCountedInFinalGrade" access="ViewOnly"/>
+      <field table="AssignmentSection" field="IsScoringNeeded"       access="ViewOnly"/>
+      <field table="AssignmentSection" field="ScoreType"             access="ViewOnly"/>
+      <!-- AssignmentSection.YearID is NOT requested. It exists and is EMPTY on
+           every row in this instance, and the 1.3.0 missing_work query filtered
+           on it: HTTP 200, zero rows, no error anywhere. The year scope comes
+           from Sections.TermID -> Terms.Yearid instead. Do not add it back
+           without checking it is populated first. -->
+
+      <field table="Assignment" field="AssignmentID" access="ViewOnly"/>
+      <field table="Assignment" field="YearID"       access="ViewOnly"/>
+
+      <field table="AssignmentCategoryAssoc" field="AssignmentSectionID" access="ViewOnly"/>
+      <field table="AssignmentCategoryAssoc" field="TeacherCategoryID"   access="ViewOnly"/>
+
+      <field table="TeacherCategory" field="TeacherCategoryID" access="ViewOnly"/>
+      <field table="TeacherCategory" field="Name"              access="ViewOnly"/>
+      <field table="TeacherCategory" field="DefaultScoreType"  access="ViewOnly"/>
+
+      <field table="GradeCalculationType" field="GradeCalculationTypeID" access="ViewOnly"/>
+      <field table="GradeCalculationType" field="Type"                   access="ViewOnly"/>
+      <field table="GradeCalculationType" field="Abbreviation"           access="ViewOnly"/>
 
       <!-- ================================================================
            RESTRICTED BLOCK. Manifest 7, 8, 14.

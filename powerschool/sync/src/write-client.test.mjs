@@ -224,15 +224,20 @@ console.log("\n1. The real plugin grant blocks every write, read not attempted")
 {
   const grants = loadAccessRequest();
   check("plugin.xml parses", grants.counts.total > 0, `${grants.counts.total}`);
-  // The working tree carries 1.1.1, which adds Log and Gen at ViewOnly and
-  // removes the two STUDENTS email columns PowerSchool rejected. It is
-  // NOT installed on the instance yet: that needs an administrator. The version
-  // pin below is what keeps those two facts from being confused.
-  check("plugin version is 1.2.0", grants.pluginVersion === "1.2.0", String(grants.pluginVersion));
-  check("130 fields declared", grants.counts.total === 130, String(grants.counts.total));
-  check("every one of them is ViewOnly", grants.counts.viewOnly === 130, String(grants.counts.viewOnly));
+  // The working tree carries 1.3.1. 1.3.0 added the gradebook block; 1.3.1
+  // drops AssignmentSection.YearID, which is granted-but-empty in this
+  // instance and which the first missing_work query filtered on, giving HTTP
+  // 200 and zero rows forever. The block covers six tables
+  // behind the missing-work card, every field confirmed to exist by a 403
+  // before it was written (docs/gradebook-sourcing.md). It is NOT installed on
+  // the instance yet: that needs an administrator. The version pin below is
+  // what keeps those two facts from being confused, which matters more here
+  // than usual because the tree is now three versions ahead of the instance.
+  check("plugin version is 1.3.1", grants.pluginVersion === "1.3.1", String(grants.pluginVersion));
+  check("164 fields declared", grants.counts.total === 164, String(grants.counts.total));
+  check("every one of them is ViewOnly", grants.counts.viewOnly === 164, String(grants.counts.viewOnly));
   check("ZERO FullAccess grants exist", grants.counts.fullAccess === 0, String(grants.counts.fullAccess));
-  check("21 tables declared", grants.counts.tables === 21, String(grants.counts.tables));
+  check("27 tables declared", grants.counts.tables === 27, String(grants.counts.tables));
 
   const rows = checkWriteGrant(grants, "log", [...LOG_WRITABLE_COLUMNS]);
   // 1.1.0 grants six of these at ViewOnly. Read access is not write access, so
@@ -1236,7 +1241,7 @@ console.log("\n24. REGRESSION: the grant check cannot be answered with a file of
     grantSourceProblems(installedGrant()).join(" | "),
   );
   check("the recorded installed version is still 1.0.6", INSTALLED_PLUGIN_VERSION === "1.0.6", INSTALLED_PLUGIN_VERSION);
-  check("the working tree has moved ahead of it", installedGrant().pluginVersion === "1.2.0", String(installedGrant().pluginVersion));
+  check("the working tree has moved ahead of it", installedGrant().pluginVersion === "1.3.1", String(installedGrant().pluginVersion));
 
   // And the loopback carve-out is genuinely narrow: an override is honoured
   // only for a target that cannot be a PowerSchool instance.

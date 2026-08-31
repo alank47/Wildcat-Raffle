@@ -85,6 +85,54 @@ export const replaceGrades = internalMutation({
   },
 });
 
+/**
+ * Replace every missing-work row. Same batched-clear contract as replaceGrades.
+ *
+ * WHOLESALE REPLACE, NOT AN UPSERT, and the reason matters more here than for
+ * grades: a row must DISAPPEAR the moment a teacher clears the missing flag. An
+ * append or an upsert-by-key leaves a student staring at work they handed in
+ * last week, which is the one failure that would make them stop trusting the
+ * card entirely.
+ */
+export const replaceMissingWork = internalMutation({
+  args: {
+    syncedAt: v.string(),
+    clearFirst: v.optional(v.boolean()),
+    rows: v.array(
+      v.object({
+        studentNumber: v.string(),
+        assignmentSectionId: v.string(),
+        assignmentName: v.optional(v.string()),
+        dueDate: v.optional(v.string()),
+        pointsPossible: v.optional(v.number()),
+        sectionId: v.optional(v.string()),
+        courseName: v.optional(v.string()),
+        categoryName: v.optional(v.string()),
+        isLate: v.optional(v.boolean()),
+      }),
+    ),
+  },
+  handler: async (ctx, { rows, syncedAt, clearFirst }) => {
+    let deleted = 0;
+    if (clearFirst) {
+      // take(), not collect(), for the reason written out in replaceGrades: a
+      // collect() over a table that outgrows the 4,096-read limit throws, and a
+      // sync that throws records nothing.
+      const old = await ctx.db.query("psMissingWork").take(2000);
+      for (const r of old) { await ctx.db.delete(r._id); deleted++; }
+      const more = await ctx.db.query("psMissingWork").take(1);
+      if (more.length > 0) {
+        // Does not insert on a pass that did not finish clearing: mixing this
+        // sync's rows with the last one's would show work that is no longer
+        // missing, and it would look like real data rather than an error.
+        return { inserted: 0, deleted, remaining: "some" };
+      }
+    }
+    for (const r of rows) await ctx.db.insert("psMissingWork", { ...r, syncedAt });
+    return { inserted: rows.length, deleted, remaining: "none" };
+  },
+});
+
 /** Coverage report. Counts only, never a value. */
 export const stats = internalMutation({
   args: {},
