@@ -21,3 +21,7 @@ pass-card-harness.html
 # Generated dev harness: the student's desk dashboard in real viewports,
 # against the real stylesheet. Rebuild with node scripts/build-dashboard-harness.mjs.
 dashboard-harness.html
+
+# Generated dev harness: every Wildcat Cash screen at once, against the real
+# stylesheets. Rebuild with node scripts/build-cash-harness.mjs.
+cash-harness.html
