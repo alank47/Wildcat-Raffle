@@ -185,15 +185,46 @@ export class PowerSchoolClient {
       const started = Date.now();
       const token = await this.accessToken();
 
-      const response = await fetch(url, {
-        method,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-          ...(options.body ? { "Content-Type": "application/json" } : {}),
-        },
-        ...(options.body ? { body: JSON.stringify(options.body) } : {}),
-      });
+      // TRANSPORT ERRORS ARE RETRIED, NOT JUST HTTP STATUSES.
+      //
+      // fetch() THROWS on a dropped connection; it does not return a status.
+      // Unwrapped, that throw escapes this whole retry loop, so a socket the
+      // server closed killed a sync that had already done its work. Seen on
+      // 2026-08-31: PowerSchool closed the keep-alive connection after about
+      // 2.6MB, the student_email query threw UND_ERR_SOCKET "other side
+      // closed", and the run ended with no sync recorded, even though the same
+      // query succeeds on its own in seven pages.
+      //
+      // A dropped connection is the textbook retryable failure: the next
+      // attempt opens a new socket. Retrying it here is what makes a long sync
+      // survive a connection the server recycles under it.
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+            ...(options.body ? { "Content-Type": "application/json" } : {}),
+          },
+          ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+        });
+      } catch (error: unknown) {
+        if (attempt < MAX_ATTEMPTS - 1) {
+          const cause = (error as { cause?: { code?: string } })?.cause?.code ?? "unknown";
+          const wait = backoffMs(attempt, null);
+          this.log(
+            `[retry] transport ${cause} on ${path}, attempt ${attempt + 1}, waiting ${wait}ms`,
+          );
+          await sleep(wait);
+          attempt += 1;
+          continue;
+        }
+        // Out of attempts. Rethrow rather than returning a status, because a
+        // transport failure is NOT an empty result and a caller that treats it
+        // as one writes an empty slice over real data.
+        throw error;
+      }
 
       const elapsed = Date.now() - started;
       lastStatus = response.status;

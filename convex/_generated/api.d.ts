@@ -20,6 +20,7 @@ import type * as hallPassRules from "../hallPassRules.js";
 import type * as hallPasses from "../hallPasses.js";
 import type * as identity from "../identity.js";
 import type * as identityRules from "../identityRules.js";
+import type * as legacyData from "../legacyData.js";
 import type * as mail from "../mail.js";
 import type * as me from "../me.js";
 import type * as mealPins from "../mealPins.js";
@@ -49,6 +50,7 @@ import type * as studentProfileRules from "../studentProfileRules.js";
 import type * as syncLog from "../syncLog.js";
 import type * as tapLocations from "../tapLocations.js";
 import type * as tapSlug from "../tapSlug.js";
+import type * as tombstones from "../tombstones.js";
 import type * as views from "../views.js";
 import type * as views_app from "../views_app.js";
 
@@ -71,6 +73,7 @@ declare const fullApi: ApiFromModules<{
   hallPasses: typeof hallPasses;
   identity: typeof identity;
   identityRules: typeof identityRules;
+  legacyData: typeof legacyData;
   mail: typeof mail;
   me: typeof me;
   mealPins: typeof mealPins;
@@ -100,6 +103,7 @@ declare const fullApi: ApiFromModules<{
   syncLog: typeof syncLog;
   tapLocations: typeof tapLocations;
   tapSlug: typeof tapSlug;
+  tombstones: typeof tombstones;
   views: typeof views;
   views_app: typeof views_app;
 }>;
