@@ -2590,8 +2590,37 @@
                                 const auth = window.WildcatAuth;
                                 const session = auth && auth.getSession();
                                 if (!session) throw new Error('Not signed in to Convex.');
+                                // THE CASH LEDGER GOES TO CONVEX, THOUGH NOT TO
+                                // FIRESTORE'S `main`.
+                                //
+                                // studentsToSave has wildcatCashTransactions
+                                // stripped, because `main` is ONE document
+                                // against a 1MB ceiling and a duplicate ledger
+                                // sharded across every student is what pushed it
+                                // to 81%. Convex stores each student as a ROW, so
+                                // that ceiling does not apply, and the student's
+                                // own card needs the history to explain a balance.
+                                //
+                                // Re-attached from the in-memory view, which
+                                // distributeCashTransactions rebuilds on load from
+                                // the authoritative cash_tx_* documents. Capped:
+                                // a phone card shows a handful, and an unbounded
+                                // array on a row still grows forever.
+                                const byId = {};
+                                (students || []).concat(nonEnrolledStudents || [])
+                                    .forEach(st => { if (st) byId[String(st.id)] = st; });
+                                const studentsForConvex = mainTransactionResult.studentsToSave
+                                    .map(st => {
+                                        const live = byId[String(st.id)];
+                                        const tx = live && live.wildcatCashTransactions;
+                                        if (!Array.isArray(tx) || !tx.length) return st;
+                                        return Object.assign({}, st, {
+                                            wildcatCashTransactions: tx.slice(-40)
+                                        });
+                                    });
+
                                 const result = await auth.convexMutation('appData:save', {
-                                    students: mainTransactionResult.studentsToSave,
+                                    students: studentsForConvex,
                                     teachers: mainTransactionResult.teachersToSave,
                                     settings: {
                                         currentWeek, cycleDuration, pbisSubcategories,
@@ -16050,6 +16079,10 @@
             grades:   '--wp-face:linear-gradient(158deg,#F5F2E9 0%,#DFD8C6 100%);--wp-ink:#14171C;' +
                       '--wp-rule:rgba(20,23,28,.13);--wp-pill:rgba(20,23,28,.08)',
             lunch:    '--wp-face:linear-gradient(158deg,#E28C3E 0%,#B4571B 100%);--wp-ink:#FFFFFF',
+            rewards:  '--wp-face:linear-gradient(158deg,#2E7D52 0%,#14512F 100%);--wp-ink:#FFFFFF;' +
+                      '--wp-rule:rgba(255,255,255,.12);--wp-pill:rgba(255,255,255,.14)',
+            rewardsOff: '--wp-face:linear-gradient(158deg,#3A3E46 0%,#22252B 100%);--wp-ink:#E7E5E0;' +
+                      '--wp-rule:rgba(255,255,255,.10);--wp-pill:rgba(255,255,255,.10)',
             clever:   '--wp-face:linear-gradient(158deg,#4C74F8 0%,#2A2F9E 100%);--wp-ink:#FFFFFF',
             /* --wp-core fills the HOLE in the timer ring, and it is the card's
                own gradient resampled for the ring's much smaller box rather than
@@ -16650,6 +16683,190 @@
         // the live meal so a student glancing at it knows whether it is lunch; the
         // barcode is what the register reads. When no meal window is open the card
         // says so, and still carries the barcode for whenever the line opens.
+        /**
+         * What a student has earned: Wildcat Cash and raffle tickets.
+         *
+         * A ZERO AND AN UNKNOWN ARE NOT THE SAME NUMBER, and this is the card
+         * where that matters most. myStudentView returns the balance as null
+         * when it has no record, precisely so the app cannot show a child $0
+         * that actually means "we could not tell". A real zero is shown as $0
+         * and said out loud as a real zero; a missing one says so instead.
+         *
+         * Tickets are shown broken down as well as totalled, because the total
+         * alone does not tell a student which of the three they could still
+         * earn this week, which is the only actionable thing on the card.
+         */
+        function wpRewardsCard(mine) {
+            const cash = (mine && mine.wildcatCash) || null;
+            const pts = (mine && mine.points) || null;
+
+            if (!mine || (!cash && !pts)) {
+                return {
+                    label: 'Wildcat Cash', lead: 'Unavailable', quiet: true, face: WP_FACE.rewardsOff,
+                    body: wpEmpty('Your balance could not be loaded just now. Reload the page to try again.'),
+                };
+            }
+
+            const bal = cash && cash.balance !== null && cash.balance !== undefined
+                ? Number(cash.balance) : null;
+            const num = function (v) {
+                return (v === null || v === undefined) ? null : Number(v);
+            };
+            const pbis = num(pts && pts.pbis), att = num(pts && pts.attendance),
+                  acad = num(pts && pts.academic);
+            const total = num(pts && pts.total);
+            const entries = num(pts && pts.bigRaffleEntries);
+
+            // NESTED, BECAUSE THEY ARE NOT FIVE SEPARATE THINGS.
+            //
+            // PBIS, attendance and academics are the three WAYS to earn a
+            // raffle ticket, and they sum to the total above them. Jackpot
+            // entries are what those tickets build toward: one per week the
+            // student qualified. Listing all five as siblings made a hierarchy
+            // read as a list of unrelated balances, which is how a student
+            // ends up thinking "academics" is its own currency.
+            const sub = function (title, sub2, value) {
+                return '<div class="wp-row wp-row-nested">' +
+                    '<span class="wp-rowmain">' +
+                      '<span class="wp-rowtitle">' + wpEsc(title) + '</span>' +
+                      (sub2 ? '<span class="wp-rowsub">' + wpEsc(sub2) + '</span>' : '') +
+                    '</span>' +
+                    '<span class="wp-rowmain" style="flex:0 0 auto;text-align:right;">' +
+                      (value === null
+                        ? '<span class="wp-rowend is-none">—</span>'
+                        : '<span class="wp-rowend">' + wpEsc(String(value)) + '</span>') +
+                    '</span></div>';
+            };
+
+            // ---- The two halves, one open at a time -----------------
+            //
+            // Asked for as an accordion rather than two cards: a student
+            // opening "Wildcat Cash" wants the balance AND why it is that
+            // number, and the ticket breakdown underneath pushes the history
+            // off the screen. Only one body is visible, so whichever they
+            // picked gets the room.
+            const money = function (n) {
+                return (n < 0 ? '-$' : '+$') + Math.abs(n);
+            };
+            const when = function (iso) {
+                if (!iso) return '';
+                const d = new Date(iso);
+                if (isNaN(d.getTime())) return '';
+                return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+            };
+            // What a movement was for, when nobody typed a reason. The kind is
+            // always known, so the row is never blank.
+            const KIND = { award: 'Wildcat Cash awarded', deduct: 'Wildcat Cash deducted',
+                           redeem: 'Reward purchase' };
+
+            const hist = (cash && Array.isArray(cash.recent)) ? cash.recent : [];
+            const txRows = hist.map(function (t) {
+                const amt = (t && typeof t.amount === 'number') ? t.amount : null;
+                const title = (t && t.reason) || KIND[t && t.kind] || 'Wildcat Cash';
+                const meta = [(t && t.by) || '', when(t && t.at)].filter(Boolean).join('  \u00b7  ');
+                return '<div class="wp-tx">' +
+                    '<span class="wp-tx-main">' +
+                      '<span class="wp-tx-title">' + wpEsc(title) + '</span>' +
+                      (meta ? '<span class="wp-tx-sub">' + wpEsc(meta) + '</span>' : '') +
+                      // The note the adult typed, shown as theirs rather than
+                      // as the app's own words.
+                      (t && t.note ? '<span class="wp-tx-note">' + wpEsc(t.note) + '</span>' : '') +
+                    '</span>' +
+                    '<span class="wp-tx-amt' + (amt === null ? '' : (amt < 0 ? ' is-minus' : ' is-plus')) + '">' +
+                      (amt === null ? '&mdash;' : wpEsc(money(amt))) +
+                    '</span></div>';
+            }).join('');
+
+            // An empty list has two meanings and they need different sentences:
+            // nothing has happened yet, or the history has not reached this
+            // account. A balance with no history is the second one.
+            const cashBody = txRows
+                ? '<div class="wp-txs">' + txRows + '</div>'
+                : wpEmpty(bal ? 'Your history has not reached your account yet. Your balance above is current.'
+                              : 'No activity yet. This fills in as staff award and you spend.');
+
+            const ticketBody =
+                '<div class="wp-rows wp-rows-nested">' +
+                  sub('Being a Wildcat', 'PBIS points', pbis) +
+                  sub('Attendance', 'Here and on time', att) +
+                  sub('Academics', 'Work and progress', acad) +
+                '</div>' +
+                '<p class="wp-groupnote">Three ways to earn one thing. Every ticket is an entry in this cycle\'s raffle.</p>' +
+                (entries === null ? '' :
+                  '<div class="wp-jackpot">' +
+                    '<span class="wp-group-title">Wildcat Jackpot</span>' +
+                    '<span class="wp-group-num">' + wpEsc(String(entries)) +
+                      '<span class="wp-group-unit">' + (entries === 1 ? 'entry' : 'entries') + '</span></span>' +
+                  '</div>' +
+                  '<p class="wp-groupnote">One entry for every week your tickets qualified you.</p>');
+
+            const section = function (key, title, figure, inner, open) {
+                return '<section class="wp-acc-sec" data-sec="' + key + '">' +
+                    '<button type="button" class="wp-acc-head" aria-expanded="' + (open ? 'true' : 'false') +
+                      '" onclick="wpRewardsOpen(\'' + key + '\')">' +
+                      '<span class="wp-acc-title">' + wpEsc(title) + '</span>' +
+                      '<span class="wp-acc-num">' + figure + '</span>' +
+                      '<span class="wp-acc-chev" aria-hidden="true">&#9662;</span>' +
+                    '</button>' +
+                    '<div class="wp-acc-body">' + inner + '</div>' +
+                  '</section>';
+            };
+
+            const body =
+                '<div class="wp-acc" id="wpRewardsAcc" data-open="cash">' +
+                  section('cash', 'Wildcat Cash',
+                    bal === null ? '<span class="is-none">Unavailable</span>' : '$' + wpEsc(String(bal)),
+                    cashBody, true) +
+                  section('tickets', 'Raffle Tickets',
+                    total === null ? '<span class="is-none">&mdash;</span>' : wpEsc(String(total)),
+                    ticketBody, false) +
+                '</div>';
+
+            // Said out loud, because a screen of zeroes looks identical to a
+            // screen that failed to load, and a child reading it deserves to
+            // know which one they are looking at.
+            const allZero = total === 0 && bal === 0;
+            const foot = bal === null
+                ? wpFoot('Your cash balance has not reached your account yet. This is not a balance of $0.')
+                : (allZero
+                    ? wpFoot('Nothing yet this cycle. Both start at zero and go up when staff award them.')
+                    : '');
+
+            return {
+                label: 'Wildcat Cash',
+                lead: bal === null ? 'Balance unavailable' : '$' + bal,
+                quiet: bal === null,
+                face: bal === null ? WP_FACE.rewardsOff : WP_FACE.rewards,
+                body: body + foot,
+            };
+        }
+
+        /**
+         * Open one half of the rewards card and collapse the other.
+         *
+         * Which one is open lives in a data attribute rather than in JS state,
+         * so it survives the card being re-rendered by a refresh, and CSS does
+         * the showing and hiding. aria-expanded is kept in step because the
+         * heading is a real button and a screen reader is entitled to know.
+         */
+        function wpRewardsOpen(which) {
+            const acc = document.getElementById('wpRewardsAcc');
+            if (!acc) return;
+            const key = which === 'tickets' ? 'tickets' : 'cash';
+            // CLICKING THE OPEN ONE CLOSES IT. A control that only ever swaps
+            // sideways teaches the wrong thing about itself: a student presses
+            // the heading they are already reading, nothing happens, and it
+            // stops looking like a button. Closing both is a legitimate state
+            // and leaves the two headings side by side.
+            const next = acc.getAttribute('data-open') === key ? 'none' : key;
+            acc.setAttribute('data-open', next);
+            Array.prototype.forEach.call(acc.querySelectorAll('.wp-acc-sec'), function (sec) {
+                const head = sec.querySelector('.wp-acc-head');
+                if (head) head.setAttribute('aria-expanded',
+                    sec.getAttribute('data-sec') === acc.getAttribute('data-open') ? 'true' : 'false');
+            });
+        }
+
         function wpMealCard(meal) {
             const nowMeal = meal && meal.currentMeal ? meal.currentMeal : null;
             const lead = nowMeal
@@ -17582,6 +17799,10 @@
             // and it follows a resize because it is a media query rather than
             // a decision taken once.
             const cards = [];
+            // Schedule and Grades are gone from the wallet (they live in the
+            // desk dashboard below). The rewards card stays: a balance is a
+            // thing a student checks standing up, same as the lunch number.
+            cards.push(wpRewardsCard(mine));
             cards.push(wpMealCard(pass.meal || pass.lunchId));
             cards.push(wpReasonCard('Clever', pass.cleverBadge, WP_FACE.clever, WP_FACE.cleverOff));
             const hallPassIdx = cards.length;
@@ -24707,9 +24928,14 @@
   <div class="sec">
     <div class="sec-title">Interventions Prior to Referral</div>
     <div class="block">
+      ${r.severeBypass
+        ? '<div class="severe-flag"><strong>Too severe for classroom interventions.</strong> ' +
+          'Immediate removal was warranted.</div>' : ''}
       ${interventions.length
         ? `<ul class="list">${interventions.map(i => `<li>${esc(i)}</li>`).join('')}</ul>`
-        : '<span class="none">None recorded</span>'}
+        : (r.severeBypass
+            ? '<span class="none">None attempted, by design.</span>'
+            : '<span class="none">None recorded</span>')}
     </div>
   </div>
 
@@ -25689,6 +25915,19 @@
             const n = document.querySelectorAll('.referral-intervention:checked').length;
             const el = document.getElementById('interventionCount');
             if (!el) return;
+
+            // Severity answers the expectation; it does not fail it. The
+            // banner says so plainly, because a teacher who has just removed a
+            // violent student should not be reading "2 more expected".
+            const severe = !!(document.getElementById('referralSevereBypass') || {}).checked;
+            if (severe) {
+                el.textContent = n
+                    ? `✓ Immediate removal recorded — ${n} intervention${n === 1 ? '' : 's'} also logged`
+                    : '✓ Immediate removal recorded — the 3-intervention expectation does not apply';
+                el.className = 'intervention-banner intervention-banner-severe';
+                return;
+            }
+
             if (n === 0) {
                 el.textContent = 'Select at least 3 interventions below';
                 el.className = 'intervention-banner';
@@ -25708,6 +25947,8 @@
                 if (el) el.value = '';
             });
             document.querySelectorAll('.referral-intervention').forEach(cb => { cb.checked = false; });
+            const severeBox = document.getElementById('referralSevereBypass');
+            if (severeBox) severeBox.checked = false;
             updateInterventionCount();
             const d = document.getElementById('referralDate');
             if (d) d.value = new Date().toISOString().split('T')[0];
@@ -25733,6 +25974,7 @@
                 }
             }
             const interventions = Array.from(document.querySelectorAll('.referral-intervention:checked')).map(cb => cb.value);
+            const severeBypass = !!(document.getElementById('referralSevereBypass') || {}).checked;
 
             // Required: student, date, behaviour, description, referring staff.
             if (!studentId)       { alert('⚠️ Please select a student'); return; }
@@ -25767,6 +26009,13 @@
                 behaviorType: behavior,   // legacy alias so older readers keep working
                 description: description,
                 interventions: interventions,
+                // WHY there were no interventions, which the count alone
+                // cannot say. Zero used to be ambiguous: a teacher who skipped
+                // the step and a teacher who removed a student mid-fight
+                // produced identical records, and the analytics counted both
+                // as "filed with none logged". They are different facts and
+                // only one of them is a practice problem.
+                severeBypass: severeBypass,
                 additionalActions: additionalActions,
                 referredBy: referringStaff,
                 referredByUsername: currentUser.username,
@@ -25883,7 +26132,9 @@
                         <div class="cell-sub">filed ${d.toLocaleDateString()}</div>
                     </td>
                     <td class="cell-center">
-                        <span class="count-pill${ivCount >= 3 ? ' count-pill-on' : ''}" title="Interventions attempted before referring">${ivCount}</span>
+                        ${r.severeBypass
+                            ? `<span class="count-pill count-pill-severe" title="Too severe for classroom interventions — immediate removal">severe</span>`
+                            : `<span class="count-pill${ivCount >= 3 ? ' count-pill-on' : ''}" title="Interventions attempted before referring">${ivCount}</span>`}
                     </td>
                     <td>
                         <button class="btn btn-sm-blue" onclick="viewReferralDetails('${r.id}')">View</button>
@@ -27012,12 +27263,20 @@
                         <h4 class="chart-title">Intervention practice</h4>
                         ${(() => {
                             if (!all.length) return '<p class="cell-empty">No data yet</p>';
-                            const withThree = all.filter(r => (r.interventions || []).length >= 3).length;
-                            const none = all.filter(r => !(r.interventions || []).length).length;
-                            const pct = Math.round(withThree / all.length * 100);
+                            // Severe removals are EXCLUDED from the denominator,
+                            // not counted as failures. Judging a teacher who
+                            // removed a violent student against a three-step
+                            // expectation that could not apply makes the figure
+                            // a measure of how many emergencies happened.
+                            const severe = all.filter(r => r.severeBypass).length;
+                            const eligible = all.filter(r => !r.severeBypass);
+                            const withThree = eligible.filter(r => (r.interventions || []).length >= 3).length;
+                            const none = eligible.filter(r => !(r.interventions || []).length).length;
+                            const pct = eligible.length ? Math.round(withThree / eligible.length * 100) : null;
                             return `<div class="mini-grid">
-                                <div class="mini-tile"><div class="mini-label">Met the 3-intervention expectation</div><div class="mini-num">${pct}%</div></div>
+                                <div class="mini-tile"><div class="mini-label">Met the 3-intervention expectation</div><div class="mini-num">${pct === null ? '—' : pct + '%'}</div></div>
                                 <div class="mini-tile${none ? ' mini-tile-warn' : ''}"><div class="mini-label">Filed with none logged</div><div class="mini-num">${none}</div></div>
+                                <div class="mini-tile"><div class="mini-label">Too severe for interventions</div><div class="mini-num">${severe}</div></div>
                                 <div class="mini-tile"><div class="mini-label">Closed &amp; loop closed</div><div class="mini-num">${all.filter(r => r.loopClosed).length}</div></div>
                             </div>`;
                         })()}
@@ -27546,6 +27805,7 @@
                 'Student Name': r.studentName,
                 'Behavior Type': r.behaviorType,
                 'Interventions Attempted': (r.interventions || []).length,
+                'Too Severe For Interventions': r.severeBypass ? 'Yes' : 'No',
                 'Resolution': r.resolutionType === 'no_action' ? 'No action required' : (r.status === 'closed' ? 'Action taken' : ''),
                 'Closing Actions': (r.closingActions || []).join('; '),
                 'Loop Closed': r.loopClosed ? 'Yes' : 'No',

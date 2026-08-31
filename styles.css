@@ -7005,3 +7005,135 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
         to   { opacity: 1; transform: none; }
     }
 }
+
+/* The severity escape hatch on the referral form.
+   Set apart from the intervention checklist because it is not one of them: it
+   is the statement that none applied. Amber rather than red — this is a
+   legitimate, expected path, not an error or a warning about the teacher. */
+.check-item.severe-bypass {
+    display: flex; gap: 10px; align-items: flex-start;
+    margin: 0 0 12px 0; padding: 12px 14px;
+    background: #FFF6E5; border: 1px solid #E8D9B8; border-radius: 8px;
+    line-height: 1.45;
+}
+.check-item.severe-bypass input { margin-top: 3px; flex: 0 0 auto; }
+.intervention-banner-severe {
+    background: #FFF6E5; color: #8A5A00; border-left: 3px solid #C08A2E;
+}
+
+/* A zero that means "emergency" must not read like a zero that means
+   "skipped the step". Same amber as the form control that produced it. */
+.count-pill-severe { background: #FFF6E5; color: #8A5A00; font-weight: 700; }
+.severe-flag {
+    background: #FFF6E5; border-left: 3px solid #C08A2E;
+    padding: 9px 12px; border-radius: 8px; color: #8A5A00; margin-bottom: 8px;
+}
+
+
+/* ---- Student wallet: a total and the things that add up to it -------
+   PBIS, attendance and academics are not three balances, they are three
+   ways to earn one. The heading carries the number and the sources sit
+   under it, indented and lighter, so the arithmetic is visible without
+   being written out. */
+.wp-group + .wp-group { margin-top: 14px; }
+.wp-group-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--wp-rule, rgba(255,255,255,.12));
+}
+.wp-group-title { font-size: 13px; font-weight: 700; letter-spacing: .02em; opacity: .92; }
+.wp-group-num { font-size: 22px; font-weight: 800; line-height: 1; }
+.wp-group-num.is-none { font-size: 15px; font-weight: 700; opacity: .55; }
+.wp-group-unit { font-size: 11px; font-weight: 700; opacity: .7; margin-left: 5px; }
+.wp-rows-nested { margin-top: 2px; }
+/* The indent and the rule are the hierarchy: these belong to the number
+   above them rather than standing beside it. */
+.wp-row-nested {
+    padding-left: 12px;
+    border-left: 2px solid var(--wp-rule, rgba(255,255,255,.12));
+}
+.wp-row-nested .wp-rowtitle { font-weight: 600; opacity: .95; }
+.wp-row-nested .wp-rowend { font-weight: 700; }
+.wp-groupnote {
+    margin: 7px 0 0 0; font-size: 11.5px; line-height: 1.4; opacity: .72;
+}
+
+
+/* ---- Student wallet: the rewards accordion --------------------------
+   Two halves of one card, one open at a time. Which one is open lives in
+   a data attribute on the container, so CSS does the showing and hiding
+   and the state survives the card being re-rendered. */
+.wp-acc-sec + .wp-acc-sec { margin-top: 8px; }
+
+/* Made to look pressable, because it is.
+   A flat heading with a chevron reads as a label with decoration next to it.
+   The fill, the border and the give on :active are what say "this is a
+   control" before anyone has tried it. Colours come from the card's own face
+   tokens, so it stays legible whichever face the card is wearing. */
+.wp-acc-head {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 11px 13px; cursor: pointer;
+    color: inherit; font: inherit; text-align: left;
+    background: var(--wp-pill, rgba(255, 255, 255, .13));
+    border: 1px solid var(--wp-rule, rgba(255, 255, 255, .16));
+    border-radius: 12px;
+    transition: background .15s ease, transform .1s ease, border-color .15s ease;
+}
+.wp-acc-head:hover { border-color: currentColor; }
+/* A real press, not just a colour change. */
+.wp-acc-head:active { transform: translateY(1px); }
+.wp-acc-title { flex: 1 1 auto; font-size: 13px; font-weight: 700; letter-spacing: .02em; }
+.wp-acc-num { font-size: 19px; font-weight: 800; line-height: 1; }
+.wp-acc-num .is-none { font-size: 13px; font-weight: 700; opacity: .55; }
+.wp-acc-chev { font-size: 11px; opacity: .6; transition: transform .18s ease; }
+.wp-acc-body { padding-top: 8px; }
+
+/* Hidden by default and SHOWN by match, rather than hidden by naming the
+   other one. That is what lets data-open="none" mean both closed: a rule
+   written as "hide the other half" has no way to express it. */
+.wp-acc-body { display: none; }
+.wp-acc[data-open="cash"]    .wp-acc-sec[data-sec="cash"]    .wp-acc-body,
+.wp-acc[data-open="tickets"] .wp-acc-sec[data-sec="tickets"] .wp-acc-body { display: block; }
+
+/* The open one is filled in and its chevron points down; the closed one sits
+   back. The difference has to be visible at a glance or the card looks like
+   two identical buttons. */
+.wp-acc[data-open="cash"]    .wp-acc-sec[data-sec="cash"]    .wp-acc-head,
+.wp-acc[data-open="tickets"] .wp-acc-sec[data-sec="tickets"] .wp-acc-head {
+    background: var(--wp-pill, rgba(255, 255, 255, .13));
+    border-color: currentColor;
+}
+.wp-acc[data-open="cash"]    .wp-acc-sec[data-sec="cash"]    .wp-acc-chev,
+.wp-acc[data-open="tickets"] .wp-acc-sec[data-sec="tickets"] .wp-acc-chev {
+    transform: rotate(180deg); opacity: .95;
+}
+.wp-acc[data-open="none"] .wp-acc-head,
+.wp-acc[data-open="cash"]    .wp-acc-sec[data-sec="tickets"] .wp-acc-head,
+.wp-acc[data-open="tickets"] .wp-acc-sec[data-sec="cash"]    .wp-acc-head {
+    background: transparent;
+}
+.wp-acc-head:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; border-radius: 6px; }
+
+/* A movement: what it was for, who did it, and how much. */
+.wp-txs { display: flex; flex-direction: column; gap: 9px; }
+.wp-tx { display: flex; align-items: flex-start; gap: 12px; }
+.wp-tx-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
+.wp-tx-title { font-size: 13.5px; font-weight: 650; line-height: 1.25; }
+.wp-tx-sub { font-size: 11px; opacity: .68; }
+/* The adult's own words, set apart so they do not read as the app's. */
+.wp-tx-note {
+    font-size: 11.5px; opacity: .82; font-style: italic;
+    margin-top: 2px; padding-left: 8px;
+    border-left: 2px solid var(--wp-rule, rgba(255,255,255,.16));
+}
+.wp-tx-amt { flex: 0 0 auto; font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.wp-tx-amt.is-plus { color: #9BE7B4; }
+.wp-tx-amt.is-minus { color: #FFC7A8; }
+.wp-card-light .wp-tx-amt.is-plus { color: #1F7A45; }
+.wp-card-light .wp-tx-amt.is-minus { color: #A8431F; }
+
+.wp-jackpot {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; margin-top: 12px; padding-top: 8px;
+    border-top: 1px solid var(--wp-rule, rgba(255,255,255,.12));
+}

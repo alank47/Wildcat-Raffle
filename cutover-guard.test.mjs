@@ -109,8 +109,15 @@ console.log("\nloadRosterFromConvex refuses to fake success");
 
 console.log("\nThe shadow write cannot break a save that already worked");
 {
+  // Bounded by a STABLE ANCHOR rather than a character count. This was
+  // `+ 2200`, and adding the Convex-only cash payload pushed the console.error
+  // past the window: the assertion failed while the code it describes was
+  // correct. The same brittleness already bit the roster branch above.
   const at = script.indexOf("DATA_WRITE === 'both'");
-  const branch = script.slice(at, at + 2200);
+  const branchEnd = script.indexOf("TRANSACTION 2", at);
+  const branch = script.slice(at, branchEnd > at ? branchEnd : at + 4000);
+  check("the shadow-write branch is bounded by its real end",
+    at > 0 && branchEnd > at);
   check("the Convex write is guarded by try", /try\s*\{/.test(branch));
   check(
     "and its catch does not rethrow",
