@@ -84,10 +84,12 @@ console.log("\nThe authoritative copy is untouched");
   // The point of the change is that nothing is LOST: cash_tx_* is the ledger
   // and it is written independently of main.
   check("weekly cash documents are still written",
-    /raffle_data', `cash_tx_\$\{wk\}`/.test(script));
+    /saveLegacySlice\(`cash_tx_\$\{wk\}`, 'transactions', txs\)/.test(script));
+  // Reads moved to Convex on 2026-08-31. The assertion is unchanged in intent:
+  // every known cash week is still fetched on load, one document per week, and
+  // the ledger is never folded back into `main`.
   check("and still read on load",
-    /'raffle_data', `cash_tx_\$\{wk\}`\)\)\)/.test(script) ||
-    /getKnownCashWeekKeys\(\)\.map\(wk => getDoc/.test(script));
+    /_cashWeekKeys\.map\(wk => snapOf\(`cash_tx_\$\{wk\}`\)\)/.test(script));
   check("distributeCashTransactions still rebuilds from that ledger",
     /\(cashTransactions \|\| \[\]\)\.forEach\(t => \{/.test(script));
 }

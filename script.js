@@ -1356,16 +1356,54 @@
 
 
 
+        /**
+         * Every remaining app document, from the Convex mirror, in the shape
+         * Firestore used to return.
+         *
+         * Throws rather than returning {} when there is no session. An empty
+         * object here is indistinguishable from "the school has no ticket
+         * history", and this app has an explicit rule against a missing value
+         * rendering as a real one. The caller catches and reports.
+         */
+        async function loadLegacyDocsFromConvex() {
+            const auth = window.WildcatAuth;
+            if (!auth) throw new Error('WildcatAuth is not loaded.');
+            const session = auth.getSession();
+            if (!session) throw new Error('Not signed in to Convex.');
+            const docs = await auth.convexQuery('legacyData:load', {}, session.idToken);
+            if (!docs || typeof docs !== 'object') {
+                throw new Error('legacyData:load returned no documents.');
+            }
+            return docs;
+        }
+
+        /**
+         * Replace one legacy document slice in Convex.
+         *
+         * `value` is the array or map the slice should BE, in the same shape
+         * the Firestore document field held, so callers read the same as they
+         * did with setDoc. A map is sent as keyed rows and an array as unkeyed
+         * ones, which is the encoding legacyData:load inverts. Sending a map
+         * as an array loses every key and a student's history silently becomes
+         * a list nobody can look up.
+         */
+        async function saveLegacySlice(docName, collection, value) {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+            if (!session) throw new Error('Not signed in to Convex.');
+            const rows = Array.isArray(value)
+                ? (value || []).map(payload => ({ payload }))
+                : Object.entries(value || {}).map(([key, payload]) => ({ key: String(key), payload }));
+            return auth.convexMutation('legacyData:saveSlice', {
+                doc: docName, collection, rows
+            }, session.idToken);
+        }
+
         // Cloud Sync Functions
         async function loadData() {
-            // Initialize Firebase first
-            await initFirebase();
-            
-            // Try to load from Firebase - LOAD FROM 4 DOCUMENTS
-            if (firebaseInitialized && firebaseDb) {
+            {
                 try {
-                    const { doc, getDoc } = window.firebaseModules;
-                    
+
                     // Load all documents in parallel.
                     // ticket_history is split into ticket_history_ms (grades 6-8) and
                     // ticket_history_hs (grades 9-12) to stay under Firestore's 1MB per-doc limit.
@@ -1380,38 +1418,56 @@
                     // history docs, so they are sliced out by count rather than
                     // destructured positionally.
                     const _cashWeekKeys = getKnownCashWeekKeys();
-                    const _allSnaps = await Promise.all([
-                        getDoc(doc(firebaseDb, 'raffle_data', 'main')),
-                        getDoc(doc(firebaseDb, 'raffle_data', 'secondary')),
-                        // Referrals live in their own document. The expanded referral
-                        // form (interventions + closing actions) roughly triples the
-                        // size of each record, and `secondary` shares the same 1MB
-                        // ceiling as every other Firestore document.
-                        getDoc(doc(firebaseDb, 'raffle_data', 'referrals')),
-                        // Class schedules, lifted out of `main` (see saveData).
-                        getDoc(doc(firebaseDb, 'raffle_data', 'schedules')),
-                        // Weekly cash transaction documents (see the cash engine).
-                        ...getKnownCashWeekKeys().map(wk => getDoc(doc(firebaseDb, 'raffle_data', `cash_tx_${wk}`))),
-                        getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_ms')),
-                        getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_hs')),
-                        // HS split into grade bands; the doc above is legacy (read-only now).
-                        getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_hs_910')),
-                        getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_hs_1112')),
-                        // Students whose grade this app cannot classify — mostly
-                        // former students. Their history used to be discarded at
-                        // save time; it is filed here instead.
-                        getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history_unknown')),
-                        getDoc(doc(firebaseDb, 'raffle_data', 'ticket_history')),
-                        getDoc(doc(firebaseDb, 'raffle_data', 'audit_log')),
-                        ...monthlyAuditPromises
-                    ]);
-                    const [mainSnap, secondarySnap, referralsSnap, schedulesSnap] = _allSnaps;
-                    const _cashSnaps = _allSnaps.slice(4, 4 + _cashWeekKeys.length);
-                    const [ticketHistoryMsSnap, ticketHistoryHsSnap, ticketHistoryHs910Snap,
-                           ticketHistoryHs1112Snap, ticketHistoryUnknownSnap,
-                           ticketHistoryLegacySnap, auditLogLegacySnap] =
-                           _allSnaps.slice(4 + _cashWeekKeys.length);
-                    const monthlyAuditSnaps = _allSnaps.slice(4 + _cashWeekKeys.length + 6);
+
+                    // ---- READS MOVED OFF FIRESTORE 2026-08-31 -----------------
+                    //
+                    // This used to be twenty-two getDoc calls against eleven
+                    // documents. It is now one authenticated Convex query, and
+                    // the reason the rest of this function is untouched is the
+                    // shim below: legacyData:load rebuilds each document as the
+                    // object Firestore used to return, and snapOf() wraps it in
+                    // the same exists()/data() pair a QuerySnapshot exposes. Six
+                    // hundred lines of merge logic downstream — the entryId
+                    // dedupe across the ticket-history partitions, the monthly
+                    // plus legacy audit merge — cannot tell the difference.
+                    //
+                    // WHY A SHIM AND NOT A REWRITE. Changing the transport and
+                    // the shape in the same commit means a bug cannot be
+                    // attributed to either. This data is student ticket history
+                    // and an audit log, where the failure is silent
+                    // double-counting rather than an exception, so the shape
+                    // stays frozen until the transport is proven.
+                    //
+                    // The documents come from the `legacyMirror` table, which
+                    // has held all of this since the 2026-08-11 migration. What
+                    // was missing was never the data: it was a function the
+                    // browser was allowed to call.
+                    const _legacy = await loadLegacyDocsFromConvex();
+                    const snapOf = (name) => {
+                        const d = _legacy[name];
+                        return { exists: () => Boolean(d), data: () => d || {} };
+                    };
+
+                    // `main` is assembled, not read. Its arrays live in the
+                    // mirror; its settings and both entity arrays come from
+                    // appData:load further down. It must report as existing
+                    // whenever Convex answered at all, because the block below
+                    // is what applies the roster, and gating that on the mirror
+                    // holding a `main` slice would skip the roster entirely on
+                    // any deployment where main held no arrays.
+                    const mainSnap = { exists: () => true, data: () => ({ ..._legacy.main }) };
+                    const secondarySnap = snapOf('secondary');
+                    const referralsSnap = snapOf('referrals');
+                    const schedulesSnap = snapOf('schedules');
+                    const _cashSnaps = _cashWeekKeys.map(wk => snapOf(`cash_tx_${wk}`));
+                    const ticketHistoryMsSnap = snapOf('ticket_history_ms');
+                    const ticketHistoryHsSnap = snapOf('ticket_history_hs');
+                    const ticketHistoryHs910Snap = snapOf('ticket_history_hs_910');
+                    const ticketHistoryHs1112Snap = snapOf('ticket_history_hs_1112');
+                    const ticketHistoryUnknownSnap = snapOf('ticket_history_unknown');
+                    const ticketHistoryLegacySnap = snapOf('ticket_history');
+                    const auditLogLegacySnap = snapOf('audit_log');
+                    const monthlyAuditSnaps = monthKeys.map(mk => snapOf(auditDocName(mk)));
 
                     // Rebuild cash history from the weekly documents.
                     cashTransactions = [];
@@ -1452,6 +1508,33 @@
                                 mainData.students = fresh.students.filter(s => s.enrolled !== false);
                                 nonEnrolledStudents = fresh.students.filter(s => s.enrolled === false);
                                 mainData.teachers = fresh.teachers;
+
+                                // SETTINGS, added 2026-08-31, and this is the
+                                // bug it closes. appData:save has been writing
+                                // currentWeek, cycleDuration, kickboardSettings,
+                                // passSettings, schoolBranding and the rest to
+                                // Convex since the dual write went in, and
+                                // appData:load has been returning them the whole
+                                // time — into a variable the caller dropped on
+                                // the floor. Every one of those was still being
+                                // read off the Firestore document below, so
+                                // Convex held the truth and the app ignored it.
+                                //
+                                // Overlaying onto mainData rather than assigning
+                                // each field means the twenty `mainData.x ||
+                                // default` lines further down are untouched and
+                                // keep their defaults.
+                                //
+                                // PARTIAL BY DESIGN. Object.assign copies only
+                                // the keys Convex actually holds, so a key it has
+                                // never been told about still falls through to
+                                // the Firestore value instead of becoming
+                                // undefined. The emptiness guard is what stops a
+                                // fresh deployment with no settings row from
+                                // blanking a live configuration.
+                                if (fresh.settings && Object.keys(fresh.settings).length > 0) {
+                                    Object.assign(mainData, fresh.settings);
+                                }
                                 rosterSource = 'convex';
                                 console.log(`✅ Roster from Convex: ${mainData.students.length} enrolled, ${nonEnrolledStudents.length} former, ${fresh.teachers.length} staff`);
                             } catch (err) {
@@ -1779,18 +1862,23 @@
                         // ever older than Firebase's currentWeek, it auto-refreshes itself.
                         startWeekStalenessWatchdog();
                         
-                        return; // Successfully loaded from Firebase
+                        return; // Successfully loaded from Convex
                     } else {
-                        console.log('ℹ️ No Firebase data found, loading from localStorage');
+                        console.log('No server data found, loading from localStorage');
                         loadDataLocal();
                     }
                 } catch (error) {
-                    console.error('❌ Firebase load error:', error);
+                    // The two branches this used to have — "Firebase is not
+                    // initialised" and "the read threw" — collapse into one now
+                    // that there is a single store. Not signed in yet is the
+                    // ordinary case at startup: loadData() runs before any
+                    // session exists, the Convex query refuses, and the
+                    // wildcat-auth-signin listener re-runs the whole load the
+                    // moment a session appears. localStorage carries the tab
+                    // until then, which is what it always did.
+                    console.error('Server load error:', error && error.message);
                     loadDataLocal();
                 }
-            } else {
-                console.log('ℹ️ Firebase not initialized, loading from localStorage');
-                loadDataLocal();
             }
         }
 
@@ -3027,18 +3115,19 @@
                             const k = cashWeekKey(t.timestamp);
                             (cashByWeek[k] = cashByWeek[k] || []).push(t);
                         });
+                        // WRITES MOVED OFF FIRESTORE 2026-08-31. One slice per
+                        // week, replaced wholesale, exactly as setDoc did — the
+                        // caller sends the array it wants the slice to BE, and
+                        // legacyData:saveSlice deletes the old rows first.
+                        // Appending here would double every transaction on every
+                        // save, which reconciles to a number twice the truth and
+                        // looks like a working ledger.
                         const cashWrites = Object.entries(cashByWeek).map(([wk, txs]) =>
-                            setDoc(doc(firebaseDb, 'raffle_data', `cash_tx_${wk}`), {
-                                transactions: txs,
-                                lastSaveTimestamp: timestamp
-                            }));
+                            saveLegacySlice(`cash_tx_${wk}`, 'transactions', txs));
 
                         const independentWrites = await Promise.allSettled([
                             ...cashWrites,
-                            setDoc(doc(firebaseDb, 'raffle_data', 'schedules'), {
-                                sections: sectionsToSave,
-                                lastSaveTimestamp: timestamp
-                            })
+                            saveLegacySlice('schedules', 'sections', sectionsToSave)
                         ]);
                         const writeNames = [
                             ...Object.keys(cashByWeek).map(w => `cash_tx_${w}`),
