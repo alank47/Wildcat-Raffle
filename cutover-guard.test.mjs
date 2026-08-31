@@ -69,11 +69,9 @@ console.log("\nConvex cutover switches");
   );
 }
 
-console.log("\nThe fallback is intact");
+console.log("\nA failed roster read is loud, not silent");
 {
-  // The Convex read must be inside a try with a catch that does NOT rethrow.
-  // If it rethrows, or the catch is removed, a Convex outage stops being a
-  // degraded roster and becomes a blank one.
+  // The Convex read must be inside a try whose catch reports and rethrows.
   // Bounded by a STABLE ANCHOR rather than a character count. This slice was
   // `+ 900`, and adding two lines inside the branch pushed the console.error
   // past the window: the assertion failed while the code it describes was
@@ -85,9 +83,17 @@ console.log("\nThe fallback is intact");
     branchStart > 0 && branchEnd > branchStart);
   check("the Convex read is guarded by try", /try\s*\{/.test(branch));
   check("and has a catch", /catch\s*\(/.test(branch), branch.slice(0, 80));
+  // INVERTED 2026-08-31, and the inversion is the whole cutover. While Firestore
+  // was still there, the catch had to SWALLOW so a Convex outage degraded to the
+  // Firestore roster instead of a blank one. Firestore is gone, so swallowing is
+  // now the bug: it would leave the app holding a half-applied load with
+  // rosterSource unset but mainData already overwritten, and the count claimed
+  // as a fact. Rethrowing hands the failure to loadData's own catch, which falls
+  // back to localStorage — the tab still gets data, and nothing pretends the
+  // roster is authoritative.
   check(
-    "the catch does not rethrow, so Firestore still answers",
-    !/catch\s*\([^)]*\)\s*\{[^}]*\bthrow\b/.test(branch),
+    "the catch rethrows, because there is no second store to answer",
+    /catch\s*\([^)]*\)\s*\{[\s\S]*?\bthrow err;/.test(branch),
   );
   check(
     "the failure is reported rather than swallowed silently",

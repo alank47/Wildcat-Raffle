@@ -1,26 +1,16 @@
 // ========================================
-        // CLOUD SYNC CONFIGURATION - FIREBASE
+// ========================================
+        // CLOUD SYNC CONFIGURATION - CONVEX
         // ========================================
-        // Firebase configuration for cloud storage
-        const firebaseConfig = {
-            apiKey: "AIzaSyDMbh3V117xbAHCYMVCwPUTNv9h1uEnFig",
-            authDomain: "wildcat-hub-94025.firebaseapp.com",
-            projectId: "wildcat-hub-94025",
-            storageBucket: "wildcat-hub-94025.firebasestorage.app",
-            messagingSenderId: "1085604958944",
-            appId: "1:1085604958944:web:2f49395c2d4b0370187685"
-        };
-        
-        // Firebase initialization - will be set up when page loads
-        let firebaseApp = null;
-        let firebaseDb = null;
-        let firebaseAuth = null;
-        let firebaseInitialized = false;
-        // True only once anonymous sign-in has actually succeeded. This is the
-        // preflight for firestore.rules: while it is false, the locked rules
-        // would deny every read and write. Check window.wildcatAuthReady in the
-        // console before deploying them.
-        let firebaseAuthReady = false;
+        // The Firebase config, the four module-level handles and the
+        // anonymous-sign-in readiness flag that stood here are gone with the
+        // store they served. Data comes from Convex, authenticated per call
+        // through wildcat-auth.js, and the roster from PowerSchool through the
+        // sync. There is no third store and no unauthenticated one.
+        //
+        // The API key that sat in this block was public by design and is now
+        // simply absent. Rotating or deleting the Firebase project itself is a
+        // console action nobody can do from here; see docs/runbook.md.
 
         /**
          * Students who are NOT on the current term's roster.
@@ -90,13 +80,18 @@
          * never leave a teacher looking at an empty roster in front of a class.
          * It is simply not counted as if it were the roll.
          */
-        let rosterSource = null;    // 'convex' | 'firestore' | null
+        let rosterSource = null;    // 'convex' | null
 
         /** True when a roster count is a fact rather than a placeholder. */
         function rosterIsAuthoritative() { return rosterSource === 'convex'; }
 
-        const DATA_SOURCE = 'convex';    // 'convex' | 'firestore'
-        const DATA_WRITE = 'both';       // 'firestore' | 'both' | 'convex'
+        // Both switches are gone. They existed so the read and the write could
+        // move off Firestore one at a time and either could be reverted alone;
+        // both have moved, every Firestore path behind them is deleted, and a
+        // constant with one legal value is not a switch — it is a branch nobody
+        // takes that every reader still has to check. Reverting is a git revert.
+        const DATA_SOURCE = 'convex';
+        const DATA_WRITE = 'convex';
 
         /**
          * Students and staff from Convex, in the shape this file already uses.
@@ -128,57 +123,6 @@
         }
 
         // Initialize Firebase
-        async function initFirebase() {
-            try {
-                // Dynamically import Firebase modules
-                const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js');
-                const { getFirestore, doc, getDoc, setDoc, serverTimestamp, runTransaction, updateDoc, arrayUnion } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
-                const { getAuth, signInAnonymously } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js');
-
-                // Store imports globally
-                window.firebaseModules = { doc, getDoc, setDoc, serverTimestamp, runTransaction, updateDoc, arrayUnion };
-
-                // Initialize Firebase app
-                firebaseApp = initializeApp(firebaseConfig);
-
-                // Sign in BEFORE touching Firestore. The locked firestore.rules
-                // require request.auth != null on raffle_data, so every read and
-                // write needs an identity, and awaiting here means no call can
-                // race the rules and fail with permission-denied on a cold load.
-                //
-                // A failure here must NOT take Firestore down with it. Anonymous
-                // sign-in is not enabled on every project yet, and the currently
-                // deployed rules are still permissive, so the app works fine
-                // without an identity. Killing init on an auth error would drop
-                // the whole app to local-only storage for no reason.
-                firebaseAuth = getAuth(firebaseApp);
-                try {
-                    await signInAnonymously(firebaseAuth);
-                    firebaseAuthReady = true;
-                } catch (authError) {
-                    firebaseAuthReady = false;
-                    console.warn(
-                        '⚠️ Anonymous sign-in unavailable (' + (authError && authError.code) + '). ' +
-                        'Continuing unauthenticated. DO NOT deploy firestore.rules until this ' +
-                        'resolves: the locked rules would deny every read and write. ' +
-                        'Fix: enable Anonymous sign-in in Firebase Console > Authentication > Sign-in method.'
-                    );
-                }
-                window.wildcatAuthReady = firebaseAuthReady;
-
-                firebaseDb = getFirestore(firebaseApp);
-                firebaseInitialized = true;
-
-                console.log('✅ Firebase initialized' + (firebaseAuthReady
-                    ? ' successfully (anonymous auth)'
-                    : ' WITHOUT auth. Rules must stay permissive until sign-in works.'));
-                return true;
-            } catch (error) {
-                console.error('❌ Firebase initialization failed:', error);
-                firebaseInitialized = false;
-                return false;
-            }
-        }
 
         // ============================================================
         // FEDERATED IDENTITY: Entra ID for staff, Google for students
@@ -274,64 +218,7 @@
             return { ok: true, record: teacher };
         }
 
-        async function signInStaffWithEntra() {
-            if (!AUTH_CONFIG.enabled) throw new Error('Federated auth is not enabled yet.');
-            const { OAuthProvider, signInWithPopup } =
-                await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js');
 
-            const provider = new OAuthProvider('microsoft.com');
-            provider.setCustomParameters({ prompt: 'select_account' });
-
-            const cred = await signInWithPopup(firebaseAuth, provider);
-            const email = cred.user.email;
-            const providerId = cred.user.providerData[0] && cred.user.providerData[0].providerId;
-
-            const verdict = classifyIdentity(email, providerId);
-            if (!verdict.ok || verdict.kind !== 'staff') {
-                await firebaseAuth.signOut();
-                throw new Error(verdict.reason || 'Not a staff identity.');
-            }
-
-            const link = linkIdentityToStaffRecord(email);
-            if (!link.ok) {
-                await firebaseAuth.signOut();
-                throw new Error(link.reason);
-            }
-            return link.record;
-        }
-
-        async function signInStudentWithGoogle() {
-            if (!AUTH_CONFIG.enabled) throw new Error('Federated auth is not enabled yet.');
-            if (!AUTH_CONFIG.studentAuthEnabled) {
-                throw new Error(
-                    'Student sign-in is not available yet. It is blocked on PowerSchool ' +
-                    'manifest field 19 (Student Email); student records currently carry no ' +
-                    'email to match a Google account against.'
-                );
-            }
-            const { GoogleAuthProvider, signInWithPopup } =
-                await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js');
-
-            const provider = new GoogleAuthProvider();
-            provider.setCustomParameters({ hd: AUTH_CONFIG.studentDomain });
-
-            const cred = await signInWithPopup(firebaseAuth, provider);
-            const providerId = cred.user.providerData[0] && cred.user.providerData[0].providerId;
-
-            const verdict = classifyIdentity(cred.user.email, providerId);
-            if (!verdict.ok || verdict.kind !== 'student') {
-                await firebaseAuth.signOut();
-                throw new Error(verdict.reason || 'Not a student identity.');
-            }
-
-            const target = normalizeEmail(cred.user.email);
-            const student = students.find(s => normalizeEmail(s.email) === target);
-            if (!student) {
-                await firebaseAuth.signOut();
-                throw new Error(`No student record matches ${target}.`);
-            }
-            return student;
-        }
 
         // Exposed for console preflight before the rules swap.
         window.wildcatAuth = {
@@ -1606,8 +1493,17 @@
                                 rosterSource = 'convex';
                                 console.log(`✅ Roster from Convex: ${mainData.students.length} enrolled, ${nonEnrolledStudents.length} former, ${fresh.teachers.length} staff`);
                             } catch (err) {
-                                rosterSource = 'firestore';
-                                console.error('[roster] Convex load failed, using the Firestore copy:', err.message);
+                                // There is no second copy to fall back to now.
+                                // rosterSource stays null, which is what
+                                // rosterIsAuthoritative() reads, so a count is
+                                // reported as unknown rather than as a real
+                                // number that happens to be wrong. The old
+                                // fallback served Firestore records that carry
+                                // no `enrolled` field at all, and every one of
+                                // them read as enrolled — that is the 1393
+                                // students the dashboard used to show.
+                                console.error('[roster] Convex load failed:', err.message);
+                                throw err;
                             }
                         }
                         const secondaryData = secondarySnap.exists() ? secondarySnap.data() : {};
@@ -1644,7 +1540,7 @@
                         const hs1112Histories = ticketHistoryHs1112Snap.exists() ? (ticketHistoryHs1112Snap.data().histories || {}) : {};
                         const unknownHistories = ticketHistoryUnknownSnap.exists() ? (ticketHistoryUnknownSnap.data().histories || {}) : {};
                         const legacyHistories = ticketHistoryLegacySnap.exists() ? (ticketHistoryLegacySnap.data().histories || {}) : {};
-                        const firebaseTicketHistories = {};
+                        const serverTicketHistories = {};
                         const allHistoryStudentIds = new Set([
                             ...Object.keys(msHistories),
                             ...Object.keys(hsHistories),
@@ -1669,7 +1565,7 @@
                             collect(legacyHistories[sid]);
                             const merged = Array.from(byId.values())
                                 .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-                            if (merged.length > 0) firebaseTicketHistories[sid] = merged;
+                            if (merged.length > 0) serverTicketHistories[sid] = merged;
                         });
                         
                         // For tombstone loading: prefer ms doc as the primary source since legacy
@@ -1696,28 +1592,28 @@
                         localTombstones = Array.from(tombstoneMap.values());
                         
                         // CRITICAL: MERGE students instead of overwriting to preserve local changes
-                        const firebaseStudents = mainData.students || [];
+                        const serverStudents = mainData.students || [];
                         
                         if (students && students.length > 0) {
                             // We have local students - MERGE with Firebase
-                            const mergedStudents = firebaseStudents.map(firebaseStudent => {
-                                const localStudent = students.find(s => s.id === firebaseStudent.id);
+                            const mergedStudents = serverStudents.map(serverStudent => {
+                                const localStudent = students.find(s => s.id === serverStudent.id);
                                 
                                 if (!localStudent) {
                                     // Student only in Firebase - restore ticket history from separate doc
                                     return {
-                                        ...firebaseStudent,
-                                        ticketHistory: firebaseTicketHistories[firebaseStudent.id] || []
+                                        ...serverStudent,
+                                        ticketHistory: serverTicketHistories[serverStudent.id] || []
                                     };
                                 }
                                 
                                 // Merge ticket histories from BOTH sources
                                 const localHistory = localStudent.ticketHistory || [];
-                                const firebaseHistory = firebaseTicketHistories[firebaseStudent.id] || [];
+                                const serverHistory = serverTicketHistories[serverStudent.id] || [];
                                 
                                 const mergedHistory = [
                                     ...localHistory,
-                                    ...firebaseHistory
+                                    ...serverHistory
                                 ];
                                 
                                 // Deduplicate - PREFER tickets WITH week field over those without
@@ -1741,7 +1637,7 @@
                                 const academicTotal = currentWeekHistory.filter(h => h.category === 'Academic' || h.category === 'Academics').reduce((sum, h) => sum + (h.tickets || h.amount || 0), 0);
                                 
                                 return {
-                                    ...firebaseStudent, // Start with Firebase (newer data from others)
+                                    ...serverStudent, // Start with Firebase (newer data from others)
                                     ...localStudent, // Overlay local changes (preserve local awards)
                                     pbisTickets: pbisTotal,
                                     attendanceTickets: attendanceTotal,
@@ -1753,7 +1649,7 @@
                             
                             // Add any NEW students that are only in local
                             students.forEach(localStudent => {
-                                if (!firebaseStudents.find(s => s.id === localStudent.id)) {
+                                if (!serverStudents.find(s => s.id === localStudent.id)) {
                                     mergedStudents.push(localStudent);
                                 }
                             });
@@ -1761,9 +1657,9 @@
                             students = mergedStudents;
                         } else {
                             // No local students yet (first load) - restore ticket histories from separate doc
-                            students = firebaseStudents.map(s => ({
+                            students = serverStudents.map(s => ({
                                 ...s,
-                                ticketHistory: firebaseTicketHistories[s.id] || []
+                                ticketHistory: serverTicketHistories[s.id] || []
                             }));
                         }
                         
@@ -1772,28 +1668,28 @@
                         cycleDuration = mainData.cycleDuration || 5;
                         
                         // MERGE teachers to preserve local changes
-                        const firebaseTeachers = mainData.teachers || [];
+                        const serverTeachers = mainData.teachers || [];
                         if (teachers && teachers.length > 0) {
-                            const mergedTeachers = firebaseTeachers.map(firebaseTeacher => {
-                                const localTeacher = teachers.find(t => t.id === firebaseTeacher.id);
-                                if (!localTeacher) return firebaseTeacher;
+                            const mergedTeachers = serverTeachers.map(serverTeacher => {
+                                const localTeacher = teachers.find(t => t.id === serverTeacher.id);
+                                if (!localTeacher) return serverTeacher;
                                 
                                 return {
-                                    ...firebaseTeacher,
+                                    ...serverTeacher,
                                     ...localTeacher,
-                                    ticketsAwarded: Math.max(localTeacher.ticketsAwarded || 0, firebaseTeacher.ticketsAwarded || 0)
+                                    ticketsAwarded: Math.max(localTeacher.ticketsAwarded || 0, serverTeacher.ticketsAwarded || 0)
                                 };
                             });
                             
                             teachers.forEach(localTeacher => {
-                                if (!firebaseTeachers.find(t => t.id === localTeacher.id)) {
+                                if (!serverTeachers.find(t => t.id === localTeacher.id)) {
                                     mergedTeachers.push(localTeacher);
                                 }
                             });
                             
                             teachers = mergedTeachers;
                         } else {
-                            teachers = firebaseTeachers;
+                            teachers = serverTeachers;
                         }
                         
                         pbisSubcategories = mainData.pbisSubcategories || ['Being Present', 'Being Responsible', 'Being Respectful', 'Being Safe'];
@@ -1878,20 +1774,20 @@
                         // Receipts merge by id, the same union-by-id shape the
                         // rest of this loader uses, so a receipt raised on one
                         // device is not dropped by a save from another.
-                        const firebaseReceipts = secondaryData.cashReceipts || [];
+                        const serverReceipts = secondaryData.cashReceipts || [];
                         if (cashReceipts && cashReceipts.length > 0) {
-                            const merged = [...firebaseReceipts];
+                            const merged = [...serverReceipts];
                             cashReceipts.forEach(localReceipt => {
-                                if (!firebaseReceipts.find(r => r.id === localReceipt.id)) {
+                                if (!serverReceipts.find(r => r.id === localReceipt.id)) {
                                     merged.push(localReceipt);
                                 }
                             });
                             cashReceipts = merged.sort((a, b) => new Date(a.purchasedAt) - new Date(b.purchasedAt));
                         } else {
-                            cashReceipts = firebaseReceipts;
+                            cashReceipts = serverReceipts;
                         }
 
-                        console.log('✅ Loaded data from Firebase (5 documents: main, secondary, ticket_history_ms, ticket_history_hs, audit_log)');
+                        console.log('Loaded data from Convex (main, secondary, ticket_history_ms, ticket_history_hs, audit_log)');
                         
                         // Apply school branding
                         if (schoolBranding && (schoolBranding.schoolName || schoolBranding.logoBase64)) {
@@ -2380,10 +2276,15 @@
             isSyncing = true;
 
             try {
-                // TRANSACTION-BASED SAVE: Prevents concurrent save conflicts
-                if (firebaseInitialized && firebaseDb) {
+                // The save is a sequence of Convex mutations now. Each one is
+                // its own transaction, which is what the five Firestore
+                // runTransaction blocks were hand-rolling.
+                {
                     try {
-                        const { doc, setDoc, getDoc, runTransaction } = window.firebaseModules;
+                        // The server's own counters, read once, so both id
+                        // counters below can take a max against what the server
+                        // actually holds rather than what this tab loaded.
+                        const serverCounters = (await peekServerState()).data() || {};
 
                         // ============================================================
                         // STALENESS CHECK: Refuse to save if our local state is too
@@ -2397,12 +2298,12 @@
                             // settings row instead of the whole document.
                             const mainPeek = await peekServerState();
                             if (mainPeek.exists()) {
-                                const firebaseTs = mainPeek.data().lastSaveTimestamp || 0;
+                                const serverTs = mainPeek.data().lastSaveTimestamp || 0;
                                 const localTs = lastSaveTimestamp || 0;
                                 // If Firebase is significantly newer, our local data is stale
-                                if (firebaseTs > localTs + STALENESS_THRESHOLD_MS) {
+                                if (serverTs > localTs + STALENESS_THRESHOLD_MS) {
                                     console.warn(`🛑 SAVE BLOCKED: local data is stale.`);
-                                    console.warn(`   Firebase: ${new Date(firebaseTs).toISOString()}`);
+                                    console.warn(`   Server: ${new Date(serverTs).toISOString()}`);
                                     console.warn(`   Local:    ${new Date(localTs).toISOString()}`);
                                     console.warn(`   Reloading from Firebase before save...`);
                                     isSyncing = false;
@@ -2440,36 +2341,36 @@
                             const weekPeek = await peekServerState();
                             if (weekPeek.exists()) {
                                 const peekData = weekPeek.data();
-                                const firebaseWeek = peekData.currentWeek;
-                                const firebaseCycleNum = peekData.currentCycle?.cycleNumber;
+                                const serverWeek = peekData.currentWeek;
+                                const serverCycleNum = peekData.currentCycle?.cycleNumber;
                                 const localCycleNum = currentCycle?.cycleNumber;
                                 
                                 // CYCLE GUARD: refuse to roll cycleNumber backwards.
                                 // A stale tab with cycleNumber=1 must not overwrite Firebase's cycleNumber=2.
-                                if (typeof firebaseCycleNum === 'number' && typeof localCycleNum === 'number' && firebaseCycleNum > localCycleNum) {
+                                if (typeof serverCycleNum === 'number' && typeof localCycleNum === 'number' && serverCycleNum > localCycleNum) {
                                     console.warn(`🛑 SAVE BLOCKED: would roll currentCycle backwards.`);
-                                    console.warn(`   Firebase cycleNumber: ${firebaseCycleNum}`);
+                                    console.warn(`   Server cycleNumber: ${serverCycleNum}`);
                                     console.warn(`   Local cycleNumber:    ${localCycleNum}`);
                                     console.warn(`   Reloading fresh state from Firebase...`);
                                     isSyncing = false;
                                     await loadData();
-                                    alert(`⚠️ Your tab was holding an outdated cycle number (Cycle ${localCycleNum}). The system has refreshed to the current cycle (Cycle ${firebaseCycleNum}). Please re-do your last action if needed.`);
+                                    alert(`⚠️ Your tab was holding an outdated cycle number (Cycle ${localCycleNum}). The system has refreshed to the current cycle (Cycle ${serverCycleNum}). Please re-do your last action if needed.`);
                                     return;
                                 }
                                 
                                 // WEEK GUARD: only enforce when cycles match. If our cycle is older,
                                 // the cycle guard above handles it. If our cycle is newer (we just advanced),
                                 // we want our lower week number to take effect.
-                                const sameCycle = (firebaseCycleNum === localCycleNum) || 
-                                                  (typeof firebaseCycleNum !== 'number' && typeof localCycleNum !== 'number');
-                                if (sameCycle && typeof firebaseWeek === 'number' && typeof currentWeek === 'number' && firebaseWeek > currentWeek) {
+                                const sameCycle = (serverCycleNum === localCycleNum) || 
+                                                  (typeof serverCycleNum !== 'number' && typeof localCycleNum !== 'number');
+                                if (sameCycle && typeof serverWeek === 'number' && typeof currentWeek === 'number' && serverWeek > currentWeek) {
                                     console.warn(`🛑 SAVE BLOCKED: would roll currentWeek backwards.`);
-                                    console.warn(`   Firebase currentWeek: ${firebaseWeek}`);
+                                    console.warn(`   Firebase currentWeek: ${serverWeek}`);
                                     console.warn(`   Local currentWeek:    ${currentWeek}`);
                                     console.warn(`   Reloading fresh state from Firebase...`);
                                     isSyncing = false;
                                     await loadData();
-                                    alert(`⚠️ Your tab was holding an outdated week number (Week ${currentWeek}). The system has refreshed to the current week (${firebaseWeek}). Please re-do your last action if needed.`);
+                                    alert(`⚠️ Your tab was holding an outdated week number (Week ${currentWeek}). The system has refreshed to the current week (${serverWeek}). Please re-do your last action if needed.`);
                                     return;
                                 }
                             }
@@ -2645,7 +2546,22 @@
                                         // ships in the browser by design. Included for
                                         // fidelity; it is not a credential.
                                         kickboardSettings, emailJSConfig, passSettings, schoolBranding,
-                                        referralIdCounter, autoWeekEnabled,
+                                        // Both counters take the max against the
+                                        // server's own value, peeked at the top of
+                                        // this save. They only ever go up, or a
+                                        // stale tab reissues an id another tab has
+                                        // already handed out. This is the rule the
+                                        // Firestore transactions enforced with
+                                        // Math.max against the document they had
+                                        // just read; the peek is what replaces that
+                                        // read now the transactions are gone.
+                                        referralIdCounter: Math.max(
+                                            Number(referralIdCounter) || 1,
+                                            Number(serverCounters.referralIdCounter) || 1),
+                                        detentionIdCounter: Math.max(
+                                            Number(detentionIdCounter) || 1,
+                                            Number(serverCounters.detentionIdCounter) || 1),
+                                        autoWeekEnabled,
                                         lastAutoResetDate, lastWeekResetTime,
                                         weekResetDay, weekResetHour, currentCycle,
                                         cycleHistory, cycleStartTimestamp,
@@ -2772,54 +2688,38 @@
                         });
 
                         async function commitHistoryDoc(docName, localHistoriesForThisDoc) {
-                            const ref = doc(firebaseDb, 'raffle_data', docName);
-                            return await runTransaction(firebaseDb, async (transaction) => {
-                                const snap = await transaction.get(ref);
-                                const fbHistories = snap.exists() ? (snap.data().histories || {}) : {};
-                                const fbTombstones = snap.exists() ? (snap.data().tombstones || []) : [];
+                            // MOVED OFF FIRESTORE 2026-08-31.
+                            //
+                            // The transaction that stood here read the stored
+                            // histories, merged them with the local ones per
+                            // student by entryId, and wrote the result back.
+                            // legacyData:mergeSlice does exactly that union
+                            // inside the mutation, keyed per student because the
+                            // slice is keyed, so two teachers awarding at once
+                            // still cannot erase each other's entries.
+                            //
+                            // TOMBSTONES ARE STILL APPLIED HERE, before sending.
+                            // They are the one thing the server union must not
+                            // decide: a union keeps everything, so an entry an
+                            // admin deleted would come straight back the moment
+                            // any tab re-sent it. Filtering locally means the
+                            // deleted entry is never in the payload at all.
+                            const tombstonedIds = new Set(localTombstones.map(t => (
+                                typeof t.entryId === 'string'
+                                    ? t.entryId
+                                    : (t.entryId && t.entryId.entryId) || null
+                            )).filter(Boolean));
 
-                                // NOTE: We do NOT carry tombstones in the history docs anymore.
-                                // Tombstones live in the dedicated `raffle_data/tombstones` document
-                                // (managed by persistTombstone / loadPersistentTombstones).
-                                // We still need a tombstone Set for filtering history entries during
-                                // the merge — built from local memory only, not the doc's old field.
-                                const tombstonedIds = new Set(localTombstones.map(t => {
-                                    // Defensive: handle malformed nested entryIds from past bugs
-                                    return typeof t.entryId === 'string' ? t.entryId : (t.entryId && t.entryId.entryId) || '';
-                                }).filter(Boolean));
-
-                                // Merge per-student by entryId
-                                const mergedHistories = {};
-                                const allStudentIds = new Set([
-                                    ...Object.keys(fbHistories),
-                                    ...Object.keys(localHistoriesForThisDoc)
-                                ]);
-                                allStudentIds.forEach(sid => {
-                                    const fb = fbHistories[sid] || [];
-                                    const local = localHistoriesForThisDoc[sid] || [];
-                                    const byId = new Map();
-                                    fb.forEach(e => {
-                                        const id = ensureEntryId(e);
-                                        if (!tombstonedIds.has(id)) byId.set(id, { ...e, entryId: id });
-                                    });
-                                    local.forEach(e => {
-                                        const id = ensureEntryId(e);
-                                        if (tombstonedIds.has(id)) return;
-                                        if (!byId.has(id)) byId.set(id, { ...e, entryId: id });
-                                    });
-                                    const merged = Array.from(byId.values())
-                                        .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-                                    if (merged.length > 0) mergedHistories[sid] = merged;
-                                });
-
-                                // History doc payload — histories only, no tombstones field
-                                transaction.set(ref, {
-                                    histories: mergedHistories,
-                                    lastSaveTimestamp: timestamp
-                                });
-
-                                return { mergedHistories };
+                            const outgoing = {};
+                            Object.keys(localHistoriesForThisDoc || {}).forEach(sid => {
+                                const kept = (localHistoriesForThisDoc[sid] || [])
+                                    .map(e => ({ ...e, entryId: ensureEntryId(e) }))
+                                    .filter(e => !tombstonedIds.has(e.entryId));
+                                if (kept.length > 0) outgoing[sid] = kept;
                             });
+
+                            await mergeLegacySlice(docName, 'histories', outgoing, 'entryId');
+                            return { mergedHistories: outgoing };
                         }
 
                         // Each history document is independent. A failure in one must
@@ -2930,34 +2830,21 @@
                                 continue;
                             }
                             monthsTried.push(monthKey);
-                            const monthRef = doc(firebaseDb, 'raffle_data', auditDocName(monthKey));
                             try {
-                                const monthResult = await runTransaction(firebaseDb, async (transaction) => {
-                                    const monthDoc = await transaction.get(monthRef);
-                                    const fbMonthEntries = monthDoc.exists() ? (monthDoc.data().auditLog || []) : [];
-
-                                    const byId = new Map();
-                                    fbMonthEntries.forEach(e => {
-                                        const id = ensureEntryId(e);
-                                        if (tombstonedIds.has(id)) return;
-                                        byId.set(id, { ...e, entryId: id });
-                                    });
-                                    monthEntries.forEach(e => {
-                                        const id = ensureEntryId(e);
-                                        if (tombstonedIds.has(id)) return;
-                                        if (!byId.has(id)) byId.set(id, { ...e, entryId: id });
-                                    });
-
-                                    const merged = Array.from(byId.values())
-                                        .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-
-                                    transaction.set(monthRef, {
-                                        auditLog: merged,
-                                        lastSaveTimestamp: timestamp
-                                    });
-
-                                    return merged;
-                                });
+                                // MOVED OFF FIRESTORE 2026-08-31. The union by
+                                // entryId happens inside legacyData:mergeSlice,
+                                // so two teachers writing to the same month at
+                                // the same moment still cannot drop each other's
+                                // entries. Tombstoned entries are filtered
+                                // BEFORE sending, because a union keeps whatever
+                                // it is given: an entry an admin deleted would
+                                // otherwise return the moment any tab re-sent it.
+                                const outgoingMonth = monthEntries
+                                    .map(e => ({ ...e, entryId: ensureEntryId(e) }))
+                                    .filter(e => !tombstonedIds.has(e.entryId))
+                                    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                                await mergeLegacySlice(auditDocName(monthKey), 'auditLog', outgoingMonth, 'entryId');
+                                const monthResult = outgoingMonth;
                                 mergedByMonth[monthKey] = monthResult;
                                 totalSavedAcrossMonths += monthResult.length;
                                 console.log(`✅ Audit log ${monthKey} saved (${monthResult.length} entries)`);
@@ -3059,63 +2946,50 @@
                         // another student's record.
                         try {
                             let mergedSecondary = null;
-                            await runTransaction(firebaseDb, async (transaction) => {
-                                const ref = doc(firebaseDb, 'raffle_data', 'secondary');
-                                const snap = await transaction.get(ref);
-                                const stored = snap.exists() ? snap.data() : {};
-                                const M = window.WildcatMerge;
+                            // MOVED OFF FIRESTORE 2026-08-31.
+                            //
+                            // Two kinds of field lived in this document and they
+                            // keep their two different rules.
+                            //
+                            // The four id-bearing lists are UNIONED server side
+                            // by legacyData:mergeSlice, which is what the
+                            // Firestore transaction's mergeById was for: a
+                            // detention or a hall pass another tab wrote between
+                            // this tab's load and its save must survive.
+                            //
+                            // The rest have no ids, so there is nothing to merge
+                            // on and they keep the whole-value behaviour they
+                            // already had. That is unchanged rather than newly
+                            // introduced; giving them ids is its own change and
+                            // pretending otherwise here would be a silent one.
+                            const secondaryLists = {
+                                detentions,
+                                hallPasses,
+                                preventionGroups,
+                                cashReceipts,
+                            };
+                            for (const key of Object.keys(secondaryLists)) {
+                                await mergeLegacySlice('secondary', key, secondaryLists[key] || [], 'id');
+                            }
 
-                                // Stamp lists are newest-concept-first so rows
-                                // written before `updatedAt` existed still order
-                                // sensibly instead of collapsing to zero.
-                                const lists = {
-                                    detentions: [detentions,
-                                        ['updatedAt', 'completedAt', 'assignedAt']],
-                                    hallPasses: [hallPasses,
-                                        ['updatedAt', 'returnedAt', 'createdAt']],
-                                    preventionGroups: [preventionGroups,
-                                        ['updatedAt', 'createdAt']],
-                                    cashReceipts: [cashReceipts,
-                                        ['updatedAt', 'cancelledAt', 'fulfilledAt', 'purchasedAt']]
-                                };
+                            const secondaryWholeValue = {
+                                weeklyWinners,
+                                bigRaffleWinners,
+                                weeklyHistory,
+                                loginHistory,
+                                detentionLocations,
+                                detentionReasons,
+                            };
+                            for (const key of Object.keys(secondaryWholeValue)) {
+                                await saveLegacySlice('secondary', key, secondaryWholeValue[key] || []);
+                            }
 
-                                const out = {
-                                    // No ids on these four, so they keep the
-                                    // previous whole-value behaviour. That is
-                                    // unchanged rather than newly introduced;
-                                    // giving them ids is its own change.
-                                    weeklyWinners,
-                                    bigRaffleWinners,
-                                    weeklyHistory,
-                                    loginHistory,
-                                    detentionLocations,
-                                    detentionReasons,
-                                    // The counter only ever goes up, so a stale
-                                    // tab cannot hand out an id another tab has
-                                    // already used. Same rule as referralIdCounter.
-                                    detentionIdCounter: Math.max(
-                                        Number(detentionIdCounter) || 1,
-                                        Number(stored.detentionIdCounter) || 1),
-                                    lastSaveTimestamp: timestamp
-                                };
-
-                                Object.keys(lists).forEach(key => {
-                                    const local = lists[key][0] || [];
-                                    const storedList = stored[key] || [];
-                                    out[key] = M.mergeById(storedList, local,
-                                        { stampFields: lists[key][1] });
-                                    const rep = M.mergeReport(storedList, local, out[key]);
-                                    if (rep.wouldHaveLost.length) {
-                                        console.warn(
-                                            `[secondary] kept ${rep.keptFromStorage} ${key} this tab ` +
-                                            `had not seen: ${rep.wouldHaveLost.join(', ')}. ` +
-                                            'A whole-document write would have destroyed them.');
-                                    }
-                                });
-
-                                transaction.set(ref, out);
-                                mergedSecondary = out;
-                            });
+                            // detentionIdCounter only ever goes up, so a stale tab
+                            // cannot hand out an id another tab already used. It
+                            // rides in the settings appData:save writes, which is
+                            // where referralIdCounter goes for the same reason.
+                            mergedSecondary = { ...secondaryLists, ...secondaryWholeValue,
+                                detentionIdCounter };
 
                             // Applied AFTER the transaction resolves, never inside
                             // it: Firestore retries that callback on contention,
@@ -3229,45 +3103,6 @@
                         }));
                         console.log('✅ Saved to localStorage (fallback)');
                     }
-                } else {
-                    // No Firebase, just localStorage
-                    localStorage.setItem('raffleData', JSON.stringify({
-                        students,
-                        currentWeek,
-                        cycleDuration,
-                        weeklyWinners,
-                        bigRaffleWinners,
-                        teachers,
-                        auditLog,
-                        weeklyHistory,
-                        pbisSubcategories,
-                        academicSubcategories,
-                        lastPowerSchoolSync,
-                        kickboardSettings,
-                        emailJSConfig,
-                        hallPasses,
-                        passSettings,
-                        preventionGroups,
-                        schoolBranding,
-                        behaviorReferrals,
-                        referralIdCounter,
-                        detentions,
-                        detentionIdCounter,
-                        detentionLocations,
-                        detentionReasons,
-                        loginHistory,
-                        autoWeekEnabled,
-                        lastAutoResetDate,
-                        lastWeekResetTime,
-                        weekResetDay,
-                        weekResetHour,
-                        currentCycle,
-                        cycleHistory,
-                        cycleStartTimestamp,
-                        localTombstones,
-                        entityTombstones
-                    }));
-                    console.log('✅ Saved to localStorage');
                 }
                 saveSucceeded = true;
             } catch (error) {
@@ -3351,88 +3186,14 @@
             console.log('💡 Use "Export Backup" button for manual backups instead');
             return;
             
-            /* DISABLED CODE - kept for reference
-            if (!firebaseInitialized || !firebaseDb) {
-                console.log('⚠️ Cannot create automatic backup: Firebase not initialized');
-                return;
-            }
-            
-            try {
-                const { doc, setDoc, serverTimestamp } = window.firebaseModules;
-                const today = new Date().toISOString().split('T')[0];
-                
-                // The full-copy backup exceeded 1MB (213% at last check), so this
-                // document was silently failing to write — the daily safety net
-                // was not there. Split into slices, each well under the limit.
-                const backupStudentsCore = (students || []).map(s => {
-                    const c = Object.assign({}, s);
-                    delete c.ticketHistory;   // sliced out below
-                    delete c.sections;        // reference data, rebuilt from import
-                    delete c.cashTransactions;
-                    delete c.wildcatCashTransactions;
-                    return c;
-                });
-                // Histories are split BY SCHOOL, the same way ticket_history_ms /
-                // ticket_history_hs are. Bundling both schools produced a 1051KB
-                // slice (103% of the limit) — the split gives ~702KB and ~349KB.
-                // Mirrors the live grade-band split (ms / hs_910 / hs_1112) so a
-                // backup slice can never be larger than the document it backs up.
-                const backupHistMs = {}, backupHist910 = {}, backupHist1112 = {};
-                const backupCash = {};
-                (students || []).forEach(s => {
-                    if (s.ticketHistory && s.ticketHistory.length) {
-                        const g = parseInt(s.grade, 10);
-                        if (g >= 11) backupHist1112[s.id] = s.ticketHistory;
-                        else if (g >= 9) backupHist910[s.id] = s.ticketHistory;
-                        else backupHistMs[s.id] = s.ticketHistory;
-                    }
-                    const tx = s.wildcatCashTransactions || s.cashTransactions;
-                    if (tx && tx.length) backupCash[s.id] = tx;
-                });
-
-                const backupData = {
-                    teachers,
-                    students: backupStudentsCore,
-                    currentWeek,
-                    cycleDuration,
-                    weeklyWinners,
-                    bigRaffleWinners,
-                    auditLog: auditLog.slice(-1000), // Last 1000 entries only
-                    weeklyHistory,
-                    schoolBranding,
-                    currentCycle,
-                    cycleHistory,
-                    cycleStartTimestamp,
-                    backupDate: serverTimestamp(),
-                    backupType: 'automatic'
-                };
-                
-                await setDoc(doc(firebaseDb, 'backups', today), backupData);
-                await new Promise(r => setTimeout(r, 50));
-                await setDoc(doc(firebaseDb, 'backups', `${today}_histories_ms`), {
-                    ticketHistories: backupHistMs, backupDate: serverTimestamp(), backupType: 'automatic-slice'
-                });
-                await new Promise(r => setTimeout(r, 50));
-                await setDoc(doc(firebaseDb, 'backups', `${today}_histories_hs910`), {
-                    ticketHistories: backupHist910, backupDate: serverTimestamp(), backupType: 'automatic-slice'
-                });
-                await new Promise(r => setTimeout(r, 50));
-                await setDoc(doc(firebaseDb, 'backups', `${today}_histories_hs1112`), {
-                    ticketHistories: backupHist1112, backupDate: serverTimestamp(), backupType: 'automatic-slice'
-                });
-                await new Promise(r => setTimeout(r, 50));
-                await setDoc(doc(firebaseDb, 'backups', `${today}_cash`), {
-                    cashTransactions: backupCash, backupDate: serverTimestamp(), backupType: 'automatic-slice'
-                });
-                console.log(`✅ Automatic backup created: ${today} (5 slices)`);
-                
-                // Clean up old backups (keep last 30 days)
-                // Note: Cleanup happens on next load to avoid slowing down this save
-                
-            } catch (error) {
-                console.error('❌ Automatic backup failed:', error);
-            }
-            */
+            // The Firebase backup code that sat here is deleted, not disabled.
+            //
+            // It had been unreachable behind the return above since the day
+            // automatic backups outgrew the 1MB document limit, and it wrote to a
+            // `backups` collection that no migration ever mirrored and nothing
+            // ever read back. Keeping eighty lines of dead Firestore calls "for
+            // reference" in a file that no longer loads Firebase is how a reader
+            // concludes the app still needs it. Manual export is the backup path.
         }
         
         // Restore from backup file
@@ -3580,11 +3341,11 @@
                     const mainSnap = await peekServerState();
 
                     if (mainSnap.exists()) {
-                        const firebaseTimestamp = mainSnap.data().lastSaveTimestamp;
+                        const serverTimestampValue = mainSnap.data().lastSaveTimestamp;
                         const localTimestamp = lastSaveTimestamp;
                         
                         // Only load if Firebase is newer
-                        if (firebaseTimestamp > localTimestamp) {
+                        if (serverTimestampValue > localTimestamp) {
                             console.log('🔄 Auto-refreshing data in background (Firebase has newer data)');
                             await loadData();
                             

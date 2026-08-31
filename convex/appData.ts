@@ -140,6 +140,12 @@ export const freshness = query({
       // stale copy of everything. Null for the same reason as the two above —
       // "no answer" must never compare as "older than every tab".
       lastSaveTimestamp: num(settings.lastSaveTimestamp),
+      // The two id counters, so a save can take the max against what the server
+      // actually holds rather than against what this tab loaded. They only ever
+      // go up; a tab that has been open since before somebody else issued a
+      // detention id must not hand that id out a second time.
+      referralIdCounter: num(settings.referralIdCounter),
+      detentionIdCounter: num(settings.detentionIdCounter),
       serverTime: new Date().toISOString(),
     };
   },

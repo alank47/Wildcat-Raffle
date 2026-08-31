@@ -71,8 +71,12 @@ console.log("\nAttendance marked on one device is not undone by another");
 
 console.log("\nReceipts reach Firestore at all, which is new");
 {
+  // Was `cashReceipts: [cashReceipts, [...stamps]]` inside the Firestore
+  // transaction's merge table. The transaction moved to Convex on 2026-08-31;
+  // the four id-bearing lists are now named in secondaryLists and unioned
+  // server-side. The property is the same one: receipts reach the server at all.
   check("cashReceipts is written to the secondary document",
-    /cashReceipts: \[cashReceipts,/.test(script));
+    /const secondaryLists = \{[\s\S]{0,200}cashReceipts,/.test(script));
   // The regression that hid for the whole feature's life: written to
   // localStorage, read from Firestore, so always empty on load.
   check("and it is no longer localStorage-only",
@@ -128,10 +132,16 @@ console.log("\nLists with no id keep their previous behaviour, deliberately");
   // loginHistory and the raffle arrays carry no id, so they cannot be merged
   // by one. Saying so out loud stops this reading as an oversight.
   const body = script.slice(
-    script.indexOf("// TRANSACTION 3: the secondary document."),
-    script.indexOf("❌ secondary save failed:"));
+    // Start at the comment block, not the const: the reason these six are
+    // replaced rather than merged is written above the code it explains.
+    script.indexOf("Two kinds of field lived in this document"),
+    script.indexOf("secondary save failed:"));
   check("they are written whole", /weeklyWinners,\s*\n\s*bigRaffleWinners,/.test(body));
-  check("and the reason is recorded", /No ids on these four/.test(body));
+  // The wording moved with the code. What must stay recorded is WHY these six
+  // are replaced rather than merged: they carry no ids, so there is nothing to
+  // merge on. Keeping that written down is what stops someone "fixing" the
+  // inconsistency by unioning them and duplicating every row.
+  check("and the reason is recorded", /no ids, so there is nothing to merge/.test(body));
 }
 
 console.log("\nReferrals carry their own student number");

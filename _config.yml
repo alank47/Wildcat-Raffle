@@ -17,8 +17,6 @@ exclude:
   - "*.test.mjs"
   - package.json
   - package-lock.json
-  - firebase.json
-  - firestore.rules
 # app/ is the built React hub served at /app/ — keep it. It contains no .md,
 # and its .js/.css are copied verbatim (Jekyll only Liquid-renders front-matter
 # files and .md), so it is safe to leave in.
