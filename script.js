@@ -16078,10 +16078,19 @@
                                 '</span></div>';
                         }).join('') + '</div>');
 
+            // Which course row is open, by section id. Module-level rather
+            // than read off the DOM because the dashboard re-renders wholesale
+            // on every poll: reading `is-open` back from the markup would lose
+            // the open row a second after a student opened it.
             // ---- grades ------------------------------------------------------
             // The same rule as the card it replaces: an absent grade is absent.
             // Never a 0, never an F. A student with nothing posted has not failed.
             const gradeRows = (grades && grades.rows) || [];
+            // Its own availability flag, deliberately separate from grades'.
+            // The two fail independently: a student can have grades and no
+            // missing-work sync yet, and "nothing missing" must not render the
+            // same as "we did not look".
+            const missing = (grades && grades.missingWork) || { available: false, bySection: {}, total: 0 };
             const posted = gradeRows.filter(function (g) {
                 return (g.currentGrade !== null && g.currentGrade !== undefined) ||
                        (g.currentPercent !== null && g.currentPercent !== undefined);
@@ -16106,13 +16115,76 @@
                                 ? '<span class="wp-rowend">' + wpEsc(letter || (pct + '%')) + '</span>' +
                                   (letter && pct !== null ? '<span class="wp-rowpct">' + pct + '%</span>' : '')
                                 : '<span class="wp-rowend is-none">Not posted</span>';
-                            return '<div class="wp-row">' +
+                            const inner =
                                 '<span class="wp-rowmain">' +
                                     '<span class="wp-rowtitle">' + wpEsc(g.courseName || 'Course') + '</span>' +
                                     (g.courseNumber ? '<span class="wp-rowsub">' + wpEsc(g.courseNumber) + '</span>' : '') +
                                 '</span>' +
-                                '<span class="wp-rowmain wp-rowright">' + end + '</span>' +
-                                '</div>';
+                                '<span class="wp-rowmain wp-rowright">' + end + '</span>';
+
+                            // A COURSE ROW OPENS ONLY WHEN THERE IS SOMETHING BEHIND IT.
+                            //
+                            // `missing.available` is false until the SIS sync has
+                            // run, and a row that opens onto "unavailable" is worse
+                            // than a row that does not open: it teaches a student
+                            // the feature is broken. So the row stays a plain div
+                            // until there is an answer to give, and the answer can
+                            // legitimately be "nothing missing", which is worth
+                            // opening for.
+                            if (!missing.available) {
+                                return '<div class="wp-row">' + inner + '</div>';
+                            }
+                            const items = (missing.bySection && g.sectionId
+                                ? missing.bySection[g.sectionId]
+                                : null) || [];
+                            const key = String(g.sectionId || ('c' + wpEsc(g.courseName || '')));
+                            const open = _wpGradeOpen === key;
+                            const body = items.length
+                                ? '<div class="wp-rows wp-rows-nested">' + items.slice().sort(function (a, b) {
+                                        // Oldest due first, and NO DUE DATE LAST.
+                                        // Sorting on `dueDate || ''` puts undated
+                                        // work at the top, above things that are
+                                        // genuinely overdue, which is the opposite
+                                        // of what a student needs to see first.
+                                        // Same rule the schedule uses for a period
+                                        // it cannot parse.
+                                        const ad = a.dueDate ? String(a.dueDate) : '\uffff';
+                                        const bd = b.dueDate ? String(b.dueDate) : '\uffff';
+                                        return ad.localeCompare(bd);
+                                    }).map(function (m) {
+                                        // pointsPossible is null, never 0, when the
+                                        // section does not score by points. Printing
+                                        // "0 pts" would say the work does not matter.
+                                        const worth = (typeof m.pointsPossible === 'number')
+                                            ? wpEsc(String(m.pointsPossible)) + ' pts'
+                                            : '';
+                                        const due = m.dueDate ? wpEsc(String(m.dueDate)) : 'No due date';
+                                        return '<div class="wp-row wp-row-nested">' +
+                                            '<span class="wp-rowmain">' +
+                                                '<span class="wp-rowtitle">' + wpEsc(m.name || 'Assignment') + '</span>' +
+                                                '<span class="wp-rowsub">' + due +
+                                                    (m.categoryName ? ' &middot; ' + wpEsc(m.categoryName) : '') +
+                                                    (m.isLate ? ' &middot; marked late' : '') +
+                                                '</span>' +
+                                            '</span>' +
+                                            '<span class="wp-rowmain wp-rowright">' +
+                                                (worth ? '<span class="wp-rowend">' + worth + '</span>' : '') +
+                                            '</span>' +
+                                        '</div>';
+                                    }).join('') + '</div>'
+                                : wpEmpty('Nothing missing in this class.');
+                            return '<div class="wp-gradesec' + (open ? ' is-open' : '') + '">' +
+                                '<button type="button" class="wp-row wp-row-btn" aria-expanded="' +
+                                    (open ? 'true' : 'false') + '" onclick="wpGradeToggle(' +
+                                    JSON.stringify(key).replace(/"/g, '&quot;') + ')">' +
+                                    inner +
+                                    '<span class="wp-rowchev" aria-hidden="true">&#9662;</span>' +
+                                    (items.length
+                                        ? '<span class="wp-rowbadge">' + items.length + '</span>'
+                                        : '') +
+                                '</button>' +
+                                '<div class="wp-gradebody">' + body + '</div>' +
+                            '</div>';
                         }).join('') + '</div>' +
                         (posted === 0
                             ? wpFoot('Nothing has been posted yet. An empty grade is not a zero.')
@@ -16120,6 +16192,33 @@
 
             return tickets + awards + money + gradePanel + schedule + attendance;
         }
+        /**
+         * Open one course's missing-work list, or close it.
+         *
+         * One at a time, like the rewards accordion: a student comparing two
+         * classes is better served by a short list than by six open at once,
+         * and on a phone six open sections is a scroll with no landmarks.
+         *
+         * Re-renders through the same path the poll uses, so there is one way
+         * the dashboard is drawn and this cannot drift from it.
+         */
+        let _wpGradeOpen = null;
+        let _wpDashLast = null;
+        function wpGradeToggle(key) {
+            _wpGradeOpen = (_wpGradeOpen === key) ? null : key;
+            const dash = wpById('wpDash');
+            if (dash && _wpDashLast) {
+                dash.innerHTML = wpDashboard(_wpDashLast.mine, _wpDashLast.sched, _wpDashLast.grades);
+            }
+        }
+        // Guarded. The dashboard harness and student-dashboard.test.mjs lift
+        // these functions out of this file and run them in Node, where there is
+        // no `window`; an unguarded assignment throws at load and takes the
+        // whole sliced block with it. In a browser this file's top level IS the
+        // global scope, so the declaration above is already reachable from the
+        // onclick attribute and this line is only belt and braces.
+        if (typeof window !== 'undefined') window.wpGradeToggle = wpGradeToggle;
+
         /* ---- end desk dashboard ---- */
 
 
@@ -17597,6 +17696,11 @@
             // card a student is standing at a scanner holding, and the reverse
             // holds too, so this is outside the !pass return above.
             const dash = wpById('wpDash');
+            // Cached so opening a course row is a re-render, not a round trip.
+            // loadStudentPortal() re-fetches everything; calling it to expand a
+            // list would put a network request behind a disclosure triangle and
+            // make the panel feel broken on a school connection.
+            _wpDashLast = { mine: mine, sched: sched, grades: grades };
             if (dash) dash.innerHTML = wpDashboard(mine, sched, grades);
 
             // Over the wallet while the pass is running. Same card object, so the

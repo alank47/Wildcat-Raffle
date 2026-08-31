@@ -7137,3 +7137,63 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     gap: 12px; margin-top: 12px; padding-top: 8px;
     border-top: 1px solid var(--wp-rule, rgba(255,255,255,.12));
 }
+
+/* --- Grades: a course row opens its own missing-work list ------------------
+   The row is a real <button>, not a div with a click handler, so it is
+   focusable, reachable by keyboard and announced as expandable. A student on a
+   Chromebook tabbing through the dashboard gets the same affordance as one
+   tapping it. `wp-row` already supplies the layout; this only adds the parts a
+   button needs and CSS resets it otherwise inherits. */
+.wp-row-btn {
+    width: 100%;
+    background: none;
+    border: 0;
+    border-top: 1px solid var(--wp-rule, rgba(255, 255, 255, 0.10));
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.wp-gradesec:first-child .wp-row-btn { border-top: 0; }
+.wp-row-btn:hover .wp-rowtitle { opacity: 1; }
+.wp-row-btn:focus-visible {
+    outline: 2px solid var(--wp-ink, currentColor);
+    outline-offset: 2px;
+    border-radius: 8px;
+}
+.wp-rowchev {
+    flex: none;
+    font-size: 11px;
+    opacity: .55;
+    transition: transform 160ms ease;
+}
+.wp-gradesec.is-open .wp-rowchev { transform: rotate(180deg); }
+
+/* The count of missing pieces, on the row itself, so a student does not have
+   to open six classes to find the one that needs them. Absent when zero: a
+   badge reading 0 is noise on the classes that are fine. */
+.wp-rowbadge {
+    flex: none;
+    min-width: 20px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+    background: rgba(190, 60, 45, .16);
+    color: #B3392F;
+}
+
+/* Closed by default and closed by DEFAULT-not-display, so the height animates
+   and a screen reader is not handed a list the student cannot see. */
+.wp-gradebody {
+    display: none;
+    padding: 2px 0 10px 0;
+}
+.wp-gradesec.is-open .wp-gradebody { display: block; }
+.wp-rows-nested { padding-left: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+    .wp-rowchev { transition: none; }
+}

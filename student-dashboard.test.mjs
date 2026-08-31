@@ -34,14 +34,18 @@ function slice(start, end) {
 }
 
 // The region under test, plus the two helpers it borrows from the card stack.
-const { wpDashboard } = new Function(
+const { wpDashboard, wpGradeToggle } = new Function(
   `const wpEsc = (v) => String(v == null ? "" : v)
      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
    const wpEmpty = (t) => '<p class="wp-empty">' + wpEsc(t) + '</p>';
    const wpFoot  = (t) => '<p class="wp-foot">' + wpEsc(t) + '</p>';
-   const wpPeriodRank = (p) => { const n = parseInt(String(p ?? ""), 10); return isNaN(n) ? 999 : n; };\n` +
+   const wpPeriodRank = (p) => { const n = parseInt(String(p ?? ""), 10); return isNaN(n) ? 999 : n; };
+   // wpGradeToggle re-renders through the DOM. There is no DOM here, and a null
+   // element is the branch it already handles, so the toggle reduces to exactly
+   // the state change this file wants to drive.
+   const wpById = () => null;\n` +
   slice("/* ---- the desk dashboard ---", "/* ---- end desk dashboard ---- */") +
-  "\nreturn { wpDashboard };",
+  "\nreturn { wpDashboard, wpGradeToggle };",
 )();
 
 const FULL = {
@@ -133,6 +137,69 @@ check("and is shown by the same .wp-wide the rest of the wide layout uses",
   /#studentPassView\.wp-wide \.wp-dash/.test(readFileSync(new URL("./styles.css", import.meta.url), "utf8")));
 check("the container exists in the markup",
   /id="wpDash"/.test(readFileSync(new URL("./index.html", import.meta.url), "utf8")));
+
+console.log("\n9. A grade row opens its own missing work");
+{
+  const MISSING = {
+    available: true,
+    total: 3,
+    bySection: {
+      S1: [
+        { assignmentSectionId: "a1", name: "Late essay", dueDate: "2026-08-28", pointsPossible: 15, isLate: true },
+        { assignmentSectionId: "a2", name: "Problem set", dueDate: "2026-08-21", pointsPossible: 20, isLate: false },
+        { assignmentSectionId: "a3", name: "Journal", dueDate: null, pointsPossible: null, isLate: false },
+      ],
+      S2: [],
+    },
+  };
+  const rows = [
+    { courseName: "Algebra", currentGrade: "B", currentPercent: 86, sectionId: "S1" },
+    { courseName: "Biology", currentGrade: "A", currentPercent: 94, sectionId: "S2" },
+  ];
+  const withMissing = () => wpDashboard(FULL, sched([]), { rows, available: true, missingWork: MISSING });
+
+  // A row must not become a button before there is anything to open. Until the
+  // sync runs, opening onto "unavailable" teaches a student the feature is broken.
+  const noSync = wpDashboard(FULL, sched([]), { rows, available: true });
+  check("without the sync, a course row is not a button", !/wp-row-btn/.test(noSync));
+  check("with it, the row is a real button", /<button[^>]*class="wp-row wp-row-btn"/.test(withMissing()));
+  check("and says whether it is expanded", /aria-expanded="false"/.test(withMissing()));
+
+  // The count belongs on the closed row, or a student opens six classes to find
+  // the one that needs them. Zero is not a count worth showing.
+  check("a course with missing work carries a badge", /wp-rowbadge">3</.test(withMissing()));
+  check("a course with none carries no badge", (withMissing().match(/wp-rowbadge/g) || []).length === 1);
+
+  wpGradeToggle("S1");
+  const open = withMissing();
+  check("opening one course marks it open", /wp-gradesec is-open/.test(open));
+  check("and flips its aria-expanded", /aria-expanded="true"/.test(open));
+
+  const body = open.slice(open.indexOf("wp-gradesec is-open"));
+  const at = (n) => body.indexOf(n);
+  check("due work sorts oldest first", at("Problem set") < at("Late essay"));
+  check("and undated work sorts LAST, not first",
+    at("Journal") > at("Late essay"),
+    "sorting on `dueDate || \'\'` puts undated work above things genuinely overdue");
+  check("a late piece says so", /marked late/.test(body));
+
+  // The rule this panel shares with every other one: an absent value is absent.
+  // \b matters: /0 pts/ matches INSIDE "20 pts", so the naive version fails on
+  // correct output and would have been "fixed" by weakening it.
+  check("an assignment with no point value shows no points, never 0 pts",
+    !/\b0 pts/.test(body) && /20 pts/.test(body));
+
+  wpGradeToggle("S2");
+  const other = withMissing();
+  check("a course with nothing missing says so rather than showing an empty box",
+    /Nothing missing in this class\./.test(other));
+  check("only one course is open at a time",
+    (other.match(/wp-gradesec is-open/g) || []).length === 1);
+
+  wpGradeToggle("S2");
+  check("pressing the open row again closes it",
+    !/wp-gradesec is-open/.test(withMissing()));
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

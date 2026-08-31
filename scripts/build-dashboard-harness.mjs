@@ -69,10 +69,39 @@ const SCHEDULE = [
   { courseName: 'PE', period: '6', teacher: 'Coach Diaz', term: 'S1' },
 ];
 const GRADES = [
-  { courseName: 'Algebra I', courseNumber: 'MAT-101', currentGrade: 'B', currentPercent: 86 },
-  { courseName: 'Biology', courseNumber: 'SCI-140', currentGrade: 'A', currentPercent: 94 },
-  { courseName: 'English 9', courseNumber: 'ENG-109', currentGrade: null, currentPercent: null },
+  { courseName: 'Algebra I', courseNumber: 'MAT-101', currentGrade: 'B', currentPercent: 86, sectionId: '5989' },
+  { courseName: 'Biology', courseNumber: 'SCI-140', currentGrade: 'A', currentPercent: 94, sectionId: '6055' },
+  { courseName: 'English 9', courseNumber: 'ENG-109', currentGrade: null, currentPercent: null, sectionId: '6067' },
 ];
+
+/**
+ * Missing work, shaped as views_app returns it.
+ *
+ * The three courses are chosen to be the states that are easy to get wrong:
+ * one with several pieces missing including one with NO point value (which
+ * must never render as "0 pts"), one with nothing missing (which must say so
+ * rather than look broken), and one whose grade is not posted at all (a
+ * student can owe work in a class that has no grade yet, and the two facts are
+ * unrelated).
+ */
+const MISSING = {
+  available: true,
+  total: 4,
+  bySection: {
+    '5989': [
+      { assignmentSectionId: '125692', name: 'Unit 3 Problem Set', dueDate: '2026-08-21',
+        pointsPossible: 20, courseName: 'Algebra I', categoryName: 'Homework', isLate: false },
+      { assignmentSectionId: '125693', name: 'Chapter 4 Quiz Corrections', dueDate: '2026-08-28',
+        pointsPossible: 15, courseName: 'Algebra I', categoryName: 'Assessment', isLate: true },
+      { assignmentSectionId: '125694', name: 'Warm-up journal', dueDate: null,
+        pointsPossible: null, courseName: 'Algebra I', categoryName: 'Practice', isLate: false },
+    ],
+    '6067': [
+      { assignmentSectionId: '125791', name: 'Reading response 2', dueDate: '2026-08-26',
+        pointsPossible: 10, courseName: 'English 9', categoryName: 'Writing', isLate: false },
+    ],
+  },
+};
 
 const STATES = [
   {
@@ -84,7 +113,25 @@ const STATES = [
       wildcatCash: { balance: 14.5, earned: 40, spent: 25.5 },
       attendance: { available: true, daysAbsentTerm: 2, daysAbsentYtd: 6, daysTardyTerm: 1 },
     },
-    sched: { rows: SCHEDULE, available: true }, grades: { rows: GRADES, available: true },
+    sched: { rows: SCHEDULE, available: true },
+    grades: { rows: GRADES, available: true, missingWork: MISSING },
+  },
+  {
+    title: 'Chromebook, a course row opened',
+    why: 'The open state is rendered here rather than clicked. The harness posts ' +
+         'MARKUP into an iframe, so no script runs inside one and a click cannot ' +
+         'be tested. What can be tested is what the open row LOOKS like, which is ' +
+         'where the mistakes are: an assignment with no point value must not read ' +
+         '"0 pts", and a course with nothing missing must say so rather than ' +
+         'render an empty box.',
+    w: 1440, h: 940, wide: true, openSection: '5989',
+    mine: {
+      points: { pbis: 12, attendance: 4, academic: 7, total: 23, weeksQualified: 5, bigRaffleEntries: 5 },
+      wildcatCash: { balance: 14.5, earned: 40, spent: 25.5 },
+      attendance: { available: true, daysAbsentTerm: 2, daysAbsentYtd: 6, daysTardyTerm: 1 },
+    },
+    sched: { rows: SCHEDULE, available: true },
+    grades: { rows: GRADES, available: true, missingWork: MISSING },
   },
   {
     title: 'Chromebook, fields the sync dropped',
@@ -190,6 +237,10 @@ STATES.forEach(function (s, i) {
     '</body></html>';
 
   f.addEventListener('load', function () {
+    // Set the open row BEFORE rendering. wpGradeToggle cannot run inside the
+    // iframe (it receives markup, not script), so the only way to see the open
+    // state is to render it open.
+    _wpGradeOpen = s.openSection || null;
     f.contentWindow.postMessage(wpDashboard(s.mine, s.sched, s.grades), '*');
   });
 });

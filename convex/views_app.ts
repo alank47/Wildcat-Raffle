@@ -233,6 +233,13 @@ export const myStudentView = query({
           .collect()
       : [];
 
+    const missingWork = number.ok
+      ? await ctx.db
+          .query("psMissingWork")
+          .withIndex("by_studentNumber", (q) => q.eq("studentNumber", number.value))
+          .collect()
+      : [];
+
     // .first(), not .unique(). putAttendance upserts one row per student number,
     // so a second row is a data fault, and .unique() answers a data fault by
     // throwing a PLAIN Error, which Convex redacts to "Server Error" in
@@ -326,7 +333,39 @@ export const myStudentView = query({
         // gradeCell, not an inline map. The inline version tested
         // `currentGrade !== undefined`, which passes for "" and rendered an
         // empty string as a grade. See studentPortalRules.gradeCell.
-        courses: gradeRows.map(gradeCell),
+        // sectionId rides ALONGSIDE gradeCell rather than inside it. gradeCell
+        // is a pure rule with its own tests about what counts as a posted
+        // grade; a section id is routing, not grading, and widening it to carry
+        // one would make those tests answer a question they were not asked.
+        courses: gradeRows.map((r) => ({ ...gradeCell(r), sectionId: r.sectionId ?? null })),
+        // Missing work, grouped by the section it belongs to, so a course row
+        // can open its own list without the client re-grouping and without
+        // shipping another student's rows to reach this one.
+        //
+        // `available` is its own flag, separate from grades.available. The two
+        // fail independently: a student can have grades and no missing-work
+        // sync, and a course with an empty list has genuinely nothing missing.
+        // Collapsing them would make "nothing missing" and "we did not look"
+        // render identically, which is the failure this file exists to avoid.
+        missingWork: {
+          available: number.ok && missingWork.length >= 0,
+          bySection: missingWork.reduce((acc, m) => {
+            const key = m.sectionId ?? "__nosection__";
+            (acc[key] ??= []).push({
+              assignmentSectionId: m.assignmentSectionId,
+              name: m.assignmentName ?? null,
+              dueDate: m.dueDate ?? null,
+              // null, never 0. A section can score by something other than
+              // points, and "worth 0" tells a student it does not matter.
+              pointsPossible: m.pointsPossible ?? null,
+              courseName: m.courseName ?? null,
+              categoryName: m.categoryName ?? null,
+              isLate: m.isLate ?? false,
+            });
+            return acc;
+          }, {} as Record<string, unknown[]>),
+          total: missingWork.length,
+        },
       },
 
       attendance: {
