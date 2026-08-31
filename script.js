@@ -220,13 +220,23 @@
 
 
 
-        // Exposed for console preflight before the rules swap.
+        // Exposed for console inspection. signInStaffWithEntra and
+        // signInStudentWithGoogle USED TO BE LISTED HERE and were deleted with
+        // the Firebase auth path they called; the names stayed behind and threw
+        // ReferenceError at load, which killed every line of this file below
+        // this point and left students looping on the sign-in screen.
+        //
+        // node --check cannot see it (the syntax is fine) and no test executed
+        // this line. An object literal is the one place a deleted function goes
+        // unnoticed: it looks like data, and it runs like code.
+        //
+        // Real sign-in is wildcat-auth.js. Nothing here was ever part of it:
+        // both deleted functions threw immediately on AUTH_CONFIG.enabled being
+        // false, which it always was.
         window.wildcatAuth = {
             config: AUTH_CONFIG,
             normalizeEmail,
-            classifyIdentity,
-            signInStaffWithEntra,
-            signInStudentWithGoogle
+            classifyIdentity
         };
         
         // ========================================
@@ -5058,7 +5068,6 @@
             if (!ok) return;
 
             try {
-                const { doc, getDoc, setDoc } = window.firebaseModules;
                 const who = currentUser.name || 'admin';
 
                 // 1. Tombstone the old winner entry
