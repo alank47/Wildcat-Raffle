@@ -59,6 +59,13 @@ export const ICONS = {
   download: 'Download01', upload: 'Upload01', mail: 'Mail01', list: 'List', filter: 'FilterFunnel01',
   'arrow-right': 'ArrowRight', 'arrow-up-right': 'ArrowUpRight', copy: 'Copy01', printer: 'Printer',
   play: 'Zap', bus: 'Bus', award: 'Award01', banknote: 'BankNote01', tag: 'Tag01',
+  // wildcat cash: the words the money screens need and no more. 'shopping' is
+  // what a student spends, 'store' is where they spend it, 'grade' is the year
+  // they are in (the hat, not the teacher), and the two trends are the pair the
+  // analytics tabs read as opposites.
+  grade: 'GraduationHat01', store: 'Building05', shopping: 'ShoppingBag01',
+  receipt: 'Receipt', card: 'CreditCard01', archive: 'Archive', minus: 'Minus',
+  'trending-up': 'TrendUp01', 'trending-down': 'TrendDown01',
 };
 
 const kebab = (s) => s.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase());

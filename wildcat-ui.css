@@ -1761,6 +1761,10 @@ body.wc-loading { overflow: hidden; }
 .mode-card-icon .wc-icon,
 .mode-dd-icon .wc-icon { width: 17px; height: 17px; vertical-align: 0; }
 .page-ico .wc-icon, .panel-icon .wc-icon, .panel-icon-sq .wc-icon { width: 18px; height: 18px; }
+/* The class header's icon sat in a 30px font-size span, which the base 1.15em
+   rule turns into a 34px glyph beside an 18px title. Size it here instead. */
+.class-header-icon { display: inline-grid; place-items: center; }
+.class-header-icon .wc-icon { width: 26px; height: 26px; vertical-align: 0; color: var(--wu-blue, #2F67A7); }
 .mode-dd-icon { display: inline-grid; place-items: center; width: 22px; height: 22px; }
 .mode-card-chev .wc-icon { width: 16px; height: 16px; transition: transform var(--wu-dur-ui) var(--wu-ease); }
 .mode-switcher.is-open .mode-card-chev .wc-icon { transform: rotate(180deg); }
