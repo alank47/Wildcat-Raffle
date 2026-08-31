@@ -1399,6 +1399,54 @@
             }, session.idToken);
         }
 
+        /**
+         * The server's view of the three numbers the save guards compare against,
+         * wrapped so the two call sites read as they did with a snapshot.
+         *
+         * exists() is false when there is no session or the query failed. That
+         * matters: both guards are written to SKIP when the peek does not exist,
+         * so a failed peek lets the save proceed rather than blocking every save
+         * in the school on a transient error. Refusing to save on a failed
+         * staleness check would be the more cautious-looking choice and the worse
+         * one — it turns a blip into a teacher who cannot award a ticket.
+         */
+        async function peekServerState() {
+            try {
+                const auth = window.WildcatAuth;
+                const session = auth && auth.getSession();
+                if (!session) return { exists: () => false, data: () => ({}) };
+                const s = await auth.convexQuery('appData:freshness', {}, session.idToken);
+                if (!s) return { exists: () => false, data: () => ({}) };
+                return {
+                    exists: () => true,
+                    data: () => ({
+                        lastSaveTimestamp: s.lastSaveTimestamp,
+                        currentWeek: s.currentWeek,
+                        currentCycle: { cycleNumber: s.cycleNumber },
+                    }),
+                };
+            } catch (e) {
+                console.warn('peekServerState failed, allowing the save:', e && e.message);
+                return { exists: () => false, data: () => ({}) };
+            }
+        }
+
+        /**
+         * One legacy document from Convex, wrapped so the read-modify-write
+         * paths read as they did with a snapshot.
+         *
+         * exists() is false only when the document genuinely has no rows, which
+         * is the distinction those callers depend on: they abort rather than
+         * write a fresh document over one they expected to find.
+         */
+        async function readLegacyDoc(docName) {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+            if (!session) throw new Error('Not signed in to Convex.');
+            const d = await auth.convexQuery('legacyData:loadDoc', { doc: docName }, session.idToken);
+            return { exists: () => Boolean(d), data: () => d || {} };
+        }
+
         // Cloud Sync Functions
         async function loadData() {
             {
@@ -1410,9 +1458,6 @@
                     // audit_log is split into per-month docs (audit_log_YYYY_MM) for the same reason.
                     // Legacy combined docs are also read as a safety net during transition.
                     const monthKeys = getKnownAuditMonthKeys();
-                    const monthlyAuditPromises = monthKeys.map(mk => 
-                        getDoc(doc(firebaseDb, 'raffle_data', auditDocName(mk)))
-                    );
                     
                     // Cash week snapshots sit between `schedules` and the ticket
                     // history docs, so they are sliced out by count rather than
@@ -2325,7 +2370,9 @@
                         // ============================================================
                         const STALENESS_THRESHOLD_MS = 60000; // 1 minute
                         try {
-                            const mainPeek = await getDoc(doc(firebaseDb, 'raffle_data', 'main'));
+                            // MOVED OFF FIRESTORE 2026-08-31. Same guard, one
+                            // settings row instead of the whole document.
+                            const mainPeek = await peekServerState();
                             if (mainPeek.exists()) {
                                 const firebaseTs = mainPeek.data().lastSaveTimestamp || 0;
                                 const localTs = lastSaveTimestamp || 0;
@@ -2363,7 +2410,11 @@
                         // overwrote currentWeek from 4 back to 2.
                         // ============================================================
                         try {
-                            const weekPeek = await getDoc(doc(firebaseDb, 'raffle_data', 'main'));
+                            // MOVED OFF FIRESTORE 2026-08-31. Same guard, and it
+                            // still refuses to roll currentWeek or cycleNumber
+                            // backwards — the 2026-04-27 incident this was
+                            // written for.
+                            const weekPeek = await peekServerState();
                             if (weekPeek.exists()) {
                                 const peekData = weekPeek.data();
                                 const firebaseWeek = peekData.currentWeek;
@@ -2753,6 +2804,16 @@
                                         lastAutoResetDate, lastWeekResetTime,
                                         weekResetDay, weekResetHour, currentCycle,
                                         cycleHistory, cycleStartTimestamp,
+                                        // ADDED 2026-08-31. Neither of these was
+                                        // ever sent, so Convex could not answer
+                                        // the two questions Firestore was still
+                                        // being asked at save time: "is this tab
+                                        // stale" (lastSaveTimestamp) and "which
+                                        // teachers and students were deleted"
+                                        // (entityTombstones). Without them,
+                                        // cutting the main write froze both.
+                                        lastSaveTimestamp: timestamp,
+                                        entityTombstones,
                                     },
                                 }, session.idToken);
                                 console.log(
@@ -3683,9 +3744,10 @@
             if (binId && !isSyncing && (currentUser || currentStudent) && timeSinceActivity > AUTO_REFRESH_DELAY && !isOnTicketsTab) {
                 // SAFETY CHECK: Only refresh if Firebase has NEWER data than local
                 try {
-                    const { doc, getDoc } = window.firebaseModules;
-                    const mainSnap = await getDoc(doc(firebaseDb, 'raffle_data', 'main'));
-                    
+                    // MOVED OFF FIRESTORE 2026-08-31. Same rule: only pull a
+                    // fresh load when the server is genuinely newer.
+                    const mainSnap = await peekServerState();
+
                     if (mainSnap.exists()) {
                         const firebaseTimestamp = mainSnap.data().lastSaveTimestamp;
                         const localTimestamp = lastSaveTimestamp;
@@ -5115,12 +5177,10 @@
             if (!ok) return;
 
             try {
-                const { doc, getDoc, setDoc } = window.firebaseModules;
 
                 // 1. Direct-write the history doc
                 const histDocName = correctionHistDocName(student);
-                const histRef = doc(firebaseDb, 'raffle_data', histDocName);
-                const histSnap = await getDoc(histRef);
+                const histSnap = await readLegacyDoc(histDocName);
                 const histories = histSnap.exists() ? (histSnap.data().histories || {}) : {};
                 let histChanged = 0;
                 histories[student.id] = (histories[student.id] || []).map(h => {
@@ -5128,21 +5188,20 @@
                     return h;
                 });
                 if (histChanged === 0) { alert('⚠️ Ticket not found in Firebase history doc. Aborting (nothing written).'); return; }
-                await setDoc(histRef, { histories, lastSaveTimestamp: Date.now() });
+                await saveLegacySlice(histDocName, 'histories', histories);
 
                 // 2. Direct-write the matching audit entry (if found)
                 if (auditMatch) {
                     const auditId = ensureEntryId(auditMatch);
                     const mk = monthKeyFromTimestamp(auditMatch.timestamp);
                     if (mk) {
-                        const aRef = doc(firebaseDb, 'raffle_data', auditDocName(mk));
-                        const aSnap = await getDoc(aRef);
+                        const aSnap = await readLegacyDoc(auditDocName(mk));
                         if (aSnap.exists()) {
                             const aEntries = (aSnap.data().auditLog || []).map(e => {
                                 if (ensureEntryId(e) === auditId) return { ...e, week: newWeek, cycle: newCycle };
                                 return e;
                             });
-                            await setDoc(aRef, { auditLog: aEntries, lastSaveTimestamp: Date.now() });
+                            await saveLegacySlice(auditDocName(mk), 'auditLog', aEntries);
                         }
                     }
                     // Local audit memory
@@ -5207,7 +5266,6 @@
             if (!ok) return;
 
             try {
-                const { doc, getDoc, setDoc } = window.firebaseModules;
                 const who = currentUser.name || 'admin';
 
                 // 1. Tombstones FIRST (so even if later steps fail, merges suppress the entry)
@@ -5216,21 +5274,20 @@
                 if (auditId) await persistTombstone(auditId, who, `Admin correction: ${reason}`, 'audit');
 
                 // 2. Direct-remove from Firebase history doc
-                const histRef = doc(firebaseDb, 'raffle_data', correctionHistDocName(student));
-                const histSnap = await getDoc(histRef);
+                const removalHistDoc = correctionHistDocName(student);
+                const histSnap = await readLegacyDoc(removalHistDoc);
                 const histories = histSnap.exists() ? (histSnap.data().histories || {}) : {};
                 histories[student.id] = (histories[student.id] || []).filter(h => ensureEntryId(h) !== entryId);
-                await setDoc(histRef, { histories, lastSaveTimestamp: Date.now() });
+                await saveLegacySlice(removalHistDoc, 'histories', histories);
 
                 // 3. Direct-remove the audit entry (if found)
                 if (auditMatch && auditId) {
                     const mk = monthKeyFromTimestamp(auditMatch.timestamp);
                     if (mk) {
-                        const aRef = doc(firebaseDb, 'raffle_data', auditDocName(mk));
-                        const aSnap = await getDoc(aRef);
+                        const aSnap = await readLegacyDoc(auditDocName(mk));
                         if (aSnap.exists()) {
                             const aEntries = (aSnap.data().auditLog || []).filter(e => ensureEntryId(e) !== auditId);
-                            await setDoc(aRef, { auditLog: aEntries, lastSaveTimestamp: Date.now() });
+                            await saveLegacySlice(auditDocName(mk), 'auditLog', aEntries);
                         }
                     }
                 }
@@ -5418,11 +5475,10 @@
                 // 2. Direct-remove old entry from its month doc
                 const oldMk = monthKeyFromTimestamp(oldEntry.timestamp);
                 if (oldMk) {
-                    const oRef = doc(firebaseDb, 'raffle_data', auditDocName(oldMk));
-                    const oSnap = await getDoc(oRef);
+                    const oSnap = await readLegacyDoc(auditDocName(oldMk));
                     if (oSnap.exists()) {
                         const oEntries = (oSnap.data().auditLog || []).filter(e => ensureEntryId(e) !== state.winnerEntryId);
-                        await setDoc(oRef, { auditLog: oEntries, lastSaveTimestamp: Date.now() });
+                        await saveLegacySlice(auditDocName(oldMk), 'auditLog', oEntries);
                     }
                 }
                 auditLog = auditLog.filter(e => ensureEntryId(e) !== state.winnerEntryId);
@@ -5445,14 +5501,13 @@
                 newEntry.entryId = ensureEntryId(newEntry);
 
                 const newMk = monthKeyFromTimestamp(newEntry.timestamp);
-                const nRef = doc(firebaseDb, 'raffle_data', auditDocName(newMk));
-                const nSnap = await getDoc(nRef);
+                const nSnap = await readLegacyDoc(auditDocName(newMk));
                 const nEntries = nSnap.exists() ? (nSnap.data().auditLog || []) : [];
                 if (!nEntries.some(e => ensureEntryId(e) === newEntry.entryId)) {
                     nEntries.push(newEntry);
                     nEntries.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
                 }
-                await setDoc(nRef, { auditLog: nEntries, lastSaveTimestamp: Date.now() });
+                await saveLegacySlice(auditDocName(newMk), 'auditLog', nEntries);
                 auditLog.push(newEntry);
                 auditLog.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 

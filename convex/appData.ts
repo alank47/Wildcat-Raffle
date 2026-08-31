@@ -134,6 +134,12 @@ export const freshness = query({
     return {
       currentWeek: num(settings.currentWeek),
       cycleNumber: num(cycle?.cycleNumber),
+      // The save path's staleness check reads this: a tab whose last save is
+      // far behind the server's has been open across somebody else's save and
+      // must reload before writing, or it overwrites their work with its own
+      // stale copy of everything. Null for the same reason as the two above —
+      // "no answer" must never compare as "older than every tab".
+      lastSaveTimestamp: num(settings.lastSaveTimestamp),
       serverTime: new Date().toISOString(),
     };
   },

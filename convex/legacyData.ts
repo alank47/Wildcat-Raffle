@@ -76,6 +76,48 @@ export const load = query({
 });
 
 /**
+ * One document, for the read-modify-write paths.
+ *
+ * The ticket and audit correction screens rewrite a single entry inside a
+ * single document. Handing them the whole mirror to do it would pull every
+ * ticket in the school across the wire so one row can change, on a screen an
+ * admin uses several times a day.
+ *
+ * Returns null rather than {} when the document has no rows, because the
+ * callers branch on existence: "this document is empty" and "this document is
+ * not there" lead to different code, and collapsing them writes a fresh
+ * document over a missing one without anybody deciding to.
+ */
+export const loadDoc = query({
+  args: { doc: v.string() },
+  handler: async (ctx, { doc }) => {
+    await requireStaff(ctx);
+
+    const rows = await ctx.db
+      .query("legacyMirror")
+      .withIndex("by_doc", (q) => q.eq("doc", doc))
+      .collect();
+    if (rows.length === 0) return null;
+
+    const collections: Record<string, Array<{ key?: string; payload: unknown }>> = {};
+    for (const r of rows) (collections[r.collection] ??= []).push({ key: r.key, payload: r.payload });
+
+    const out: Record<string, unknown> = {};
+    for (const [collection, slice] of Object.entries(collections)) {
+      const keyed = slice.some((r) => typeof r.key === "string");
+      if (keyed) {
+        const map: Record<string, unknown> = {};
+        for (const r of slice) if (typeof r.key === "string") map[r.key] = r.payload;
+        out[collection] = map;
+      } else {
+        out[collection] = slice.map((r) => r.payload);
+      }
+    }
+    return out;
+  },
+});
+
+/**
  * Replace one (doc, collection) slice.
  *
  * Replace, not append, for the same reason `mirror:putSlice` replaces: the app
