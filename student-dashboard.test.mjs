@@ -34,18 +34,29 @@ function slice(start, end) {
 }
 
 // The region under test, plus the two helpers it borrows from the card stack.
-const { wpDashboard, wpGradeToggle } = new Function(
+const { wpDashboard, wpGradeOpen, __el, __store } = new Function(
   `const wpEsc = (v) => String(v == null ? "" : v)
      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
    const wpEmpty = (t) => '<p class="wp-empty">' + wpEsc(t) + '</p>';
    const wpFoot  = (t) => '<p class="wp-foot">' + wpEsc(t) + '</p>';
    const wpPeriodRank = (p) => { const n = parseInt(String(p ?? ""), 10); return isNaN(n) ? 999 : n; };
-   // wpGradeToggle re-renders through the DOM. There is no DOM here, and a null
-   // element is the branch it already handles, so the toggle reduces to exactly
-   // the state change this file wants to drive.
-   const wpById = () => null;\n` +
+   // The modal writes into an element and reads localStorage. Both are stubbed
+   // so the real wpGradeOpen runs here, rather than the test re-implementing
+   // what it thinks the modal renders.
+   // SEPARATE elements. One stub for both ids meant wpGradeOpen wrote the modal
+   // and then the dashboard re-render overwrote it in the same call, and every
+   // assertion about modal content read the dashboard instead.
+   const __el = { innerHTML: "", classList: { add(){}, remove(){} } };
+   const __dash = { innerHTML: "", classList: { add(){}, remove(){} } };
+   const wpById = (id) => id === "wpGradeModal" ? __el : (id === "wpDash" ? __dash : null);
+   const __store = new Map();
+   const localStorage = {
+     getItem: (k) => (__store.has(k) ? __store.get(k) : null),
+     setItem: (k, v) => __store.set(k, String(v)),
+   };
+   globalThis.__el = __el; globalThis.__store = __store;\n` +
   slice("/* ---- the desk dashboard ---", "/* ---- end desk dashboard ---- */") +
-  "\nreturn { wpDashboard, wpGradeToggle };",
+  "\nreturn { wpDashboard, wpGradeOpen, wpUnseenTotal, __el, __store };",
 )();
 
 const FULL = {
@@ -138,7 +149,7 @@ check("and is shown by the same .wp-wide the rest of the wide layout uses",
 check("the container exists in the markup",
   /id="wpDash"/.test(readFileSync(new URL("./index.html", import.meta.url), "utf8")));
 
-console.log("\n9. A grade row opens its own missing work");
+console.log("\n9. A grade row opens a modal, and says which nothing it means");
 {
   const MISSING = {
     available: true,
@@ -156,49 +167,77 @@ console.log("\n9. A grade row opens its own missing work");
     { courseName: "Algebra", currentGrade: "B", currentPercent: 86, sectionId: "S1" },
     { courseName: "Biology", currentGrade: "A", currentPercent: 94, sectionId: "S2" },
   ];
-  const withMissing = () => wpDashboard(FULL, sched([]), { rows, available: true, missingWork: MISSING });
+  const gradesWith = { rows, available: true, missingWork: MISSING };
+  const render = (g) => wpDashboard(FULL, sched([]), g);
 
-  // A row must not become a button before there is anything to open. Until the
-  // sync runs, opening onto "unavailable" teaches a student the feature is broken.
-  const noSync = wpDashboard(FULL, sched([]), { rows, available: true });
-  check("without the sync, a course row is not a button", !/wp-row-btn/.test(noSync));
-  check("with it, the row is a real button", /<button[^>]*class="wp-row wp-row-btn"/.test(withMissing()));
-  check("and says whether it is expanded", /aria-expanded="false"/.test(withMissing()));
+  // THE BUG THIS PAIR EXISTS FOR. missingWork reached wpDashboard in every
+  // earlier test because they handed it over directly. On the real page it went
+  // through wpSection, which kept three keys and dropped the rest, so the
+  // feature shipped dead. Assert the CARRY, not just the render.
+  const src = readFileSync(new URL("./script.js", import.meta.url), "utf8");
+  check("wpSection is told to carry missingWork",
+    /wpSection\(mine && mine\.grades, 'courses', \['missingWork'\]\)/.test(src),
+    "without this the panel renders correctly and is fed nothing");
+  check("and wpSection can carry extra keys at all",
+    /function wpSection\(node, rowsKey, carry\)/.test(src));
 
-  // The count belongs on the closed row, or a student opens six classes to find
-  // the one that needs them. Zero is not a count worth showing.
-  check("a course with missing work carries a badge", /wp-rowbadge">3</.test(withMissing()));
-  check("a course with none carries no badge", (withMissing().match(/wp-rowbadge/g) || []).length === 1);
+  // Every row opens, always. A row that is sometimes a button teaches a student
+  // the app is broken.
+  const noSync = render({ rows, available: true });
+  check("a row is a button even before the sync has run", /wp-row-btn/.test(noSync));
+  check("and still a button when a class has nothing missing",
+    (render(gradesWith).match(/wp-row-btn/g) || []).length === 2);
+  check("a course with missing work carries a count", /wp-rowbadge">3</.test(render(gradesWith)));
+  check("a course with none carries no count",
+    (render(gradesWith).match(/wp-rowbadge/g) || []).length === 1);
 
-  wpGradeToggle("S1");
-  const open = withMissing();
-  check("opening one course marks it open", /wp-gradesec is-open/.test(open));
-  check("and flips its aria-expanded", /aria-expanded="true"/.test(open));
+  // ---- the modal ----------------------------------------------------------
+  __store.clear();
+  wpGradeOpen("S1");
+  const open = __el.innerHTML;
+  check("opening a course renders a dialog", /role="dialog"/.test(open));
+  check("titled with the course", /wp-modal-title">Algebra</.test(open));
+  check("and showing its grade", /B \u00b7 86%|B · 86%/.test(open));
 
-  const body = open.slice(open.indexOf("wp-gradesec is-open"));
-  const at = (n) => body.indexOf(n);
-  check("due work sorts oldest first", at("Problem set") < at("Late essay"));
-  check("and undated work sorts LAST, not first",
-    at("Journal") > at("Late essay"),
-    "sorting on `dueDate || \'\'` puts undated work above things genuinely overdue");
-  check("a late piece says so", /marked late/.test(body));
+  check("due work sorts oldest first", open.indexOf("Problem set") < open.indexOf("Late essay"));
+  check("and undated work sorts LAST", open.indexOf("Journal") > open.indexOf("Late essay"));
+  check("a late piece says so", /marked late/.test(open));
+  // \b matters: /0 pts/ matches inside "20 pts".
+  check("no point value shows no points, never 0 pts",
+    !/\b0 pts/.test(open) && /20 pts/.test(open));
 
-  // The rule this panel shares with every other one: an absent value is absent.
-  // \b matters: /0 pts/ matches INSIDE "20 pts", so the naive version fails on
-  // correct output and would have been "fixed" by weakening it.
-  check("an assignment with no point value shows no points, never 0 pts",
-    !/\b0 pts/.test(body) && /20 pts/.test(body));
+  // THREE STATES, THREE SENTENCES. "we did not look" and "you are fine" are not
+  // the same fact and must not render the same.
+  wpGradeOpen("S2");
+  check("a class with nothing missing says exactly that",
+    /Nothing missing in this class\./.test(__el.innerHTML));
 
-  wpGradeToggle("S2");
-  const other = withMissing();
-  check("a course with nothing missing says so rather than showing an empty box",
-    /Nothing missing in this class\./.test(other));
-  check("only one course is open at a time",
-    (other.match(/wp-gradesec is-open/g) || []).length === 1);
+  // Render a dashboard whose sync has NOT run, which is what the modal reads.
+  render({ rows, available: true });
+  wpGradeOpen("S1");
+  check("before the sync, the modal says NO DATA YET, not 'nothing missing'",
+    /No data yet\./.test(__el.innerHTML) && !/Nothing missing/.test(__el.innerHTML),
+    "an empty box cannot tell a student which of the two is true");
+}
 
-  wpGradeToggle("S2");
-  check("pressing the open row again closes it",
-    !/wp-gradesec is-open/.test(withMissing()));
+console.log("\n10. The dot means new since you last looked");
+{
+  const MISSING = {
+    available: true,
+    bySection: { S1: [{ assignmentSectionId: "n1", name: "New thing", dueDate: "2026-08-30", pointsPossible: 5 }] },
+  };
+  const rows = [{ courseName: "Algebra", currentGrade: "B", currentPercent: 86, sectionId: "S1" }];
+  const grades = { rows, available: true, missingWork: MISSING };
+
+  __store.clear();
+  check("unseen work shows a dot on the row", /wp-rowdot/.test(wpDashboard(FULL, sched([]), grades)));
+  check("and on the panel head, so it reads without opening a class",
+    /wp-headdot/.test(wpDashboard(FULL, sched([]), grades)));
+
+  wpGradeOpen("S1");
+  const after = wpDashboard(FULL, sched([]), grades);
+  check("opening the course clears both", !/wp-rowdot/.test(after) && !/wp-headdot/.test(after));
+  check("but the count stays, because the work is still missing", /wp-rowbadge">1</.test(after));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

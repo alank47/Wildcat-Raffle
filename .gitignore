@@ -26,3 +26,4 @@ dashboard-harness.html
 # stylesheets. Rebuild with node scripts/build-cash-harness.mjs.
 cash-harness.html
 brand-preview.html
+modal-preview.html
