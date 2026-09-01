@@ -16288,9 +16288,20 @@
             // laptop without rehoming them would mean a student at a desk could
             // not see a pass that is RUNNING, which is the one thing on this
             // screen with a clock attached.
+            // THE HALL PASS PANEL IS ALWAYS HERE, whether or not one is running.
+            //
+            // It used to render only when a pass existed, which is backwards:
+            // the moment a student most needs this panel is when they have NO
+            // pass and want one. A panel that appears only once you already
+            // have the thing it is for is a panel nobody learns is there.
+            //
+            // The request goes through openHallPassSheet(), the same sheet the
+            // phone wallet uses. One request path, one set of refusals, so a
+            // student cannot be told different things by two screens.
             const hp = (pass && pass.hallPass) || null;
-            const passPanel = (hp && hp.available && hp.state)
-                ? wpPanel('Hall pass', String(hp.state).replace(/_/g, ' '),
+            const hpState = (hp && hp.available && hp.state) ? String(hp.state) : null;
+            const passPanel = hpState
+                ? wpPanel('Hall pass', hpState.replace(/_/g, ' '),
                     '<div class="wp-stats">' +
                         wpStat('Destination', hp.sentTo || null) +
                         wpStat('Started', hp.clockStartAt
@@ -16299,13 +16310,25 @@
                         wpStat('Minutes allowed', hp.clockLimitMinutes) +
                     '</div>' +
                     wpFoot('Your phone shows the live timer and the check-in tap.'))
-                : '';
+                : wpPanel('Hall pass',
+                    // available:false is "we could not look", which is not the
+                    // same as "you have no pass", and a student must not be
+                    // offered a button that cannot work.
+                    (hp && hp.available === false) ? 'Unavailable' : 'None active',
+                    (hp && hp.available === false)
+                        ? wpEmpty((hp && hp.reason) || 'Your pass could not be looked up just now.')
+                        : wpEmpty('No pass right now. Ask for one, then hold your phone near the tag at the door.') +
+                          '<div class="wp-actions"><button type="button" class="wp-btn wp-btn-solid" ' +
+                          'onclick="openHallPassSheet()">Request a pass</button></div>' +
+                          wpFoot('Your teacher has to approve it'));
 
             // NO STUDENT ID PANEL HERE, deliberately. A barcode is for holding
             // up to a scanner, which is a phone errand: the wallet still has
             // it. On a desk it was a panel nobody could use, taking a column
             // from the figures a student actually came to read.
-            return tiles + passPanel + gradePanel + schedule + tickets + money + awards + attendance;
+            // Hall pass follows Tickets so it lands beside the short cards
+            // rather than above Grades, which is the tallest panel on the page.
+            return tiles + gradePanel + schedule + tickets + passPanel + money + awards + attendance;
         }
         /**
          * Open one course's missing-work list, or close it.

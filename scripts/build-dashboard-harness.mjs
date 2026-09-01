@@ -137,8 +137,9 @@ const STATES = [
     sched: { rows: SCHEDULE, available: true },
     grades: { rows: GRADES, available: true, missingWork: MISSING },
     pass: {
-      hallPass: { available: true, state: 'out', sentTo: 'Front office',
-                  clockStartAt: '2026-09-01T17:12:00.000Z', clockLimitMinutes: 10 },
+      // No pass running. This is the state the panel most has to work in: a
+      // student who wants one and has not got one.
+      hallPass: { available: true, state: 'none' },
       studentId: { available: true, value: '12217' },
     },
   },
