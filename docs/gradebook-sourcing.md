@@ -106,15 +106,31 @@ unfounded. But the original conclusion was also wrong, because that table is an
 empty stub. `AssignmentScore` carries `StudentsDCID` and `AssignmentSectionID`
 and 1.37 million rows.
 
-## What the SIS admin still needs to confirm
+## Weighting: asked and answered, and the answer is no
 
-Only one thing, and it is narrow. **Category weights.** No weight column was
-found on `TeacherCategory`, and `GradeCalculationType` carries no key back to a
-section. Either the weights live somewhere not yet probed, or this instance
-stores them outside the tables the API exposes.
+**There is no category-weight table in this instance.** Checked exhaustively on
+2026-08-31 across two independent probes, roughly twenty spellings:
 
-Everything else is settled: teachers do create and score assignments, 1.37
-million scores prove it, and `IsMissing` is populated.
+`PSM_SectionGradeWeighting`, `PSM_CategoryWeighting`, `PSM_TermWeighting`,
+`PSM_SectionGradeCalcFormula`, `PSM_SectionCategoryWeight`,
+`PSM_SectionTermWeight`, `PSM_ScoreConfig`, `PSM_SectionScoreConfig`,
+`PSM_TermBin`, `PSM_CategoryWeight`, `PSM_SectionCategory`, `SectionGradeWeight`
+and the unprefixed form of every one of those. All 404.
+
+`TeacherCategory` exists with 937 rows and carries `name`, `color`,
+`defaultScoreType` and `usersDCID`, and **no weight column** under any spelling
+tried. `GradeCalculationType` exists with 2,032 rows and carries `type` and
+`abbreviation`, but **no key back to a section**, so it cannot say which
+sections are weighted.
+
+So the card can say WHICH work is missing and WHAT it is worth in points, and it
+cannot say what handing it in would do to a grade in a weighted section. It must
+refuse to project rather than guess, which is what it does. That is settled, not
+outstanding: nobody needs to go looking again.
+
+The remaining route, if a projection is ever wanted badly enough, is not another
+probe. It is asking PowerSchool whether category weights are exposed to the API
+at all on this version, because the evidence here is that they are not.
 
 ## Why `op run` fails, and why it is not a PowerSchool problem
 
