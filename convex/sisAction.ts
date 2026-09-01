@@ -262,6 +262,81 @@ export const syncFromPowerSchool = internalAction({
       });
     }
 
+    // ---- work a teacher marked missing ----
+    //
+    // ON THE CRON, not only in the local script, and that distinction is the
+    // whole point of this block. The student-facing card reads this table, so
+    // leaving it to `npm run sync` would mean a child's missing-work list was
+    // as fresh as the last time somebody remembered to open a laptop. It was
+    // added to sync-to-app.ts first and the cron kept running without it,
+    // which is exactly how one of two sync implementations goes quietly stale.
+    //
+    // Scoped by year through Terms, never by AssignmentSection.YearID: that
+    // column is granted and EMPTY on every row here, and filtering on it
+    // returned HTTP 200 with zero rows for the whole of plugin 1.3.0.
+    //
+    // A refusal is REPORTED and skipped, never fatal, for the same reason the
+    // demographics below are: the roster matters more than the card, and a
+    // sync that aborts here takes the whole school's schedule down over a
+    // panel that can say "no data yet".
+    type MissingRow = {
+      studentNumber: string;
+      assignmentSectionId: string;
+      assignmentName?: string;
+      dueDate?: string;
+      pointsPossible?: number;
+      sectionId?: string;
+      courseName?: string;
+      categoryName?: string;
+      isLate?: boolean;
+    };
+    let missingRows: MissingRow[] = [];
+    let missingError: string | null = null;
+    try {
+      const missing = await namedQuery(host, tok, `${prefix}.missing_work`, {
+        schoolid,
+        yearid: need("PS_YEAR_ID"),
+      });
+      missingRows = missing.rows
+        .map((m) => ({
+          studentNumber: s(m.student_number) ?? "",
+          assignmentSectionId: s(m.assignment_section_id) ?? "",
+          assignmentName: s(m.assignment_name),
+          dueDate: s(m.due_date),
+          // undefined stays undefined, never 0: a section can score by
+          // something other than points, and a 0 reads to a student as work
+          // that does not count.
+          pointsPossible: n(m.points_possible),
+          sectionId: s(m.section_id),
+          courseName: s(m.course_name),
+          categoryName: s(m.category_name),
+          // PowerSchool returns booleans as the STRINGS "0" and "1", and
+          // Boolean("0") is true, so every assignment would be reported late.
+          isLate: String(m.is_late) === "1",
+        }))
+        .filter((m) => m.studentNumber && m.assignmentSectionId);
+    } catch (e: unknown) {
+      missingError = e instanceof Error ? e.message : String(e);
+    }
+
+    if (missingError === null) {
+      // The clear runs even when there is nothing to write. A sync that finds
+      // NOTHING missing must still empty the table, or every student keeps
+      // yesterday's list forever, on the one day it should have gone away.
+      for (let pass = 0; pass < 20; pass++) {
+        const r: { remaining?: string } = await ctx.runMutation(
+          internal.sisStats.replaceMissingWork,
+          { syncedAt, rows: [], clearFirst: true },
+        );
+        if (r.remaining !== "some") break;
+      }
+      for (let i = 0; i < missingRows.length; i += 200) {
+        await ctx.runMutation(internal.sisStats.replaceMissingWork, {
+          syncedAt, rows: missingRows.slice(i, i + 200), clearFirst: false,
+        });
+      }
+    }
+
     // ---- restricted demographics ----
     //
     // ON THE CRON, not only in the local script, for the same reason student
@@ -357,6 +432,11 @@ export const syncFromPowerSchool = internalAction({
       attendanceRows: attRows.length,
       gradeRows: gradeRows.length,
       gradeRowsMissingPercent: gradeRows.filter((g) => g.currentPercent === undefined).length,
+      missingWorkRows: missingRows.length,
+      // Named rather than silently zero, for the same reason the race error
+      // is: "nobody is missing work" and "we were refused" need different
+      // responses, and only one of them is a code problem.
+      missingWorkError: missingError,
       studentEmailRows: emailRows.length,
       restrictedStudents: restrictedRows.length,
       restrictedRaceCodes: raceCodeCount,
