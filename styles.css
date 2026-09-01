@@ -4825,6 +4825,35 @@ body.wp-open { overflow: hidden; }
     color: #8E9199;
 }
 
+/* Who the request is going to.
+   These values were inline in wpRenderClassPanel, which made them
+   unoverridable and therefore wrong on one of the two grounds this sheet
+   stands on: a white 6% wash is a lift on the dark phone sheet and nothing at
+   all on the light desk one. Same markup, one rule per ground, below. */
+.wp-sendto {
+    margin: 2px 0 4px;
+    padding: 14px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+}
+.wp-sendto-label {
+    margin: 0 0 3px;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    opacity: 0.62;
+}
+.wp-sendto-who { margin: 0; font-size: 17px; font-weight: 600; }
+.wp-sendto-where { margin: 3px 0 0; font-size: 13.5px; opacity: 0.72; }
+/* The refusal. A pale red wash reads on both grounds, so it does not need a
+   second value; it is here rather than inline for the same reason as the rest. */
+.wp-sendto.is-refused {
+    background: rgba(179, 57, 47, 0.10);
+    border-color: rgba(179, 57, 47, 0.28);
+}
+.wp-sendto-why { margin: 0; font-size: 14px; line-height: 1.5; }
+
 .wp-picklist {
     border-radius: 14px;
     overflow: hidden;
@@ -7749,5 +7778,21 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
         border: 1px solid var(--wc-border, #e3e8ef);
     }
     .wp-wide .wp-sheet .wp-btn-ghost:hover { background: var(--wc-blue-mist); }
+    /* The "Sending to" card, on the ground it is actually standing on. White
+       at 6% over white is white: on the desk sheet this block had no card
+       around it at all, so the one line telling a student WHICH TEACHER their
+       request is about to reach read as loose text under the heading. */
+    .wp-wide .wp-sendto {
+        background: var(--wc-blue-mist, #EEF3FB);
+        border-color: rgba(16, 24, 40, 0.10);
+    }
+    .wp-wide .wp-sendto-label { color: #5B6675; opacity: 1; }
+    .wp-wide .wp-sendto-who { color: #16202E; }
+    .wp-wide .wp-sendto-where { color: #5B6675; opacity: 1; }
+    .wp-wide .wp-sendto.is-refused {
+        background: rgba(179, 57, 47, 0.08);
+        border-color: rgba(179, 57, 47, 0.30);
+    }
+    .wp-wide .wp-sendto-why { color: #7A2A22; }
     .wp-wide .wp-scrim { background: rgba(16, 24, 40, 0.45); }
 }

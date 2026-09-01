@@ -16299,7 +16299,32 @@
             // phone wallet uses. One request path, one set of refusals, so a
             // student cannot be told different things by two screens.
             const hp = (pass && pass.hallPass) || null;
-            const hpState = (hp && hp.available && hp.state) ? String(hp.state) : null;
+
+            // available:false MEANS THERE IS NO PASS. It does not mean the
+            // lookup failed, and reading it as a failure is what put
+            // "Unavailable / Your pass could not be looked up just now" on every
+            // desk in the school, permanently, with the Request button behind a
+            // condition no student could ever satisfy.
+            //
+            // The server settles this. passCard:mine ends its hall pass block
+            // `live ? { available: true, ... } : { available: false, state:
+            // "none" }`, so false is the ordinary state of a student who is
+            // sitting in class, which is almost all of them almost all of the
+            // time. It is also computed INSIDE the query whose failure would
+            // have blanked this whole screen upstream: loadStudentPortal returns
+            // early on a null pass, so by the time this line runs the lookup has
+            // already succeeded and there is nothing left for `false` to mean.
+            //
+            // wpHallPassCard, the phone's version of this panel, has read it
+            // that way since it was written (`if (!live || state === 'none')`).
+            // The desk panel is the copy that got it wrong.
+            //
+            // A real outage would arrive as `reason`, which this branch never
+            // sends today. The panel still honours one if it ever does, rather
+            // than printing a refusal the server did not ask for.
+            const hpState = (hp && hp.available && hp.state && String(hp.state) !== 'none')
+                ? String(hp.state) : null;
+            const hpBroken = Boolean(hp && hp.available === false && hp.reason);
             const passPanel = hpState
                 ? wpPanel('Hall pass', hpState.replace(/_/g, ' '),
                     '<div class="wp-stats">' +
@@ -16311,12 +16336,9 @@
                     '</div>' +
                     wpFoot('Your phone shows the live timer and the check-in tap.'))
                 : wpPanel('Hall pass',
-                    // available:false is "we could not look", which is not the
-                    // same as "you have no pass", and a student must not be
-                    // offered a button that cannot work.
-                    (hp && hp.available === false) ? 'Unavailable' : 'None active',
-                    (hp && hp.available === false)
-                        ? wpEmpty((hp && hp.reason) || 'Your pass could not be looked up just now.')
+                    hpBroken ? 'Unavailable' : 'None active',
+                    hpBroken
+                        ? wpEmpty(hp.reason)
                         : wpEmpty('No pass right now. Ask for one, then hold your phone near the tag at the door.') +
                           '<div class="wp-actions"><button type="button" class="wp-btn wp-btn-solid" ' +
                           'onclick="openHallPassSheet()">Request a pass</button></div>' +
@@ -18273,9 +18295,8 @@
                 // No button, no picker, no way to send it anyway. The sentence
                 // already names the fallback, so nothing here rewords it.
                 host.innerHTML =
-                    '<div style="margin:2px 0 4px;padding:14px;border-radius:12px;' +
-                    'background:rgba(179,57,47,.10);border:1px solid rgba(179,57,47,.28);">' +
-                    '<p style="margin:0;font-size:14px;line-height:1.5;">' +
+                    '<div class="wp-sendto is-refused">' +
+                    '<p class="wp-sendto-why">' +
                     wpEsc(wpCurrentClass.reason || 'The app cannot tell which class you are in.') +
                     '</p></div>';
                 setGo(false);
@@ -18286,14 +18307,19 @@
             if (wpCurrentClass.period) bits.push('Period ' + wpCurrentClass.period);
             if (wpCurrentClass.room) bits.push(wpCurrentClass.room);
 
+            // CLASSES, NOT INLINE COLOUR. This block used to carry its own
+            // `background: rgba(255,255,255,.06)` and a white hairline border,
+            // which is a lift on the dark phone sheet and INVISIBLE on the desk
+            // one: white at 6% over white is white. A student on a Chromebook
+            // got the words with no card around them, and no CSS rule could
+            // correct it, because an inline style outranks a stylesheet.
+            // The colours live in styles.css now, one value per ground.
             host.innerHTML =
-                '<div style="margin:2px 0 4px;padding:14px;border-radius:12px;' +
-                'background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);">' +
-                '<p style="margin:0 0 3px;font-size:12px;letter-spacing:.06em;' +
-                'text-transform:uppercase;opacity:.62;">Sending to</p>' +
-                '<p style="margin:0;font-size:17px;font-weight:600;">' +
+                '<div class="wp-sendto">' +
+                '<p class="wp-sendto-label">Sending to</p>' +
+                '<p class="wp-sendto-who">' +
                 wpEsc(wpCurrentClass.teacherName || 'your teacher') + '</p>' +
-                '<p style="margin:3px 0 0;font-size:13.5px;opacity:.72;">' +
+                '<p class="wp-sendto-where">' +
                 wpEsc([wpCurrentClass.courseName, bits.join('  ·  ')].filter(Boolean).join('  ·  ')) +
                 '</p></div>';
             setGo(true);
