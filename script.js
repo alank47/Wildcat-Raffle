@@ -872,7 +872,7 @@
 
                     // Cycle drift detection — takes priority over week drift
                     if (typeof svCycleNum === 'number' && typeof localCycleNum === 'number' && svCycleNum > localCycleNum) {
-                        console.warn(`Cycle watchdog: server cycle (${svCycleNum}) is ahead of local (${localCycleNum}). This tab is stale — reloading data.`);
+                        console.warn(`Cycle watchdog: server cycle (${svCycleNum}) is ahead of local (${localCycleNum}). This tab is stale, reloading data.`);
                         await loadData();
                         return;
                     }
@@ -880,7 +880,7 @@
                     // Week drift detection (only enforced within same cycle)
                     const sameCycle = (svCycleNum === localCycleNum) || (typeof svCycleNum !== 'number' && typeof localCycleNum !== 'number');
                     if (sameCycle && typeof svWeek === 'number' && typeof currentWeek === 'number' && svWeek > currentWeek) {
-                        console.warn(`Week watchdog: server currentWeek (${svWeek}) is ahead of local (${currentWeek}). This tab is stale — reloading data.`);
+                        console.warn(`Week watchdog: server currentWeek (${svWeek}) is ahead of local (${currentWeek}). This tab is stale, reloading data.`);
                         await loadData();
                     }
                 } catch (e) {
@@ -2876,7 +2876,7 @@
                             auditLog = reconstructed.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
                         }
 
-                        console.log(`✅ Audit log save complete: ${totalSavedAcrossMonths} entries across ${monthsTried.length} months${auditSaveSucceeded ? '' : ' (some months failed — outbox retained)'}`);
+                        console.log(`✅ Audit log save complete: ${totalSavedAcrossMonths} entries across ${monthsTried.length} months${auditSaveSucceeded ? '' : ' (some months failed, outbox retained)'}`);
 
                         // Clear the outbox only when the audit save actually succeeded.
                         // If it failed, entries remain in the outbox and get replayed next load.
@@ -4252,7 +4252,7 @@
                     highEl.innerHTML = `
                         <div style="background: #d1fae5; padding: 12px 15px; border-radius: 8px;">
                             <div style="font-weight: 600; color: #065f46; margin-bottom: 6px; font-size: 13px;">
-                                🔝 High Outliers (${highOutliers.length}) — awarding significantly more than average
+                                🔝 High Outliers (${highOutliers.length}), awarding significantly more than average
                             </div>
                             <div style="font-size: 13px; color: #047857;">
                                 ${highOutliers.map(([name, c]) => `${name}: <b>${c}</b>`).join(' • ')}
@@ -4269,7 +4269,7 @@
                     lowEl.innerHTML = `
                         <div style="background: #fee2e2; padding: 12px 15px; border-radius: 8px;">
                             <div style="font-weight: 600; color: #991b1b; margin-bottom: 6px; font-size: 13px;">
-                                ⚠️ Low Outliers (${lowOutliers.length}) — awarding significantly less than average
+                                ⚠️ Low Outliers (${lowOutliers.length}), awarding significantly less than average
                             </div>
                             <div style="font-size: 13px; color: #b91c1c;">
                                 ${lowOutliers.map(([name, c]) => `${name}: <b>${c}</b>`).join(' • ')}
@@ -4405,13 +4405,13 @@
         function renderHallOfFame() {
             const log = auditLog || [];
 
-            // Jackpot winners — sorted newest first
+            // Jackpot winners, sorted newest first
             const jackpot = log
                 .filter(e => e.action === 'Wildcat Jackpot Winner')
                 .slice()
                 .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
-            // Weekly raffle winners — sorted newest first
+            // Weekly raffle winners, sorted newest first
             const allWeekly = log
                 .filter(e => e.action === 'Raffle Winner')
                 .slice()
@@ -4482,7 +4482,7 @@
                             ? `Drawn from ${e.reason.match(/(\d+)/)[1]} entries`
                             : (e.reason || '');
                         const reconBadge = e.reconstructed
-                            ? `<div style="position: absolute; top: 12px; right: 12px; background: rgba(0,0,0,0.3); color: white; padding: 3px 8px; border-radius: 10px; font-size: 10px; font-weight: 600;" title="Reconstructed from system records — not real-time logged">📋 RECONSTRUCTED</div>`
+                            ? `<div style="position: absolute; top: 12px; right: 12px; background: rgba(0,0,0,0.3); color: white; padding: 3px 8px; border-radius: 10px; font-size: 10px; font-weight: 600;" title="Reconstructed from system records, not real-time logged">📋 RECONSTRUCTED</div>`
                             : '';
                         return `
                             <div style="background: ${gradient}; color: white; padding: 25px; border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); position: relative; overflow: hidden;">
@@ -4719,7 +4719,7 @@
             }).join('');
 
             listEl.innerHTML = `
-                <div style="font-weight:600;margin-bottom:8px;">${escapeHtml(student.firstName)} ${escapeHtml(student.lastName)} — last ${hist.length} tickets</div>
+                <div style="font-weight:600;margin-bottom:8px;">${escapeHtml(student.firstName)} ${escapeHtml(student.lastName)}, last ${hist.length} tickets</div>
                 <div style="overflow-x:auto;max-height:380px;overflow-y:auto;border:1px solid #eee;border-radius:8px;">
                 <table style="width:100%;border-collapse:collapse;background:#fafafa;border-radius:8px;">
                     <thead style="position:sticky;top:0;z-index:1;"><tr style="background:#667eea;color:white;font-size:11px;letter-spacing:0.5px;">
@@ -4742,7 +4742,7 @@
             const maxWeek = cycleDuration || 5;
             actionEl.innerHTML = `
                 <div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:16px;">
-                    <div style="font-weight:600;margin-bottom:10px;">✏️ Re-tag ticket — ${escapeHtml(entry.category || '?')} on ${new Date(entry.timestamp).toLocaleDateString()}</div>
+                    <div style="font-weight:600;margin-bottom:10px;">✏️ Re-tag ticket: ${escapeHtml(entry.category || '?')} on ${new Date(entry.timestamp).toLocaleDateString()}</div>
                     <label style="font-size:13px;margin-right:8px;">Week:
                         <input type="number" id="correctionNewWeek" min="1" max="${maxWeek}" value="${entry.week ?? currentWeek}" style="width:60px;padding:6px;border:1px solid #ccc;border-radius:6px;">
                     </label>
@@ -4764,7 +4764,7 @@
             const newWeek = parseInt(document.getElementById('correctionNewWeek')?.value);
             const newCycle = parseInt(document.getElementById('correctionNewCycle')?.value);
             if (isNaN(newWeek) || isNaN(newCycle)) { alert('Enter valid week and cycle numbers.'); return; }
-            if (newWeek === entry.week && newCycle === entry.cycle) { alert('No change — week and cycle are already those values.'); return; }
+            if (newWeek === entry.week && newCycle === entry.cycle) { alert('No change, week and cycle are already those values.'); return; }
 
             const auditMatch = correctionFindAuditMatch(student, entry);
             const ok = await showConfirm(
@@ -4773,7 +4773,7 @@
                 `Ticket: ${entry.category} (${entry.tickets || entry.amount || 0}) on ${new Date(entry.timestamp).toLocaleString()}\n` +
                 `From: Week ${entry.week ?? '?'} / Cycle ${entry.cycle ?? '—'}\n` +
                 `To:   Week ${newWeek} / Cycle ${newCycle}\n\n` +
-                `Matching audit entry: ${auditMatch ? 'found — will be updated too' : 'NOT FOUND — only history will change'}\n\n` +
+                `Matching audit entry: ${auditMatch ? 'found, will be updated too' : 'NOT FOUND, only history will change'}\n\n` +
                 `This writes directly to the database.`
             );
             if (!ok) return;
@@ -4825,7 +4825,7 @@
                 updateAllDisplays();
             } catch (err) {
                 console.error('correctionApplyEdit failed:', err);
-                alert(`❌ Correction failed: ${err.message}. Nothing may have been partially written — check the console.`);
+                alert(`❌ Correction failed: ${err.message}. Nothing may have been partially written. Check the console.`);
             }
         }
 
@@ -4836,8 +4836,8 @@
             if (!actionEl || !entry) return;
             actionEl.innerHTML = `
                 <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:16px;">
-                    <div style="font-weight:600;margin-bottom:10px;color:#b91c1c;">🗑️ Remove ticket — ${escapeHtml(entry.category || '?')} on ${new Date(entry.timestamp).toLocaleDateString()}</div>
-                    <input type="text" id="correctionRemoveReason" placeholder="Reason (required — goes in the audit trail)" style="width:100%;max-width:480px;padding:8px 12px;border:1px solid #fca5a5;border-radius:8px;font-size:13px;margin-bottom:10px;">
+                    <div style="font-weight:600;margin-bottom:10px;color:#b91c1c;">🗑️ Remove ticket: ${escapeHtml(entry.category || '?')} on ${new Date(entry.timestamp).toLocaleDateString()}</div>
+                    <input type="text" id="correctionRemoveReason" placeholder="Reason (required: it goes in the audit trail)" style="width:100%;max-width:480px;padding:8px 12px;border:1px solid #fca5a5;border-radius:8px;font-size:13px;margin-bottom:10px;">
                     <div>
                         <button data-act="apply-remove" data-sid="${sid}" data-eid="${entryId}" style="padding:8px 16px;background:#dc2626;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:600;">Preview &amp; Remove</button>
                         <button data-act="cancel-action" style="padding:8px 12px;background:#f5f5f5;border:1px solid #ddd;border-radius:8px;cursor:pointer;margin-left:6px;">Cancel</button>
@@ -4853,7 +4853,7 @@
             if (!student || !entry) { alert('Ticket not found.'); return; }
 
             const reason = (document.getElementById('correctionRemoveReason')?.value || '').trim();
-            if (!reason) { alert('A reason is required — it goes in the audit trail.'); return; }
+            if (!reason) { alert('A reason is required. It goes in the audit trail.'); return; }
 
             const auditMatch = correctionFindAuditMatch(student, entry);
             const ok = await showConfirm(
@@ -4862,7 +4862,7 @@
                 `Ticket: ${entry.category} (${entry.tickets || entry.amount || 0}) on ${new Date(entry.timestamp).toLocaleString()}\n` +
                 `Awarded by: ${entry.teacher || '?'}\n` +
                 `Reason for removal: ${reason}\n\n` +
-                `Matching audit entry: ${auditMatch ? 'found — will be removed too' : 'not found'}\n\n` +
+                `Matching audit entry: ${auditMatch ? 'found, will be removed too' : 'not found'}\n\n` +
                 `The ticket is tombstoned so it cannot come back from stale tabs.`
             );
             if (!ok) return;
@@ -4908,7 +4908,7 @@
                 updateAllDisplays();
             } catch (err) {
                 console.error('correctionApplyRemove failed:', err);
-                alert(`❌ Removal failed: ${err.message}. The tombstone may already be in place — check the console.`);
+                alert(`❌ Removal failed: ${err.message}. The tombstone may already be in place. Check the console.`);
             }
         }
 
@@ -4963,7 +4963,7 @@
 
             panel.innerHTML = `
                 <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:16px;">
-                    <div style="font-weight:600;margin-bottom:6px;">♻️ Invalidating: ${escapeHtml(entry.studentName || '?')} — ${escapeHtml(entry.category || '?')}</div>
+                    <div style="font-weight:600;margin-bottom:6px;">♻️ Invalidating: ${escapeHtml(entry.studentName || '?')}, ${escapeHtml(entry.category || '?')}</div>
                     <input type="text" id="correctionRedrawReason" placeholder="Reason for invalidating (required)" style="width:100%;max-width:480px;padding:8px 12px;border:1px solid #fcd34d;border-radius:8px;font-size:13px;margin-bottom:12px;">
                     ${isJackpot ? `
                         <div style="font-size:13px;color:#92400e;margin-bottom:10px;">
@@ -5039,7 +5039,7 @@
                 <div style="background:white;border-radius:8px;padding:12px;border:1px solid #e5e7eb;">
                     <div style="font-weight:600;margin-bottom:6px;">Eligible pool: ${uniqueNames.length} student${uniqueNames.length === 1 ? '' : 's'}${state.isJackpot ? ` (${pool.length} weighted entries)` : ''}</div>
                     ${uniqueNames.length === 0
-                        ? '<div style="color:#b91c1c;font-size:13px;">⚠️ Pool is empty — check the parameters above. Nothing will be drawn.</div>'
+                        ? '<div style="color:#b91c1c;font-size:13px;">⚠️ Pool is empty. Check the parameters above. Nothing will be drawn.</div>'
                         : `<details style="font-size:12px;color:#555;"><summary style="cursor:pointer;">Show names</summary><div style="margin-top:6px;line-height:1.7;">${uniqueNames.map(escapeHtml).join('<br>')}</div></details>
                            <button data-act="execute-redraw" style="margin-top:12px;padding:10px 20px;background:#10b981;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;">🎲 Draw New Winner</button>`
                     }
@@ -5095,7 +5095,7 @@
                     studentName: `${winner.firstName} ${winner.lastName}`,
                     category: oldEntry.category,
                     ticketCount: null,
-                    reason: `Replacement draw — ${reason}`,
+                    reason: `Replacement draw, ${reason}`,
                     week: oldEntry.week ?? currentWeek,
                     cycle: oldEntry.cycle ?? getCurrentCycleNumber()
                 };
@@ -5119,7 +5119,7 @@
                 updateAllDisplays();
             } catch (err) {
                 console.error('correctionExecuteRedraw failed:', err);
-                alert(`❌ Redraw failed: ${err.message}. Check the console — the old entry may already be tombstoned.`);
+                alert(`❌ Redraw failed: ${err.message}. Check the console, the old entry may already be tombstoned.`);
             }
         }
 
@@ -5695,7 +5695,7 @@
                 const formattedDate = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                 const formattedTime = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
                 
-                // Category icon only — colour comes from the shared calm chip style.
+                // Category icon only, colour comes from the shared calm chip style.
                 const categoryIcons = {
                     'PBIS Behaviors': '🎯',
                     'Perfect Attendance': '📅',
@@ -6145,7 +6145,7 @@
          * awaits saveData() BEFORE it hides the login screen, and that gap is
          * exactly the "login screen flashes back with a Saving… pill" the owner
          * reported. The overlay sits over it and lifts in the finally, when
-         * mainApp is on screen and drawn — success or error, the loader always
+         * mainApp is on screen and drawn, success or error, the loader always
          * comes down.
          */
         async function establishTeacherSession(teacher) {
@@ -6341,7 +6341,7 @@
             // weekOverride lets callers (e.g. the Perfect Attendance upload, which awards
             // tickets for a specific past week) tag the audit entry with the SAME week as
             // the matching ticket-history entry. Without it, the audit entry would use
-            // currentWeek and silently disagree with the history entry — the exact bug that
+            // currentWeek and silently disagree with the history entry, the exact bug that
             // caused attendance raffle pools to come up empty. When null, defaults to currentWeek.
             const effectiveWeek = (typeof weekOverride === 'number' && !isNaN(weekOverride))
                 ? weekOverride
@@ -6510,7 +6510,7 @@
                 // A dash is not a fact. An award with no category recorded and
                 // an award of zero tickets are different things from an award
                 // whose category simply is not applicable, and the log cannot
-                // tell them apart — so it says "not recorded" rather than
+                // tell them apart, so it says "not recorded" rather than
                 // printing a hyphen that reads as data.
                 const absent = (what) => `<span class="wu-absent">${what}</span>`;
 
@@ -7357,7 +7357,7 @@
                 addToAuditLog('cash_award',
                     selectedStudentForCash.id, 'Wildcat Cash',
                     Math.abs(amount),
-                    behavior.name + (notes.trim() ? ' — ' + notes.trim() : ''));
+                    behavior.name + (notes.trim() ? ', ' + notes.trim() : ''));
             }
 
             closeAddCashModal();
@@ -7436,7 +7436,7 @@
                 addToAuditLog('cash_deduct',
                     selectedStudentForCash.id, 'Wildcat Cash',
                     Math.abs(amount),
-                    behavior.name + (notes.trim() ? ' — ' + notes.trim() : ''));
+                    behavior.name + (notes.trim() ? ', ' + notes.trim() : ''));
             }
 
             closeRemoveCashModal();
@@ -10482,7 +10482,7 @@
                 const view = paginate('teachers', teachers, true);
                 renderPager('teachers', 'teachersTable', view);
                 // Roles used to be solid pills in five unrelated colours —
-                // crimson, indigo, green, another green — each with an emoji
+                // crimson, indigo, green, another green, each with an emoji
                 // inside it. The emoji forced the label to wrap out of the
                 // pill and the row to grow to roughly 200px, so four staff
                 // filled a screen. Roles are a category, not a severity: one
@@ -11045,7 +11045,7 @@
                 const existing = existingById.get(id);
                 
                 if (existing) {
-                    // Existing student — preserve ALL their ticket data, only update name/grade/homeroom
+                    // Existing student, preserve ALL their ticket data, only update name/grade/homeroom
                     return {
                         ...existing,
                         firstName: firstName || existing.firstName,
@@ -11107,7 +11107,7 @@
                 opt.value = String(w);
                 let label = `Week ${w}`;
                 if (w === currentWeek) label += ' (Current week)';
-                else if (w === currentWeek - 1) label += ' (Last week — most common)';
+                else if (w === currentWeek - 1) label += ' (Last week: most common)';
                 opt.textContent = label;
                 if (w === currentWeek) opt.selected = true;
                 weekSelect.appendChild(opt);
@@ -11242,7 +11242,7 @@
                     }
 
                     // Check if already awarded Perfect Attendance for this week
-                    // Look at ticket history, not counters — counters can include
+                    // Look at ticket history, not counters, counters can include
                     // other Attendance awards (being on time, etc.)
                     const hist = student.ticketHistory || [];
                     const alreadyHasIt = hist.some(h => {
@@ -11304,7 +11304,7 @@
                 if (unmatched.length > 0) {
                     html += `
                         <div style="margin-bottom: 18px;">
-                            <div style="font-weight: 600; color: #991b1b; margin-bottom: 8px; font-size: 14px;">⚠️ Unmatched students (${unmatched.length}) — these IDs are not in the system and will be skipped:</div>
+                            <div style="font-weight: 600; color: #991b1b; margin-bottom: 8px; font-size: 14px;">⚠️ Unmatched students (${unmatched.length}), these IDs are not in the system and will be skipped:</div>
                             <div style="background: #fef2f2; padding: 10px 14px; border-radius: 6px; max-height: 120px; overflow-y: auto; font-size: 12px; color: #7f1d1d;">
                                 ${unmatched.map(u => `ID ${u.id}${u.name ? ' — ' + u.name : ''}${u.grade ? ' (Grade ' + u.grade + ')' : ''}`).join('<br>')}
                             </div>
@@ -11315,7 +11315,7 @@
                 if (alreadyAwarded.length > 0) {
                     html += `
                         <div style="margin-bottom: 18px;">
-                            <div style="font-weight: 600; color: #92400e; margin-bottom: 8px; font-size: 14px;">Already have Perfect Attendance for Week ${selectedWeek} (${alreadyAwarded.length}) — will be skipped:</div>
+                            <div style="font-weight: 600; color: #92400e; margin-bottom: 8px; font-size: 14px;">Already have Perfect Attendance for Week ${selectedWeek} (${alreadyAwarded.length}), will be skipped:</div>
                             <div style="background: #fffbeb; padding: 10px 14px; border-radius: 6px; max-height: 120px; overflow-y: auto; font-size: 12px; color: #78350f;">
                                 ${alreadyAwarded.map(a => `${a.student.firstName} ${a.student.lastName} (Grade ${a.student.grade})`).join('<br>')}
                             </div>
@@ -11416,7 +11416,7 @@
                     cycle: getCurrentCycleNumber()
                 });
 
-                // Audit log entry — pass selectedWeek so the audit entry's week matches
+                // Audit log entry, pass selectedWeek so the audit entry's week matches
                 // the ticket-history entry's week. Previously this used currentWeek, which
                 // diverged from the history when awarding for a past week and broke raffle pools.
                 addToAuditLog('Awarded Tickets', student.id, 'Attendance', 1, ticketReason, null, selectedWeek);
@@ -15802,8 +15802,8 @@
             }
 
             // One delegated pointermove for the whole stack. It stands down
-            // while a drag is in flight — the stack sets wp-noanim for the
-            // duration — so the spotlight can never compete with the
+            // while a drag is in flight, the stack sets wp-noanim for the
+            // duration, so the spotlight can never compete with the
             // gesture the student is actually making.
             m.spotlight(stack, {
                 selector: '.wp-card',
@@ -15838,8 +15838,8 @@
         //
         // Every card used to keep its full-strength face whether or not it
         // had anything on it, so on a typical account the two loudest
-        // surfaces in the stack — the orange Lunch card and the electric
-        // indigo Clever card — both read "Not available". The stack was
+        // surfaces in the stack, the orange Lunch card and the electric
+        // indigo Clever card, both read "Not available". The stack was
         // pointing hardest at the two things a student cannot use, and the
         // one card that always works, their ID barcode, was quieter than
         // both.
@@ -21796,9 +21796,9 @@
                 { key: 'referrals',         label: 'Referrals', bytes: _byteSize(referralsPayload) },
                 { key: 'schedules',         label: 'Class schedules', bytes: _byteSize(schedulesPayload) },
                 { key: 'audit_log',         label: 'Audit log (largest week' + (auditWorstMonth ? ': ' + auditWorstMonth.replace('_', '-') : '') + ')', bytes: auditBytes },
-                { key: 'ticket_history_hs_910',  label: 'Ticket history — Grades 9-10', bytes: _byteSize(hs910Hist) },
-                { key: 'ticket_history_hs_1112', label: 'Ticket history — Grades 11-12', bytes: _byteSize(hs1112Hist) },
-                { key: 'ticket_history_ms', label: 'Ticket history — Middle School', bytes: _byteSize(msHist) }
+                { key: 'ticket_history_hs_910',  label: 'Ticket history: Grades 9-10', bytes: _byteSize(hs910Hist) },
+                { key: 'ticket_history_hs_1112', label: 'Ticket history: Grades 11-12', bytes: _byteSize(hs1112Hist) },
+                { key: 'ticket_history_ms', label: 'Ticket history: Middle School', bytes: _byteSize(msHist) }
             ];
             rows.forEach(r => { r.pct = r.bytes / STORAGE_DOC_LIMIT; });
 
@@ -21843,9 +21843,9 @@
             const words = {
                 ok:   'Plenty of room',
                 mid:  'Fine',
-                warn: 'Getting full — plan a fix',
+                warn: 'Getting full: plan a fix',
                 high: 'Act soon',
-                crit: 'Fix now — saves may fail'
+                crit: 'Fix now: saves may fail'
             };
 
             let html = '';
@@ -21991,7 +21991,7 @@
                         status.textContent = '❌ ' + analysis.error;
                         return;
                     }
-                    status.textContent = '✅ Analyzed ' + file.name + ' — ' + analysis.rowCount +
+                    status.textContent = '✅ Analyzed ' + file.name + ', ' + analysis.rowCount +
                                          ' rows, ' + analysis.incoming.size + ' unique students. Nothing was saved.';
                     renderRolloverPreview(analysis);
                     results.style.display = 'block';
@@ -22142,8 +22142,8 @@
                 '<p class="panel-note">' +
                     a.rowCount + ' data rows describing <strong>' + a.incoming.size + ' unique students</strong>' +
                     (a.isSchedule
-                        ? ' — about ' + (a.rowCount / a.incoming.size).toFixed(1) + ' rows each, so this is a <strong>schedule export</strong> (one row per class). Duplicate rows per student are expected and were collapsed by Student Number.'
-                        : ' — roughly one row per student.') +
+                        ? ', about ' + (a.rowCount / a.incoming.size).toFixed(1) + ' rows each, so this is a <strong>schedule export</strong> (one row per class). Duplicate rows per student are expected and were collapsed by Student Number.'
+                        : ', roughly one row per student.') +
                 '</p>' +
                 (a.teacherSet.size
                     ? '<p class="panel-note" style="margin-top:8px;">It also contains <strong>' + a.teacherSet.size +
@@ -22175,7 +22175,7 @@
                 html += '<div class="wc-card check-ok">' +
                     '<h3 class="panel-title">✅ Departure check looks normal</h3>' +
                     '<p class="panel-note">All ' + a.departing.length + ' departing students are in grade ' +
-                    a.topGrade + ', the highest grade in your roster — exactly what graduation looks like.</p></div>';
+                    a.topGrade + ', the highest grade in your roster, exactly what graduation looks like.</p></div>';
             } else {
                 html += '<div class="wc-card check-warn">' +
                     '<div class="warn-badge">⚠️ CHECK THIS BEFORE ANY ROLLOVER</div>' +
@@ -22184,13 +22184,13 @@
                     '<p class="panel-note">Graduating students should all be in grade ' + (a.topGrade === null ? '?' : a.topGrade) +
                     '. These ' + unexp + ' are not, which usually means one of:</p>' +
                     '<ul class="rollover-list">' +
-                    '<li><strong>The file is out of date.</strong> Students who enrolled after this export was produced are missing from it, so they look like they left. This is the most common cause — re-export from PowerSchool and run this again.</li>' +
+                    '<li><strong>The file is out of date.</strong> Students who enrolled after this export was produced are missing from it, so they look like they left. This is the most common cause, re-export from PowerSchool and run this again.</li>' +
                     '<li><strong>They genuinely transferred out</strong> during the year, which is normal.</li>' +
                     '<li><strong>Their Student Number changed</strong> in PowerSchool, so they no longer match.</li>' +
                     '</ul>' +
                     (a.unexpectedWithTickets.length
                         ? '<p class="panel-note" style="margin-top:10px;"><strong>' + a.unexpectedWithTickets.length +
-                          '</strong> of them currently hold tickets, so they are active students — a strong sign the file is stale rather than that they left.</p>'
+                          '</strong> of them currently hold tickets, so they are active students, a strong sign the file is stale rather than that they left.</p>'
                         : '') +
                     (a.departingShare > 0.25
                         ? '<p class="panel-note" style="margin-top:10px;"><strong>' + Math.round(a.departingShare * 100) +
@@ -22214,8 +22214,8 @@
 
             // ---- Departing (the list to eyeball) ----
             html += '<div class="wc-card panel-card">' +
-                '<div class="panel-head"><span class="panel-icon">👋</span><h3>Departing — ' + a.departing.length + ' student' + (a.departing.length === 1 ? '' : 's') + '</h3></div>' +
-                '<p class="panel-hint" style="margin:0 0 12px 0;">These are in the system but absent from the new file — normally graduates and transfers out. <strong>Check this list carefully:</strong> anyone here by mistake would be removed from the active roster by a real rollover.</p>';
+                '<div class="panel-head"><span class="panel-icon">👋</span><h3>Departing, ' + a.departing.length + ' student' + (a.departing.length === 1 ? '' : 's') + '</h3></div>' +
+                '<p class="panel-hint" style="margin:0 0 12px 0;">These are in the system but absent from the new file, normally graduates and transfers out. <strong>Check this list carefully:</strong> anyone here by mistake would be removed from the active roster by a real rollover.</p>';
             if (!a.departing.length) {
                 html += '<p class="cell-empty">Nobody would depart.</p>';
             } else {
@@ -22235,7 +22235,7 @@
                         '<td class="cell-center">' + (Number(s.weeksQualified) || 0) + '</td>' +
                         '<td>' + (expected
                             ? '<span class="tag-ok">Graduating</span>'
-                            : '<span class="tag-warn">Verify — not graduating grade</span>') + '</td>' +
+                            : '<span class="tag-warn">Verify, not graduating grade</span>') + '</td>' +
                         '</tr>';
                 });
                 html += '</tbody></table></div>';
@@ -22244,8 +22244,8 @@
 
             // ---- New students ----
             html += '<div class="wc-card panel-card">' +
-                '<div class="panel-head"><span class="panel-icon">✨</span><h3>New — ' + a.newStudents.length + ' student' + (a.newStudents.length === 1 ? '' : 's') + '</h3></div>' +
-                '<p class="panel-hint" style="margin:0 0 12px 0;">In the new file but not yet in the system — incoming students and transfers in.</p>';
+                '<div class="panel-head"><span class="panel-icon">✨</span><h3>New, ' + a.newStudents.length + ' student' + (a.newStudents.length === 1 ? '' : 's') + '</h3></div>' +
+                '<p class="panel-hint" style="margin:0 0 12px 0;">In the new file but not yet in the system, incoming students and transfers in.</p>';
             if (!a.newStudents.length) {
                 html += '<p class="cell-empty">No new students.</p>';
             } else {
@@ -22269,7 +22269,7 @@
                 '<h3 class="panel-title">🎓 Grade changes</h3>' +
                 '<p class="panel-note"><strong>' + a.gradeChanges.length + '</strong> returning students would change grade' +
                 (a.schoolMoves.length
-                    ? ', including <strong>' + a.schoolMoves.length + '</strong> crossing between middle and high school — their tickets would start recording in the other school\'s history document.'
+                    ? ', including <strong>' + a.schoolMoves.length + '</strong> crossing between middle and high school, their tickets would start recording in the other school\'s history document.'
                     : '.') + '</p>';
             const gks = Object.keys(a.gradeCounts).sort((x, y) => (parseInt(x, 10) || 99) - (parseInt(y, 10) || 99));
             if (gks.length) {
@@ -22287,11 +22287,11 @@
                 '<h3 class="panel-title">🛠️ What a real rollover would do beyond this</h3>' +
                 '<ul class="rollover-list">' +
                 '<li>Archive this year\'s ticket history, then reset every student\'s PBIS, attendance and academic counts to 0</li>' +
-                '<li>Clear jackpot qualifications — this must bypass the normal save path, because the merge rules <em>union</em> qualification arrays and would silently keep them</li>' +
-                '<li>Reset to Cycle 1, Week 1 — which requires deliberately overriding the guard that blocks the cycle from moving backwards</li>' +
+                '<li>Clear jackpot qualifications, this must bypass the normal save path, because the merge rules <em>union</em> qualification arrays and would silently keep them</li>' +
+                '<li>Reset to Cycle 1, Week 1, which requires deliberately overriding the guard that blocks the cycle from moving backwards</li>' +
                 '<li>Preserve teacher accounts, settings, and the Hall of Fame</li>' +
                 '<li>Rebuild period and teacher section assignments' + (a.sectionSet.size ? ' from the ' + a.sectionSet.size + ' sections in this file' : '') + '</li>' +
-                '<li>Students who enroll <em>after</em> the rollover are added by the normal Students &rarr; Import, which only adds and updates — it never removes anyone, so it is safe to re-run mid-year as new students arrive</li>' +
+                '<li>Students who enroll <em>after</em> the rollover are added by the normal Students &rarr; Import, which only adds and updates, it never removes anyone, so it is safe to re-run mid-year as new students arrive</li>' +
                 '</ul>' +
                 '<p class="panel-note" style="margin-top:10px;">None of that has happened. This was a read-only report.</p>' +
                 '</div>';
@@ -22761,7 +22761,7 @@
                         behavior.points >= 0 ? 'cash_award' : 'cash_deduct',
                         student.id, 'Wildcat Cash',
                         Math.abs(behavior.points),
-                        `${behavior.name}${notes ? ' — ' + notes : ''}`
+                        `${behavior.name}${notes ? ', ' + notes : ''}`
                     );
                 }
             });
@@ -23257,7 +23257,7 @@
                         ${reward.description ? `<p class="reward-desc">${escapeHtml(reward.description)}</p>` : ''}
                         <div class="reward-cost">$${reward.cost}</div>
                         <div class="reward-category">${escapeHtml(reward.category || 'General')}</div>
-                        ${paused ? '<div class="reward-flag">Paused — not purchasable</div>' : ''}
+                        ${paused ? '<div class="reward-flag">Paused: not purchasable</div>' : ''}
                         ${outOfStock && !paused ? '<div class="reward-flag">Out of stock</div>' : ''}
                         <div class="reward-actions">
                             <button class="btn" onclick="openRedeemRewardModal('${reward.id}')"
@@ -23727,7 +23727,7 @@
             );
             addToAuditLog('reward_fulfilled', cashReceipts[idx].studentId, 'Wildcat Cash',
                 cashReceipts[idx].totalCost,
-                `Handed over ${cashReceipts[idx].rewardName} — receipt ${receiptId}`);
+                `Handed over ${cashReceipts[idx].rewardName}, receipt ${receiptId}`);
             saveData();
             updateReceiptsTable();
             showToast(`✅ ${receiptId} fulfilled`, 'success');
@@ -23764,7 +23764,7 @@
 
             addToAuditLog('reward_cancelled', receipt.studentId, 'Wildcat Cash',
                 receipt.totalCost,
-                `Cancelled ${receipt.rewardName} — receipt ${receiptId}. ${res.receipt.cancelReason}`);
+                `Cancelled ${receipt.rewardName}, receipt ${receiptId}. ${res.receipt.cancelReason}`);
             saveData();
             updateReceiptsTable();
             showToast(`${receiptId} cancelled and refunded`, 'success');
@@ -23963,7 +23963,7 @@
                         role="option" data-index="${i}"
                         onmousedown="pickStudent('${s.id}')">
                         <span class="sp-name">${escapeHtml(s.lastName)}, ${escapeHtml(s.firstName)}</span>
-                        <span class="sp-meta">Gr ${escapeHtml(String(s.grade || ''))} &middot; $${bal}${short ? ' — short' : ''}</span>
+                        <span class="sp-meta">Gr ${escapeHtml(String(s.grade || ''))} &middot; $${bal}${short ? ', short' : ''}</span>
                     </li>`;
             }).join('');
             list.classList.remove('hidden');
@@ -24143,7 +24143,7 @@
                 student.id,
                 'Wildcat Cash',
                 built.receipt.totalCost,
-                `Purchased ${reward.name}${built.receipt.quantity > 1 ? ' x' + built.receipt.quantity : ''} — receipt ${built.receipt.id}`
+                `Purchased ${reward.name}${built.receipt.quantity > 1 ? ' x' + built.receipt.quantity : ''}, receipt ${built.receipt.id}`
             );
 
             return { ok: true, receipt: built.receipt, transaction: tx };
@@ -24204,7 +24204,7 @@
             }
             el.innerHTML = cashYearArchives.slice().reverse().map(a =>
                 `<div>Closed <strong>${escapeHtml(a.schoolYear)}</strong> on ` +
-                `${new Date(a.closedAt).toLocaleDateString()} by ${escapeHtml(a.closedBy || '')} — ` +
+                `${new Date(a.closedAt).toLocaleDateString()} by ${escapeHtml(a.closedBy || '')}, ` +
                 `${a.totals.students} students, $${(a.totals.totalBalance || 0).toLocaleString()} cleared` +
                 `${a.backupRef ? `, backup <code>${escapeHtml(a.backupRef)}</code>` : ''}</div>`
             ).join('');
@@ -25026,8 +25026,8 @@
                     { year: 'numeric', month: 'long', day: 'numeric' });
             };
             const statusText = r.status === 'closed'
-                ? (r.loopClosed ? 'Resolved — loop closed' : 'Resolved')
-                : 'Open — awaiting administrator';
+                ? (r.loopClosed ? 'Resolved: loop closed' : 'Resolved')
+                : 'Open: awaiting administrator';
 
             const interventions = (r.interventions || []);
             const closingActions = (r.closingActions || []);
@@ -25891,7 +25891,7 @@
                 .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
             sel.innerHTML = list.length
                 ? list.map(t => `<option value="${escapeHtml(String(t.id))}">` +
-                    `${escapeHtml(t.name || t.username || 'Unnamed')} — ` +
+                    `${escapeHtml(t.name || t.username || 'Unnamed')}, ` +
                     `${escapeHtml(getFriendlyRoleName(t.role) || t.role || '')}</option>`).join('')
                 : '<option value="">No other staff to view as</option>';
         }
@@ -26009,7 +26009,7 @@
             // are in this view will report bugs that are not bugs, or worse,
             // conclude a teacher can see something they cannot.
             bar.innerHTML =
-                '<span>👁️ <strong>Teacher view</strong> — showing the app as ' +
+                '<span>👁️ <strong>Teacher view</strong>, showing the app as ' +
                 escapeHtml(currentUser.name || '') + '. Read-only, and server permissions ' +
                 'still answer as you.</span>' +
                 '<button type="button" class="wc-preview-exit" onclick="endTeacherPreview()">Exit</button>';
@@ -26060,7 +26060,7 @@
             if (!names.length) {
                 sel.innerHTML = '<option value="">(staff list unavailable)</option>';
                 sel.disabled = false;
-                if (hint) hint.textContent = 'Could not load the staff list — the referral will be filed under your account.';
+                if (hint) hint.textContent = 'Could not load the staff list, the referral will be filed under your account.';
                 console.warn('populateReferringStaffDropdown: no names available',
                              { me: me, role: currentUser && currentUser.role, teachers: (teachers || []).length });
                 return;
@@ -26103,8 +26103,8 @@
             const severe = !!(document.getElementById('referralSevereBypass') || {}).checked;
             if (severe) {
                 el.textContent = n
-                    ? `✓ Immediate removal recorded — ${n} intervention${n === 1 ? '' : 's'} also logged`
-                    : '✓ Immediate removal recorded — the 3-intervention expectation does not apply';
+                    ? `✓ Immediate removal recorded, ${n} intervention${n === 1 ? '' : 's'} also logged`
+                    : '✓ Immediate removal recorded, the 3-intervention expectation does not apply';
                 el.className = 'intervention-banner intervention-banner-severe';
                 return;
             }
@@ -26113,7 +26113,7 @@
                 el.textContent = 'Select at least 3 interventions below';
                 el.className = 'intervention-banner';
             } else if (n < 3) {
-                el.textContent = `${n} of 3 selected — ${3 - n} more expected before referring`;
+                el.textContent = `${n} of 3 selected, ${3 - n} more expected before referring`;
                 el.className = 'intervention-banner intervention-banner-warn';
             } else {
                 el.textContent = `✓ ${n} interventions selected`;
@@ -26241,7 +26241,7 @@
 
             // Confirm now; persist in the background.
             showReferralToast(
-                `✅ <strong>Referral submitted</strong> for ${escapeHtml(referral.studentName)} — sent to administration for review.`, 'ok');
+                `✅ <strong>Referral submitted</strong> for ${escapeHtml(referral.studentName)}, sent to administration for review.`, 'ok');
             clearReferralForm();
             if (typeof updateReferralReviewTable === 'function') updateReferralReviewTable();
             setButtonBusy(submitBtn, false);
@@ -26314,7 +26314,7 @@
                     </td>
                     <td class="cell-center">
                         ${r.severeBypass
-                            ? `<span class="count-pill count-pill-severe" title="Too severe for classroom interventions — immediate removal">severe</span>`
+                            ? `<span class="count-pill count-pill-severe" title="Too severe for classroom interventions, immediate removal">severe</span>`
                             : `<span class="count-pill${ivCount >= 3 ? ' count-pill-on' : ''}" title="Interventions attempted before referring">${ivCount}</span>`}
                     </td>
                     <td>
@@ -26353,7 +26353,7 @@
                 const actions = (r.closingActions || []);
                 const loopBadge = r.loopClosed
                     ? '<span class="tag-ok">Loop closed</span>'
-                    : `<button class="btn btn-sm-loop" onclick="openCloseLoopModal('${r.id}')">Loop pending — close it</button>`;
+                    : `<button class="btn btn-sm-loop" onclick="openCloseLoopModal('${r.id}')">Loop pending, close it</button>`;
                 return `
                 <div class="wc-card closed-ref-card">
                     <div class="closed-ref-head">
@@ -26678,7 +26678,7 @@
                     ${ca.length ? `<ul class="closed-ref-actions">${ca.map(a => `<li>${escapeHtml(a)}</li>`).join('')}</ul>` : ''}
                     ${r.adminNotes ? `<div class="closed-ref-note">${escapeHtml(r.adminNotes)}</div>` : ''}
                     <div class="cell-sub" style="margin-top:6px;">Closed by ${escapeHtml(r.closedBy || '—')}${r.loopClosed ? ' &middot; loop closed' : ' &middot; loop still pending'}</div>
-                </div>` : '<div class="modal-desc"><span class="ctx-label">Status</span>Open — awaiting administrator</div>'}
+                </div>` : '<div class="modal-desc"><span class="ctx-label">Status</span>Open: awaiting administrator</div>'}
 
                 <div class="modal-actions">
                     <button class="btn btn-secondary" onclick="closeModalById('referralDetailModal')">Close</button>
@@ -27169,7 +27169,7 @@
                             ${res.unknownEthnicity === 1 ? 'has' : 'have'} no answer to the
                             Hispanic/Latino question in the SIS, so
                             ${res.unknownEthnicity === 1 ? 'it is' : 'they are'} categorised by race
-                            code alone. That is a sync gap, not a finding — a large number here
+                            code alone. That is a sync gap, not a finding. A large number here
                             means the ethnicity field is not coming through.
                         </p>` : ''}
                 </div>`;
@@ -27280,7 +27280,7 @@
 
             const why = function (info) {
                 if (!info) return 'No SIS record';
-                if (info.basis === 'ethnicity') return 'Hispanic/Latino — ethnicity is asked first and overrides race';
+                if (info.basis === 'ethnicity') return 'Hispanic/Latino, ethnicity is asked first and overrides race';
                 if (info.basis === 'race') return 'Not Hispanic/Latino, so categorised by race code';
                 if (!info.hasRecord) return 'No restricted record synced for this student';
                 return 'No usable race code or ethnicity answer';
@@ -28782,7 +28782,7 @@
 
             const idEl = document.getElementById('dashIdentity');
             if (idEl) {
-                // The chevron is on a pill that GOES somewhere — My Activity,
+                // The chevron is on a pill that GOES somewhere, My Activity,
                 // which every role has. A chevron on a control that does
                 // nothing is worse than no chevron.
                 idEl.innerHTML = `
@@ -28954,7 +28954,7 @@
             // Wednesday out under the word "Today" would be a fabricated day.
             const dow = new Date(selected + 'T12:00:00').getDay();
             const isToday = selected === todayIso;
-            // getActiveSchedule() answers for NOW — it reads today's day of the
+            // getActiveSchedule() answers for NOW, it reads today's day of the
             // week and has no way to be asked about another date. So periods
             // are laid out for today only. On any other day the strip shows
             // what is actually recorded for that day (the passes and, in the
@@ -28990,8 +28990,8 @@
                 periods.forEach(p => {
                     // A period this user teaches reads as an event: a card with
                     // an icon square, a title and a subtitle. Every other
-                    // period is still on the strip — a teacher needs the shape
-                    // of the day — but it is one quiet outlined line, which is
+                    // period is still on the strip, a teacher needs the shape
+                    // of the day, but it is one quiet outlined line, which is
                     // exactly how 03 draws a break.
                     const mySection = mySections.get(String(p.period));
                     const start = toMin(p.start);
@@ -29050,7 +29050,7 @@
                 //
                 // THESE CARDS NEVER APPEARED. They were built from `hallPasses`,
                 // the pre-Convex array the deleted Student Kiosk used to fill,
-                // and filtered on `status === 'active'` — a field name Convex
+                // and filtered on `status === 'active'`, a field name Convex
                 // does not use either. A teacher's day timeline could not show
                 // a hall pass no matter how many children were out.
                 //
