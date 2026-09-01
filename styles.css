@@ -7403,12 +7403,24 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
    Scoped entirely to .wp-wide inside the same 1000px query the grid uses, so
    the phone wallet is untouched: same file, same class, one breakpoint. */
 @media (min-width: 1000px) {
+    /* THE GROUND IS THE TEACHER APP'S GROUND, not a second set of greys that
+       nearly match it. This view used to declare #EEF2F7, #16202E and #5B6675,
+       three values that came from nowhere and landed a half-step off every card
+       on the staff side. wildcat-ui.css opens by saying why that is worth
+       fixing: its tokens exist so the two portals are "literally the same
+       colour rather than two dark greys that nearly match". That file is
+       already linked on every page here, so adopting it costs one request of
+       nothing.
+
+       Only the five the wallet already reads are redefined. Nothing new is
+       introduced: a token this view alone knows about would be the same
+       mistake in a newer coat. */
     #studentPassView.wp-wide {
-        --wp-ground: #EEF2F7;
-        --wp-fg: #16202E;
-        --wp-dim: #5B6675;
-        --wp-hair: rgba(16, 24, 40, 0.10);
-        --wp-rule: rgba(16, 24, 40, 0.09);
+        --wp-ground: var(--wu-paper);
+        --wp-fg: var(--wu-fg);
+        --wp-dim: var(--wu-fg-dim);
+        --wp-hair: var(--wu-hair);
+        --wp-rule: var(--wu-hair);
         background: var(--wp-ground);
         color: var(--wp-fg);
     }
@@ -7434,53 +7446,97 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     .wp-wide .wp-brandlogo { filter: none; opacity: 1; }
     .wp-wide .wp-name { color: var(--wp-fg); }
     .wp-wide .wp-meta { color: var(--wp-dim); }
-    .wp-wide .wp-avatar { background: #D8E2F0; color: #1B3A63; }
-    .wp-wide .wp-round { background: rgba(16, 24, 40, 0.07); color: var(--wp-fg); }
-    .wp-wide .wp-round:hover { background: rgba(16, 24, 40, 0.13); }
+    /* The staff side's own avatar: initials in blue mist, never a photograph.
+       The base rule rings it in white for the near-black wallet, which on paper
+       is a ring nobody can see. */
+    .wp-wide .wp-avatar {
+        background: var(--wu-blue-mist);
+        border-color: var(--wu-hair);
+        color: var(--wu-blue-deep);
+    }
+    /* INK, AS PUNCTUATION. wildcat-ui.css allows the portal's near-black
+       exactly one job on a paper ground, the small circular action at a card's
+       corner, and sign-out is the only circular action the desk has. It is
+       also the one dark thing on the page, which is what a column of white
+       cards on pale blue is otherwise missing. */
+    .wp-wide .wp-round {
+        background: var(--wu-ink-900);
+        border: 0;
+        color: #FFFFFF;
+    }
+    .wp-wide .wp-round:hover { background: var(--wu-blue-deep); }
+    .wp-wide .wp-round:focus-visible { outline: 2px solid var(--wu-blue); outline-offset: 2px; }
 
-    /* ---- the tiles ---- */
+    /* ---- the tiles: the three figures a student opens the page for ---- */
     .wp-wide .wp-tiles {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 18px;
-        margin-bottom: 18px;
+        gap: var(--wu-s5);
+        margin-bottom: var(--wu-s5);
     }
     .wp-wide .wp-tile {
         position: relative;
-        background: #FFFFFF;
-        border-radius: 16px;
-        padding: 22px 24px 20px;
-        box-shadow: 0 4px 15px rgba(16, 24, 40, 0.07);
+        background: var(--wu-surface);
+        border: 1px solid var(--wu-hair);
+        border-radius: var(--wu-r-panel);
+        padding: var(--wu-s5) var(--wu-s5) var(--wu-s4);
+        box-shadow: var(--wu-shadow-1);
         overflow: hidden;
+        /* The texture below is painted at z-index -1 so it sits over the tile's
+           white and under its text. Without a stacking context of its own it
+           would go behind the tile instead and never be seen. */
+        isolation: isolate;
     }
-    /* The gradient edge is the staff dashboard's signature. Same device here so
-       the two read as one product. */
+    /* THE WAVE, off the teacher's identity card, brought to the figures rather
+       than to a hero card. This screen has no hero, it has a question, so the
+       texture belongs on the three numbers that answer it. Same inline SVG,
+       same rotation so no tile seam can show, one data URI and no image
+       request, which is the point on a school Chromebook.
+       Blue by default because two of the three tiles are things the school
+       recorded; the alpha is set so the crest composites to about the same
+       value as --wu-surface-sunk, which is paper, not pattern. */
     .wp-wide .wp-tile::before {
         content: '';
         position: absolute;
-        inset: 0 0 auto 0;
-        height: 4px;
-        background: linear-gradient(90deg, var(--wc-blue, #2F67A7) 0%, var(--wc-blue-deep, #0C447C) 100%);
+        inset: -40%;
+        z-index: -1;
+        pointer-events: none;
+        transform: rotate(-16deg);
+        border-radius: inherit;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='17'%3E%3Cpath d='M0 12 Q7.5 2 15 12 T30 12' fill='none' stroke='rgba(47,103,167,0.055)' stroke-width='2'/%3E%3C/svg%3E");
+        background-size: 30px 17px;
     }
+    .wp-wide .wp-tile > * { position: relative; z-index: 1; }
+    /* FIGURE FIRST, THEN LABEL, which is the reverse of .wu-tile and stays that
+       way. The teacher's tile leads with its label because a teacher is
+       scanning twelve of them for the one that is wrong. A student has three
+       and already knows what they are asking; the number is the answer, and
+       reordering it in CSS would also put the markup and the screen in
+       different sequences to buy nothing. */
     .wp-wide .wp-tile-n {
-        margin: 6px 0 2px;
+        margin: 0 0 var(--wu-s2);
         font-size: 38px;
         font-weight: 700;
-        line-height: 1.05;
-        color: #16202E;
+        line-height: 1.03;
+        letter-spacing: -.03em;
+        font-variant-numeric: tabular-nums;
+        color: var(--wu-blue-deep);
     }
     /* "Not on file" must not be typeset as a headline number. It is a sentence
        about an absence, and at 38px it reads as data. */
     .wp-wide .wp-tile.is-none .wp-tile-n { font-size: 19px; font-weight: 600; color: var(--wp-dim); }
+    /* The eyebrow's shape from wildcat-ui.css, one step darker than its colour.
+       --wu-fg-faint measures 3.2:1 on white, which the teacher app can carry
+       beside a 21px title and an 11px label a student has to read cannot. */
     .wp-wide .wp-tile-l {
         margin: 0;
-        font-size: 12.5px;
-        font-weight: 700;
-        letter-spacing: .05em;
+        font-size: 11px;
+        font-weight: 650;
+        letter-spacing: .12em;
         text-transform: uppercase;
-        color: #5B6675;
+        color: var(--wp-dim);
     }
-    .wp-wide .wp-tile-s { margin: 4px 0 0; font-size: 12px; color: #7A8494; }
+    .wp-wide .wp-tile-s { margin: 6px 0 0; font-size: 12.5px; color: var(--wp-dim); }
 
     /* ---- panels, white like the staff cards ---- */
     /* The column count is set once, up with the rest of the wide shell, as
@@ -7489,23 +7545,42 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
        need saying: they span whatever number of columns it chose. */
     .wp-wide .wp-tiles { grid-column: 1 / -1; }
     .wp-wide .wp-panel {
-        background: #FFFFFF;
-        border: 1px solid rgba(16, 24, 40, 0.08);
-        border-radius: 16px;
-        box-shadow: 0 4px 15px rgba(16, 24, 40, 0.06);
-        padding: 20px 22px 22px;
+        background: var(--wu-surface);
+        border: 1px solid var(--wu-hair);
+        border-radius: var(--wu-r-panel);
+        box-shadow: var(--wu-shadow-1);
+        padding: var(--wu-s5);
     }
-    .wp-wide .wp-panel-title { color: #16202E; }
+    .wp-wide .wp-panel-title { color: var(--wp-fg); }
     .wp-wide .wp-panel-note { color: var(--wp-dim); }
-    .wp-wide .wp-rowtitle { color: #16202E; }
+    .wp-wide .wp-rowtitle { color: var(--wp-fg); }
     .wp-wide .wp-rowsub, .wp-wide .wp-rowpct { color: var(--wp-dim); }
-    .wp-wide .wp-rowend { color: #16202E; }
+    .wp-wide .wp-rowend { color: var(--wp-fg); }
     .wp-wide .wp-row, .wp-wide .wp-row-btn { border-top-color: var(--wp-rule); }
-    .wp-wide .wp-stat-n { color: #16202E; }
+    .wp-wide .wp-stat-n { color: var(--wp-fg); }
     .wp-wide .wp-stat-l, .wp-wide .wp-stat-s { color: var(--wp-dim); }
     .wp-wide .wp-empty, .wp-wide .wp-foot { color: var(--wp-dim); }
-    .wp-wide .wp-rowchev { color: #5B6675; }
-    .wp-wide .wp-row-btn:focus-visible { outline-color: #0C447C; }
+    .wp-wide .wp-rowchev { color: var(--wp-dim); }
+    .wp-wide .wp-row-btn:focus-visible { outline-color: var(--wu-blue); }
+
+    /* ---- SMALL PRINT DIMS WITH A COLOUR HERE, NEVER WITH OPACITY ----
+       The wallet fades its sub-lines, its footnotes and its "Not posted" with
+       opacity, which is correct on #0B0B0E: 60% of a near-white is still a
+       light grey on black. Composite the same 60% onto a white card and
+       #5F6570 lands at #9FA3A9, which measures 2.5:1, and the worst of them,
+       at .52, is 2.2:1. Those are the sentences that explain why a panel is
+       empty and the words that say a grade has NOT been posted, which is the
+       one thing this portal exists to say clearly.
+
+       The colour is already set above. All this does is stop the wallet's
+       alpha eating it. Measured composited, not read off the raw value. */
+    .wp-wide .wp-empty,
+    .wp-wide .wp-foot,
+    .wp-wide .wp-rowsub,
+    .wp-wide .wp-rowpct,
+    .wp-wide .wp-rowchev,
+    .wp-wide .wp-rowend.is-none { opacity: 1; }
+    .wp-wide .wp-rowend.is-none { color: var(--wp-dim); }
 
     /* ---- NOTHING SCROLLS INSIDE A PANEL ON A DESK ----
        .wp-rows is `flex: 1 1 auto; overflow-y: auto` because in the WALLET a
@@ -7528,26 +7603,47 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
        overlay, so its body keeps its own. */
     .wp-wide .wp-modal-body { overflow-y: auto; max-height: 62vh; }
 
-    /* The modal opens over a light page now. */
+    /* The modal opens over a light page now. #wpGradeModal is a SIBLING of the
+       portal rather than a child of it, which is why it is reached through
+       body:has() instead of .wp-wide. */
     .wp-wide ~ #wpGradeModal .wp-modal-card,
     body:has(.wp-wide) #wpGradeModal .wp-modal-card {
-        background: #FFFFFF;
-        border-color: rgba(16, 24, 40, 0.12);
-        color: #16202E;
+        background: var(--wu-surface);
+        border-color: var(--wu-hair-strong);
+        border-radius: var(--wu-r-card);
+        box-shadow: var(--wu-shadow-2);
+        color: var(--wu-fg);
     }
     body:has(.wp-wide) #wpGradeModal .wp-modal-title,
     body:has(.wp-wide) #wpGradeModal .wp-rowtitle,
-    body:has(.wp-wide) #wpGradeModal .wp-rowend { color: #16202E; }
+    body:has(.wp-wide) #wpGradeModal .wp-rowend { color: var(--wu-fg); }
     body:has(.wp-wide) #wpGradeModal .wp-modal-sub,
     body:has(.wp-wide) #wpGradeModal .wp-rowsub,
-    body:has(.wp-wide) #wpGradeModal .wp-empty { color: #5B6675; }
+    body:has(.wp-wide) #wpGradeModal .wp-empty { color: var(--wu-fg-dim); }
+    /* Same alpha trap as the panels: the dialog carries the course's grade line
+       and the sentence saying nothing is missing, and both were arriving at
+       about 3:1 once the wallet's opacity had composited onto white. */
+    body:has(.wp-wide) #wpGradeModal .wp-modal-sub,
+    body:has(.wp-wide) #wpGradeModal .wp-rowsub,
+    body:has(.wp-wide) #wpGradeModal .wp-rowpct,
+    body:has(.wp-wide) #wpGradeModal .wp-empty,
+    body:has(.wp-wide) #wpGradeModal .wp-modal-body .wp-empty { opacity: 1; }
+    /* Quiet, not ink: the page's one dark circle is the sign-out button, and a
+       second one on a white dialog would make the close button the loudest
+       thing in it. */
     body:has(.wp-wide) #wpGradeModal .wp-modal-head .wp-round {
-        background: rgba(16, 24, 40, 0.08);
-        border-color: rgba(16, 24, 40, 0.16);
-        color: #16202E;
+        background: var(--wu-surface-sunk);
+        border: 1px solid var(--wu-hair-strong);
+        color: var(--wu-fg-dim);
     }
-    body:has(.wp-wide) #wpGradeModal .wp-row-nested { border-left-color: rgba(16, 24, 40, .18); }
-    body:has(.wp-wide) #wpGradeModal .wp-modal-body .wp-row-nested { border-top-color: rgba(16, 24, 40, .09); }
+    body:has(.wp-wide) #wpGradeModal .wp-modal-head .wp-round:hover {
+        background: var(--wu-blue-mist);
+        border-color: var(--wu-blue-pale);
+        color: var(--wu-blue-deep);
+    }
+    body:has(.wp-wide) #wpGradeModal .wp-modal-scrim { background: rgba(16, 24, 40, .45); }
+    body:has(.wp-wide) #wpGradeModal .wp-row-nested { border-left-color: var(--wu-hair-strong); }
+    body:has(.wp-wide) #wpGradeModal .wp-modal-body .wp-row-nested { border-top-color: var(--wu-hair); }
 }
 
 /* --- Grades wear their band ------------------------------------------------
@@ -7577,7 +7673,7 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     .wp-wide .wp-grade-c { color: #8A5E06; }
     .wp-wide .wp-grade-d { color: #9C5114; }
     .wp-wide .wp-grade-f { color: #A32820; }
-    .wp-wide .wp-grade-none { color: #16202E; }
+    .wp-wide .wp-grade-none { color: var(--wp-fg); }
 
     /* The modal opens over the light view, so it takes the same set. */
     body:has(.wp-wide) #wpGradeModal .wp-grade-a { color: #16713F; }
@@ -7593,100 +7689,134 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 }
 
 /* ==========================================================================
-   DESK VIEW COLOUR. Winner of a three-way bake-off, judged against the
-   teacher dashboard rendered from its own markup.
+   DESK VIEW COLOUR: the student dialect of wildcat-ui.css.
    ==========================================================================
-   The bar turned out not to have background patterns at all. What makes the
-   staff side read as coloured is furniture: a blue chip beside every panel
-   head, blue numerals instead of black, and one warm accent. So that is what
-   is borrowed. A tinted-panel candidate was rejected for washing every card
-   the same blue as the ground, which cost the separation between a card and
-   the page; a texture candidate was rejected for looking better lit while
-   staying just as grey.
+   The pass before this one bought colour with furniture: a blue chip beside
+   every panel title and a 2px blue rule under every panel head. It read as
+   coloured and it read as a different product, because the design system draws
+   neither of those things: its panel head has no rule under it on purpose, so
+   that a column of four panels does not read as four boxed forms, and its
+   accent appears about twice per screen rather than six times.
 
-   Every colour is a --wc- token from :root. No new hex. */
+   What was actually wrong was upstream of the furniture, and it is fixed in
+   the token block above: this view had invented its own greys. Everything
+   below is what to do with the colour once the greys are the right ones, and
+   the rule is that each colour has ONE job.
+
+     BLUE is what the school records about you. Ticket counts, absences,
+     grades, the count of work still outstanding, the dot that says something
+     in here changed since you last looked.
+
+     ORANGE is what you earned and can spend. It appears on one figure, the
+     Wildcat Cash tile, and it is the only warm thing on the page.
+
+     THE WAVE, up in the tile block, is the teacher identity card's texture on
+     the three headline figures, tinted to whichever of those two registers the
+     tile belongs to.
+
+   NO YELLOW. wildcat-ui.css reserves it for the gauge arc and the identity
+   badge, and this screen has neither. An accent spent on a third thing stops
+   being an accent, which is the discipline that file names explicitly.
+
+   The result is meant to be calmer than the teacher's page and unmistakably
+   the same hand. That is the difference between a dialect and a costume. */
 @media (min-width: 1000px) {
 
-    /* ---- panel heads: a chip and a rule, the staff signature ---- */
+    /* ---- panel heads: a title and a state chip, no rule ----
+       The rule and the square chip that used to be here are gone. What
+       separates one panel from the next is the space between the cards, which
+       is the system's own answer and the reason its dashboard reads calm. */
     .wp-wide .wp-panel-head {
-        border-bottom: 2px solid var(--wc-blue-pale);
-        padding-bottom: 10px;
+        align-items: center;
+        margin-bottom: var(--wu-s4);
     }
-    .wp-wide .wp-panel-title::before {
-        content: '';
-        display: inline-block;
-        width: 9px;
-        height: 9px;
-        margin-right: 8px;
-        vertical-align: 1px;
-        border-radius: 3px;
-        background: var(--wc-blue);
+    .wp-wide .wp-panel-title {
+        font-size: 17px;
+        font-weight: 700;
+        letter-spacing: -.02em;
+    }
+    /* The lead becomes the chip the staff cards use for state: "6 classes",
+       "3 of 5 posted", "None active", "Unavailable". Sentence case in a full
+       pill, per the system. The uppercase micro-label treatment is what made
+       an earlier cut of these panels read as boarding passes.
+
+       :empty because wpPanel always emits the span, and a pill with nothing
+       in it is a smudge in the corner of five cards out of seven. */
+    .wp-wide .wp-panel-lead {
+        padding: 3px 10px;
+        border-radius: var(--wu-r-chip);
+        background: var(--wu-surface-sunk);
+        color: var(--wp-dim);
+        font-size: 11.5px;
+        font-weight: 650;
+        line-height: 1.5;
+    }
+    .wp-wide .wp-panel-lead:empty { display: none; }
+
+    /* ---- the figures inside a panel ---- */
+    .wp-wide .wp-stats { gap: var(--wu-s5) var(--wu-s6); }
+    .wp-wide .wp-stat-n { letter-spacing: -.02em; }
+    .wp-wide .wp-stat-l {
+        font-size: 11px;
+        font-weight: 650;
+        letter-spacing: .12em;
     }
 
-    /* ---- tiles: blue numerals, and money is warm ----
-       `.wp-tile.is-none .wp-tile-n` is four class selectors and already
-       outranks this two-selector rule, so "Not on file" keeps its grey by
-       SPECIFICITY rather than by cascade order. That is deliberate: cascade
-       order is an accident of where a block was pasted. */
-    .wp-wide .wp-tile::before {
-        height: 5px;
-        background: linear-gradient(90deg,
-            var(--wc-blue) 0%, var(--wc-blue-dark) 55%, var(--wc-blue-deep) 100%);
-    }
-    .wp-wide .wp-tile-n { font-weight: 800; color: var(--wc-blue-deep); }
+    /* ---- the one warm tile ----
+       Wildcat Cash is the second tile and the only figure on this page a
+       student SPENDS. One tile in three carrying the warm half of the palette
+       is what stops the row reading as three of the same number.
 
-    /* Wildcat Cash is the second tile, and it is the one figure a student
-       SPENDS from. Orange into yellow, the pairing the staff bar reserves
-       for money, so it reads as a different kind of number from the two
-       counts beside it. :not(.is-none) so an absent balance never goes warm. */
+       #8A4413 rather than --wu-orange itself, which measures 3.2:1 on white.
+       It is not a new hex: it is the value wildcat-ui.css already reaches for
+       everywhere the orange has to be TEXT rather than a fill.
+
+       :not(.is-none) so an absent balance never goes warm, and
+       `.wp-tile.is-none .wp-tile-n` outranks this by specificity anyway, which
+       is deliberate: cascade order is an accident of where a block was
+       pasted. */
     .wp-wide .wp-tiles .wp-tile:nth-child(2)::before {
-        background: linear-gradient(90deg, var(--wc-orange) 0%, var(--wc-yellow) 100%);
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='17'%3E%3Cpath d='M0 12 Q7.5 2 15 12 T30 12' fill='none' stroke='rgba(217,116,47,0.075)' stroke-width='2'/%3E%3C/svg%3E");
     }
     .wp-wide .wp-tiles .wp-tile:nth-child(2):not(.is-none) .wp-tile-n {
-        color: var(--wc-orange);
-    }
-
-    /* ---- cards sit above the page ----
-       Taken from the texture candidate, which was right that white-on-pale
-       needs a shadow to separate, and wrong that it needed four of them. */
-    .wp-wide .wp-panel,
-    .wp-wide .wp-tile {
-        box-shadow: 0 1px 2px rgba(16, 24, 40, .05),
-                    0 12px 26px -14px rgba(12, 68, 124, .18);
+        color: #8A4413;
     }
 
     /* ---- the missing-work count ----
-       A PLAIN VALUE FIRST, then color-mix. color-mix is Chrome 111+, and a
-       school Chromebook fleet is exactly where an unsupported function drops
-       the whole declaration; without the fallback the badge would inherit the
-       dark theme's red-on-transparent and read as off-brand rather than as a
-       count. The fallback is the same colour, computed by hand. */
+       BLUE, and this is the one thing that moved register. It was a warm chip,
+       which spent the page's only accent on the thing a student is least glad
+       to see and left the money reading like every other number. A count of
+       unfinished work is something the school has recorded, so it takes the
+       recorded colour: the same mist-fill, pale-border, deep-ink pill the
+       staff feed tags every award with.
+
+       It also drops a color-mix, which is Chrome 111+ and had to carry a
+       hand-computed fallback for the Chromebook fleet. Flat tokens need
+       none. */
     .wp-wide .wp-rowbadge {
-        background: #FBE8DA;
-        background: color-mix(in srgb, var(--wc-orange) 16%, white);
-        color: #6E3A18;
-        color: color-mix(in srgb, var(--wc-orange) 55%, black);
+        background: var(--wu-blue-mist);
+        border: 1px solid var(--wu-blue-pale);
+        color: var(--wu-blue-deep);
     }
 
     /* ---- "new since you last looked" ----
        BLUE, not amber. This is a notice that something changed, not a warning
-       that something is wrong, and the tinted-panel candidate was right about
-       that. A yellow bead ringed in navy also went muddy at 9px, which is the
-       size it is actually rendered at. */
+       that something is wrong. A yellow bead ringed in navy also went muddy at
+       the size it is actually rendered at. Solid and 8px against the pale pill
+       beside it, so the two never read as one blue smear. */
     .wp-wide .wp-rowdot,
-    .wp-wide .wp-headdot { background: var(--wc-blue); }
+    .wp-wide .wp-headdot { background: var(--wu-blue); }
 
     /* ---- rows react like the buttons they are ---- */
-    .wp-wide .wp-row-btn { transition: background 120ms ease; }
-    .wp-wide .wp-row-btn:hover { background: var(--wc-blue-mist); }
+    .wp-wide .wp-row-btn { transition: background var(--wu-dur-ui, 180ms) ease; }
+    .wp-wide .wp-row-btn:hover { background: var(--wu-blue-mist); }
     .wp-wide .wp-row-btn:hover .wp-rowchev,
-    .wp-wide .wp-row-btn:focus-visible .wp-rowchev { color: var(--wc-blue); }
+    .wp-wide .wp-row-btn:focus-visible .wp-rowchev { color: var(--wu-blue); }
 
-    /* NO ORANGE RAIL ON A ROW THAT MERELY HAS MISSING WORK. The tinted-panel
-       candidate proposed one and then named the reason not to ship it: it
-       fires on any outstanding work, so a student with a chronic backlog sees
-       the same row painted every visit until the accent means nothing. The
-       count already says how much. The blue dot already says what is new. */
+    /* NO ORANGE RAIL ON A ROW THAT MERELY HAS MISSING WORK. It fires on any
+       outstanding work, so a student with a chronic backlog sees the same row
+       painted every visit until the accent means nothing. The count already
+       says how much. The blue dot already says what is new. */
 }
 
 /* --- The desk panels FLOW, they do not sit in a rigid grid -----------------
@@ -7703,33 +7833,43 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
    The tiles span every column, so the three headline figures stay a full-width
    row above the panels rather than being dealt into one of them. */
 @media (min-width: 1000px) {
+    /* AIR IS A THIRD OF WHAT MAKES THIS LOOK LIKE THE STAFF SIDE, which is the
+       one thing wildcat-ui.css says twice. 14px between cards was a gutter
+       inherited from the wallet's own rhythm; --wu-s5 is the gap the reference
+       dashboard actually uses between its panels. Three columns inside a
+       1120px shell lose four pixels each to it, which is nothing, and the page
+       stops reading as a contact sheet. */
     #studentPassView.wp-wide .wp-dash {
         display: block;
         columns: 3;
-        column-gap: 14px;
+        column-gap: var(--wu-s5);
     }
     #studentPassView.wp-wide .wp-dash > * {
         break-inside: avoid;
         -webkit-column-break-inside: avoid;
-        margin-bottom: 14px;
+        margin-bottom: var(--wu-s5);
     }
     #studentPassView.wp-wide .wp-dash > .wp-tiles {
         column-span: all;
-        margin-bottom: 18px;
+        margin-bottom: var(--wu-s5);
     }
 
     /* The request button, on the light desk ground. .wp-btn-solid is drawn for
        the dark wallet, where a pale fill reads as raised; on white it needs
        the school blue to read as the action it is. */
-    .wp-wide .wp-actions { margin-top: 12px; }
+    .wp-wide .wp-actions { margin-top: var(--wu-s3); }
     .wp-wide .wp-btn-solid {
-        background: var(--wc-blue);
+        background: var(--wu-blue);
         color: #FFFFFF;
         border: 0;
+        border-radius: var(--wu-r-control);
     }
-    .wp-wide .wp-btn-solid:hover { background: var(--wc-blue-dark); }
+    /* filter:none because .wp-btn-solid's own hover dims itself with
+       brightness(.94), which is how a white wallet button acknowledges a
+       press. A darker blue does not need to be dimmed as well. */
+    .wp-wide .wp-btn-solid:hover { background: var(--wu-blue-deep); filter: none; }
     .wp-wide .wp-btn-solid:focus-visible {
-        outline: 2px solid var(--wc-blue-deep);
+        outline: 2px solid var(--wu-blue);
         outline-offset: 2px;
     }
 }
