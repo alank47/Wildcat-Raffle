@@ -7224,22 +7224,104 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     .wp-top { gap: 12px; }
 }
 
-/* --- Grades: the opened section sits lighter than the card ----------------
-   The panel is rgba(255,255,255,.028) against a #0B0B0E ground. The expanded
-   list needs to read as INSIDE that card rather than as more card, so it lifts
-   a step rather than darkening: on a near-black ground the only direction that
-   separates is up. */
-.wp-gradebody {
-    background: rgba(255, 255, 255, 0.045);
-    border-radius: 12px;
-    padding: 4px 12px 8px;
-    margin: 2px 0 8px;
+/* --- Grades: a course opens in its own modal ------------------------------
+   The inline drawer this replaces pushed every course below it down the page,
+   so opening the last class moved the one you were reading, and on a phone a
+   nested list inside a card was unreadable at any width. */
+.wp-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 9500;              /* above .wp-root (9000) */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
 }
-.wp-gradesec.is-open .wp-row-btn { border-bottom: 0; }
-.wp-gradebody .wp-row-nested {
-    border-top-color: rgba(255, 255, 255, 0.07);
-    border-left-color: rgba(255, 255, 255, 0.16);
+.wp-modal.hidden { display: none; }
+.wp-modal-scrim {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, .62);
+    backdrop-filter: blur(2px);
 }
-/* The empty case is a sentence, not a row, so it needs its own breathing room
-   inside the lifted box rather than inheriting a row's tight padding. */
-.wp-gradebody .wp-empty { margin: 8px 2px; opacity: .72; }
+.wp-modal-card {
+    position: relative;
+    width: min(560px, 100%);
+    max-height: min(78vh, 680px);
+    display: flex;
+    flex-direction: column;
+    background: #17171C;
+    border: 1px solid var(--wp-hair, rgba(255,255,255,.10));
+    border-radius: 18px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, .55);
+    overflow: hidden;
+}
+.wp-modal-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 18px 18px 12px;
+}
+.wp-modal-title { margin: 0; font-size: 18px; font-weight: 700; color: var(--wp-fg, #F6F4EF); }
+.wp-modal-sub { margin: 3px 0 0; font-size: 13px; opacity: .72; }
+.wp-modal-body {
+    padding: 0 18px 18px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+.wp-modal-body .wp-empty { margin: 10px 2px 6px; opacity: .74; line-height: 1.5; }
+.wp-modal-body .wp-row-nested { border-left-color: rgba(255,255,255,.16); }
+
+/* The row is a button that opens it. The chevron points right, because this
+   goes somewhere rather than unfolding in place. */
+.wp-row-btn {
+    width: 100%;
+    background: none;
+    border: 0;
+    border-top: 1px solid var(--wp-rule, rgba(255,255,255,.10));
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.wp-row-btn:first-child { border-top: 0; }
+.wp-row-btn:hover .wp-rowtitle { opacity: 1; }
+.wp-row-btn:focus-visible {
+    outline: 2px solid var(--wp-ink, currentColor);
+    outline-offset: 2px;
+    border-radius: 8px;
+}
+.wp-rowchev { flex: none; font-size: 16px; opacity: .45; }
+
+/* Count of missing pieces. Absent at zero: a badge reading 0 is noise on the
+   classes that are fine. */
+.wp-rowbadge {
+    flex: none;
+    min-width: 20px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+    background: rgba(190, 60, 45, .16);
+    color: #E8776A;
+}
+
+/* "New since you last looked", on the row and on the panel head. A dot, not a
+   number: the count is already on the badge, and two numbers side by side
+   invite the reader to work out the difference between them. */
+.wp-rowdot, .wp-headdot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #4C9AFF;
+}
+.wp-headdot { display: inline-block; margin-right: 7px; vertical-align: 1px; }
+
+@media (max-width: 560px) {
+    .wp-modal { padding: 12px; align-items: flex-end; }
+    .wp-modal-card { max-height: 82vh; border-radius: 20px 20px 14px 14px; }
+}
