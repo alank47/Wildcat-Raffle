@@ -7562,3 +7562,100 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
        weight is what carries it for everyone else. */
     .wp-wide .wp-rowend[class*="wp-grade-"] { font-weight: 750; }
 }
+
+/* ==========================================================================
+   DESK VIEW COLOUR. Winner of a three-way bake-off, judged against the
+   teacher dashboard rendered from its own markup.
+   ==========================================================================
+   The bar turned out not to have background patterns at all. What makes the
+   staff side read as coloured is furniture: a blue chip beside every panel
+   head, blue numerals instead of black, and one warm accent. So that is what
+   is borrowed. A tinted-panel candidate was rejected for washing every card
+   the same blue as the ground, which cost the separation between a card and
+   the page; a texture candidate was rejected for looking better lit while
+   staying just as grey.
+
+   Every colour is a --wc- token from :root. No new hex. */
+@media (min-width: 1000px) {
+
+    /* ---- panel heads: a chip and a rule, the staff signature ---- */
+    .wp-wide .wp-panel-head {
+        border-bottom: 2px solid var(--wc-blue-pale);
+        padding-bottom: 10px;
+    }
+    .wp-wide .wp-panel-title::before {
+        content: '';
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        margin-right: 8px;
+        vertical-align: 1px;
+        border-radius: 3px;
+        background: var(--wc-blue);
+    }
+
+    /* ---- tiles: blue numerals, and money is warm ----
+       `.wp-tile.is-none .wp-tile-n` is four class selectors and already
+       outranks this two-selector rule, so "Not on file" keeps its grey by
+       SPECIFICITY rather than by cascade order. That is deliberate: cascade
+       order is an accident of where a block was pasted. */
+    .wp-wide .wp-tile::before {
+        height: 5px;
+        background: linear-gradient(90deg,
+            var(--wc-blue) 0%, var(--wc-blue-dark) 55%, var(--wc-blue-deep) 100%);
+    }
+    .wp-wide .wp-tile-n { font-weight: 800; color: var(--wc-blue-deep); }
+
+    /* Wildcat Cash is the second tile, and it is the one figure a student
+       SPENDS from. Orange into yellow, the pairing the staff bar reserves
+       for money, so it reads as a different kind of number from the two
+       counts beside it. :not(.is-none) so an absent balance never goes warm. */
+    .wp-wide .wp-tiles .wp-tile:nth-child(2)::before {
+        background: linear-gradient(90deg, var(--wc-orange) 0%, var(--wc-yellow) 100%);
+    }
+    .wp-wide .wp-tiles .wp-tile:nth-child(2):not(.is-none) .wp-tile-n {
+        color: var(--wc-orange);
+    }
+
+    /* ---- cards sit above the page ----
+       Taken from the texture candidate, which was right that white-on-pale
+       needs a shadow to separate, and wrong that it needed four of them. */
+    .wp-wide .wp-panel,
+    .wp-wide .wp-tile {
+        box-shadow: 0 1px 2px rgba(16, 24, 40, .05),
+                    0 12px 26px -14px rgba(12, 68, 124, .18);
+    }
+
+    /* ---- the missing-work count ----
+       A PLAIN VALUE FIRST, then color-mix. color-mix is Chrome 111+, and a
+       school Chromebook fleet is exactly where an unsupported function drops
+       the whole declaration; without the fallback the badge would inherit the
+       dark theme's red-on-transparent and read as off-brand rather than as a
+       count. The fallback is the same colour, computed by hand. */
+    .wp-wide .wp-rowbadge {
+        background: #FBE8DA;
+        background: color-mix(in srgb, var(--wc-orange) 16%, white);
+        color: #6E3A18;
+        color: color-mix(in srgb, var(--wc-orange) 55%, black);
+    }
+
+    /* ---- "new since you last looked" ----
+       BLUE, not amber. This is a notice that something changed, not a warning
+       that something is wrong, and the tinted-panel candidate was right about
+       that. A yellow bead ringed in navy also went muddy at 9px, which is the
+       size it is actually rendered at. */
+    .wp-wide .wp-rowdot,
+    .wp-wide .wp-headdot { background: var(--wc-blue); }
+
+    /* ---- rows react like the buttons they are ---- */
+    .wp-wide .wp-row-btn { transition: background 120ms ease; }
+    .wp-wide .wp-row-btn:hover { background: var(--wc-blue-mist); }
+    .wp-wide .wp-row-btn:hover .wp-rowchev,
+    .wp-wide .wp-row-btn:focus-visible .wp-rowchev { color: var(--wc-blue); }
+
+    /* NO ORANGE RAIL ON A ROW THAT MERELY HAS MISSING WORK. The tinted-panel
+       candidate proposed one and then named the reason not to ship it: it
+       fires on any outstanding work, so a student with a chronic backlog sees
+       the same row painted every visit until the accent means nothing. The
+       count already says how much. The blue dot already says what is new. */
+}
