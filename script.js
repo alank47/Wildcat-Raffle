@@ -16008,11 +16008,38 @@
                 '</div>';
         }
 
-        function wpPanel(title, lead, inner) {
+        /**
+         * One headline figure, staff-dashboard style.
+         *
+         * Separate from wpStat, which is a small figure INSIDE a panel. This is
+         * the panel: three of these run across the top of the desk view and
+         * carry the numbers a student opens the page to see.
+         *
+         * An absent value says so rather than printing 0, the same rule every
+         * other figure on this screen follows. A tile reading 0 where the truth
+         * is "not on file" is the one failure this portal is written against.
+         */
+        function wpTile(label, value, note, tone) {
+            const known = value !== null && value !== undefined && value !== '';
+            return '<article class="wp-tile' + (tone ? ' wp-tile-' + tone : '') + (known ? '' : ' is-none') + '">' +
+                '<p class="wp-tile-n">' + (known ? wpEsc(String(value)) : 'Not on file') + '</p>' +
+                '<p class="wp-tile-l">' + wpEsc(label) + '</p>' +
+                (note ? '<p class="wp-tile-s">' + wpEsc(note) + '</p>' : '') +
+            '</article>';
+        }
+
+        function wpPanel(title, lead, inner, mark) {
+            // `lead` is TEXT and is escaped. `mark` is the one place raw markup
+            // is allowed, and it exists because the alternative was passing the
+            // notification dot through `lead`, where it printed as its own
+            // source on screen. Two parameters with two rules beats one
+            // parameter that is sometimes escaped.
             return '<article class="wp-panel">' +
                 '<header class="wp-panel-head">' +
                     '<h3 class="wp-panel-title">' + wpEsc(title) + '</h3>' +
-                    (lead ? '<span class="wp-panel-lead">' + wpEsc(lead) + '</span>' : '') +
+                    '<span class="wp-panel-lead">' + (mark || '') +
+                        (lead ? wpEsc(lead) : '') +
+                    '</span>' +
                 '</header>' + inner + '</article>';
         }
 
@@ -16021,13 +16048,13 @@
             return (v === null || v === undefined) ? null : '$' + Number(v).toFixed(2);
         }
 
-        function wpDashboard(mine, sched, grades) {
+        function wpDashboard(mine, sched, grades, pass) {
             // Recorded HERE rather than at the call site. The modal reads these
             // to render a course without a network round trip, and setting it
             // anywhere else means the two can disagree: a caller that renders
             // and forgets to record leaves the modal showing the previous
             // student's classes.
-            _wpDashLast = { mine: mine, sched: sched, grades: grades };
+            _wpDashLast = { mine: mine, sched: sched, grades: grades, pass: pass };
             if (!mine) {
                 return wpPanel('Your year', '', wpEmpty(
                     'Your stats could not be loaded just now. Your pass, ID and lunch ' +
@@ -16134,11 +16161,6 @@
                         wpEmpty('No gradebook entries have reached your account yet. ' +
                                 'An empty grade is not a zero, and nothing here is counting against you.'))
                     : wpPanel('Grades',
-                        // The dot rides on the panel note so a student sees
-                        // "something changed in here" without opening a class.
-                        (wpUnseenTotal(missing) > 0
-                            ? '<span class="wp-headdot" aria-label="' + wpUnseenTotal(missing) +
-                              ' new"></span>' : '') +
                         posted + ' of ' + gradeRows.length + ' posted',
                         '<div class="wp-rows">' + gradeRows.slice().sort(function (a, b) {
                             return String(a.courseName || '').localeCompare(String(b.courseName || ''));
@@ -16192,9 +16214,63 @@
                         }).join('') + '</div>' +
                         (posted === 0
                             ? wpFoot('Nothing has been posted yet. An empty grade is not a zero.')
-                            : ''));
+                            : ''),
+                        // The dot rides in the panel head so a student sees
+                        // "something changed in here" without opening a class.
+                        // Passed as `mark` because it is markup: through `lead`
+                        // it printed as its own source on screen.
+                        wpUnseenTotal(missing) > 0
+                            ? '<span class="wp-headdot" aria-label="' + wpUnseenTotal(missing) + ' new"></span>'
+                            : '');
 
-            return tickets + awards + money + gradePanel + schedule + attendance;
+            // ---- the desk view -------------------------------------------
+            //
+            // THREE TILES, THEN PANELS. On a laptop the card wallet is hidden
+            // (see .wp-wide in styles.css) because a wallet is a thing you hold
+            // at a doorway, not a thing you read at a desk. What replaces it is
+            // the shape the staff dashboard already uses: the headline figures
+            // across the top, then the detail underneath.
+            //
+            // The tiles carry the same numbers as the Tickets, Wildcat Cash and
+            // Attendance panels below them, deliberately. A student opening a
+            // Chromebook wants "how am I doing" answered before they read
+            // anything, and the panels are where the breakdown lives.
+            const tiles =
+                '<div class="wp-tiles">' +
+                    wpTile('Tickets', p.total, 'this cycle') +
+                    wpTile('Wildcat Cash', wpMoney(cash.balance), 'balance') +
+                    wpTile('Absent this term',
+                        att.available ? att.daysAbsentTerm : null,
+                        att.available ? 'days' : (att.reason || 'not available')) +
+                '</div>';
+
+            // ---- the hall pass, and the ID, as panels ---------------------
+            //
+            // These live in the wallet on a phone. Hiding the wallet on a
+            // laptop without rehoming them would mean a student at a desk could
+            // not see a pass that is RUNNING, which is the one thing on this
+            // screen with a clock attached.
+            const hp = (pass && pass.hallPass) || null;
+            const passPanel = (hp && hp.available && hp.state)
+                ? wpPanel('Hall pass', String(hp.state).replace(/_/g, ' '),
+                    '<div class="wp-stats">' +
+                        wpStat('Destination', hp.sentTo || null) +
+                        wpStat('Started', hp.clockStartAt
+                            ? new Date(hp.clockStartAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                            : null) +
+                        wpStat('Minutes allowed', hp.clockLimitMinutes) +
+                    '</div>' +
+                    wpFoot('Your phone shows the live timer and the check-in tap.'))
+                : '';
+
+            const sid = (pass && pass.studentId) || null;
+            const idPanel = (sid && sid.available && sid.value)
+                ? wpPanel('Student ID', String(sid.value),
+                    '<div class="wp-idwrap"><svg id="wpDashBarcode" class="wp-idbar"></svg></div>' +
+                    wpFoot('Hold your phone to the scanner at lunch; this is the same number.'))
+                : '';
+
+            return tiles + passPanel + gradePanel + schedule + tickets + money + awards + attendance + idPanel;
         }
         /**
          * Open one course's missing-work list, or close it.
@@ -16355,7 +16431,29 @@
             // survive until they do.
             wpMarkSeen(items);
             const dash = wpById('wpDash');
-            if (dash) dash.innerHTML = wpDashboard(_wpDashLast.mine, _wpDashLast.sched, _wpDashLast.grades);
+            if (dash) dash.innerHTML = wpDashboard(_wpDashLast.mine, _wpDashLast.sched, _wpDashLast.grades, _wpDashLast.pass);
+        }
+
+        /**
+         * Draw the ID barcode on the desk dashboard.
+         *
+         * JsBarcode needs a real element, so it runs AFTER innerHTML rather
+         * than inside the template. Guarded on the library and the element
+         * both: the wallet already draws one into #wpBarcode, and a missing
+         * CDN must leave the number readable rather than throw and take the
+         * rest of the dashboard render with it.
+         */
+        function wpDashBarcode(pass) {
+            const sid = (pass && pass.studentId) || null;
+            if (!sid || !sid.available || !sid.value) return;
+            if (!window.JsBarcode) return;
+            const el = document.getElementById('wpDashBarcode');
+            if (!el) return;
+            try {
+                JsBarcode('#wpDashBarcode', String(sid.value), {
+                    format: 'CODE128', displayValue: false, height: 64, margin: 0,
+                });
+            } catch (e) { /* the number above it is still readable */ }
         }
 
         function wpGradeClose() {
@@ -17896,7 +17994,8 @@
             // card a student is standing at a scanner holding, and the reverse
             // holds too, so this is outside the !pass return above.
             const dash = wpById('wpDash');
-            if (dash) dash.innerHTML = wpDashboard(mine, sched, grades);
+            if (dash) dash.innerHTML = wpDashboard(mine, sched, grades, pass);
+            wpDashBarcode(pass);
 
             // Over the wallet while the pass is running. Same card object, so the
             // two cannot disagree; see wpRenderFull.
