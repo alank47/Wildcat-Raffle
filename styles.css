@@ -7247,6 +7247,27 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
    keeps the phone byte-identical through this change. */
 .wp-badge { display: none; }
 
+/* The product wordmark, same rule and same reason: it belongs to the desk's
+   frame and the wallet has no frame to put it in. */
+.wp-hub { display: none; }
+
+/* Available to a screen reader, gone from the page. The period rail sets a
+   bare digit in a chip, and "1" is not what a reader should hear where the
+   markup means "Period 1". Only ever rendered inside .wp-dash, which is
+   display:none until the desk view exists at all. */
+.wp-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
+
 .wp-brandlogo {
     height: 30px;
     width: auto;
@@ -7464,10 +7485,18 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
        must clip its own weave and a badge inside a clipped box cannot overhang
        anything. .wp-topid is the card. Neither needed new markup: the header
        already had a wrapper and a row inside it. */
+    /* The 44px of top padding is the frame row: school mark, a hairline, and
+       the product's name. Everything else in this block is positioned against
+       it, so the row's height is stated once here rather than three times as
+       offsets that would drift apart.
+
+       44 rather than the 25px the row actually occupies, because the badge
+       overhangs the card by 14px and has to land in the space between the two
+       without touching the logo's strapline. 25 + 14 + 5 of air. */
     .wp-wide .wp-top {
         position: relative;
         display: block;
-        padding: 0 0 var(--wu-s5);
+        padding: 44px 0 var(--wu-s5);
     }
     .wp-wide .wp-topid {
         position: relative;
@@ -7477,9 +7506,15 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
            replaced. .wp-avatar carries an :empty rule for a student whose
            initials never arrived, and in a fixed three-column grid that
            missing box would slide the sign-out button in from the right;
-           flex just closes the gap. */
+           flex just closes the gap.
+
+           A BAND, NOT A HERO. The card was 52px of top padding under a 38px
+           name, about 150px of the fold spent telling a student their own
+           name. It is indented past the badge instead of cleared beneath it,
+           which is what lets the whole header cost about 95px and puts the
+           hall pass panel above the fold on a 1366x768 Chromebook. */
         gap: var(--wu-s4);
-        padding: 52px var(--wu-s6) var(--wu-s6);
+        padding: var(--wu-s5) var(--wu-s6) var(--wu-s5) 76px;
         border-radius: var(--wu-r-card);
         /* TWO STOPS, AND A THINNER WEAVE THAN THE TEACHER CARD'S, for a
            reason that is about width rather than taste. wildcat-ui runs
@@ -7505,7 +7540,13 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
         pointer-events: none;
         transform: rotate(-16deg);
         background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='17'%3E%3Cpath d='M0 12 Q7.5 2 15 12 T30 12' fill='none' stroke='rgba(255,255,255,0.10)' stroke-width='2'/%3E%3C/svg%3E");
-        background-size: 30px 17px;
+        /* SCALED, NOT JUST FADED. The tile is 30x17 on the teacher's card,
+           which is a few hundred pixels wide; across 1072px the same tile is
+           thirty-six repeats of a hairline and reads as noise rather than as
+           weave. background-size scales the stroke with the tile, so 1.9x
+           gives a wave with the reference's weight at this card's width, at
+           the same alpha and therefore the same measured contrast. */
+        background-size: 57px 32px;
     }
     .wp-wide .wp-topid > * { position: relative; z-index: 1; }
 
@@ -7515,7 +7556,8 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
        loud rather than as designed. */
     .wp-wide .wp-badge {
         position: absolute;
-        top: -14px;
+        /* 44px of frame row, less the 14px it overhangs the card by. */
+        top: 30px;
         left: -14px;
         z-index: 2;
         display: grid;
@@ -7529,29 +7571,56 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
         line-height: 1;
     }
 
-    /* The school mark rides ON the card rather than above it, which is what
-       lets the header be one object instead of a logo and then a card. The
-       wallet forces the asset white because its ground is near-black; the
-       card's ground is blue and the same treatment is right again, which is
-       the whole reason there is one logo file and not two. */
+    /* ---- THE FRAME THE TWO SCREENS SHARE ----------------------------------
+       The teacher app is wrapped in chrome that says "Wildcat Hub" in its
+       topbar. A student has one screen and no modes, so a sidebar here would
+       be navigation to nowhere and a topbar would be chrome around a single
+       page. What the two can share instead is this line: the school mark, a
+       hairline, the product's name, on the paper ground above the card. It
+       frames the page, it names the product, and it navigates nowhere because
+       there is nowhere to go.
+
+       The logo goes back to its own ink. Reversed onto the blue card at 22px
+       the strapline inside the asset rendered about four pixels tall and was
+       unreadable; on paper at its own weight it is the mark as drawn. */
     .wp-wide .wp-brand {
         position: absolute;
-        top: 22px;
-        right: var(--wu-s6);
+        top: 0;
+        left: 2px;
+        display: flex;
+        align-items: center;
+        gap: var(--wu-s3);
         z-index: 2;
     }
     .wp-wide .wp-brandlogo {
-        height: 22px;
+        height: 25px;
         max-width: none;
-        filter: brightness(0) invert(1);
+        filter: none;
         opacity: 1;
     }
+    .wp-wide .wp-hub {
+        display: block;
+        padding-left: var(--wu-s3);
+        border-left: 1px solid var(--wu-hair-strong);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: .14em;
+        text-transform: uppercase;
+        color: var(--wu-blue-deep);
+    }
+
+    /* ONE BADGE IN THAT CORNER, which is what the reference puts there. The
+       initials circle sat under the yellow badge and the two read as a single
+       accidental blob. It is a wallet affordance anyway: it tells a student
+       which card they are holding up at a doorway, and at a desk the name
+       beside it is doing that job in 30px letters. */
+    .wp-wide .wp-avatar { display: none; }
 
     .wp-wide .wp-name {
-        font-size: clamp(28px, 3.2vw, 38px);
+        font-size: clamp(24px, 2.3vw, 30px);
         font-weight: 700;
-        line-height: 1.04;
-        letter-spacing: -.03em;
+        line-height: 1.06;
+        letter-spacing: -.024em;
         color: #fff;
     }
     /* SOLID WHITE, not a tinted one. Every pale blue and every translucent
@@ -7559,12 +7628,7 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
        the weave is composited under it, and a student's grade level and
        lunch number are not decoration. Size and weight carry the hierarchy
        instead, which also survives a colour-blind reader. */
-    .wp-wide .wp-meta { color: #fff; font-size: 14px; }
-    .wp-wide .wp-avatar {
-        background: var(--wu-blue-mist);
-        border-color: transparent;
-        color: var(--wu-blue-deep);
-    }
+    .wp-wide .wp-meta { color: #fff; font-size: 13.5px; margin-top: 3px; }
     /* A white circle on the blue card, the shape wildcat-ui gives the chevron
        on its person pill. Ink would be the wrong note here: the reference
        spends ink as punctuation on a WHITE card, and the desk's one ink
@@ -7621,17 +7685,46 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
            it. --wu-fg-dim is the same scale at 5.86:1. The treatment is the
            reference's; the value is the one a student can read. */
         color: var(--wu-fg-dim);
+        display: flex;
+        align-items: center;
+        gap: 7px;
     }
+    /* The same category bar the panels carry, so a tile and a panel about the
+       same thing are marked the same way. */
+    .wp-wide .wp-tile-l::before {
+        content: "";
+        flex: none;
+        width: 3px;
+        height: 11px;
+        border-radius: 2px;
+        background: var(--wu-blue);
+    }
+    .wp-wide .wp-tile-warm .wp-tile-l::before { background: var(--wu-orange); }
+    /* THE TOP OF A LADDER OF TWO. A tile figure is 34px and a panel figure is
+       22px, a ratio of about 1.5, because 30 against 26 is not a hierarchy,
+       it is two sizes that look like a mistake. */
     .wp-wide .wp-tile-n {
         order: 2;
         margin: 10px 0 0;
-        font-size: 30px;
+        font-size: 34px;
         font-weight: 700;
         line-height: 1.02;
         letter-spacing: -.03em;
-        font-variant-numeric: tabular-nums;
         color: var(--wu-blue-deep);
     }
+
+    /* NO TABULAR NUMERALS ON THIS PAGE, and money is why. In Visuelt Pro a
+       tabular full stop takes a whole digit cell, so every figure on the desk
+       rendered as "$14 . 50" and looked like a rendering fault, four times
+       over. Tabular numerals exist so a COLUMN of figures aligns digit by
+       digit; there is no such column here. Balance, Earned and Spent sit side
+       by side, the tiles sit side by side, and nothing on this screen is read
+       downward as a number. Scoped to the desk, so the wallet keeps its own
+       typesetting. */
+    .wp-wide .wp-tile-n,
+    .wp-wide .wp-stat-n,
+    .wp-wide .wp-rowend,
+    .wp-wide .wp-rowpct { font-variant-numeric: normal; }
     /* "Not on file" must not be typeset as a headline number. It is a
        sentence about an absence, and at 30px it reads as data. Same shape as
        wildcat-ui's .wu-absent, which exists for this exact rule. */
@@ -7663,10 +7756,11 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
        the space does the separating, which is what stops a column of panels
        reading as a column of boxed forms. The SIZE is what makes them calm. */
     .wp-wide .wp-panel-head {
-        align-items: baseline;
+        align-items: center;
         gap: var(--wu-s3);
-        margin-bottom: var(--wu-s3);
+        margin-bottom: var(--wu-s4);
     }
+    .wp-wide .wp-panel-heading { min-width: 0; }
     .wp-wide .wp-panel-title {
         font-size: 21px;
         font-weight: 700;
@@ -7674,20 +7768,123 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
         letter-spacing: -.022em;
         color: var(--wu-fg);
     }
-    .wp-wide .wp-panel-lead { font-size: 12.5px; color: var(--wu-fg-dim); }
+
+    /* ---- THE EYEBROW, which is the card signature this view did not have ---
+       An uppercase tracked label over a bold title is the most recognisable
+       thing about the reference's cards, and it survived here only on the
+       tiles, which are the one shape the teacher screen does not have. Now
+       every content card opens with one.
+
+       The category colour rides on the bar, never on the words: --wu-fg-dim
+       is what clears 4.5:1 on white, and a tinted band across a card head
+       washes the card, which is how the version that tried it failed. Cool is
+       what the school records about a student, warm is what a student has
+       earned, and the warm bar is where --wu-orange finally does a job on this
+       page that is not text on white. */
+    .wp-wide .wp-panel-eyebrow {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin: 0 0 3px;
+        font-size: 11px;
+        font-weight: 650;
+        letter-spacing: .12em;
+        text-transform: uppercase;
+        color: var(--wu-fg-dim);
+    }
+    .wp-wide .wp-panel-eyebrow::before {
+        content: "";
+        flex: none;
+        width: 3px;
+        height: 11px;
+        border-radius: 2px;
+        background: var(--wu-blue);
+    }
+    .wp-wide .wp-panel-eyebrow.is-warm::before { background: var(--wu-orange); }
+
+    /* ONE TREATMENT FOR THE CARD'S META, which was three: a count with a dot
+       beside it, a count with nothing, and a bare word. It is a chip on every
+       card now, the same quiet pill wildcat-ui uses, and the "new" dot rides
+       inside it rather than floating next to it. An empty one is not drawn:
+       several panels have nothing to say up there and a blank pill is worse
+       than a gap. */
+    .wp-wide .wp-panel-lead {
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 10px;
+        border-radius: var(--wu-r-chip);
+        background: var(--wu-surface-sunk);
+        color: var(--wu-fg-dim);
+        font-size: 11.5px;
+        font-weight: 650;
+        white-space: nowrap;
+    }
+    .wp-wide .wp-panel-lead:empty { display: none; }
 
     .wp-wide .wp-rowtitle { color: var(--wu-fg); }
     .wp-wide .wp-rowend { color: var(--wu-fg); }
     .wp-wide .wp-row, .wp-wide .wp-row-btn { border-top-color: var(--wp-rule); }
-    .wp-wide .wp-stat-n { color: var(--wu-fg); }
-    .wp-wide .wp-stat.is-none .wp-stat-n { color: var(--wu-fg-dim); }
+
+    /* ---- A PANEL'S FIGURES ARE A ROW OF EQUAL CELLS, NOT A WRAPPING LIST ---
+       Three money figures in a flex wrap came out two-then-one, with Balance
+       and Earned paired and Spent sitting alone beside an empty half. And two
+       identical fives in "What you have earned" sat side by side with nothing
+       between them, so the same number read twice looked like one number
+       printed twice. grid-auto-flow: column gives however many figures there
+       are one equal share each, and the hairline between them says these are
+       separate answers. Same device as wildcat-ui's paired sub-rings. */
+    .wp-wide .wp-stats {
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: minmax(0, 1fr);
+        gap: 0;
+    }
+    .wp-wide .wp-stat { min-width: 0; gap: 3px; }
+    .wp-wide .wp-stat + .wp-stat {
+        padding-left: var(--wu-s3);
+        margin-left: var(--wu-s3);
+        border-left: 1px solid var(--wu-hair);
+    }
+    /* The lower rung of the ladder, and 20px is where three money figures
+       still fit. A panel is a third of 1072px less its own padding, so each of
+       Balance, Earned and Spent gets about 85px; "$40.00" is six glyphs and at
+       22px it was wider than that and ran into the divider beside it. The
+       ladder against a 34px tile figure is still a ladder at 20. */
+    .wp-wide .wp-stat-n { font-size: 20px; font-weight: 700; color: var(--wu-fg); }
+    .wp-wide .wp-stat.is-none .wp-stat-n {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--wu-fg-dim);
+    }
+    /* Quieter than the card's own eyebrow, on purpose and by a measurable
+       amount. The eyebrow names the card and gets the reference's full 11px at
+       .12em; this names one figure inside a cell about 72px wide, and
+       "ATTENDANCE" set at that tracking is 76px, so the labels in Tickets ran
+       into each other across the divider. 10px at .06em fits the longest word
+       any of these panels has. */
     .wp-wide .wp-stat-l {
-        font-size: 11px;
+        font-size: 10px;
         font-weight: 650;
-        letter-spacing: .12em;
+        letter-spacing: .06em;
+        line-height: 1.35;
         color: var(--wu-fg-dim);
     }
     .wp-wide .wp-stat-s { color: var(--wu-fg-dim); }
+
+    /* A footnote, set as one. These sentences earn their place (a child
+       reading two noughts has to be told the noughts are not a mark against
+       them) but they were typeset as body prose under the figures, which gave
+       an explanation the same weight as the thing it explains. A rule above
+       and a smaller size makes it an aside. */
+    .wp-wide .wp-foot {
+        margin-top: var(--wu-s4);
+        padding-top: var(--wu-s3);
+        border-top: 1px solid var(--wu-hair);
+        font-size: 11.5px;
+        line-height: 1.45;
+    }
 
     /* OPACITY IS NOT A COLOUR, and this is the correction that mattered most.
        The wallet dims its secondary text by fading near-white ink, which is
@@ -7710,6 +7907,74 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
         outline: 2px solid var(--wu-blue);
         outline-offset: 2px;
     }
+
+    /* ---- THE GRADE RAIL IS A COLUMN, AND IT HAS TO STAY ONE ---------------
+       Six courses, and the two carrying a "new" dot and a missing-work count
+       pushed their letter about 55px left of the other four. One broken right
+       edge in a column of six is the first thing the eye finds in that card,
+       and it made the letters look like they were in no particular place.
+
+       The indicators move to the INSIDE of the grade, between the course name
+       and the mark. Everything to the right of the flexible title is
+       flex:none, so the grade's right edge now lands at the same x on every
+       row whatever else the row is carrying, and text-align:right does the
+       rest. The percentage under the letter shares that edge, which it did not
+       while it carried tabular numerals and the letter carried a negative
+       tracking. */
+    .wp-wide .wp-row-btn > .wp-rowmain:not(.wp-rowright) { order: 1; flex: 1 1 auto; }
+    .wp-wide .wp-row-btn > .wp-rowdot { order: 2; }
+    .wp-wide .wp-row-btn > .wp-rowbadge { order: 3; }
+    .wp-wide .wp-row-btn > .wp-rowright { order: 4; min-width: 46px; }
+    .wp-wide .wp-row-btn > .wp-rowchev { order: 5; }
+    .wp-wide .wp-rowend { letter-spacing: 0; }
+
+    /* A CHEVRON THAT IS A TARGET. It was a text glyph, a hairline sitting in
+       an empty gutter, repeated six times, and it read as a stray character
+       rather than as the control that opens a class. Eleven year olds use this
+       on touchscreens. The row is still the button; this is the part that says
+       so. */
+    .wp-wide .wp-rowchev {
+        display: grid;
+        place-items: center;
+        width: 26px;
+        height: 26px;
+        margin-left: 0;
+        border-radius: 999px;
+        background: var(--wu-surface-sunk);
+        font-size: 13px;
+        line-height: 1;
+        transition: background-color var(--wu-dur-ui) ease, color var(--wu-dur-ui) ease;
+    }
+
+    /* ---- THE PERIOD RAIL --------------------------------------------------
+       A numbered chip down the left of the schedule, so a student sees at a
+       glance which period they are in and which one is not there. The chip is
+       cool because a timetable is something the school records.
+
+       A row with no period NUMBER keeps the chip's box, outlined and empty, so
+       the rail is still a straight column, and says its word in the sub line
+       where a word can be read. Setting "Nutrition" inside a box built for one
+       digit is what broke the rail in the version this was taken from. */
+    .wp-wide .wp-period {
+        flex: none;
+        display: grid;
+        place-items: center;
+        width: 30px;
+        height: 30px;
+        border-radius: 10px;
+        background: var(--wu-blue-mist);
+        color: var(--wu-blue-deep);
+        font-size: 13.5px;
+        font-weight: 700;
+        line-height: 1;
+    }
+    .wp-wide .wp-period.is-none {
+        background: transparent;
+        border: 1px dashed var(--wu-hair-strong);
+    }
+    /* The schedule's rows are two lines beside a 30px chip, so they need the
+       height the grades rows get from their own controls. */
+    .wp-wide .wp-row-sched { padding: 11px 0; }
 
     /* ---- NOTHING SCROLLS INSIDE A PANEL ON A DESK ----
        .wp-rows is `flex: 1 1 auto; overflow-y: auto` because in the WALLET a
@@ -7854,24 +8119,26 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
         color: #8A4413;
     }
 
-    /* ---- the missing-work count ----
-       A PLAIN VALUE FIRST, then color-mix. color-mix is Chrome 111+, and a
-       school Chromebook fleet is exactly where an unsupported function drops
-       the whole declaration; without the fallback the badge would inherit the
-       dark theme's red-on-transparent and read as off-brand rather than as a
-       count. The fallback is the same colour, computed by hand: 7.76:1. */
+    /* ---- the missing-work count, and the dot beside it -------------------
+       ONE SYSTEM, ONE COLOUR. The count was a cream pill and the "new" dot
+       beside it was blue: two indicators on the same row, in two colours, with
+       no legend for either, and the cream put a fourth warm value on the page
+       next to a data chip. Yellow is spent on the identity badge and warm is
+       spent on the rewards eyebrow; neither is available to a count of missing
+       assignments, which is a school record and therefore cool. They agree now,
+       and the modal the row opens is where both are said in words.
+
+       No color-mix and no fallback needed any more: --wu-blue-mist is a token,
+       not a computation, so a Chromebook too old for color-mix gets exactly
+       the same badge. 8.60:1. */
     .wp-wide .wp-rowbadge {
-        background: #F9E9DE;
-        background: color-mix(in srgb, var(--wu-orange) 16%, white);
-        color: #6E3A18;
-        color: color-mix(in srgb, var(--wu-orange) 55%, black);
+        background: var(--wu-blue-mist);
+        color: var(--wu-blue-deep);
     }
 
-    /* ---- "new since you last looked" ----
-       BLUE, not amber. This is a notice that something changed, not a warning
-       that something is wrong. A yellow bead ringed in navy also went muddy at
-       9px, which is the size it is actually rendered at, and yellow is spent
-       on the identity badge in any case. */
+    /* This is a notice that something changed, not a warning that something is
+       wrong. A yellow bead ringed in navy also went muddy at 9px, which is the
+       size it is actually rendered at. */
     .wp-wide .wp-rowdot,
     .wp-wide .wp-headdot { background: var(--wu-blue); }
 
@@ -7882,7 +8149,13 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
        next tap somewhere else, and a Chromebook with a touchscreen is a
        Chromebook this runs on. */
     .wp-wide .wp-row-btn { transition: background-color var(--wu-dur-ui) ease; }
-    .wp-wide .wp-row-btn:focus-visible .wp-rowchev { color: var(--wu-blue); }
+    .wp-wide .wp-row-btn:focus-visible .wp-rowchev {
+        background: var(--wu-blue-mist);
+        color: var(--wu-blue-deep);
+    }
+    /* The dot rides inside the head's chip now, so its own spacing is the
+       chip's gap rather than a margin of its own. */
+    .wp-wide .wp-panel-lead .wp-headdot { margin-right: 0; vertical-align: 0; }
 
     /* NO ORANGE RAIL ON A ROW THAT MERELY HAS MISSING WORK. The tinted-panel
        candidate proposed one and then named the reason not to ship it: it
@@ -7897,7 +8170,10 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
    reachable, and visibly so, from a keyboard. */
 @media (min-width: 1000px) and (hover: hover) and (pointer: fine) {
     .wp-wide .wp-row-btn:hover { background: var(--wu-blue-mist); }
-    .wp-wide .wp-row-btn:hover .wp-rowchev { color: var(--wu-blue); }
+    .wp-wide .wp-row-btn:hover .wp-rowchev {
+        background: var(--wu-blue);
+        color: #fff;
+    }
     .wp-wide .wp-round:hover { background: var(--wu-blue-mist); }
     .wp-wide .wp-btn-solid:hover { background: var(--wu-blue-deep); }
 }
@@ -7936,9 +8212,16 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
         -webkit-column-break-inside: avoid;
         margin-bottom: var(--wu-s5);
     }
+    /* ONE GAP EVERYWHERE ON THIS PAGE, and it is --wu-s5. The declared margin
+       here is 14px rather than 20px because a column-span:all spanner carries
+       6px of spacing of its own beneath it in Blink: measured, 0px declared
+       renders a 6px gap and 14px declared renders the 20px every other gap on
+       the page renders. The number to keep true is what a student sees, not
+       what the declaration says, so the correction is written down instead of
+       left as a value that looks like a typo. */
     #studentPassView.wp-wide .wp-dash > .wp-tiles {
         column-span: all;
-        margin-bottom: var(--wu-s5);
+        margin-bottom: 14px;
     }
 
     /* The request button, on the light desk ground. .wp-btn-solid is drawn for

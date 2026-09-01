@@ -16065,15 +16065,41 @@
             '</article>';
         }
 
-        function wpPanel(title, lead, inner, mark) {
-            // `lead` is TEXT and is escaped. `mark` is the one place raw markup
-            // is allowed, and it exists because the alternative was passing the
-            // notification dot through `lead`, where it printed as its own
-            // source on screen. Two parameters with two rules beats one
-            // parameter that is sometimes escaped.
+        /**
+         * The categories a panel can belong to, and the two temperatures.
+         *
+         * COOL IS WHAT THE SCHOOL RECORDS, WARM IS WHAT THE STUDENT EARNS.
+         * A grade, an absence and a timetable are things done to a student and
+         * written down; tickets, cash and jackpot entries are things they have.
+         * They are read for opposite reasons and they should not look alike, so
+         * the temperature is the one piece of colour that says which is which.
+         *
+         * The eyebrow appears above every panel title, which is the reference's
+         * most distinctive card signature and the thing this view was missing.
+         * The colour rides on a small bar beside it rather than on the words:
+         * a tinted band across a card head washes the card, and the eyebrow
+         * itself has to stay at --wu-fg-dim to clear 4.5:1 on white.
+         */
+        const WP_WARM_EYEBROWS = { 'Rewards': true, 'Wallet': true };
+
+        function wpPanel(eyebrow, title, lead, inner, mark) {
+            // `eyebrow`, `title` and `lead` are TEXT and are escaped. `mark` is
+            // the one place raw markup is allowed, and it exists because the
+            // alternative was passing the notification dot through `lead`,
+            // where it printed as its own source on screen. Parameters with one
+            // rule each beat one parameter that is sometimes escaped.
+            //
+            // The eyebrow comes FIRST because that is the order the card reads
+            // in, so a call site is a picture of the card head it draws.
+            const heat = WP_WARM_EYEBROWS[eyebrow] ? ' is-warm' : ' is-cool';
             return '<article class="wp-panel">' +
                 '<header class="wp-panel-head">' +
-                    '<h3 class="wp-panel-title">' + wpEsc(title) + '</h3>' +
+                    '<div class="wp-panel-heading">' +
+                        (eyebrow
+                            ? '<p class="wp-panel-eyebrow' + heat + '">' + wpEsc(eyebrow) + '</p>'
+                            : '') +
+                        '<h3 class="wp-panel-title">' + wpEsc(title) + '</h3>' +
+                    '</div>' +
                     '<span class="wp-panel-lead">' + (mark || '') +
                         (lead ? wpEsc(lead) : '') +
                     '</span>' +
@@ -16093,7 +16119,9 @@
             // student's classes.
             _wpDashLast = { mine: mine, sched: sched, grades: grades, pass: pass };
             if (!mine) {
-                return wpPanel('Your year', '', wpEmpty(
+                // No eyebrow on the failure card. It belongs to no category
+                // because it is standing in for all of them.
+                return wpPanel('', 'Your year', '', wpEmpty(
                     'Your stats could not be loaded just now. Your pass, ID and lunch ' +
                     'number above are unaffected. Reload the page to try again.'));
             }
@@ -16103,45 +16131,60 @@
             const att = mine.attendance || {};
 
             // ---- stats ----------------------------------------------------
-            const tickets = wpPanel('Tickets',
-                (p.total === null || p.total === undefined) ? '' : p.total + ' in total',
+            // "this cycle", not "in total". The tile above this panel reads the
+            // same p.total and said "this cycle" while the panel said "in
+            // total", so one number carried two different claims about what it
+            // counted. The cycle reading is the true one: every ticket is an
+            // entry in this cycle's raffle, which is what the awards panel
+            // below already tells a student.
+            const tickets = wpPanel('Rewards', 'Tickets',
+                (p.total === null || p.total === undefined) ? '' : p.total + ' this cycle',
                 '<div class="wp-stats">' +
                     wpStat('PBIS', p.pbis) +
                     wpStat('Attendance', p.attendance) +
                     wpStat('Academic', p.academic) +
                 '</div>');
 
-            const money = wpPanel('Wildcat Cash',
+            const money = wpPanel('Wallet', 'Wildcat Cash',
                 cash.balance === null || cash.balance === undefined ? '' : 'balance',
                 '<div class="wp-stats">' +
                     wpStat('Balance', wpMoney(cash.balance)) +
                     wpStat('Earned', wpMoney(cash.earned)) +
                     wpStat('Spent', wpMoney(cash.spent)) +
                 '</div>' +
-                wpFoot('Earned is everything you have ever been given. Balance is what is left to spend.'));
+                // One line, not two. The labels under the figures already say
+                // Balance, Earned and Spent; the only part a student cannot
+                // work out from them is which one they can actually go and use.
+                wpFoot('Balance is what is left to spend.'));
 
             // ---- awards ----------------------------------------------------
             // Framed as what a student HAS, not as a scoreboard against other
             // children: this portal is their own and nobody is ranked on it.
             const entries = p.bigRaffleEntries;
             const weeks = p.weeksQualified;
-            const awards = wpPanel('What you have earned', '',
+            const awards = wpPanel('Rewards', 'What you have earned', '',
                 '<div class="wp-stats">' +
                     wpStat('Weeks qualified', weeks) +
                     wpStat('Jackpot entries', entries) +
                 '</div>' +
+                // THE ZERO BRANCH KEEPS BOTH ITS SENTENCES. A child looking at
+                // two noughts needs to be told what would change them and that
+                // the noughts are not a mark against them; that is the whole
+                // reason this panel is framed as what a student HAS. The
+                // non-zero branch had a sentence explaining arithmetic the two
+                // labels already do, and that one is gone.
                 ((entries === 0 || entries === null || entries === undefined)
                     ? wpFoot('Qualify in a week and your name goes in the jackpot draw for it. ' +
                              'Nothing here is counting against you.')
-                    : wpFoot('One entry for every week you qualified. They stay in for the year.')));
+                    : wpFoot('They stay in for the year.')));
 
             // ---- attendance --------------------------------------------------
             // Three states, exactly as the server sends them: unavailable is not
             // the same as "looked it up and found nothing", and neither is zero.
             const attendance = !att.available
-                ? wpPanel('Attendance', 'Unavailable',
+                ? wpPanel('School record', 'Attendance', 'Unavailable',
                     wpEmpty(att.reason || 'Attendance could not be looked up just now.'))
-                : wpPanel('Attendance', '',
+                : wpPanel('School record', 'Attendance', '',
                     '<div class="wp-stats">' +
                         wpStat('Absent this term', att.daysAbsentTerm) +
                         wpStat('Absent this year', att.daysAbsentYtd) +
@@ -16151,12 +16194,12 @@
             // ---- schedule ----------------------------------------------------
             const schedRows = (sched && sched.rows) || [];
             const schedule = (!sched || !sched.available)
-                ? wpPanel('Schedule', 'Unavailable',
+                ? wpPanel('Your day', 'Schedule', 'Unavailable',
                     wpEmpty((sched && sched.reason) || 'Your schedule could not be loaded just now.'))
                 : !schedRows.length
-                    ? wpPanel('Schedule', 'None yet',
+                    ? wpPanel('Your day', 'Schedule', 'None yet',
                         wpEmpty('No classes have reached your account yet.'))
-                    : wpPanel('Schedule', schedRows.length + ' classes',
+                    : wpPanel('Your day', 'Schedule', schedRows.length + ' classes',
                         // In the order the day runs, not the order the server
                         // happened to return. wpPeriodRank sorts an unparseable
                         // period to the end rather than to the front, so a
@@ -16164,9 +16207,30 @@
                         '<div class="wp-rows">' + schedRows.slice().sort(function (a, b) {
                             return wpPeriodRank(a.period) - wpPeriodRank(b.period);
                         }).map(function (r) {
-                            const period = r.period ? 'Period ' + r.period : '';
-                            const sub = [period, r.teacher, r.term].filter(Boolean).join('  ·  ');
-                            return '<div class="wp-row">' +
+                            // THE PERIOD NUMBER IS A RAIL, NOT A SENTENCE.
+                            // Buried in "Period 3 · Ms Chen · S1" a student has
+                            // to read six rows to notice period 4 is missing;
+                            // down a column of chips they see the gap.
+                            //
+                            // ONLY A NUMBER GOES IN THE CHIP. Nutrition and
+                            // Promise Time are not numbers, and setting a word
+                            // in a box built for a digit breaks the column the
+                            // rail exists to make. Those rows keep the chip's
+                            // width so the rail stays straight, get an outline
+                            // with nothing in it, and say the word in the sub
+                            // where it has room to be a word. An absence of a
+                            // period number renders as an absence, which is the
+                            // rule this whole portal is written on.
+                            const raw = String(r.period === null || r.period === undefined ? '' : r.period).trim();
+                            const numbered = /^\d{1,2}$/.test(raw);
+                            const sub = [numbered ? '' : raw, r.teacher, r.term]
+                                .filter(Boolean).join('  ·  ');
+                            return '<div class="wp-row wp-row-sched">' +
+                                '<span class="wp-period' + (numbered ? '' : ' is-none') + '">' +
+                                    (numbered
+                                        ? '<span class="wp-sr">Period </span>' + wpEsc(raw)
+                                        : '<span class="wp-sr">No period number</span>') +
+                                '</span>' +
                                 '<span class="wp-rowmain">' +
                                     '<span class="wp-rowtitle">' + wpEsc(r.courseName || 'Class') + '</span>' +
                                     (sub ? '<span class="wp-rowsub">' + wpEsc(sub) + '</span>' : '') +
@@ -16191,13 +16255,13 @@
                        (g.currentPercent !== null && g.currentPercent !== undefined);
             }).length;
             const gradePanel = (!grades || !grades.available)
-                ? wpPanel('Grades', 'Unavailable',
+                ? wpPanel('School record', 'Grades', 'Unavailable',
                     wpEmpty((grades && grades.reason) || 'Grades could not be loaded just now.'))
                 : !gradeRows.length
-                    ? wpPanel('Grades', 'None yet',
+                    ? wpPanel('School record', 'Grades', 'None yet',
                         wpEmpty('No gradebook entries have reached your account yet. ' +
                                 'An empty grade is not a zero, and nothing here is counting against you.'))
-                    : wpPanel('Grades',
+                    : wpPanel('School record', 'Grades',
                         posted + ' of ' + gradeRows.length + ' posted',
                         '<div class="wp-rows">' + gradeRows.slice().sort(function (a, b) {
                             return String(a.courseName || '').localeCompare(String(b.courseName || ''));
@@ -16244,6 +16308,13 @@
                                     (fresh > 0
                                         ? '<span class="wp-rowdot" aria-label="' + fresh + ' new"></span>'
                                         : '') +
+                                    // The dot says "new" and the count says
+                                    // "how much", and the fix for two unlabelled
+                                    // indicators is not a tooltip an eleven year
+                                    // old on a touchscreen can never open. They
+                                    // are the same blue now so they read as one
+                                    // system, and the modal this row opens is
+                                    // where both are said in words.
                                     (items.length
                                         ? '<span class="wp-rowbadge">' + items.length + '</span>'
                                         : '') +
@@ -16273,13 +16344,18 @@
             // Attendance panels below them, deliberately. A student opening a
             // Chromebook wants "how am I doing" answered before they read
             // anything, and the panels are where the breakdown lives.
+            // wpTile's `tone` carries the same temperature the panel eyebrows
+            // carry, so the three headline figures are already sorted into
+            // "what you have earned" and "what the school recorded" before a
+            // student has read a word of them.
             const tiles =
                 '<div class="wp-tiles">' +
-                    wpTile('Tickets', p.total, 'this cycle') +
-                    wpTile('Wildcat Cash', wpMoney(cash.balance), 'balance') +
+                    wpTile('Tickets', p.total, 'this cycle', 'warm') +
+                    wpTile('Wildcat Cash', wpMoney(cash.balance), 'balance', 'warm') +
                     wpTile('Absent this term',
                         att.available ? att.daysAbsentTerm : null,
-                        att.available ? 'days' : (att.reason || 'not available')) +
+                        att.available ? 'days' : (att.reason || 'not available'),
+                        'cool') +
                 '</div>';
 
             // ---- the hall pass, and the ID, as panels ---------------------
@@ -16326,7 +16402,7 @@
                 ? String(hp.state) : null;
             const hpBroken = Boolean(hp && hp.available === false && hp.reason);
             const passPanel = hpState
-                ? wpPanel('Hall pass', hpState.replace(/_/g, ' '),
+                ? wpPanel('Your day', 'Hall pass', hpState.replace(/_/g, ' '),
                     '<div class="wp-stats">' +
                         wpStat('Destination', hp.sentTo || null) +
                         wpStat('Started', hp.clockStartAt
@@ -16335,7 +16411,7 @@
                         wpStat('Minutes allowed', hp.clockLimitMinutes) +
                     '</div>' +
                     wpFoot('Your phone shows the live timer and the check-in tap.'))
-                : wpPanel('Hall pass',
+                : wpPanel('Your day', 'Hall pass',
                     hpBroken ? 'Unavailable' : 'None active',
                     hpBroken
                         ? wpEmpty(hp.reason)
@@ -16348,9 +16424,15 @@
             // up to a scanner, which is a phone errand: the wallet still has
             // it. On a desk it was a panel nobody could use, taking a column
             // from the figures a student actually came to read.
-            // Hall pass follows Tickets so it lands beside the short cards
-            // rather than above Grades, which is the tallest panel on the page.
-            return tiles + gradePanel + schedule + tickets + passPanel + money + awards + attendance;
+            // HALL PASS FIRST, AND ABOVE THE FOLD. It used to follow Tickets so
+            // it would land beside the short cards, which was a tidiness
+            // argument: the panels flow into three balanced columns, and a
+            // short card placed fourth lands wherever the balancing puts it.
+            // On a 1366x768 Chromebook that was below the fold, which is the
+            // wrong place for the one control on this screen a student needs in
+            // a hurry and at a fixed moment. Placed first it opens the left
+            // column, and Grades, the tallest panel, falls in under it.
+            return tiles + passPanel + gradePanel + schedule + tickets + money + awards + attendance;
         }
         /**
          * Open one course's missing-work list, or close it.
