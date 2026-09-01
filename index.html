@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20260901d">
-    <link rel="icon" href="favicon.ico?v=20260901d" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260901d" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260901d" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20260901e">
+    <link rel="icon" href="favicon.ico?v=20260901e" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260901e" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260901e" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260901d">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260901e">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20260901d">
+    <link rel="stylesheet" href="styles.css?v=20260901e">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260901d">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260901e">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20260901d">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260901e">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20260901d" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20260901e" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -168,7 +168,7 @@
                      asset, so there is one logo to replace when the school
                      changes it. -->
                 <div class="wp-brand">
-                    <img src="assets/westbrook-logo.png?v=20260901d"
+                    <img src="assets/westbrook-logo.png?v=20260901e"
                          alt="Westbrook Academy" class="wp-brandlogo" id="wpBrandLogo">
                 </div>
                 <div class="wp-topid">
@@ -427,7 +427,7 @@
         <header class="app-topbar">
             <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-menu"></use></svg></button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20260901d" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20260901e" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -761,7 +761,7 @@
                 <div id="perfectAttendanceModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000; align-items: center; justify-content: center;">
                     <div style="background: white; border-radius: 12px; max-width: 800px; width: 90%; max-height: 85vh; overflow: hidden; display: flex; flex-direction: column;">
                         <div style="padding: 20px 25px; background: #2E7D52; color: white; display: flex; justify-content: space-between; align-items: center;">
-                            <h3 style="margin: 0; color: white;">📅 Perfect Attendance — Preview</h3>
+                            <h3 style="margin: 0; color: white;">📅 Perfect Attendance, Preview</h3>
                             <button onclick="closePerfectAttendanceModal()" style="background: rgba(255,255,255,0.2); border: none; color: white; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 14px;">✕ Close</button>
                         </div>
                         <div id="perfectAttendanceModalBody" style="padding: 25px; overflow-y: auto; flex: 1;">
@@ -1168,7 +1168,7 @@
 
                 <div class="wc-card info-card">
                     <p><strong>ℹ️ Qualification:</strong> Students must receive at least one ticket in all three categories (PBIS, Attendance, and Academics) during a single week to qualify. Qualification happens automatically when you complete the week.</p>
-                    <p><strong>📊 Multiple entries:</strong> Students who qualify in multiple weeks get more entries — qualifying 3 weeks means 3 entries, so 3&times; better odds.</p>
+                    <p><strong>📊 Multiple entries:</strong> Students who qualify in multiple weeks get more entries, qualifying 3 weeks means 3 entries, so 3&times; better odds.</p>
                 </div>
 
                 <div class="stat-grid">
@@ -1848,7 +1848,7 @@
                     
                     <div class="wc-card banner-card">
                         <h3 class="banner-title">🔍 Program Health Insights</h3>
-                        <p class="banner-sub">Beyond counts and totals — these metrics reveal how the PBIS program is actually performing across equity, engagement, and motivation dimensions.</p>
+                        <p class="banner-sub">Beyond counts and totals, these metrics reveal how the PBIS program is actually performing across equity, engagement, and motivation dimensions.</p>
                     </div>
 
                     <!-- Near-Miss Students -->
@@ -1856,7 +1856,7 @@
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                             <div>
                                 <h3 class="panel-title">🎯 Near-Miss Students (This Week)</h3>
-                                <p class="panel-note">Students who have earned tickets in 2 of 3 categories this week — one more to qualify for the jackpot.</p>
+                                <p class="panel-note">Students who have earned tickets in 2 of 3 categories this week, one more to qualify for the jackpot.</p>
                             </div>
                             <div style="text-align: right;">
                                 <div class="panel-metric" id="nearMissCount">0</div>
@@ -1931,7 +1931,7 @@
                     <!-- Banner -->
                     <div class="wc-card banner-card">
                         <h3 class="banner-title">🏆 Hall of Fame</h3>
-                        <p class="banner-sub">Every Wildcat Jackpot champion and weekly raffle winner — celebrated and remembered.</p>
+                        <p class="banner-sub">Every Wildcat Jackpot champion and weekly raffle winner, celebrated and remembered.</p>
                     </div>
 
                     <!-- WILDCAT JACKPOT WINNERS — Card Grid -->
@@ -1958,7 +1958,7 @@
                         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; flex-wrap: wrap; gap: 15px;">
                             <div>
                                 <h3 style="margin: 0; color: #333; font-size: 20px;">🎟️ Weekly Raffle Winners</h3>
-                                <p style="margin: 5px 0 0 0; color: #666; font-size: 13px;">Drawn each week across PBIS, Attendance, and Academics — for both Middle and High School.</p>
+                                <p style="margin: 5px 0 0 0; color: #666; font-size: 13px;">Drawn each week across PBIS, Attendance, and Academics, for both Middle and High School.</p>
                             </div>
                             <div style="display: flex; align-items: center; gap: 10px;">
                                 <label for="halloffameCycleFilter" style="font-size: 13px; color: #666; font-weight: 600;">Cycle:</label>
@@ -2526,13 +2526,13 @@
                         <div class="safe-badge">🔒 PREVIEW ONLY</div>
                         <p class="safe-text">
                             This tool <strong>reads your file and reports what it finds</strong>. It does not save anything,
-                            does not change any student, and does not touch the database. Nothing here can affect live data —
-                            run it as many times as you like.
+                            does not change any student, and does not touch the database. Nothing here can affect live data.
+                            Run it as many times as you like.
                         </p>
                     </div>
 
                     <div class="wc-card panel-card">
-                        <div class="panel-head"><span class="panel-icon">📁</span><h3>Step 1 — Choose the new roster file</h3></div>
+                        <div class="panel-head"><span class="panel-icon">📁</span><h3>Step 1, Choose the new roster file</h3></div>
                         <p class="panel-hint" style="margin: 0 0 12px 0;">
                             Accepts the same PowerSchool export you already use (CSV or Excel), including the
                             schedule format with one row per class.
@@ -2682,7 +2682,7 @@
                 <div class="page-header">
                     <div>
                         <h2 class="page-title">🔒 System Administration</h2>
-                        <p class="page-subtitle">Destructive tools — superadmin only</p>
+                        <p class="page-subtitle">Destructive tools, superadmin only</p>
                     </div>
                     <span class="mode-pill"></span>
                 </div>
@@ -2695,13 +2695,13 @@
                 <div class="wc-card panel-card">
                     <div class="panel-head">
                         <span class="panel-icon">🧪</span>
-                        <h3>Wildcat Cash — Test Data</h3>
+                        <h3>Wildcat Cash, Test Data</h3>
                     </div>
                     <p class="panel-hint" style="margin: 0 0 14px 0;">
                         Creates 30 clearly-marked test students (IDs beginning <strong>TEST-</strong>) with a few
                         hundred transactions spread across several teachers and the last three weeks.
                         Deliberately includes a teacher who awards nothing, a teacher who mostly deducts,
-                        and students nobody has recognised — so the reports can be checked against
+                        and students nobody has recognised, so the reports can be checked against
                         patterns we already know are there. Real students are never touched.
                     </p>
                     <div style="display: flex; gap: 10px; flex-wrap: wrap;">
@@ -2839,7 +2839,7 @@
                 <div id="closeLoopModal" class="ref-modal hidden">
                     <div class="ref-modal-card">
                         <div class="inline-modal-head inline-modal-head-green">
-                            <h3>Referral Closed — Loop Summary</h3>
+                            <h3>Referral Closed, Loop Summary</h3>
                             <button class="inline-modal-x" onclick="closeModalById('closeLoopModal')">✕</button>
                         </div>
                         <div id="closeLoopBody"></div>
@@ -2932,7 +2932,7 @@
                                 <input type="checkbox" id="referralSevereBypass"
                                        onchange="updateInterventionCount()">
                                 <span><strong>This incident was too severe for classroom interventions.</strong>
-                                Immediate removal was warranted — violence, a threat to safety, or similar.
+                                Immediate removal was warranted, violence, a threat to safety, or similar.
                                 Describe what happened below.</span>
                             </label>
                             <div class="intervention-banner" id="interventionCount">Select at least 3 interventions below</div>
@@ -3374,7 +3374,7 @@
                     </div>
                     <p class="panel-hint" style="margin: 0 0 12px 0;">
                         Loads the app as that staff member would find it: their tabs, their
-                        class periods, their students. <strong>Read-only</strong> — nothing can be
+                        class periods, their students. <strong>Read-only</strong>, nothing can be
                         saved while you are looking, so you cannot award or file anything as
                         them by accident.
                     </p>
@@ -5252,19 +5252,19 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260901d"></script>
+    <script src="wildcat-auth.js?v=20260901e"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
     <!-- The icon sprite. Injected at load, before anything renders, so an
          icon is never a blank square for a frame. -->
-    <script src="wildcat-icons.js?v=20260901d"></script>
-    <script src="wildcat-motion.js?v=20260901d"></script>
-    <script src="wildcat-discipline.js?v=20260901d"></script>
-    <script src="wildcat-merge.js?v=20260901d"></script>
-    <script src="wildcat-savequeue.js?v=20260901d"></script>
-    <script src="wildcat-roster.js?v=20260901d"></script>
-    <script src="wildcat-store.js?v=20260901d"></script>
-    <script src="script.js?v=20260901d"></script>
+    <script src="wildcat-icons.js?v=20260901e"></script>
+    <script src="wildcat-motion.js?v=20260901e"></script>
+    <script src="wildcat-discipline.js?v=20260901e"></script>
+    <script src="wildcat-merge.js?v=20260901e"></script>
+    <script src="wildcat-savequeue.js?v=20260901e"></script>
+    <script src="wildcat-roster.js?v=20260901e"></script>
+    <script src="wildcat-store.js?v=20260901e"></script>
+    <script src="script.js?v=20260901e"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -5274,7 +5274,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20260901d').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20260901e').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {
