@@ -132,6 +132,11 @@ const STATES = [
     },
     sched: { rows: SCHEDULE, available: true },
     grades: { rows: GRADES, available: true, missingWork: MISSING },
+    pass: {
+      hallPass: { available: true, state: 'out', sentTo: 'Front office',
+                  clockStartAt: '2026-09-01T17:12:00.000Z', clockLimitMinutes: 10 },
+      studentId: { available: true, value: '12217' },
+    },
   },
   {
     title: 'Chromebook, fields the sync dropped',
@@ -240,8 +245,7 @@ STATES.forEach(function (s, i) {
     // Set the open row BEFORE rendering. wpGradeToggle cannot run inside the
     // iframe (it receives markup, not script), so the only way to see the open
     // state is to render it open.
-    _wpGradeOpen = s.openSection || null;
-    f.contentWindow.postMessage(wpDashboard(s.mine, s.sched, s.grades), '*');
+    f.contentWindow.postMessage(wpDashboard(s.mine, s.sched, s.grades, s.pass), '*');
   });
 });
 <\/script>

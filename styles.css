@@ -7363,3 +7363,169 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
    lift with it or they vanish. */
 .wp-modal-body .wp-row-nested { border-top-color: rgba(255, 255, 255, 0.10); }
 .wp-modal-body .wp-rows-nested .wp-row-nested { border-left-color: rgba(255, 255, 255, 0.22); }
+
+/* ==========================================================================
+   THE DESK VIEW: light, like the staff dashboard, and no card wallet.
+   ==========================================================================
+   A wallet is a thing you hold at a doorway. At a desk the question is "how am
+   I doing", and the answer is the shape the staff side already uses: headline
+   figures across the top, detail underneath.
+
+   Scoped entirely to .wp-wide inside the same 1000px query the grid uses, so
+   the phone wallet is untouched: same file, same class, one breakpoint. */
+@media (min-width: 1000px) {
+    #studentPassView.wp-wide {
+        --wp-ground: #EEF2F7;
+        --wp-fg: #16202E;
+        --wp-dim: #5B6675;
+        --wp-hair: rgba(16, 24, 40, 0.10);
+        --wp-rule: rgba(16, 24, 40, 0.09);
+        background: var(--wp-ground);
+        color: var(--wp-fg);
+    }
+
+    /* The wallet is mobile only. Hidden rather than not built: the same render
+       feeds both, and a resize must not need a reload. */
+    .wp-wide .wp-stage,
+    .wp-wide .wp-detail,
+    .wp-wide .wp-passbar,
+    .wp-wide .wp-asof,
+    .wp-wide .wp-note { display: none; }
+
+    /* One column now that the stack is gone. */
+    .wp-wide .wp-shell {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas: "top" "dash";
+        max-width: 1120px;
+        margin: 0 auto;
+    }
+
+    /* The logo is forced white for the dark phone ground. On this one it has
+       to be its own ink again, or it is a white mark on a white card. */
+    .wp-wide .wp-brandlogo { filter: none; opacity: 1; }
+    .wp-wide .wp-name { color: var(--wp-fg); }
+    .wp-wide .wp-meta { color: var(--wp-dim); }
+    .wp-wide .wp-avatar { background: #D8E2F0; color: #1B3A63; }
+    .wp-wide .wp-round { background: rgba(16, 24, 40, 0.07); color: var(--wp-fg); }
+    .wp-wide .wp-round:hover { background: rgba(16, 24, 40, 0.13); }
+
+    /* ---- the tiles ---- */
+    .wp-wide .wp-tiles {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 18px;
+        margin-bottom: 18px;
+    }
+    .wp-wide .wp-tile {
+        position: relative;
+        background: #FFFFFF;
+        border-radius: 16px;
+        padding: 22px 24px 20px;
+        box-shadow: 0 4px 15px rgba(16, 24, 40, 0.07);
+        overflow: hidden;
+    }
+    /* The gradient edge is the staff dashboard's signature. Same device here so
+       the two read as one product. */
+    .wp-wide .wp-tile::before {
+        content: '';
+        position: absolute;
+        inset: 0 0 auto 0;
+        height: 4px;
+        background: linear-gradient(90deg, var(--wc-blue, #2F67A7) 0%, var(--wc-blue-deep, #0C447C) 100%);
+    }
+    .wp-wide .wp-tile-n {
+        margin: 6px 0 2px;
+        font-size: 38px;
+        font-weight: 700;
+        line-height: 1.05;
+        color: #16202E;
+    }
+    /* "Not on file" must not be typeset as a headline number. It is a sentence
+       about an absence, and at 38px it reads as data. */
+    .wp-wide .wp-tile.is-none .wp-tile-n { font-size: 19px; font-weight: 600; color: var(--wp-dim); }
+    .wp-wide .wp-tile-l {
+        margin: 0;
+        font-size: 12.5px;
+        font-weight: 700;
+        letter-spacing: .05em;
+        text-transform: uppercase;
+        color: #5B6675;
+    }
+    .wp-wide .wp-tile-s { margin: 4px 0 0; font-size: 12px; color: #7A8494; }
+
+    /* ---- panels, white like the staff cards ---- */
+    /* The column count is set once, up with the rest of the wide shell, as
+       auto-fit. Re-declaring it here lost to that rule's id selector anyway,
+       and two places deciding one layout is how they drift. Only the tiles
+       need saying: they span whatever number of columns it chose. */
+    .wp-wide .wp-tiles { grid-column: 1 / -1; }
+    .wp-wide .wp-panel {
+        background: #FFFFFF;
+        border: 1px solid rgba(16, 24, 40, 0.08);
+        border-radius: 16px;
+        box-shadow: 0 4px 15px rgba(16, 24, 40, 0.06);
+        padding: 20px 22px 22px;
+    }
+    .wp-wide .wp-panel-title { color: #16202E; }
+    .wp-wide .wp-panel-note { color: var(--wp-dim); }
+    .wp-wide .wp-rowtitle { color: #16202E; }
+    .wp-wide .wp-rowsub, .wp-wide .wp-rowpct { color: var(--wp-dim); }
+    .wp-wide .wp-rowend { color: #16202E; }
+    .wp-wide .wp-row, .wp-wide .wp-row-btn { border-top-color: var(--wp-rule); }
+    .wp-wide .wp-stat-n { color: #16202E; }
+    .wp-wide .wp-stat-l, .wp-wide .wp-stat-s { color: var(--wp-dim); }
+    .wp-wide .wp-empty, .wp-wide .wp-foot { color: var(--wp-dim); }
+    .wp-wide .wp-rowchev { color: #5B6675; }
+    .wp-wide .wp-row-btn:focus-visible { outline-color: #0C447C; }
+
+    /* ---- NOTHING SCROLLS INSIDE A PANEL ON A DESK ----
+       .wp-rows is `flex: 1 1 auto; overflow-y: auto` because in the WALLET a
+       card is a fixed height and its list has to scroll inside it. A desk has
+       no such limit: the page scrolls, so a panel should be as tall as its
+       content and a student should never meet a second scrollbar inside a
+       card. A six-class schedule cut off at four, with the rest reachable only
+       by scrolling a region that gives no hint it scrolls, is how a student
+       concludes they have four classes. */
+    .wp-wide .wp-rows,
+    .wp-wide .wp-modal-body {
+        flex: 0 0 auto;
+        overflow: visible;
+        max-height: none;
+        min-height: 0;
+    }
+    /* The panel stops being a fixed-height flex box and simply grows. */
+    .wp-wide .wp-panel { min-height: auto; height: auto; }
+    /* The modal is the one place a scroll is still right: it is a fixed
+       overlay, so its body keeps its own. */
+    .wp-wide .wp-modal-body { overflow-y: auto; max-height: 62vh; }
+
+    /* The ID barcode reads as ink on paper, which is what a scanner wants. */
+    .wp-wide .wp-idwrap {
+        background: #FFFFFF;
+        border-radius: 10px;
+        padding: 10px 4px 4px;
+        text-align: center;
+    }
+    .wp-wide .wp-idbar { width: 100%; max-width: 340px; height: 64px; }
+
+    /* The modal opens over a light page now. */
+    .wp-wide ~ #wpGradeModal .wp-modal-card,
+    body:has(.wp-wide) #wpGradeModal .wp-modal-card {
+        background: #FFFFFF;
+        border-color: rgba(16, 24, 40, 0.12);
+        color: #16202E;
+    }
+    body:has(.wp-wide) #wpGradeModal .wp-modal-title,
+    body:has(.wp-wide) #wpGradeModal .wp-rowtitle,
+    body:has(.wp-wide) #wpGradeModal .wp-rowend { color: #16202E; }
+    body:has(.wp-wide) #wpGradeModal .wp-modal-sub,
+    body:has(.wp-wide) #wpGradeModal .wp-rowsub,
+    body:has(.wp-wide) #wpGradeModal .wp-empty { color: #5B6675; }
+    body:has(.wp-wide) #wpGradeModal .wp-modal-head .wp-round {
+        background: rgba(16, 24, 40, 0.08);
+        border-color: rgba(16, 24, 40, 0.16);
+        color: #16202E;
+    }
+    body:has(.wp-wide) #wpGradeModal .wp-row-nested { border-left-color: rgba(16, 24, 40, .18); }
+    body:has(.wp-wide) #wpGradeModal .wp-modal-body .wp-row-nested { border-top-color: rgba(16, 24, 40, .09); }
+}
