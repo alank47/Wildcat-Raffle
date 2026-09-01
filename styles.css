@@ -6914,8 +6914,11 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     border: 1px solid var(--wp-hair);
     border-radius: 16px;
     /* A shade off the ground rather than a lift: the wallet above owns the
-       depth on this screen, and two competing elevations read as two apps. */
-    background: rgba(255, 255, 255, 0.028);
+       depth on this screen, and two competing elevations read as two apps.
+       Raised from .028 to .06 on 2026-08-31: at .028 the card was ~#131316
+       against a #0B0B0E ground, a two-percent difference that survived neither
+       a Chromebook screen at an angle nor a bright classroom. */
+    background: rgba(255, 255, 255, 0.06);
 }
 
 .wp-panel-head {
@@ -7250,8 +7253,11 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     max-height: min(78vh, 680px);
     display: flex;
     flex-direction: column;
-    background: #17171C;
-    border: 1px solid var(--wp-hair, rgba(255,255,255,.10));
+    /* Lifted well clear of both the scrim and the panels behind it. A dialog
+       that sits at nearly the ground colour reads as part of the page rather
+       than as something that opened on top of it. */
+    background: #22222A;
+    border: 1px solid rgba(255, 255, 255, .16);
     border-radius: 18px;
     box-shadow: 0 24px 60px rgba(0, 0, 0, .55);
     overflow: hidden;
@@ -7293,7 +7299,10 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     outline-offset: 2px;
     border-radius: 8px;
 }
-.wp-rowchev { flex: none; font-size: 16px; opacity: .45; }
+/* The chevron is the only thing saying the row opens, so it has to be seen.
+   .45 read as decoration on the lighter card. */
+.wp-rowchev { flex: none; font-size: 18px; opacity: .62; margin-left: 2px; }
+.wp-row-btn:hover .wp-rowchev { opacity: .95; }
 
 /* Count of missing pieces. Absent at zero: a badge reading 0 is noise on the
    classes that are fine. */
@@ -7325,3 +7334,32 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     .wp-modal { padding: 12px; align-items: flex-end; }
     .wp-modal-card { max-height: 82vh; border-radius: 20px 20px 14px 14px; }
 }
+
+/* --- The modal's close button has to be findable ---------------------------
+   .wp-round is drawn for the sign-out button, which sits on the near-black
+   page ground where a 9% white fill is plenty. The same fill on the lifted
+   modal card is nearly the card colour, so the control disappeared into it.
+   Scoped to the modal rather than changing .wp-round everywhere, because the
+   sign-out button is correct where it is. */
+.wp-modal-head .wp-round {
+    background: rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    color: #FFFFFF;
+    transition: background 140ms ease, border-color 140ms ease;
+}
+.wp-modal-head .wp-round:hover {
+    background: rgba(255, 255, 255, 0.26);
+    border-color: rgba(255, 255, 255, 0.38);
+}
+.wp-modal-head .wp-round:focus-visible {
+    outline: 2px solid #FFFFFF;
+    outline-offset: 2px;
+}
+/* The glyph itself was 1.8 stroke at 18px, which is thin on a dark fill. */
+.wp-modal-head .wp-round svg { width: 20px; height: 20px; }
+.wp-modal-head .wp-round svg path { stroke-width: 2.2; }
+
+/* Rows inside the modal sit on a lighter card now, so their rules need to
+   lift with it or they vanish. */
+.wp-modal-body .wp-row-nested { border-top-color: rgba(255, 255, 255, 0.10); }
+.wp-modal-body .wp-rows-nested .wp-row-nested { border-left-color: rgba(255, 255, 255, 0.22); }
