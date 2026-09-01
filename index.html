@@ -158,6 +158,16 @@
     <div id="studentPassView" class="wp-root hidden">
         <div class="wp-shell">
             <header class="wp-top">
+                <!-- The badge that overhangs the identity card's corner on a
+                     desk, and the same graduation cap the teacher dashboard's
+                     card wears. It is a sibling of the card rather than a
+                     child because the card has to clip its own weave, and a
+                     badge inside a clipped box cannot overhang anything.
+
+                     Decorative, so it is hidden from a reader: the card
+                     already says whose portal this is. On a phone it is
+                     display:none and there is no card for it to hang off. -->
+                <span class="wp-badge" aria-hidden="true">&#127891;</span>
                 <!-- The school mark, above the student's name. A child opening
                      this at a doorway should see whose app it is before they
                      see anything else.
