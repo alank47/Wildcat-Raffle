@@ -139,7 +139,36 @@ const STATES = [
     pass: {
       // No pass running. This is the state the panel most has to work in: a
       // student who wants one and has not got one.
-      hallPass: { available: true, state: 'none' },
+      //
+      // AND THIS IS THE PAYLOAD THE SERVER ACTUALLY SENDS. It used to read
+      // `available: true, state: 'none'`, which passCard:mine has never
+      // returned: its hall pass block ends `live ? { available: true, ... } :
+      // { available: false, state: "none" }`. The invented shape is why the
+      // harness looked right for weeks while every real Chromebook printed
+      // "Unavailable / Your pass could not be looked up just now" and hid the
+      // Request button. A fixture that does not match the server is a mock,
+      // whatever else it lifts from the shipped code.
+      hallPass: { available: false, state: 'none' },
+      studentId: { available: true, value: '12217' },
+    },
+  },
+  {
+    title: 'Chromebook, a pass is running',
+    why: 'The other half of the same panel: once a pass exists the detail ' +
+         'replaces the button, and there must not be two ways to ask at once.',
+    w: 1440, h: 940, wide: true,
+    mine: {
+      points: { pbis: 12, attendance: 4, academic: 7, total: 23, weeksQualified: 5, bigRaffleEntries: 5 },
+      wildcatCash: { balance: 14.5, earned: 40, spent: 25.5 },
+      attendance: { available: true, daysAbsentTerm: 2, daysAbsentYtd: 6, daysTardyTerm: 1 },
+    },
+    sched: { rows: SCHEDULE, available: true },
+    grades: { rows: GRADES, available: true },
+    pass: {
+      hallPass: {
+        available: true, state: 'approved', sentTo: 'Front Office',
+        clockStartAt: Date.now() - 4 * 60000, clockLimitMinutes: 8,
+      },
       studentId: { available: true, value: '12217' },
     },
   },

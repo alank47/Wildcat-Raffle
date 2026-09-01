@@ -288,7 +288,59 @@ console.log("\n11. Grades wear a band, and an unposted grade wears none");
     />A</.test(out) && />F</.test(out));
 }
 
-console.log("\n12. The desk view drops the ID card");
+console.log("\n12. A student with no pass is offered one");
+{
+  // THE OUTAGE THIS EXISTS TO PREVENT. passCard:mine ends its hall pass block
+  // `live ? { available: true, ... } : { available: false, state: "none" }`.
+  // The desk panel read that false as "the lookup failed" and printed
+  // "Unavailable / Your pass could not be looked up just now" instead of the
+  // Request button. Since almost every student is in class almost all of the
+  // time, that was every student, every period: the one screen whose whole
+  // purpose is asking for a pass could not ask for one.
+  //
+  // It shipped because the fixture below used to be `{ available: false }` and
+  // nothing asserted what came out of it.
+  const none = wpDashboard(FULL, sched([]), grades([]), {
+    hallPass: { available: false, state: "none" },
+  });
+  check("no live pass offers the Request button",
+    /openHallPassSheet\(\)/.test(none),
+    "available:false is the ordinary state of a student sitting in class, not an outage");
+  check("and does not claim the lookup failed",
+    !/could not be looked up/.test(none) && !/Unavailable/.test(none));
+  check("it reads as None active", /None active/.test(none));
+
+  // The shape an older or partial payload can take. Same answer: offer it.
+  check("a missing hallPass key still offers the button",
+    /openHallPassSheet\(\)/.test(wpDashboard(FULL, sched([]), grades([]), {})));
+  check("a bare available:false, with no state, still offers the button",
+    /openHallPassSheet\(\)/.test(
+      wpDashboard(FULL, sched([]), grades([]), { hallPass: { available: false } })));
+
+  // A REAL refusal is still honoured, and is still not a button. The server
+  // does not send one today; if it ever does, a student must not be handed a
+  // control that cannot work.
+  const broken = wpDashboard(FULL, sched([]), grades([]), {
+    hallPass: { available: false, reason: "Passes are turned off during testing." },
+  });
+  check("a server-stated reason is printed instead of the button",
+    /Passes are turned off during testing/.test(broken) && !/openHallPassSheet/.test(broken));
+  check("and that one does say Unavailable", /Unavailable/.test(broken));
+
+  // A running pass must not grow a second Request button underneath it.
+  const live = wpDashboard(FULL, sched([]), grades([]), {
+    hallPass: { available: true, state: "approved", sentTo: "Office", clockLimitMinutes: 8 },
+  });
+  check("a live pass shows its detail, not a request button",
+    !/openHallPassSheet/.test(live) && /Office/.test(live));
+
+  // The phone card is the reference reading; the desk copy is what drifted.
+  check("the phone card reads available:false the same way",
+    /if \(!live \|\| state === 'none'\)/.test(src),
+    "two screens must not tell a student different things about the same field");
+}
+
+console.log("\n13. The desk view drops the ID card");
 {
   const out = wpDashboard(FULL, sched([]), grades([]), {
     studentId: { available: true, value: "12217" },
