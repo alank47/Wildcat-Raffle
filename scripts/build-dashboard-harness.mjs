@@ -219,6 +219,34 @@ const STATES = [
   },
 ];
 
+/*
+ * The portal header, LIFTED out of index.html rather than written here.
+ *
+ * It used to be three hand-written tags: an avatar, a name, a meta line. That
+ * is a mock, and it hid exactly the kind of change this harness exists to
+ * show. The real header carries the school mark and a sign out button, and a
+ * restyle that turns it into an identity card touches markup in index.html
+ * that a hand-written stand-in does not have, so the harness rendered the old
+ * header and the change looked like it had not happened.
+ *
+ * The ids are stripped because nothing in here runs the code that fills them,
+ * and the sample name and initials are written into the empty elements so the
+ * shot is of a student rather than of two blank boxes.
+ */
+function liftHeader() {
+  const html = readFileSync(join(root, 'index.html'), 'utf8');
+  const a = html.indexOf('<header class="wp-top"');
+  const b = html.indexOf('</header>', a);
+  if (a === -1 || b === -1) throw new Error('index.html has no .wp-top header to lift');
+  return html.slice(a, b + '</header>'.length)
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\?v=[0-9a-z]+/g, '')
+    .replace(/id="wpAvatar"([^>]*)>/, 'id="wpAvatar"$1>JR')
+    .replace(/id="wpName"([^>]*)><\/h1>/, 'id="wpName"$1>Jordan Rivera</h1>')
+    .replace(/id="wpMeta"([^>]*)><\/p>/, 'id="wpMeta"$1>Grade 9  &middot;  12217</p>');
+}
+const header = liftHeader();
+
 const stamp = `script.js ${(stat.size / 1024).toFixed(0)}KB, modified ${stat.mtime.toISOString()}`;
 
 const page = `<!doctype html>
@@ -228,6 +256,8 @@ const page = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Student dashboard harness</title>
 <link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="wildcat-motion.css">
+<link rel="stylesheet" href="wildcat-ui.css">
 <style>
   body { margin: 0; background: #14151a; color: #e9e6df; font: 14px/1.5 system-ui, sans-serif; }
   .h-head { padding: 20px 24px 8px; }
@@ -261,12 +291,20 @@ STATES.forEach(function (s, i) {
   grid.appendChild(cell);
 
   f.srcdoc = '<!doctype html><html><head><meta charset="utf-8">' +
-    '<link rel="stylesheet" href="styles.css"></head>' +
+    // ALL THREE SHEETS, IN THE ORDER index.html LOADS THEM. The harness used
+    // to link styles.css alone, which is not what the app serves: index.html
+    // also loads wildcat-motion.css and wildcat-ui.css, and wildcat-ui.css is
+    // where every --wu-* token lives. A rule written as var(--wu-blue) with no
+    // fallback therefore resolved to NOTHING in here while rendering correctly
+    // in the app, so the harness showed unstyled panels and a white button on a
+    // white card for CSS that was fine. A harness that loads a different
+    // stylesheet than the page is testing a page that does not exist.
+    '<link rel="stylesheet" href="styles.css">' +
+    '<link rel="stylesheet" href="wildcat-motion.css">' +
+    '<link rel="stylesheet" href="wildcat-ui.css"></head>' +
     '<body><div id="studentPassView" class="wp-root' + (s.wide ? ' wp-wide' : '') + '">' +
       '<div class="wp-shell">' +
-        '<header class="wp-top"><span class="wp-avatar">JR</span>' +
-        '<div class="wp-who"><h1 class="wp-name">Jordan Rivera</h1>' +
-        '<p class="wp-meta">Grade 9  &middot;  12217</p></div></header>' +
+        ${JSON.stringify(header)} +
         '<p style="color:#8E9199;font:12px system-ui;margin:0 0 6px">' +
           (s.wide ? 'the wallet sits here' : 'the wallet is the whole screen here') + '</p>' +
         '<section class="wp-dash" id="wpDash"></section>' +
