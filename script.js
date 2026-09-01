@@ -16065,15 +16065,55 @@
             '</article>';
         }
 
-        function wpPanel(title, lead, inner, mark) {
-            // `lead` is TEXT and is escaped. `mark` is the one place raw markup
-            // is allowed, and it exists because the alternative was passing the
-            // notification dot through `lead`, where it printed as its own
-            // source on screen. Two parameters with two rules beats one
-            // parameter that is sometimes escaped.
+        /**
+         * The categories a panel can belong to, and the two temperatures.
+         *
+         * COOL IS WHAT THE SCHOOL RECORDS, WARM IS WHAT THE STUDENT EARNS.
+         * A grade, an absence and a timetable are things done to a student and
+         * written down; tickets, cash and jackpot entries are things they have.
+         * They are read for opposite reasons and they should not look alike, so
+         * the temperature is the one piece of colour that says which is which.
+         *
+         * The eyebrow appears above every panel title, which is the reference's
+         * most distinctive card signature and the thing this view was missing.
+         * The colour rides on a small bar beside it rather than on the words:
+         * a tinted band across a card head washes the card, and the eyebrow
+         * itself has to stay at --wu-fg-dim to clear 4.5:1 on white.
+         *
+         * EVERY EYEBROW NAMES ITS OWN CARD. The first cut used the category
+         * name itself, so "Your day" headed two cards, "School record" headed
+         * two and "Rewards" headed two: six of ten labels carrying no
+         * information and quietly claiming the pairs were the same thing. The
+         * category is what the tick is for. The words are what the card is for.
+         *
+         * Which is why this table exists at all: with the labels unique there
+         * is nothing left in the word to derive the temperature from, so the
+         * three warm cards are named here, once, and everything else is cool.
+         */
+        const WP_WARM_CARDS = {
+            'Ticket sources': true,
+            'Earned and spent': true,
+            'Jackpot draw': true,
+        };
+
+        function wpPanel(eyebrow, title, lead, inner, mark) {
+            // `eyebrow`, `title` and `lead` are TEXT and are escaped. `mark` is
+            // the one place raw markup is allowed, and it exists because the
+            // alternative was passing the notification dot through `lead`,
+            // where it printed as its own source on screen. Parameters with one
+            // rule each beat one parameter that is sometimes escaped.
+            //
+            // The eyebrow comes FIRST because that is the order the card reads
+            // in, so a call site is a picture of the card head it draws.
+            const heat = WP_WARM_CARDS[eyebrow] ? ' is-warm' : ' is-cool';
             return '<article class="wp-panel">' +
                 '<header class="wp-panel-head">' +
-                    '<h3 class="wp-panel-title">' + wpEsc(title) + '</h3>' +
+                    '<div class="wp-panel-heading">' +
+                        (eyebrow
+                            ? '<p class="wp-panel-eyebrow' + heat + '">' + wpEsc(eyebrow) + '</p>'
+                            : '') +
+                        '<h3 class="wp-panel-title">' + wpEsc(title) + '</h3>' +
+                    '</div>' +
                     '<span class="wp-panel-lead">' + (mark || '') +
                         (lead ? wpEsc(lead) : '') +
                     '</span>' +
@@ -16093,7 +16133,9 @@
             // student's classes.
             _wpDashLast = { mine: mine, sched: sched, grades: grades, pass: pass };
             if (!mine) {
-                return wpPanel('Your year', '', wpEmpty(
+                // No eyebrow on the failure card. It belongs to no category
+                // because it is standing in for all of them.
+                return wpPanel('', 'Your year', '', wpEmpty(
                     'Your stats could not be loaded just now. Your pass, ID and lunch ' +
                     'number above are unaffected. Reload the page to try again.'));
             }
@@ -16103,47 +16145,86 @@
             const att = mine.attendance || {};
 
             // ---- stats ----------------------------------------------------
-            const tickets = wpPanel('Tickets',
-                (p.total === null || p.total === undefined) ? '' : p.total + ' in total',
+            // THE TILE IS THE HEADLINE, THE PANEL IS THE BREAKDOWN, and neither
+            // says the other's number.
+            //
+            // The mirroring between the two rows is deliberate and stays: a
+            // student opening a Chromebook wants "how am I doing" answered
+            // before they read anything. What cannot stay is a panel repeating
+            // the tile VERBATIM six inches below it. $14.50 appeared as the
+            // Wildcat Cash tile and again as BALANCE; 2 appeared as the Absent
+            // this term tile and again as the first figure in Attendance. A
+            // child cannot tell whether the second number is the same fact or a
+            // different one, and a panel that leads with a number already on
+            // the screen is spending its best line on nothing.
+            //
+            // So each panel now carries only what its tile does not. The lead
+            // chip goes with it: "23 this cycle" beside a tile reading 23 was
+            // the same repetition in a smaller typeface.
+            const tickets = wpPanel('Ticket sources', 'Tickets', '',
                 '<div class="wp-stats">' +
                     wpStat('PBIS', p.pbis) +
                     wpStat('Attendance', p.attendance) +
                     wpStat('Academic', p.academic) +
                 '</div>');
 
-            const money = wpPanel('Wildcat Cash',
-                cash.balance === null || cash.balance === undefined ? '' : 'balance',
+            // FOUR USES OF THE WORD BALANCE IN ONE CARD, and the fix for all
+            // four is the same removal: the eyebrow said Wallet, a pill said
+            // "balance" while carrying no value, a column header said BALANCE
+            // over the figure the tile already showed, and a footnote explained
+            // what balance meant. The tile owns the balance. This card owns the
+            // two figures that add up to it, and needs no sentence to say so
+            // because the labels do.
+            const money = wpPanel('Earned and spent', 'Wildcat Cash', '',
                 '<div class="wp-stats">' +
-                    wpStat('Balance', wpMoney(cash.balance)) +
                     wpStat('Earned', wpMoney(cash.earned)) +
                     wpStat('Spent', wpMoney(cash.spent)) +
-                '</div>' +
-                wpFoot('Earned is everything you have ever been given. Balance is what is left to spend.'));
+                '</div>');
 
             // ---- awards ----------------------------------------------------
             // Framed as what a student HAS, not as a scoreboard against other
             // children: this portal is their own and nobody is ranked on it.
             const entries = p.bigRaffleEntries;
             const weeks = p.weeksQualified;
-            const awards = wpPanel('What you have earned', '',
+            // ONE FIGURE, AND THE OTHER AS ITS SENTENCE. Weeks qualified and
+            // jackpot entries are one entry per qualified week, so in the
+            // ordinary case they are the same integer, and two identical
+            // numbers side by side at the same size read as a copy-paste
+            // before they read as data. The entries figure is the outcome and
+            // keeps the headline; the weeks become the line under it that says
+            // where the entries came from.
+            //
+            // NULL IS STILL NOT ZERO on the demoted one. An absent
+            // weeksQualified says it is absent rather than quietly printing
+            // nothing, which is the same rule the figure above it follows.
+            const weeksNote = (weeks === null || weeks === undefined)
+                ? 'weeks qualified not on file'
+                : weeks + (weeks === 1 ? ' week qualified' : ' weeks qualified');
+            const awards = wpPanel('Jackpot draw', 'What you have earned', '',
                 '<div class="wp-stats">' +
-                    wpStat('Weeks qualified', weeks) +
-                    wpStat('Jackpot entries', entries) +
+                    wpStat('Jackpot entries', entries, weeksNote) +
                 '</div>' +
+                // THE ZERO BRANCH KEEPS BOTH ITS SENTENCES. A child looking at
+                // two noughts needs to be told what would change them and that
+                // the noughts are not a mark against them; that is the whole
+                // reason this panel is framed as what a student HAS. The
+                // non-zero branch had a sentence explaining arithmetic the two
+                // labels already do, and that one is gone.
                 ((entries === 0 || entries === null || entries === undefined)
                     ? wpFoot('Qualify in a week and your name goes in the jackpot draw for it. ' +
                              'Nothing here is counting against you.')
-                    : wpFoot('One entry for every week you qualified. They stay in for the year.')));
+                    : wpFoot('They stay in for the year.')));
 
             // ---- attendance --------------------------------------------------
             // Three states, exactly as the server sends them: unavailable is not
             // the same as "looked it up and found nothing", and neither is zero.
+            // Absent this term is the tile. This card is the rest of the
+            // picture, which is what its eyebrow now says.
             const attendance = !att.available
-                ? wpPanel('Attendance', 'Unavailable',
+                ? wpPanel('Year to date', 'Attendance', 'Unavailable',
                     wpEmpty(att.reason || 'Attendance could not be looked up just now.'))
-                : wpPanel('Attendance', '',
+                : wpPanel('Year to date', 'Attendance', '',
                     '<div class="wp-stats">' +
-                        wpStat('Absent this term', att.daysAbsentTerm) +
                         wpStat('Absent this year', att.daysAbsentYtd) +
                         wpStat('Tardy this term', att.daysTardyTerm) +
                     '</div>');
@@ -16151,12 +16232,12 @@
             // ---- schedule ----------------------------------------------------
             const schedRows = (sched && sched.rows) || [];
             const schedule = (!sched || !sched.available)
-                ? wpPanel('Schedule', 'Unavailable',
+                ? wpPanel('Timetable', 'Schedule', 'Unavailable',
                     wpEmpty((sched && sched.reason) || 'Your schedule could not be loaded just now.'))
                 : !schedRows.length
-                    ? wpPanel('Schedule', 'None yet',
+                    ? wpPanel('Timetable', 'Schedule', 'None yet',
                         wpEmpty('No classes have reached your account yet.'))
-                    : wpPanel('Schedule', schedRows.length + ' classes',
+                    : wpPanel('Timetable', 'Schedule', schedRows.length + ' classes',
                         // In the order the day runs, not the order the server
                         // happened to return. wpPeriodRank sorts an unparseable
                         // period to the end rather than to the front, so a
@@ -16164,11 +16245,54 @@
                         '<div class="wp-rows">' + schedRows.slice().sort(function (a, b) {
                             return wpPeriodRank(a.period) - wpPeriodRank(b.period);
                         }).map(function (r) {
-                            const period = r.period ? 'Period ' + r.period : '';
-                            const sub = [period, r.teacher, r.term].filter(Boolean).join('  ·  ');
-                            return '<div class="wp-row">' +
+                            // THE PERIOD NUMBER IS A RAIL, NOT A SENTENCE.
+                            // Buried in "Period 3 · Ms Chen · S1" a student has
+                            // to read six rows to notice period 4 is missing;
+                            // down a column of chips they see the gap.
+                            //
+                            // ONLY A NUMBER GOES IN THE CHIP, and a row without
+                            // one gets NO CHIP AT ALL.
+                            //
+                            // The first cut gave it an empty outlined circle to
+                            // hold the rail straight, and an empty dashed ring
+                            // in a column of filled numbered squircles reads as
+                            // a render that failed rather than as a fact. The
+                            // rail is held by the row's own indent instead, and
+                            // wildcat-ui already settles what these rows are:
+                            // "A break in the day is not an event. It is one
+                            // outlined line with a time and a word on it, and
+                            // no icon square." Nutrition is a break in the day.
+                            //
+                            // The class is is-unnumbered rather than is-break
+                            // because that is the only thing actually known.
+                            // Nutrition is a break; a class whose period the
+                            // sync dropped is not, and nothing here can tell
+                            // them apart. So the row loses its chip and keeps
+                            // the indent, and its title keeps full ink: dimming
+                            // a real class because a field is missing is an
+                            // absence rendering as a judgment, which is the one
+                            // thing this portal is written against.
+                            //
+                            // AND IF THE PERIOD AND THE COURSE ARE THE SAME
+                            // STRING, PRINT ONE. The server sends Nutrition as
+                            // both, which came out as "Nutrition" set over
+                            // "Nutrition" in two type sizes.
+                            const raw = String(r.period === null || r.period === undefined ? '' : r.period).trim();
+                            const numbered = /^\d{1,2}$/.test(raw);
+                            const title = r.courseName || 'Class';
+                            const named = !numbered && raw &&
+                                raw.toLowerCase() !== String(title).trim().toLowerCase();
+                            const sub = [named ? raw : '', r.teacher, r.term]
+                                .filter(Boolean).join('  ·  ');
+                            return '<div class="wp-row wp-row-sched' +
+                                    (numbered ? '' : ' is-unnumbered') + '">' +
+                                (numbered
+                                    ? '<span class="wp-period">' +
+                                        '<span class="wp-sr">Period </span>' + wpEsc(raw) +
+                                      '</span>'
+                                    : '') +
                                 '<span class="wp-rowmain">' +
-                                    '<span class="wp-rowtitle">' + wpEsc(r.courseName || 'Class') + '</span>' +
+                                    '<span class="wp-rowtitle">' + wpEsc(title) + '</span>' +
                                     (sub ? '<span class="wp-rowsub">' + wpEsc(sub) + '</span>' : '') +
                                 '</span></div>';
                         }).join('') + '</div>');
@@ -16191,13 +16315,13 @@
                        (g.currentPercent !== null && g.currentPercent !== undefined);
             }).length;
             const gradePanel = (!grades || !grades.available)
-                ? wpPanel('Grades', 'Unavailable',
+                ? wpPanel('Gradebook', 'Grades', 'Unavailable',
                     wpEmpty((grades && grades.reason) || 'Grades could not be loaded just now.'))
                 : !gradeRows.length
-                    ? wpPanel('Grades', 'None yet',
+                    ? wpPanel('Gradebook', 'Grades', 'None yet',
                         wpEmpty('No gradebook entries have reached your account yet. ' +
                                 'An empty grade is not a zero, and nothing here is counting against you.'))
-                    : wpPanel('Grades',
+                    : wpPanel('Gradebook', 'Grades',
                         posted + ' of ' + gradeRows.length + ' posted',
                         '<div class="wp-rows">' + gradeRows.slice().sort(function (a, b) {
                             return String(a.courseName || '').localeCompare(String(b.courseName || ''));
@@ -16244,6 +16368,13 @@
                                     (fresh > 0
                                         ? '<span class="wp-rowdot" aria-label="' + fresh + ' new"></span>'
                                         : '') +
+                                    // The dot says "new" and the count says
+                                    // "how much", and the fix for two unlabelled
+                                    // indicators is not a tooltip an eleven year
+                                    // old on a touchscreen can never open. They
+                                    // are the same blue now so they read as one
+                                    // system, and the modal this row opens is
+                                    // where both are said in words.
                                     (items.length
                                         ? '<span class="wp-rowbadge">' + items.length + '</span>'
                                         : '') +
@@ -16273,13 +16404,18 @@
             // Attendance panels below them, deliberately. A student opening a
             // Chromebook wants "how am I doing" answered before they read
             // anything, and the panels are where the breakdown lives.
+            // wpTile's `tone` carries the same temperature the panel eyebrows
+            // carry, so the three headline figures are already sorted into
+            // "what you have earned" and "what the school recorded" before a
+            // student has read a word of them.
             const tiles =
                 '<div class="wp-tiles">' +
-                    wpTile('Tickets', p.total, 'this cycle') +
-                    wpTile('Wildcat Cash', wpMoney(cash.balance), 'balance') +
+                    wpTile('Tickets', p.total, 'this cycle', 'warm') +
+                    wpTile('Wildcat Cash', wpMoney(cash.balance), 'balance', 'warm') +
                     wpTile('Absent this term',
                         att.available ? att.daysAbsentTerm : null,
-                        att.available ? 'days' : (att.reason || 'not available')) +
+                        att.available ? 'days' : (att.reason || 'not available'),
+                        'cool') +
                 '</div>';
 
             // ---- the hall pass, and the ID, as panels ---------------------
@@ -16326,7 +16462,7 @@
                 ? String(hp.state) : null;
             const hpBroken = Boolean(hp && hp.available === false && hp.reason);
             const passPanel = hpState
-                ? wpPanel('Hall pass', hpState.replace(/_/g, ' '),
+                ? wpPanel('Hallway', 'Hall pass', hpState.replace(/_/g, ' '),
                     '<div class="wp-stats">' +
                         wpStat('Destination', hp.sentTo || null) +
                         wpStat('Started', hp.clockStartAt
@@ -16335,22 +16471,28 @@
                         wpStat('Minutes allowed', hp.clockLimitMinutes) +
                     '</div>' +
                     wpFoot('Your phone shows the live timer and the check-in tap.'))
-                : wpPanel('Hall pass',
+                : wpPanel('Hallway', 'Hall pass',
                     hpBroken ? 'Unavailable' : 'None active',
                     hpBroken
                         ? wpEmpty(hp.reason)
                         : wpEmpty('No pass right now. Ask for one, then hold your phone near the tag at the door.') +
                           '<div class="wp-actions"><button type="button" class="wp-btn wp-btn-solid" ' +
                           'onclick="openHallPassSheet()">Request a pass</button></div>' +
-                          wpFoot('Your teacher has to approve it'));
+                          wpFoot('Your teacher has to approve it.'));
 
             // NO STUDENT ID PANEL HERE, deliberately. A barcode is for holding
             // up to a scanner, which is a phone errand: the wallet still has
             // it. On a desk it was a panel nobody could use, taking a column
             // from the figures a student actually came to read.
-            // Hall pass follows Tickets so it lands beside the short cards
-            // rather than above Grades, which is the tallest panel on the page.
-            return tiles + gradePanel + schedule + tickets + passPanel + money + awards + attendance;
+            // HALL PASS FIRST, AND ABOVE THE FOLD. It used to follow Tickets so
+            // it would land beside the short cards, which was a tidiness
+            // argument: the panels flow into three balanced columns, and a
+            // short card placed fourth lands wherever the balancing puts it.
+            // On a 1366x768 Chromebook that was below the fold, which is the
+            // wrong place for the one control on this screen a student needs in
+            // a hurry and at a fixed moment. Placed first it opens the left
+            // column, and Grades, the tallest panel, falls in under it.
+            return tiles + passPanel + gradePanel + schedule + tickets + money + awards + attendance;
         }
         /**
          * Open one course's missing-work list, or close it.

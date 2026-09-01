@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20260901i">
-    <link rel="icon" href="favicon.ico?v=20260901i" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260901i" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260901i" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20260901j">
+    <link rel="icon" href="favicon.ico?v=20260901j" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260901j" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260901j" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260901i">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260901j">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20260901i">
+    <link rel="stylesheet" href="styles.css?v=20260901j">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260901i">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260901j">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20260901i">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260901j">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20260901i" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20260901j" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -158,6 +158,16 @@
     <div id="studentPassView" class="wp-root hidden">
         <div class="wp-shell">
             <header class="wp-top">
+                <!-- The badge that overhangs the identity card's corner on a
+                     desk, and the same graduation cap the teacher dashboard's
+                     card wears. It is a sibling of the card rather than a
+                     child because the card has to clip its own weave, and a
+                     badge inside a clipped box cannot overhang anything.
+
+                     Decorative, so it is hidden from a reader: the card
+                     already says whose portal this is. On a phone it is
+                     display:none and there is no card for it to hang off. -->
+                <span class="wp-badge" aria-hidden="true">&#127891;</span>
                 <!-- The school mark, above the student's name. A child opening
                      this at a doorway should see whose app it is before they
                      see anything else.
@@ -168,8 +178,22 @@
                      asset, so there is one logo to replace when the school
                      changes it. -->
                 <div class="wp-brand">
-                    <img src="assets/westbrook-logo.png?v=20260901i"
+                    <img src="assets/westbrook-logo.png?v=20260901j"
                          alt="Westbrook Academy" class="wp-brandlogo" id="wpBrandLogo">
+                    <!-- The product's name, which appeared nowhere on the
+                         student's screen while the teacher's topbar has said
+                         it since the app was built. On a desk this row is the
+                         frame the two screens share: school mark, then
+                         "Wildcat Hub", then the page.
+
+                         Text rather than an image, so the reversed strapline
+                         inside the logo PNG never has to be legible at 4px,
+                         and so this costs no second asset request.
+
+                         Off on a phone, where the wallet is the product and a
+                         product name above one card is a title bar on a
+                         business card. -->
+                    <span class="wp-hub">Wildcat Hub</span>
                 </div>
                 <div class="wp-topid">
                 <!-- Initials in a tinted circle, never a photograph. Same rule
@@ -184,6 +208,12 @@
                         <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
                         <path d="M10 8l-4 4 4 4M6 12h9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
                     </svg>
+                    <!-- The word, on a desk only. A glyph in a circle is a
+                         guess for a child; the teacher app labels the same
+                         action. Off on a phone, where the header is a tight
+                         row beside a 30px name and the icon is the whole
+                         affordance the wallet was measured with. -->
+                    <span class="wp-round-label">Sign out</span>
                 </button>
                 </div>
             </header>
@@ -427,7 +457,7 @@
         <header class="app-topbar">
             <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-menu"></use></svg></button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20260901i" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20260901j" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -5252,19 +5282,19 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260901i"></script>
+    <script src="wildcat-auth.js?v=20260901j"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
     <!-- The icon sprite. Injected at load, before anything renders, so an
          icon is never a blank square for a frame. -->
-    <script src="wildcat-icons.js?v=20260901i"></script>
-    <script src="wildcat-motion.js?v=20260901i"></script>
-    <script src="wildcat-discipline.js?v=20260901i"></script>
-    <script src="wildcat-merge.js?v=20260901i"></script>
-    <script src="wildcat-savequeue.js?v=20260901i"></script>
-    <script src="wildcat-roster.js?v=20260901i"></script>
-    <script src="wildcat-store.js?v=20260901i"></script>
-    <script src="script.js?v=20260901i"></script>
+    <script src="wildcat-icons.js?v=20260901j"></script>
+    <script src="wildcat-motion.js?v=20260901j"></script>
+    <script src="wildcat-discipline.js?v=20260901j"></script>
+    <script src="wildcat-merge.js?v=20260901j"></script>
+    <script src="wildcat-savequeue.js?v=20260901j"></script>
+    <script src="wildcat-roster.js?v=20260901j"></script>
+    <script src="wildcat-store.js?v=20260901j"></script>
+    <script src="script.js?v=20260901j"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -5274,7 +5304,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20260901i').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20260901j').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {

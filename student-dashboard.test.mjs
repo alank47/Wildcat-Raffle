@@ -95,8 +95,17 @@ check("zero tickets renders as 0, not as an absence",
 const zeroCash = wpDashboard({ points: {}, wildcatCash: { balance: 0, earned: 0, spent: 0 }, attendance: {} },
   sched([]), grades([]));
 check("a balance of exactly zero is $0.00, not an absence", zeroCash.includes("$0.00"));
+// ASSERTED DIRECTLY, not by counting. This used to compare how many stats
+// carried is-none across the two fixtures, which was a proxy for the rule and
+// stopped being one the moment the desk panels stopped repeating their tiles:
+// the Wallet card gave up its Balance figure and Attendance gave up Absent
+// this term, so both fixtures lost is-none stats and the two counts met. The
+// rule itself never changed, so it is now written down as itself, from both
+// sides. A stat marked missing prints "not on file" and NEVER a figure.
 check("and is not marked as missing",
-  (zeroCash.match(/wp-stat is-none/g) || []).length < (missing.match(/wp-stat is-none/g) || []).length);
+  !/class="wp-stat is-none"><span class="wp-stat-n">\$/.test(zeroCash) &&
+  /class="wp-stat is-none"><span class="wp-stat-n">not on file/.test(missing),
+  "a real $0.00 must never be typeset as an absence, and a null must never be typeset as a figure");
 
 console.log("\n4. Grades: an empty grade is not a zero, and not an F");
 const noGrades = wpDashboard(FULL, sched([]), grades([]));
