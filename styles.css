@@ -7659,3 +7659,48 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
        the same row painted every visit until the accent means nothing. The
        count already says how much. The blue dot already says what is new. */
 }
+
+/* --- The desk panels FLOW, they do not sit in a rigid grid -----------------
+   A grid gives every cell in a row the height of the tallest card in it, so a
+   six-course Grades panel beside a three-figure Tickets panel leaves a hole
+   under Tickets that nothing can fill. Reordering cannot fix it: the next
+   panel starts a new row.
+
+   Multi-column lays the panels out like text, so each one takes only the
+   height it needs and the next fills in behind it. `break-inside: avoid` is
+   what keeps a panel whole rather than splitting it across a column boundary,
+   and it is the whole reason this is safe.
+
+   The tiles span every column, so the three headline figures stay a full-width
+   row above the panels rather than being dealt into one of them. */
+@media (min-width: 1000px) {
+    #studentPassView.wp-wide .wp-dash {
+        display: block;
+        columns: 3;
+        column-gap: 14px;
+    }
+    #studentPassView.wp-wide .wp-dash > * {
+        break-inside: avoid;
+        -webkit-column-break-inside: avoid;
+        margin-bottom: 14px;
+    }
+    #studentPassView.wp-wide .wp-dash > .wp-tiles {
+        column-span: all;
+        margin-bottom: 18px;
+    }
+
+    /* The request button, on the light desk ground. .wp-btn-solid is drawn for
+       the dark wallet, where a pale fill reads as raised; on white it needs
+       the school blue to read as the action it is. */
+    .wp-wide .wp-actions { margin-top: 12px; }
+    .wp-wide .wp-btn-solid {
+        background: var(--wc-blue);
+        color: #FFFFFF;
+        border: 0;
+    }
+    .wp-wide .wp-btn-solid:hover { background: var(--wc-blue-dark); }
+    .wp-wide .wp-btn-solid:focus-visible {
+        outline: 2px solid var(--wc-blue-deep);
+        outline-offset: 2px;
+    }
+}
