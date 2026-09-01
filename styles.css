@@ -7197,3 +7197,49 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 @media (prefers-reduced-motion: reduce) {
     .wp-rowchev { transition: none; }
 }
+
+/* --- Student portal: the school mark, above the name ----------------------
+   .wp-top was a single row (avatar, name, sign-out). It is now two: the brand
+   above, that row below. Stacking rather than squeezing the logo in beside the
+   avatar, because on a phone a wordmark and a name competing for one line
+   truncates the thing a student actually needs to recognise. */
+.wp-top { flex-direction: column; align-items: stretch; gap: 14px; }
+.wp-topid { display: flex; align-items: center; gap: 12px; }
+
+.wp-brand { display: flex; align-items: center; }
+.wp-brandlogo {
+    height: 30px;
+    width: auto;
+    max-width: 62%;
+    /* The asset is dark ink on transparent, drawn for the light login screen.
+       brightness(0) collapses it to solid black whatever colour it started,
+       then invert(1) makes it solid white, so this cannot go grey if the file
+       is ever redrawn in a different shade. A plain invert() would depend on
+       the source colour. */
+    filter: brightness(0) invert(1);
+    opacity: .88;
+}
+@media (max-width: 560px) {
+    .wp-brandlogo { height: 26px; max-width: 70%; }
+    .wp-top { gap: 12px; }
+}
+
+/* --- Grades: the opened section sits lighter than the card ----------------
+   The panel is rgba(255,255,255,.028) against a #0B0B0E ground. The expanded
+   list needs to read as INSIDE that card rather than as more card, so it lifts
+   a step rather than darkening: on a near-black ground the only direction that
+   separates is up. */
+.wp-gradebody {
+    background: rgba(255, 255, 255, 0.045);
+    border-radius: 12px;
+    padding: 4px 12px 8px;
+    margin: 2px 0 8px;
+}
+.wp-gradesec.is-open .wp-row-btn { border-bottom: 0; }
+.wp-gradebody .wp-row-nested {
+    border-top-color: rgba(255, 255, 255, 0.07);
+    border-left-color: rgba(255, 255, 255, 0.16);
+}
+/* The empty case is a sentence, not a row, so it needs its own breathing room
+   inside the lifted box rather than inheriting a row's tight padding. */
+.wp-gradebody .wp-empty { margin: 8px 2px; opacity: .72; }
