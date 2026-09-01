@@ -34,7 +34,7 @@ function slice(start, end) {
 }
 
 // The region under test, plus the two helpers it borrows from the card stack.
-const { wpDashboard, wpGradeOpen, __el, __store } = new Function(
+const { wpDashboard, wpGradeOpen, wpGradeTone, __el, __store } = new Function(
   `const wpEsc = (v) => String(v == null ? "" : v)
      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
    const wpEmpty = (t) => '<p class="wp-empty">' + wpEsc(t) + '</p>';
@@ -56,7 +56,7 @@ const { wpDashboard, wpGradeOpen, __el, __store } = new Function(
    };
    globalThis.__el = __el; globalThis.__store = __store;\n` +
   slice("/* ---- the desk dashboard ---", "/* ---- end desk dashboard ---- */") +
-  "\nreturn { wpDashboard, wpGradeOpen, wpUnseenTotal, __el, __store };",
+  "\nreturn { wpDashboard, wpGradeOpen, wpGradeTone, wpUnseenTotal, __el, __store };",
 )();
 
 const FULL = {
@@ -238,6 +238,67 @@ console.log("\n10. The dot means new since you last looked");
   const after = wpDashboard(FULL, sched([]), grades);
   check("opening the course clears both", !/wp-rowdot/.test(after) && !/wp-headdot/.test(after));
   check("but the count stays, because the work is still missing", /wp-rowbadge">1</.test(after));
+}
+
+console.log("\n11. Grades wear a band, and an unposted grade wears none");
+{
+  // The letter wins when there is one: a school can set its own cut points, and
+  // a percentage bucketed here would quietly disagree with the mark beside it.
+  check("A bands green", wpGradeTone("A", 94) === "a");
+  check("F bands red", wpGradeTone("F", 41) === "f");
+  check("A- bands with A, which is what a student means by 'an A'", wpGradeTone("A-", null) === "a");
+  check("B+ bands with B", wpGradeTone("B+", null) === "b");
+  check("the letter wins over a percent that disagrees with it",
+    wpGradeTone("A", 55) === "a",
+    "the school's cut points are the school's, not this file's");
+
+  // Percent only when there is no letter to read.
+  check("90 with no letter is an A band", wpGradeTone(null, 90) === "a");
+  check("89 is a B", wpGradeTone(null, 89) === "b");
+  check("59 is an F", wpGradeTone(null, 59) === "f");
+
+  // THE ONE THAT MATTERS.
+  check("nothing posted gets NO band", wpGradeTone(null, null) === null,
+    "red on an unmarked class tells a child they are failing something nobody has graded");
+  check("an empty string is not a grade", wpGradeTone("", null) === null);
+  check("a narrative or pass/fail mark gets no band rather than a guessed one",
+    wpGradeTone("Pass", null) === null && wpGradeTone("INC", null) === null);
+
+  const rows = [
+    { courseName: "Algebra", currentGrade: "A", currentPercent: 94, sectionId: "S1" },
+    { courseName: "History", currentGrade: "F", currentPercent: 41, sectionId: "S2" },
+    { courseName: "Art", currentGrade: null, currentPercent: null, sectionId: "S3" },
+  ];
+  const out = wpDashboard(FULL, sched([]), { rows, available: true });
+  check("the band reaches the markup", /wp-grade-a/.test(out) && /wp-grade-f/.test(out));
+  // "Not posted" renders through its own branch and never reaches the band
+  // code at all, which is the right shape: there is no grade to colour. What
+  // matters is that it comes out UNBANDED, so assert that rather than assert a
+  // class it was never going to carry.
+  const artRow = out.slice(out.indexOf("Art"), out.indexOf("Art") + 400);
+  check("the unposted course is not banded at all",
+    /Not posted/.test(artRow) && !/wp-grade-[abcdf]\b/.test(artRow),
+    "red on an unmarked class is the failure this whole portal is written against");
+  check("wp-grade-none exists for a real mark that has no band",
+    /wp-grade-none/.test(wpDashboard(FULL, sched([]), {
+      rows: [{ courseName: "PE", currentGrade: "Pass", currentPercent: null, sectionId: "S9" }],
+      available: true,
+    })));
+  check("the letter is still printed, so colour is never the only signal",
+    />A</.test(out) && />F</.test(out));
+}
+
+console.log("\n12. The desk view drops the ID card");
+{
+  const out = wpDashboard(FULL, sched([]), grades([]), {
+    studentId: { available: true, value: "12217" },
+    hallPass: { available: false },
+  });
+  check("no Student ID panel on the desk", !/Student ID/.test(out),
+    "a barcode is for holding to a scanner, which is a phone errand");
+  check("and no barcode element is left behind", !/wpDashBarcode/.test(out));
+  const src = readFileSync(new URL("./script.js", import.meta.url), "utf8");
+  check("the drawing function went with it", !/function wpDashBarcode/.test(src));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
