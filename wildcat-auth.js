@@ -296,16 +296,53 @@
    * hanging forever on a spinner. Resolves as soon as the roster appears, so
    * the normal case costs one tick, not the whole timeout.
    */
-  async function waitForTeacherRecord(normalizedEmail, timeoutMs) {
+  async function waitForTeacherRecord(normalizedEmail, timeoutMs, idToken) {
     const deadline = Date.now() + (timeoutMs || 20000);
+
+    // A NON-EMPTY `teachers` ARRAY IS NOT PROOF OF ANYTHING.
+    //
+    // This used to give up the moment the array had rows in it, on the
+    // reasoning that "the roster is loaded and the address genuinely is not in
+    // it". That was true while Firestore served the roster WITHOUT a sign-in:
+    // whatever was in the array had come from the server.
+    //
+    // Retiring Firestore broke it. loadData now needs a Convex session, so on
+    // a redirect return it fails with "Not signed in to Convex" and falls back
+    // to localStorage. The array is then a STALE LOCAL CACHE from this
+    // machine's last good load, and it is non-empty, so this function searched
+    // it, missed, and reported a missing staff record — seconds before the
+    // real roster arrived from Convex.
+    //
+    // It only bit staff added since that machine last cached a roster, which
+    // is why it looked like two specific people with bad email addresses. The
+    // addresses were correct the whole time.
+
+    // Ask the SERVER first, because it is the only authoritative answer.
+    // me:get runs on requireIdentity rather than requireStaff, so it answers
+    // for exactly the people this function exists to judge.
+    if (idToken) {
+      try {
+        const me = await convexQuery('me:get', {}, idToken);
+        if (me && me.hasAppRecord === false) {
+          // Genuinely absent. Say so now rather than making them wait out the
+          // timeout for an answer that will not change.
+          return null;
+        }
+      } catch (e) {
+        // Unreachable server, an expired token, anything: fall through to
+        // polling. A diagnostic must never be the thing that blocks a sign-in.
+        console.warn('[wildcat-auth] me:get check skipped:', (e && e.message) || e);
+      }
+    }
+
     for (;;) {
       if (typeof teachers !== 'undefined' && Array.isArray(teachers) && teachers.length) {
         const hit = teachers.find(function (t) {
           return (t.email || '').trim().toLowerCase() === normalizedEmail;
         });
         if (hit) return hit;
-        // Roster is loaded and the address genuinely is not in it.
-        return null;
+        // NOT a conclusion. The post-sign-in refresh may still be in flight,
+        // and it replaces this array wholesale when it lands.
       }
       if (Date.now() > deadline) return null;
       await new Promise(function (r) { setTimeout(r, 200); });
@@ -503,7 +540,7 @@
       // empty. Reporting "no staff record" then is not a lookup failure, it is
       // a race, and it looked exactly like a real data problem.
       const target = (me.email || '').trim().toLowerCase();
-      const teacher = await waitForTeacherRecord(target);
+      const teacher = await waitForTeacherRecord(target, undefined, redirectResult.idToken);
 
       if (!teacher) {
         throw new Error(
@@ -959,13 +996,17 @@
    */
   async function adoptStaffRecord(me) {
     const target = (me.email || '').trim().toLowerCase();
-    const teacher =
-      typeof teachers !== 'undefined' &&
-      teachers.find((t) => (t.email || '').trim().toLowerCase() === target);
+
+    // THROUGH waitForTeacherRecord, not a bare find. This searched `teachers`
+    // once and threw if it missed, which on a cold load reads a stale
+    // localStorage roster and rejects staff who are in Convex but were added
+    // after this machine last cached one. Same fault as the redirect path had;
+    // fixing one and not the other would leave the bug alive on the resumed
+    // session route.
+    const teacher = await waitForTeacherRecord(
+      target, undefined, (session || {}).idToken);
 
     if (!teacher) {
-      // Expected for most staff right now: 39 of 40 records have no email,
-      // so there is nothing to match even though the sign-in itself worked.
       throw new Error(
         `Signed in as ${target}, but no local staff record carries that ` +
         `email address. An admin needs to add it to your profile.`,
