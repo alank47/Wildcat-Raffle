@@ -71,6 +71,10 @@ const SCHEDULE = [
 const GRADES = [
   { courseName: 'Algebra I', courseNumber: 'MAT-101', currentGrade: 'B', currentPercent: 86, sectionId: '5989' },
   { courseName: 'Biology', courseNumber: 'SCI-140', currentGrade: 'A', currentPercent: 94, sectionId: '6055' },
+  { courseName: 'World History', courseNumber: 'HIS-120', currentGrade: 'C', currentPercent: 74, sectionId: '6100' },
+  { courseName: 'Spanish I', courseNumber: 'SPA-101', currentGrade: 'D', currentPercent: 63, sectionId: '6101' },
+  { courseName: 'Geometry', courseNumber: 'MAT-140', currentGrade: 'F', currentPercent: 41, sectionId: '6102' },
+  // Not posted must stay ordinary ink. It is the reason the band set exists.
   { courseName: 'English 9', courseNumber: 'ENG-109', currentGrade: null, currentPercent: null, sectionId: '6067' },
 ];
 

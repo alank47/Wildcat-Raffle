@@ -7499,15 +7499,6 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
        overlay, so its body keeps its own. */
     .wp-wide .wp-modal-body { overflow-y: auto; max-height: 62vh; }
 
-    /* The ID barcode reads as ink on paper, which is what a scanner wants. */
-    .wp-wide .wp-idwrap {
-        background: #FFFFFF;
-        border-radius: 10px;
-        padding: 10px 4px 4px;
-        text-align: center;
-    }
-    .wp-wide .wp-idbar { width: 100%; max-width: 340px; height: 64px; }
-
     /* The modal opens over a light page now. */
     .wp-wide ~ #wpGradeModal .wp-modal-card,
     body:has(.wp-wide) #wpGradeModal .wp-modal-card {
@@ -7528,4 +7519,46 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     }
     body:has(.wp-wide) #wpGradeModal .wp-row-nested { border-left-color: rgba(16, 24, 40, .18); }
     body:has(.wp-wide) #wpGradeModal .wp-modal-body .wp-row-nested { border-top-color: rgba(16, 24, 40, .09); }
+}
+
+/* --- Grades wear their band ------------------------------------------------
+   A is green through F is red, on the letter the teacher chose rather than on
+   a percentage this file bucketed, so the colour can never disagree with the
+   mark beside it.
+
+   `wp-grade-none` IS THE POINT OF THE SET. A grade nobody has posted keeps the
+   ordinary ink. Painting it red would tell a child they are failing a class the
+   teacher has simply not marked yet, which is an absence rendering as a value,
+   and this portal is written against exactly that.
+
+   Two palettes: the desk view is light, the phone wallet is dark, and a green
+   that reads on white is invisible on #0B0B0E. Contrast is checked against the
+   ground each one actually sits on, not against a mid grey. */
+.wp-grade-a { color: #1F9254; }
+.wp-grade-b { color: #2F7DBF; }
+.wp-grade-c { color: #B07A0B; }
+.wp-grade-d { color: #C4671C; }
+.wp-grade-f { color: #C2352B; }
+.wp-grade-none { color: inherit; }
+
+@media (min-width: 1000px) {
+    /* Light ground: darken so the band survives on white. */
+    .wp-wide .wp-grade-a { color: #16713F; }
+    .wp-wide .wp-grade-b { color: #1F5F94; }
+    .wp-wide .wp-grade-c { color: #8A5E06; }
+    .wp-wide .wp-grade-d { color: #9C5114; }
+    .wp-wide .wp-grade-f { color: #A32820; }
+    .wp-wide .wp-grade-none { color: #16202E; }
+
+    /* The modal opens over the light view, so it takes the same set. */
+    body:has(.wp-wide) #wpGradeModal .wp-grade-a { color: #16713F; }
+    body:has(.wp-wide) #wpGradeModal .wp-grade-b { color: #1F5F94; }
+    body:has(.wp-wide) #wpGradeModal .wp-grade-c { color: #8A5E06; }
+    body:has(.wp-wide) #wpGradeModal .wp-grade-d { color: #9C5114; }
+    body:has(.wp-wide) #wpGradeModal .wp-grade-f { color: #A32820; }
+
+    /* COLOUR IS NEVER THE ONLY SIGNAL. The letter is already there and says the
+       same thing, which is what makes this safe for a colour-blind reader; the
+       weight is what carries it for everyone else. */
+    .wp-wide .wp-rowend[class*="wp-grade-"] { font-weight: 750; }
 }

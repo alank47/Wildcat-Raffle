@@ -16019,6 +16019,43 @@
          * other figure on this screen follows. A tile reading 0 where the truth
          * is "not on file" is the one failure this portal is written against.
          */
+        /**
+         * A colour band for a grade: 'a' through 'd', 'f', or null.
+         *
+         * NULL IS A REAL ANSWER AND IT IS THE IMPORTANT ONE. A grade nobody has
+         * posted gets no colour at all. Painting it red would tell a child they
+         * are failing a class the teacher simply has not marked yet, which is
+         * the exact failure this whole portal is written against: an absence
+         * rendering as a value.
+         *
+         * The LETTER wins when there is one, because it is what the teacher
+         * chose. A school can set its own cut points, and a percentage bucketed
+         * here would quietly disagree with the letter beside it. The percent is
+         * only read when there is no letter to read, and the buckets below are
+         * the conventional ones.
+         *
+         * A+ / A- / B+ all band by their first character, which is what a
+         * student means when they say "I have an A".
+         */
+        function wpGradeTone(letter, pct) {
+            const L = String(letter || '').trim().toUpperCase();
+            if (L) {
+                const first = L.charAt(0);
+                if (first === 'A' || first === 'B' || first === 'C' || first === 'D' || first === 'F') {
+                    return first.toLowerCase();
+                }
+                // A pass/fail or narrative mark is a real grade and not a band.
+                // No colour is honest; a guessed one is not.
+                return null;
+            }
+            if (typeof pct !== 'number' || !isFinite(pct)) return null;
+            if (pct >= 90) return 'a';
+            if (pct >= 80) return 'b';
+            if (pct >= 70) return 'c';
+            if (pct >= 60) return 'd';
+            return 'f';
+        }
+
         function wpTile(label, value, note, tone) {
             const known = value !== null && value !== undefined && value !== '';
             return '<article class="wp-tile' + (tone ? ' wp-tile-' + tone : '') + (known ? '' : ' is-none') + '">' +
@@ -16171,7 +16208,8 @@
                                 ? null : Math.round(g.currentPercent);
                             const has = letter !== '' || pct !== null;
                             const end = has
-                                ? '<span class="wp-rowend">' + wpEsc(letter || (pct + '%')) + '</span>' +
+                                ? '<span class="wp-rowend wp-grade-' + (wpGradeTone(letter, pct) || 'none') + '">' +
+                                    wpEsc(letter || (pct + '%')) + '</span>' +
                                   (letter && pct !== null ? '<span class="wp-rowpct">' + pct + '%</span>' : '')
                                 : '<span class="wp-rowend is-none">Not posted</span>';
                             const inner =
@@ -16263,14 +16301,11 @@
                     wpFoot('Your phone shows the live timer and the check-in tap.'))
                 : '';
 
-            const sid = (pass && pass.studentId) || null;
-            const idPanel = (sid && sid.available && sid.value)
-                ? wpPanel('Student ID', String(sid.value),
-                    '<div class="wp-idwrap"><svg id="wpDashBarcode" class="wp-idbar"></svg></div>' +
-                    wpFoot('Hold your phone to the scanner at lunch; this is the same number.'))
-                : '';
-
-            return tiles + passPanel + gradePanel + schedule + tickets + money + awards + attendance + idPanel;
+            // NO STUDENT ID PANEL HERE, deliberately. A barcode is for holding
+            // up to a scanner, which is a phone errand: the wallet still has
+            // it. On a desk it was a panel nobody could use, taking a column
+            // from the figures a student actually came to read.
+            return tiles + passPanel + gradePanel + schedule + tickets + money + awards + attendance;
         }
         /**
          * Open one course's missing-work list, or close it.
@@ -16366,8 +16401,11 @@
                 ? '' : String(course.currentGrade);
             const pct = (course.currentPercent === null || course.currentPercent === undefined)
                 ? null : Math.round(course.currentPercent);
+            const tone = wpGradeTone(letter, pct);
             const gradeLine = (letter || pct !== null)
-                ? wpEsc(letter || '') + (letter && pct !== null ? ' \u00b7 ' : '') + (pct !== null ? pct + '%' : '')
+                ? '<span class="wp-grade-' + (tone || 'none') + '">' +
+                    wpEsc(letter || '') + (letter && pct !== null ? ' \u00b7 ' : '') +
+                    (pct !== null ? pct + '%' : '') + '</span>'
                 : 'Not posted';
 
             let body;
@@ -16432,28 +16470,6 @@
             wpMarkSeen(items);
             const dash = wpById('wpDash');
             if (dash) dash.innerHTML = wpDashboard(_wpDashLast.mine, _wpDashLast.sched, _wpDashLast.grades, _wpDashLast.pass);
-        }
-
-        /**
-         * Draw the ID barcode on the desk dashboard.
-         *
-         * JsBarcode needs a real element, so it runs AFTER innerHTML rather
-         * than inside the template. Guarded on the library and the element
-         * both: the wallet already draws one into #wpBarcode, and a missing
-         * CDN must leave the number readable rather than throw and take the
-         * rest of the dashboard render with it.
-         */
-        function wpDashBarcode(pass) {
-            const sid = (pass && pass.studentId) || null;
-            if (!sid || !sid.available || !sid.value) return;
-            if (!window.JsBarcode) return;
-            const el = document.getElementById('wpDashBarcode');
-            if (!el) return;
-            try {
-                JsBarcode('#wpDashBarcode', String(sid.value), {
-                    format: 'CODE128', displayValue: false, height: 64, margin: 0,
-                });
-            } catch (e) { /* the number above it is still readable */ }
         }
 
         function wpGradeClose() {
@@ -17995,7 +18011,6 @@
             // holds too, so this is outside the !pass return above.
             const dash = wpById('wpDash');
             if (dash) dash.innerHTML = wpDashboard(mine, sched, grades, pass);
-            wpDashBarcode(pass);
 
             // Over the wallet while the pass is running. Same card object, so the
             // two cannot disagree; see wpRenderFull.
