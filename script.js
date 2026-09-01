@@ -17007,6 +17007,10 @@
          */
         let wpWatchTimer = null;
         let wpWatchSignature = null;
+        // Last sync this tab has seen. null means "not established yet": the
+        // first poll records it and never reloads on it, or every student would
+        // get a reload the moment they opened the portal.
+        let wpSyncVersion = null;
         const WP_WATCH_MS = 15000;
 
         /**
@@ -17647,7 +17651,32 @@
             const session = auth && auth.getSession && auth.getSession();
             if (!session) return;
             try {
-                const card = await auth.convexQuery('passCard:mine', {}, session.idToken);
+                const [card, version] = await Promise.all([
+                    auth.convexQuery('passCard:mine', {}, session.idToken),
+                    // Cheap: one row, the same answer for everyone. See
+                    // views_app.myDataVersion for why it is not per student.
+                    auth.convexQuery('views_app:myDataVersion', {}, session.idToken)
+                        .catch(function () { return null; }),
+                ]);
+
+                // TWO THINGS ARE WATCHED, AND THEY LAND DIFFERENTLY.
+                //
+                // The hall pass is why the phone is in their hand, so a change
+                // there deals the wallet back to the pass card. A SYNC is
+                // background news: grades moved, an assignment was marked
+                // missing. Reloading a student onto a different card for that
+                // would yank the screen out from under them, so it re-renders
+                // where they are.
+                const nextSync = (version && version.syncedAt) || null;
+                if (wpSyncVersion === null) {
+                    wpSyncVersion = nextSync;
+                } else if (nextSync && nextSync !== wpSyncVersion) {
+                    wpSyncVersion = nextSync;
+                    // preferIndex undefined keeps the card they are on.
+                    await loadStudentPortal();
+                    return;
+                }
+
                 const next = wpPassSignature(card && card.hallPass);
                 if (wpWatchSignature === null) { wpWatchSignature = next; return; }
                 if (next !== wpWatchSignature) {
@@ -17671,6 +17700,12 @@
 
         function exitStudentPortal() {
             wpStopPassWatch();
+            // Not reset in wpStopPassWatch, which runs on every reload and
+            // would therefore re-arm the sync reload it just performed. Reset
+            // HERE, on sign-out, or the next student on a shared library
+            // machine inherits this one's last-seen sync and gets a spurious
+            // reload on their first poll.
+            wpSyncVersion = null;
             const view = wpById('studentPassView');
             if (view) { view.classList.add('hidden'); view.scrollTop = 0; }
             const tap = wpById('tapResultView');

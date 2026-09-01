@@ -215,6 +215,45 @@ export const teacherRosterFor = query({
  * should run. See studentPortalRules.ts for why an empty join key is refused
  * instead of looked up.
  */
+/**
+ * A version string for everything a student's dashboard shows.
+ *
+ * WHAT IT IS FOR. The portal already polls for the hall pass, because that is
+ * the card a student stands at a doorway holding. Nothing watched the rest, so
+ * a sync could land at 06:00 and a Chromebook left open since yesterday would
+ * still be showing yesterday's grades until somebody pressed reload. This is
+ * what the poll compares to notice.
+ *
+ * ONE ROW, DELIBERATELY. It reads the newest sync run and nothing else, so it
+ * costs the same whether a student has three classes or nine, and it is the
+ * same answer for every student in the school. Building it from the student's
+ * own rows would mean reading their whole gradebook every fifteen seconds to
+ * find out it had not changed.
+ *
+ * The trade that buys: a sync refreshes EVERY open dashboard, including ones
+ * whose own data did not change. That is the right way round. A student seeing
+ * a screen redraw with the same numbers has lost nothing; a student reading a
+ * grade that moved two hours ago has.
+ *
+ * requireStudentSelf, like every other query in this file. A version string is
+ * not sensitive, but an unauthenticated endpoint is a door, and this one would
+ * be a door that reports when the school's data changes.
+ */
+export const myDataVersion = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireStudentSelf(ctx);
+    const latest = await ctx.db.query("syncRuns").withIndex("by_at").order("desc").first();
+    return {
+      // null, not "", when no sync has ever run. The client treats an absent
+      // version as "nothing to compare" and does not reload, which is right:
+      // reloading on every poll because there is no answer is worse than not
+      // reloading at all.
+      syncedAt: latest?.at ?? null,
+    };
+  },
+});
+
 export const myStudentView = query({
   args: {},
   handler: async (ctx) => {
