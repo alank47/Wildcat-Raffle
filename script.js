@@ -1846,10 +1846,13 @@
                     // initialised" and "the read threw" — collapse into one now
                     // that there is a single store. Not signed in yet is the
                     // ordinary case at startup: loadData() runs before any
-                    // session exists, the Convex query refuses, and the
-                    // wildcat-auth-signin listener re-runs the whole load the
-                    // moment a session appears. localStorage carries the tab
-                    // until then, which is what it always did.
+                    // session exists and the Convex query refuses. The
+                    // wildcat-auth-signin listener re-runs THIS function the
+                    // moment a session appears, so everything below is filled
+                    // in then. localStorage carries the tab until that lands,
+                    // and on a machine that has never run the app it carries
+                    // nothing: an empty screen for two seconds beats a wrong
+                    // one that never corrects itself.
                     console.error('Server load error:', error && error.message);
                     loadDataLocal();
                 }
@@ -15091,6 +15094,11 @@
                 const previous = new Map(students.map((s) => [String(s.id), s]));
                 nonEnrolledStudents = fresh.students.filter((s) => s.enrolled === false);
                 students = fresh.students.filter((s) => s.enrolled !== false).map((s) => {
+                    // Carried across because the Convex roster does not include
+                    // them. Only correct when `students` is ALREADY populated:
+                    // called against an empty array this replaces real sections
+                    // with nothing. The sign-in listener runs loadData() first
+                    // for exactly that reason.
                     const prior = previous.get(String(s.id));
                     return {
                         ...s,
@@ -15140,8 +15148,33 @@
             }
         }
 
-        window.addEventListener('wildcat-auth-signin', () => {
-            refreshRosterFromConvex('sign-in');
+        window.addEventListener('wildcat-auth-signin', async () => {
+            // THE WHOLE LOAD, not just the roster.
+            //
+            // loadData() runs before any session exists, so every Convex read
+            // in it refuses with "Not signed in to Convex" and it falls back to
+            // localStorage. On a machine that has never run this app, which is
+            // every machine on the first day, that fallback is EMPTY.
+            //
+            // This listener used to refresh only students and teachers, leaving
+            // schedules, referrals, cash transactions, the audit log and the
+            // settings block at that empty state for the whole session. The
+            // comment in loadData claimed the listener "re-runs the whole
+            // load"; it did not. Eight people signing in on their own devices
+            // is what made the gap visible: aides opened "All students" and got
+            // nothing, teachers had no class periods.
+            //
+            // Ordering matters. loadData() first, so `students` carries real
+            // sections and ticket history; THEN the roster refresh, which
+            // carries those across by id from the array loadData just filled.
+            // The other way round it copies sections from an empty array and
+            // wipes them, which is the second half of the same bug.
+            try {
+                await loadData();
+            } catch (e) {
+                console.error('[signin] full reload failed, roster only:', (e && e.message) || e);
+            }
+            await refreshRosterFromConvex('sign-in');
         });
 
         /**
