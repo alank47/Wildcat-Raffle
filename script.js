@@ -23430,6 +23430,17 @@
                 sisTeacherRoster = await auth.convexQuery('views_app:teacherRoster', {}, session.idToken);
                 sisRosterState = 'ready';
                 sisRosterError = null;
+                // A roster that arrived under a DIFFERENT address than the one
+                // this person signs in with. Said out loud, every time: the
+                // patch exists for a name change PowerSchool has not caught up
+                // with, and it is meant to be removed once the SIS is fixed.
+                if (sisTeacherRoster && sisTeacherRoster.rosterVia) {
+                    console.info(`[roster] classes found under ${sisTeacherRoster.rosterVia}, ` +
+                        `not your sign-in address. This is a PowerSchool name-change patch.`);
+                } else if (sisTeacherRoster && sisTeacherRoster.rosterViaRefused) {
+                    console.warn('[roster] a PowerSchool email patch on this account was REFUSED: ' +
+                        'that address now belongs to a staff record. Showing your own roster.');
+                }
             } catch (e) {
                 // Left as failed rather than empty. An empty roster and a failed
                 // request look identical downstream, and they need opposite

@@ -119,8 +119,14 @@ console.log("\nIt shows THEIR roster, via an admin-only query");
   // The existing query every teacher depends on must be untouched.
   check("teacherRoster still takes no arguments",
     /export const teacherRoster = query\(\{\s*\n\s*args: \{\},/.test(views));
+  // The lookup address is now resolved through rosterEmailFor, so a teacher
+  // whose sections PowerSchool files under an older address still gets them.
+  // The property this asserts is unchanged and is the one that matters: the
+  // address comes from the AUTHENTICATED record, never from an argument.
   check("and still resolves from the caller's own token",
-    /teacherRoster = query[\s\S]*?q\.eq\("teacherEmail", teacher\.email\)/.test(views));
+    /teacherRoster = query[\s\S]*?const lookup = await rosterEmailFor\(ctx, teacher\);[\s\S]*?q\.eq\("teacherEmail", lookup\.email\)/.test(views));
+  check("and rosterEmailFor is handed the authenticated record, not an argument",
+    !/teacherRoster = query\(\{\s*\n\s*args: \{[^}]/.test(views));
   check("the duplication is a recorded decision, not an accident",
     /WHY THIS DUPLICATES teacherRoster INSTEAD OF SHARING A HELPER/.test(views));
 

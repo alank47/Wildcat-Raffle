@@ -12,7 +12,7 @@
 // Keying a roster row to any of those points a child's schedule at an address
 // no token will ever carry.
 import { primaryEmailByStudentNumber } from "./identityRules.ts";
-import { attachStudentEmail } from "./rosterEmail.ts";
+import { attachStudentEmail, teacherRosterEmail } from "./rosterEmail.ts";
 
 let pass = 0, fail = 0;
 const check = (l, c, d = "") => {
@@ -147,6 +147,82 @@ const ROSTER = [
     "an empty map leaves every row unkeyed rather than blank keyed",
     out.every((r) => r.studentEmail === undefined),
   );
+}
+
+
+// ---------------------------------------------------------------------------
+// A TEACHER whose sections are filed under an older address.
+//
+// Jazmin Kent married. Entra issued jazmina@, the app's staff record followed
+// it and sign-in works; PowerSchool still files her sections under jazmink@.
+// psRoster.teacherEmail matched nothing, so she opened the app to no classes
+// and every student in the school listed instead -- there was no section to
+// narrow by, so the absence looked like access.
+//
+// The danger in fixing it is the obvious one: an address that points at
+// somebody ELSE hands one teacher another teacher's roster. These are the
+// cases where that could happen.
+// ---------------------------------------------------------------------------
+console.log("\nA teacher's sections under an older address");
+{
+  const jazmin = { email: "jazmina@lapromisefund.org", psEmail: "jazmink@lapromisefund.org" };
+
+  const ok = teacherRosterEmail(jazmin, false);
+  check("an unclaimed old address is used for the lookup",
+    ok.email === "jazmink@lapromisefund.org");
+  check("and is reported, so the screen can say where the classes came from",
+    ok.via === "jazmink@lapromisefund.org");
+  check("nothing was refused", ok.refused === false);
+
+  // THE ONE THAT MATTERS. The address is now somebody's sign-in identity.
+  const taken = teacherRosterEmail(jazmin, true);
+  check("an address that belongs to a staff record is REFUSED",
+    taken.email === "jazmina@lapromisefund.org");
+  check("and reported as refused rather than failing quietly",
+    taken.refused === true);
+  check("with no via, because no substitution happened", taken.via === null);
+}
+
+{
+  // No patch at all: the overwhelming majority of staff.
+  const plain = teacherRosterEmail({ email: "alexr@lapromisefund.org" }, false);
+  check("a teacher with no psEmail looks up their own address",
+    plain.email === "alexr@lapromisefund.org");
+  check("and is not marked as coming via anything", plain.via === null);
+  check("and is not marked refused either", plain.refused === false);
+
+  for (const empty of ["", "   ", null, undefined]) {
+    const r = teacherRosterEmail({ email: "alexr@lapromisefund.org", psEmail: empty }, false);
+    check(`an empty psEmail (${JSON.stringify(empty)}) is simply no patch`,
+      r.email === "alexr@lapromisefund.org" && r.via === null && r.refused === false);
+  }
+}
+
+{
+  // Set to the person's OWN address. Harmless, but it must not report a
+  // substitution that did not happen -- the screen would say the classes came
+  // from somewhere else when they came from the usual place.
+  const same = teacherRosterEmail(
+    { email: "sonh@lapromisefund.org", psEmail: "SonH@LaPromiseFund.org" }, false);
+  check("a psEmail equal to the sign-in address, in any case, is not a substitution",
+    same.email === "sonh@lapromisefund.org" && same.via === null);
+
+  const spaced = teacherRosterEmail(
+    { email: "sonh@lapromisefund.org", psEmail: "  OLDNAME@lapromisefund.org  " }, false);
+  check("case and stray whitespace do not stop a real patch working",
+    spaced.email === "oldname@lapromisefund.org" && spaced.via === "oldname@lapromisefund.org");
+}
+
+{
+  // IT IS NOT AN IDENTITY. Whatever this returns is used for ONE thing: which
+  // teacherEmail to look sections up under. If it ever starts being returned
+  // as who somebody IS, this assertion is the tripwire.
+  const r = teacherRosterEmail(
+    { email: "jazmina@lapromisefund.org", psEmail: "jazmink@lapromisefund.org" }, false);
+  check("the sign-in address is never replaced on the record itself",
+    !("identity" in r) && !("role" in r) && !("name" in r));
+  check("the result says only which address, whether via, and whether refused",
+    Object.keys(r).sort().join(",") === "email,refused,via");
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { requireStaff, requireStudentSelf, requireAdmin } from "./identity";
 import { restrictedFor } from "./restrictedPolicy";
 import { sisNumberKey, sisEmailKey, gradeCell } from "./studentPortalRules";
+import { teacherRosterEmail } from "./rosterEmail";
 import { studentView } from "./views";
 
 /**
@@ -23,6 +24,43 @@ import { studentView } from "./views";
 /** How many cash movements a student's own card carries. */
 const RECENT_CASH = 15;
 
+/**
+ * The address to look this person's SECTIONS up under, with the database
+ * lookup the pure rule needs.
+ *
+ * The decision itself is teacherRosterEmail in rosterEmail.ts, tested there
+ * against the cases that matter. This adds only the one question it cannot
+ * answer on its own: does any staff record sign in as that address?
+ *
+ * ASKED ON EVERY READ, deliberately. setPowerSchoolEmail refuses a claimed
+ * address at write time too, but an address that is unclaimed the day it is
+ * set can be claimed later -- a new hire, an old account re-enabled -- and a
+ * write-time check cannot see that coming. Checked here, the patch stops
+ * working the moment the address belongs to somebody, which is the moment it
+ * would otherwise start handing out their roster.
+ */
+async function rosterEmailFor(
+  ctx: { db: any },
+  teacher: { email: string; psEmail?: string },
+): Promise<{ email: string; via: string | null; refused: boolean }> {
+  const alt = (teacher.psEmail ?? "").trim().toLowerCase();
+
+  const owner = alt && alt !== teacher.email
+    ? await ctx.db
+        .query("teachers")
+        .withIndex("by_email", (q: any) => q.eq("email", alt))
+        .first()
+    : null;
+
+  const decision = teacherRosterEmail(teacher, Boolean(owner));
+  if (decision.refused) {
+    console.warn(
+      `[roster] refusing psEmail ${alt} for ${teacher.email}: that address belongs to a staff record.`,
+    );
+  }
+  return decision;
+}
+
 /** Staff: my sections, my students, with their totals. */
 export const teacherRoster = query({
   args: {},
@@ -30,9 +68,11 @@ export const teacherRoster = query({
     const teacher = await requireStaff(ctx);
     const policy = restrictedFor(teacher.role);
 
+    const lookup = await rosterEmailFor(ctx, teacher);
+
     const rows = await ctx.db
       .query("psRoster")
-      .withIndex("by_teacherEmail", (q) => q.eq("teacherEmail", teacher.email))
+      .withIndex("by_teacherEmail", (q) => q.eq("teacherEmail", lookup.email))
       .collect();
 
     // One lookup per distinct student, not per enrollment row.
@@ -80,6 +120,14 @@ export const teacherRoster = query({
       sectionCount: sections.size,
       studentCount: numbers.length,
       sections: [...sections.values()],
+      // Named so a substitution is never silent. No screen renders these yet;
+      // the app logs them, and they are what a console or the Convex logs are
+      // read for when somebody asks why a teacher has the classes they have.
+      // Do not remove them to tidy up -- the whole risk in psEmail is a roster
+      // arriving from an address nobody knew about.
+      rosterEmail: lookup.email,
+      rosterVia: lookup.via,
+      rosterViaRefused: lookup.refused,
       restricted: {
         // Told plainly rather than silently omitted, so a teacher knows data
         // exists and is withheld rather than assuming it is missing.
@@ -137,9 +185,15 @@ export const teacherRosterFor = query({
       .withIndex("by_email", (q) => q.eq("email", target))
       .unique();
 
+    // The same psEmail rule teacherRoster uses, so teacher view previews what
+    // that teacher actually gets rather than an empty screen they do not have.
+    const lookupFor = staffRow
+      ? await rosterEmailFor(ctx, staffRow)
+      : { email: target, via: null, refused: false };
+
     const rows = await ctx.db
       .query("psRoster")
-      .withIndex("by_teacherEmail", (q) => q.eq("teacherEmail", target))
+      .withIndex("by_teacherEmail", (q) => q.eq("teacherEmail", lookupFor.email))
       .collect();
 
     const numbers = [...new Set(rows.map((r) => r.studentNumber))];

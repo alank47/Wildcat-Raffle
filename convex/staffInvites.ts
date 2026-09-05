@@ -191,3 +191,83 @@ export const replaceDirectory = internalMutation({
     return { removed: old.length, written, mirroredAt };
   },
 });
+
+/**
+ * ADMIN ONLY: the address PowerSchool files this person's sections under.
+ *
+ * WHY THIS EXISTS. A name change gives someone a new address. Entra issues it,
+ * the app's staff record follows it, and sign-in works. PowerSchool keeps
+ * filing their sections under the old one until a registrar changes it, so
+ * `psRoster.teacherEmail` matches nothing and that teacher opens the app to no
+ * classes at all -- with every student in the school listed instead, because
+ * there is no section to narrow by.
+ *
+ * The real fix is in the SIS, and this does not replace it. It is the patch
+ * that gets a teacher through the week, and it is meant to be cleared.
+ *
+ * WHAT IT IS NOT. Not an alias, not a second identity, and never consulted by
+ * authentication. Sign-in, referral ownership and every permission check read
+ * `email` and are untouched. The ONLY thing this changes is which
+ * `teacherEmail` the roster lookup uses.
+ *
+ * TWO REFUSALS, BOTH DELIBERATE:
+ *
+ *  - An address that belongs to another staff record is refused here, because
+ *    pointing one teacher at another's sections is the whole risk.
+ *  - It is refused AGAIN on every read, in rosterEmailFor. An address that is
+ *    unclaimed today can be claimed tomorrow -- a new hire, or an old account
+ *    re-enabled -- and a check that only ran at write time would never see it.
+ *
+ * INTERNAL, so no browser can reach it under any role. There is no screen that
+ * needs this: it is a rare repair for a mismatch between two systems, done
+ * deliberately by whoever is holding the deploy key, and a button for it would
+ * be a button for pointing one teacher at another teacher's class lists. Run:
+ *
+ *   npx convex run staffInvites:setPowerSchoolEmail --prod \
+ *     '{"email":"them@lapromisefund.org","psEmail":"older@lapromisefund.org"}'
+ *
+ * Pass an empty psEmail to clear it, which is what to do once the SIS is fixed.
+ */
+export const setPowerSchoolEmail = internalMutation({
+  args: { email: v.string(), psEmail: v.string() },
+  handler: async (ctx, { email, psEmail }) => {
+    const target = String(email ?? "").trim().toLowerCase();
+    const alt = String(psEmail ?? "").trim().toLowerCase();
+    if (!target) throw new ConvexError("No staff email given.");
+
+    const staff = await ctx.db
+      .query("teachers")
+      .withIndex("by_email", (q) => q.eq("email", target))
+      .unique();
+    if (!staff) throw new ConvexError(`No staff record for ${target}.`);
+
+    if (!alt) {
+      await ctx.db.patch(staff._id, { psEmail: undefined });
+      console.log(`[roster] cleared psEmail for ${target}`);
+      return { email: target, psEmail: null, cleared: true };
+    }
+
+    if (alt === target) {
+      throw new ConvexError(
+        "That is already the sign-in address; clear the field instead.",
+      );
+    }
+
+    const owner = await ctx.db
+      .query("teachers")
+      .withIndex("by_email", (q) => q.eq("email", alt))
+      .first();
+    if (owner) {
+      throw new ConvexError(
+        `${alt} is another staff member's sign-in address (${owner.name}). ` +
+        "Pointing one teacher at another's roster is not something this can do.",
+      );
+    }
+
+    await ctx.db.patch(staff._id, { psEmail: alt });
+    // Written to the log rather than only to the row: this is one person being
+    // given another address's sections, and it should be findable afterwards.
+    console.log(`[roster] set psEmail for ${target} -> ${alt}`);
+    return { email: target, psEmail: alt, cleared: false };
+  },
+});

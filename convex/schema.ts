@@ -29,6 +29,26 @@ export default defineSchema({
     ticketsAwarded: v.number(),
     sections: v.optional(v.array(v.string())),
     createdDate: v.string(),
+    /**
+     * The address PowerSchool files this person's SECTIONS under, when it is
+     * not the address they sign in with.
+     *
+     * Exists because a name change leaves the two systems disagreeing. Entra
+     * issues the new address and the app's record follows it, so sign-in
+     * works; PowerSchool keeps filing the sections under the old one until a
+     * registrar changes it, so `psRoster.teacherEmail` never matches and the
+     * teacher gets no classes at all. That is a data mismatch the app can
+     * survive without pretending the two addresses are the same identity.
+     *
+     * NOT an alias, and never used for authentication. The ONLY thing it
+     * changes is which teacherEmail the roster query looks up. Sign-in,
+     * ownership of referrals and every permission check keep reading `email`.
+     *
+     * A value here is refused, at write AND at read, when it is another staff
+     * member's `email` -- otherwise setting it wrong hands one teacher another
+     * teacher's roster. Clear it once the SIS is corrected.
+     */
+    psEmail: v.optional(v.string()),
     // NOTE: no `password` field, deliberately. The cleartext password column is
     // what this whole migration exists to delete. Do not carry it across.
   }).index("by_email", ["email"]),
