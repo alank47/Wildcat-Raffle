@@ -508,7 +508,107 @@
     };
   }
 
+  /**
+   * A referral id that two computers cannot both mint.
+   *
+   * WHAT THIS REPLACES, AND WHAT IT COST. Ids came from `REF${referralIdCounter++}`
+   * -- a single counter, held per browser and reconciled between tabs only when
+   * a save happened to land. Two teachers filing at the same time both read
+   * counter 12 and both produced REF12.
+   *
+   * That was not a cosmetic clash. The save path is
+   * mergeLegacySlice(..., 'id'), which dedupes on the id and lets the STORED
+   * copy win -- correct when the two are the same record arriving twice, and
+   * catastrophic when they are different children. On 2026-09-04 a referral for
+   * Nadia Almendares-Castaneda was minted as REF12, collided with an existing
+   * REF12 for Milachi Isidro Rogers filed by another teacher, and was discarded
+   * by the merge. It appeared to save, appeared in Open Referrals, and was gone
+   * on the next reload -- where View then showed the other teacher's referral
+   * about the other child. Production also carried a duplicate REF2.
+   *
+   * A referral is a disciplinary record about a named child. Losing one
+   * silently, or showing one under another child's name, is the worst failure
+   * this app has.
+   *
+   * SHAPE: REF-YYMMDD-XXXXXXX. Still short enough to read down a column and
+   * say over a phone, which the old ids were and which is why this is not a
+   * UUID -- the id is printed in the referral table and the audit log. The date
+   * makes it sortable and human; the seven random characters are what make it
+   * unique.
+   *
+   * Seven, not five. Five gave 33 million combinations a day, and the birthday
+   * bound -- not the naive one -- is what matters: at 50 referrals a day that
+   * is roughly a 1 in 27,000 chance of a clash, which over a few school years
+   * is not a number to be relaxed about for a record like this. Seven gives 34
+   * billion and a chance around 1 in 28 million. Two characters is a cheap
+   * price for the difference.
+   *
+   * crypto.getRandomValues when the browser has it. Math.random is seeded per
+   * process, and a school's machines boot together and are imaged identically;
+   * correlated seeds are exactly the case where two computers mint the same
+   * suffix in the same second. Falls back to Math.random rather than throwing,
+   * because refusing to file a referral is worse than a weaker id.
+   */
+  function newReferralId(now, random) {
+    var d = now instanceof Date ? now : new Date(typeof now === 'number' ? now : Date.now());
+    var yy = String(d.getFullYear()).slice(2);
+    var mm = String(d.getMonth() + 1).padStart(2, '0');
+    var dd = String(d.getDate()).padStart(2, '0');
+
+    // Base36 with the pairs a person confuses out loud broken up: no 0 and no
+    // O, no 1 and no I. L stays, and so does the count -- 32 divides 256, which
+    // is what makes the modulo below unbiased. Dropping L for 31 characters
+    // would skew the first few letters of every id to buy nothing: with 0, 1
+    // and I all absent there is nothing left for L to be mistaken for.
+    var ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+    var LEN = 7;
+    var suffix = '';
+
+    if (typeof random === 'function') {
+      for (var i = 0; i < LEN; i++) {
+        suffix += ALPHABET.charAt(Math.floor(random() * ALPHABET.length) % ALPHABET.length);
+      }
+      return 'REF-' + yy + mm + dd + '-' + suffix;
+    }
+
+    var g = (typeof crypto !== 'undefined' && crypto && crypto.getRandomValues)
+      ? crypto : null;
+    if (g) {
+      var bytes = new Uint8Array(LEN);
+      g.getRandomValues(bytes);
+      // ALPHABET.length is 32, which divides 256, so the modulo is unbiased.
+      for (var j = 0; j < LEN; j++) suffix += ALPHABET.charAt(bytes[j] % ALPHABET.length);
+    } else {
+      for (var k = 0; k < LEN; k++) {
+        suffix += ALPHABET.charAt(Math.floor(Math.random() * ALPHABET.length) % ALPHABET.length);
+      }
+    }
+    return 'REF-' + yy + mm + dd + '-' + suffix;
+  }
+
+  /**
+   * Ids appearing more than once in a referral list.
+   *
+   * Returns them rather than throwing: the caller decides whether a duplicate
+   * is worth a console warning or a screen. Exists because the counter era left
+   * real duplicates in stored data, and because a merge that silently keeps one
+   * of two different records must never again be invisible.
+   */
+  function duplicateReferralIds(referrals) {
+    var seen = {};
+    var dupes = [];
+    (referrals || []).forEach(function (r) {
+      var id = String((r && r.id) || '').trim();
+      if (!id) return;
+      if (seen[id] === true && dupes.indexOf(id) === -1) dupes.push(id);
+      seen[id] = true;
+    });
+    return dupes;
+  }
+
   root.WildcatDiscipline = {
+    newReferralId: newReferralId,
+    duplicateReferralIds: duplicateReferralIds,
     SMALL_GROUP: SMALL_GROUP,
     MIN_REFERRALS_FOR_INDEX: MIN_REFERRALS_FOR_INDEX,
     DIMENSIONS: DIMENSIONS,

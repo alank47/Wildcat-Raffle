@@ -924,6 +924,10 @@
 
         // Behavior Referral System
         let behaviorReferrals = []; // Array of referral objects
+        // LEGACY. No longer mints ids -- see WildcatDiscipline.newReferralId.
+        // Still loaded, merged as a max and saved, because referrals filed
+        // before 2026-09-04 carry REF1..REF12 ids derived from it and the
+        // stored value is the only record of where that sequence reached.
         let referralIdCounter = 1;
         
         // Detention Tracker System
@@ -1863,6 +1867,27 @@
                                 console.log(`ℹ️ Migrating ${behaviorReferrals.length} referral(s) from secondary → referrals document on next save.`);
                             }
                         }
+                        // A DUPLICATE ID IS DATA LOSS THAT ALREADY HAPPENED.
+                        //
+                        // The save path dedupes on id and lets the stored copy
+                        // win, so two referrals sharing one means the other was
+                        // discarded -- possibly a different child, filed by a
+                        // different teacher. The counter that caused this is
+                        // retired, but referrals minted before 2026-09-04 are
+                        // still here, and production carried a duplicate REF2.
+                        //
+                        // Loud, and never silent again. It does not throw: the
+                        // records that survived are still worth showing.
+                        try {
+                            const dupes = window.WildcatDiscipline.duplicateReferralIds(behaviorReferrals);
+                            if (dupes.length) {
+                                console.error(
+                                    `🚨 ${dupes.length} duplicate referral id(s): ${dupes.join(', ')}. ` +
+                                    'Each one means a referral was overwritten by another with the same id. ' +
+                                    'These predate the 2026-09-04 id change and need an admin to re-file them.');
+                            }
+                        } catch (e) { /* the rules module is optional at this point */ }
+
                         detentions = secondaryData.detentions || [];
                         // Read the counter back from Firebase, not just localStorage.
                         // It used to be localStorage-only, and localStorage is never
@@ -26631,7 +26656,12 @@
 
             const grade = parseInt(student.grade, 10);
             const referral = {
-                id: `REF${referralIdCounter++}`,
+                // Minted, not counted. `REF${referralIdCounter++}` came from a
+                // per-browser counter, so two teachers filing at once both
+                // produced the same id -- and the save path dedupes on id with
+                // the STORED copy winning, so the second referral was thrown
+                // away. See newReferralId for the incident.
+                id: window.WildcatDiscipline.newReferralId(),
                 studentId: studentId,
                 // SNAPSHOT, like the demographics below. studentId may be a
                 // legacy CSV value, while the SIS is keyed by student number,
