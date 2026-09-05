@@ -306,7 +306,15 @@
                 if (!res.ok) return;
                 const html = await res.text();
                 const m = /script\.js\?v=([^"&]+)/.exec(html);
-                if (m && m[1] && m[1] !== APP_VERSION) showUpdateBar(m[1]);
+                if (m && m[1] && m[1] !== APP_VERSION) {
+                    showUpdateBar(m[1]);
+                } else if (m && m[1]) {
+                    // Quiet, but present. This check was entirely silent when
+                    // it found nothing, so there was no way to tell a tab that
+                    // was up to date from one whose checker had stopped running
+                    // -- and Chrome throttles timers hard in background tabs.
+                    console.log('[update] up to date:', APP_VERSION);
+                }
             } catch (e) {
                 // Offline or blocked. Silent: an update prompt is not worth an
                 // error message, and the next check will catch it.
@@ -15487,6 +15495,16 @@
         window.wcDiagnoseRoster = function () {
             const out = {};
             try {
+                // FIRST, because it is what wasted the most time today. Two
+                // people reported "still broken" from tabs running code five
+                // versions old: index.html is cached for ten minutes by GitHub
+                // Pages, and a tab left open never re-fetches it at all. Every
+                // report needs to say which version it came from.
+                out.version = {
+                    running: typeof APP_VERSION !== 'undefined' ? APP_VERSION : null,
+                    updateBarShowing: Boolean(document.getElementById('wcUpdateBar'))
+                };
+
                 const auth = window.WildcatAuth;
                 const session = auth && auth.getSession && auth.getSession();
                 out.signedIn = Boolean(session);
