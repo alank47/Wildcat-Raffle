@@ -18,13 +18,15 @@
 import { readFileSync } from "node:fs";
 
 const script = readFileSync(new URL("./script.js", import.meta.url), "utf8");
+/** Comments stripped, so an assertion cannot pass on prose describing the bug. */
+const code = script.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
 
 let pass = 0, fail = 0;
 const check = (n, c) => { c ? (pass++, console.log(`  PASS  ${n}`)) : (fail++, console.log(`  FAIL  ${n}`)); };
 
 // ---- Extract the loader and run it for real, against a fake Convex. --------
 const start = script.indexOf("const LEGACY_FIXED_DOCS = [");
-const endMark = "            return out;\n        }";
+const endMark = "            return { docs: out, failed: failures.map(f => f.doc), errors: failures };\n        }";
 const end = script.indexOf(endMark, start) + endMark.length;
 if (start < 0 || end < endMark.length) {
   console.log("  FAIL  could not extract the loader from script.js");
@@ -66,7 +68,7 @@ console.log("\nIt reads one document at a time, through the index");
 
   const f = fakeAuth({ main: { a: 1 }, secondary: { b: 2 } });
   const m = mod({ WildcatAuth: f.api });
-  const docs = await m.loadLegacyDocsFromConvex(["main", "secondary", "referrals"]);
+  const docs = (await m.loadLegacyDocsFromConvex(["main", "secondary", "referrals"])).docs;
   check("every named document is requested", f.asked.length === 3);
   check("each by name", f.asked.sort().join(",") === "main,referrals,secondary");
   check("the documents that exist come back", docs.main.a === 1 && docs.secondary.b === 2);
@@ -80,28 +82,52 @@ console.log("\nAn empty document is absent, not present-and-null");
   // expressed it, so absence is what is preserved.
   const f = fakeAuth({ main: { a: 1 } });
   const m = mod({ WildcatAuth: f.api });
-  const docs = await m.loadLegacyDocsFromConvex(["main", "audit_log_2026_W99"]);
+  const docs = (await m.loadLegacyDocsFromConvex(["main", "audit_log_2026_W99"])).docs;
   check("a document with no rows is left off entirely",
     !("audit_log_2026_W99" in docs));
   check("and Boolean() on it reads false, as snapOf expects",
     Boolean(docs["audit_log_2026_W99"]) === false);
 }
 
-console.log("\nA partial load is refused, never returned");
+console.log("\nA failed document does not sink the other 144");
 {
-  // THE FAILURE THAT MATTERS. A document that failed and a document that is
-  // empty are not the same thing, and the difference is a student's ticket
-  // history. Returning what arrived would let loadData write a half-loaded
-  // picture back over the real one.
-  const f = fakeAuth({ main: { a: 1 }, ticket_history_ms: { h: {} } },
+  // THE REGRESSION THIS REPLACES. This used to throw, so one unreadable
+  // document discarded every other document and dropped the whole app to its
+  // localStorage copy -- which renders as zeros indistinguishable from real
+  // ones. On 2026-09-05 three ticket-history documents were over Convex's read
+  // limit and took 142 good documents down with them, on a school that is not
+  // using raffle at all.
+  const f = fakeAuth({ main: { a: 1 }, secondary: { b: 2 }, ticket_history_ms: { h: {} } },
                      { failOn: ["ticket_history_ms"] });
   const m = mod({ WildcatAuth: f.api });
-  let threw = null;
-  try { await m.loadLegacyDocsFromConvex(["main", "ticket_history_ms"]); }
-  catch (e) { threw = e; }
-  check("one failed document rejects the whole load", threw !== null);
-  check("and the message names the document", /ticket_history_ms/.test(threw.message));
-  check("and says how many of how many", /1 of 2/.test(threw.message));
+  const res = await m.loadLegacyDocsFromConvex(["main", "secondary", "ticket_history_ms"]);
+
+  check("the documents that loaded are returned", res.docs.main.a === 1 && res.docs.secondary.b === 2);
+  check("the one that failed is NOT present as empty", !("ticket_history_ms" in res.docs));
+  check("and is named, so the caller knows it is unknown rather than absent",
+    res.failed.length === 1 && res.failed[0] === "ticket_history_ms");
+  check("with the reason attached", /Server Error/.test(res.errors[0].message));
+  check("nothing throws, so the load completes", true);
+}
+
+console.log("\nWhat could not be READ is never WRITTEN");
+{
+  // The reason the old strictness existed, kept without the collateral damage.
+  // A document that failed to load is unknown, not empty. Writing this tab's
+  // idea of it over a document it never saw is how a read error becomes data
+  // loss -- and saveSlice REPLACES, so it would delete what it could not see.
+  check("mergeLegacySlice refuses an unread document",
+    /async function mergeLegacySlice[\s\S]{0,500}unreadLegacyDocs\.has\(docName\)[\s\S]{0,200}throw new Error/.test(code));
+  check("saveLegacySlice refuses one too",
+    /async function saveLegacySlice[\s\S]{0,500}unreadLegacyDocs\.has\(docName\)[\s\S]{0,200}throw new Error/.test(code));
+  check("the ticket-history writer checks before building a request",
+    /unreadLegacyDocs\.has\(docName\)[\s\S]{0,300}not writing it/.test(code));
+  check("the set is filled from the load's failures",
+    /unreadLegacyDocs = new Set\(_legacyResult\.failed \|\| \[\]\)/.test(code));
+  check("and it starts empty, so a tab that has not loaded blocks nothing",
+    /let unreadLegacyDocs = new Set\(\);/.test(code));
+  check("the diagnostic reports which documents those are",
+    /out\.unreadableDocuments/.test(code));
 }
 
 console.log("\nIt does not stampede Convex");
@@ -111,7 +137,7 @@ console.log("\nIt does not stampede Convex");
   for (let i = 0; i < 40; i++) { names.push(`doc_${i}`); store[`doc_${i}`] = { i }; }
   const f = fakeAuth(store);
   const m = mod({ WildcatAuth: f.api });
-  const docs = await m.loadLegacyDocsFromConvex(names);
+  const docs = (await m.loadLegacyDocsFromConvex(names)).docs;
   check("all 40 documents load", Object.keys(docs).length === 40);
   check("but never more than the concurrency limit at once",
     f.peak() <= m.LEGACY_LOAD_CONCURRENCY);

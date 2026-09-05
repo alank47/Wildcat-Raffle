@@ -517,6 +517,17 @@
         let auditIdsOnServer = new Set();
 
         /**
+         * Legacy documents this tab could not READ on its last load.
+         *
+         * Read by saveData, which refuses to write any slice sourced from one.
+         * A document that failed to load is unknown, not empty: writing this
+         * tab's idea of it over a document it never saw is how a read error
+         * turns into data loss. Empty by default, so a tab that has not loaded
+         * yet blocks nothing.
+         */
+        let unreadLegacyDocs = new Set();
+
+        /**
          * What this tab has already written, so it stops writing it again.
          *
          * saveData wrote every slice on every save. A cash award therefore
@@ -1493,7 +1504,7 @@
                         // whole-table query simply had no key for it.
                         if (d) out[name] = d;
                     } catch (e) {
-                        failures.push(name + ': ' + ((e && e.message) || e));
+                        failures.push({ doc: name, message: (e && e.message) || String(e) });
                     }
                 }
             }
@@ -1501,13 +1512,22 @@
             const lanes = Math.min(LEGACY_LOAD_CONCURRENCY, wanted.length) || 1;
             await Promise.all(Array.from({ length: lanes }, worker));
 
-            if (failures.length) {
-                throw new Error(
-                    `legacy documents failed to load (${failures.length} of ` +
-                    `${wanted.length}): ${failures.slice(0, 3).join('; ')}` +
-                    (failures.length > 3 ? ` and ${failures.length - 3} more` : ''));
-            }
-            return out;
+            // A FAILED DOCUMENT IS NOT AN EMPTY ONE, AND IT IS NOT THE WHOLE LOAD.
+            //
+            // This used to throw, so one failure discarded the other 144
+            // documents and dropped the whole app to its localStorage copy --
+            // which renders as zeros indistinguishable from real ones. On
+            // 2026-09-05 three ticket-history documents were over Convex's read
+            // limit, and 142 perfectly good documents were thrown away with
+            // them, on a school that is not even using raffle.
+            //
+            // The reason for the strictness was real and still holds: a
+            // document that failed to load must never be treated as empty and
+            // then SAVED as empty, which would destroy it. So the names are
+            // returned instead, and the save path refuses to write those
+            // slices. The app works with what it has; what it could not read,
+            // it does not touch.
+            return { docs: out, failed: failures.map(f => f.doc), errors: failures };
         }
 
         /**
@@ -1521,6 +1541,13 @@
          * a list nobody can look up.
          */
         async function saveLegacySlice(docName, collection, value) {
+            // saveSlice REPLACES the stored rows, so writing a document this
+            // tab never read would delete what it could not see. The one place
+            // the rule matters most.
+            if (unreadLegacyDocs.has(docName)) {
+                throw new Error(
+                    `${docName} could not be read this session, so it will not be written.`);
+            }
             const auth = window.WildcatAuth;
             const session = auth && auth.getSession();
             if (!session) throw new Error('Not signed in to Convex.');
@@ -1592,6 +1619,14 @@
          * same moment from erasing each other.
          */
         async function mergeLegacySlice(docName, collection, value, dedupeField) {
+            // The same rule as the ticket-history guard, applied to every
+            // caller: a document this tab could not read is not a document it
+            // may write. Refused here rather than at each call site so a new
+            // caller inherits it instead of having to remember it.
+            if (unreadLegacyDocs.has(docName)) {
+                throw new Error(
+                    `${docName} could not be read this session, so it will not be written.`);
+            }
             const auth = window.WildcatAuth;
             const session = auth && auth.getSession();
             if (!session) throw new Error('Not signed in to Convex.');
@@ -1647,10 +1682,25 @@
                     // read back with, so the fetch and the lookup cannot
                     // disagree about which week it is.
                     window._wcLastLoadSource = 'convex (in progress)';
-                    const _legacy = await loadLegacyDocsFromConvex(
+                    const _legacyResult = await loadLegacyDocsFromConvex(
                         LEGACY_FIXED_DOCS
                             .concat(monthKeys.map(auditDocName))
                             .concat(_cashWeekKeys.map(wk => `cash_tx_${wk}`)));
+                    const _legacy = _legacyResult.docs;
+
+                    // NAMES THE SAVE PATH MUST NOT TOUCH.
+                    //
+                    // A document that failed to load is unknown, not empty.
+                    // Saving a slice sourced from one would write whatever this
+                    // tab happens to hold over a document it could not read --
+                    // which for ticket history is every child's ticket history.
+                    // Module scope, so saveData sees it.
+                    unreadLegacyDocs = new Set(_legacyResult.failed || []);
+                    if (unreadLegacyDocs.size) {
+                        console.warn(
+                            `⚠️ ${unreadLegacyDocs.size} document(s) could not be read and will NOT be written: ` +
+                            (_legacyResult.errors || []).map(e => `${e.doc} (${e.message})`).join('; '));
+                    }
                     const snapOf = (name) => {
                         const d = _legacy[name];
                         return { exists: () => Boolean(d), data: () => d || {} };
@@ -3049,6 +3099,23 @@
                                     .filter(e => !tombstonedIds.has(e.entryId));
                                 if (kept.length > 0) outgoing[sid] = kept;
                             });
+
+                            // NEVER WRITE A DOCUMENT THIS TAB COULD NOT READ.
+                            //
+                            // `outgoing` is built from what is in memory. If
+                            // this document failed to load, memory holds
+                            // whatever the localStorage fallback had -- which
+                            // may be a fraction of the stored history, or none
+                            // of it. mergeLegacySlice unions rather than
+                            // replaces, so the stored rows would survive; but
+                            // the tombstone filter above REMOVES entries before
+                            // sending, and a tombstone list built against data
+                            // this tab never saw is not something to act on.
+                            // Unknown is not empty.
+                            if (unreadLegacyDocs.has(docName)) {
+                                console.warn(`↩︎ ${docName} was not readable this session; not writing it.`);
+                                return { mergedHistories: outgoing, skipped: true, unread: true };
+                            }
 
                             // Unchanged since this tab last wrote it: sending
                             // it again would insert nothing and cost the server
@@ -15609,6 +15676,8 @@
             try {
                 const n = (v) => (Array.isArray(v) ? v.length : (v == null ? null : 'not-an-array'));
                 out.loadedFrom = window._wcLastLoadSource || 'unknown';
+                out.unreadableDocuments = (typeof unreadLegacyDocs !== 'undefined' && unreadLegacyDocs)
+                    ? Array.from(unreadLegacyDocs) : null;
 
                 out.counts = {
                     students: n(typeof students !== 'undefined' ? students : null),
