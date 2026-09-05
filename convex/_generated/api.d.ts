@@ -11,6 +11,9 @@
 import type * as accessRules from "../accessRules.js";
 import type * as appData from "../appData.js";
 import type * as appDataShape from "../appDataShape.js";
+import type * as auditLog from "../auditLog.js";
+import type * as auditMigrate from "../auditMigrate.js";
+import type * as auditMigrateRead from "../auditMigrateRead.js";
 import type * as authEvents from "../authEvents.js";
 import type * as bellSchedules from "../bellSchedules.js";
 import type * as crons from "../crons.js";
@@ -64,6 +67,9 @@ declare const fullApi: ApiFromModules<{
   accessRules: typeof accessRules;
   appData: typeof appData;
   appDataShape: typeof appDataShape;
+  auditLog: typeof auditLog;
+  auditMigrate: typeof auditMigrate;
+  auditMigrateRead: typeof auditMigrateRead;
   authEvents: typeof authEvents;
   bellSchedules: typeof bellSchedules;
   crons: typeof crons;

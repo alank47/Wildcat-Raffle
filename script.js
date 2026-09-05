@@ -389,6 +389,19 @@
         let bigRaffleWinners = [];
         let teachers = [];
         let auditLog = [];
+        /**
+         * entryIds this tab knows are stored server side.
+         *
+         * Filled from the load and after every successful append, and read to
+         * decide what a save needs to send. It is what turns the audit save
+         * from "re-send the entire month" into "send what changed" -- the
+         * difference between a cost that grows with the log and one that grows
+         * with the day's work.
+         *
+         * Only ever added to on CONFIRMED writes. Adding optimistically would
+         * drop entries whenever a batch failed.
+         */
+        let auditIdsOnServer = new Set();
         let localTombstones = []; // NEW: tracks intentionally deleted ticket/audit entries
         let entityTombstones = []; // NEW: tracks intentionally deleted teachers/students (on main doc)
 
@@ -1621,6 +1634,44 @@
                         // Dedupe by entryId so overlap between monthly docs and legacy
                         // doesn't double-count. Monthly docs are preferred (read first).
                         const auditById = new Map();
+                        // THE TABLE FIRST, then the documents it replaced.
+                        //
+                        // Both are read and unioned by entryId, deliberately,
+                        // for as long as the documents still hold anything. A
+                        // migration that flips the read over in one step has no
+                        // way to notice it moved less than it thought: the
+                        // entries would simply be absent, which on an audit log
+                        // looks exactly like a quiet week. Reading both means
+                        // the worst case is reading an entry twice, and the
+                        // union collapses that.
+                        //
+                        // The legacyMirror rows are not deleted by the
+                        // migration. When they are eventually dropped, this
+                        // block and monthlyAuditSnaps go with them.
+                        auditIdsOnServer = new Set();
+                        try {
+                            let cursor = null;
+                            for (let guard = 0; guard < 500; guard++) {
+                                const page = await auth.convexQuery('auditLog:list',
+                                    cursor ? { cursor } : {}, session.idToken);
+                                (page.entries || []).forEach(e => {
+                                    const id = ensureEntryId(e);
+                                    if (!auditById.has(id)) auditById.set(id, { ...e, entryId: id });
+                                    // Confirmed stored, so the next save does
+                                    // not offer it back.
+                                    auditIdsOnServer.add(id);
+                                });
+                                if (page.isDone) break;
+                                cursor = page.cursor;
+                            }
+                            console.log(`✅ Audit log: ${auditIdsOnServer.size} entries from the table`);
+                        } catch (e) {
+                            // The documents below still carry everything the
+                            // migration copied, so a failed table read degrades
+                            // to the old behaviour rather than an empty log.
+                            console.warn('[audit] table read failed, falling back to documents:', e && e.message);
+                        }
+
                         monthlyAuditSnaps.forEach(snap => {
                             if (!snap.exists()) return;
                             const entries = snap.data().auditLog || [];
@@ -2925,81 +2976,73 @@
 
                         console.log(`✅ Ticket history document saved (transaction)`);
                         
-                        // TRANSACTION 3: Audit Log — SPLIT BY MONTH.
-                        // Entries are partitioned by timestamp's month into separate documents
-                        // (audit_log_YYYY_MM). Each month's save is a separate transaction; if
-                        // one fails, others still commit, and the outbox preserves unsaved entries.
+                        // TRANSACTION 3: THE AUDIT LOG, into its own table.
                         //
-                        // Each transaction is tombstone-aware and uses union merge by entryId, so
-                        // concurrent saves from multiple tabs don't lose entries.
+                        // It used to be partitioned into weekly legacyMirror
+                        // documents and saved with mergeSlice, which reads the
+                        // whole stored slice to merge it. Convex charges a
+                        // delete as a read, so appending one entry to a week
+                        // holding 1,278 cost 2,556 reads against a 4,096 limit
+                        // -- and the client re-sent the ENTIRE month every save
+                        // regardless of what had changed.
+                        //
+                        // One entry is written per student per cash award. At
+                        // 34 teachers awarding whole classes that ceiling
+                        // arrives mid-week, and the failure is the quiet kind:
+                        // cash awards keep working, because balances live
+                        // elsewhere, while the record of who gave what stops.
+                        //
+                        // Now only entries the server has not confirmed are
+                        // sent, and each is one indexed lookup and one insert.
+                        // The cost is proportional to what CHANGED, so the log
+                        // can grow for years without this path changing shape.
                         const tombstonedIds = new Set((localTombstones || []).map(t => {
                             return typeof t.entryId === 'string' ? t.entryId 
                                  : (t.entryId && t.entryId.entryId) || '';
                         }).filter(Boolean));
 
-                        // Partition local auditLog by month. Entries with missing/invalid
-                        // timestamps go into a "_unknown" bucket so they don't get lost.
-                        const entriesByMonth = {};
-                        auditLog.forEach(e => {
-                            const mk = monthKeyFromTimestamp(e.timestamp);
-                            if (!mk) {
-                                if (!entriesByMonth._unknown) entriesByMonth._unknown = [];
-                                entriesByMonth._unknown.push(e);
-                                return;
-                            }
-                            if (!entriesByMonth[mk]) entriesByMonth[mk] = [];
-                            entriesByMonth[mk].push(e);
-                        });
+                        let auditSaveSucceeded = true;
+                        let auditInserted = 0;
+                        try {
+                            // Tombstoned entries are filtered BEFORE sending,
+                            // because append keeps whatever it is given: an
+                            // entry an admin deleted would otherwise return the
+                            // moment any tab re-sent it.
+                            const pending = (auditLog || []).filter(e => {
+                                const id = ensureEntryId(e);
+                                if (!id || tombstonedIds.has(id)) return false;
+                                // Already confirmed stored by this tab. The set
+                                // is filled from the load and after each
+                                // successful append, so a failed append leaves
+                                // its entries pending and they retry next save.
+                                return !auditIdsOnServer.has(id);
+                            });
 
-                        let auditSaveSucceeded = true; // becomes false if ANY month fails
-                        let totalSavedAcrossMonths = 0;
-                        const monthsTried = [];
-                        const mergedByMonth = {};
+                            const rows = window.WildcatAudit.toRows(pending, ensureEntryId);
+                            const batches = window.WildcatAudit.chunk(rows, window.WildcatAudit.MAX_APPEND);
 
-                        for (const [monthKey, monthEntries] of Object.entries(entriesByMonth)) {
-                            if (monthKey === '_unknown') {
-                                // Park entries with unknown timestamps in the legacy combined doc
-                                // so they're preserved but don't bloat any monthly doc.
-                                continue;
+                            for (const batch of batches) {
+                                const res = await auth.convexMutation(
+                                    'auditLog:append', { entries: batch }, session.idToken);
+                                auditInserted += (res && res.inserted) || 0;
+                                // Marked only once the server has them. Doing
+                                // this optimistically would drop entries on a
+                                // failed batch, which is the whole thing this
+                                // is here to prevent.
+                                batch.forEach(r => auditIdsOnServer.add(r.entryId));
                             }
-                            monthsTried.push(monthKey);
-                            try {
-                                // MOVED OFF FIRESTORE 2026-08-31. The union by
-                                // entryId happens inside legacyData:mergeSlice,
-                                // so two teachers writing to the same month at
-                                // the same moment still cannot drop each other's
-                                // entries. Tombstoned entries are filtered
-                                // BEFORE sending, because a union keeps whatever
-                                // it is given: an entry an admin deleted would
-                                // otherwise return the moment any tab re-sent it.
-                                const outgoingMonth = monthEntries
-                                    .map(e => ({ ...e, entryId: ensureEntryId(e) }))
-                                    .filter(e => !tombstonedIds.has(e.entryId))
-                                    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-                                await mergeLegacySlice(auditDocName(monthKey), 'auditLog', outgoingMonth, 'entryId');
-                                const monthResult = outgoingMonth;
-                                mergedByMonth[monthKey] = monthResult;
-                                totalSavedAcrossMonths += monthResult.length;
-                                console.log(`✅ Audit log ${monthKey} saved (${monthResult.length} entries)`);
-                            } catch (monthErr) {
-                                // Don't rethrow. Outbox preserves entries. Loud log so we notice.
-                                console.error(`⚠️ AUDIT LOG ${monthKey} SAVE FAILED:`, monthErr?.code, '|', monthErr?.message);
-                                auditSaveSucceeded = false;
-                            }
+
+                            console.log(pending.length
+                                ? `✅ Audit log: ${auditInserted} new entr${auditInserted === 1 ? 'y' : 'ies'} written (${pending.length} sent, ${auditLog.length} held locally)`
+                                : `✅ Audit log: nothing new to write (${auditLog.length} entries)`);
+                        } catch (auditErr) {
+                            // Not rethrown. The outbox keeps the entries and
+                            // they replay; the rest of the save is still worth
+                            // committing. Loud, because a silent audit failure
+                            // is exactly what went unnoticed before.
+                            auditSaveSucceeded = false;
+                            console.error('⚠️ AUDIT LOG SAVE FAILED:', auditErr?.message || auditErr);
                         }
-
-                        // Reconstruct auditLog from the successfully-saved months PLUS any months
-                        // we couldn't save (kept from current local state). This way a failed save
-                        // doesn't blank out audit entries — they stay in memory and try again next time.
-                        if (auditSaveSucceeded && monthsTried.length > 0) {
-                            const reconstructed = [];
-                            Object.values(mergedByMonth).forEach(arr => reconstructed.push(...arr));
-                            // Preserve _unknown entries
-                            if (entriesByMonth._unknown) reconstructed.push(...entriesByMonth._unknown);
-                            auditLog = reconstructed.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-                        }
-
-                        console.log(`✅ Audit log save complete: ${totalSavedAcrossMonths} entries across ${monthsTried.length} months${auditSaveSucceeded ? '' : ' (some months failed, outbox retained)'}`);
 
                         // Clear the outbox only when the audit save actually succeeded.
                         // If it failed, entries remain in the outbox and get replayed next load.
@@ -6433,6 +6476,17 @@
                 ? weekOverride
                 : currentWeek;
             const logEntry = {
+                // MINTED AT BIRTH, not derived at save time.
+                //
+                // ensureEntryId hashes the entry's contents into 32 bits. That
+                // is stable, which is what it was for, but it is only ~2.1
+                // billion values and the birthday bound is what matters for a
+                // dedupe key: at ~50,000 entries a year the chance that some
+                // pair of DIFFERENT entries collides is better than even, and a
+                // collision means the second is treated as a duplicate and
+                // dropped. A cash award that happened, with no record that it
+                // did. Legacy entries keep their hashed ids -- see wildcat-audit.js.
+                entryId: window.WildcatAudit.newAuditEntryId(),
                 timestamp: new Date().toISOString(),
                 teacher: currentUser.name,
                 teacherId: currentUser.id,

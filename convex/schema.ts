@@ -151,6 +151,45 @@ export default defineSchema({
     timestamp: v.string(),
   }).index("by_timestamp", ["timestamp"]),
 
+  /**
+   * THE AUDIT LOG. Who awarded what, to whom, and why.
+   *
+   * WHY IT IS A TABLE AND NOT A DOCUMENT. It lived as rows inside a weekly
+   * `legacyMirror` document, merged by rewriting the whole slice. Convex counts
+   * a delete as a read, so appending one entry to a week holding 1,278 cost
+   * 2,556 reads against a 4,096 limit -- a ceiling near 2,048 entries a week.
+   * One entry is written per student per cash award, so 34 teachers awarding
+   * whole classes cross that mid-week.
+   *
+   * The failure was the dangerous kind: cash awards keep working, because
+   * balances live elsewhere, while the record of who gave what silently stops.
+   * That record is what the PBIS team reads, and what answers a parent asking
+   * why their child was deducted.
+   *
+   * Here an append is one indexed lookup and one insert. There is no ceiling,
+   * and the cost does not grow with the size of the log.
+   *
+   * PAYLOAD VERBATIM, like legacyMirror before it. The entry keeps the exact
+   * shape the app has always written -- teacher, studentName, category,
+   * ticketCount, reason, week, cycle -- so the analytics, the exports and the
+   * PBIS screens are untouched by the move. Changing the transport and the
+   * shape at once means a bug in the result cannot be attributed to either.
+   * The indexed columns are lifted out beside it, never instead of it.
+   *
+   * `entryId` is the dedupe key and the reason two tabs saving the same entry
+   * cannot double it. See newAuditEntryId in wildcat-audit.js for why entries
+   * written from 2026-09-04 carry a minted id rather than a content hash.
+   */
+  appAuditLog: defineTable({
+    entryId: v.string(),
+    timestamp: v.string(),   // ISO 8601, so lexical order is chronological
+    payload: v.any(),
+  })
+    // Dedupe on append: one point lookup per incoming entry.
+    .index("by_entryId", ["entryId"])
+    // Load a window, newest first, without reading the whole table.
+    .index("by_timestamp", ["timestamp"]),
+
   // Deletions are recorded, not erased, so a restored backup cannot silently
   // resurrect a removed entry. Carried across from the Firestore design.
   tombstones: defineTable({
