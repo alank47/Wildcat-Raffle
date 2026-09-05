@@ -340,6 +340,23 @@ export default defineSchema({
     courseName: v.optional(v.string()),
     categoryName: v.optional(v.string()),
     isLate: v.optional(v.boolean()),
+    /**
+     * What the student currently has on it, and what the work is worth in the
+     * gradebook's own terms.
+     *
+     * The PowerQuery has returned both since 1.3.0 and the sync threw them
+     * away. `scorePoints` is what makes "you scored 0 of 100" sayable instead
+     * of the bare "100 pts" a student reads as a mark they were given, and it
+     * is the difference between work flagged missing and work scored zero --
+     * which the owner wants shown as two different prompts, hand it in versus
+     * ask about a retake.
+     *
+     * `totalPointValue` sits beside `pointsPossible` in PowerSchool and is not
+     * always the same number; both are kept rather than guessing which a given
+     * section grades by.
+     */
+    scorePoints: v.optional(v.number()),
+    totalPointValue: v.optional(v.number()),
     syncedAt: v.string(),
   })
     .index("by_studentNumber", ["studentNumber"])

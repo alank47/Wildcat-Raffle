@@ -313,6 +313,12 @@ export const syncFromPowerSchool = internalAction({
           // PowerSchool returns booleans as the STRINGS "0" and "1", and
           // Boolean("0") is true, so every assignment would be reported late.
           isLate: String(m.is_late) === "1",
+          // Returned by the query since 1.3.0 and discarded here until
+          // 2026-09-05. n() keeps undefined as undefined: a missing score and
+          // a score of zero are different facts, and this column is what tells
+          // "not handed in" apart from "handed in and scored nothing".
+          scorePoints: n(m.score_points),
+          totalPointValue: n(m.total_point_value),
         }))
         .filter((m) => m.studentNumber && m.assignmentSectionId);
     } catch (e: unknown) {

@@ -454,6 +454,14 @@ export const myStudentView = query({
               courseName: m.courseName ?? null,
               categoryName: m.categoryName ?? null,
               isLate: m.isLate ?? false,
+              // null and 0 are DIFFERENT ANSWERS here, and the card says
+              // different things for each. null is "flagged missing, nothing
+              // entered"; 0 is "flagged missing and scored zero", which at this
+              // school is how most teachers record work not handed in -- 634 of
+              // 1,054 items on 2026-09-05. A student can act on both, but the
+              // second is also the one where a retake is worth asking about.
+              // ?? null, never || null, or a genuine 0 would become null.
+              scorePoints: m.scorePoints ?? null,
             });
             return acc;
           }, {} as Record<string, unknown[]>),

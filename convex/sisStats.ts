@@ -109,6 +109,13 @@ export const replaceMissingWork = internalMutation({
         courseName: v.optional(v.string()),
         categoryName: v.optional(v.string()),
         isLate: v.optional(v.boolean()),
+        // KEEP IN STEP WITH THE SCHEMA. A field added to psMissingWork in
+        // schema.ts but not here is rejected at the boundary with
+        // ArgumentValidationError and the WHOLE sync fails -- which is what
+        // happened on 2026-09-05 when these two were added. The schema being
+        // permissive does not make the mutation permissive.
+        scorePoints: v.optional(v.number()),
+        totalPointValue: v.optional(v.number()),
       }),
     ),
   },

@@ -3096,6 +3096,14 @@ body {
     display: block; margin-top: 4px; font-size: 12.5px; line-height: 1.45;
     color: var(--wc-gray-text, #4A535F);
 }
+/* The number a student is actually here for. Green, because this is what there
+   is to GAIN -- the amber heading above it is the situation, this is the way
+   out of it. */
+.wp-missing-gain {
+    display: block; margin-top: 6px; font-size: 13.5px; line-height: 1.45;
+    color: #2E7D52; font-weight: 600;
+}
+.wp-missing-gain b { font-weight: 800; }
 @media (max-width: 560px) { .wc-stale-data { font-size: 12.5px; padding: 10px 14px; } }
 
 @media (max-width: 620px) {

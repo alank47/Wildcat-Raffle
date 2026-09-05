@@ -277,3 +277,20 @@ export const categoryNames = internalQuery({
       .sort((a, b) => b.items - a.items);
   },
 });
+
+/** How much of the missing work now carries a score, and how many are zeros. */
+export const scoreShape = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("psMissingWork").take(4000);
+    let withScore = 0, zeros = 0, positive = 0, noScore = 0, withTotal = 0;
+    for (const r of rows) {
+      if (typeof r.scorePoints === "number") {
+        withScore++;
+        if (r.scorePoints === 0) zeros++; else positive++;
+      } else noScore++;
+      if (typeof r.totalPointValue === "number") withTotal++;
+    }
+    return { rows: rows.length, withScore, zeros, positive, noScore, withTotal };
+  },
+});

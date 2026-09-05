@@ -17045,10 +17045,32 @@
                 // bottom sees a grade and then a list of numbers, and the
                 // natural reading is "here is what I scored". It is the reverse:
                 // work not handed in, and what it is worth if they do.
+                // WHAT IS THERE TO GAIN, in the only unit that is honest here.
+                //
+                // A percentage projection needs the whole gradebook and, for a
+                // weighted section, the category weights -- neither of which
+                // this instance exposes. Points do not: the work is worth what
+                // PowerSchool says it is worth, and the student already has
+                // some of them or none. Summing what is still on the table is
+                // arithmetic on data we hold, not a guess about a grade.
+                //
+                // Deliberately "up to". A teacher decides the mark, and late
+                // work may carry a penalty; promising the full amount would be
+                // the app making a commitment the teacher never made.
+                const upFor = items.reduce(function (sum, m) {
+                    if (typeof m.pointsPossible !== 'number') return sum;
+                    const got = (typeof m.scorePoints === 'number') ? m.scorePoints : 0;
+                    return sum + Math.max(0, m.pointsPossible - got);
+                }, 0);
+
                 body = '<div class="wp-missing-head">' +
                         '<span class="wp-missing-title">Missing work &middot; ' +
                             items.length + (items.length === 1 ? ' assignment' : ' assignments') +
                         '</span>' +
+                        (upFor > 0
+                            ? '<span class="wp-missing-gain">Up to <b>' + upFor +
+                              ' points</b> back in this class if you turn these in or retake them.</span>'
+                            : '') +
                         '<span class="wp-missing-note">Your teacher marked these as not handed in. ' +
                         'The points show what each is worth, not a score you were given.</span>' +
                        '</div>' +
@@ -17066,8 +17088,26 @@
                     // directly under a posted grade, a bare number reads as the
                     // score the student GOT. This is what the work is worth if
                     // they hand it in, which is the opposite meaning.
-                    const worth = (typeof m.pointsPossible === 'number')
-                        ? 'worth ' + wpEsc(String(m.pointsPossible)) + ' pts' : '';
+                    // THREE STATES, because they are three different actions.
+                    //
+                    //   no score      -> not handed in. Hand it in.
+                    //   scored 0      -> handed in and got nothing, or recorded
+                    //                    as a zero. Worth asking about a retake.
+                    //   scored above 0-> partial credit. Some points are left.
+                    //
+                    // 634 of 1,054 flagged items at this school are zeros, so
+                    // collapsing the middle case into the first would mislabel
+                    // most of them.
+                    const P = (typeof m.pointsPossible === 'number') ? m.pointsPossible : null;
+                    const got = (typeof m.scorePoints === 'number') ? m.scorePoints : null;
+                    let worth = '';
+                    if (P !== null && got === 0) {
+                        worth = 'scored 0 of ' + wpEsc(String(P));
+                    } else if (P !== null && got !== null && got > 0) {
+                        worth = wpEsc(String(got)) + ' of ' + wpEsc(String(P));
+                    } else if (P !== null) {
+                        worth = 'worth ' + wpEsc(String(P)) + ' pts';
+                    }
                     const due = m.dueDate ? wpEsc(String(m.dueDate)) : 'No due date';
                     return '<div class="wp-row wp-row-nested">' +
                         '<span class="wp-rowmain">' +
@@ -17075,6 +17115,9 @@
                             '<span class="wp-rowsub">' + due +
                                 (m.categoryName ? ' &middot; ' + wpEsc(m.categoryName) : '') +
                                 (m.isLate ? ' &middot; marked late' : '') +
+                                ((typeof m.scorePoints === 'number' && m.scorePoints === 0)
+                                    ? ' &middot; <b>ask about a retake</b>'
+                                    : ' &middot; <b>turn this in</b>') +
                             '</span>' +
                         '</span>' +
                         '<span class="wp-rowmain wp-rowright">' +
