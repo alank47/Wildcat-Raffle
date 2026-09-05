@@ -155,5 +155,47 @@ console.log("\nAccounts is scoped like Award Cash");
     /function updateStudentAccounts[\s\S]{0,2000}scoped\.reason/.test(code));
 }
 
+
+console.log("\nThe history fits without dragging sideways");
+{
+  // Six columns -- when, staff, action, behaviour, amount, notes -- do not fit
+  // a dialog. The first version put them in a table inside a horizontal
+  // scroller, so a teacher checking WHY a child lost five dollars had to drag
+  // sideways to reach the reason, which is the column they opened it for.
+  const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  check("the history is a list, not a table in a scroller",
+    /function showStudentCashHistory[\s\S]{0,1500}<ul class="cash-history">/.test(code));
+  check("nothing in it uses the horizontal scroller",
+    !/function showStudentCashHistory[\s\S]{0,2500}wu-scroll-x/.test(code));
+
+  check("the dialog opens wide for this one screen", /wide: true/.test(code));
+  check("and _wcDialog knows how to be wide", /wc-dialog-wide/.test(code));
+  check("860px, up from the 460px a confirmation uses",
+    /\.wc-dialog\.wc-dialog-wide \{ max-width: 860px; \}/.test(css));
+  check("the icon gutter is reclaimed for reading width",
+    /\.wc-dialog-wide \.wc-dialog-body \{ padding-left: 22px/.test(css));
+
+  // min-width:0 is the line that makes the wrapping work: without it a long
+  // note refuses to wrap and pushes the amount off the right edge.
+  check("long text wraps instead of pushing the amount out of the row",
+    /\.chr-main \{ min-width: 0;/.test(css));
+  check("and words too long to wrap are broken rather than overflowing",
+    (css.match(/overflow-wrap: anywhere/g) || []).length >= 2);
+  check("the amount never wraps mid-figure", /\.chr-amount \{[^}]*white-space: nowrap/.test(css));
+
+  check("on a phone the row becomes a single column",
+    /@media \(max-width: 620px\)[\s\S]{0,400}\.cash-history-row \{ grid-template-columns: 1fr; \}/.test(css));
+  check("and the totals go two-up rather than shrinking to fit four",
+    /@media \(max-width: 620px\)[\s\S]{0,200}\.cash-history-totals \{ grid-template-columns: repeat\(2, 1fr\); \}/.test(css));
+
+  // A reset shared the deduction's red, which reads as "something went wrong"
+  // for a routine start-of-year action.
+  check("a system reset is neutral, not error red",
+    /\.cash-action-badge\.act-reset\s+\{ background: #6E7885; \}/.test(css));
+  check("each row's left border matches its badge colour",
+    /\.cash-history-row\.act-redeem \{ border-left-color: #6D4AB8; \}/.test(css));
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);

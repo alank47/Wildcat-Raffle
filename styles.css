@@ -1521,7 +1521,7 @@ th[onclick]:hover {
 .cash-action-badge.act-award  { background: #2E7D52; }
 .cash-action-badge.act-deduct { background: #B3392F; }
 .cash-action-badge.act-redeem { background: #6D4AB8; }
-.cash-action-badge.act-reset  { background: #B3392F; }
+.cash-action-badge.act-reset  { background: #6E7885; }   /* neutral: a reset is routine, not an error */
 .cash-action-badge.act-other  { background: var(--wc-blue-mist); color: var(--wc-blue-deep); }
 
 /* Smooth transitions */
@@ -2991,6 +2991,62 @@ body {
 .account-card { transition: box-shadow .15s ease, transform .15s ease; }
 .account-card:hover { box-shadow: 0 6px 18px rgba(20,23,28,.14) !important; transform: translateY(-1px); }
 .account-card:focus-visible { outline: 2px solid var(--wc-blue, #2F67A7); outline-offset: 2px; }
+
+/* ---- One student's cash history, inside the dialog --------------------------
+   The dialog is 460px by default, which is right for a confirmation and far too
+   narrow for a record with six things to say. This widens it and drops the
+   56px left gutter the icon needs, so the reading width is the dialog width. */
+.wc-dialog.wc-dialog-wide { max-width: 860px; }
+.wc-dialog-wide .wc-dialog-body { padding-left: 22px; padding-bottom: 4px; }
+
+/* Totals: four equal columns that collapse to two on a phone rather than
+   shrinking until the numbers wrap mid-figure. */
+.cash-history-totals {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+    text-align: center; margin: 2px 0 18px;
+    padding: 14px 10px; background: #F7F9FB; border: 1px solid #E7ECF2; border-radius: 10px;
+}
+.cash-history-totals .cht-num   { display: block; font-size: 21px; font-weight: 700; line-height: 1.15; }
+.cash-history-totals .cht-label { display: block; color: #8892a0; font-size: 12px; margin-top: 2px; }
+
+/* THE ROWS. A list, not a table: nothing here has a width it can run out of,
+   so the notes never end up off the right edge behind a scrollbar. */
+.cash-history { list-style: none; margin: 0; padding: 0; max-height: 52vh; overflow-y: auto; }
+.cash-history-row {
+    display: grid; grid-template-columns: 1fr auto; align-items: start; gap: 14px;
+    padding: 12px 14px; border: 1px solid #E7ECF2; border-radius: 10px;
+    border-left: 4px solid #C9D3DE; background: #fff;
+}
+.cash-history-row + .cash-history-row { margin-top: 8px; }
+.cash-history-row.act-award  { border-left-color: #2E7D52; }
+.cash-history-row.act-deduct { border-left-color: #B3392F; }
+.cash-history-row.act-redeem { border-left-color: #6D4AB8; }
+.cash-history-row.act-reset  { border-left-color: #6E7885; }
+.cash-history-row.act-other  { border-left-color: #2F67A7; }
+
+.chr-main { min-width: 0; }               /* lets long text wrap instead of pushing the amount out */
+.chr-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.chr-behavior { font-weight: 600; color: var(--wc-ink, #14171C); overflow-wrap: anywhere; }
+.chr-meta  { color: #8892a0; font-size: 12.5px; margin-top: 4px; }
+.chr-notes {
+    margin-top: 6px; padding-left: 10px; border-left: 2px solid #E7ECF2;
+    color: #4A535F; font-size: 13px; overflow-wrap: anywhere;
+}
+.chr-amount { font-size: 19px; font-weight: 700; white-space: nowrap; text-align: right; }
+.chr-up   { color: #2E7D52; }
+.chr-down { color: #B3392F; }
+.chr-flat { color: #8892a0; }
+.chr-empty { color: #8892a0; padding: 24px 0; text-align: center; }
+
+@media (max-width: 620px) {
+    .cash-history-totals { grid-template-columns: repeat(2, 1fr); }
+    .cash-history-row { grid-template-columns: 1fr; }
+    /* On a phone the amount moves under the text and sits left, rather than
+       being stranded alone on its own line at the right. The row gap is meant
+       for the two-column layout, so it is closed up here. */
+    .cash-history-row { gap: 0; }
+    .chr-amount { text-align: left; margin-top: 8px; }
+}
 
 /* Analytics rank bars */
 .analytics-block { margin-bottom: 22px; }

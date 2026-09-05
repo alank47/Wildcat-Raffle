@@ -24229,39 +24229,51 @@
 
             const rows = CA.forStudent(auditLog, studentId).map(e => CA.describe(e));
 
+            // A LIST, NOT A TABLE.
+            //
+            // Six columns -- when, staff, action, behaviour, amount, notes --
+            // cannot fit a dialog, and the previous version put them in a table
+            // inside a horizontal scroller. A teacher checking why a child lost
+            // five dollars had to drag sideways to reach the reason, which is
+            // the one column they opened this for.
+            //
+            // Stacked rows have no width to run out of. The amount stays on the
+            // right where it can be scanned down the column; everything else
+            // wraps underneath it instead of being pushed off the edge.
             const body = rows.length ? `
-                <div class="wu-scroll-x">
-                <table class="wc-table" style="width:100%;">
-                    <thead><tr>
-                        <th>When</th><th>Staff</th><th>Action</th>
-                        <th>Behavior</th><th style="text-align:center;">Amount</th><th>Notes</th>
-                    </tr></thead>
-                    <tbody>${rows.map(r => {
+                <ul class="cash-history">
+                    ${rows.map(r => {
                         const d = r.timestamp ? new Date(r.timestamp) : null;
                         const when = d && !isNaN(d)
-                            ? d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                            ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
+                              ', ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
                             : '—';
-                        const amt = r.signed == null ? '—'
-                            : (r.signed < 0 ? '-' : '+') + '$' + Math.abs(r.signed);
-                        const col = r.signed == null ? '#8892a0' : (r.signed < 0 ? '#B3392F' : '#2E7D52');
-                        return `<tr>
-                            <td style="white-space:nowrap;font-size:13px;color:#666;">${escapeHtml(when)}</td>
-                            <td>${escapeHtml(r.teacher)}</td>
-                            <td><span class="cash-action-badge ${r.actionClass}">${r.actionIcon} ${escapeHtml(r.actionLabel)}</span></td>
-                            <td>${r.behavior ? escapeHtml(r.behavior) : '<span style="color:#aaa;">—</span>'}</td>
-                            <td style="text-align:center;font-weight:700;color:${col};white-space:nowrap;">${amt}</td>
-                            <td style="font-size:13px;color:#555;">${r.notes ? escapeHtml(r.notes) : '<span style="color:#aaa;">—</span>'}</td>
-                        </tr>`;
-                    }).join('')}</tbody>
-                </table></div>`
-                : '<p style="color:#8892a0;padding:20px 0;">No Wildcat Cash activity recorded for this student yet.</p>';
+                        const amt = r.signed == null
+                            ? '—'
+                            : (r.signed < 0 ? '−' : '+') + '$' + Math.abs(r.signed);
+                        const dir = r.signed == null ? 'flat' : (r.signed < 0 ? 'down' : 'up');
+                        return `
+                            <li class="cash-history-row ${r.actionClass}">
+                                <div class="chr-main">
+                                    <div class="chr-head">
+                                        <span class="cash-action-badge ${r.actionClass}">${r.actionIcon} ${escapeHtml(r.actionLabel)}</span>
+                                        ${r.behavior ? `<span class="chr-behavior">${escapeHtml(r.behavior)}</span>` : ''}
+                                    </div>
+                                    <div class="chr-meta">${escapeHtml(r.teacher)} &middot; ${escapeHtml(when)}</div>
+                                    ${r.notes ? `<div class="chr-notes">${escapeHtml(r.notes)}</div>` : ''}
+                                </div>
+                                <div class="chr-amount chr-${dir}">${amt}</div>
+                            </li>`;
+                    }).join('')}
+                </ul>`
+                : '<p class="chr-empty">No Wildcat Cash activity recorded for this student yet.</p>';
 
             const totals = `
-                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;text-align:center;margin:4px 0 18px;">
-                    <div><div style="font-size:20px;font-weight:700;color:${student.wildcatCashBalance >= 0 ? '#2E7D52' : '#B3392F'};">$${student.wildcatCashBalance}</div><div style="color:#999;font-size:12px;">Balance</div></div>
-                    <div><div style="font-size:20px;font-weight:700;color:#2E7D52;">$${student.wildcatCashEarned}</div><div style="color:#999;font-size:12px;">Earned</div></div>
-                    <div><div style="font-size:20px;font-weight:700;color:#2F67A7;">$${student.wildcatCashSpent}</div><div style="color:#999;font-size:12px;">Spent</div></div>
-                    <div><div style="font-size:20px;font-weight:700;color:#B3392F;">$${student.wildcatCashDeducted}</div><div style="color:#999;font-size:12px;">Deducted</div></div>
+                <div class="cash-history-totals">
+                    <div><span class="cht-num" style="color:${student.wildcatCashBalance >= 0 ? '#2E7D52' : '#B3392F'};">$${student.wildcatCashBalance}</span><span class="cht-label">Balance</span></div>
+                    <div><span class="cht-num" style="color:#2E7D52;">$${student.wildcatCashEarned}</span><span class="cht-label">Earned</span></div>
+                    <div><span class="cht-num" style="color:#2F67A7;">$${student.wildcatCashSpent}</span><span class="cht-label">Spent</span></div>
+                    <div><span class="cht-num" style="color:#B3392F;">$${student.wildcatCashDeducted}</span><span class="cht-label">Deducted</span></div>
                 </div>`;
 
             // _wcDialog is the app's one dialog. Reusing it rather than
@@ -24275,7 +24287,8 @@
                     ` &middot; Grade ${escapeHtml(String(student.grade || '—'))}` +
                     ` &middot; ${rows.length} record${rows.length === 1 ? '' : 's'}</p>` +
                     totals + body,
-                buttons: [{ label: 'Close', value: true, cls: 'btn-primary' }]
+                buttons: [{ label: 'Close', value: true, cls: 'btn-primary' }],
+                wide: true
             });
         }
         window.showStudentCashHistory = showStudentCashHistory;
@@ -26606,13 +26619,13 @@
             t._timer = setTimeout(() => { t.className = 'wc-toast'; }, ms || 4200);
         }
 
-        function _wcDialog({ kind, title, body, buttons, input }) {
+        function _wcDialog({ kind, title, body, buttons, input, wide }) {
             return new Promise(resolve => {
                 const host = _wcDialogHost();
                 const k = kind || 'info';
                 host.innerHTML = `
                     <div class="wc-dialog-backdrop" id="wcDialogBackdrop">
-                        <div class="wc-dialog wc-dialog-${k}" role="dialog" aria-modal="true">
+                        <div class="wc-dialog wc-dialog-${k}${wide ? ' wc-dialog-wide' : ''}" role="dialog" aria-modal="true">
                             <div class="wc-dialog-head">
                                 <span class="wc-dialog-icon">${WC_ICONS[k] || WC_ICONS.info}</span>
                                 <h3 class="wc-dialog-title">${title || ''}</h3>
