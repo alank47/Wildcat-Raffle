@@ -25711,23 +25711,24 @@
             dropdown.innerHTML = options.join('');
         }
 
+        /**
+         * "View Details" on a flagged student, from Analytics.
+         *
+         * It used to switch to the Accounts tab and then hunt for a row in
+         * `#studentAccountsTableBody`. That element does not exist: Accounts
+         * renders a GRID OF CARDS into #studentAccountsGrid. So the highlight
+         * and the scroll both matched nothing, silently, and the only visible
+         * effect was being thrown onto another tab -- having lost the list of
+         * flagged students you were reading.
+         *
+         * It opens the student's cash history instead, which is what the
+         * button says it does. Nothing navigates, so the Analytics table is
+         * still there underneath when the dialog closes.
+         */
         function viewStudentCashDetails(studentId) {
-            // Switch to Student Accounts tab and focus on this student
-            switchTab('studentAccounts');
-            
-            // Scroll to and highlight the student's row
-            setTimeout(() => {
-                const rows = document.querySelectorAll('#studentAccountsTableBody tr');
-                rows.forEach(row => {
-                    if (row.dataset.studentId === studentId) {
-                        row.style.background = 'rgba(47, 103, 167, 0.12)';
-                        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        setTimeout(() => {
-                            row.style.background = '';
-                        }, 3000);
-                    }
-                });
-            }, 100);
+            if (typeof showStudentCashHistory === 'function') {
+                showStudentCashHistory(studentId);
+            }
         }
 
         // ========================================
@@ -26564,6 +26565,39 @@
             }, 200);
         }
 
+        /**
+         * Back closes an open dialog instead of leaving the app.
+         *
+         * WHY. Sign-in is a REDIRECT flow, so Microsoft's authorize endpoint is
+         * genuinely in this tab's history. Walking back into it re-requests a
+         * POST-only endpoint with a GET and Microsoft answers:
+         *
+         *   AADSTS900561: The endpoint only accepts POST requests.
+         *                 Received a GET request
+         *
+         * which a teacher reads as the app being broken. MSAL's second
+         * navigation is switched off in wildcat-auth.js, which removes one
+         * entry; this removes the commonest REASON to press Back, which is a
+         * dialog somebody wants to get out of.
+         *
+         * Deliberately NOT a trap. It only acts while a dialog is actually
+         * open, and it re-pushes exactly the state it consumed, so Back behaves
+         * normally everywhere else. Trapping Back to protect somebody from a
+         * bad history entry is worse than the entry.
+         */
+        (function backClosesDialogs() {
+            window.addEventListener('popstate', function () {
+                var host = document.getElementById('wcDialogRoot');
+                var open = host && host.querySelector('.wc-dialog-backdrop');
+                if (!open) return;                       // nothing to absorb
+                host.innerHTML = '';
+                // Put back the entry the browser just consumed, so the dialog
+                // cost one Back press and the stack is where it was.
+                try { history.pushState({ wcDialogClosed: true }, document.title, location.href); }
+                catch (e) { /* history unavailable; the dialog still closed */ }
+            });
+        })();
+
         function _wcDialogHost() {
             let host = document.getElementById('wcDialogRoot');
             if (!host) {
@@ -26644,11 +26678,25 @@
                         </div>
                     </div>`;
 
+                // One history entry per dialog, so the Back button has
+                // something of ours to land on rather than the entry before it
+                // -- which after a redirect sign-in is Microsoft's.
+                try { history.pushState({ wcDialogOpen: true }, document.title, location.href); }
+                catch (e) { /* history unavailable; the dialog still works */ }
+
                 const backdrop = document.getElementById('wcDialogBackdrop');
                 const inputEl = document.getElementById('wcDialogInput');
                 const finish = (val) => {
                     host.innerHTML = '';
                     document.removeEventListener('keydown', onKey);
+                    // Consume the entry this dialog pushed. Without this, every
+                    // open-and-close leaves a spent entry behind and they pile
+                    // up: five dialogs would cost five dead Back presses before
+                    // the button did anything visible. The popstate handler
+                    // above finds no dialog open by now and lets it through.
+                    try {
+                        if (history.state && history.state.wcDialogOpen) history.back();
+                    } catch (e) { /* history unavailable; the dialog still closed */ }
                     resolve(val);
                 };
                 const onKey = (e) => {

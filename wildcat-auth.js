@@ -269,6 +269,21 @@
         // wrong, and popups are blocked by default on mobile Safari anyway,
         // which matters for Chromebooks and phones.
         redirectUri: window.location.origin + '/',
+        // NO SECOND NAVIGATION AFTER THE REDIRECT.
+        //
+        // Default true, which makes MSAL navigate a second time -- back to
+        // whatever URL started the sign-in -- once it has processed the
+        // response. That extra hop pushes another entry onto the history
+        // stack, so a Back press later in the session walks into Microsoft's
+        // authorize endpoint and gets:
+        //
+        //   AADSTS900561: The endpoint only accepts POST requests.
+        //                 Received a GET request
+        //
+        // which a teacher reads as the app being broken. The app already puts
+        // itself in the right place after sign-in, so the second navigation
+        // buys nothing and costs that.
+        navigateToLoginRequestUrl: false,
       },
       cache: { cacheLocation: 'sessionStorage' },
     });
