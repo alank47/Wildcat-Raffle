@@ -1939,6 +1939,24 @@
 
                         auditIdsOnServer = new Set();
                         try {
+                            // Declared here for the same reason the append
+                            // block declares its own: the `auth` and `session`
+                            // pair further up loadData belongs to a block that
+                            // has closed, so this threw ReferenceError, the
+                            // catch turned it into a warning, and
+                            // auditIdsOnServer stayed empty on every load --
+                            // the knownOnServer: 0 in every diagnostic.
+                            //
+                            // Both halves of the audit log were broken by one
+                            // mistake: this read, so an account saw only the
+                            // documents and never the table, and the append, so
+                            // nothing new ever reached the table. An award
+                            // showed on the teacher's own screen, where it sits
+                            // in memory, and nowhere else.
+                            const auth = window.WildcatAuth;
+                            const session = auth && auth.getSession && auth.getSession();
+                            if (!auth || !session) throw new Error('Not signed in to Convex.');
+
                             let cursor = null;
                             for (let guard = 0; guard < 500; guard++) {
                                 const page = await auth.convexQuery('auditLog:list',
@@ -3339,6 +3357,27 @@
                         let auditSaveSucceeded = true;
                         let auditInserted = 0;
                         try {
+                            // DECLARED HERE, not borrowed from an outer block.
+                            //
+                            // This used `auth` and `session` from a const pair
+                            // declared inside the ticket-history try above --
+                            // a block that has already closed by this point. So
+                            // every audit save threw ReferenceError on the
+                            // first batch, the catch below turned it into a
+                            // console warning, and NOT ONE audit entry reached
+                            // the server after the log moved to its own table.
+                            //
+                            // The symptom was awards that appeared on the
+                            // teacher's own screen, where they sit in memory,
+                            // and never anywhere else. Found because the
+                            // newest row in appAuditLog was sixteen hours old
+                            // while awards were still being made.
+                            const auth = window.WildcatAuth;
+                            const session = auth && auth.getSession && auth.getSession();
+                            if (!auth || !session) {
+                                throw new Error('Not signed in to Convex.');
+                            }
+
                             // Tombstoned entries are filtered BEFORE sending,
                             // because append keeps whatever it is given: an
                             // entry an admin deleted would otherwise return the

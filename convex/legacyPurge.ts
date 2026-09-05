@@ -87,3 +87,24 @@ export const probeAuditList = internalQuery({
     };
   },
 });
+
+/** Newest audit entries in the table, to see whether awards are arriving. */
+export const recentAudit = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("appAuditLog").order("desc").take(400);
+    const byDay: Record<string, number> = {};
+    for (const r of rows) byDay[String(r.timestamp).slice(0, 10)] = (byDay[String(r.timestamp).slice(0, 10)] || 0) + 1;
+    return {
+      sampled: rows.length,
+      newest: rows.slice(0, 6).map((r) => ({
+        ts: r.timestamp,
+        action: (r.payload as any)?.action,
+        teacher: (r.payload as any)?.teacher,
+        student: (r.payload as any)?.studentName,
+        amount: (r.payload as any)?.ticketCount,
+      })),
+      byDay,
+    };
+  },
+});
