@@ -64,8 +64,12 @@ console.log("\nThe stale comment that hid this is corrected");
 {
   // loadData's own comment asserted the listener re-ran everything. It did not,
   // and that sentence is why nobody looked here.
-  const around = script.slice(script.indexOf("Server load error:") - 900,
-                              script.indexOf("Server load error:"));
+  // Anchored on the catch block it belongs to, not a byte count. A fixed
+  // window ending at "Server load error:" broke the moment a comment was added
+  // above it -- the assertion was measuring distance rather than meaning.
+  const catchStart = script.lastIndexOf("} catch (error) {",
+                                        script.indexOf("Server load error:"));
+  const around = script.slice(catchStart, script.indexOf("loadDataLocal();", catchStart));
   check("it no longer claims the whole load is re-run",
     !/re-runs the whole load/.test(around));
   check("it names what actually re-runs", /re-runs THIS function/.test(around));

@@ -1646,6 +1646,7 @@
                     // Named from the SAME arrays the snapshots below are
                     // read back with, so the fetch and the lookup cannot
                     // disagree about which week it is.
+                    window._wcLastLoadSource = 'convex (in progress)';
                     const _legacy = await loadLegacyDocsFromConvex(
                         LEGACY_FIXED_DOCS
                             .concat(monthKeys.map(auditDocName))
@@ -2105,6 +2106,7 @@
                             cashReceipts = serverReceipts;
                         }
 
+                        window._wcLastLoadSource = 'convex';
                         console.log('Loaded data from Convex (main, secondary, ticket_history_ms, ticket_history_hs, audit_log)');
                         
                         // Apply school branding
@@ -2161,6 +2163,15 @@
                     // and on a machine that has never run the app it carries
                     // nothing: an empty screen for two seconds beats a wrong
                     // one that never corrects itself.
+                    // WHICH SOURCE THE SCREEN IS SHOWING.
+                    //
+                    // A failed server load falls back to localStorage without
+                    // telling anybody, and stale or empty local data renders as
+                    // zeros that look exactly like real zeros. Recorded so
+                    // wcDiagnoseData() can say which of the two a teacher is
+                    // actually looking at.
+                    window._wcLastLoadSource = 'localStorage (server load failed: '
+                        + ((error && error.message) || 'unknown') + ')';
                     console.error('Server load error:', error && error.message);
                     loadDataLocal();
                 }
@@ -15581,6 +15592,72 @@
          *
          *   wcDiagnoseRoster()
          */
+        /**
+         * What did this tab actually LOAD?
+         *
+         * Zeros on screen have two completely different causes -- the data is
+         * gone, or this tab never received it -- and they look identical. The
+         * stores are checkable from my side; what is in this browser's memory
+         * is not. This reports it.
+         *
+         * Read only. Fetches nothing, changes nothing.
+         *
+         *   wcDiagnoseData()
+         */
+        window.wcDiagnoseData = function () {
+            const out = { version: typeof APP_VERSION !== 'undefined' ? APP_VERSION : null };
+            try {
+                const n = (v) => (Array.isArray(v) ? v.length : (v == null ? null : 'not-an-array'));
+                out.loadedFrom = window._wcLastLoadSource || 'unknown';
+
+                out.counts = {
+                    students: n(typeof students !== 'undefined' ? students : null),
+                    enrolled: (typeof enrolledStudents === 'function') ? enrolledStudents().length : null,
+                    teachers: n(typeof teachers !== 'undefined' ? teachers : null),
+                    auditLog: n(typeof auditLog !== 'undefined' ? auditLog : null),
+                    cashTransactions: n(typeof cashTransactions !== 'undefined' ? cashTransactions : null),
+                    referrals: n(typeof behaviorReferrals !== 'undefined' ? behaviorReferrals : null),
+                    detentions: n(typeof detentions !== 'undefined' ? detentions : null)
+                };
+
+                // The audit log is what every cash number on Analytics and the
+                // Audit Log screen is derived from.
+                if (typeof auditLog !== 'undefined' && Array.isArray(auditLog)) {
+                    const CA = window.WildcatCashAudit;
+                    const cash = CA ? auditLog.filter(CA.isCashEntry) : [];
+                    const byAction = {};
+                    cash.forEach(e => { byAction[e.action] = (byAction[e.action] || 0) + 1; });
+                    out.auditLog = {
+                        total: auditLog.length,
+                        cashEntries: cash.length,
+                        byAction: byAction,
+                        newest: auditLog.length
+                            ? auditLog.map(e => e.timestamp).sort().slice(-1)[0] : null,
+                        knownOnServer: (typeof auditIdsOnServer !== 'undefined' && auditIdsOnServer)
+                            ? auditIdsOnServer.size : null
+                    };
+                }
+
+                // Balances live on the student rows, separately from the log.
+                if (typeof students !== 'undefined' && Array.isArray(students)) {
+                    const num = (v) => (typeof v === 'number' && isFinite(v) ? v : 0);
+                    out.balances = {
+                        withBalance: students.filter(s => num(s.wildcatCashBalance) !== 0).length,
+                        withEarned: students.filter(s => num(s.wildcatCashEarned) !== 0).length,
+                        withDeducted: students.filter(s => num(s.wildcatCashDeducted) !== 0).length,
+                        totalEarned: students.reduce((a, s) => a + num(s.wildcatCashEarned), 0),
+                        withTxnList: students.filter(s => Array.isArray(s.wildcatCashTransactions)
+                            && s.wildcatCashTransactions.length).length
+                    };
+                }
+            } catch (e) {
+                out.threw = (e && e.stack) || String(e);
+            }
+            console.log('=== WILDCAT DATA DIAGNOSTIC ===');
+            console.log(JSON.stringify(out, null, 2));
+            return out;
+        };
+
         window.wcDiagnoseRoster = function () {
             const out = {};
             try {
