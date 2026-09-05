@@ -1235,7 +1235,6 @@
         let pbisSubcategories = ['Being Present', 'Being Responsible', 'Being Respectful', 'Being Safe'];
         let academicSubcategories = ['No Missing Assignments', 'Improvement on quiz/assessment or successful retakes', 'Participation in tutoring'];
         let lastPowerSchoolSync = null; // Track last sync time
-        let csvScheduleData = new Map(); // Store teacher-section mappings from CSV
         const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes in milliseconds
         const AUTO_REFRESH_DELAY = 300000; // Only auto-refresh after 5 minutes of inactivity (reduced conflicts)
         
@@ -7528,8 +7527,10 @@
             teacher.email = email;
             teacher.role = role;
             
-            // If name changed, try to re-match to CSV sections
-            matchTeacherToSections(teacher);
+            // The CSV re-match that used to run here is gone. It rewrote
+            // teacher.sections from a spreadsheet loaded earlier in the same
+            // session, in a shape the schema rejects, and nothing read the
+            // result -- classes come from the SIS.
             
             // If editing current user, update currentUser reference
             if (editingTeacherId === currentUser.id) {
@@ -11003,554 +11004,39 @@
             }
         }
 
-        function uploadFile() {
-            const fileInput = document.getElementById('fileInput');
-            const file = fileInput.files[0];
-            
-            if (!file) {
-                alert('Please select a file first!');
-                return;
-            }
+        // THE SPREADSHEET IMPORT WAS REMOVED HERE, 2026-09-05.
+        //
+        // uploadFile, importPowerSchoolWithHeaders, importPowerSchoolSchedule,
+        // importTraditionalCSV, matchTeacherToSections and
+        // updateCSVScheduleStatus: 542 lines.
+        //
+        // The IMPORT had been unreachable since 2026-08-12, when its button was
+        // taken off the Students screen -- the SIS is the roster now, syncing
+        // twice a day, and a CSV that replaced `students` wholesale could only
+        // fight with it. The functions were left behind.
+        //
+        // matchTeacherToSections was NOT dead, and that is why this is being
+        // removed rather than merely tidied. The teacher edit form called it on
+        // every save, and it wrote `teacher.sections` in the CSV era's shape --
+        // an array of objects, where the schema says v.array(v.string()). A
+        // Convex mutation is transactional, so one such profile failed the
+        // ENTIRE appData:save, taking students and settings with it. That was
+        // the 'data not saving' of 2026-09-05.
+        //
+        // Nothing read what it wrote. A teacher's classes come from psRoster
+        // through views_app:teacherRoster, and accessRules refuses this field
+        // deliberately: a teacher who can edit their own profile could
+        // otherwise grant themselves the whole school.
+        //
+        // Perfect Attendance upload and the year-end rollover file are
+        // different features, both still in use, and are untouched.
 
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const data = new Uint8Array(e.target.result);
-                const workbook = XLSX.read(data, {type: 'array'});
-                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-                
-                // First, try reading as array (no headers)
-                const arrayData = XLSX.utils.sheet_to_json(firstSheet, {header: 1});
-                
-                console.log('First 3 rows as arrays:', arrayData.slice(0, 3));
-                
-                // Check format type
-                // New format: Has header row with "Student Number", "First Name", etc.
-                const hasHeaders = arrayData[0] && 
-                                  (arrayData[0].includes('Student Number') || 
-                                   arrayData[0].includes('First Name'));
-                
-                if (hasHeaders) {
-                    console.log('Detected: New PowerSchool format with headers');
-                    importPowerSchoolWithHeaders(arrayData);
-                } else {
-                    // Old format: 6 columns, row 1 has student ID in column 1
-                    const isPowerSchoolOld = arrayData.length >= 2 && 
-                                             arrayData[1] && 
-                                             arrayData[1].length === 6 &&
-                                             /^\d+$/.test(String(arrayData[1][1] || '').trim());
-                    
-                    console.log('Detected as PowerSchool old format:', isPowerSchoolOld);
-                    
-                    if (isPowerSchoolOld) {
-                        importPowerSchoolSchedule(arrayData);
-                    } else {
-                        // Try traditional student list import
-                        importTraditionalCSV(workbook);
-                    }
-                }
-            };
-            reader.readAsArrayBuffer(file);
-        }
-        
-        function importPowerSchoolWithHeaders(data) {
-            // New PowerSchool format: [Student Number, First Name, Last Name, Grade, Course, Period, Teacher]
-            const studentMap = new Map();
-            const teacherSectionMap = new Map();
-            
-            console.log('Importing new PowerSchool format with headers');
-            
-            // Start with existing students to preserve their data
-            students.forEach(student => {
-                studentMap.set(student.id, {
-                    ...student,  // Preserve all existing data (tickets, cash, history)
-                    sections: [] // Reset sections - will be rebuilt from CSV
-                });
-            });
-            
-            // Skip header row (row 0)
-            for (let i = 1; i < data.length; i++) {
-                const row = data[i];
-                if (!row || row.length < 7) continue;
-                
-                // Extract fields directly (already in correct format!)
-                const studentId = String(row[0] || '').trim();
-                const firstName = String(row[1] || '').trim();
-                const lastName = String(row[2] || '').trim();
-                const grade = String(row[3] || '').trim();
-                const courseName = String(row[4] || '').trim();
-                const periodRaw = String(row[5] || '').trim();
-                const teacherName = String(row[6] || '').trim();
-                
-                // Debug first row
-                if (i === 1) {
-                    console.log('First student data:');
-                    console.log('  Student ID:', studentId);
-                    console.log('  First Name:', firstName);
-                    console.log('  Last Name:', lastName);
-                    console.log('  Grade:', grade);
-                    console.log('  Course:', courseName);
-                    console.log('  Period:', periodRaw);
-                    console.log('  Teacher:', teacherName);
-                }
-                
-                // Skip if missing critical data
-                if (!studentId || !firstName || !lastName) continue;
-                
-                // Extract period from format like "P1(M-Fri)"
-                const periodMatch = periodRaw.match(/([A-Z]+\d+)/);
-                const period = periodMatch ? periodMatch[1] : periodRaw;
-                
-                // Parse teacher name (format: "Last, First")
-                const teacherParts = teacherName.split(',').map(s => s.trim());
-                const teacherLastName = teacherParts[0] || '';
-                const teacherFirstName = teacherParts[1] || '';
-                const teacherFullName = `${teacherFirstName} ${teacherLastName}`.trim();
-                
-                // Add student to map if new (preserve existing students)
-                if (!studentMap.has(studentId)) {
-                    const studentObj = {
-                        id: studentId,
-                        firstName: firstName,
-                        lastName: lastName,
-                        grade: grade,
-                        pbisTickets: 0,
-                        attendanceTickets: 0,
-                        academicTickets: 0,
-                        bigRaffleQualified: [],
-                        weeksQualified: 0,
-                        ticketHistory: [],
-                        sections: []  // Initialize sections array for student schedules
-                    };
-                    
-                    if (i === 1) {
-                        console.log('First student object:', studentObj);
-                    }
-                    
-                    studentMap.set(studentId, studentObj);
-                } else {
-                    // Update name and grade for existing students (in case they changed)
-                    const existingStudent = studentMap.get(studentId);
-                    existingStudent.firstName = firstName;
-                    existingStudent.lastName = lastName;
-                    existingStudent.grade = grade;
-                }
-                
-                // Add this class to the student's sections array
-                const student = studentMap.get(studentId);
-                if (period && courseName) {
-                    if (!student.sections) {
-                        console.error('❌ Student has no sections array!', studentId, student);
-                        student.sections = [];
-                    }
-                    student.sections.push({
-                        period: period,
-                        courseName: courseName,
-                        teacherName: teacherFullName || teacherName,
-                        teacherId: null  // Will be populated if we match to a teacher account
-                    });
-                    
-                    // Debug first few sections
-                    if (i <= 5) {
-                        console.log(`Row ${i}: Added ${period} ${courseName} to student ${studentId}`);
-                        console.log(`  Student now has ${student.sections.length} sections`);
-                    }
-                }
-                
-                // Build teacher section mappings
-                if (teacherFullName && courseName && period) {
-                    const sectionKey = `${teacherFullName}|${period}|${courseName}`;
-                    if (!teacherSectionMap.has(teacherFullName)) {
-                        teacherSectionMap.set(teacherFullName, new Map());
-                    }
-                    
-                    const teacherSections = teacherSectionMap.get(teacherFullName);
-                    if (!teacherSections.has(sectionKey)) {
-                        teacherSections.set(sectionKey, {
-                            sectionId: `${period}-${courseName.replace(/\s+/g, '')}`,
-                            period: period,
-                            courseName: courseName,
-                            students: []
-                        });
-                    }
-                    
-                    const section = teacherSections.get(sectionKey);
-                    if (!section.students.includes(studentId)) {
-                        section.students.push(studentId);
-                    }
-                }
-            }
-            
-            // Convert maps to arrays
-            students = Array.from(studentMap.values());
-            
-            console.log('Total unique students:', students.length);
-            console.log('Sample students with sections:', students.slice(0, 3));
-            
-            // Check how many students have sections
-            const studentsWithSections = students.filter(s => s.sections && s.sections.length > 0);
-            console.log(`✅ ${studentsWithSections.length} students have schedule data`);
-            console.log(`❌ ${students.length - studentsWithSections.length} students have NO schedule data`);
-            
-            // Show a sample student's full data
-            if (students.length > 0) {
-                console.log('=== SAMPLE STUDENT ===');
-                console.log(students[0]);
-                if (students[0].sections) {
-                    console.log(`  Has ${students[0].sections.length} classes:`, students[0].sections);
-                }
-            }
-            
-            // Save teacher section map globally
-            csvScheduleData = teacherSectionMap;
-            console.log('Saved CSV schedule data for', csvScheduleData.size, 'teachers');
-            
-            // Update existing teacher section assignments
-            teachers.forEach(teacher => {
-                matchTeacherToSections(teacher);
-            });
-            
-            saveData();
-            updateAllDisplays();
-            updateCSVScheduleStatus();
-            
-            const teachersWithSections = teachers.filter(t => t.sections && t.sections.length > 0).length;
-            alert(`✅ Successfully imported PowerSchool schedule!\n\n` +
-                  `📚 ${students.length} students\n` +
-                  `👥 ${teachersWithSections} teachers matched with class rosters\n\n` +
-                  `✅ All existing ticket balances and cash preserved!\n` +
-                  `Students now have their class schedules loaded for period detection!`);
-        }
-        
-        function importPowerSchoolSchedule(data) {
-            // PowerSchool format: [Student Name, Student ID, Course, Period, Teacher, Term]
-            const studentMap = new Map();
-            const teacherSectionMap = new Map();
-            
-            // Debug: Log first row
-            console.log('First row of data:', data[0]);
-            console.log('Second row of data:', data[1]);
-            console.log('Total rows:', data.length);
-            
-            // Start with existing students to preserve their data
-            students.forEach(student => {
-                studentMap.set(student.id, {
-                    ...student,  // Preserve all existing data (tickets, cash, history)
-                    sections: [] // Reset sections - will be rebuilt from CSV
-                });
-            });
-            
-            // Skip first row if it's empty or header
-            const startRow = (data[0] && data[0].every(cell => !cell || cell === '')) ? 1 : 0;
-            console.log('Starting at row:', startRow);
-            
-            for (let i = startRow; i < data.length; i++) {
-                const row = data[i];
-                if (!row || row.length < 6) continue;
-                
-                // Extract and clean each field
-                const fullName = String(row[0] || '').trim();
-                const studentId = String(row[1] || '').trim();
-                const courseName = String(row[2] || '').trim();
-                const periodRaw = String(row[3] || '').trim();
-                const teacherName = String(row[4] || '').trim();
-                const term = String(row[5] || '').trim();
-                
-                // Debug: Log first student processing
-                if (i === startRow) {
-                    console.log('First student data:');
-                    console.log('  Full Name:', fullName);
-                    console.log('  Student ID:', studentId);
-                    console.log('  Course:', courseName);
-                    console.log('  Period:', periodRaw);
-                    console.log('  Teacher:', teacherName);
-                }
-                
-                // Skip if missing critical data
-                if (!studentId || !fullName || studentId === '' || fullName === '') continue;
-                
-                // Parse student name (format: "Last, First Middle")
-                const nameParts = fullName.split(',').map(s => s.trim());
-                const lastName = nameParts[0] || '';
-                const firstMiddle = nameParts[1] || '';
-                const firstName = firstMiddle.split(' ')[0] || '';
-                
-                // Extract period from format like "P1(M-Fri)" or "A1(M-Fri)"
-                const periodMatch = periodRaw.match(/([A-Z]+\d+)/);
-                const period = periodMatch ? periodMatch[1] : periodRaw;
-                
-                // Parse teacher name (format: "Last, First")
-                const teacherParts = teacherName.split(',').map(s => s.trim());
-                const teacherLastName = teacherParts[0] || '';
-                const teacherFirstName = teacherParts[1] || '';
-                const teacherFullName = `${teacherFirstName} ${teacherLastName}`.trim();
-                
-                // Add student to map if new (preserve existing students)
-                if (!studentMap.has(studentId)) {
-                    // Infer grade from course name (look for numbers like "7B", "10B", "12")
-                    let grade = '';
-                    const gradeMatch = courseName.match(/\b(\d{1,2})[AB]?\b/);
-                    if (gradeMatch) {
-                        grade = gradeMatch[1];
-                    }
-                    
-                    const studentObj = {
-                        id: studentId,
-                        firstName: firstName,
-                        lastName: lastName,
-                        grade: grade,
-                        pbisTickets: 0,
-                        attendanceTickets: 0,
-                        academicTickets: 0,
-                        bigRaffleQualified: [],
-                        weeksQualified: 0,
-                        ticketHistory: [],
-                        sections: []  // Initialize sections array for student schedules
-                    };
-                    
-                    // Debug: Log first student object
-                    if (i === startRow) {
-                        console.log('First student object created:', studentObj);
-                    }
-                    
-                    studentMap.set(studentId, studentObj);
-                } else {
-                    // Update name and grade for existing students (in case they changed)
-                    const existingStudent = studentMap.get(studentId);
-                    existingStudent.firstName = firstName;
-                    existingStudent.lastName = lastName;
-                    // Update grade if we inferred one
-                    const gradeMatch = courseName.match(/\b(\d{1,2})[AB]?\b/);
-                    if (gradeMatch) {
-                        existingStudent.grade = gradeMatch[1];
-                    }
-                }
-                
-                // Add this class to the student's sections array
-                const student = studentMap.get(studentId);
-                if (period && courseName) {
-                    student.sections.push({
-                        period: period,
-                        courseName: courseName,
-                        teacherName: teacherFullName || teacherName,
-                        teacherId: null  // Will be populated if we match to a teacher account
-                    });
-                }
-                
-                // Build teacher section mappings (only if we have teacher and course info)
-                if (teacherFullName && courseName && period) {
-                    const sectionKey = `${teacherFullName}|${period}|${courseName}`;
-                    if (!teacherSectionMap.has(teacherFullName)) {
-                        teacherSectionMap.set(teacherFullName, new Map());
-                    }
-                    
-                    const teacherSections = teacherSectionMap.get(teacherFullName);
-                    if (!teacherSections.has(sectionKey)) {
-                        teacherSections.set(sectionKey, {
-                            sectionId: `${period}-${courseName.replace(/\s+/g, '')}`,
-                            period: period,
-                            courseName: courseName,
-                            students: []
-                        });
-                    }
-                    
-                    const section = teacherSections.get(sectionKey);
-                    if (!section.students.includes(studentId)) {
-                        section.students.push(studentId);
-                    }
-                }
-            }
-            
-            // Convert maps to arrays
-            students = Array.from(studentMap.values());
-            
-            console.log('Total unique students:', students.length);
-            console.log('Sample students:', students.slice(0, 3));
-            
-            // Save teacher section map globally for future use
-            csvScheduleData = teacherSectionMap;
-            console.log('Saved CSV schedule data for', csvScheduleData.size, 'teachers');
-            
-            // Update existing teacher section assignments
-            teachers.forEach(teacher => {
-                matchTeacherToSections(teacher);
-            });
-            
-            saveData();
-            updateAllDisplays();
-            updateCSVScheduleStatus();
-            
-            const teachersWithSections = teachers.filter(t => t.sections && t.sections.length > 0).length;
-            alert(`✅ Successfully imported PowerSchool schedule!\n\n` +
-                  `📚 ${students.length} students\n` +
-                  `👥 ${teachersWithSections} teachers matched with class rosters\n\n` +
-                  `Teachers can now use period filtering!`);
-        }
-        
-        // Function to match a teacher to their sections from CSV data
-        function matchTeacherToSections(teacher) {
-            console.log(`Attempting to match teacher: "${teacher.name}"`);
-            
-            // Try exact match first
-            if (csvScheduleData.has(teacher.name)) {
-                const sections = Array.from(csvScheduleData.get(teacher.name).values());
-                teacher.sections = sections;
-                console.log(`✅ Exact match: ${teacher.name} → ${sections.length} sections`);
-                return true;
-            }
-            
-            // Try case-insensitive match
-            for (const [csvTeacherName, sectionMap] of csvScheduleData.entries()) {
-                if (csvTeacherName.toLowerCase() === teacher.name.toLowerCase()) {
-                    const sections = Array.from(sectionMap.values());
-                    teacher.sections = sections;
-                    console.log(`✅ Case-insensitive match: "${teacher.name}" matched to "${csvTeacherName}" → ${sections.length} sections`);
-                    return true;
-                }
-            }
-            
-            // Try fuzzy match (handle slight variations)
-            const normalizedTeacherName = teacher.name.toLowerCase().replace(/[^a-z]/g, '');
-            for (const [csvTeacherName, sectionMap] of csvScheduleData.entries()) {
-                const normalizedCSVName = csvTeacherName.toLowerCase().replace(/[^a-z]/g, '');
-                if (normalizedCSVName === normalizedTeacherName) {
-                    const sections = Array.from(sectionMap.values());
-                    teacher.sections = sections;
-                    console.log(`✅ Fuzzy match: "${teacher.name}" matched to "${csvTeacherName}" → ${sections.length} sections`);
-                    return true;
-                }
-            }
-            
-            // No match found
-            teacher.sections = [];
-            console.log(`❌ No match found for "${teacher.name}"`);
-            console.log('Available CSV teachers:', Array.from(csvScheduleData.keys()).slice(0, 5), '...');
-            return false;
-        }
         
         
-        // Update CSV schedule status display
-        function updateCSVScheduleStatus() {
-            const statusElement = document.getElementById('csvScheduleStatus');
-            if (statusElement) {
-                if (csvScheduleData.size > 0) {
-                    statusElement.textContent = `Yes (${csvScheduleData.size} teachers in CSV)`;
-                    statusElement.style.color = '#4CAF50';
-                    statusElement.style.fontWeight = 'bold';
-                } else {
-                    statusElement.textContent = 'No';
-                    statusElement.style.color = '#999';
-                }
-            }
-        }
         
-        function importTraditionalCSV(workbook) {
-            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-            const jsonData = XLSX.utils.sheet_to_json(firstSheet);
-            
-            // Try to detect column names (case-insensitive)
-            const firstRow = jsonData[0];
-            const keys = Object.keys(firstRow);
-            
-            // Find ID column
-            const idCol = keys.find(k => 
-                k.toLowerCase().includes('student') && k.toLowerCase().includes('id') ||
-                k.toLowerCase() === 'id' ||
-                k.toLowerCase() === 'studentid' ||
-                k.toLowerCase() === 'student_id'
-            ) || keys[0];
-            
-            // Find first name column
-            const firstNameCol = keys.find(k => 
-                k.toLowerCase().includes('first') && k.toLowerCase().includes('name') ||
-                k.toLowerCase() === 'firstname' ||
-                k.toLowerCase() === 'first_name' ||
-                k.toLowerCase() === 'fname'
-            );
-            
-            // Find last name column
-            const lastNameCol = keys.find(k => 
-                k.toLowerCase().includes('last') && k.toLowerCase().includes('name') ||
-                k.toLowerCase() === 'lastname' ||
-                k.toLowerCase() === 'last_name' ||
-                k.toLowerCase() === 'lname'
-            );
-            
-            // Find full name column if first/last not found
-            const fullNameCol = keys.find(k => 
-                k.toLowerCase() === 'name' ||
-                k.toLowerCase() === 'student name' ||
-                k.toLowerCase() === 'studentname' ||
-                k.toLowerCase() === 'full name' ||
-                k.toLowerCase() === 'fullname'
-            );
-            
-            // Find grade column
-            const gradeCol = keys.find(k => 
-                k.toLowerCase() === 'grade' ||
-                k.toLowerCase().includes('grade')
-            );
-            
-            // Build a map of existing students by ID so we preserve their ticket data
-            const existingById = new Map();
-            students.forEach(s => existingById.set(String(s.id), s));
-
-            students = jsonData.map((row, index) => {
-                let firstName = '';
-                let lastName = '';
-                
-                // Try to get first and last name
-                if (firstNameCol && lastNameCol) {
-                    firstName = row[firstNameCol] || '';
-                    lastName = row[lastNameCol] || '';
-                } else if (fullNameCol) {
-                    // Split full name
-                    const fullName = (row[fullNameCol] || '').trim().split(/\s+/);
-                    firstName = fullName[0] || '';
-                    lastName = fullName.slice(1).join(' ') || '';
-                }
-                
-                const id = String(row[idCol] || `STU${String(index + 1).padStart(3, '0')}`);
-                const existing = existingById.get(id);
-                
-                if (existing) {
-                    // Existing student, preserve ALL their ticket data, only update name/grade/homeroom
-                    return {
-                        ...existing,
-                        firstName: firstName || existing.firstName,
-                        lastName: lastName || existing.lastName,
-                        grade: gradeCol ? (row[gradeCol] || existing.grade) : existing.grade,
-                        homeroom: row['Homeroom'] || row['homeroom'] || existing.homeroom || ''
-                    };
-                }
-                
-                // Brand new student
-                return {
-                    id: id,
-                    firstName: firstName,
-                    lastName: lastName,
-                    grade: gradeCol ? row[gradeCol] : '',
-                    homeroom: row['Homeroom'] || row['homeroom'] || '',
-                    pbisTickets: 0,
-                    attendanceTickets: 0,
-                    academicTickets: 0,
-                    bigRaffleQualified: [],
-                    weeksQualified: 0,
-                    ticketHistory: []
-                };
-            });
-            
-            // Add back any existing students who were NOT in the CSV (don't silently drop them)
-            const importedIds = new Set(students.map(s => String(s.id)));
-            existingById.forEach((existing, id) => {
-                if (!importedIds.has(id)) {
-                    students.push(existing);
-                }
-            });
-
-            saveData();
-            updateAllDisplays();
-            alert(`Successfully imported ${students.length} students!`);
-        }
+        
+        
+        
 
         // ============================================================
         // PERFECT ATTENDANCE UPLOAD
@@ -11944,7 +11430,6 @@
             updateSubcategoryDropdown();
             updateSubcategoryLists();
             updatePeriodFilter();
-            updateCSVScheduleStatus();
             if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin')) {
                 updateTeachersTable();
             }
@@ -22889,12 +22374,13 @@
         // WOULD do. It never writes: no saveData, no setDoc, no mutation
         // of `students`, `teachers`, or config. Safe to run on live data.
         //
-        // Why this is separate from the existing importer:
-        // importPowerSchoolWithHeaders() seeds its map from the CURRENT
-        // roster, so students absent from the new file are kept, and
-        // returning students keep their tickets. That is correct for a
-        // mid-year schedule refresh but wrong for a year rollover, where
-        // graduates must leave and counters must reset.
+        // Why this is separate from the importer it outlived: that one
+        // (removed 2026-09-05) seeded its map from the CURRENT roster, so
+        // students absent from the new file were kept and returning students
+        // kept their tickets. Correct for a mid-year schedule refresh, wrong
+        // for a year rollover, where graduates must leave and counters reset.
+        // This reads a file and reports; it is the only spreadsheet path into
+        // the roster that still exists, and it still writes nothing.
         // ============================================================
 
         function previewYearRollover() {
