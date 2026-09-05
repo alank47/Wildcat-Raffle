@@ -33,47 +33,29 @@ import { requireStaff } from "./identity";
  * a list and every student's history disappears without an error.
  */
 
-/** Rebuild every mirrored document as the object the app used to read. */
-export const load = query({
-  args: {},
-  handler: async (ctx) => {
-    await requireStaff(ctx);
-
-    const rows = await ctx.db.query("legacyMirror").collect();
-
-    // doc -> collection -> rows, preserving insertion order within a slice.
-    const grouped: Record<string, Record<string, Array<{ key?: string; payload: unknown }>>> = {};
-    for (const r of rows) {
-      const doc = (grouped[r.doc] ??= {});
-      (doc[r.collection] ??= []).push({ key: r.key, payload: r.payload });
-    }
-
-    const out: Record<string, Record<string, unknown>> = {};
-    for (const [docName, collections] of Object.entries(grouped)) {
-      const rebuilt: Record<string, unknown> = {};
-      for (const [collection, slice] of Object.entries(collections)) {
-        // A keyed slice was a map (histories keyed by student id); an unkeyed
-        // slice was a list (auditLog, tombstones). Mixed cannot happen: the
-        // writer decides per slice, not per row. If it ever did, treating it
-        // as a map loses the unkeyed rows silently, so the list wins and the
-        // keys are preserved as a fallback field nobody reads.
-        const keyed = slice.some((r) => typeof r.key === "string");
-        if (keyed) {
-          const map: Record<string, unknown> = {};
-          for (const r of slice) {
-            if (typeof r.key === "string") map[r.key] = r.payload;
-          }
-          rebuilt[collection] = map;
-        } else {
-          rebuilt[collection] = slice.map((r) => r.payload);
-        }
-      }
-      out[docName] = rebuilt;
-    }
-
-    return out;
-  },
-});
+/**
+ * WHERE `load` WENT.
+ *
+ * There was a `load` query here that rebuilt EVERY mirrored document in one
+ * call, with `.collect()` over the whole legacyMirror table. It exceeded
+ * Convex's read limit in production on or before 2026-09-04:
+ *
+ *   Uncaught Error: Too many bytes read in a single function execution
+ *   (limit: 16777216 bytes)
+ *
+ * That table is every student's ticket history and every week of the audit
+ * log, so it only grows and the query was never coming back. While it failed,
+ * every load in the app fell through to its localStorage copy without
+ * surfacing anything, because the fallback is not an error path -- a machine
+ * that had never run the app showed no schedules, no referrals, no cash and no
+ * audit log for the whole session, silently.
+ *
+ * `loadDoc` below is the replacement, called once per document by
+ * loadLegacyDocsFromConvex in script.js. It reads through the by_doc index, so
+ * an execution is bounded by ONE document rather than by the whole school's
+ * history, and no chunk size has to be tuned against a table that grows every
+ * week. Do not reintroduce a whole-table read here.
+ */
 
 /**
  * One document, for the read-modify-write paths.

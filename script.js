@@ -1262,16 +1262,105 @@
          * history", and this app has an explicit rule against a missing value
          * rendering as a real one. The caller catches and reports.
          */
-        async function loadLegacyDocsFromConvex() {
+        /**
+         * The documents loadData reads that are always called the same thing.
+         *
+         * Every one of these is named as a string literal in loadData, either
+         * through snapOf() or, for `main`, by property access. A name missing
+         * from this list does not raise anything -- it loads as an absent
+         * document, which reads downstream as "this school has no ticket
+         * history". legacy-docs.test.mjs asserts the list against the literals
+         * in loadData for exactly that reason.
+         *
+         * The two families that vary by date, audit_log_* and cash_tx_*, are
+         * added at the call site from the SAME key arrays loadData reads them
+         * back with, so a week boundary crossed mid-load cannot fetch a
+         * document under one key and look for it under another.
+         */
+        const LEGACY_FIXED_DOCS = [
+            'main', 'secondary', 'referrals', 'schedules',
+            'ticket_history', 'ticket_history_ms', 'ticket_history_hs',
+            'ticket_history_hs_910', 'ticket_history_hs_1112',
+            'ticket_history_unknown', 'audit_log'
+        ];
+
+        /** How many document reads are in flight at once. */
+        const LEGACY_LOAD_CONCURRENCY = 8;
+
+        /**
+         * Every legacy document the loader needs, fetched BY NAME.
+         *
+         * WHY NOT legacyData:load, WHICH DID THIS IN ONE CALL. Because it
+         * stopped working. That query does `.collect()` over the whole
+         * legacyMirror table, and the table crossed Convex's 16 MiB
+         * per-execution read limit some time before 2026-09-04:
+         *
+         *   Uncaught Error: Too many bytes read in a single function execution
+         *   (limit: 16777216 bytes)
+         *
+         * Every load in production was failing on that and falling through to
+         * the localStorage copy. On a machine that had never run the app there
+         * is no localStorage copy, so schedules, referrals, cash and the audit
+         * log were simply empty for the whole session -- silently, because the
+         * fallback is not an error path. The table only grows, so this was
+         * never going to recover on its own.
+         *
+         * loadDoc reads ONE document through the by_doc index, so each
+         * execution reads that document and nothing else. That is the property
+         * worth having: the limit is no longer measured against the whole
+         * school's history, and no chunk size has to be tuned against data
+         * that grows every week. It costs one round trip per document instead
+         * of one for all of them, which is the trade being made deliberately.
+         *
+         * PARTIAL RESULTS ARE REFUSED. A document that fails is not the same
+         * as a document that is empty, and the difference is a student's
+         * ticket history. Anything short of every requested document throws,
+         * and loadData falls back as a whole rather than writing a half-loaded
+         * picture back over the real one.
+         */
+        async function loadLegacyDocsFromConvex(docNames) {
             const auth = window.WildcatAuth;
             if (!auth) throw new Error('WildcatAuth is not loaded.');
             const session = auth.getSession();
             if (!session) throw new Error('Not signed in to Convex.');
-            const docs = await auth.convexQuery('legacyData:load', {}, session.idToken);
-            if (!docs || typeof docs !== 'object') {
-                throw new Error('legacyData:load returned no documents.');
+
+            const wanted = (docNames && docNames.length)
+                ? docNames
+                : LEGACY_FIXED_DOCS.slice();
+
+            const out = {};
+            const failures = [];
+            let next = 0;
+
+            async function worker() {
+                for (;;) {
+                    const i = next++;
+                    if (i >= wanted.length) return;
+                    const name = wanted[i];
+                    try {
+                        const d = await auth.convexQuery(
+                            'legacyData:loadDoc', { doc: name }, session.idToken);
+                        // null means the document has no rows. Left OFF the
+                        // object rather than set to null, so snapOf's
+                        // Boolean(d) reads absent exactly as it did when the
+                        // whole-table query simply had no key for it.
+                        if (d) out[name] = d;
+                    } catch (e) {
+                        failures.push(name + ': ' + ((e && e.message) || e));
+                    }
+                }
             }
-            return docs;
+
+            const lanes = Math.min(LEGACY_LOAD_CONCURRENCY, wanted.length) || 1;
+            await Promise.all(Array.from({ length: lanes }, worker));
+
+            if (failures.length) {
+                throw new Error(
+                    `legacy documents failed to load (${failures.length} of ` +
+                    `${wanted.length}): ${failures.slice(0, 3).join('; ')}` +
+                    (failures.length > 3 ? ` and ${failures.length - 3} more` : ''));
+            }
+            return out;
         }
 
         /**
@@ -1280,7 +1369,7 @@
          * `value` is the array or map the slice should BE, in the same shape
          * the Firestore document field held, so callers read the same as they
          * did with setDoc. A map is sent as keyed rows and an array as unkeyed
-         * ones, which is the encoding legacyData:load inverts. Sending a map
+         * ones, which is the encoding legacyData:loadDoc inverts. Sending a map
          * as an array loses every key and a student's history silently becomes
          * a list nobody can look up.
          */
@@ -1389,7 +1478,7 @@
                     // This used to be twenty-two getDoc calls against eleven
                     // documents. It is now one authenticated Convex query, and
                     // the reason the rest of this function is untouched is the
-                    // shim below: legacyData:load rebuilds each document as the
+                    // shim below: legacyData:loadDoc rebuilds each document as the
                     // object Firestore used to return, and snapOf() wraps it in
                     // the same exists()/data() pair a QuerySnapshot exposes. Six
                     // hundred lines of merge logic downstream — the entryId
@@ -1407,7 +1496,13 @@
                     // has held all of this since the 2026-08-11 migration. What
                     // was missing was never the data: it was a function the
                     // browser was allowed to call.
-                    const _legacy = await loadLegacyDocsFromConvex();
+                    // Named from the SAME arrays the snapshots below are
+                    // read back with, so the fetch and the lookup cannot
+                    // disagree about which week it is.
+                    const _legacy = await loadLegacyDocsFromConvex(
+                        LEGACY_FIXED_DOCS
+                            .concat(monthKeys.map(auditDocName))
+                            .concat(_cashWeekKeys.map(wk => `cash_tx_${wk}`)));
                     const snapOf = (name) => {
                         const d = _legacy[name];
                         return { exists: () => Boolean(d), data: () => d || {} };
