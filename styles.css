@@ -2823,6 +2823,19 @@ body {
     border-bottom: 2px solid #B3392F;
 }
 .referral-form-icon { font-size: 19px; }
+
+/* Narrow-then-search, above the student picker. Two columns on a desktop so
+   the pair reads as one control; stacked on a phone, where a teacher filing
+   from a corridor is holding the device one-handed. */
+.referral-student-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  margin-bottom: 8px;
+}
+@media (max-width: 560px) {
+  .referral-student-picker { grid-template-columns: 1fr; }
+}
 .referral-form-head h3 {
     margin: 0; color: #8a2b23; font-size: 16px;
     font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;

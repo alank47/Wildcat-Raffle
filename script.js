@@ -25268,6 +25268,7 @@
 
             // Per-tab data loading
             if (subtab === 'submit') {
+                resetReferralRosterFetch();
                 populateReferralStudentDropdown();
                 if (typeof populateReferringStaffDropdown === 'function') populateReferringStaffDropdown();
                 const now = new Date();
@@ -25291,34 +25292,120 @@
             }
         }
 
+        // At most one roster fetch per visit to the referral form, so a
+        // failed lookup cannot loop on a broken connection.
+        let referralRosterFetchTried = false;
+        function resetReferralRosterFetch() { referralRosterFetchTried = false; }
+
         /**
-         * Every enrolled student, for the referral form.
+         * The student picker on the referral form: narrow, search, pick.
          *
-         * DELIBERATELY NOT SCOPED TO THE TEACHER'S OWN CLASSES. A referral is
-         * written for what somebody did, and most of what gets referred happens
-         * in a corridor, a stairwell or the yard, between adults and children
-         * who have never shared a timetable. Scoping this to a roster the way
-         * Award Cash is scoped would make the commonest referral impossible to
-         * file. Award Cash is different because awarding is an act of teaching
-         * a class; this is not.
+         * EVERY ENROLLED STUDENT STAYS REACHABLE. Confirmed with the owner
+         * 2026-09-04. A referral is written for what somebody did, and most of
+         * what gets referred happens in a corridor, a stairwell or the yard,
+         * between an adult and a child who have never shared a timetable.
+         * Scoping this to a roster the way Award Cash is scoped would make the
+         * commonest referral impossible to file, and would leave the seven
+         * teachers who have no PowerSchool sections unable to file at all.
          *
-         * ENROLLED ONLY, though. `students` carries leavers so their balances
-         * and histories survive, and a dropdown built from the raw array
-         * offered 139 children who have left the school -- a referral filed
-         * against one of them is a record nobody can act on.
+         * So the period filter is a SHORTCUT, never a restriction: it defaults
+         * to All Students and every narrowing option sits alongside that rather
+         * than replacing it. Award Cash is the opposite -- there the roster is
+         * the boundary -- and the two must not be "made consistent" with each
+         * other, because they are answering different questions.
+         *
+         * ENROLLED ONLY. `students` carries the 139 leavers so their balances
+         * and histories survive; a referral filed against a child who has left
+         * is a record nobody can act on.
          */
         function populateReferralStudentDropdown() {
             const select = document.getElementById('referralStudentSelect');
-            const sortedStudents = [...enrolledStudents()].sort((a, b) => {
-                const aName = `${a.lastName}, ${a.firstName}`.toLowerCase();
-                const bName = `${b.lastName}, ${b.firstName}`.toLowerCase();
-                return aName.localeCompare(bName);
-            });
-            
-            select.innerHTML = '<option value="">Select a student...</option>' + 
-                sortedStudents.map(s => 
-                    `<option value="${s.id}">${s.lastName}, ${s.firstName} (Grade ${s.grade})</option>`
+            if (!select) return;
+            const scopeSel = document.getElementById('referralStudentScope');
+            const searchEl = document.getElementById('referralStudentSearch');
+            const hint = document.getElementById('referralStudentHint');
+
+            const roster = activeTeacherRoster();
+            const sections = window.WildcatRoster.sectionsFrom(roster);
+            const everyone = enrolledStudents();
+
+            // ---- The scope control, rebuilt in place ------------------------
+            // Kept on the value the user chose. Rebuilding drops a section that
+            // no longer exists, which is correct: silently keeping a stale
+            // selection would filter against nothing and read as "no students".
+            if (scopeSel) {
+                const wanted = scopeSel.value;
+                let html = `<option value="">All students (${everyone.length})</option>`;
+                if (sections.length) {
+                    const mine = window.WildcatRoster.studentNumbersFor(roster, null);
+                    const mineCount = everyone.filter(st =>
+                        mine[String(st.studentNumber || '').trim()] === true).length;
+                    html += `<option value="__mine">My students (${mineCount})</option>`;
+                    sections.forEach(sec => {
+                        html += `<option value="${sec.sectionId}">` +
+                                `${sec.label} (${(sec.students || []).length})</option>`;
+                    });
+                }
+                scopeSel.innerHTML = html;
+                scopeSel.value = wanted;
+                if (scopeSel.selectedIndex < 0) scopeSel.value = '';
+            }
+
+            // ---- Narrow ----------------------------------------------------
+            const scope = scopeSel ? scopeSel.value : '';
+            let pool = everyone;
+            if (scope === '__mine' || (scope && scope !== '')) {
+                const picked = window.WildcatRoster.studentNumbersFor(
+                    roster, scope === '__mine' ? null : scope);
+                pool = everyone.filter(st =>
+                    picked[String(st.studentNumber || '').trim()] === true);
+            }
+
+            // ---- Search ----------------------------------------------------
+            // Name in either order, plus the id a teacher reads off a screen.
+            const q = (searchEl ? searchEl.value : '').toLowerCase().trim();
+            if (q) {
+                pool = pool.filter(st => {
+                    const first = String(st.firstName || '').toLowerCase();
+                    const last = String(st.lastName || '').toLowerCase();
+                    return `${first} ${last}`.includes(q)
+                        || `${last}, ${first}`.includes(q)
+                        || String(st.id || '').toLowerCase().includes(q)
+                        || String(st.studentNumber || '').toLowerCase().includes(q);
+                });
+            }
+
+            const sorted = [...pool].sort((a, b) =>
+                `${a.lastName}, ${a.firstName}`.toLowerCase()
+                    .localeCompare(`${b.lastName}, ${b.firstName}`.toLowerCase()));
+
+            // ---- Rebuild, without losing a choice already made --------------
+            // A teacher who picks a child and then types in the search box must
+            // not have the selection silently cleared underneath them.
+            const chosen = select.value;
+            select.innerHTML = '<option value="">Search and select a student...</option>' +
+                sorted.map(st =>
+                    `<option value="${st.id}">${st.lastName}, ${st.firstName} (Grade ${st.grade})</option>`
                 ).join('');
+            if (chosen && sorted.some(st => String(st.id) === String(chosen))) {
+                select.value = chosen;
+            }
+
+            if (hint) {
+                hint.textContent = sorted.length
+                    ? `${sorted.length} student${sorted.length === 1 ? '' : 's'} listed. ` +
+                      'Any student in the school can be referred.'
+                    : (q ? 'No student matches that search.' : 'No students in that class.');
+            }
+
+            // The roster is fetched by Award Cash, so in Discipline it may not
+            // be here yet. Paint from what exists, then fetch and repaint --
+            // awaiting would leave the form blank on a network round trip.
+            if (!roster && sisRosterState !== 'loading'
+                && !referralRosterFetchTried && !isPreviewingTeacher()) {
+                referralRosterFetchTried = true;
+                loadTeacherRosterFromSIS(true).then(() => populateReferralStudentDropdown());
+            }
         }
 
         /**
@@ -26491,11 +26578,17 @@
         }
 
         function clearReferralForm() {
-            ['referralStudentSelect','referralDate','referralTime','referralLocation',
+            // referralStudentScope and referralStudentSearch are in this list
+            // deliberately. A period filter left over from the last referral
+            // would silently narrow the next one, and the teacher filing it has
+            // no reason to look at a control they did not just touch.
+            ['referralStudentSelect','referralStudentScope','referralStudentSearch',
+             'referralDate','referralTime','referralLocation',
              'referralBehaviorType','referralDescription','referralAdditionalActions'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.value = '';
             });
+            populateReferralStudentDropdown();
             document.querySelectorAll('.referral-intervention').forEach(cb => { cb.checked = false; });
             const severeBox = document.getElementById('referralSevereBypass');
             if (severeBox) severeBox.checked = false;
