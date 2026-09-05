@@ -349,3 +349,40 @@ export const raceCodesInUse = internalQuery({
     };
   },
 });
+
+/**
+ * Replace the section point totals.
+ *
+ * Same shape as replaceMissingWork, and the same trap: the args validator here
+ * must carry every field the schema does. A field in one and not the other is
+ * rejected at the boundary and the WHOLE sync fails, which is how 2026-09-05
+ * lost a sync to two new columns.
+ */
+export const replaceSectionPoints = internalMutation({
+  args: {
+    syncedAt: v.string(),
+    clearFirst: v.optional(v.boolean()),
+    rows: v.array(
+      v.object({
+        studentNumber: v.string(),
+        sectionId: v.string(),
+        courseName: v.optional(v.string()),
+        pointsEarned: v.number(),
+        pointsPossible: v.number(),
+      }),
+    ),
+  },
+  handler: async (ctx, { rows, syncedAt, clearFirst }) => {
+    let deleted = 0;
+    if (clearFirst) {
+      // take(), not collect(): a collect() over a table past the 4,096-read
+      // limit throws, and a sync that throws records nothing.
+      const old = await ctx.db.query("psSectionPoints").take(2000);
+      for (const r of old) { await ctx.db.delete(r._id); deleted++; }
+      const more = await ctx.db.query("psSectionPoints").take(1);
+      if (more.length) return { deleted, written: 0, moreToClear: true };
+    }
+    for (const r of rows) await ctx.db.insert("psSectionPoints", { ...r, syncedAt });
+    return { deleted, written: rows.length, moreToClear: false };
+  },
+});

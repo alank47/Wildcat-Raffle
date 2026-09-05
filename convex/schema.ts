@@ -330,6 +330,37 @@ export default defineSchema({
    * missing must DISAPPEAR, and an append would leave a student looking at work
    * they already handed in.
    */
+  /**
+   * Points earned and points possible per student per section.
+   *
+   * THE DENOMINATOR A PROJECTION NEEDS. psMissingWork says what has NOT been
+   * handed in; it can never say what a grade would become, because it has no
+   * record of the work already done. This does.
+   *
+   * Aggregated in the PowerQuery rather than stored per assignment: every
+   * assignment for every enrolled student is roughly a hundred thousand rows
+   * resynced twice a day, and SUM() gives the same answer in about five
+   * thousand.
+   *
+   * `matchesPosted` is the safety interlock and the reason this works WITHOUT
+   * category weights. earned/possible is the total-points grade. PGFinalGrades
+   * already posts the real percent. If they agree the section is total points
+   * and (earned + p) / possible is exact arithmetic; if they disagree the
+   * section is weighted and the app must refuse to project rather than guess.
+   * The model is checked against PowerSchool's own answer, per student per
+   * section, on every sync.
+   */
+  psSectionPoints: defineTable({
+    studentNumber: v.string(),
+    sectionId: v.string(),
+    courseName: v.optional(v.string()),
+    pointsEarned: v.number(),
+    pointsPossible: v.number(),
+    syncedAt: v.string(),
+  })
+    .index("by_studentNumber", ["studentNumber"])
+    .index("by_section", ["sectionId"]),
+
   psMissingWork: defineTable({
     studentNumber: v.string(),
     assignmentSectionId: v.string(),

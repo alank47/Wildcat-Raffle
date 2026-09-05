@@ -494,6 +494,84 @@
          Sections.TERMID                -> Terms.ID (3601, S1)
          Terms.YEARID                   -> 36 (2026-2027)
        ================================================================== -->
+  <!-- ==================================================================
+       SECTION POINT TOTALS. Added at 1.4.0.
+
+       One row per student per section: how many points they have earned and
+       how many the graded work was worth. That is everything a percentage
+       projection needs, and it is the ONLY thing missing_work could not give
+       -- that query returns the work not handed in, never the work already
+       done, so there was no denominator.
+
+       WHY AGGREGATED, NOT ONE ROW PER ASSIGNMENT. Every assignment for every
+       enrolled student is roughly a hundred thousand rows, twenty times the
+       whole roster feed, resynced twice a day. SUM() in the database gives the
+       same answer in about five thousand rows. Nothing downstream needs an
+       individual score it does not already get from missing_work.
+
+       WHY THIS DOES NOT NEED CATEGORY WEIGHTS. It does not compute the grade.
+       It reports earned and possible, and the consumer compares
+       earned/possible against the percent PowerSchool already posts in
+       PGFinalGrades:
+
+         they agree   -> the section is total points, and the projection
+                         (earned + p) / possible is exact arithmetic
+         they differ  -> the section is weighted, and the app must say it
+                         cannot predict rather than guess
+
+       That check is what makes a projection safe WITHOUT a weight column,
+       which this instance does not expose under any spelling probed. The model
+       is validated against PowerSchool's own answer before it is trusted, per
+       student per section, every sync.
+
+       COUNTED WORK ONLY, matching missing_work, so the denominator and the
+       numerator describe the same gradebook.
+
+       Same year filter through TERMS, for the reason written above:
+       ASSIGNMENTSECTION.YEARID is granted and empty here, and filtering on a
+       blank column returns zero rows forever without erroring.
+       ================================================================== -->
+  <query name="com.lapromisefund.wildcathub.section_points" coreTable="students" flattened="true">
+    <description>
+      Points earned and points possible per student per section, over work that
+      counts toward the final grade. The denominator a projection needs.
+    </description>
+    <args>
+      <arg name="schoolid" required="true" type="primitive" description="Schools.School_Number for the school being read" />
+      <arg name="yearid" required="true" type="primitive" description="Terms.Yearid for the school year being read" />
+    </args>
+    <columns>
+      <column column="STUDENTS.STUDENT_NUMBER">student_number</column>
+      <column column="SECTIONS.ID">section_id</column>
+      <column column="COURSES.COURSE_NAME">course_name</column>
+      <column column="ASSIGNMENTSCORE.SCOREPOINTS">points_earned</column>
+      <column column="ASSIGNMENTSECTION.SCOREENTRYPOINTS">points_possible</column>
+    </columns>
+    <sql>
+      <![CDATA[
+        SELECT
+          S.STUDENT_NUMBER                       AS student_number,
+          SEC.ID                                 AS section_id,
+          MAX(C.COURSE_NAME)                     AS course_name,
+          SUM(NVL(SCORE.SCOREPOINTS, 0))         AS points_earned,
+          SUM(NVL(ASEC.SCOREENTRYPOINTS, 0))     AS points_possible
+        FROM ASSIGNMENTSCORE SCORE
+        JOIN STUDENTS S             ON S.DCID = SCORE.STUDENTSDCID
+        JOIN ASSIGNMENTSECTION ASEC ON ASEC.ASSIGNMENTSECTIONID = SCORE.ASSIGNMENTSECTIONID
+        JOIN SECTIONS SEC           ON SEC.DCID = ASEC.SECTIONSDCID
+        JOIN TERMS T                ON T.ID       = SEC.TERMID
+                                   AND T.SCHOOLID = SEC.SCHOOLID
+        LEFT JOIN COURSES C         ON C.COURSE_NUMBER = SEC.COURSE_NUMBER
+                                   AND (C.SCHOOLID = SEC.SCHOOLID OR C.SCHOOLID = 0)
+        WHERE S.SCHOOLID               = :schoolid
+          AND T.YEARID                 = :yearid
+          AND S.ENROLL_STATUS          = 0
+          AND ASEC.ISCOUNTEDINFINALGRADE = 1
+        GROUP BY S.STUDENT_NUMBER, SEC.ID
+      ]]>
+    </sql>
+  </query>
+
   <query name="com.lapromisefund.wildcathub.missing_work" coreTable="students" flattened="true">
     <description>
       Assignments a teacher has marked missing, for one school, with the point

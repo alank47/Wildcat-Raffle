@@ -5,6 +5,7 @@ import { restrictedFor } from "./restrictedPolicy";
 import { sisNumberKey, sisEmailKey, gradeCell } from "./studentPortalRules";
 import { teacherRosterEmail } from "./rosterEmail";
 import { studentView } from "./views";
+import { projectGrade } from "./gradeProjection";
 
 /**
  * The three reads the app actually needs.
@@ -333,6 +334,15 @@ export const myStudentView = query({
           .collect()
       : [];
 
+    // The denominator. Absent until plugin 1.4.0 is installed, in which case
+    // every projection below refuses and the card falls back to points.
+    const sectionPoints = number.ok
+      ? await ctx.db
+          .query("psSectionPoints")
+          .withIndex("by_studentNumber", (q) => q.eq("studentNumber", number.value))
+          .collect()
+      : [];
+
     // .first(), not .unique(). putAttendance upserts one row per student number,
     // so a second row is a data fault, and .unique() answers a data fault by
     // throwing a PLAIN Error, which Convex redacts to "Server Error" in
@@ -466,6 +476,42 @@ export const myStudentView = query({
             return acc;
           }, {} as Record<string, unknown[]>),
           total: missingWork.length,
+
+          // WHAT HANDING IT IN WOULD DO, per section.
+          //
+          // Computed server side so the rule lives in one tested place rather
+          // than in a template. Every entry is either a projection or a stated
+          // reason there is none -- never a number the app is unsure of.
+          projection: (() => {
+            const byId = new Map(sectionPoints.map((p) => [p.sectionId, p]));
+            const posted = new Map(
+              gradeRows.map((g) => [g.sectionId ?? "", g.currentPercent ?? null]),
+            );
+            const out: Record<string, unknown> = {};
+            for (const [sectionId, items] of Object.entries(
+              missingWork.reduce((acc, m) => {
+                const k = m.sectionId ?? "__nosection__";
+                (acc[k] ??= []).push(m);
+                return acc;
+              }, {} as Record<string, typeof missingWork>),
+            )) {
+              // What is still on the table: the value of the work minus
+              // whatever partial credit is already recorded against it.
+              const available = items.reduce((sum, m) => {
+                const worth = typeof m.pointsPossible === "number" ? m.pointsPossible : 0;
+                const got = typeof m.scorePoints === "number" ? m.scorePoints : 0;
+                return sum + Math.max(0, worth - got);
+              }, 0);
+              const totals = byId.get(sectionId);
+              out[sectionId] = projectGrade(
+                posted.get(sectionId) ?? null,
+                totals?.pointsEarned ?? null,
+                totals?.pointsPossible ?? null,
+                available,
+              );
+            }
+            return out;
+          })(),
         },
       },
 

@@ -3104,6 +3104,14 @@ body {
     color: #2E7D52; font-weight: 600;
 }
 .wp-missing-gain b { font-weight: 800; }
+/* The honesty line under a projection. Quiet, but never optional: the number
+   above it is a ceiling, and a student who reads it as a promise has been
+   misled by us rather than by their teacher. */
+.wp-missing-caveat {
+    display: block; margin-top: 3px;
+    font-size: 11.5px; line-height: 1.4; font-weight: 500;
+    color: var(--wc-gray-text, #6E7885);
+}
 @media (max-width: 560px) { .wc-stale-data { font-size: 12.5px; padding: 10px 14px; } }
 
 @media (max-width: 620px) {

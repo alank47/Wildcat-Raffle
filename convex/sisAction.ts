@@ -343,6 +343,54 @@ export const syncFromPowerSchool = internalAction({
       }
     }
 
+    // ---- SECTION POINT TOTALS (plugin 1.4.0) --------------------------------
+    //
+    // The denominator a percentage projection needs. Its own try/catch and its
+    // own error field, like missing work above: an instance still running
+    // plugin 1.3.x does not have this query, and a 404 here must not take the
+    // roster, grades and attendance down with it. The card simply says it
+    // cannot project until the plugin is updated.
+    let sectionPointRows: Array<{
+      studentNumber: string; sectionId: string; courseName?: string;
+      pointsEarned: number; pointsPossible: number;
+    }> = [];
+    let sectionPointsError: string | null = null;
+    try {
+      const sp = await namedQuery(host, tok, `${prefix}.section_points`, {
+        schoolid,
+        yearid: need("PS_YEAR_ID"),
+      });
+      sectionPointRows = sp.rows
+        .map((r) => ({
+          studentNumber: s(r.student_number) ?? "",
+          sectionId: s(r.section_id) ?? "",
+          courseName: s(r.course_name),
+          pointsEarned: n(r.points_earned) ?? 0,
+          pointsPossible: n(r.points_possible) ?? 0,
+        }))
+        // A section with no graded work yet has a zero denominator, and a
+        // percentage over zero is not a low grade, it is no grade. Dropped
+        // here so nothing downstream has to guard against dividing by it.
+        .filter((r) => r.studentNumber && r.sectionId && r.pointsPossible > 0);
+    } catch (e: unknown) {
+      sectionPointsError = e instanceof Error ? e.message : String(e);
+    }
+
+    if (sectionPointsError === null) {
+      for (let pass = 0; pass < 20; pass++) {
+        const r: { moreToClear?: boolean } = await ctx.runMutation(
+          internal.sisStats.replaceSectionPoints,
+          { syncedAt, rows: [], clearFirst: true },
+        );
+        if (!r.moreToClear) break;
+      }
+      for (let i = 0; i < sectionPointRows.length; i += 200) {
+        await ctx.runMutation(internal.sisStats.replaceSectionPoints, {
+          syncedAt, rows: sectionPointRows.slice(i, i + 200), clearFirst: false,
+        });
+      }
+    }
+
     // ---- restricted demographics ----
     //
     // ON THE CRON, not only in the local script, for the same reason student
@@ -443,6 +491,8 @@ export const syncFromPowerSchool = internalAction({
       // is: "nobody is missing work" and "we were refused" need different
       // responses, and only one of them is a code problem.
       missingWorkError: missingError,
+      sectionPointRows: sectionPointRows.length,
+      sectionPointsError,
       studentEmailRows: emailRows.length,
       restrictedStudents: restrictedRows.length,
       restrictedRaceCodes: raceCodeCount,

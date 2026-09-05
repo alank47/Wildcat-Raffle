@@ -547,12 +547,16 @@ console.log("\n8. The type vocabulary normalizes without inventing anything");
 // ---------------------------------------------------------------------------
 console.log("\n9. PowerQuery contract, CONTROL: the queries already live");
 // ---------------------------------------------------------------------------
-// Was seven. missing_work was added at plugin 1.3.0 on 2026-08-31, so the
-// control is eight. The number is asserted rather than the file merely parsed
-// because a query that silently fails to register answers 404 forever and
-// reports nothing about why. A count that drops is the cheapest way to notice.
+// Was seven, then eight when missing_work arrived at plugin 1.3.0 on
+// 2026-08-31, and nine with section_points at 1.4.0 on 2026-09-05 -- the
+// earned/possible totals a percentage projection needs, which missing_work
+// could never supply because it returns only the work NOT done.
+//
+// The number is asserted rather than the file merely parsed because a query
+// that silently fails to register answers 404 forever and reports nothing about
+// why. A count that drops is the cheapest way to notice.
 const live = validate("live", LIVE_XML, { dcidStrict: false });
-check("control file holds the installed queries", live.length === 8, `${live.length}`);
+check("control file holds the installed queries", live.length === 9, `${live.length}`);
 
 // CALIBRATION NOTE, and the reason the control is here at all.
 //

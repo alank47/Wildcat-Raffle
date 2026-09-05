@@ -17063,14 +17063,40 @@
                     return sum + Math.max(0, m.pointsPossible - got);
                 }, 0);
 
+                // THE PERCENTAGE, WHERE IT CAN BE TRUSTED.
+                //
+                // Students read percentages, not points. The server works out
+                // whether a percentage is honest for this section -- it checks
+                // its own total-points arithmetic against the grade PowerSchool
+                // posts, and refuses when they disagree, which is what a
+                // weighted gradebook looks like from outside.
+                //
+                // Points are the fallback, not the lesser answer: they are true
+                // in every section, including the ones that cannot be projected.
+                const proj = (missing.projection && course.sectionId)
+                    ? missing.projection[course.sectionId] : null;
+
+                const gainLine = (proj && proj.canProject && proj.gainPercent > 0)
+                    ? '<span class="wp-missing-gain">' +
+                        'Turn these in and this class could go from <b>' +
+                        proj.currentPercent + '%</b> to <b>' + proj.projectedPercent + '%</b>' +
+                        '<span class="wp-missing-caveat">Best case, if you get full marks. ' +
+                        'Your teacher sets the grade.</span>' +
+                      '</span>'
+                    : (upFor > 0
+                        ? '<span class="wp-missing-gain">Up to <b>' + upFor +
+                          ' points</b> back in this class if you turn these in or retake them.' +
+                          ((proj && proj.reason && /weights categories/.test(proj.reason))
+                            ? '<span class="wp-missing-caveat">' + wpEsc(proj.reason) + '</span>'
+                            : '') +
+                          '</span>'
+                        : '');
+
                 body = '<div class="wp-missing-head">' +
                         '<span class="wp-missing-title">Missing work &middot; ' +
                             items.length + (items.length === 1 ? ' assignment' : ' assignments') +
                         '</span>' +
-                        (upFor > 0
-                            ? '<span class="wp-missing-gain">Up to <b>' + upFor +
-                              ' points</b> back in this class if you turn these in or retake them.</span>'
-                            : '') +
+                        gainLine +
                         '<span class="wp-missing-note">Your teacher marked these as not handed in. ' +
                         'The points show what each is worth, not a score you were given.</span>' +
                        '</div>' +
