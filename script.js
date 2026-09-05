@@ -1045,7 +1045,9 @@
 
         let currentUser = null;
         let currentStudent = null;
-        let binId = '6987ac03ae596e708f191041'; // School database ID - hardcoded for auto-connect
+        // A hardcoded JSONBin id, kept only because the auto-refresh guard below
+        // still tests it for truthiness. It addresses nothing: storage is Convex.
+        let binId = '6987ac03ae596e708f191041';
         let isSyncing = false; // Prevent sync conflicts
         let lastSaveTimestamp = 0; // Track when we last saved data
         let lastUserActivity = Date.now(); // Track user activity
@@ -3879,54 +3881,13 @@
 
 
 
-        async function createCloudBin() {
-            if (JSONBIN_API_KEY === 'YOUR_API_KEY_HERE') {
-                return; // Cloud not configured
-            }
-
-            try {
-                const response = await fetch('https://api.jsonbin.io/v3/b', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Master-Key': JSONBIN_API_KEY
-                    },
-                    body: JSON.stringify({
-                        students,
-                        currentWeek,
-                        weeklyWinners,
-                        bigRaffleWinners,
-                        teachers,
-                        auditLog,
-                        weeklyHistory,
-                        pbisSubcategories,
-                        academicSubcategories,
-                        lastPowerSchoolSync
-                    })
-                });
-
-                if (response.ok) {
-                    const result = await response.json();
-                    binId = result.metadata.id;
-                    localStorage.setItem('schoolBinId', binId);
-                    
-                    console.log('✅ New cloud bin created:', binId);
-                    alert(`✅ New cloud storage created!\n\n` +
-                          `Your new School ID: ${binId}\n\n` +
-                          `Your data has been saved to the cloud.\n` +
-                          `All users will now sync to this storage.`);
-                    
-                    // Save again to make sure it's synced
-                    await saveData();
-                } else {
-                    console.error('Failed to create bin:', response.status);
-                    alert('❌ Could not create cloud storage.\n\nPlease check your API key is valid at jsonbin.io');
-                }
-            } catch (error) {
-                console.error('Failed to create cloud bin:', error);
-                alert('❌ Error creating cloud storage: ' + error.message);
-            }
-        }
+        // createCloudBin() REMOVED 2026-09-05, with the JSONBin era it belonged to.
+        //
+        // It read JSONBIN_API_KEY, a name declared nowhere in this file. Calling
+        // it threw ReferenceError. It was reachable from createAdminAccount, which
+        // runs when the roster is EMPTY -- exactly the state a failed load produces,
+        // so the one moment somebody might press 'Create Admin Account' was the one
+        // moment it would throw. Storage is Convex now and has been for weeks.
 
         // Auto-refresh data from cloud only when inactive
         autoRefreshInterval = setInterval(async () => {
@@ -4486,9 +4447,24 @@
                     break;
                 case 'custom':
                     // Custom range filtering
-                    if (customStartDate && customEndDate) {
-                        const startDate = new Date(customStartDate);
-                        const endDate = new Date(customEndDate);
+                    // .value, not the elements themselves.
+                    //
+                    // customStartDate and customEndDate are element IDs, and a
+                    // browser exposes every id as a global -- so these names
+                    // resolved to the <input> elements rather than throwing.
+                    // Both were always truthy, and new Date(<input>) is Invalid
+                    // Date, so every comparison was false and a custom range
+                    // returned nothing at all. Silently: no error, just an
+                    // empty log that looked like a quiet week.
+                    const rawStart = document.getElementById('customStartDate')?.value;
+                    const rawEnd = document.getElementById('customEndDate')?.value;
+                    if (rawStart && rawEnd) {
+                        const startDate = new Date(rawStart);
+                        // Through the END of the chosen day. A date input gives
+                        // midnight, so an entry at 09:15 on the end date would
+                        // otherwise fall outside a range that names that date.
+                        const endDate = new Date(rawEnd);
+                        endDate.setHours(23, 59, 59, 999);
                         filteredAudit = auditLog.filter(e => {
                             const entryDate = new Date(e.timestamp);
                             return entryDate >= startDate && entryDate <= endDate;
@@ -6685,12 +6661,10 @@
 
             saveData();
             
-            // Create cloud bin if API key is configured
-            if (JSONBIN_API_KEY !== 'YOUR_API_KEY_HERE') {
-                createCloudBin();
-            } else {
-                alert('Admin account created! Please login.\n\n⚠️ Note: Cloud sync is not configured. Data will only be saved on this device.\n\nTo enable multi-device sync, follow the setup instructions.');
-            }
+            // The JSONBin branch that stood here read an undeclared name and
+            // threw. Data goes to Convex, and saveData above has already sent
+            // it.
+            alert('Admin account created. Please sign in.');
             
             // Hide create admin button now that admin exists
             const createAdminSection = document.getElementById('createAdminSection');
@@ -7908,7 +7882,13 @@
                     null, null, { behavior: behavior.name, notes: notes.trim() });
             }
 
-            closeAddCashModal();
+            cancelAddCash();   // was closeAddCashModal/closeRemoveCashModal, which do not exist.
+            //
+            // The throw landed BETWEEN the award and the save. The balance had
+            // already been changed in memory and the audit entry pushed, so the
+            // teacher's own screen showed the award -- and the four lines below,
+            // including `await saveData()`, never ran. The award reached no
+            // other person and no database. The modal simply stayed open.
             if (typeof updateStudentAccounts === 'function') updateStudentAccounts();
             if (typeof updateCashTable === 'function') updateCashTable();
             showToast(`✅ +$${Math.abs(amount)} · ${behavior.name}\n${selectedStudentForCash.firstName} ${selectedStudentForCash.lastName}`, 'success');
@@ -7988,7 +7968,7 @@
                     null, null, { behavior: behavior.name, notes: notes.trim() });
             }
 
-            closeRemoveCashModal();
+            cancelRemoveCash();   // was closeRemoveCashModal; see confirmAddCash.
             if (typeof updateStudentAccounts === 'function') updateStudentAccounts();
             if (typeof updateCashTable === 'function') updateCashTable();
             showToast(`✅ -$${Math.abs(amount)} · ${behavior.name}\n${selectedStudentForCash.firstName} ${selectedStudentForCash.lastName}`, 'success');
