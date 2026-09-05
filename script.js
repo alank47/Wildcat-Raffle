@@ -402,6 +402,23 @@
          * drop entries whenever a batch failed.
          */
         let auditIdsOnServer = new Set();
+
+        /**
+         * What this tab has already written, so it stops writing it again.
+         *
+         * saveData wrote every slice on every save. A cash award therefore
+         * re-sent five ticket-history documents -- about 9,600 stored rows the
+         * server has to read to merge them -- for a Raffle mode nobody is
+         * running. With thirty-four teachers that is nearly all of the load,
+         * and all of it redundant.
+         *
+         * Marked only after a write RESOLVES, so a failure re-sends. Cleared on
+         * load, because after a load this tab's record of what it has written
+         * is no longer about the data it now holds.
+         */
+        const saveDirty = (window.WildcatDirty && window.WildcatDirty.create())
+            || { changed: () => true, markWritten: () => {}, forget: () => {},
+                 stats: () => ({ checked: 0, skipped: 0, sent: 0 }) };
         let localTombstones = []; // NEW: tracks intentionally deleted ticket/audit entries
         let entityTombstones = []; // NEW: tracks intentionally deleted teachers/students (on main doc)
 
@@ -1648,6 +1665,13 @@
                         // The legacyMirror rows are not deleted by the
                         // migration. When they are eventually dropped, this
                         // block and monthlyAuditSnaps go with them.
+                        // This tab's record of what it has written is about
+                        // the data it held BEFORE this load. Forgetting it
+                        // means the first save after a load sends everything --
+                        // the cautious direction, and the only one that cannot
+                        // skip a write that is genuinely needed.
+                        saveDirty.forget();
+
                         auditIdsOnServer = new Set();
                         try {
                             let cursor = null;
@@ -2902,7 +2926,16 @@
                                 if (kept.length > 0) outgoing[sid] = kept;
                             });
 
+                            // Unchanged since this tab last wrote it: sending
+                            // it again would insert nothing and cost the server
+                            // a full read of the stored slice. In Cash or
+                            // Discipline mode no ticket history changes at all,
+                            // so this skips every one of them.
+                            if (!saveDirty.changed('hist:' + docName, outgoing)) {
+                                return { mergedHistories: outgoing, skipped: true };
+                            }
                             await mergeLegacySlice(docName, 'histories', outgoing, 'entryId');
+                            saveDirty.markWritten('hist:' + docName, outgoing);
                             return { mergedHistories: outgoing };
                         }
 
@@ -3080,13 +3113,20 @@
                         const cashWrites = Object.entries(cashByWeek).map(([wk, txs]) =>
                             saveLegacySlice(`cash_tx_${wk}`, 'transactions', txs));
 
+                        // Schedules change when the SIS syncs, which is twice a
+                        // day, not on every award. Skipping an unchanged one
+                        // removes a 324-row write from every save.
+                        const schedulesChanged = saveDirty.changed('schedules', sectionsToSave);
                         const independentWrites = await Promise.allSettled([
                             ...cashWrites,
-                            saveLegacySlice('schedules', 'sections', sectionsToSave)
+                            ...(schedulesChanged
+                                ? [saveLegacySlice('schedules', 'sections', sectionsToSave)
+                                    .then(r => { saveDirty.markWritten('schedules', sectionsToSave); return r; })]
+                                : [])
                         ]);
                         const writeNames = [
                             ...Object.keys(cashByWeek).map(w => `cash_tx_${w}`),
-                            'schedules'
+                            ...(schedulesChanged ? ['schedules'] : [])
                         ];
                         independentWrites.forEach((res, i) => {
                             if (res.status === 'fulfilled') console.log(`✅ ${writeNames[i]} saved`);
@@ -3144,8 +3184,29 @@
                                 preventionGroups,
                                 cashReceipts,
                             };
+                            // TEN SEQUENTIAL ROUND TRIPS, AWAITED ONE AT A TIME.
+                            //
+                            // These are ten independent slices in different
+                            // collections. Nothing orders them, and nothing
+                            // reads a result before writing the next. Awaiting
+                            // each one put ten network round trips end to end
+                            // inside every single save -- on a school network,
+                            // most of the time the "Saving..." message is on
+                            // screen.
+                            //
+                            // Now issued together, and skipped entirely when
+                            // the slice has not changed since this tab last
+                            // wrote it. Most saves touch one of these; the
+                            // other nine cost nothing.
+                            const secondaryWrites = [];
+                            const secondaryNames = [];
                             for (const key of Object.keys(secondaryLists)) {
-                                await mergeLegacySlice('secondary', key, secondaryLists[key] || [], 'id');
+                                const value = secondaryLists[key] || [];
+                                if (!saveDirty.changed('secondary:' + key, value)) continue;
+                                secondaryNames.push(key);
+                                secondaryWrites.push(
+                                    mergeLegacySlice('secondary', key, value, 'id')
+                                        .then(r => { saveDirty.markWritten('secondary:' + key, value); return r; }));
                             }
 
                             const secondaryWholeValue = {
@@ -3157,7 +3218,28 @@
                                 detentionReasons,
                             };
                             for (const key of Object.keys(secondaryWholeValue)) {
-                                await saveLegacySlice('secondary', key, secondaryWholeValue[key] || []);
+                                const value = secondaryWholeValue[key] || [];
+                                if (!saveDirty.changed('secondary:' + key, value)) continue;
+                                secondaryNames.push(key);
+                                secondaryWrites.push(
+                                    saveLegacySlice('secondary', key, value)
+                                        .then(r => { saveDirty.markWritten('secondary:' + key, value); return r; }));
+                            }
+
+                            // allSettled, not all: one slice failing must not
+                            // abandon the other nine, which is the behaviour the
+                            // sequential loop had by accident and this keeps on
+                            // purpose. A failure leaves that slice's fingerprint
+                            // unmarked, so the next save retries it.
+                            const secondaryResults = await Promise.allSettled(secondaryWrites);
+                            secondaryResults.forEach((res, i) => {
+                                if (res.status === 'rejected') {
+                                    console.error(`❌ secondary.${secondaryNames[i]} save failed:`,
+                                        res.reason?.message || res.reason);
+                                }
+                            });
+                            if (secondaryNames.length === 0) {
+                                console.log('✅ secondary: nothing changed');
                             }
 
                             // detentionIdCounter only ever goes up, so a stale tab
