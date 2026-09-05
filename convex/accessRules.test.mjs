@@ -3,6 +3,7 @@
 // Grilled.md: teachers see their OWN roster only; admins see wider scope.
 // Getting this wrong means a teacher can pull up any child in the school,
 // which in a system holding SIS data is the failure that matters most.
+import { readFileSync } from "node:fs";
 import { canViewStudent } from "./accessRules.ts";
 
 let pass = 0, fail = 0;
@@ -77,6 +78,36 @@ console.log("\nA refusal does not leak");
   const r = canViewStudent(OTHER, NOT_HERS);
   check("refusal names no other teacher", !r.reason.includes("amberc"));
   check("refusal does not confirm or deny the student exists", !/exists|not found|no student/i.test(r.reason));
+}
+
+
+// ---------------------------------------------------------------------------
+// teachers.sections is not writable from a browser.
+//
+// It was, and one stale profile failed EVERY appData:save. Browsers holding the
+// CSV-era shape sent sections as an array of objects; the schema says
+// v.array(v.string()); a Convex mutation is transactional, so the whole write
+// -- students, teachers and settings together -- aborted:
+//
+//   Failed to insert or update a document in table "teachers"
+//   Path: .sections[0]  Validator: v.string()
+//
+// The field is dead: nothing in the PowerSchool path writes it, every row
+// carries [], and a teacher's classes come from psRoster.
+// ---------------------------------------------------------------------------
+{
+  const shape = readFileSync(new URL("./appDataShape.ts", import.meta.url), "utf8");
+  const writable = /export const TEACHER_WRITABLE = \[([^\]]*)\]/.exec(shape);
+  check("TEACHER_WRITABLE is declared", Boolean(writable));
+  check("a browser cannot write teachers.sections", !/"sections"/.test(writable[1]));
+  check("name and ticketsAwarded stay writable",
+    /"name"/.test(writable[1]) && /"ticketsAwarded"/.test(writable[1]));
+  check("email and role are still refused",
+    !/"email"/.test(writable[1]) && !/"role"/.test(writable[1]));
+  check("and psEmail, which only an admin mutation may set",
+    !/"psEmail"/.test(writable[1]));
+  check("the reason is recorded where the field was removed",
+    /Path: \.sections\[0\]/.test(shape));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

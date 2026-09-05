@@ -68,3 +68,22 @@ export const countDoc = internalQuery({
     return { doc, atLeast: rows.length, capped: rows.length === 4000 };
   },
 });
+
+/** Does auditLog:list actually return rows? Read-only probe. */
+export const probeAuditList = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const page = await ctx.db
+      .query("appAuditLog")
+      .withIndex("by_timestamp", (ix) => ix)
+      .order("asc")
+      .paginate({ cursor: null, numItems: 5 });
+    const any = await ctx.db.query("appAuditLog").take(3);
+    return {
+      pagedRows: page.page.length,
+      isDone: page.isDone,
+      tableRows: any.length,
+      sample: page.page.slice(0, 1).map((r) => ({ entryId: r.entryId, timestamp: r.timestamp })),
+    };
+  },
+});

@@ -151,8 +151,30 @@ export const STUDENT_WRITABLE = [
   "cashTransactions",
 ] as const;
 
-/** Same reasoning for staff. Email and role are NOT writable from a browser. */
-export const TEACHER_WRITABLE = ["name", "ticketsAwarded", "sections"] as const;
+/**
+ * Same reasoning for staff. Email and role are NOT writable from a browser.
+ *
+ * `sections` WAS here and has been removed. It is the legacy CSV field: nothing
+ * in the PowerSchool path has ever written it, every staff row carries `[]`,
+ * and nothing reads it -- a teacher's classes come from psRoster through
+ * views_app:teacherRoster, and accessRules refuses to read this field on
+ * purpose, because a teacher who can edit their own profile could otherwise
+ * grant themselves the whole school.
+ *
+ * It was not merely dead. Browsers still holding the CSV-era shape sent
+ * sections as an array of OBJECTS, the schema says v.array(v.string()), and a
+ * Convex mutation is transactional -- so one stale profile failed the entire
+ * appData:save, taking students and settings down with it:
+ *
+ *   Failed to insert or update a document in table "teachers"
+ *   Path: .sections[0]
+ *   Value: {courseName: "Multimedia Production 1B", period: "P4", ...}
+ *   Validator: v.string()
+ *
+ * Removing it from the allowlist stops the browser sending it at all. Values
+ * already stored are left exactly as they are; nothing reads them.
+ */
+export const TEACHER_WRITABLE = ["name", "ticketsAwarded"] as const;
 
 function pick(source: Record<string, any>, keys: readonly string[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};

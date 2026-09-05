@@ -1913,8 +1913,10 @@
                                 if (page.isDone) break;
                                 cursor = page.cursor;
                             }
+                            window._wcAuditTableRead = { ok: true, entries: auditIdsOnServer.size };
                             console.log(`✅ Audit log: ${auditIdsOnServer.size} entries from the table`);
                         } catch (e) {
+                            window._wcAuditTableRead = { ok: false, why: (e && e.message) || String(e) };
                             // The documents below still carry everything the
                             // migration copied, so a failed table read degrades
                             // to the old behaviour rather than an empty log.
@@ -15785,7 +15787,12 @@
                         newest: auditLog.length
                             ? auditLog.map(e => e.timestamp).sort().slice(-1)[0] : null,
                         knownOnServer: (typeof auditIdsOnServer !== 'undefined' && auditIdsOnServer)
-                            ? auditIdsOnServer.size : null
+                            ? auditIdsOnServer.size : null,
+                        // knownOnServer of 0 has two causes -- the table read
+                        // failed, or it genuinely returned nothing -- and the
+                        // difference decides whether every save re-sends 6,000
+                        // entries or the table is simply empty.
+                        tableRead: window._wcAuditTableRead || 'did not run'
                     };
                 }
 
