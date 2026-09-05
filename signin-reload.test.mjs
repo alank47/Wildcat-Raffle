@@ -23,9 +23,21 @@ const script = readFileSync(new URL("./script.js", import.meta.url), "utf8");
 let pass = 0, fail = 0;
 const check = (n, c) => { c ? (pass++, console.log(`  PASS  ${n}`)) : (fail++, console.log(`  FAIL  ${n}`)); };
 
-const listener = script.slice(
-  script.indexOf("window.addEventListener('wildcat-auth-signin'"),
-  script.indexOf("window.addEventListener('wildcat-auth-signin'") + 1800);
+// Located by CONTENT, not by position or length. There are several
+// wildcat-auth-signin listeners now -- one clears the signed-out bar, one
+// refreshes hall passes -- and indexOf finds whichever happens to be first in
+// the file. The one under test is the one that re-runs the load.
+const _sigIdx = (() => {
+  let i = -1;
+  for (;;) {
+    const next = script.indexOf("window.addEventListener('wildcat-auth-signin'", i + 1);
+    if (next === -1) throw new Error("the sign-in reload listener is gone");
+    const body = script.slice(next, next + 2500);
+    if (/await loadData\(\)/.test(body)) return next;
+    i = next;
+  }
+})();
+const listener = script.slice(_sigIdx, script.indexOf("});", script.indexOf("refreshRosterFromConvex('sign-in')", _sigIdx)));
 
 console.log("\nSigning in re-runs the whole load, not just the roster");
 {
@@ -51,8 +63,13 @@ console.log("\nThe sections carry-across is documented as order-dependent");
 {
   // This line silently wipes class lists if it runs against an empty array,
   // which is precisely what happened.
-  const fn = script.slice(script.indexOf("async function refreshRosterFromConvex"),
-                          script.indexOf("window.addEventListener('wildcat-auth-signin'"));
+  // Bounded by the function's OWN end, not by whatever happens to come next in
+  // the file. The previous version sliced up to the first sign-in listener,
+  // which stopped being this function's neighbour the moment another listener
+  // was added above it -- and an inverted slice is empty, so every assertion
+  // here failed for a reason that had nothing to do with the code under test.
+  const _rIdx = script.indexOf("async function refreshRosterFromConvex");
+  const fn = script.slice(_rIdx, script.indexOf("\n        }", _rIdx) + 10);
   check("it still carries sections across", /sections: \(prior && prior\.sections\) \|\| \[\]/.test(fn));
   check("with the precondition stated at the line",
     /Only correct when `students` is ALREADY populated/.test(fn));

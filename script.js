@@ -1244,6 +1244,54 @@
         const POWERSCHOOL_API_KEY = 'mhlkugli76_986g7g60p';
 
         // Session management functions
+        /**
+         * The Microsoft session went away while the app was open.
+         *
+         * A staff ID token lasts about an hour. When it expires,
+         * acquireTokenSilent can need a real prompt, which it cannot show, so
+         * it returns null -- and everything from that moment writes only to
+         * localStorage while saveData still logs "Saved to localStorage" as
+         * though that were success. A teacher can award a whole period into a
+         * browser tab and lose it.
+         *
+         * Detected where it actually shows up: a Convex call refusing with
+         * "Not signed in". Shown as a bar that does not go away on its own,
+         * because the work already on screen is not saved anywhere but here.
+         */
+        let _sessionLostShown = false;
+        function reportSessionLost(reason) {
+            const auth = window.WildcatAuth;
+            // A real session means this was something else -- a network blip,
+            // one bad document -- and must not be reported as a lost sign-in.
+            if (auth && auth.getSession && auth.getSession()) return;
+            if (_sessionLostShown) return;
+            _sessionLostShown = true;
+
+            console.error('[session] Convex refused: no signed-in session.', reason || '');
+
+            let bar = document.getElementById('wcSessionLost');
+            if (bar) return;
+            bar = document.createElement('div');
+            bar.id = 'wcSessionLost';
+            bar.className = 'wc-session-lost';
+            bar.innerHTML =
+                '<span><strong>You have been signed out.</strong> ' +
+                'Anything awarded since then is saved on this device only, and will be sent ' +
+                'once you sign in again. Do not close this tab first.</span>' +
+                '<button type="button" class="wc-session-signin">Sign in again</button>';
+            bar.querySelector('.wc-session-signin').addEventListener('click', function () {
+                if (typeof signInWithMicrosoft === 'function') signInWithMicrosoft();
+            });
+            document.body.appendChild(bar);
+        }
+
+        /** Cleared when a session comes back, so the bar can appear again later. */
+        window.addEventListener('wildcat-auth-signin', function () {
+            _sessionLostShown = false;
+            const bar = document.getElementById('wcSessionLost');
+            if (bar) bar.remove();
+        });
+
         function saveSession() {
             if (currentUser) {
                 sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
@@ -3530,6 +3578,14 @@
                             lastSaveTimestamp: timestamp
                         }));
                         console.log('✅ Saved to localStorage');
+                        // localStorage is a cache, not a destination. If the
+                        // server writes above were refused for want of a
+                        // session, saying "saved" is the lie that lets a
+                        // teacher close the tab on a period of work.
+                        if (!(window.WildcatAuth && window.WildcatAuth.getSession
+                              && window.WildcatAuth.getSession())) {
+                            reportSessionLost('save completed to localStorage only');
+                        }
                         
                     } catch (error) {
                         console.error('❌ Firebase save error:', error);
@@ -22364,7 +22420,45 @@
                 try { await window.WildcatAuth.resumeSession({ knownStaff: true }); } catch (e) {}
             }
 
-            if (hasSession) {
+            // A RESTORED SCREEN IS NOT A RESTORED SESSION.
+            //
+            // Both currentUser and MSAL's cache live in sessionStorage, so they
+            // are lost together when a tab closes. What comes apart is their
+            // LIFETIME INSIDE one tab: currentUser sits there until the
+            // 30-minute inactivity timeout, while a Microsoft ID token expires
+            // in about an hour and acquireTokenSilent can then need a real
+            // prompt -- which it cannot show, so it returns null. The catch
+            // above swallowed that.
+            //
+            // What a teacher then saw was their own name, their own students
+            // and yesterday's numbers, on an app that could not read or write a
+            // single thing. Awards went into localStorage, saveData reported
+            // "Saved to localStorage" as though that were success, and a period
+            // of work existed only in one browser until that tab was closed.
+            //
+            // Diagnosed 2026-09-05 from wcDiagnoseData: signedInNow false, one
+            // load attempt, "Not signed in to Convex."
+            //
+            // Better to ask for one click than to lose a lesson's work. Staff
+            // whose Convex session did not come back are sent to the login
+            // screen with the reason, rather than into an app that lies.
+            const staffNeedsReauth =
+                hasSession && currentUser && currentUser.role &&
+                !(window.WildcatAuth && window.WildcatAuth.getSession && window.WildcatAuth.getSession());
+
+            if (staffNeedsReauth) {
+                console.warn('[boot] a staff session was restored locally but Convex has no session; asking for sign-in.');
+                currentUser = null;
+                try { localStorage.removeItem('currentSession'); } catch (e) {}
+                document.getElementById('mainApp').classList.add('hidden');
+                document.getElementById('loginScreen').classList.remove('hidden');
+                const notice = document.getElementById('loginError');
+                if (notice) {
+                    notice.textContent =
+                        'Your sign-in did not carry over to this tab. Please sign in again — ' +
+                        'this protects your work, which cannot be saved without it.';
+                }
+            } else if (hasSession) {
                 // User/student was logged in, restore their session
                 if (currentUser) {
                     document.getElementById('loginScreen').classList.add('hidden');

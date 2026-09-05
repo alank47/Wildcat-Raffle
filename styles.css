@@ -3038,6 +3038,26 @@ body {
 .chr-flat { color: #8892a0; }
 .chr-empty { color: #8892a0; padding: 24px 0; text-align: center; }
 
+/* Signed out while the tab stayed open. Deliberately loud and deliberately not
+   dismissible: the work on screen exists only in this browser until it is
+   sent, so the one thing a teacher must not do is close the tab. */
+.wc-session-lost {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10000;
+    display: flex; align-items: center; justify-content: center; gap: 16px;
+    flex-wrap: wrap; text-align: center;
+    padding: 14px 18px;
+    background: #B3392F; color: #fff;
+    font-size: 14px; line-height: 1.45;
+    box-shadow: 0 -6px 24px rgba(0,0,0,.28);
+}
+.wc-session-lost .wc-session-signin {
+    border: none; border-radius: 8px; cursor: pointer; white-space: nowrap;
+    padding: 9px 18px; font-size: 13.5px; font-weight: 700; font-family: inherit;
+    background: #fff; color: #B3392F;
+}
+.wc-session-lost .wc-session-signin:hover { background: #FBEBE9; }
+@media (max-width: 560px) { .wc-session-lost { font-size: 13px; padding: 12px 14px; } }
+
 @media (max-width: 620px) {
     .cash-history-totals { grid-template-columns: repeat(2, 1fr); }
     .cash-history-row { grid-template-columns: 1fr; }
