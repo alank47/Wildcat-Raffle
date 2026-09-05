@@ -14963,7 +14963,18 @@
             // answer visible instead of silent.
             const cashTabs = ['awardCash', 'cashActivity', 'cashLeaderboard',
                               'rewardsStore', 'studentAccounts', 'cashAnalytics', 'cashAudit'];
-            if (cashTabs.includes(tabName) && currentUser && currentUser.role !== 'superadmin') {
+            if (cashTabs.includes(tabName) && currentUser && !modeAllowed('cash')) {
+                // PUT THEM SOMEWHERE THAT WORKS.
+                //
+                // Painting the message and returning was the whole response
+                // here, which left the person parked on a mode they cannot use
+                // with an empty roster and no obvious way out. Wildcat Cash is
+                // no longer offered in the mode dropdown to roles that cannot
+                // enter it, so reaching this line now means something upstream
+                // failed -- most likely wildcat-modes.js not loading, which
+                // makes modeAllowed fail open and lets a stale saved mode
+                // through. Falling back to Raffle is the recovery that matters;
+                // the message survives for the case where even that cannot run.
                 const body = document.getElementById('cashStudentTableBody');
                 if (body) {
                     body.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:#999;">' +
@@ -14973,6 +14984,10 @@
                         'or ask a super admin to change your access level.</div></td></tr>';
                 }
                 console.warn(`[cash] ${tabName} is superadmin only; current role is ${currentUser.role}`);
+                // Terminates: switchSystemMode('raffle') routes through
+                // updateTabVisibility to switchTab('tickets'), which is not a
+                // cash tab, so this branch cannot re-enter itself.
+                if (typeof switchSystemMode === 'function') switchSystemMode('raffle');
                 return;
             }
 
@@ -22559,15 +22574,51 @@
             return currentUser && currentUser.id ? ('systemMode_u' + currentUser.id) : null;
         }
 
+        /**
+         * May the signed-in user enter this mode?
+         *
+         * Fails OPEN when wildcat-modes.js has not loaded. This is navigation
+         * courtesy, not the authorization boundary -- switchTab still refuses
+         * the cash tabs and Convex still checks identity -- so a script that
+         * failed to fetch must cost a stale menu entry, never lock every
+         * teacher out of every mode.
+         */
+        function modeAllowed(mode) {
+            const M = window.WildcatModes;
+            if (!M || typeof M.canUseMode !== 'function') return true;
+            return M.canUseMode(currentUser && currentUser.role, mode);
+        }
+
         function getSavedTeacherMode() {
             const key = getTeacherModeKey();
             if (!key) return null;
             const val = localStorage.getItem(key);
-            return MODE_META[val] ? val : null;
+            if (!MODE_META[val]) return null;
+            // A SAVED MODE IS A PREFERENCE, NOT AN ENTITLEMENT.
+            //
+            // A teacher who once clicked Wildcat Cash had that written here,
+            // and initSidebarShell restored it on every later sign-in -- after
+            // the role branch on sign-in had already forced the account back to
+            // Raffle. One curious click during a demo therefore left that
+            // person on a permanently dead Award Cash screen. Discarding the
+            // value is also self-healing: initSidebarShell falls back to Raffle
+            // and writes THAT here, so the bad preference does not survive.
+            if (!modeAllowed(val)) {
+                console.warn(`[mode] discarding saved mode "${val}"; not available to role ${currentUser && currentUser.role}`);
+                return null;
+            }
+            return val;
         }
 
         function selectMode(mode) {
             if (!MODE_META[mode]) return;
+            // Belt and braces for the dropdown filter below: a button rendered
+            // before the role was known, or a stale handler on a page that has
+            // been open since a role change, must not get in this way.
+            if (!modeAllowed(mode)) {
+                console.warn(`[mode] ${mode} is not available to role ${currentUser && currentUser.role}`);
+                return;
+            }
             const emptyState = document.getElementById('modeEmptyState');
             const content = document.querySelector('#mainApp .content');
             if (emptyState) emptyState.style.display = 'none';
@@ -22676,7 +22727,10 @@
             }
 
             // Dropdown rows
-            dd.innerHTML = Object.entries(MODE_META).map(([key, meta]) => `
+            // Only the modes this role may actually enter. Offering Wildcat
+            // Cash to a teacher and then refusing every tab inside it is how
+            // this screen became a trap; the honest fix is not to offer it.
+            dd.innerHTML = Object.entries(MODE_META).filter(([key]) => modeAllowed(key)).map(([key, meta]) => `
                 <button type="button" class="mode-dd-item ${key === mode ? 'mode-dd-active' : ''}" onclick="selectMode('${key}')">
                     <span class="mode-dd-icon">${meta.icon}</span>
                     <span>${meta.label}</span>
