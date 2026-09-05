@@ -23446,6 +23446,7 @@
                         <button class="tab" id="cashAnalyticsTabBtn" onclick="switchTab('cashAnalytics')">📊 Analytics</button>
                         <button class="tab" id="cashAuditTabBtn" onclick="switchTab('cashAudit')">📋 Audit Log</button>
                         <button class="tab admin-only" id="cashSettingsTabBtn" onclick="openCashSettings()">⚙️ Cash Settings</button>
+                        <button class="tab admin-only" id="cashSyncTabBtn" onclick="openSisSyncPanel()">🔄 Sync PowerSchool</button>
                     `;
                     const modeNavEl = document.getElementById('modeNav');
                     if (modeNavEl) {
@@ -23464,7 +23465,8 @@
         function removeCashTabButtons() {
             ['awardCashTabBtn', 'cashActivityTabBtn', 'cashLeaderboardTabBtn',
              'rewardsStoreTabBtn', 'studentAccountsTabBtn', 'cashAnalyticsTabBtn',
-             'cashAuditTabBtn', 'cashSettingsTabBtn', 'receiptsTabBtn'].forEach(btnId => {
+             'cashAuditTabBtn', 'cashSettingsTabBtn', 'cashSyncTabBtn',
+             'receiptsTabBtn'].forEach(btnId => {
                 const btn = document.getElementById(btnId);
                 if (btn) btn.remove();
             });
@@ -23862,6 +23864,26 @@
             switchTab('settings');
             switchSettingsSubtab('cash');
         }
+
+        /**
+         * The sync panel, in one click, from the mode people actually use.
+         *
+         * `body.cash-mode #settingsTab { display: none }` hides the Settings
+         * BUTTON in Cash mode -- which is the launch mode for everybody. The
+         * panel was reachable only by pressing "Cash Settings" and then finding
+         * an Integrations subtab, which is two hops through a button named
+         * after something else. A control an admin needs the moment a teacher
+         * says "I just flagged it" cannot be behind that.
+         */
+        function openSisSyncPanel() {
+            switchTab('settings');
+            switchSettingsSubtab('integrations');
+            const panel = document.getElementById('sisSyncNowBtn');
+            if (panel && panel.scrollIntoView) {
+                panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+        window.openSisSyncPanel = openSisSyncPanel;
 
         // At most one retry per context, so a repaint cannot loop on a broken
         // connection. Mirrors periodFilterFetchTried on the raffle side.

@@ -137,5 +137,28 @@ console.log("\nA student can see what there is to gain");
   check("the gain line is styled", /\.wp-missing-gain \{/.test(css));
 }
 
+
+console.log("\nThe button is reachable from the mode people are actually in");
+{
+  // body.cash-mode hides #settingsTab -- the Settings BUTTON -- and Cash is the
+  // launch mode for everybody. The panel was reachable only by pressing "Cash
+  // Settings" and then finding an Integrations subtab: two hops through a
+  // button named after something else, for a control an admin needs the moment
+  // a teacher says "I just flagged it".
+  check("Cash mode hides the Settings tab button, which is why this is needed",
+    /body\.cash-mode #settingsTab/.test(css));
+  check("the Cash nav carries its own entry", /id="cashSyncTabBtn"/.test(script));
+  check("it is admin-only, like Cash Settings beside it",
+    /cashSyncTabBtn" onclick="openSisSyncPanel\(\)/.test(script) &&
+    /class="tab admin-only" id="cashSyncTabBtn"/.test(script));
+  check("it opens the Integrations panel directly, not Cash Settings",
+    /function openSisSyncPanel[\s\S]{0,400}switchSettingsSubtab\('integrations'\)/.test(script));
+  check("and scrolls the button into view rather than leaving it below the fold",
+    /function openSisSyncPanel[\s\S]{0,600}scrollIntoView/.test(script));
+  check("it is torn down with the other cash tabs when the mode changes",
+    /'cashSyncTabBtn'/.test(script) &&
+    /removeCashTabButtons[\s\S]{0,400}cashSyncTabBtn/.test(script));
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);
