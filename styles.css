@@ -3077,6 +3077,25 @@ body {
     background: #fff; color: #8A5A00;
 }
 .wc-stale-data .wc-stale-retry:hover { background: #FFF6E5; }
+
+/* The missing-work list needs to say what it is. It sits directly under a
+   posted grade in the same modal, and an unlabelled list of assignment names
+   and point values reads as "here is what I scored" -- the reverse of the
+   truth. Amber rather than red: this is work to do, not a punishment. */
+.wp-missing-head {
+    display: block; margin: 2px 0 12px;
+    padding: 11px 13px; border-radius: 10px;
+    background: var(--warn-soft, #FFF6E5);
+    border-left: 3px solid var(--warn, #8A5A00);
+}
+.wp-missing-title {
+    display: block; font-weight: 700; font-size: 14px;
+    color: var(--warn, #8A5A00); letter-spacing: .005em;
+}
+.wp-missing-note {
+    display: block; margin-top: 4px; font-size: 12.5px; line-height: 1.45;
+    color: var(--wc-gray-text, #4A535F);
+}
 @media (max-width: 560px) { .wc-stale-data { font-size: 12.5px; padding: 10px 14px; } }
 
 @media (max-width: 620px) {

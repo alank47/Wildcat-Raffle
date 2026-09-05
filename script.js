@@ -4035,6 +4035,13 @@
                 selectedContent.style.display = 'block';
             }
 
+            // Same reasoning as the NFC and bell panels below: when the
+            // sync last ran lives on the server, and the whole point of the
+            // panel is knowing whether the data on screen is current.
+            if (subtab === 'integrations' && typeof showLastSisSync === 'function') {
+                showLastSisSync();
+            }
+
             // The NFC tag list is remote, so it is fetched when its tab is
             // opened rather than held stale in the DOM. Same trigger the
             // Teachers tab used to own, moved with the surface.
@@ -11567,6 +11574,99 @@
             }
         }
         
+        /**
+         * Pull from PowerSchool now, instead of waiting for 6am or midday.
+         *
+         * Runs the SAME action the cron runs, through sisManual:runNow, which
+         * holds an admin check and a two-minute cooldown server side. Nothing
+         * here is the guard; this is the button and the wording.
+         *
+         * Awaited and reported. A sync that fires and forgets teaches an admin
+         * nothing, and the reason this exists at all is somebody flagging work
+         * and being unable to tell whether the app had seen it.
+         */
+        /**
+         * When the sync last ran, on opening the panel.
+         *
+         * The button's whole purpose is "is what I am looking at current?", and
+         * a panel that cannot answer that without pressing the button is asking
+         * the admin to run a minute-long job to find out whether they need to.
+         */
+        async function showLastSisSync() {
+            const out = document.getElementById('sisSyncStatus');
+            if (!out) return;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!session) return;
+            try {
+                const st = await auth.convexQuery('sisManual:status', {}, session.idToken);
+                const last = st && st.last;
+                if (!last || !last.at) {
+                    out.style.display = 'block';
+                    out.innerHTML = 'No manual sync has been run from here yet. ' +
+                        'The scheduled syncs still run at 6:00 AM and 12:00 PM.';
+                    return;
+                }
+                const when = new Date(last.at);
+                const state = last.state === 'failed'
+                    ? '<b>failed</b>'
+                    : last.state === 'running' ? 'started' : 'completed';
+                out.style.display = 'block';
+                out.innerHTML = 'Last manual sync ' + state + ' ' +
+                    escapeHtml(when.toLocaleString()) +
+                    (last.by ? ' by ' + escapeHtml(last.by) : '') +
+                    (last.error ? '<br>' + escapeHtml(String(last.error)) : '');
+            } catch (e) {
+                // Non-fatal: the button still works without this line.
+                console.warn('[sis] could not read sync status:', (e && e.message) || e);
+            }
+        }
+        window.showLastSisSync = showLastSisSync;
+
+        async function runSisSyncNow() {
+            const btn = document.getElementById('sisSyncNowBtn');
+            const out = document.getElementById('sisSyncStatus');
+            const say = (html) => { if (out) { out.style.display = 'block'; out.innerHTML = html; } };
+
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!session) {
+                say('<b>Not signed in.</b> Sign in again and retry.');
+                return;
+            }
+
+            if (btn) { btn.disabled = true; btn.textContent = 'Syncing…'; }
+            say('Pulling roster, grades, attendance and gradebook from PowerSchool. ' +
+                'This takes about a minute &mdash; you can leave this page open.');
+
+            try {
+                const res = await auth.convexAction('sisManual:runNow', {}, session.idToken);
+
+                if (!res.started) {
+                    say('<b>Not started.</b> ' + escapeHtml(res.reason || 'A sync ran very recently.'));
+                    return;
+                }
+                if (!res.ok) {
+                    say('<b>Sync failed.</b> ' + escapeHtml(res.error || 'Unknown error.') +
+                        '<br>The scheduled sync will try again at 6:00 AM.');
+                    return;
+                }
+
+                const d = res.summary || {};
+                say('<b>Sync complete.</b><br>' +
+                    `${d.students ?? '?'} students &middot; ${d.rosterRows ?? '?'} roster rows &middot; ` +
+                    `${d.gradeRows ?? '?'} grades &middot; ${d.missingWorkRows ?? '?'} missing-work items` +
+                    (d.missingWorkError ? '<br><b>Missing work did not sync:</b> ' + escapeHtml(String(d.missingWorkError)) : '') +
+                    '<br>Reload the page to see the new data.');
+            } catch (e) {
+                say('<b>Sync failed.</b> ' + escapeHtml((e && e.message) || String(e)) +
+                    '<br>The scheduled sync will try again at 6:00 AM.');
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = 'Sync now'; }
+            }
+        }
+        window.runSisSyncNow = runSisSyncNow;
+
         function updateLastSyncTime() {
             const syncTimeElement = document.getElementById('lastSyncTime');
             if (syncTimeElement) {
@@ -16937,7 +17037,22 @@
             } else if (!items.length) {
                 body = wpEmpty('Nothing missing in this class.');
             } else {
-                body = '<div class="wp-rows wp-rows-nested">' + items.slice().sort(function (a, b) {
+                // SAY WHAT THE LIST IS.
+                //
+                // It used to open straight into assignment names, due dates and
+                // point values, directly beneath the posted grade -- with
+                // nothing anywhere saying "missing". A student reading it top to
+                // bottom sees a grade and then a list of numbers, and the
+                // natural reading is "here is what I scored". It is the reverse:
+                // work not handed in, and what it is worth if they do.
+                body = '<div class="wp-missing-head">' +
+                        '<span class="wp-missing-title">Missing work &middot; ' +
+                            items.length + (items.length === 1 ? ' assignment' : ' assignments') +
+                        '</span>' +
+                        '<span class="wp-missing-note">Your teacher marked these as not handed in. ' +
+                        'The points show what each is worth, not a score you were given.</span>' +
+                       '</div>' +
+                       '<div class="wp-rows wp-rows-nested">' + items.slice().sort(function (a, b) {
                     // Oldest due first, no due date LAST. Sorting on
                     // `dueDate || ''` puts undated work above things genuinely
                     // overdue, which is the opposite of what a student needs.
@@ -16947,8 +17062,12 @@
                 }).map(function (m) {
                     // null, never 0: a section can score by something other than
                     // points, and "0 pts" says the work does not matter.
+                    // "worth 100 pts", never "100 pts". On a card that sits
+                    // directly under a posted grade, a bare number reads as the
+                    // score the student GOT. This is what the work is worth if
+                    // they hand it in, which is the opposite meaning.
                     const worth = (typeof m.pointsPossible === 'number')
-                        ? wpEsc(String(m.pointsPossible)) + ' pts' : '';
+                        ? 'worth ' + wpEsc(String(m.pointsPossible)) + ' pts' : '';
                     const due = m.dueDate ? wpEsc(String(m.dueDate)) : 'No due date';
                     return '<div class="wp-row wp-row-nested">' +
                         '<span class="wp-rowmain">' +

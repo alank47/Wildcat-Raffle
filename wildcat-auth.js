@@ -133,6 +133,38 @@
     return body.value;
   }
 
+  /**
+   * Same contract again, against the ACTION endpoint.
+   *
+   * Actions are their own endpoint: /api/action, not /api/mutation. Calling an
+   * action through the mutation endpoint fails in a way that reads like the
+   * function not existing, which is a slow thing to diagnose.
+   *
+   * No timeout is imposed here. The one action this serves is the PowerSchool
+   * sync, which takes about a minute by design; a client-side abort would
+   * leave the sync running server side while telling the user it failed.
+   */
+  async function convexAction(path, args, idToken) {
+    const res = await fetch(`${CONFIG.convexUrl}/api/action`, {
+      method: 'POST',
+      headers: Object.assign(
+        { 'Content-Type': 'application/json' },
+        idToken ? { Authorization: `Bearer ${idToken}` } : {},
+      ),
+      body: JSON.stringify({ path, args: args || {}, format: 'json' }),
+    });
+    if (!res.ok) throw new Error(`Convex HTTP ${res.status}`);
+    const body = await res.json();
+    if (body.status === 'error') {
+      throw new Error(
+        (typeof body.errorData === 'string' && body.errorData) ||
+        (body.errorData && body.errorData.message) ||
+        body.errorMessage || 'Convex action failed',
+      );
+    }
+    return body.value;
+  }
+
   /** Same contract as convexQuery, against the mutation endpoint. */
   async function convexMutation(path, args, idToken) {
     const res = await fetch(`${CONFIG.convexUrl}/api/mutation`, {
@@ -1254,6 +1286,7 @@
     forgetCachedStaffAccount,
     convexQuery,
     convexMutation,
+    convexAction,
     getSession: () => session,
     /** Console preflight: what is wired up and what is still missing. */
     status: () => ({

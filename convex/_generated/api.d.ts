@@ -44,6 +44,7 @@ import type * as seed from "../seed.js";
 import type * as seedBellSchedules from "../seedBellSchedules.js";
 import type * as seedTestRoster from "../seedTestRoster.js";
 import type * as sisAction from "../sisAction.js";
+import type * as sisManual from "../sisManual.js";
 import type * as sisMerge from "../sisMerge.js";
 import type * as sisStats from "../sisStats.js";
 import type * as sisSync from "../sisSync.js";
@@ -102,6 +103,7 @@ declare const fullApi: ApiFromModules<{
   seedBellSchedules: typeof seedBellSchedules;
   seedTestRoster: typeof seedTestRoster;
   sisAction: typeof sisAction;
+  sisManual: typeof sisManual;
   sisMerge: typeof sisMerge;
   sisStats: typeof sisStats;
   sisSync: typeof sisSync;
