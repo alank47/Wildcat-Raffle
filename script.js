@@ -15472,6 +15472,83 @@
          * added and then quietly miss the refresh — which is exactly how Award
          * Cash ended up without the retry Award Tickets had.
          */
+        /**
+         * Why are there no class periods on screen?
+         *
+         * Written because I guessed twice and was wrong twice. Every stage of
+         * the roster path reports what it actually holds, so the answer comes
+         * from the machine that has the problem instead of from me reasoning
+         * about code I cannot sign into.
+         *
+         * Read only. It fetches nothing and changes nothing.
+         *
+         *   wcDiagnoseRoster()
+         */
+        window.wcDiagnoseRoster = function () {
+            const out = {};
+            try {
+                const auth = window.WildcatAuth;
+                const session = auth && auth.getSession && auth.getSession();
+                out.signedIn = Boolean(session);
+                out.user = currentUser
+                    ? { email: currentUser.email, role: currentUser.role, id: currentUser.id }
+                    : null;
+
+                out.mode = {
+                    body: document.body.className,
+                    cashEnabled: typeof wildcatCashEnabled !== 'undefined' ? wildcatCashEnabled : null,
+                    saved: (typeof getSavedTeacherMode === 'function') ? getSavedTeacherMode() : null
+                };
+
+                out.fetch = {
+                    state: typeof sisRosterState !== 'undefined' ? sisRosterState : null,
+                    error: typeof sisRosterError !== 'undefined' ? sisRosterError : null,
+                    raffleTried: typeof periodFilterFetchTried !== 'undefined' ? periodFilterFetchTried : null,
+                    cashTried: typeof cashFilterFetchTried !== 'undefined' ? cashFilterFetchTried : null,
+                    previewing: (typeof isPreviewingTeacher === 'function') ? isPreviewingTeacher() : null
+                };
+
+                const roster = activeTeacherRoster();
+                out.roster = roster ? {
+                    sectionCount: roster.sectionCount,
+                    studentCount: roster.studentCount,
+                    sectionsInPayload: (roster.sections || []).length,
+                    rosterEmail: roster.rosterEmail || null,
+                    rosterVia: roster.rosterVia || null,
+                    refused: roster.rosterViaRefused || false
+                } : null;
+
+                // The step between the payload and the dropdown, which is where
+                // a full roster can still produce an empty list.
+                const sections = window.WildcatRoster.sectionsFrom(roster);
+                out.sectionsFrom = sections.map(s => ({
+                    id: s.sectionId, label: s.label, students: (s.students || []).length
+                }));
+
+                const opts = (id) => {
+                    const el = document.getElementById(id);
+                    if (!el) return 'element missing';
+                    return Array.from(el.options || []).map(o => o.textContent);
+                };
+                out.dropdowns = {
+                    cashPeriodFilter: opts('cashPeriodFilter'),
+                    periodFilter: opts('periodFilter'),
+                    referralStudentScope: opts('referralStudentScope')
+                };
+
+                out.students = {
+                    inMemory: typeof students !== 'undefined' ? students.length : null,
+                    withStudentNumber: typeof students !== 'undefined'
+                        ? students.filter(s => s && s.studentNumber).length : null
+                };
+            } catch (e) {
+                out.threw = (e && e.stack) || String(e);
+            }
+            console.log('=== WILDCAT ROSTER DIAGNOSTIC ===');
+            console.log(JSON.stringify(out, null, 2));
+            return out;
+        };
+
         function repaintRosterPickers(reason) {
             const sections = window.WildcatRoster.sectionsFrom(activeTeacherRoster());
             console.log(`[roster] repaint after ${reason}: ${sections.length} section(s)`);
