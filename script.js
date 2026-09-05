@@ -1301,11 +1301,23 @@
         }
 
         let _sessionLostShown = false;
+        /** Set once a session has actually been established in this page load. */
+        let _hadSessionThisLoad = false;
         function reportSessionLost(reason) {
             const auth = window.WildcatAuth;
             // A real session means this was something else -- a network blip,
             // one bad document -- and must not be reported as a lost sign-in.
             if (auth && auth.getSession && auth.getSession()) return;
+
+            // NOTHING IS LOST IF NOTHING WAS EVER HELD.
+            //
+            // loadData runs before sign-in and its Convex writes all refuse, so
+            // without this the bar appeared on the LOGIN SCREEN of every page
+            // load, telling a teacher they had been signed out before they had
+            // signed in. "You have been signed out" is only true of a session
+            // that existed.
+            if (!_hadSessionThisLoad) return;
+
             if (_sessionLostShown) return;
             _sessionLostShown = true;
 
@@ -1329,6 +1341,7 @@
 
         /** Cleared when a session comes back, so the bar can appear again later. */
         window.addEventListener('wildcat-auth-signin', function () {
+            _hadSessionThisLoad = true;
             _sessionLostShown = false;
             const bar = document.getElementById('wcSessionLost');
             if (bar) bar.remove();
@@ -8563,14 +8576,29 @@
 
         // Ensure bell schedules exist (initialize with defaults if missing)
         function ensureBellSchedulesExist() {
+            // SAVES ONLY IF IT CHANGED SOMETHING.
+            //
+            // This ended with an unconditional saveData(), and loadDataLocal
+            // calls it during boot -- so every page load performed a full save
+            // of 615 students BEFORE anyone had signed in. Every Convex write
+            // in it refused, printing twenty red errors on a login screen, and
+            // it was what tripped the "You have been signed out" bar before
+            // anybody had signed in.
+            //
+            // Almost every call finds the settings already correct and needs to
+            // write nothing at all.
+            let changed = false;
+
             // Initialize bellSchedules object if it doesn't exist
             if (!passSettings.bellSchedules) {
                 passSettings.bellSchedules = {};
+                changed = true;
             }
             
             // Initialize currentSchool if not set
             if (!passSettings.currentSchool) {
                 passSettings.currentSchool = 'highschool';
+                changed = true;
             }
             
             // Check if we need to migrate from old schedule system to new multi-school system
@@ -8591,6 +8619,7 @@
                 
                 // Replace with new school-specific schedules
                 passSettings.bellSchedules = customSchedules;
+                changed = true;
             }
             
             // CREATE HIGH SCHOOL SCHEDULES
@@ -8811,15 +8840,17 @@
             // Set default active schedule if not set
             if (!passSettings.activeSchedule) {
                 passSettings.activeSchedule = 'auto';
+                changed = true;
             }
             
             // Set default auto-detection if not set
             if (passSettings.enableAutoDetection === undefined) {
                 passSettings.enableAutoDetection = true;
+                changed = true;
             }
             
-            // Save the updated schedules
-            saveData();
+            // Only when there is genuinely something new to store.
+            if (changed) saveData();
         }
 
         // Get the correct schedule based on day of week or manual selection

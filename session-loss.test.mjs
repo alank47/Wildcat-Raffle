@@ -131,5 +131,44 @@ console.log("\nAnalytics is not scoped to one person, so stale data must be visi
     /\.wc-stale-data \{[^}]*z-index: 9998/.test(css));
 }
 
+
+console.log("\nIt does not cry wolf on the login screen");
+{
+  // loadData runs BEFORE sign-in and every Convex write in it refuses. Without
+  // a guard the bar appeared on the login screen of every page load, telling a
+  // teacher they had been signed out before they had signed in. Confirmed from
+  // a real console on 2026-09-05:
+  //   [session] Convex refused: no signed-in session. save completed to
+  //   localStorage only        <- during boot, before any sign-in
+  const fn = code.slice(code.indexOf("function reportSessionLost("),
+                        code.indexOf("function saveSession()"));
+  check("it returns unless a session existed in this page load",
+    /if \(!_hadSessionThisLoad\) return;/.test(fn));
+  check("that guard runs BEFORE the bar is built",
+    fn.indexOf("_hadSessionThisLoad") < fn.indexOf("createElement"));
+  check("the flag starts false", /let _hadSessionThisLoad = false;/.test(code));
+  check("and is set only by an actual sign-in",
+    /wildcat-auth-signin'[\s\S]{0,120}_hadSessionThisLoad = true;/.test(code));
+}
+
+console.log("\nBoot does not save before anyone has signed in");
+{
+  // ensureBellSchedulesExist ended in an unconditional saveData(), and
+  // loadDataLocal calls it during boot -- a full 615-student save with no
+  // session, twenty refused Convex writes, and the false alarm above.
+  const i = code.indexOf("function ensureBellSchedulesExist()");
+  const fn = code.slice(i, code.indexOf("\n        }", code.indexOf("if (changed) saveData();", i)));
+  check("the save is conditional", /if \(changed\) saveData\(\);/.test(fn));
+  check("and unconditional saveData is gone from it",
+    !/^\s*saveData\(\);\s*$/m.test(fn));
+
+  // Every branch that writes a setting must mark it, or a real migration would
+  // silently not persist -- which is worse than the noise this removes.
+  const writes = (fn.match(/passSettings\.[A-Za-z]+(\[[^\]]*\])?\s*=[^=]/g) || []).length;
+  const marks = (fn.match(/changed = true;/g) || []).length;
+  check(`every mutating branch marks changed (${writes} writes, ${marks} markers)`,
+    marks >= writes - 1);
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);
