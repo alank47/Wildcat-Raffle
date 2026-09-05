@@ -1682,6 +1682,19 @@
                     // read back with, so the fetch and the lookup cannot
                     // disagree about which week it is.
                     window._wcLastLoadSource = 'convex (in progress)';
+                    // EVERY ATTEMPT, not just the last one.
+                    //
+                    // loadData runs at least twice -- once at boot, which
+                    // always fails because no session exists yet, and again
+                    // when the sign-in listener fires. Reporting only the last
+                    // outcome cannot distinguish "the second one failed too"
+                    // from "the second one has not run", and those need
+                    // opposite fixes. This has cost several rounds.
+                    (window._wcLoadLog = window._wcLoadLog || []).push({
+                        at: new Date().toISOString(), outcome: 'started',
+                        signedIn: Boolean(window.WildcatAuth && window.WildcatAuth.getSession
+                                          && window.WildcatAuth.getSession())
+                    });
                     const _legacyResult = await loadLegacyDocsFromConvex(
                         LEGACY_FIXED_DOCS
                             .concat(monthKeys.map(auditDocName))
@@ -2157,6 +2170,8 @@
                         }
 
                         window._wcLastLoadSource = 'convex';
+                        (window._wcLoadLog = window._wcLoadLog || []).push({
+                            at: new Date().toISOString(), outcome: 'convex ok' });
                         console.log('Loaded data from Convex (main, secondary, ticket_history_ms, ticket_history_hs, audit_log)');
                         
                         // Apply school branding
@@ -2222,6 +2237,12 @@
                     // actually looking at.
                     window._wcLastLoadSource = 'localStorage (server load failed: '
                         + ((error && error.message) || 'unknown') + ')';
+                    (window._wcLoadLog = window._wcLoadLog || []).push({
+                        at: new Date().toISOString(), outcome: 'failed',
+                        why: (error && error.message) || 'unknown',
+                        signedIn: Boolean(window.WildcatAuth && window.WildcatAuth.getSession
+                                          && window.WildcatAuth.getSession())
+                    });
                     console.error('Server load error:', error && error.message);
                     loadDataLocal();
                 }
@@ -15676,6 +15697,11 @@
             try {
                 const n = (v) => (Array.isArray(v) ? v.length : (v == null ? null : 'not-an-array'));
                 out.loadedFrom = window._wcLastLoadSource || 'unknown';
+                // The whole sequence, so "the reload never ran" and "the reload
+                // ran and failed" can be told apart at a glance.
+                out.loadAttempts = window._wcLoadLog || [];
+                out.signedInNow = Boolean(window.WildcatAuth && window.WildcatAuth.getSession
+                                          && window.WildcatAuth.getSession());
                 out.unreadableDocuments = (typeof unreadLegacyDocs !== 'undefined' && unreadLegacyDocs)
                     ? Array.from(unreadLegacyDocs) : null;
 
