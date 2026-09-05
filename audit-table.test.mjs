@@ -153,12 +153,15 @@ console.log("\nThe move cannot lose an entry it has not copied yet");
     /if \(!auditById\.has\(id\)\) auditById\.set\(id, \{ \.\.\.e, entryId: id \}\)/.test(code));
   check("a failed table read degrades to the documents rather than an empty log",
     /table read failed, falling back to documents/.test(code));
+  const migration = readFileSync(new URL("./convex/auditMigrate.ts", import.meta.url), "utf8");
   check("the migration does not delete its source",
-    /IT DOES NOT DELETE ANYTHING/.test(
-      readFileSync(new URL("./scripts/migrate-audit-log.mjs", import.meta.url), "utf8")));
+    /IT DOES NOT DELETE ANYTHING/.test(migration));
   check("and it is idempotent, because the first run may fail partway",
-    /SAFE TO RUN TWICE/.test(
-      readFileSync(new URL("./scripts/migrate-audit-log.mjs", import.meta.url), "utf8")));
+    /SAFE TO RUN TWICE/.test(migration));
+  check("it uses the SAME id function as the app, or it would import everything twice",
+    /ensureEntryId from script\.js, character for character/.test(migration));
+  check("and it distinguishes a redundant copy from a real hash collision",
+    /IS THIS THE SAME ENTRY TWICE, OR TWO DIFFERENT ONES\?/.test(migration));
 }
 
 console.log("\nThe module is actually served, before the code that calls it");
