@@ -1257,6 +1257,47 @@
          * "Not signed in". Shown as a bar that does not go away on its own,
          * because the work already on screen is not saved anywhere but here.
          */
+        /**
+         * This screen is showing a cached copy, not the server's.
+         *
+         * WHY IT MATTERS MOST ON ANALYTICS. Nothing in Analytics is scoped to
+         * one person -- every panel reads the whole school, and only the two
+         * screens called "My Activity" filter by user. So two people looking at
+         * the same dashboard should see the same figures, and on 2026-09-05 they
+         * did not: one session had loaded from Convex and the other had fallen
+         * back to localStorage, so the totals differed by twenty-four entries
+         * with nothing on screen to say why.
+         *
+         * A number that is quietly out of date is worse than no number on a
+         * screen the PBIS team uses to decide things.
+         *
+         * Distinct from the signed-out bar: that one means the person must act
+         * before anything can save. This one means what is on screen is old.
+         * Both can be true; the red bar carries the more urgent instruction, so
+         * this stays quiet whenever that one is up.
+         */
+        function refreshStaleDataNotice() {
+            const src = window._wcLastLoadSource || '';
+            const stale = src && src.indexOf('convex') !== 0;
+            const signedOutBarUp = Boolean(document.getElementById('wcSessionLost'));
+            const existing = document.getElementById('wcStaleData');
+
+            if (!stale || signedOutBarUp) { if (existing) existing.remove(); return; }
+            if (existing) return;
+
+            const bar = document.createElement('div');
+            bar.id = 'wcStaleData';
+            bar.className = 'wc-stale-data';
+            bar.innerHTML =
+                '<span><strong>Showing saved data from this device.</strong> ' +
+                'The server could not be reached on the last load, so these figures may be out of date.</span>' +
+                '<button type="button" class="wc-stale-retry">Reload</button>';
+            bar.querySelector('.wc-stale-retry').addEventListener('click', function () {
+                location.reload();
+            });
+            document.body.appendChild(bar);
+        }
+
         let _sessionLostShown = false;
         function reportSessionLost(reason) {
             const auth = window.WildcatAuth;
@@ -11430,6 +11471,8 @@
             updateSubcategoryDropdown();
             updateSubcategoryLists();
             updatePeriodFilter();
+            // Cheap, and the one place guaranteed to run on every repaint.
+            if (typeof refreshStaleDataNotice === 'function') refreshStaleDataNotice();
             if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin')) {
                 updateTeachersTable();
             }

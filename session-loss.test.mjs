@@ -83,5 +83,53 @@ console.log("\nThe bar cannot be missed or dismissed");
     !/wc-session-dismiss|wc-session-later/.test(code));
 }
 
+
+console.log("\nAnalytics is not scoped to one person, so stale data must be visible");
+{
+  // WHY THIS SITS HERE. Two accounts showed different Analytics totals on
+  // 2026-09-05 -- 6,247 audit entries against 6,223, 25 cash transactions
+  // against 0. Not a permissions rule: nothing in Analytics filters by user.
+  // One session had loaded from Convex and the other had fallen back to
+  // localStorage, and nothing on screen said so.
+  const scopedByDesign = ["updateMyActivity", "updateCashActivityLog"];
+  const schoolWide = ["updateCashAnalytics", "updateCashAuditLogTable",
+                      "updateTeacherInteractionDetails", "updateLeaderboard"];
+
+  const bodyOf = (n) => {
+    const i = code.indexOf(`function ${n}(`);
+    return i < 0 ? "" : code.slice(i, i + 3000);
+  };
+  for (const fn of schoolWide) {
+    const b = bodyOf(fn);
+    check(`${fn} exists`, b.length > 0);
+    check(`${fn} does NOT filter to the signed-in user`,
+      !/currentUser\.(id|name|username)\s*===/.test(b));
+  }
+  for (const fn of scopedByDesign) {
+    check(`${fn} DOES filter to the signed-in user, as its name promises`,
+      /currentUser\.(id|name|username)/.test(bodyOf(fn)));
+  }
+
+  check("a cached load raises a notice", /function refreshStaleDataNotice\(/.test(code));
+  const notice = code.slice(code.indexOf("function refreshStaleDataNotice("),
+                            code.indexOf("let _sessionLostShown"));
+  check("it fires only when the last load did not come from Convex",
+    /src\.indexOf\('convex'\) !== 0/.test(notice));
+  check("it yields to the signed-out bar, which is more urgent",
+    /signedOutBarUp/.test(notice));
+  check("it removes itself once a load succeeds",
+    /if \(!stale \|\| signedOutBarUp\) \{ if \(existing\) existing\.remove\(\); return; \}/.test(notice));
+  check("it offers a reload rather than only stating the problem",
+    /location\.reload\(\)/.test(notice));
+  check("and it is re-evaluated on every repaint",
+    /refreshStaleDataNotice\(\);/.test(code.slice(code.indexOf("function updateAllDisplays"))));
+
+  const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+  check("amber, not the red reserved for a stop",
+    /\.wc-stale-data \{[^}]*background: #8A5A00/.test(css));
+  check("and it sits below the session bar in the stack",
+    /\.wc-stale-data \{[^}]*z-index: 9998/.test(css));
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);

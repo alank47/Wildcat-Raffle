@@ -3058,6 +3058,27 @@ body {
 .wc-session-lost .wc-session-signin:hover { background: #FBEBE9; }
 @media (max-width: 560px) { .wc-session-lost { font-size: 13px; padding: 12px 14px; } }
 
+/* Showing a cached copy. Amber, not red: nothing is broken and nothing is lost,
+   the figures are simply old -- which on a dashboard people decide from is
+   still worth saying out loud. Sits above the session bar's slot but yields to
+   it, because that one carries the more urgent instruction. */
+.wc-stale-data {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 9998;
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    flex-wrap: wrap; text-align: center;
+    padding: 11px 18px;
+    background: #8A5A00; color: #fff;
+    font-size: 13.5px; line-height: 1.45;
+    box-shadow: 0 -4px 18px rgba(0,0,0,.22);
+}
+.wc-stale-data .wc-stale-retry {
+    border: none; border-radius: 8px; cursor: pointer; white-space: nowrap;
+    padding: 7px 16px; font-size: 13px; font-weight: 700; font-family: inherit;
+    background: #fff; color: #8A5A00;
+}
+.wc-stale-data .wc-stale-retry:hover { background: #FFF6E5; }
+@media (max-width: 560px) { .wc-stale-data { font-size: 12.5px; padding: 10px 14px; } }
+
 @media (max-width: 620px) {
     .cash-history-totals { grid-template-columns: repeat(2, 1fr); }
     .cash-history-row { grid-template-columns: 1fr; }
