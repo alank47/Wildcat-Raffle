@@ -6292,30 +6292,21 @@
             document.getElementById('currentUserName').textContent = teacher.name;
             document.getElementById('currentUserRole').textContent = getFriendlyRoleName(teacher.role);
             
-            // Force admin, teacher, and campus aide users to Raffle Mode only
-            if (teacher.role === 'teacher' || teacher.role === 'campusaide' || teacher.role === 'pbis' || teacher.role === 'admin') {
-                wildcatCashEnabled = false;
-                localStorage.setItem('systemMode', 'raffle');
-                document.body.classList.remove('cash-mode', 'hallpass-mode', 'discipline-mode');
-                document.body.classList.add('raffle-mode');
-                
-                // Ensure tabs are visible
-                const tabsContainer = document.querySelector('.tabs');
-                if (tabsContainer) tabsContainer.style.display = 'flex';
-                
-                // Ensure content container is visible
-                const contentContainer = document.querySelector('.content');
-                if (contentContainer) {
-                    contentContainer.style.display = 'block';
-                    // Remove any inline display styles from tab-content divs
-                    contentContainer.querySelectorAll('.tab-content').forEach(el => el.style.display = '');
-                }
-                
-                // Hide Claw Pass and Discipline content for non-superadmins
-                const clawPassContent = document.getElementById('clawPassContent');
-                const disciplineContent = document.getElementById('disciplineContent');
-                if (clawPassContent) clawPassContent.style.display = 'none';
-                if (disciplineContent) disciplineContent.style.display = 'none';
+            // THE MODE IS NOT DECIDED HERE ANY MORE.
+            //
+            // This block forced teacher, campus aide, PBIS and admin into
+            // Raffle and hid Claw Pass and Discipline outright. Two things
+            // were wrong with it. Raffle is not what the school launches on --
+            // most staff cannot even open it now -- and initSidebarShell
+            // restored the person's saved mode a few milliseconds later
+            // anyway, so this was overruled on every sign-in while still
+            // costing a flash of the wrong screen.
+            //
+            // wildcat-modes.js owns which modes a role may open, and
+            // switchSystemMode owns the DOM that goes with each one. Doing it
+            // in one place is what stops the two disagreeing.
+            if (typeof switchSystemMode === 'function') {
+                switchSystemMode(getSavedTeacherMode() || allowedModeOrDefault());
             }
             
             // Show/hide tabs based on role
@@ -6330,8 +6321,9 @@
                 // Hide week controls for teachers and campus aides
                 const weekControls = document.getElementById('weekControls');
                 if (weekControls) weekControls.style.display = 'none';
-                
-                switchTab('tickets');
+                // No switchTab here: switchSystemMode above already opened the
+                // landing screen for whichever mode this person gets. Naming a
+                // tab now would drag them out of it.
             } else if (teacher.role === 'admin') {
                 // Admins see admin tabs but not super admin tabs
                 adminTabs.forEach(tab => tab.classList.remove('disabled'));
@@ -6340,8 +6332,7 @@
                 // Show week controls for admins
                 const weekControls = document.getElementById('weekControls');
                 if (weekControls) weekControls.style.display = 'flex';
-                
-                switchTab('students');
+                // Landing screen already chosen by switchSystemMode above.
             } else if (teacher.role === 'superadmin') {
                 // Super admins see everything
                 adminTabs.forEach(tab => tab.classList.remove('disabled'));
@@ -6351,42 +6342,14 @@
                 const weekControls = document.getElementById('weekControls');
                 if (weekControls) weekControls.style.display = 'flex';
                 
-                // Restore superadmin's saved mode preference or default to raffle
-                const savedMode = localStorage.getItem('systemMode') || 'raffle';
-                if (savedMode === 'cash') {
-                    wildcatCashEnabled = true;
-                    document.body.classList.remove('raffle-mode', 'hallpass-mode');
-                    document.body.classList.add('cash-mode');
-                } else if (savedMode === 'hallpass') {
-                    document.body.classList.remove('raffle-mode', 'cash-mode');
-                    document.body.classList.add('hallpass-mode');
-                    const clawPassContent = document.getElementById('clawPassContent');
-                    const tabsContainer = document.querySelector('.tabs');
-                    if (tabsContainer) tabsContainer.style.display = 'none';
-                    if (clawPassContent) clawPassContent.style.display = 'block';
-                    
-                    // Make sure subtab buttons are visible for admins/teachers
-                    document.querySelectorAll('.subtab-button').forEach(btn => {
-                        btn.style.display = '';
-                    });
-                    
-                    switchHallPassTab('myClass');
-                } else {
-                    wildcatCashEnabled = false;
-                    document.body.classList.remove('cash-mode', 'hallpass-mode');
-                    document.body.classList.add('raffle-mode');
-                    // Ensure normal content is visible for raffle mode
-                    const tabsContainer = document.querySelector('.tabs');
-                    if (tabsContainer) tabsContainer.style.display = 'flex';
-                    const contentContainer = document.querySelector('.content');
-                    if (contentContainer) {
-                        contentContainer.querySelectorAll('.tab-content').forEach(el => el.style.display = '');
-                    }
-                }
-                
-                updateModeToggleUI();
-                updateTabVisibility();
-                switchTab('students');
+                // Mode already restored by switchSystemMode at the top of this
+                // function, from the PER-USER preference. This branch read the
+                // shared `systemMode` key and re-applied the body classes by
+                // hand -- a second, divergent copy of what switchSystemMode
+                // does, keyed on storage that every account on a shared
+                // Chromebook writes to. On a shared machine that handed a
+                // superadmin whatever mode the last person left behind.
+
             }
 
             updateAllDisplays();
@@ -15084,33 +15047,35 @@
             //
             // This does not change who may use Cash mode. It makes the existing
             // answer visible instead of silent.
+            // MODE GATE, not a cash gate.
+            //
+            // This used to be `role !== 'superadmin'`, from when Wildcat Cash
+            // was in beta. Cash is what the school LAUNCHES on, so it is open
+            // to every member of staff and this branch no longer fires for it.
+            //
+            // Kept, and made general, because the shape of the mistake it
+            // caught is the one worth catching: a tab reached in a mode the
+            // person may not open, most often from a `systemMode` left in
+            // localStorage by an earlier session. Landing somebody on a screen
+            // that will never populate reads as a broken app rather than a
+            // closed door.
             const cashTabs = ['awardCash', 'cashActivity', 'cashLeaderboard',
                               'rewardsStore', 'studentAccounts', 'cashAnalytics', 'cashAudit'];
             if (cashTabs.includes(tabName) && currentUser && !modeAllowed('cash')) {
-                // PUT THEM SOMEWHERE THAT WORKS.
-                //
-                // Painting the message and returning was the whole response
-                // here, which left the person parked on a mode they cannot use
-                // with an empty roster and no obvious way out. Wildcat Cash is
-                // no longer offered in the mode dropdown to roles that cannot
-                // enter it, so reaching this line now means something upstream
-                // failed -- most likely wildcat-modes.js not loading, which
-                // makes modeAllowed fail open and lets a stale saved mode
-                // through. Falling back to Raffle is the recovery that matters;
-                // the message survives for the case where even that cannot run.
                 const body = document.getElementById('cashStudentTableBody');
                 if (body) {
                     body.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:#999;">' +
-                        '<div style="font-weight:600;margin-bottom:6px;">Wildcat Cash is limited to super admins</div>' +
+                        '<div style="font-weight:600;margin-bottom:6px;">Wildcat Cash is not available to your account</div>' +
                         '<div style="font-size:13px;max-width:520px;margin:0 auto;">' +
-                        `Your account is "${currentUser.role}". Switch to Raffle Mode to award tickets, ` +
-                        'or ask a super admin to change your access level.</div></td></tr>';
+                        `Your account is "${currentUser.role}". ` +
+                        'Ask a super admin to change your access level.</div></td></tr>';
                 }
-                console.warn(`[cash] ${tabName} is superadmin only; current role is ${currentUser.role}`);
-                // Terminates: switchSystemMode('raffle') routes through
-                // updateTabVisibility to switchTab('tickets'), which is not a
-                // cash tab, so this branch cannot re-enter itself.
-                if (typeof switchSystemMode === 'function') switchSystemMode('raffle');
+                console.warn(`[cash] ${tabName} is not available to role ${currentUser.role}`);
+                // Somewhere that works. allowedModeOrDefault never returns a
+                // mode this role cannot open, so this cannot bounce into
+                // another closed door, and the target is not a cash tab so it
+                // cannot re-enter this branch.
+                if (typeof switchSystemMode === 'function') switchSystemMode(allowedModeOrDefault());
                 return;
             }
 
@@ -21852,88 +21817,38 @@
                     const adminTabs = document.querySelectorAll('.admin-only');
                     const superAdminTabs = document.querySelectorAll('.super-admin-only');
                     
-                    if (currentUser.role === 'teacher' || currentUser.role === 'campusaide') {
-                        adminTabs.forEach(tab => tab.classList.add('disabled'));
-                        superAdminTabs.forEach(tab => tab.classList.add('disabled'));
-                        
-                        const weekControls = document.getElementById('weekControls');
-                        if (weekControls) weekControls.style.display = 'none';
-                        
-                        // Force raffle mode for teachers and campus aides
-                        wildcatCashEnabled = false;
-                        disciplineModeEnabled = false;
-                        localStorage.setItem('systemMode', 'raffle');
-                        document.body.classList.remove('cash-mode', 'hallpass-mode', 'discipline-mode');
-                        document.body.classList.add('raffle-mode');
-                        const clawPassContent = document.getElementById('clawPassContent');
-                        const disciplineContent = document.getElementById('disciplineContent');
-                        if (clawPassContent) clawPassContent.style.display = 'none';
-                        if (disciplineContent) disciplineContent.style.display = 'none';
-                        
-                        switchTab('tickets');
-                    } else if (currentUser.role === 'admin') {
-                        adminTabs.forEach(tab => tab.classList.remove('disabled'));
-                        superAdminTabs.forEach(tab => tab.classList.add('disabled'));
-                        
-                        const weekControls = document.getElementById('weekControls');
-                        if (weekControls) weekControls.style.display = 'flex';
-                        
-                        // Force raffle mode for admins
-                        wildcatCashEnabled = false;
-                        localStorage.setItem('systemMode', 'raffle');
-                        document.body.classList.remove('cash-mode', 'hallpass-mode');
-                        document.body.classList.add('raffle-mode');
-                        const clawPassContent = document.getElementById('clawPassContent');
-                        if (clawPassContent) clawPassContent.style.display = 'none';
-                        
-                        switchTab('students');
-                    } else if (currentUser.role === 'superadmin') {
-                        adminTabs.forEach(tab => tab.classList.remove('disabled'));
-                        superAdminTabs.forEach(tab => tab.classList.remove('disabled'));
-                        
-                        const weekControls = document.getElementById('weekControls');
-                        if (weekControls) weekControls.style.display = 'flex';
-                        
-                        // Restore system mode from localStorage
-                        const savedMode = localStorage.getItem('systemMode');
-                        if (savedMode === 'cash') {
-                            wildcatCashEnabled = true;
-                            // Set body class immediately
-                            document.body.classList.add('cash-mode');
-                            document.body.classList.remove('raffle-mode', 'hallpass-mode');
-                            updateModeToggleUI();
-                            updateTabVisibility();
-                            // Will switch to awardCash tab via updateTabVisibility
-                        } else if (savedMode === 'hallpass') {
-                            wildcatCashEnabled = false;
-                            document.body.classList.add('hallpass-mode');
-                            document.body.classList.remove('raffle-mode', 'cash-mode', 'discipline-mode');
-                            const clawPassContent = document.getElementById('clawPassContent');
-                            const tabsContainer = document.querySelector('.tabs');
-                            if (tabsContainer) tabsContainer.style.display = 'none';
-                            if (clawPassContent) clawPassContent.style.display = 'block';
-                            updateModeToggleUI();
-                            switchHallPassTab('myClass');
-                        } else if (savedMode === 'discipline') {
-                            wildcatCashEnabled = false;
-                            disciplineModeEnabled = true;
-                            document.body.classList.add('discipline-mode');
-                            document.body.classList.remove('raffle-mode', 'cash-mode', 'hallpass-mode');
-                            const disciplineContent = document.getElementById('disciplineContent');
-                            const tabsContainer = document.querySelector('.tabs');
-                            if (tabsContainer) tabsContainer.style.display = 'none';
-                            if (disciplineContent) disciplineContent.style.display = 'block';
-                            updateModeToggleUI();
-                            switchDisciplineTab('submit');
-                        } else {
-                            // Set raffle mode body class
-                            document.body.classList.add('raffle-mode');
-                            document.body.classList.remove('cash-mode', 'hallpass-mode', 'discipline-mode');
-                            updateModeToggleUI();
-                            switchTab('students');
-                        }
+                    // ONE MODE DECISION, FOR EVERY ROLE.
+                    //
+                    // This was three divergent copies of switchSystemMode
+                    // written out by hand -- one per role branch -- each
+                    // setting body classes and containers itself. They had
+                    // already drifted: the first branch tested only 'teacher'
+                    // and 'campusaide', so a PBIS user restoring a session
+                    // matched no branch at all and got no mode, no tab and no
+                    // landing screen. Two of them hardcoded Raffle, which most
+                    // staff can no longer open.
+                    //
+                    // They also read the SHARED `systemMode` key rather than
+                    // the per-user one, so on a shared Chromebook a returning
+                    // user was handed whatever mode the last person left.
+                    //
+                    // getSavedTeacherMode already refuses a mode this role may
+                    // not enter, so a teacher who used Raffle before launch is
+                    // moved to the launch default without anyone touching
+                    // their browser.
+                    const seesAdminTabs =
+                        currentUser.role === 'admin' || currentUser.role === 'superadmin';
+                    adminTabs.forEach(tab => tab.classList.toggle('disabled', !seesAdminTabs));
+                    superAdminTabs.forEach(tab =>
+                        tab.classList.toggle('disabled', currentUser.role !== 'superadmin'));
+
+                    const weekControls = document.getElementById('weekControls');
+                    if (weekControls) weekControls.style.display = seesAdminTabs ? 'flex' : 'none';
+
+                    if (typeof switchSystemMode === 'function') {
+                        switchSystemMode(getSavedTeacherMode() || allowedModeOrDefault());
                     }
-                    
+
                     // Update displays with fresh currentUser data
                     updateAllDisplays();
                     if (currentUser.role === 'superadmin' || currentUser.role === 'admin') {
@@ -22712,6 +22627,24 @@
             return M.canUseMode(currentUser && currentUser.role, mode);
         }
 
+        /**
+         * Where to put somebody when nothing else has decided.
+         *
+         * Every landing decision goes through here rather than naming a mode
+         * directly. The sign-in role branches used to hardcode Raffle, which
+         * is now a mode most staff cannot open at all -- so a hardcoded
+         * landing is a hardcoded dead end waiting to happen the next time the
+         * school changes what it runs.
+         *
+         * Raffle only if the rules module is missing entirely, since that is
+         * the historical default and this must not throw.
+         */
+        function allowedModeOrDefault() {
+            const M = window.WildcatModes;
+            if (!M || typeof M.defaultModeFor !== 'function') return 'raffle';
+            return M.defaultModeFor(currentUser && currentUser.role);
+        }
+
         function getSavedTeacherMode() {
             const key = getTeacherModeKey();
             if (!key) return null;
@@ -22932,13 +22865,14 @@
             if (saved) {
                 selectMode(saved);
             } else {
-                // Default to Raffle, landing on the Dashboard, rather than opening
-                // a "choose a mode" chooser. Raffle is the school's default
-                // economy, so a teacher lands in a working app instead of an
-                // empty picker. The mode dropdown stays available for anyone who
-                // wants Cash / Claw Pass / Discipline, and once they pick one it
-                // is remembered per user (getSavedTeacherMode) above.
-                selectMode('raffle');
+                // Land on a mode this person may actually open, rather than
+                // opening a "choose a mode" chooser. This said 'raffle', which
+                // most staff can no longer open at all -- the launch default
+                // is Wildcat Cash and the rules module owns that choice, so
+                // changing what the school runs does not mean hunting for
+                // hardcoded mode names in here. Once somebody picks a mode it
+                // is remembered per user (getSavedTeacherMode above).
+                selectMode(allowedModeOrDefault());
             }
         }
 
@@ -25357,9 +25291,25 @@
             }
         }
 
+        /**
+         * Every enrolled student, for the referral form.
+         *
+         * DELIBERATELY NOT SCOPED TO THE TEACHER'S OWN CLASSES. A referral is
+         * written for what somebody did, and most of what gets referred happens
+         * in a corridor, a stairwell or the yard, between adults and children
+         * who have never shared a timetable. Scoping this to a roster the way
+         * Award Cash is scoped would make the commonest referral impossible to
+         * file. Award Cash is different because awarding is an act of teaching
+         * a class; this is not.
+         *
+         * ENROLLED ONLY, though. `students` carries leavers so their balances
+         * and histories survive, and a dropdown built from the raw array
+         * offered 139 children who have left the school -- a referral filed
+         * against one of them is a record nobody can act on.
+         */
         function populateReferralStudentDropdown() {
             const select = document.getElementById('referralStudentSelect');
-            const sortedStudents = [...students].sort((a, b) => {
+            const sortedStudents = [...enrolledStudents()].sort((a, b) => {
                 const aName = `${a.lastName}, ${a.firstName}`.toLowerCase();
                 const bName = `${b.lastName}, ${b.firstName}`.toLowerCase();
                 return aName.localeCompare(bName);
@@ -25371,9 +25321,16 @@
                 ).join('');
         }
 
+        /**
+         * Student History, admin and PBIS only (see disciplineTabsFor).
+         *
+         * Enrolled only, matching the referral form. Looking up the discipline
+         * history of a child who left is not a thing this screen is for, and
+         * the leavers are only in `students` so their balances survive.
+         */
         function populateHistoryStudentDropdown() {
             const select = document.getElementById('historyStudentSelect');
-            const sortedStudents = [...students].sort((a, b) => {
+            const sortedStudents = [...enrolledStudents()].sort((a, b) => {
                 const aName = `${a.lastName}, ${a.firstName}`.toLowerCase();
                 const bName = `${b.lastName}, ${b.firstName}`.toLowerCase();
                 return aName.localeCompare(bName);

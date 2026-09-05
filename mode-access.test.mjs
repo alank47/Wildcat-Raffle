@@ -26,38 +26,56 @@ const code = script
 let pass = 0, fail = 0;
 const check = (n, c) => { c ? (pass++, console.log(`  PASS  ${n}`)) : (fail++, console.log(`  FAIL  ${n}`)); };
 
-console.log("\nThe rule itself");
+console.log("\nThe launch policy: Cash and Discipline for staff");
 {
-  check("a teacher may not enter Wildcat Cash", M.canUseMode("teacher", "cash") === false);
-  check("nor a campus aide", M.canUseMode("campusaide", "cash") === false);
-  check("nor PBIS", M.canUseMode("pbis", "cash") === false);
-  check("nor an admin", M.canUseMode("admin", "cash") === false);
-  check("a superadmin may", M.canUseMode("superadmin", "cash") === true);
-
-  // The mode gate is a different question from what a teacher sees INSIDE
-  // Discipline; that narrowing lives in wildcat-discipline.js.
-  for (const role of ["teacher", "campusaide", "pbis", "admin", "superadmin"]) {
-    check(`${role} keeps Raffle`, M.canUseMode(role, "raffle") === true);
-    check(`${role} keeps Claw Pass`, M.canUseMode(role, "hallpass") === true);
-    check(`${role} keeps Discipline`, M.canUseMode(role, "discipline") === true);
+  // Westbrook opens 2026-09-09 on Wildcat Cash and Discipline. Raffle and Claw
+  // Pass work; they are not what the school is running, and a teacher handed
+  // four modes on day one picks the wrong one in front of a class.
+  for (const role of ["teacher", "campusaide", "pbis"]) {
+    check(`${role} gets Wildcat Cash`, M.canUseMode(role, "cash") === true);
+    check(`${role} gets Discipline`, M.canUseMode(role, "discipline") === true);
+    check(`${role} does NOT get Raffle`, M.canUseMode(role, "raffle") === false);
+    check(`${role} does NOT get Claw Pass`, M.canUseMode(role, "hallpass") === false);
+    check(`${role} is offered exactly those two, in dropdown order`,
+      M.modesFor(role).join(",") === "cash,discipline");
   }
 
-  check("a teacher is offered exactly three modes",
-    M.modesFor("teacher").join(",") === "raffle,hallpass,discipline");
-  check("a superadmin is offered all four",
-    M.modesFor("superadmin").join(",") === "raffle,cash,hallpass,discipline");
+  // Admins keep everything: they are the ones testing what staff cannot see.
+  for (const role of ["admin", "superadmin"]) {
+    check(`${role} keeps all four modes`,
+      M.modesFor(role).join(",") === "raffle,cash,hallpass,discipline");
+  }
+
+  check("Cash is no longer superadmin-only, which is the reversal from 2026-09-04",
+    M.canUseMode("teacher", "cash") === true && M.canUseMode("admin", "cash") === true);
   check("modesFor returns dropdown order, not storage order",
     M.ALL_MODES[0] === "raffle");
+  check("the launch set is named rather than implied",
+    Array.isArray(M.LAUNCH_MODES) && M.LAUNCH_MODES.join(",") === "cash,discipline");
+}
+
+console.log("\nWhere somebody lands with no saved preference");
+{
+  // Launch day is Cash, so that is where everyone starts -- including admins,
+  // who can switch. A hardcoded landing mode in script.js is what this
+  // replaces, and it named Raffle.
+  for (const role of ["teacher", "campusaide", "pbis", "admin", "superadmin"]) {
+    check(`${role} lands on Wildcat Cash`, M.defaultModeFor(role) === "cash");
+    check(`and it is a mode ${role} may actually open`,
+      M.canUseMode(role, M.defaultModeFor(role)));
+  }
+  check("an unknown role also lands somewhere it is allowed",
+    M.canUseMode("registrar", M.defaultModeFor("registrar")));
 }
 
 console.log("\nRole is read tolerantly, because it comes from stored records");
 {
-  check("case does not matter", M.canUseMode("SuperAdmin", "cash") === true);
-  check("stray whitespace does not matter", M.canUseMode(" superadmin ", "cash") === true);
-  check("a missing role is not a superadmin", M.canUseMode(undefined, "cash") === false);
-  check("nor is an empty one", M.canUseMode("", "cash") === false);
-  check("an unknown role gets the open modes only",
-    M.modesFor("registrar").join(",") === "raffle,hallpass,discipline");
+  check("case does not matter", M.canUseMode("SuperAdmin", "raffle") === true);
+  check("stray whitespace does not matter", M.canUseMode(" admin ", "hallpass") === true);
+  check("a missing role is not an admin", M.canUseMode(undefined, "raffle") === false);
+  check("nor is an empty one", M.canUseMode("", "hallpass") === false);
+  check("an unknown role gets the launch set, not everything",
+    M.modesFor("registrar").join(",") === "cash,discipline");
   check("an unknown MODE is refused rather than allowed",
     M.canUseMode("superadmin", "bank") === false);
 }
@@ -97,8 +115,14 @@ console.log("\nThe tab gate shares the rule instead of restating it");
     /cashTabs\.includes\(tabName\)[^\n]*!modeAllowed\('cash'\)/.test(code));
   check("role !== 'superadmin' is gone from the cash gate",
     !/cashTabs\.includes\(tabName\)[^\n]*role !== 'superadmin'/.test(code));
-  check("and reaching it recovers to Raffle rather than parking on a dead tab",
-    /\[cash\][\s\S]{0,400}switchSystemMode\('raffle'\)/.test(code));
+  check("and reaching it recovers to a mode the person may open, not a hardcoded one",
+    /\[cash\][\s\S]{0,400}switchSystemMode\(allowedModeOrDefault\(\)\)/.test(code));
+  check("no landing decision in the app hardcodes a mode name",
+    !/selectMode\('raffle'\)/.test(code) && !/switchSystemMode\('raffle'\)/.test(code));
+  check("the sign-in path asks the rules where to land",
+    /switchSystemMode\(getSavedTeacherMode\(\) \|\| allowedModeOrDefault\(\)\)/.test(code));
+  check("allowedModeOrDefault falls back only when the rules module is absent",
+    /function allowedModeOrDefault\(\)[\s\S]{0,300}return 'raffle';[\s\S]{0,200}defaultModeFor/.test(code));
 }
 
 console.log("\nThe rules module cannot lock anyone out by failing to load");
