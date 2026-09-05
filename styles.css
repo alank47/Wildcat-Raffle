@@ -2973,6 +2973,25 @@ body {
 .btn-loop-close { background: #2E7D52 !important; background-image: none !important; color: #fff !important; font-weight: 700; padding: 12px 26px !important; border-radius: 9px; }
 .btn-loop-close:hover { background: #26694a !important; }
 
+/* Award and deduct, on the Accounts cards. Same geometry as .btn-sm-blue so
+   the three read as one set of controls; the colours are the app's cash green
+   and the referral red already used for a negative amount elsewhere. */
+.btn-sm-green, .btn-sm-red {
+    padding: 10px 13px !important; font-size: 13px !important;
+    border-radius: 7px; font-weight: 700; background-image: none !important;
+    border: none; color: #fff !important; cursor: pointer; width: 100%;
+}
+.btn-sm-green { background: #2E7D52 !important; }
+.btn-sm-green:hover { background: #26694a !important; }
+.btn-sm-red   { background: #B3392F !important; }
+.btn-sm-red:hover { background: #97302a !important; }
+
+/* The Accounts card is a control now: the whole card opens that student's
+   cash history, so it has to look like something you can press. */
+.account-card { transition: box-shadow .15s ease, transform .15s ease; }
+.account-card:hover { box-shadow: 0 6px 18px rgba(20,23,28,.14) !important; transform: translateY(-1px); }
+.account-card:focus-visible { outline: 2px solid var(--wc-blue, #2F67A7); outline-offset: 2px; }
+
 /* Analytics rank bars */
 .analytics-block { margin-bottom: 22px; }
 .rank-bar-row { margin-bottom: 10px; }

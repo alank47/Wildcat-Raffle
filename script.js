@@ -6660,7 +6660,7 @@
             }
         }
 
-        function addToAuditLog(action, studentId, category, ticketCount, reason, periodInfo = null, weekOverride = null) {
+        function addToAuditLog(action, studentId, category, ticketCount, reason, periodInfo = null, weekOverride = null, extra = null) {
             const student = students.find(s => s.id === studentId);
             // weekOverride lets callers (e.g. the Perfect Attendance upload, which awards
             // tickets for a specific past week) tag the audit entry with the SAME week as
@@ -6699,6 +6699,22 @@
             if (periodInfo) {
                 logEntry.period = periodInfo.period;
                 logEntry.courseName = periodInfo.courseName;
+            }
+
+            // STRUCTURED FIELDS, so a screen never has to parse prose.
+            //
+            // The cash screens built `reason` as "Behaviour name, whatever the
+            // teacher typed", and the Audit Log then tried to pull the two back
+            // apart with a regular expression. Splitting on the first comma is
+            // wrong the moment a behaviour name contains one, and the failure
+            // is silent: half a behaviour name in one column and the rest in
+            // another still looks like data.
+            //
+            // `reason` is still written, unchanged, because every entry already
+            // stored has only that and the reader falls back to splitting it.
+            if (extra && typeof extra === 'object') {
+                if (extra.behavior) logEntry.behavior = String(extra.behavior);
+                if (extra.notes)    logEntry.notes    = String(extra.notes);
             }
             
             auditLog.push(logEntry);
@@ -7212,128 +7228,86 @@
 
         function updateCashAuditLogTable(keepPage) {
             const tbody = document.getElementById('cashAuditLogTable');
+            const CA = window.WildcatCashAudit;
 
-            // Filter to only show CASH MODE transactions from auditLog
-            let cashAuditLog = auditLog.filter(log => {
-                // Only include cash-related actions
-                const cashActions = ['cash_award', 'cash_deduct', 'reward_redemption', 'reset_all_student_cash'];
-                return cashActions.includes(log.action);
-            });
+            // EVERY COLUMN BUT DATE AND ACTION USED TO BE WRONG.
+            //
+            // This read `log.teacherName` and `log.details`. addToAuditLog has
+            // never written either: the entry carries `teacher` and `reason`.
+            // So the teacher column printed "System" for every row, the student
+            // fell back to "Student #12345", and the behaviour, amount and
+            // notes were recovered by running a regular expression over a
+            // string that did not exist -- which produced "-" every time.
+            //
+            // Nothing threw, which is why it lasted. An undefined field renders
+            // as its fallback, and a fallback looks like data.
+            //
+            // The reading rules now live in wildcat-cashaudit.js, shared with
+            // the per-student history on the Accounts screen, because those two
+            // are views of the same record and must not disagree about what a
+            // transaction was.
+            const nameOf = (id) => {
+                const st = students.find(s => String(s.id) === String(id));
+                return st ? `${st.firstName} ${st.lastName}` : '';
+            };
 
-            // Search the whole log (all pages), not the rendered rows.
-            const cashAuditSearch = (document.getElementById('searchCashAudit')?.value || '').toLowerCase().trim();
-            if (cashAuditSearch) {
-                cashAuditLog = cashAuditLog.filter(log => {
-                    const hay = [log.details, log.teacher, log.studentId, log.action]
-                        .map(v => String(v || '').toLowerCase()).join(' ');
-                    return hay.includes(cashAuditSearch);
-                });
-            }
+            let rows = auditLog
+                .filter(CA.isCashEntry)
+                .map(e => CA.describe(e, nameOf));
 
-            if (cashAuditLog.length === 0) {
-                const msg = cashAuditSearch ? 'No cash activity matches your search' : 'No cash activity logged yet';
+            // Search the whole log (all pages), not the rendered rows, and over
+            // the fields a person can actually see.
+            const q = (document.getElementById('searchCashAudit')?.value || '').toLowerCase().trim();
+            if (q) rows = rows.filter(r => CA.searchText(r).includes(q));
+
+            if (rows.length === 0) {
+                const msg = q ? 'No cash activity matches your search' : 'No cash activity logged yet';
                 tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; padding: 40px; color: #999;">${msg}</td></tr>`;
                 renderPager('cashAudit', 'cashAuditLogTable', { pages: 1 });
                 return;
             }
 
-            // Show most recent first, then page the sorted, searched set.
-            const sorted = [...cashAuditLog].reverse();
-            const cashAuditView = paginate('cashAudit', sorted, keepPage);
-            renderPager('cashAudit', 'cashAuditLogTable', cashAuditView);
+            // Newest first. Sorted on the timestamp rather than by reversing
+            // the array: entries arrive from several tabs and the stored order
+            // is the order they were merged, not the order they happened.
+            rows.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
 
-            tbody.innerHTML = cashAuditView.slice.map(log => {
-                const date = new Date(log.timestamp);
-                const formattedDate = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
-                
-                // Determine styling based on action
-                let actionClass = '';
-                let actionIcon = '';
-                let actionText = '';
+            const view = paginate('cashAudit', rows, keepPage);
+            renderPager('cashAudit', 'cashAuditLogTable', view);
 
-                // Action styling is carried by classes (.cash-audit-row and
-                // .cash-action-badge in styles.css) instead of inline CSS.
-                //
-                // Every one of these rows previously set
-                //   background: var(--wc-blue), transparent);
-                // which is not valid CSS. The unbalanced parenthesis came
-                // from a find and replace that swapped a linear-gradient()
-                // colour for the token but left the gradient's arguments
-                // behind. Browsers dropped the whole declaration, so no row
-                // has had its intended tint. The same replace also flattened
-                // two badge colours to blue while their border-left kept the
-                // original colour; the badges are restored to match.
-                if (log.action === 'cash_award') {
-                    actionClass = 'act-award';
-                    actionIcon = '💰';
-                    actionText = 'Cash Awarded';
-                } else if (log.action === 'cash_deduct') {
-                    actionClass = 'act-deduct';
-                    actionIcon = '⚠️';
-                    actionText = 'Cash Deducted';
-                } else if (log.action === 'reward_redemption') {
-                    actionClass = 'act-redeem';
-                    actionIcon = '🎁';
-                    actionText = 'Reward Redeemed';
-                } else if (log.action === 'reset_all_student_cash') {
-                    actionClass = 'act-reset';
-                    actionIcon = '🔄';
-                    actionText = 'System Reset';
-                } else {
-                    actionClass = 'act-other';
-                    actionIcon = '📝';
-                    actionText = log.action;
-                }
-                
-                // Get student name safely
-                const studentName = log.details && log.details.includes(' ') ? 
-                    log.details.split(' ')[0] + ' ' + log.details.split(' ')[1] : 
-                    (log.studentId ? `Student #${log.studentId}` : 'Unknown');
-                
-                // Parse amount and behavior from details
-                let behaviorName = '-';
-                let amount = '-';
-                
-                if (log.details) {
-                    // Try to extract behavior name and amount
-                    const detailMatch = log.details.match(/(.+?) (?:awarded|deducted|redeemed) (.+?) for \$(\d+)/);
-                    if (detailMatch) {
-                        behaviorName = detailMatch[2];
-                        amount = log.action === 'cash_deduct' ? `-$${detailMatch[3]}` : `+$${detailMatch[3]}`;
-                    } else if (log.details.includes('$')) {
-                        // Try to extract just the amount
-                        const amountMatch = log.details.match(/\$(\d+)/);
-                        if (amountMatch) {
-                            amount = log.action === 'cash_deduct' ? `-$${amountMatch[1]}` : `+$${amountMatch[1]}`;
-                        }
-                    }
-                }
-                
+            tbody.innerHTML = view.slice.map(r => {
+                const d = r.timestamp ? new Date(r.timestamp) : null;
+                const when = d && !isNaN(d)
+                    ? d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                    : '—';
+                // null, not 0: a reset carries no amount, and "$0" would read
+                // as a transaction worth nothing rather than as no transaction.
+                const amount = r.signed == null
+                    ? '—'
+                    : (r.signed < 0 ? '-' : '+') + '$' + Math.abs(r.signed);
+                const amountColour = r.signed == null ? '#8892a0'
+                    : (r.signed < 0 ? '#B3392F' : '#2E7D52');
+
                 return `
-                    <tr class="cash-audit-row ${actionClass}">
-                        <td style="padding: 12px 8px;">
-                            <span style="font-size: 13px; color: #666;">${formattedDate}</span>
+                    <tr class="cash-audit-row ${r.actionClass}">
+                        <td style="padding:12px 8px;"><span style="font-size:13px;color:#666;">${escapeHtml(when)}</span></td>
+                        <td style="padding:12px 8px;"><span class="teacher-badge">${escapeHtml(r.teacher)}</span></td>
+                        <td style="padding:12px 8px;">
+                            <span class="cash-action-badge ${r.actionClass}">${r.actionIcon} ${escapeHtml(r.actionLabel)}</span>
                         </td>
-                        <td style="padding: 12px 8px;">
-                            <span class="teacher-badge" style="background: #e3f2fd; color: #1976d2; padding: 4px 10px; border-radius: 12px; font-size: 13px; font-weight: 500;">${escapeHtml(log.teacherName || 'System')}</span>
+                        <td style="padding:12px 8px;font-weight:500;">${escapeHtml(r.studentName)}</td>
+                        <td style="padding:12px 8px;">
+                            ${r.behavior
+                                ? `<span style="background:#f5f5f5;padding:4px 8px;border-radius:8px;font-size:12px;">${escapeHtml(r.behavior)}</span>`
+                                : '<span style="color:#aaa;">—</span>'}
                         </td>
-                        <td style="padding: 12px 8px;">
-                            <span class="cash-action-badge ${actionClass}">
-                                ${actionIcon} ${escapeHtml(actionText)}
-                            </span>
+                        <td style="padding:12px 8px;text-align:center;">
+                            <span style="font-weight:700;font-size:16px;color:${amountColour};">${amount}</span>
                         </td>
-                        <td style="padding: 12px 8px; font-weight: 500;">${studentName}</td>
-                        <td style="padding: 12px 8px;">
-                            <span style="background: #f5f5f5; padding: 4px 8px; border-radius: 8px; font-size: 12px;">${behaviorName}</span>
+                        <td style="padding:12px 8px;max-width:250px;">
+                            <span style="font-size:13px;color:#555;">${r.notes ? escapeHtml(r.notes) : '<span style="color:#aaa;">—</span>'}</span>
                         </td>
-                        <td style="padding: 12px 8px; text-align: center;">
-                            <span style="font-weight: 700; font-size: 16px; color: ${log.action === 'cash_deduct' ? '#B3392F' : '#2E7D52'};">${amount}</span>
-                        </td>
-                        <td style="padding: 12px 8px; max-width: 250px;">
-                            <span style="font-size: 13px; color: #555;">${log.details || '-'}</span>
-                        </td>
-                    </tr>
-                `;
+                    </tr>`;
             }).join('');
         }
 
@@ -7692,7 +7666,8 @@
                 addToAuditLog('cash_award',
                     selectedStudentForCash.id, 'Wildcat Cash',
                     Math.abs(amount),
-                    behavior.name + (notes.trim() ? ', ' + notes.trim() : ''));
+                    behavior.name + (notes.trim() ? ', ' + notes.trim() : ''),
+                    null, null, { behavior: behavior.name, notes: notes.trim() });
             }
 
             closeAddCashModal();
@@ -7771,7 +7746,8 @@
                 addToAuditLog('cash_deduct',
                     selectedStudentForCash.id, 'Wildcat Cash',
                     Math.abs(amount),
-                    behavior.name + (notes.trim() ? ', ' + notes.trim() : ''));
+                    behavior.name + (notes.trim() ? ', ' + notes.trim() : ''),
+                    null, null, { behavior: behavior.name, notes: notes.trim() });
             }
 
             closeRemoveCashModal();
@@ -15393,7 +15369,15 @@
             } else if (tabName === 'receipts') {
                 updateReceiptsTable();
             } else if (tabName === 'studentAccounts') {
+                // Paint from cache, then fetch the roster and repaint -- the
+                // same two-step Award Cash uses, so the class filter is
+                // populated on the first visit rather than after a tab switch.
+                updateAccountPeriodFilter();
                 updateStudentAccounts();
+                loadTeacherRosterFromSIS().then(() => {
+                    updateAccountPeriodFilter();
+                    updateStudentAccounts();
+                });
             } else if (tabName === 'cashAnalytics') {
                 updateCashAnalytics();
                 // Initialize dashboard view
@@ -23499,7 +23483,9 @@
                         behavior.points >= 0 ? 'cash_award' : 'cash_deduct',
                         student.id, 'Wildcat Cash',
                         Math.abs(behavior.points),
-                        `${behavior.name}${notes ? ', ' + notes : ''}`
+                        `${behavior.name}${notes ? ', ' + notes : ''}`,
+                        null, null,
+                        { behavior: behavior.name, notes: notes }
                     );
                 }
             });
@@ -24093,111 +24079,206 @@
         }
 
         // Update Student Accounts
+        //
+        // Scoped and filtered exactly like Award Cash. A teacher who has just
+        // narrowed Award Cash to Period 3 and then opens Accounts was being
+        // handed all 754 records, including the 139 who have left -- two
+        // screens about the same students disagreeing about who the students
+        // are.
         function updateStudentAccounts() {
             const container = document.getElementById('studentAccountsGrid');
-            const searchTerm = document.getElementById('accountSearch').value.toLowerCase();
-            
-            // Get selected grade from dropdown
-            const selectedGrade = document.getElementById('accountGradeFilter').value;
-            
-            let filteredStudents = students.filter(student => {
-                const fullName = `${student.firstName} ${student.lastName}`.toLowerCase();
-                const id = student.id.toLowerCase();
-                const matchesSearch = fullName.includes(searchTerm) || id.includes(searchTerm);
-                const matchesGrade = selectedGrade === 'all' || student.grade == selectedGrade;
-                return matchesSearch && matchesGrade;
+            if (!container) return;
+            const CA = window.WildcatCashAudit;
+
+            const searchTerm = (document.getElementById('accountSearch')?.value || '').toLowerCase().trim();
+            const selectedGrade = document.getElementById('accountGradeFilter')?.value || 'all';
+            const selectedPeriod = document.getElementById('accountPeriodFilter')?.value || '';
+
+            // ENROLLED ONLY. `students` keeps leavers so their balances and
+            // histories survive; it is not the list of who is at this school.
+            let list = enrolledStudents();
+
+            // The same roster scoping Award Cash uses, through the same helper,
+            // so a chosen class means the same thing on both screens.
+            const scoped = window.WildcatRoster.scopeStudents({
+                students: list,
+                role: currentUser && currentUser.role,
+                roster: activeTeacherRoster(),
+                sectionId: selectedPeriod || null
             });
-            
-            // Sort by name
-            filteredStudents.sort((a, b) => {
-                const nameA = `${a.lastName}, ${a.firstName}`.toLowerCase();
-                const nameB = `${b.lastName}, ${b.firstName}`.toLowerCase();
-                return nameA.localeCompare(nameB);
-            });
-            
+            list = scoped.students;
+
+            if (selectedGrade !== 'all') list = list.filter(st => st.grade == selectedGrade);
+            if (searchTerm) {
+                list = list.filter(st =>
+                    `${st.firstName} ${st.lastName}`.toLowerCase().includes(searchTerm) ||
+                    String(st.id).toLowerCase().includes(searchTerm));
+            }
+
+            list.sort((a, b) =>
+                `${a.lastName}, ${a.firstName}`.toLowerCase()
+                    .localeCompare(`${b.lastName}, ${b.firstName}`.toLowerCase()));
+
             container.innerHTML = '';
-            
-            if (filteredStudents.length === 0) {
-                container.innerHTML = '<p style="text-align: center; color: #999; padding: 40px; grid-column: 1/-1;">No students found</p>';
+
+            if (list.length === 0) {
+                // Say WHICH filter emptied it. "No students found" sends a
+                // teacher looking for a data problem when they have simply
+                // narrowed to a class they do not teach.
+                const why = searchTerm ? 'No students match your search.'
+                    : selectedGrade !== 'all' ? `No students in grade ${escapeHtml(selectedGrade)} in this list.`
+                    : scoped.reason || 'No students found.';
+                container.innerHTML =
+                    `<p style="text-align:center;color:#999;padding:40px;grid-column:1/-1;">${escapeHtml(why)}</p>`;
                 return;
             }
-            
-            filteredStudents.forEach(student => {
-                // Initialize if needed
-                if (student.wildcatCashBalance === undefined) {
-                    student.wildcatCashBalance = STARTING_BALANCE;
-                    student.wildcatCashEarned = 0;
-                    student.wildcatCashSpent = 0;
-                    student.wildcatCashDeducted = 0;
-                    student.wildcatCashTransactions = [];
-                }
-                
+
+            list.forEach(student => {
+                ensureCashFields(student);
+
                 const balanceColor = student.wildcatCashBalance >= 0 ? '#2E7D52' : '#B3392F';
-                
                 const card = document.createElement('div');
-                card.style.cssText = 'background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);';
-                
-                // Recent transactions
-                const recentTxns = (student.wildcatCashTransactions || [])
-                    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-                    .slice(0, 5);
-                
-                let txnsHTML = '';
-                if (recentTxns.length > 0) {
-                    txnsHTML = '<div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e0e0e0;"><div style="font-weight: 600; color: #666; font-size: 13px; margin-bottom: 10px;">Recent Transactions</div>';
-                    recentTxns.forEach(txn => {
-                        const txnColor = txn.amount > 0 ? '#2E7D52' : '#B3392F';
-                        txnsHTML += `
-                            <div style="display: flex; justify-content: space-between; padding: 8px 0; font-size: 13px;">
-                                <span style="color: #666;">${txn.behaviorName}</span>
-                                <span style="color: ${txnColor}; font-weight: 600;">${txn.amount > 0 ? '+' : ''}$${txn.amount}</span>
-                            </div>
-                        `;
-                    });
-                    txnsHTML += '</div>';
-                }
-                
+                card.className = 'wc-card account-card';
+                card.style.cssText = 'background:white;padding:20px;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.1);';
+
+                // The audit log, not student.wildcatCashTransactions: the audit
+                // entry is the one that records WHO did it, and "which teacher"
+                // is the question this screen is opened to answer.
+                const recent = CA.forStudent(auditLog, student.id)
+                    .slice(0, 3)
+                    .map(e => CA.describe(e));
+
+                const recentHTML = recent.length ? (
+                    '<div style="margin-top:15px;padding-top:15px;border-top:1px solid #e0e0e0;">' +
+                    '<div style="font-weight:600;color:#666;font-size:13px;margin-bottom:10px;">Recent Activity</div>' +
+                    recent.map(r => {
+                        const amt = r.signed == null ? '—'
+                            : (r.signed < 0 ? '-' : '+') + '$' + Math.abs(r.signed);
+                        const col = r.signed == null ? '#8892a0' : (r.signed < 0 ? '#B3392F' : '#2E7D52');
+                        return `<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;font-size:13px;">
+                                    <span style="color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                                        ${escapeHtml(r.behavior || r.actionLabel)}
+                                        <span style="color:#aaa;">· ${escapeHtml(r.teacher)}</span>
+                                    </span>
+                                    <span style="color:${col};font-weight:600;white-space:nowrap;">${amt}</span>
+                                </div>`;
+                    }).join('') + '</div>'
+                ) : '<div style="margin-top:15px;padding-top:15px;border-top:1px solid #e0e0e0;color:#aaa;font-size:13px;">No cash activity yet</div>';
+
                 card.innerHTML = `
-                    <div style="text-align: center; margin-bottom: 20px;">
-                        <h3 style="margin: 0 0 5px 0; color: #333;">${student.firstName} ${student.lastName}</h3>
-                        <div style="color: #999; font-size: 14px;">ID: ${student.id} | Grade: ${student.grade}</div>
+                    <div style="text-align:center;margin-bottom:20px;">
+                        <h3 style="margin:0 0 5px 0;color:#333;">${escapeHtml(student.firstName + ' ' + student.lastName)}</h3>
+                        <div style="color:#999;font-size:14px;">ID: ${escapeHtml(String(student.id))} | Grade: ${escapeHtml(String(student.grade || '—'))}</div>
                     </div>
-                    
-                    <div style="text-align: center; margin-bottom: 20px;">
-                        <div style="font-size: 36px; font-weight: 700; color: ${balanceColor};">$${student.wildcatCashBalance}</div>
-                        <div style="color: #999; font-size: 13px;">Current Balance</div>
+                    <div style="text-align:center;margin-bottom:20px;">
+                        <div style="font-size:36px;font-weight:700;color:${balanceColor};">$${student.wildcatCashBalance}</div>
+                        <div style="color:#999;font-size:13px;">Current Balance</div>
                     </div>
-                    
-                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; text-align: center; margin-bottom: 15px;">
-                        <div>
-                            <div style="font-size: 18px; font-weight: 600; color: #10b981;">$${student.wildcatCashEarned}</div>
-                            <div style="color: #999; font-size: 12px;">Earned</div>
-                        </div>
-                        <div>
-                            <div style="font-size: 18px; font-weight: 600; color: #f093fb;">$${student.wildcatCashSpent}</div>
-                            <div style="color: #999; font-size: 12px;">Spent</div>
-                        </div>
-                        <div>
-                            <div style="font-size: 18px; font-weight: 600; color: #ef4444;">$${student.wildcatCashDeducted}</div>
-                            <div style="color: #999; font-size: 12px;">Deducted</div>
-                        </div>
+                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;text-align:center;margin-bottom:15px;">
+                        <div><div style="font-size:18px;font-weight:600;color:#2E7D52;">$${student.wildcatCashEarned}</div><div style="color:#999;font-size:12px;">Earned</div></div>
+                        <div><div style="font-size:18px;font-weight:600;color:#2F67A7;">$${student.wildcatCashSpent}</div><div style="color:#999;font-size:12px;">Spent</div></div>
+                        <div><div style="font-size:18px;font-weight:600;color:#B3392F;">$${student.wildcatCashDeducted}</div><div style="color:#999;font-size:12px;">Deducted</div></div>
                     </div>
-                    
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
-                        <button onclick="showAddCashModal('${student.id}')" style="background: #10b981; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 14px; transition: all 0.3s;">
-                            ➕ Add Cash
-                        </button>
-                        <button onclick="showRemoveCashModal('${student.id}')" style="background: #ef4444; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 14px; transition: all 0.3s;">
-                            ➖ Remove Cash
-                        </button>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+                        <button class="btn btn-sm-green" onclick="event.stopPropagation();showAddCashModal('${escapeHtml(String(student.id))}')">➕ Add Cash</button>
+                        <button class="btn btn-sm-red" onclick="event.stopPropagation();showRemoveCashModal('${escapeHtml(String(student.id))}')">➖ Remove Cash</button>
                     </div>
-                    
-                    ${txnsHTML}
+                    <button class="btn btn-sm-blue" style="width:100%;" onclick="showStudentCashHistory('${escapeHtml(String(student.id))}')">
+                        View full history
+                    </button>
+                    ${recentHTML}
                 `;
-                
+
+                // The whole card opens the history. The two award buttons stop
+                // the event above, so clicking them does not also open it.
+                card.style.cursor = 'pointer';
+                card.addEventListener('click', () => showStudentCashHistory(student.id));
                 container.appendChild(card);
             });
         }
+
+        /** Fill the Accounts class filter from the same roster Award Cash uses. */
+        function updateAccountPeriodFilter() {
+            const select = document.getElementById('accountPeriodFilter');
+            if (!select) return;
+            const keep = select.value;
+            const sections = window.WildcatRoster.sectionsFrom(activeTeacherRoster());
+            select.innerHTML = '<option value="">All students</option>' + periodFilterNote(sections);
+            sections.forEach(sec => {
+                const o = document.createElement('option');
+                o.value = sec.sectionId;
+                o.textContent = `${sec.label} (${(sec.students || []).length})`;
+                select.appendChild(o);
+            });
+            if (keep) select.value = keep;
+        }
+
+        /**
+         * Every cash movement on one student, and who made it.
+         *
+         * Built from the AUDIT LOG rather than student.wildcatCashTransactions,
+         * because the audit entry is the only one that records which member of
+         * staff acted. "Who took five dollars off my child" is the question
+         * this screen exists to answer, and the transaction list cannot answer
+         * it.
+         */
+        function showStudentCashHistory(studentId) {
+            const CA = window.WildcatCashAudit;
+            const student = students.find(s => String(s.id) === String(studentId));
+            if (!student) return;
+
+            const rows = CA.forStudent(auditLog, studentId).map(e => CA.describe(e));
+
+            const body = rows.length ? `
+                <div class="wu-scroll-x">
+                <table class="wc-table" style="width:100%;">
+                    <thead><tr>
+                        <th>When</th><th>Staff</th><th>Action</th>
+                        <th>Behavior</th><th style="text-align:center;">Amount</th><th>Notes</th>
+                    </tr></thead>
+                    <tbody>${rows.map(r => {
+                        const d = r.timestamp ? new Date(r.timestamp) : null;
+                        const when = d && !isNaN(d)
+                            ? d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                            : '—';
+                        const amt = r.signed == null ? '—'
+                            : (r.signed < 0 ? '-' : '+') + '$' + Math.abs(r.signed);
+                        const col = r.signed == null ? '#8892a0' : (r.signed < 0 ? '#B3392F' : '#2E7D52');
+                        return `<tr>
+                            <td style="white-space:nowrap;font-size:13px;color:#666;">${escapeHtml(when)}</td>
+                            <td>${escapeHtml(r.teacher)}</td>
+                            <td><span class="cash-action-badge ${r.actionClass}">${r.actionIcon} ${escapeHtml(r.actionLabel)}</span></td>
+                            <td>${r.behavior ? escapeHtml(r.behavior) : '<span style="color:#aaa;">—</span>'}</td>
+                            <td style="text-align:center;font-weight:700;color:${col};white-space:nowrap;">${amt}</td>
+                            <td style="font-size:13px;color:#555;">${r.notes ? escapeHtml(r.notes) : '<span style="color:#aaa;">—</span>'}</td>
+                        </tr>`;
+                    }).join('')}</tbody>
+                </table></div>`
+                : '<p style="color:#8892a0;padding:20px 0;">No Wildcat Cash activity recorded for this student yet.</p>';
+
+            const totals = `
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;text-align:center;margin:4px 0 18px;">
+                    <div><div style="font-size:20px;font-weight:700;color:${student.wildcatCashBalance >= 0 ? '#2E7D52' : '#B3392F'};">$${student.wildcatCashBalance}</div><div style="color:#999;font-size:12px;">Balance</div></div>
+                    <div><div style="font-size:20px;font-weight:700;color:#2E7D52;">$${student.wildcatCashEarned}</div><div style="color:#999;font-size:12px;">Earned</div></div>
+                    <div><div style="font-size:20px;font-weight:700;color:#2F67A7;">$${student.wildcatCashSpent}</div><div style="color:#999;font-size:12px;">Spent</div></div>
+                    <div><div style="font-size:20px;font-weight:700;color:#B3392F;">$${student.wildcatCashDeducted}</div><div style="color:#999;font-size:12px;">Deducted</div></div>
+                </div>`;
+
+            // _wcDialog is the app's one dialog. Reusing it rather than
+            // hand-rolling an overlay keeps the escape key, the backdrop click
+            // and the focus handling identical to every other modal here.
+            _wcDialog({
+                kind: 'info',
+                title: escapeHtml(`${student.firstName} ${student.lastName}`),
+                body:
+                    `<p style="margin:0 0 10px;color:#8892a0;font-size:13px;">ID ${escapeHtml(String(student.id))}` +
+                    ` &middot; Grade ${escapeHtml(String(student.grade || '—'))}` +
+                    ` &middot; ${rows.length} record${rows.length === 1 ? '' : 's'}</p>` +
+                    totals + body,
+                buttons: [{ label: 'Close', value: true, cls: 'btn-primary' }]
+            });
+        }
+        window.showStudentCashHistory = showStudentCashHistory;
 
         function filterStudentAccounts() {
             updateStudentAccounts();

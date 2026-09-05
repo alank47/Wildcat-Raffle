@@ -18,6 +18,7 @@ import type * as authEvents from "../authEvents.js";
 import type * as bellSchedules from "../bellSchedules.js";
 import type * as crons from "../crons.js";
 import type * as disciplineAggregates from "../disciplineAggregates.js";
+import type * as entraProbe from "../entraProbe.js";
 import type * as entraSync from "../entraSync.js";
 import type * as hallPassRules from "../hallPassRules.js";
 import type * as hallPasses from "../hallPasses.js";
@@ -74,6 +75,7 @@ declare const fullApi: ApiFromModules<{
   bellSchedules: typeof bellSchedules;
   crons: typeof crons;
   disciplineAggregates: typeof disciplineAggregates;
+  entraProbe: typeof entraProbe;
   entraSync: typeof entraSync;
   hallPassRules: typeof hallPassRules;
   hallPasses: typeof hallPasses;
