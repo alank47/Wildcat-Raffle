@@ -277,6 +277,11 @@
         })();
 
         function showUpdateBar(newVersion) {
+            // The bar stays, for anyone actively using the tab who would rather
+            // update now than wait for a free moment. The automatic path below
+            // is what covers the tab nobody is looking at.
+            pendingUpdateVersion = newVersion;
+            maybeApplyUpdate();
             if (document.getElementById('wcUpdateBar')) return;   // already shown
             var bar = document.createElement('div');
             bar.id = 'wcUpdateBar';
@@ -321,7 +326,107 @@
             }
         }
 
-        setInterval(checkForAppUpdate, 300000);   // every 5 minutes
+        // ---------------------------------------------------------------
+        // KEEPING AN OPEN TAB UP TO DATE
+        //
+        // index.html is cached for ten minutes and a tab left open never
+        // re-fetches it, so a fix shipped in the morning reaches nobody who
+        // does not reload. Teachers keep this open all day. A bar with a
+        // Reload button is a prompt, not a system: it gets dismissed, missed,
+        // or ignored by somebody teaching.
+        //
+        // So the tab updates itself, at the first moment when losing the
+        // screen costs nothing -- backgrounded, or idle for two minutes. Never
+        // over a pending save or a half-finished referral. WildcatUpdate owns
+        // that decision and is tested against the cases that would lose work.
+        // ---------------------------------------------------------------
+        let pendingUpdateVersion = null;
+
+        /** Work that exists only on this screen and would die in a reload. */
+        function screenHasUnfinishedWork() {
+            try {
+                if (document.querySelector('.modal:not(.hidden)')) return true;
+                const dlg = document.getElementById('wcDialogRoot');
+                if (dlg && dlg.childElementCount > 0) return true;
+                // A referral being written. The student picker alone is not
+                // work; a typed description is.
+                const desc = document.getElementById('referralDescription');
+                if (desc && desc.value.trim()) return true;
+                const student = document.getElementById('referralStudentSelect');
+                if (student && student.value) return true;
+                // Students ticked ready to be awarded.
+                if (document.querySelector('#cashStudentTableBody input[type="checkbox"]:checked')) return true;
+                if (document.querySelector('.student-checkbox:checked')) return true;
+                const notes = document.getElementById('cashNotes');
+                if (notes && notes.value.trim()) return true;
+            } catch (e) { return true; }   // cannot tell: assume busy
+            return false;
+        }
+
+        /**
+         * Reload if this is a free moment. Re-evaluated often, because the
+         * free moment usually arrives a little after the update does.
+         */
+        async function maybeApplyUpdate() {
+            if (!pendingUpdateVersion || !window.WildcatUpdate) return;
+
+            const decision = window.WildcatUpdate.shouldAutoReload({
+                hasUpdate: true,
+                newVersion: pendingUpdateVersion,
+                attemptedVersion: sessionStorage.getItem('wcUpdateAttempt'),
+                savePending: (typeof _saveQueue !== 'undefined' && _saveQueue)
+                    ? _saveQueue.isPending() : false,
+                busy: screenHasUnfinishedWork(),
+                hidden: document.visibilityState === 'hidden',
+                idleMs: Date.now() - (typeof lastUserActivity === 'number' ? lastUserActivity : Date.now())
+            });
+
+            if (!decision.reload) return;
+
+            console.log(`[update] reloading to ${pendingUpdateVersion}: ${decision.reason}`);
+            // Remembered BEFORE the reload, so a reload that fails to deliver
+            // the new version cannot start a loop across every teacher's screen.
+            try { sessionStorage.setItem('wcUpdateAttempt', pendingUpdateVersion); } catch (e) {}
+
+            // Everything outstanding goes first. This is the failure that got
+            // automatic reloads removed the first time.
+            try { await flushSaves(); } catch (e) {
+                console.warn('[update] flush before reload failed; not reloading:', (e && e.message) || e);
+                return;
+            }
+
+            const target = window.WildcatUpdate.reloadUrl(location.href, pendingUpdateVersion);
+            if (target) location.replace(target); else location.reload();
+        }
+
+        // Five minutes is the floor, not the mechanism: Chrome throttles timers
+        // hard in a background tab, which is exactly the tab this is for. The
+        // events below are what actually make it reliable.
+        setInterval(checkForAppUpdate, 300000);
+        // Once an update is known, look for a free moment far more often than
+        // five minutes -- otherwise a teacher switches away, comes back, and
+        // the moment has passed unnoticed.
+        setInterval(maybeApplyUpdate, 20000);
+
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'hidden') {
+                // The best moment there is. Take it before they come back.
+                maybeApplyUpdate();
+            } else {
+                // Returning to the tab: a check here is never throttled.
+                checkForAppUpdate();
+            }
+        });
+        window.addEventListener('focus', checkForAppUpdate);
+
+        // The cache-buster has done its job by the time the app is running.
+        // Removed so the address bar does not collect them, and so a bookmark
+        // taken now does not pin an old version forever.
+        (function stripUpdateParam() {
+            if (!window.WildcatUpdate) return;
+            const clean = window.WildcatUpdate.cleanUrl(location.href);
+            if (clean) window.history.replaceState({}, document.title, clean);
+        })();
         
         // ========================================
         // DATA INITIALIZATION
