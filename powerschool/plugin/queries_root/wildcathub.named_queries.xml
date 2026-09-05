@@ -462,10 +462,22 @@
        gradebook data by asking the empty one, and a third by asking the PLURAL
        spelling, which does not exist. Do not re-point this at a PSM_ table.
 
-       ISMISSING IS A TEACHER'S FLAG, NOT AN INFERENCE. An unscored assignment
-       is not the same thing: it may be ungraded yet, excused, or not collected.
-       Only rows the teacher marked are returned, because telling a child they
-       are missing work they are not missing is worse than telling them nothing.
+       ISMISSING IS A TEACHER'S FLAG, NOT AN INFERENCE. An UNSCORED assignment
+       is not the same thing: it may be ungraded yet, excused, or not collected,
+       and it is still excluded -- telling a child they are missing work they
+       are not missing is worse than telling them nothing.
+
+       A ZERO IS RETURNED TOO, from 1.4.1, and is_missing says which is which.
+       At this school 634 of 1,054 flagged items also carry a zero, because that
+       is how most teachers record work not handed in. But a zero WITHOUT the
+       flag is a different situation: the work was handed in and scored nothing,
+       so the question is a retake rather than "can I still turn it in". Both
+       are actionable; they are not the same action, and the app says so.
+
+       NULL IS NOT ZERO. `SCOREPOINTS = 0` excludes nulls by the comparison
+       itself, because NULL = 0 is NULL in Oracle. That is deliberate rather
+       than incidental: an ungraded assignment must not be reported to a child
+       as a zero.
 
        ISCOUNTEDINFINALGRADE filters the rest. Practice work that cannot move a
        grade should not appear on a card about what to do next.
@@ -574,8 +586,9 @@
 
   <query name="com.lapromisefund.wildcathub.missing_work" coreTable="students" flattened="true">
     <description>
-      Assignments a teacher has marked missing, for one school, with the point
-      value and course of each. Counts-toward-final work only.
+      Work a student can still act on: assignments a teacher marked missing, and
+      assignments scored zero that were not flagged. Counts-toward-final work
+      only, with the point value, course and which of the two each row is.
     </description>
     <args>
       <arg name="schoolid" required="true" type="primitive" description="Schools.School_Number for the school being read" />
@@ -593,6 +606,7 @@
       <column column="COURSES.COURSE_NAME">course_name</column>
       <column column="TEACHERCATEGORY.NAME">category_name</column>
       <column column="ASSIGNMENTSCORE.ISLATE">is_late</column>
+      <column column="ASSIGNMENTSCORE.ISMISSING">is_missing</column>
       <column column="ASSIGNMENTSCORE.SCOREPOINTS">score_points</column>
     </columns>
     <sql>
@@ -609,6 +623,7 @@
           C.COURSE_NAME              AS course_name,
           TC.NAME                    AS category_name,
           SCORE.ISLATE               AS is_late,
+          SCORE.ISMISSING            AS is_missing,
           SCORE.SCOREPOINTS          AS score_points
         FROM ASSIGNMENTSCORE SCORE
         JOIN STUDENTS S            ON S.DCID = SCORE.STUDENTSDCID
@@ -625,7 +640,19 @@
         WHERE S.SCHOOLID              = :schoolid
           AND T.YEARID                = :yearid
           AND S.ENROLL_STATUS         = 0
-          AND SCORE.ISMISSING         = 1
+          AND (
+                SCORE.ISMISSING = 1
+                -- A zero the teacher did NOT flag. Different situation and a
+                -- different thing to ask for: the work was handed in and scored
+                -- nothing, so the question is a retake, not "can I still turn
+                -- it in". Returned so the app can say which.
+                --
+                -- SCOREPOINTS = 0 only. A NULL score is not a zero -- it is
+                -- ungraded, excused or not collected -- and NULL = 0 is NULL in
+                -- Oracle, so nulls are excluded by the comparison itself
+                -- rather than by an assumption.
+                OR SCORE.SCOREPOINTS = 0
+              )
           AND ASEC.ISCOUNTEDINFINALGRADE = 1
       ]]>
     </sql>

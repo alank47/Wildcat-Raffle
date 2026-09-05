@@ -472,6 +472,9 @@ export const myStudentView = query({
               // second is also the one where a retake is worth asking about.
               // ?? null, never || null, or a genuine 0 would become null.
               scorePoints: m.scorePoints ?? null,
+              // Absent means a row written before plugin 1.4.1, whose query
+              // returned only flagged work -- so absent is TRUE, not false.
+              isMissing: m.isMissing !== false,
             });
             return acc;
           }, {} as Record<string, unknown[]>),

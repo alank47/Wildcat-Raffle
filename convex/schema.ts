@@ -372,6 +372,19 @@ export default defineSchema({
     categoryName: v.optional(v.string()),
     isLate: v.optional(v.boolean()),
     /**
+     * Did a TEACHER flag this, or is it here because it scored zero?
+     *
+     * From plugin 1.4.1 the query returns both, and they are different
+     * situations with different asks: flagged means the work is not in, so the
+     * question is whether it can still be handed in; an unflagged zero means it
+     * WAS handed in and scored nothing, so the question is a retake.
+     *
+     * Optional because rows written by 1.3.x carry no such column, and every
+     * one of those was flagged by definition -- the old query returned nothing
+     * else. Absent is therefore read as true, not false.
+     */
+    isMissing: v.optional(v.boolean()),
+    /**
      * What the student currently has on it, and what the work is worth in the
      * gradebook's own terms.
      *

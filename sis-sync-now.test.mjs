@@ -83,16 +83,18 @@ console.log("\nA student can tell missing work from a score");
   check("with the count", /' assignment' : ' assignments'/.test(script));
   check("it says a teacher marked them, not the app",
     /Your teacher marked these as not handed in/.test(script));
-  check("and that the points are a value, not a score",
-    /what each is worth, not a score you were given/.test(script));
+  check("and, where they are all flagged, that the points are a value not a score",
+    /what each is\s*\n?\s*'?\s*\+?\s*'?worth, not a score you were given/.test(script));
   // The intent, not one wording: a bare point value under a posted grade reads
   // as a score. Every branch must attach a word that says which it is.
   check("no row renders a bare point number",
     !/const worth = \(typeof m\.pointsPossible === 'number'\)\s*\?\s*wpEsc/.test(script));
-  check("every branch labels the number it prints",
-    /worth = 'scored 0 of '/.test(script) &&
-    /wpEsc\(String\(got\)\) \+ ' of '/.test(script) &&
-    /worth = 'worth ' \+ wpEsc\(String\(P\)\)/.test(script));
+  // TWO branches now, not three. A flagged assignment shows what the work is
+  // worth whatever it scored -- the owner's rule 3 -- so partial credit stopped
+  // being its own case on 2026-09-05.
+  check("both branches label the number they print",
+    /worth = 'worth ' \+ wpEsc\(String\(P\)\) \+ ' pts'/.test(script) &&
+    /worth = 'scored 0 of ' \+ wpEsc\(String\(P\)\)/.test(script));
   check("the heading is styled and visible", /\.wp-missing-head \{/.test(css));
   check("in the amber used for attention, not the red used for a stop",
     /\.wp-missing-title \{[^}]*--warn/.test(css));
@@ -122,11 +124,26 @@ console.log("\nA student can see what there is to gain");
   // into "not handed in" would mislabel most of them.
   check("a zero reads as a zero, not as nothing handed in",
     /worth = 'scored 0 of '/.test(script));
-  check("partial credit shows both numbers", /wpEsc\(String\(got\)\) \+ ' of '/.test(script));
+  // Rule 3: flagged and NOT zero reads the same as flagged and zero. So a
+  // partially credited flagged assignment shows what it is worth, like every
+  // other flagged row, rather than its own third wording.
+  check("a flagged row never shows a partial score instead of its value",
+    !/wpEsc\(String\(got\)\) \+ ' of '/.test(script));
   check("and an unscored item still says what it is worth",
     /worth = 'worth ' \+ wpEsc\(String\(P\)\)/.test(script));
-  check("a zero prompts a retake, anything else prompts handing it in",
-    /ask about a retake/.test(script) && /turn this in/.test(script));
+  // THE FLAG DECIDES, NOT THE SCORE. Set by the owner 2026-09-05: a flagged
+  // assignment means the work is not in, whatever it scored -- and 634 of 1,054
+  // flagged items carry a zero, so scoring cannot be the signal.
+  check("a flagged row asks whether it can still be handed in",
+    /flagged\s*\?\s*' &middot; <b>ask if you can still turn it in<\/b>'/.test(script));
+  check("and only an UNFLAGGED row asks about a retake",
+    /:\s*' &middot; <b>ask about a retake<\/b>'/.test(script));
+  check("the flag is what is tested, not the score",
+    /const flagged = m\.isMissing !== false;/.test(script));
+  check("a flagged row shows what the work is worth, not the zero it carries",
+    /if \(P !== null && flagged\) \{\s*\n\s*worth = 'worth '/.test(script));
+  check("an unflagged zero shows the zero, which is the fact it turns on",
+    /worth = 'scored 0 of '/.test(script));
 
   // null and 0 are different answers all the way down.
   check("the server sends the score through", /scorePoints: m\.scorePoints \?\? null/.test(views));
@@ -158,6 +175,49 @@ console.log("\nThe button is reachable from the mode people are actually in");
   check("it is torn down with the other cash tabs when the mode changes",
     /'cashSyncTabBtn'/.test(script) &&
     /removeCashTabButtons[\s\S]{0,400}cashSyncTabBtn/.test(script));
+}
+
+
+console.log("\nThe heading never contradicts the rows");
+{
+  // It said "Missing work" over every row while a row said "ask about a
+  // retake". A retake is not missing work, and that contradiction is what the
+  // owner reported as confusing for students.
+  check("it counts the two kinds separately", /const nMissing = items\.filter/.test(script));
+  check("all flagged reads as missing work", /'Missing work &middot; ' \+ nMissing/.test(script));
+  check("all zeros reads as scored zero", /'Scored zero &middot; ' \+ nZero/.test(script));
+  check("and a mix names both", /' missing &middot; ' \+\s*\n?\s*nZero \+ ' scored zero'/.test(script));
+  check("the explanation follows the same three cases",
+    /const headNote = \(nZero === 0\)/.test(script));
+  check("it never claims a graded zero was 'not handed in'",
+    /These were graded and scored zero/.test(script));
+  check("missing rows sort above zeros, so each ask is in one place",
+    /const am = \(a\.isMissing !== false\) \? 0 : 1;/.test(script));
+}
+
+console.log("\nThe flag survives the whole path, and an old row defaults to missing");
+{
+  const plugin = readFileSync(new URL("./powerschool/plugin/queries_root/wildcathub.named_queries.xml", import.meta.url), "utf8");
+  check("the query returns the flag", /<column column="ASSIGNMENTSCORE.ISMISSING">is_missing<\/column>/.test(plugin));
+  check("and now also returns unflagged zeros", /OR SCORE\.SCOREPOINTS = 0/.test(plugin));
+  check("a NULL score is still excluded, because ungraded is not zero",
+    /NULL = 0 is NULL in Oracle/.test(plugin));
+  check("counted work only, so the list cannot include practice work",
+    /ISCOUNTEDINFINALGRADE = 1/.test(plugin));
+
+  check("the sync maps it, with the string trap handled",
+    /isMissing: m\.is_missing === undefined \? true : String\(m\.is_missing\) === "1"/.test(sisAction));
+  check("the mutation validator accepts it, or the whole sync fails",
+    /isMissing: v\.optional\(v\.boolean\(\)\)/.test(sisStats));
+  check("the server sends it on, defaulting absent to missing",
+    /isMissing: m\.isMissing !== false/.test(views));
+
+  // Rows written by 1.3.x have no such column, and that query returned only
+  // flagged work -- so absent must read as TRUE. Reading it as false would tell
+  // every child with old data that their work was graded zero.
+  check("absent means missing everywhere it is read, never false",
+    !/isMissing: m\.isMissing === true/.test(views) &&
+    !/m\.isMissing === true/.test(script));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

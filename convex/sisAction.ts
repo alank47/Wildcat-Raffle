@@ -319,6 +319,11 @@ export const syncFromPowerSchool = internalAction({
           // "not handed in" apart from "handed in and scored nothing".
           scorePoints: n(m.score_points),
           totalPointValue: n(m.total_point_value),
+          // Absent means 1.3.x, whose query returned ONLY flagged work, so an
+          // old row is missing by definition. String "0"/"1" again: Boolean("0")
+          // is true, and getting this backwards would tell every child their
+          // handed-in work was never handed in.
+          isMissing: m.is_missing === undefined ? true : String(m.is_missing) === "1",
         }))
         .filter((m) => m.studentNumber && m.assignmentSectionId);
     } catch (e: unknown) {

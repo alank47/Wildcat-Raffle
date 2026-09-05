@@ -17092,15 +17092,49 @@
                           '</span>'
                         : '');
 
+                // THE HEADING MUST NOT CONTRADICT THE ROWS.
+                //
+                // It said "Missing work" over every row, and then a row said
+                // "ask about a retake" -- which is the confusion the owner
+                // reported. A retake is not missing work. The list now holds two
+                // kinds and the heading counts them separately, or names the one
+                // kind when there is only one.
+                const nMissing = items.filter(function (m) { return m.isMissing !== false; }).length;
+                const nZero = items.length - nMissing;
+
+                const headTitle = (nZero === 0)
+                    ? 'Missing work &middot; ' + nMissing +
+                      (nMissing === 1 ? ' assignment' : ' assignments')
+                    : (nMissing === 0)
+                        ? 'Scored zero &middot; ' + nZero +
+                          (nZero === 1 ? ' assignment' : ' assignments')
+                        : 'Work to follow up &middot; ' + nMissing + ' missing &middot; ' +
+                          nZero + ' scored zero';
+
+                // The explanation follows the same three cases, because "your
+                // teacher marked these as not handed in" is simply untrue of a
+                // zero that was handed in.
+                const headNote = (nZero === 0)
+                    ? 'Your teacher marked these as not handed in. The points show what each is ' +
+                      'worth, not a score you were given.'
+                    : (nMissing === 0)
+                        ? 'These were graded and scored zero. Your teacher can tell you whether a ' +
+                          'retake is possible.'
+                        : 'Some of these were never handed in, and some were graded and scored zero. ' +
+                          'Each one below says which, and what to ask for.';
+
                 body = '<div class="wp-missing-head">' +
-                        '<span class="wp-missing-title">Missing work &middot; ' +
-                            items.length + (items.length === 1 ? ' assignment' : ' assignments') +
-                        '</span>' +
+                        '<span class="wp-missing-title">' + headTitle + '</span>' +
                         gainLine +
-                        '<span class="wp-missing-note">Your teacher marked these as not handed in. ' +
-                        'The points show what each is worth, not a score you were given.</span>' +
+                        '<span class="wp-missing-note">' + headNote + '</span>' +
                        '</div>' +
                        '<div class="wp-rows wp-rows-nested">' + items.slice().sort(function (a, b) {
+                    // Missing first, then zeros: one is "go and hand it in",
+                    // the other is "go and ask". Mixing them makes a student
+                    // read the same list twice to find both.
+                    const am = (a.isMissing !== false) ? 0 : 1;
+                    const bm = (b.isMissing !== false) ? 0 : 1;
+                    if (am !== bm) return am - bm;
                     // Oldest due first, no due date LAST. Sorting on
                     // `dueDate || ''` puts undated work above things genuinely
                     // overdue, which is the opposite of what a student needs.
@@ -17114,25 +17148,36 @@
                     // directly under a posted grade, a bare number reads as the
                     // score the student GOT. This is what the work is worth if
                     // they hand it in, which is the opposite meaning.
-                    // THREE STATES, because they are three different actions.
+                    // THE FLAG DECIDES, NOT THE SCORE.
                     //
-                    //   no score      -> not handed in. Hand it in.
-                    //   scored 0      -> handed in and got nothing, or recorded
-                    //                    as a zero. Worth asking about a retake.
-                    //   scored above 0-> partial credit. Some points are left.
+                    // Set by the owner, 2026-09-05, and the reasoning is the
+                    // student's: what should I go and ask for?
                     //
-                    // 634 of 1,054 flagged items at this school are zeros, so
-                    // collapsing the middle case into the first would mislabel
-                    // most of them.
+                    //   flagged missing  -> the work is not in. "Ask if you can
+                    //                       still turn it in." The score is
+                    //                       irrelevant and mentioning a zero
+                    //                       here only muddies it, because 634 of
+                    //                       1,054 flagged items carry one.
+                    //   zero, not flagged-> it WAS handed in and scored nothing.
+                    //                       "Ask about a retake." A different
+                    //                       conversation with a different
+                    //                       teacher answer.
+                    //
+                    // Anything unflagged and non-zero is not in this list at
+                    // all: the query returns flagged work and zeros, nothing
+                    // else.
                     const P = (typeof m.pointsPossible === 'number') ? m.pointsPossible : null;
                     const got = (typeof m.scorePoints === 'number') ? m.scorePoints : null;
+                    const flagged = m.isMissing !== false;
+
+                    // A flagged row says what the work is WORTH; a zero says
+                    // what was scored, because that is the fact each case turns
+                    // on.
                     let worth = '';
-                    if (P !== null && got === 0) {
-                        worth = 'scored 0 of ' + wpEsc(String(P));
-                    } else if (P !== null && got !== null && got > 0) {
-                        worth = wpEsc(String(got)) + ' of ' + wpEsc(String(P));
-                    } else if (P !== null) {
+                    if (P !== null && flagged) {
                         worth = 'worth ' + wpEsc(String(P)) + ' pts';
+                    } else if (P !== null) {
+                        worth = 'scored 0 of ' + wpEsc(String(P));
                     }
                     const due = m.dueDate ? wpEsc(String(m.dueDate)) : 'No due date';
                     return '<div class="wp-row wp-row-nested">' +
@@ -17141,9 +17186,9 @@
                             '<span class="wp-rowsub">' + due +
                                 (m.categoryName ? ' &middot; ' + wpEsc(m.categoryName) : '') +
                                 (m.isLate ? ' &middot; marked late' : '') +
-                                ((typeof m.scorePoints === 'number' && m.scorePoints === 0)
-                                    ? ' &middot; <b>ask about a retake</b>'
-                                    : ' &middot; <b>turn this in</b>') +
+                                (flagged
+                                    ? ' &middot; <b>ask if you can still turn it in</b>'
+                                    : ' &middot; <b>ask about a retake</b>') +
                             '</span>' +
                         '</span>' +
                         '<span class="wp-rowmain wp-rowright">' +

@@ -116,6 +116,7 @@ export const replaceMissingWork = internalMutation({
         // permissive does not make the mutation permissive.
         scorePoints: v.optional(v.number()),
         totalPointValue: v.optional(v.number()),
+        isMissing: v.optional(v.boolean()),
       }),
     ),
   },
