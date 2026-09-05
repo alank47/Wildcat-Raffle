@@ -166,27 +166,68 @@ export const mergeSlice = mutation({
     const keyed = existing.some((r) => typeof r.key === "string")
       || rows.some((r) => typeof r.key === "string");
 
+    // A ROW THAT SURVIVES IS LEFT WHERE IT IS.
+    //
+    // This used to delete every stored row and re-insert the merged set. The
+    // result was correct and the cost was not: appending one audit entry to a
+    // week that already held 1,278 rewrote all 1,279.
+    //
+    // Convex counts a delete as a READ, so that doubled the read budget: 2n
+    // against a 4,096 limit, a ceiling of ~2,048 rows per document. The audit
+    // log is partitioned weekly and takes one entry per student per cash award,
+    // so a launch week with 34 teachers awarding whole classes would have
+    // crossed it mid-week -- and the PBIS team reads that log to see who is
+    // giving what. Ticket history had already crossed it and was failing on
+    // every save.
+    //
+    // Keeping survivors in place makes an append cost n reads and as many
+    // writes as there are genuinely new rows -- usually a handful, often none.
+    //
+    // The MERGE RULE IS UNCHANGED: stored still wins a collision, the same
+    // tokens are compared in the same order, and the final set is identical
+    // row for row. Only the number of database operations differs. Survivors
+    // also keep their original `mirroredAt`, which nothing reads and which now
+    // honestly means "when this row was written" rather than "when a save last
+    // touched this slice".
     const seen = new Set<string>();
-    const keep: Array<{ key?: string; payload: unknown }> = [];
-    const push = (r: { key?: string; payload: unknown }) => {
+    const keptStored: typeof existing = [];
+    const toInsert: Array<{ key?: string; payload: unknown }> = [];
+    let anonymous = 0;
+
+    const tokenFor = (r: { key?: string; payload: unknown }) => {
       const id = idOf(r.payload);
       // A row with no dedupe value cannot be compared, so it is kept rather
       // than dropped. Losing an entry because it lacks an id is worse than
       // keeping a duplicate an admin can see and remove.
-      const token = id === undefined || id === null
-        ? `__nokey__${keep.length}`
-        : `${keyed ? r.key ?? "" : ""} ${String(id)}`;
-      if (seen.has(token)) return;
-      seen.add(token);
-      keep.push({ key: r.key, payload: r.payload });
+      return id === undefined || id === null
+        ? `__nokey__${anonymous++}`
+        : `${keyed ? r.key ?? "" : ""} ${String(id)}`;
     };
 
-    for (const r of existing) push({ key: r.key, payload: r.payload }); // stored wins
-    for (const r of rows) push(r);
+    for (const r of existing) {
+      const token = tokenFor(r);
+      if (seen.has(token)) continue;   // a duplicate ALREADY in storage
+      seen.add(token);
+      keptStored.push(r);
+    }
+    for (const r of rows) {
+      const token = tokenFor(r);
+      if (seen.has(token)) continue;   // stored wins
+      seen.add(token);
+      toInsert.push(r);
+    }
 
-    for (const r of existing) await ctx.db.delete(r._id);
+    // Only rows that did NOT survive the merge are touched.
+    const survivors = new Set(keptStored.map((r) => r._id));
+    let deleted = 0;
+    for (const r of existing) {
+      if (survivors.has(r._id)) continue;
+      await ctx.db.delete(r._id);
+      deleted++;
+    }
+
     const mirroredAt = new Date().toISOString();
-    for (const r of keep) {
+    for (const r of toInsert) {
       await ctx.db.insert("legacyMirror", {
         doc,
         collection,
@@ -196,7 +237,16 @@ export const mergeSlice = mutation({
       });
     }
 
-    return { doc, collection, stored: keep.length, incoming: rows.length };
+    return {
+      doc,
+      collection,
+      stored: keptStored.length + toInsert.length,
+      incoming: rows.length,
+      // So a caller can see that a re-send of unchanged data wrote nothing.
+      inserted: toInsert.length,
+      deleted,
+    };
+
   },
 });
 
