@@ -43,10 +43,29 @@ console.log("\nThe counter is gone from id minting");
 console.log("\nTwo computers cannot mint the same id");
 {
   // The actual failure. Independent mints, no shared state of any kind.
+  // SIZED TO REALITY, not to a round number. The suffix is 7 characters from a
+  // 32-symbol alphabet: 34.4 billion per day. A school files tens of referrals
+  // a day, so the honest test is that a day's worth never collides.
+  //
+  // An earlier version of this asserted zero collisions in 100,000 mints. That
+  // is 100,000 referrals in ONE DAY, which cannot happen, and at that volume
+  // the birthday bound EXPECTS about 0.145 collisions -- so it failed roughly
+  // one run in seven. A test that flakes teaches people to re-run it, which is
+  // worse than not having it.
+  const DAY = 2000;                       // far above a real day at this school
   const ids = new Set();
+  for (let i = 0; i < DAY; i++) ids.add(D.newReferralId());
+  check(`${DAY} referrals in one day are all distinct`, ids.size === DAY);
+
+  // And the rate at absurd volume, which is the property the size was chosen
+  // for. Expected collisions at 100,000 is ~0.145; anything near 1% would mean
+  // the alphabet or the length is wrong.
+  const many = new Set();
   const N = 100000;
-  for (let i = 0; i < N; i++) ids.add(D.newReferralId());
-  check(`${N} independent mints produce ${N} distinct ids`, ids.size === N);
+  for (let i = 0; i < N; i++) many.add(D.newReferralId());
+  const rate = (N - many.size) / N;
+  check(`at 100,000 mints the collision rate stays under 0.01% (${(rate * 100).toFixed(4)}%)`,
+    rate < 0.0001);
 
   // Two machines filing in the same second, which is the real scenario.
   const sameInstant = new Date("2026-09-04T18:30:00");

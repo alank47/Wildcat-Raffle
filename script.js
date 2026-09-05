@@ -15264,6 +15264,7 @@
                 // Paint immediately from whatever is cached, then fetch the SIS
                 // roster and repaint. Awaiting here would leave a teacher on a
                 // blank tab for the length of a network round trip.
+                resetCashFilterFetch();
                 updateCashPeriodFilter();
                 updateCashTable();
                 loadTeacherRosterFromSIS().then(() => {
@@ -15439,7 +15440,48 @@
                 console.error('[signin] full reload failed, roster only:', (e && e.message) || e);
             }
             await refreshRosterFromConvex('sign-in');
+
+            // AND THE SIS ROSTER, which is a different query and a different
+            // failure.
+            //
+            // loadTeacherRosterFromSIS refuses without a session and records
+            // `failed`. Every landing screen fires before this event, so on
+            // sign-in it always refuses at least once. Raffle survived that
+            // because updatePeriodFilter retries a failed roster; Wildcat Cash
+            // did not retry at all, and Cash is now where everybody lands. One
+            // early refusal therefore meant no class periods for the rest of
+            // the session, for teachers and admins alike.
+            //
+            // Forced, because a `failed` state with a null roster would
+            // otherwise be re-fetched only by luck, and repainted here rather
+            // than left for the next click.
+            try {
+                resetPeriodFilterFetch();
+                resetReferralRosterFetch();
+                await loadTeacherRosterFromSIS(true);
+                repaintRosterPickers('sign-in');
+            } catch (e) {
+                console.warn('[signin] SIS roster refresh failed:', (e && e.message) || e);
+            }
         });
+
+        /**
+         * Redraw every control built from the SIS roster.
+         *
+         * One function, so a new screen that shows class periods cannot be
+         * added and then quietly miss the refresh — which is exactly how Award
+         * Cash ended up without the retry Award Tickets had.
+         */
+        function repaintRosterPickers(reason) {
+            const sections = window.WildcatRoster.sectionsFrom(activeTeacherRoster());
+            console.log(`[roster] repaint after ${reason}: ${sections.length} section(s)`);
+            const safely = (fn) => { try { if (typeof fn === 'function') fn(); } catch (e) {} };
+            safely(window.updatePeriodFilter);
+            safely(window.updateCashPeriodFilter);
+            safely(window.updateCashTable);
+            safely(window.updateTicketsTable);
+            safely(window.populateReferralStudentDropdown);
+        }
 
         /**
          * The second case, which the event alone does not cover.
@@ -23595,9 +23637,29 @@
             switchSettingsSubtab('cash');
         }
 
+        // At most one retry per context, so a repaint cannot loop on a broken
+        // connection. Mirrors periodFilterFetchTried on the raffle side.
+        let cashFilterFetchTried = false;
+        function resetCashFilterFetch() { cashFilterFetchTried = false; }
+
         function updateCashPeriodFilter() {
             const select = document.getElementById('cashPeriodFilter');
             if (!select) return;
+
+            // RETRIES A FAILED ROSTER, which this did not and Award Tickets
+            // did. loadTeacherRosterFromSIS refuses before a Convex session
+            // exists, and every landing screen runs before sign-in resolves —
+            // so the first attempt of the visit always refuses. Award Tickets
+            // recovered on its next repaint; this tab kept the empty list for
+            // the whole session, and Cash is where everybody now lands.
+            if (!activeTeacherRoster() && sisRosterState !== 'loading'
+                && !cashFilterFetchTried && !isPreviewingTeacher()) {
+                cashFilterFetchTried = true;
+                loadTeacherRosterFromSIS(true).then(() => {
+                    updateCashPeriodFilter();
+                    try { updateCashTable(); } catch (e) {}
+                });
+            }
 
             const sections = window.WildcatRoster.sectionsFrom(activeTeacherRoster());
             const seesAll = window.WildcatRoster.seesEveryStudent(currentUser && currentUser.role);
