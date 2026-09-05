@@ -13263,29 +13263,57 @@
             let headerTitle = 'All Students';
             let headerSubtitle = 'Select students to award tickets';
             
-            // Filter by period if selected (but NOT for Campus Aides - they see all students)
-            if (selectedPeriod && currentUser && currentUser.sections && currentUser.role !== 'campusaide') {
-                console.log('Filtering by selected period...');
-                const section = currentUser.sections.find(s => s.sectionId === selectedPeriod);
-                if (section) {
-                    console.log('Found section:', section);
-                    displayStudents = enrolledStudents().filter(s => section.students.includes(s.id));
-                    headerTitle = `Period ${section.period} - ${section.courseName}`;
-                    headerSubtitle = `${section.students.length} students in this class`;
-                    console.log('Filtered to', displayStudents.length, 'students');
-                } else {
-                    console.log('Section not found!');
-                }
-            } else if (currentUser && currentUser.role === 'campusaide') {
-                // Campus Aides can filter by grade
+            // Campus Aides filter by grade; they see the whole school either way.
+            if (currentUser && currentUser.role === 'campusaide') {
                 if (selectedGrade) {
-                    displayStudents = enrolledStudents().filter(s => s.grade == selectedGrade);
+                    displayStudents = displayStudents.filter(s => s.grade == selectedGrade);
                     headerTitle = `Grade ${selectedGrade} (Campus Aide)`;
                     headerSubtitle = `${displayStudents.length} students in grade ${selectedGrade}`;
                 } else {
                     headerTitle = 'All Students (Campus Aide)';
                     headerSubtitle = 'You have access to all students';
                 }
+            } else {
+                // SIS SCOPING, THE SAME CALL AWARD CASH MAKES.
+                //
+                // This read `currentUser.sections` and matched with
+                // `section.students.includes(s.id)`. Both halves were wrong,
+                // and they hid each other:
+                //
+                //   1. currentUser.sections is the legacy CSV field. Nothing
+                //      in the PowerSchool path has ever written it -- every
+                //      staff row in Convex has `sections: []`. So the whole
+                //      branch was unreachable and EVERY period showed the
+                //      whole school. updatePeriodFilter says this about the
+                //      dropdown in its own comment; the table it filters was
+                //      never moved across with it.
+                //
+                //   2. Even reached, `.includes(s.id)` compares an app id to
+                //      the SIS section's student OBJECTS. scopeStudents joins
+                //      on studentNumber, which is the key both sides share.
+                //
+                // Invisible until today, because the dropdown was empty too:
+                // with nothing to select, nobody could see that selecting did
+                // nothing. Fixing the dropdown is what exposed this.
+                //
+                // scopeStudents also corrects the failure direction. The old
+                // code applied its filter only when sections existed, so a
+                // teacher with no roster fell through to the entire school --
+                // absent data reading as unrestricted. Now no roster means no
+                // students, with a reason attached.
+                const scoped = window.WildcatRoster.scopeStudents({
+                    students: displayStudents,
+                    role: currentUser && currentUser.role,
+                    roster: activeTeacherRoster(),
+                    sectionId: selectedPeriod || null
+                });
+                displayStudents = scoped.students;
+                headerTitle = window.WildcatRoster.scopeLabel(
+                    scoped, activeTeacherRoster(), selectedPeriod || null) || headerTitle;
+                headerSubtitle = scoped.reason
+                    || `${displayStudents.length} student${displayStudents.length === 1 ? '' : 's'}`;
+                console.log(`Scope: ${scoped.scope}, ${displayStudents.length} student(s)` +
+                    (scoped.reason ? ` -- ${scoped.reason}` : ''));
             }
             
             console.log('Displaying', displayStudents.length, 'students');
