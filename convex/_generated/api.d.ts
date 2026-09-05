@@ -25,6 +25,7 @@ import type * as hallPasses from "../hallPasses.js";
 import type * as identity from "../identity.js";
 import type * as identityRules from "../identityRules.js";
 import type * as legacyData from "../legacyData.js";
+import type * as legacyPurge from "../legacyPurge.js";
 import type * as mail from "../mail.js";
 import type * as me from "../me.js";
 import type * as mealPins from "../mealPins.js";
@@ -82,6 +83,7 @@ declare const fullApi: ApiFromModules<{
   identity: typeof identity;
   identityRules: typeof identityRules;
   legacyData: typeof legacyData;
+  legacyPurge: typeof legacyPurge;
   mail: typeof mail;
   me: typeof me;
   mealPins: typeof mealPins;
