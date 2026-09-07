@@ -15280,6 +15280,22 @@
                 rosterSource = 'convex';
                 console.log(`✅ Roster refreshed from Convex after ${reason}: ${students.length} enrolled, ${nonEnrolledStudents.length} former`);
 
+                // RECONCILE AGAIN, because `students` just changed.
+                //
+                // loadData reconciles the cash ledger at its end, and on
+                // 2026-09-07 that ran while only 13 student records carried a
+                // cash array; this refresh then brought the set to 23. The
+                // fifteen August movements arrived AFTER the only pass that
+                // would have picked them up, so recovered was 0 and My Activity
+                // stayed on one transaction while the analytics showed sixteen.
+                //
+                // Safe to call twice: the union is by transaction id and
+                // cash-ledger.test.mjs asserts that running it repeatedly
+                // changes nothing. Anything that replaces `students` has to
+                // call this, which is why it sits here rather than at a call
+                // site somebody has to remember.
+                if (typeof reconcileCashLedger === 'function') reconcileCashLedger();
+
                 // Redraw whatever is on screen. There is no `currentTab` variable
                 // and no data-tab attribute: the markup wires tabs up as
                 // onclick="switchTab('tickets')", so the name is read back out of

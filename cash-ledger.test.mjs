@@ -123,5 +123,45 @@ console.log("\nBoth load paths reconcile");
     raw.indexOf("reconcileCashLedger();") < raw.indexOf("updateAllDisplays();"));
 }
 
+
+console.log("\nIt reconciles again whenever the roster is replaced");
+{
+  // THE ORDERING FAULT, 2026-09-07. loadData reconciled at its end, with 13
+  // student records carrying a cash array; refreshRosterFromConvex then brought
+  // that to 23. The fifteen August movements arrived AFTER the only pass that
+  // would have collected them:
+  //
+  //   at reconcile time   13 students,  49 movements,  recovered 0
+  //   at diagnostic time  23 students,  16 of them the signed-in user's
+  //
+  // so My Activity stayed on one while the analytics showed sixteen.
+  check("refreshRosterFromConvex reconciles after replacing students",
+    /Roster refreshed from Convex after \$\{reason\}[\s\S]{0,1200}reconcileCashLedger\(\)/.test(raw));
+  check("and it does so AFTER the students array is rebuilt",
+    raw.indexOf("students = fresh") < raw.indexOf("if (typeof reconcileCashLedger === 'function') reconcileCashLedger();")
+    || /students\.length\} enrolled[\s\S]{0,1200}reconcileCashLedger\(\)/.test(raw));
+  check("loadData still reconciles too, for the path that does not refresh",
+    (raw.match(/reconcileCashLedger\(\);/g) || []).length >= 3);
+
+  // Idempotence is what makes calling it from several places correct rather
+  // than merely convenient.
+  const { ctx, run } = make();
+  ctx.cashTransactions = [];
+  ctx.students = [{ id: "s1", wildcatCashTransactions: [
+    { id: "t1", teacherId: "T001", timestamp: "2026-08-01T00:00:00Z" },
+  ] }];
+  run();
+  const afterFirst = ctx.cashTransactions.length;
+  // A later roster refresh brings a student that was not there before.
+  ctx.students.push({ id: "s2", wildcatCashTransactions: [
+    { id: "t2", teacherId: "T001", timestamp: "2026-08-02T00:00:00Z" },
+  ] });
+  run();
+  check("a second pass picks up what a later load brought",
+    afterFirst === 1 && ctx.cashTransactions.length === 2);
+  run();
+  check("and a third changes nothing", ctx.cashTransactions.length === 2);
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);
