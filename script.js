@@ -6655,18 +6655,11 @@
         // its password-form caller is gone.
 
 
-        function backToLogin() {
-            // #connectSchoolScreen went with the "connect to a school by id"
-            // onboarding, which nothing could reach: showConnectSchool() was
-            // its only opener and nothing called that. Reading .textContent off
-            // the null a deleted element returns would throw here and abort the
-            // rest of the function, which is how #studentLoginId broke this
-            // same function on 2026-08-14.
-            document.getElementById('createAdminScreen').classList.add('hidden');
-            document.getElementById('loginScreen').classList.remove('hidden');
-            const adminErr = document.getElementById('adminError');
-            if (adminErr) adminErr.textContent = '';
-        }
+        // backToLogin and closeChangePassword were removed 2026-09-07 with the
+        // screens they closed. Neither had a caller left, and both reached for
+        // #createAdminScreen / #changePasswordModal by id and dereferenced the
+        // result -- so either would have thrown the moment anything called it.
+
 
 
 
@@ -6735,8 +6728,13 @@
             // Save login - saveData() now intelligently merges with Firebase to prevent data loss
             await saveData();
             
+            // #createAdminScreen was hidden here too, until it was removed with
+            // the password login on 2026-09-07. Reading .classList off null
+            // threw, and this line sits BEFORE mainApp is shown -- so sign-in
+            // completed server side and then died on the handoff, leaving
+            // everybody on the login screen. Third time a removal has broken a
+            // caller that reached for an element by id.
             document.getElementById('loginScreen').classList.add('hidden');
-            document.getElementById('createAdminScreen').classList.add('hidden');
             document.getElementById('mainApp').classList.remove('hidden');
             
             document.getElementById('currentUserName').textContent = teacher.name;
@@ -6830,8 +6828,13 @@
                     try { window.WildcatAuth.signOut(); } catch (e) { /* still log out locally */ }
                 }
 
+                // #studentApp is not in index.html. It has been dead markup
+                // since the portal became a top level surface, and this line
+                // has been throwing on every logout ever since -- unguarded,
+                // before #loginScreen is shown, so logout left the app hidden
+                // and nothing on screen. Found while sweeping for the same
+                // fault after removing the password login.
                 document.getElementById('mainApp').classList.add('hidden');
-                document.getElementById('studentApp').classList.add('hidden');
                 document.getElementById('loginScreen').classList.remove('hidden');
                 // #loginUsername and #loginPassword were cleared here until
                 // 2026-09-07, when the password form was removed. Reading
@@ -7729,10 +7732,6 @@
         }
 
 
-        function closeChangePassword() {
-            document.getElementById('changePasswordModal').classList.add('hidden');
-            document.getElementById('mainApp').classList.remove('hidden');
-        }
 
 
         // Add Cash Modal Functions
@@ -22214,16 +22213,10 @@
                     openStudentPortal(currentStudent, { fromBoot: true });
                 }
             } else {
-                // No active session, show login screen
-                // Show create admin button ONLY if NO teachers exist
-                const createAdminSection = document.getElementById('createAdminSection');
-                if (createAdminSection) {
-                    if (teachers.length === 0) {
-                        createAdminSection.style.display = 'block';
-                    } else {
-                        createAdminSection.style.display = 'none';
-                    }
-                }
+                // No active session: the login screen is already the default
+                // state. The "Create Admin" button that used to be toggled here
+                // went with the password login on 2026-09-07; the first admin
+                // comes from convex/seed.ts.
             }
             
             // Check if automatic backup is needed (once per day)
