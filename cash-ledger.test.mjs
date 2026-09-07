@@ -26,11 +26,14 @@ const code = raw.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
 const src = code.slice(code.indexOf("function reconcileCashLedger()"),
                        code.indexOf("function applyTombstonesToLocalState()"));
 const make = () => {
-  const ctx = { cashTransactions: [], students: [], logs: [] };
+  const ctx = { cashTransactions: [], students: [], logs: [], window: {} };
   const fn = new Function("state", `
     let cashTransactions = state.cashTransactions;
     let students = state.students;
     const console = { log: (m) => state.logs.push(m) };
+    // The function records what it did on window for the diagnostic. Stubbed
+    // rather than stripped, so the test runs the shipped body unaltered.
+    const window = state.window;
     ${src}
     reconcileCashLedger();
     state.cashTransactions = cashTransactions;
@@ -60,7 +63,14 @@ console.log("\nThe two stores become one");
     ctx.cashTransactions.map((t) => t.id).join(",") === "txn_aug_1,txn_aug_2,txn_sep_1");
   check("a recovered movement carries the student it belongs to",
     ctx.cashTransactions.find((t) => t.id === "txn_aug_1").studentId === "s1");
-  check("and it says what it did", /reconciled: 2 movement/.test(ctx.ctx?.logs?.[0] ?? ctx.logs[0] ?? ""));
+  check("and it says what it did", /reconciled: 2 movement/.test(ctx.logs[0] ?? ""));
+  // Recorded for wcDiagnoseData, so a report of "still only one" can be
+  // answered from the machine rather than by another round of guessing.
+  check("it records what it found, for the diagnostic",
+    ctx.window._wcCashReconcile
+      && ctx.window._wcCashReconcile.recovered === 2
+      && ctx.window._wcCashReconcile.ledgerAfter === 3
+      && ctx.window._wcCashReconcile.onStudentRecords === 3);
 }
 
 console.log("\nIt is safe to run when there is nothing to do");

@@ -756,6 +756,16 @@
                 });
             });
 
+            window._wcCashReconcile = {
+                at: new Date().toISOString(),
+                recovered: recovered,
+                ledgerAfter: (cashTransactions || []).length,
+                studentsWithArray: students.filter(s =>
+                    Array.isArray(s && s.wildcatCashTransactions) && s.wildcatCashTransactions.length).length,
+                onStudentRecords: students.reduce((n, s) =>
+                    n + (Array.isArray(s && s.wildcatCashTransactions) ? s.wildcatCashTransactions.length : 0), 0)
+            };
+
             if (recovered) {
                 cashTransactions.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
                 console.log(`✅ Cash ledger reconciled: ${recovered} movement(s) recovered from student records (${cashTransactions.length} total)`);
@@ -15372,6 +15382,36 @@
             try {
                 const n = (v) => (Array.isArray(v) ? v.length : (v == null ? null : 'not-an-array'));
                 out.loadedFrom = window._wcLastLoadSource || 'unknown';
+
+                // THE CASH LEDGER, from both stores, split by who awarded it.
+                // My Activity reads the first number; the Teacher Interactions
+                // analytics reads the second. They disagreeing is the whole
+                // report, so both are shown side by side rather than inferred.
+                out.cashLedger = window._wcCashReconcile || 'reconcile did not run';
+                if (typeof cashTransactions !== 'undefined' && Array.isArray(cashTransactions)
+                    && currentUser) {
+                    const mine = cashTransactions.filter(t => {
+                        const actor = t && (t.teacherId || t.addedBy || t.removedBy);
+                        return actor && actor === currentUser.id;
+                    });
+                    let onRecords = 0;
+                    (typeof students !== 'undefined' && Array.isArray(students) ? students : [])
+                        .forEach(s => {
+                            (Array.isArray(s && s.wildcatCashTransactions) ? s.wildcatCashTransactions : [])
+                                .forEach(t => {
+                                    const actor = t && (t.teacherId || t.addedBy || t.removedBy);
+                                    if (actor && actor === currentUser.id) onRecords++;
+                                });
+                        });
+                    out.myActivity = {
+                        me: currentUser.id,
+                        inLedger: mine.length,          // what My Activity shows
+                        onStudentRecords: onRecords,    // what Analytics counts
+                        ledgerTotal: cashTransactions.length,
+                        oldestInLedger: cashTransactions.length
+                            ? cashTransactions.map(t => t && t.timestamp).filter(Boolean).sort()[0] : null
+                    };
+                }
                 // The whole sequence, so "the reload never ran" and "the reload
                 // ran and failed" can be told apart at a glance.
                 out.loadAttempts = window._wcLoadLog || [];
