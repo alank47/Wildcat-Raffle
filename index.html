@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20260905s">
-    <link rel="icon" href="favicon.ico?v=20260905s" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260905s" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260905s" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20260907a">
+    <link rel="icon" href="favicon.ico?v=20260907a" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260907a" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260907a" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260905s">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260907a">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20260905s">
+    <link rel="stylesheet" href="styles.css?v=20260907a">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260905s">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260907a">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20260905s">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260907a">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20260905s" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20260907a" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -85,24 +85,16 @@
                 <div style="flex: 1; height: 1px; background: #eceff3;"></div>
             </div>
 
-            <div class="form-group">
-                <label>Username</label>
-                <input type="text" id="loginUsername" placeholder="Enter your username">
-            </div>
-            
-            <div class="form-group">
-                <label>Password</label>
-                <input type="password" id="loginPassword" placeholder="Enter your password">
-            </div>
-            
-            <button class="btn" style="width: 100%; padding: 13px; font-size: 15px; font-weight: 600; border-radius: 10px; margin-top: 4px;" onclick="login()">Sign In</button>
-            
+            <!-- USERNAME AND PASSWORD REMOVED 2026-09-07.
+                 The teachers table has carried no `password` and no `username`
+                 column since the Convex migration deleted them, so login()
+                 compared undefined against whatever was typed and refused every
+                 attempt. All 400 recorded sign-ins are microsoft.com or
+                 google.com; there has never been a password one on this
+                 deployment. It was a form that could only ever say
+                 "Invalid username or password". -->
             <div id="loginError" class="error-message" style="text-align: center; margin-top: 12px;"></div>
             
-            <div id="createAdminSection" style="margin-top: 24px; padding-top: 20px; border-top: 1px solid #f0f0f5; text-align: center; display: none;">
-                <p style="color: #aaa; font-size: 12px; margin-bottom: 10px; letter-spacing: 0.2px;">First time here?</p>
-                <button style="background: none; border: 1.5px solid #d7dde5; color: #2F67A7; padding: 9px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#eef4fa'" onmouseout="this.style.background='none'" onclick="showCreateAdmin()">Create Admin Account</button>
-            </div>
         </div>
         
         <!-- The student portal and the tap result screen USED TO LIVE HERE, as
@@ -192,7 +184,7 @@
                      asset, so there is one logo to replace when the school
                      changes it. -->
                 <div class="wp-brand">
-                    <img src="assets/westbrook-logo.png?v=20260905s"
+                    <img src="assets/westbrook-logo.png?v=20260907a"
                          alt="Westbrook Academy" class="wp-brandlogo" id="wpBrandLogo">
                     <!-- The product's name, which appeared nowhere on the
                          student's screen while the teacher's topbar has said
@@ -351,62 +343,11 @@
 
 
     <!-- Create Admin Screen -->
-    <div id="createAdminScreen" class="login-container hidden">
-        <h1>Create Admin Account</h1>
-        
-        <div class="form-group">
-            <label>Teacher Name</label>
-            <input type="text" id="adminName" placeholder="e.g., Ms. Johnson">
-        </div>
-        
-        <div class="form-group">
-            <label>Username</label>
-            <input type="text" id="adminUsername" placeholder="Choose a username">
-        </div>
-        
-        <div class="form-group">
-            <label>Password</label>
-            <input type="password" id="adminPassword" placeholder="Choose a password">
-        </div>
-        
-        <div class="form-group">
-            <label>Confirm Password</label>
-            <input type="password" id="adminPasswordConfirm" placeholder="Confirm password">
-        </div>
-        
-        <button class="btn" style="width: 100%; margin-bottom: 10px;" onclick="createAdminAccount()">Create Admin Account</button>
-        <button class="btn btn-secondary" style="width: 100%;" onclick="backToLogin()">Back to Login</button>
-        
-        <div id="adminError" class="error-message" style="text-align: center;"></div>
-    </div>
-
-
-    <!-- Change Password Modal -->
-    <div id="changePasswordModal" class="login-container hidden" style="margin-top: 50px;">
-        <h1>Change Password</h1>
-        
-        <div class="form-group">
-            <label>Current Password</label>
-            <input type="password" id="currentPasswordInput" placeholder="Enter current password">
-        </div>
-        
-        <div class="form-group">
-            <label>New Password</label>
-            <input type="password" id="newPasswordInput" placeholder="Enter new password">
-        </div>
-        
-        <div class="form-group">
-            <label>Confirm New Password</label>
-            <input type="password" id="confirmPasswordInput" placeholder="Confirm new password">
-        </div>
-        
-        <button class="btn" style="width: 100%; margin-bottom: 10px;" onclick="changePassword()">Change Password</button>
-        <button class="btn btn-secondary" style="width: 100%;" onclick="closeChangePassword()">Cancel</button>
-        
-        <div id="changePasswordError" class="error-message" style="text-align: center;"></div>
-    </div>
-
-    <!-- Add Cash Modal -->
+    <!-- CREATE ADMIN SCREEN REMOVED 2026-09-07, with the password login it
+         belonged to. It minted a teacher carrying a cleartext `password`, which
+         is the exact column the Convex migration exists to have deleted, and it
+         only ever appeared when the roster was empty. The first admin now comes
+         from convex/seed.ts and signs in through Entra like everyone else. -->
     <div id="addCashModal" class="login-container hidden" style="margin-top: 50px; max-width: 500px;">
         <h1>➕ Add Wildcat Cash</h1>
         
@@ -471,7 +412,7 @@
         <header class="app-topbar">
             <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-menu"></use></svg></button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20260905s" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20260907a" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -485,7 +426,6 @@
                     <span class="topbar-avatar" id="topbarAvatar" aria-hidden="true"></span>
                     <span><strong id="currentUserName"></strong>&nbsp;<span class="user-role">(<span id="currentUserRole"></span>)</span></span>
                 </span>
-                <button class="btn-topbar" onclick="showChangePassword()">Change Password</button>
                 <button class="btn-topbar btn-topbar-logout" onclick="logout()">Logout</button>
             </div>
         </header>
@@ -5344,24 +5284,24 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260905s"></script>
+    <script src="wildcat-auth.js?v=20260907a"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
     <!-- The icon sprite. Injected at load, before anything renders, so an
          icon is never a blank square for a frame. -->
-    <script src="wildcat-icons.js?v=20260905s"></script>
-    <script src="wildcat-motion.js?v=20260905s"></script>
-    <script src="wildcat-discipline.js?v=20260905s"></script>
-    <script src="wildcat-audit.js?v=20260905s"></script>
-    <script src="wildcat-cashaudit.js?v=20260905s"></script>
-    <script src="wildcat-dirty.js?v=20260905s"></script>
-    <script src="wildcat-update.js?v=20260905s"></script>
-    <script src="wildcat-modes.js?v=20260905s"></script>
-    <script src="wildcat-merge.js?v=20260905s"></script>
-    <script src="wildcat-savequeue.js?v=20260905s"></script>
-    <script src="wildcat-roster.js?v=20260905s"></script>
-    <script src="wildcat-store.js?v=20260905s"></script>
-    <script src="script.js?v=20260905s"></script>
+    <script src="wildcat-icons.js?v=20260907a"></script>
+    <script src="wildcat-motion.js?v=20260907a"></script>
+    <script src="wildcat-discipline.js?v=20260907a"></script>
+    <script src="wildcat-audit.js?v=20260907a"></script>
+    <script src="wildcat-cashaudit.js?v=20260907a"></script>
+    <script src="wildcat-dirty.js?v=20260907a"></script>
+    <script src="wildcat-update.js?v=20260907a"></script>
+    <script src="wildcat-modes.js?v=20260907a"></script>
+    <script src="wildcat-merge.js?v=20260907a"></script>
+    <script src="wildcat-savequeue.js?v=20260907a"></script>
+    <script src="wildcat-roster.js?v=20260907a"></script>
+    <script src="wildcat-store.js?v=20260907a"></script>
+    <script src="script.js?v=20260907a"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -5371,7 +5311,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20260905s').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20260907a').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {

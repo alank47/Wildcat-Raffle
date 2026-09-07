@@ -6626,11 +6626,34 @@
             }
         }
 
-        // Authentication functions
-        function showCreateAdmin() {
-            document.getElementById('loginScreen').classList.add('hidden');
-            document.getElementById('createAdminScreen').classList.remove('hidden');
-        }
+        // THE PASSWORD SURFACE WAS REMOVED HERE, 2026-09-07.
+        //
+        // login, showChangePassword, changePassword, resetTeacherPassword,
+        // createAdminAccount and showCreateAdmin: 155 lines.
+        //
+        // None of it could work. The teachers table has carried no `password`
+        // and no `username` column since the Convex migration deleted them --
+        // that deletion is the reason the migration exists -- so login()
+        // compared undefined against whatever was typed and refused every
+        // attempt, and changePassword compared against currentUser.password,
+        // which is undefined for everyone.
+        //
+        // resetTeacherPassword was the one worth removing on its own merits.
+        // It set teacher.password, which appDataShape does not list as
+        // writable so nothing persisted it, and then alerted:
+        //
+        //     Password reset successfully for <name>
+        //     New password: <value>
+        //     Make sure to share this with the teacher securely!
+        //
+        // An admin could hand somebody a password that had never existed, for
+        // a login that does not exist, and be told it worked.
+        //
+        // All 400 recorded sign-ins are microsoft.com or google.com. The first
+        // admin now comes from convex/seed.ts. establishTeacherSession stays:
+        // it is the shared session path both federated routes call, and only
+        // its password-form caller is gone.
+
 
         function backToLogin() {
             // #connectSchoolScreen went with the "connect to a school by id"
@@ -6647,53 +6670,6 @@
 
 
 
-        function createAdminAccount() {
-            const name = document.getElementById('adminName').value.trim();
-            const username = document.getElementById('adminUsername').value.trim();
-            const password = document.getElementById('adminPassword').value;
-            const confirm = document.getElementById('adminPasswordConfirm').value;
-            const errorDiv = document.getElementById('adminError');
-
-            if (!name || !username || !password) {
-                errorDiv.textContent = 'Please fill in all fields';
-                return;
-            }
-
-            if (password !== confirm) {
-                errorDiv.textContent = 'Passwords do not match';
-                return;
-            }
-
-            if (teachers.length > 0) {
-                errorDiv.textContent = 'Admin account already exists. Please login.';
-                return;
-            }
-
-            teachers.push({
-                id: 'T001',
-                name: name,
-                username: username,
-                password: password,
-                role: 'admin',
-                ticketsAwarded: 0,
-                createdDate: new Date().toISOString()
-            });
-
-            saveData();
-            
-            // The JSONBin branch that stood here read an undeclared name and
-            // threw. Data goes to Convex, and saveData above has already sent
-            // it.
-            alert('Admin account created. Please sign in.');
-            
-            // Hide create admin button now that admin exists
-            const createAdminSection = document.getElementById('createAdminSection');
-            if (createAdminSection) {
-                createAdminSection.style.display = 'none';
-            }
-            
-            backToLogin();
-        }
 
         function getFriendlyRoleName(role) {
             const roleNames = {
@@ -6706,25 +6682,6 @@
             return roleNames[role] || role;
         }
 
-        async function login() {
-            const username = document.getElementById('loginUsername').value.trim();
-            const password = document.getElementById('loginPassword').value;
-            const errorDiv = document.getElementById('loginError');
-
-            if (!username || !password) {
-                errorDiv.textContent = 'Please enter username and password';
-                return;
-            }
-
-            const teacher = teachers.find(t => t.username === username && t.password === password);
-
-            if (!teacher) {
-                errorDiv.textContent = 'Invalid username or password';
-                return;
-            }
-
-            return establishTeacherSession(teacher);
-        }
 
         /**
          * Everything that happens AFTER a teacher has been authenticated.
@@ -6876,8 +6833,11 @@
                 document.getElementById('mainApp').classList.add('hidden');
                 document.getElementById('studentApp').classList.add('hidden');
                 document.getElementById('loginScreen').classList.remove('hidden');
-                document.getElementById('loginUsername').value = '';
-                document.getElementById('loginPassword').value = '';
+                // #loginUsername and #loginPassword were cleared here until
+                // 2026-09-07, when the password form was removed. Reading
+                // .value off null throws, and the comment below records the
+                // last time exactly that happened on this line -- so this is
+                // the second removal to nearly break logout the same way.
                 // #studentLoginId was removed with the name lookup on
                 // 2026-08-14. Reading .value off null threw here, which meant
                 // the two lines below and showTeacherLogin() never ran: a
@@ -7768,60 +7728,12 @@
             alert('✅ Full system backup downloaded!\n\nKeep this file safe in case you need to restore data.');
         }
 
-        function showChangePassword() {
-            document.getElementById('mainApp').classList.add('hidden');
-            document.getElementById('changePasswordModal').classList.remove('hidden');
-            document.getElementById('currentPasswordInput').value = '';
-            document.getElementById('newPasswordInput').value = '';
-            document.getElementById('confirmPasswordInput').value = '';
-            document.getElementById('changePasswordError').textContent = '';
-        }
 
         function closeChangePassword() {
             document.getElementById('changePasswordModal').classList.add('hidden');
             document.getElementById('mainApp').classList.remove('hidden');
         }
 
-        async function changePassword() {
-            const currentPassword = document.getElementById('currentPasswordInput').value;
-            const newPassword = document.getElementById('newPasswordInput').value;
-            const confirmPassword = document.getElementById('confirmPasswordInput').value;
-            const errorDiv = document.getElementById('changePasswordError');
-
-            if (!currentPassword || !newPassword || !confirmPassword) {
-                errorDiv.textContent = 'Please fill in all fields';
-                return;
-            }
-
-            if (currentPassword !== currentUser.password) {
-                errorDiv.textContent = 'Current password is incorrect';
-                return;
-            }
-
-            if (newPassword.length < 4) {
-                errorDiv.textContent = 'New password must be at least 4 characters';
-                return;
-            }
-
-            if (newPassword !== confirmPassword) {
-                errorDiv.textContent = 'New passwords do not match';
-                return;
-            }
-
-            // Update password
-            const teacher = teachers.find(t => t.id === currentUser.id);
-            if (teacher) {
-                teacher.password = newPassword;
-                currentUser.password = newPassword;
-                await saveData();
-                saveSession(); // Update session with new password
-                
-                alert('✅ Password changed successfully!');
-                closeChangePassword();
-            } else {
-                errorDiv.textContent = 'Error updating password. Please try again.';
-            }
-        }
 
         // Add Cash Modal Functions
         let selectedStudentForCash = null;
@@ -10780,42 +10692,6 @@
         // END CLAW PASS FUNCTIONS
         // ============================================
 
-        async function resetTeacherPassword(teacherId) {
-            if (currentUser.role !== 'admin' && currentUser.role !== 'superadmin') {
-                alert('Only admins can reset passwords');
-                return;
-            }
-
-            const teacher = teachers.find(t => t.id === teacherId);
-            if (!teacher) {
-                alert('Teacher not found');
-                return;
-            }
-
-            const newPassword = await showPrompt(`Reset password for ${teacher.name}\n\nEnter new password:`);
-            
-            if (!newPassword) {
-                return; // User cancelled
-            }
-
-            if (newPassword.length < 4) {
-                alert('Password must be at least 4 characters');
-                return;
-            }
-
-            const confirmPassword = await showPrompt('Confirm new password:');
-            
-            if (newPassword !== confirmPassword) {
-                alert('Passwords do not match. Please try again.');
-                return;
-            }
-
-            // Update password
-            teacher.password = newPassword;
-            saveData();
-            
-            alert(`✅ Password reset successfully for ${teacher.name}\n\nNew password: ${newPassword}\n\nMake sure to share this with the teacher securely!`);
-        }
 
         // ---------------------------------------------------------------
         // Add New Teacher modal.
@@ -11089,7 +10965,6 @@
                             <div class="wc-row-actions">
                             <button class="wu-btn wc-btn-sm" onclick="editTeacher('${t.id}')">Edit</button>
                             ${t.id !== currentUser.id ? `
-                                <button class="wu-btn wc-btn-sm" onclick="resetTeacherPassword('${t.id}')" title="Send this person a password reset">Reset</button>
                                 <button class="wu-btn wc-btn-sm wc-btn-risk" onclick="deleteTeacher('${t.id}')">Delete</button>
                             ` : '<span class="wu-absent">this is you</span>'}
                             </div>
