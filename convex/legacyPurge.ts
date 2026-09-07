@@ -294,3 +294,48 @@ export const scoreShape = internalQuery({
     return { rows: rows.length, withScore, zeros, positive, noScore, withTotal };
   },
 });
+
+/** What identity the stored cash transactions actually carry. */
+export const cashTxIdentities = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db
+      .query("legacyMirror")
+      .withIndex("by_doc_collection", (q) =>
+        q.eq("doc", "cash_tx_2026_W36").eq("collection", "transactions"))
+      .take(200);
+    const seen: Record<string, number> = {};
+    const sample: any[] = [];
+    for (const r of rows) {
+      const p = r.payload as any;
+      const key = `teacherId=${JSON.stringify(p?.teacherId)} teacherUsername=${JSON.stringify(p?.teacherUsername)} teacherName=${JSON.stringify(p?.teacherName)}`;
+      seen[key] = (seen[key] || 0) + 1;
+      if (sample.length < 2) sample.push({ id: p?.id, teacherId: p?.teacherId, teacherName: p?.teacherName, amount: p?.amount });
+    }
+    return { rows: rows.length, identities: seen, sample };
+  },
+});
+
+/** The per-student cash arrays, which Analytics reads, by teacher. */
+export const cashTxOnStudents = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const students = await ctx.db.query("students").take(2000);
+    const byTeacher: Record<string, number> = {};
+    let studentsWithAny = 0, total = 0;
+    const weeks: Record<string, number> = {};
+    for (const s of students) {
+      const txs = (s as any).wildcatCashTransactions;
+      if (!Array.isArray(txs) || !txs.length) continue;
+      studentsWithAny++;
+      for (const t of txs) {
+        total++;
+        const who = `${t?.teacherId ?? "?"} ${t?.teacherName ?? ""}`.trim();
+        byTeacher[who] = (byTeacher[who] || 0) + 1;
+        const wk = String(t?.timestamp ?? "").slice(0, 7) || "(no date)";
+        weeks[wk] = (weeks[wk] || 0) + 1;
+      }
+    }
+    return { studentsWithAny, total, byTeacher, byMonth: weeks };
+  },
+});

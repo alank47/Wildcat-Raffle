@@ -707,6 +707,61 @@
 
         // Applies tombstones as a filter to current in-memory state.
         // Called after load. Never writes — pure display filter.
+        /**
+         * One cash ledger, from the two places it is stored.
+         *
+         * THE SPLIT. Cash movements live in two stores that were never
+         * reconciled: the weekly `cash_tx_<week>` documents, and an array on
+         * each student record. Different screens read different ones --
+         * My Activity the weekly documents, the Teacher Interactions analytics
+         * the student arrays -- so on 2026-09-07 the same admin was shown
+         * 1 transaction on one screen and 16 on the other.
+         *
+         * Neither was wrong about what it read. The weekly documents only began
+         * in September; every movement before that exists solely on the student
+         * records. Alan Kent's fifteen August awards were in one store and not
+         * the other.
+         *
+         * The union is taken by transaction id, which is minted as
+         * `txn_<ms>_<random>` and unique. Taking it here rather than teaching
+         * each screen to read both means a screen added later inherits the
+         * whole ledger instead of half of it.
+         *
+         * SELF-HEALING, and deliberately so: the next save writes
+         * `cashTransactions` back out per week, so a movement that existed only
+         * on a student record lands in its weekly document and stops being a
+         * discrepancy. It runs after the roster loads, because it needs
+         * `students` populated -- called against an empty array it is a no-op
+         * rather than a loss.
+         */
+        function reconcileCashLedger() {
+            if (typeof students === 'undefined' || !Array.isArray(students)) return;
+
+            const seen = new Set((cashTransactions || []).map(t => t && t.id).filter(Boolean));
+            let recovered = 0;
+
+            students.forEach(s => {
+                const txs = s && s.wildcatCashTransactions;
+                if (!Array.isArray(txs)) return;
+                txs.forEach(t => {
+                    // An entry with no id cannot be deduped, and adding it would
+                    // double on every load. Left where it is.
+                    if (!t || !t.id || seen.has(t.id)) return;
+                    seen.add(t.id);
+                    // studentId is on the weekly-document copies and not always
+                    // on the per-student ones, where it was implied by which
+                    // record the array sat on. Every screen reads it.
+                    cashTransactions.push(t.studentId ? t : { ...t, studentId: s.id });
+                    recovered++;
+                });
+            });
+
+            if (recovered) {
+                cashTransactions.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                console.log(`✅ Cash ledger reconciled: ${recovered} movement(s) recovered from student records (${cashTransactions.length} total)`);
+            }
+        }
+
         function applyTombstonesToLocalState() {
             if (!localTombstones || localTombstones.length === 0) return;
             const tombstonedIds = new Set(localTombstones.map(t => t.entryId));
@@ -2312,6 +2367,11 @@
                             emailjs.init(emailJSConfig.publicKey);
                         }
                         
+                        // Both cash stores into one ledger, before anything
+                        // renders from it. After the roster, because it reads
+                        // the student records.
+                        reconcileCashLedger();
+
                         // NEW: Apply tombstone filter as a display layer.
                         // Even if old code saved deleted entries back into ticket_history/audit_log,
                         // tombstones filter them out before they reach the UI.
@@ -2438,6 +2498,11 @@
                     emailjs.init(emailJSConfig.publicKey);
                 }
                 
+                // Same reconciliation on the fallback path: a tab running on
+                // the localStorage copy must not show a different ledger from
+                // one that reached the server.
+                reconcileCashLedger();
+
                 // NEW: Apply tombstone filter (localStorage-fallback path)
                 applyTombstonesToLocalState();
                 
@@ -23852,9 +23917,17 @@
             // nothing saved, so this tab said "No transactions yet" to a
             // teacher who had awarded cash all week.
             const teacherTransactions = cashTransactions.filter(t => {
-                const teacherId = t.teacherId || t.addedBy || t.removedBy;
-                // Match by ID or username (since Add/Remove use username)
-                return teacherId === currentUser.id || teacherId === currentUser.username;
+                const actor = t.teacherId || t.addedBy || t.removedBy;
+                // AN UNATTRIBUTED MOVEMENT BELONGS TO NOBODY, NOT TO EVERYBODY.
+                //
+                // This compared against currentUser.username as well, which has
+                // been undefined for every user since the migration deleted that
+                // column. A transaction whose actor was also undefined therefore
+                // matched `undefined === undefined` and appeared in EVERY
+                // teacher's My Activity. Requiring a value first is what stops
+                // an unattributed award being shown to all fifty-six of them.
+                if (!actor) return false;
+                return actor === currentUser.id;
             });
             
             // Sort by timestamp (newest first)
