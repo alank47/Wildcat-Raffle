@@ -29511,6 +29511,52 @@
          * movements per teacher, and an average taken over that is noise; a
          * child who has been quiet for a month is the one worth surfacing.
          */
+        /**
+         * Today's goal, in its own box.
+         *
+         * SHOWN TO EVERYONE, including admins. It was gated on !seesAll, on the
+         * reasoning that "your awards" is not a meaningful figure school-wide
+         * -- which was wrong: the owner is a superadmin who also teaches seven
+         * sections, so the one person most likely to look at it was the one
+         * person who could not see it. An admin who awards is still an adult
+         * with a daily practice.
+         */
+        function wcRenderDailyGoal(o) {
+            const panel = document.getElementById('dashGoalPanel');
+            const body = document.getElementById('dashGoalBody');
+            const chip = document.getElementById('dashGoalChip');
+            const sub = document.getElementById('dashGoalSub');
+            if (!panel || !body) return;
+
+            const goal = Math.max(1, Number(o && o.goal) || 1);
+            const today = Math.max(0, Number(o && o.today) || 0);
+            const mine = Math.max(0, Number(o && o.mine) || 0);
+            const med = Number(o && o.median) || 0;
+
+            const hit = today >= goal;
+            const pct = Math.round((Math.min(today, goal) / goal) * 100);
+
+            panel.hidden = false;
+            panel.classList.toggle('is-hit', hit);
+            if (chip) chip.textContent = today + ' / ' + goal;
+            if (sub) {
+                sub.textContent = hit
+                    ? 'More than half the staff manage on a normal day.'
+                    : (goal - today) + ' more to match a typical day here.';
+            }
+
+            body.innerHTML =
+                '<div class="wc-goal-track" role="img" aria-label="' +
+                    today + ' of ' + goal + ' interactions today">' +
+                    '<span class="wc-goal-fill" style="width:' + pct + '%;"></span>' +
+                '</div>' +
+                '<div class="wc-goal-foot">' +
+                    '<span><b>' + mine + '</b> in ' + QUIET_WINDOW_DAYS + ' days</span>' +
+                    '<span class="wc-goal-vs">typical colleague <b>' +
+                        med.toFixed(med % 1 ? 1 : 0) + '</b></span>' +
+                '</div>';
+        }
+
         function wcRenderQuietStudents(seesAll) {
             const panel = document.getElementById('dashQuietPanel');
             const list = document.getElementById('dashQuietList');
@@ -29599,49 +29645,16 @@
             const rows = res.never.concat(res.quiet);
             panel.hidden = false;
 
-            // The comparison, for a teacher looking at their own screen. Never
-            // shown to an admin viewing school-wide, where "your awards" is not
-            // a meaningful number.
-            const compare = (!seesAll && currentUser)
-                ? (function () {
-                    const done = Math.min(myToday, goal);
-                    const hit = myToday >= goal;
-                    const pct = Math.round((done / goal) * 100);
-
-                    // The goal first, because it is the part somebody can act
-                    // on before lunch. The thirty-day figure is context under
-                    // it, not the headline.
-                    return '<div class="wc-goal ' + (hit ? 'is-hit' : '') + '">' +
-                            '<div class="wc-goal-head">' +
-                                '<span class="wc-goal-label">' +
-                                    (hit ? 'Today\u2019s goal reached' : 'Today\u2019s goal') +
-                                '</span>' +
-                                '<span class="wc-goal-count"><b>' + myToday + '</b> / ' + goal + '</span>' +
-                            '</div>' +
-                            '<div class="wc-goal-track" role="img" aria-label="' +
-                                myToday + ' of ' + goal + ' interactions today">' +
-                                '<span class="wc-goal-fill" style="width:' + pct + '%;"></span>' +
-                            '</div>' +
-                            '<p class="wc-goal-sub">' +
-                                (hit
-                                    ? 'That is more than half the staff manage on a normal day.'
-                                    : (goal - myToday) + ' more to match a typical day here.') +
-                            '</p>' +
-                        '</div>' +
-                        '<div class="wc-quiet-compare ' +
-                            (myAwards < staffMedian ? 'is-behind' : 'is-ahead') + '">' +
-                            '<span><b>' + myAwards + '</b> in ' + QUIET_WINDOW_DAYS + ' days</span>' +
-                            '<span class="wc-quiet-vs">typical colleague <b>' +
-                            staffMedian.toFixed(staffMedian % 1 ? 1 : 0) + '</b></span>' +
-                        '</div>';
-                })()
-                : '';
+            // The goal is its own panel now -- the goal is about the adult
+            // and this list is about children, and they are read at different
+            // moments. wcRenderDailyGoal draws it.
+            wcRenderDailyGoal({ goal: goal, today: myToday, mine: myAwards, median: staffMedian });
 
             if (!rows.length) {
                 if (chip) chip.textContent = 'all noticed';
                 if (sub) sub.textContent =
                     'Everyone in your classes has been awarded in the last ' + QUIET_WINDOW_DAYS + ' days.';
-                list.innerHTML = compare + '<p class="wu-absent">Nothing to flag. That is the goal.</p>';
+                list.innerHTML = '<p class="wu-absent">Nothing to flag. That is the goal.</p>';
                 return;
             }
 
@@ -29653,7 +29666,7 @@
                     : 'Students in your classes awarded less than the school average, who are doing nothing wrong.';
             }
 
-            list.innerHTML = compare + rows.map(r => {
+            list.innerHTML = rows.map(r => {
                 const st = r.student || {};
                 const name = escapeHtml(((st.firstName || '') + ' ' + (st.lastName || '')).trim() || 'Student');
                 const grade = st.grade ? 'Grade ' + escapeHtml(String(st.grade)) : '';
@@ -29674,7 +29687,12 @@
                        '</button>';
             }).join('') +
             (totalFlagged > rows.length
-                ? '<p class="wc-quiet-more">and ' + (totalFlagged - rows.length) + ' more</p>'
+                // "and 586 more" is a number, not a fact anybody can act on,
+                // and at pre-launch volume nearly the whole school is on this
+                // list. Saying which few are shown reframes it as a place to
+                // start rather than a backlog.
+                ? '<p class="wc-quiet-more">Showing the ' + rows.length +
+                  ' least noticed of ' + totalFlagged + '.</p>'
                 : '');
         }
 

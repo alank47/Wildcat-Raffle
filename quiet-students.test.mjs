@@ -178,10 +178,21 @@ console.log("\nThe teacher comparison uses a denominator that is fair");
       readFileSync(new URL("./script.js", import.meta.url), "utf8")));
 
   check("the teacher's own count is their own awards", /awardsByActor\[currentUser\.id\]/.test(app));
-  check("it is shown only on a teacher's own dashboard, not a school-wide one",
-    /!seesAll && currentUser/.test(app));
-  check("behind and ahead are both rendered, so it is not only a rebuke",
-    /is-behind/.test(app) && /is-ahead/.test(app));
+  // It WAS gated on !seesAll, which hid it from the one person most likely to
+  // look: a superadmin who also teaches seven sections. An admin who awards is
+  // still an adult with a daily practice.
+  check("the goal is shown to everyone, admins included",
+    !/!seesAll && currentUser/.test(app));
+  check("and it is its own panel, not a strip inside the student list",
+    /id="dashGoalPanel"/.test(readFileSync(new URL("./index.html", import.meta.url), "utf8")) &&
+    /function wcRenderDailyGoal\(/.test(app));
+  // The old amber/green strip is gone with the refactor. The goal panel is now
+  // the thing that reads as encouragement rather than rebuke: it shows the
+  // colleague median beside your own figure without ever colouring you red.
+  check("the goal panel shows your figure beside the typical colleague's",
+    /typical colleague/.test(app));
+  check("and nothing on it is coloured as a failure",
+    !/is-behind/.test(app));
 
   const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
   check("behind is amber, not red -- something to act on, not a failure",
@@ -232,13 +243,21 @@ console.log("\nThe goal and the comparison are on screen");
     /teachers : \[\]\)\s*\n?\s*\.map\(t => awardsByActor\[t\.id\] \|\| 0\)/.test(app));
   check("the goal comes from the same counts", /R\.dailyGoal\(staffCounts/.test(app));
   check("progress is today's awards, not the window's", /todayStart/.test(app));
-  check("the bar is capped so it cannot overflow", /Math\.min\(myToday, goal\)/.test(app));
-  check("a reached goal is stated as reached", /goal reached/i.test(app));
+  check("the bar is capped so it cannot overflow", /Math\.min\(today, goal\)/.test(app));
+  check("a reached goal says so", /manage on a normal day/.test(app));
+  check("the panel carries the reached state, not an inner card",
+    /panel\.classList\.toggle\('is-hit', hit\)/.test(app));
+  // "and 586 more" is a number, not a fact anybody can act on.
+  check("the footer says which few are shown rather than how many are left",
+    /Showing the '\s*\+\s*rows\.length/.test(app));
   check("and the track stays visible when it is",
-    /\.wc-goal\.is-hit \.wc-goal-fill/.test(css));
-  check("reached is green, in progress is blue",
-    /\.wc-goal \{[^}]*--wc-blue-mist/.test(css) &&
-    /\.wc-goal\.is-hit \{[^}]*--wc-green-mist/.test(css));
+    /\.wc-goal-panel\.is-hit \.wc-goal-fill/.test(css));
+  check("reached turns the bar green",
+    /\.wc-goal-panel\.is-hit \.wc-goal-fill \{[^}]*--wc-green-deep/.test(css));
+  check("a long student name truncates instead of pushing the badge out",
+    /\.wc-quiet-name \{[^}]*text-overflow: ellipsis/.test(css));
+  check("and the footer lines up with the rows above it",
+    /\.wc-quiet-more \{[^}]*padding: 0 11px/.test(css));
   check("the fill animates, and not for anyone who asked it not to",
     /prefers-reduced-motion[\s\S]{0,140}\.wc-goal-fill \{ transition: none/.test(css));
 }
