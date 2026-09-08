@@ -355,9 +355,17 @@
    * reported, labelled, so the list is useful on day one and still correct in
    * March.
    *
-   * THE AVERAGE IS OVER THE STUDENTS PASSED IN, not the school. A teacher's
-   * question is "who in MY class am I missing", and an average taken across
-   * their own roster self-calibrates to how much that teacher awards.
+   * THE AVERAGE IS THE SCHOOL'S, NOT THIS TEACHER'S. That is a correction:
+   * measuring a teacher's students against that teacher's own average
+   * self-calibrates, and self-calibration rewards doing nothing. A teacher who
+   * awards nobody has an average of zero, so no student is below it and the
+   * panel falls silent for exactly the person who most needs it. Against the
+   * staff-wide average, the same teacher sees their whole class flagged --
+   * which is the wake-up call, and the school's reason for asking.
+   *
+   * `average` may be passed in. When it is absent the rule falls back to the
+   * group's own mean, which is right for a school-wide view where the group IS
+   * the school.
    *
    * 83% is 5 positives to 1 correction, the same ratio the dashboard gauge and
    * the sidebar tips use. One number, three places.
@@ -389,7 +397,9 @@
     });
 
     var sum = rows.reduce(function (n, r) { return n + r.total; }, 0);
-    var average = sum / rows.length;
+    var average = (typeof o.average === 'number' && isFinite(o.average) && o.average >= 0)
+      ? o.average
+      : sum / rows.length;
 
     var never = rows.filter(function (r) { return r.total === 0; });
     var quiet = rows.filter(function (r) {
@@ -409,6 +419,9 @@
 
     return {
       average: average,
+      // What this group actually does, so a caller can show it beside the
+      // threshold rather than making the teacher take it on trust.
+      groupAverage: sum / rows.length,
       considered: rows.length,
       neverCount: never.length,
       quietCount: quiet.length,

@@ -29521,11 +29521,46 @@
             const R = window.WildcatRoster;
             if (!R || typeof R.quietStudents !== 'function') { panel.hidden = true; return; }
 
-            // The teacher's own classes, through the same helper Award Cash
-            // uses, so this panel and that screen cannot disagree about who is
-            // in the room.
+            const since = Date.now() - QUIET_WINDOW_DAYS * 86400000;
+            const moves = (Array.isArray(cashTransactions) ? cashTransactions : []).filter(t =>
+                t && t.studentId && t.timestamp &&
+                new Date(t.timestamp).getTime() >= since && (Number(t.amount) || 0) !== 0);
+
+            // Interactions per student, from EVERY adult. This is the threshold
+            // a student is measured against: how much attention that child has
+            // had, not how much one teacher gave.
+            const interactions = {};
+            moves.forEach(t => {
+                const e = (interactions[String(t.studentId)] ||= { positive: 0, negative: 0 });
+                if ((Number(t.amount) || 0) > 0) e.positive += 1; else e.negative += 1;
+            });
+
+            const schoolStudents = enrolledStudents();
+            const schoolAverage = schoolStudents.length
+                ? moves.length / schoolStudents.length
+                : 0;
+
+            // TWO DIFFERENT NUMBERS, AND THEY ARE NOT INTERCHANGEABLE.
+            //
+            // The threshold above is interactions per student from all adults.
+            // The comparison below is awards per MEMBER OF STAFF. Measuring a
+            // teacher's own awards-per-student against the all-adults figure
+            // would tell every teacher they are behind, because the second
+            // aggregates every colleague's awards to the same child. Same
+            // words, different denominators, and the wrong pairing is an
+            // accusation the data does not support.
+            const awardsByActor = {};
+            moves.forEach(t => {
+                const actor = t.teacherId || t.addedBy || t.removedBy;
+                if (!actor) return;
+                awardsByActor[actor] = (awardsByActor[actor] || 0) + 1;
+            });
+            const activeStaff = (Array.isArray(teachers) ? teachers : []).length || 1;
+            const staffAverage = moves.length / activeStaff;
+            const myAwards = (currentUser && awardsByActor[currentUser.id]) || 0;
+
             const scoped = R.scopeStudents({
-                students: enrolledStudents(),
+                students: schoolStudents,
                 role: currentUser && currentUser.role,
                 roster: activeTeacherRoster(),
                 sectionId: null
@@ -29533,51 +29568,58 @@
             const mine = scoped.students || [];
             if (!mine.length) { panel.hidden = true; return; }
 
-            const since = Date.now() - QUIET_WINDOW_DAYS * 86400000;
-            const interactions = {};
-            (Array.isArray(cashTransactions) ? cashTransactions : []).forEach(t => {
-                if (!t || !t.studentId || !t.timestamp) return;
-                if (new Date(t.timestamp).getTime() < since) return;
-                const amt = Number(t.amount) || 0;
-                if (!amt) return;
-                const e = (interactions[String(t.studentId)] ||= { positive: 0, negative: 0 });
-                if (amt > 0) e.positive += 1; else e.negative += 1;
+            const res = R.quietStudents({
+                students: mine,
+                interactions: interactions,
+                average: schoolAverage,
+                limit: 6
             });
-
-            const res = R.quietStudents({ students: mine, interactions: interactions, limit: 6 });
             const rows = res.never.concat(res.quiet);
+            panel.hidden = false;
+
+            // The comparison, for a teacher looking at their own screen. Never
+            // shown to an admin viewing school-wide, where "your awards" is not
+            // a meaningful number.
+            const compare = (!seesAll && currentUser)
+                ? (function () {
+                    const behind = myAwards < staffAverage;
+                    return '<div class="wc-quiet-compare ' + (behind ? 'is-behind' : 'is-ahead') + '">' +
+                        '<span><b>' + myAwards + '</b> award' + (myAwards === 1 ? '' : 's') +
+                        ' from you in ' + QUIET_WINDOW_DAYS + ' days</span>' +
+                        '<span class="wc-quiet-vs">staff average <b>' +
+                        staffAverage.toFixed(1) + '</b></span>' +
+                    '</div>';
+                })()
+                : '';
 
             if (!rows.length) {
-                panel.hidden = false;
                 if (chip) chip.textContent = 'all noticed';
                 if (sub) sub.textContent =
                     'Everyone in your classes has been awarded in the last ' + QUIET_WINDOW_DAYS + ' days.';
-                list.innerHTML = '<p class="wu-absent">Nothing to flag. That is the goal.</p>';
+                list.innerHTML = compare + '<p class="wu-absent">Nothing to flag. That is the goal.</p>';
                 return;
             }
 
-            panel.hidden = false;
             const totalFlagged = res.neverCount + res.quietCount;
             if (chip) chip.textContent = totalFlagged + ' of ' + res.considered;
             if (sub) {
                 sub.textContent = seesAll
-                    ? 'Students awarded less than average, who are doing nothing wrong.'
-                    : 'Students in your classes awarded less than average, who are doing nothing wrong.';
+                    ? 'Students awarded less than the school average, who are doing nothing wrong.'
+                    : 'Students in your classes awarded less than the school average, who are doing nothing wrong.';
             }
 
-            list.innerHTML = rows.map(r => {
-                const s = r.student || {};
-                const name = escapeHtml(((s.firstName || '') + ' ' + (s.lastName || '')).trim() || 'Student');
-                const grade = s.grade ? 'Grade ' + escapeHtml(String(s.grade)) : '';
-                // Two different facts, said differently. "0 awards" is not a
-                // low score, it is no score, and a teacher reads them
-                // differently.
+            list.innerHTML = compare + rows.map(r => {
+                const st = r.student || {};
+                const name = escapeHtml(((st.firstName || '') + ' ' + (st.lastName || '')).trim() || 'Student');
+                const grade = st.grade ? 'Grade ' + escapeHtml(String(st.grade)) : '';
+                // Two different facts, said differently. "0 awards" is not a low
+                // score, it is no score, and a teacher reads them differently.
                 const note = r.total === 0
                     ? '<span class="wc-quiet-never">never awarded</span>'
                     : '<span class="wc-quiet-few">' + r.total + ' award' + (r.total === 1 ? '' : 's') +
                       ' &middot; ' + Math.round(r.positivity * 100) + '% positive</span>';
                 return '<button type="button" class="wc-quiet-row" ' +
-                       'onclick="openStudentProfile(\'' + escapeHtml(String(s.id)) + '\')" ' +
+                       'onclick="openStudentProfile(\'' + escapeHtml(String(st.id)) + '\')" ' +
                        'aria-label="Open ' + name + '">' +
                            '<span class="wc-quiet-main">' +
                                '<span class="wc-quiet-name">' + name + '</span>' +

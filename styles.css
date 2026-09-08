@@ -3152,6 +3152,29 @@ body {
     color: var(--wc-gray-text, #8892a0);
 }
 
+/* Your awards against the staff average. A prompt, not a scoreboard: it is on
+   the teacher's own dashboard, shows only their own figure, and no teacher is
+   ever named to another. Amber when behind -- something to act on, not a
+   failure -- and green when not. */
+.wc-quiet-compare {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    flex-wrap: wrap;
+    margin: 0 0 10px; padding: 9px 11px;
+    border-radius: 10px; font-size: 12.5px; line-height: 1.4;
+}
+.wc-quiet-compare b { font-weight: 700; font-variant-numeric: tabular-nums; }
+.wc-quiet-compare .wc-quiet-vs { opacity: .85; white-space: nowrap; }
+.wc-quiet-compare.is-behind {
+    background: var(--wc-amber-mist, #FFF6E5);
+    color: var(--wc-amber-deep, #8A5A00);
+    border-left: 3px solid var(--wc-amber-deep, #8A5A00);
+}
+.wc-quiet-compare.is-ahead {
+    background: var(--wc-green-mist, #E7F3EC);
+    color: var(--wc-green-deep, #2E7D52);
+    border-left: 3px solid var(--wc-green-deep, #2E7D52);
+}
+
 /* The rotation is decoration. Somebody who has asked for less motion gets the
    tips without the fade, and the dots still work. */
 @media (prefers-reduced-motion: reduce) {

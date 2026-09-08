@@ -73,16 +73,39 @@ console.log("\n83% is 5 to 1, the same number as the gauge and the tips");
   check("4 to 1 does not", !ids(at.quiet).includes("3"));
 }
 
-console.log("\nThe average is over the students passed in");
+console.log("\nThe threshold is the school's average, not the teacher's own");
 {
-  // A teacher's question is "who in MY class am I missing", so an average over
-  // the whole school would flag their entire roster or none of it.
-  const res = R.quietStudents({
+  // THE CORRECTION, 2026-09-07. Measuring a teacher's students against that
+  // teacher's own average self-calibrates, and self-calibration rewards doing
+  // nothing: a teacher who awards nobody has an average of zero, so no student
+  // is below it and the panel falls silent for exactly the person who most
+  // needs it.
+  const students = [S(1), S(2), S(3), S(4), S(5)];
+  const interactions = { "1": { positive: 1, negative: 0 } };
+
+  const own = R.quietStudents({ students, interactions });
+  const school = R.quietStudents({ students, interactions, average: 2.0 });
+
+  check("against their own average, the awarded student is not flagged",
+    own.quietCount === 0);
+  check("against the school's, they are", school.quietCount === 1);
+  check("the passed-in average is the one used", school.average === 2.0);
+  check("and the group's own is still reported, so both can be shown",
+    Math.abs(school.groupAverage - 0.2) < 1e-9);
+
+  // Falling back matters: a school-wide view IS the whole group, and passing
+  // its own mean back in would be circular.
+  const noArg = R.quietStudents({
     students: [S(1), S(2)],
     interactions: { "1": { positive: 1, negative: 0 }, "2": { positive: 9, negative: 0 } },
   });
-  check("the average is of this group, not a constant", res.average === 5);
-  check("and only the below-average one is flagged", ids(res.quiet).join(",") === "1");
+  check("with no average given it falls back to the group's own", noArg.average === 5);
+
+  for (const bad of [-1, NaN, Infinity, "3", null]) {
+    const r = R.quietStudents({ students: [S(1)], interactions: {}, average: bad });
+    check(`a nonsense average (${JSON.stringify(bad)}) falls back rather than flagging wrongly`,
+      r.average === 0);
+  }
 }
 
 console.log("\nLeast noticed first, and the list is capped");
@@ -114,8 +137,18 @@ console.log("\nThe screen says the two groups differently");
   const app = readFileSync(new URL("./script.js", import.meta.url), "utf8")
     .replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
   check("it renders through the shared rule", /WildcatRoster\.quietStudents|R\.quietStudents/.test(app));
+  // Bounded by the function's OWN body, not by a character window. The window
+  // version broke the moment the averages were computed above the scoping,
+  // which is the third time today a distance-based assertion has failed for a
+  // reason unrelated to the code under test.
+  const quietFn = (() => {
+    const i = app.indexOf("function wcRenderQuietStudents(");
+    return app.slice(i, app.indexOf("\n        }", app.indexOf("wc-quiet-more", i)));
+  })();
   check("and scopes to the teacher's own classes through scopeStudents",
-    /wcRenderQuietStudents[\s\S]{0,900}scopeStudents\(\{/.test(app));
+    /scopeStudents\(\{/.test(quietFn));
+  check("using the same roster helper Award Cash uses, so the two agree",
+    /roster: activeTeacherRoster\(\)/.test(quietFn));
   check("never-awarded is worded as such, not as a low score",
     /never awarded/.test(app));
   check("the window is stated in the copy, not left implicit",
@@ -124,6 +157,36 @@ console.log("\nThe screen says the two groups differently");
     /Nothing to flag\. That is the goal\./.test(app));
   check("the subtitle says these children are doing nothing wrong",
     /doing nothing wrong/.test(app));
+}
+
+
+console.log("\nThe teacher comparison uses a denominator that is fair");
+{
+  const app = readFileSync(new URL("./script.js", import.meta.url), "utf8")
+    .replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+
+  // Comparing a teacher's own awards-per-student against the ALL-ADULTS
+  // awards-per-student would tell every teacher they are behind, because the
+  // second aggregates every colleague's awards to the same child. The
+  // comparison is per member of staff; the student threshold is per student.
+  check("the student threshold is interactions per student",
+    /schoolAverage = schoolStudents\.length[\s\S]{0,120}moves\.length \/ schoolStudents\.length/.test(app));
+  check("the teacher comparison is awards per member of staff",
+    /staffAverage = moves\.length \/ activeStaff/.test(app));
+  check("and the two are not confused with each other",
+    /Same\s*\n?\s*\/\/ words, different denominators/.test(
+      readFileSync(new URL("./script.js", import.meta.url), "utf8")));
+
+  check("the teacher's own count is their own awards", /awardsByActor\[currentUser\.id\]/.test(app));
+  check("it is shown only on a teacher's own dashboard, not a school-wide one",
+    /!seesAll && currentUser/.test(app));
+  check("behind and ahead are both rendered, so it is not only a rebuke",
+    /is-behind/.test(app) && /is-ahead/.test(app));
+
+  const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+  check("behind is amber, not red -- something to act on, not a failure",
+    /\.wc-quiet-compare\.is-behind \{[^}]*--wc-amber-deep/.test(css));
+  check("no other teacher is ever named", !/awardsByActor\[[^\]]*\]\s*\+[\s\S]{0,80}name/.test(app));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
