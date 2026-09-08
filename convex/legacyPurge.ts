@@ -749,3 +749,31 @@ export const rosterTeacherSearch = internalQuery({
     };
   },
 });
+
+/** How complete is the mirrored Entra directory, and how old? Read-only. */
+export const directoryHealth = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const dir = await ctx.db.query("entraDirectory").take(4000);
+    const teach = await ctx.db.query("teachers").take(2000);
+    const emails = new Set(dir.map((d: any) => String(d.email || "").toLowerCase()));
+    const missing = teach
+      .filter((t: any) => !emails.has(String(t.email || "").toLowerCase()))
+      .map((t: any) => ({ email: t.email, name: t.name, role: t.role }));
+    let newest: string | null = null, oldest: string | null = null;
+    for (const d of dir as any[]) {
+      const s = typeof d.syncedAt === "string" ? d.syncedAt : null;
+      if (!s) continue;
+      if (!newest || s > newest) newest = s;
+      if (!oldest || s < oldest) oldest = s;
+    }
+    return {
+      directoryRows: dir.length,
+      teacherRows: teach.length,
+      teachersNotInDirectory: missing.length,
+      missing,
+      mirrorNewest: newest,
+      mirrorOldest: oldest,
+    };
+  },
+});
