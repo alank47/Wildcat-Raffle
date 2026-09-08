@@ -271,3 +271,70 @@ export const setPowerSchoolEmail = internalMutation({
     return { email: target, psEmail: alt, cleared: false };
   },
 });
+
+/**
+ * The same invite, runnable with the deploy key.
+ *
+ * inviteStaff is gated on requireAdmin, which needs a signed-in identity. A CLI
+ * call has none, so an admin sitting beside the terminal cannot use it — and on
+ * 2026-09-08 the Teachers screen that would have was hidden, because Cash mode
+ * hides #teachersTab.
+ *
+ * IT KEEPS THE SAME GUARDS, deliberately, rather than being a bare insert:
+ * the address must be on the staff domain AND already present in the Entra
+ * directory mirror. That is what stops this creating access for somebody the
+ * school has not employed. It also refuses to grant superadmin, which the
+ * interactive flow reserves for a superadmin caller and this has no caller to
+ * check.
+ */
+export const inviteStaffFromCli = internalMutation({
+  args: {
+    email: v.string(),
+    role: v.union(
+      v.literal("teacher"),
+      v.literal("admin"),
+      v.literal("campusaide"),
+      v.literal("pbis"),
+    ),
+  },
+  handler: async (ctx, { email, role }) => {
+    const target = normalizeEmail(email);
+    const staffDomain = (process.env.STAFF_DOMAIN ?? "").trim().toLowerCase();
+    if (!staffDomain) throw new ConvexError("STAFF_DOMAIN is not configured.");
+    if (!target.endsWith(`@${staffDomain}`)) {
+      throw new ConvexError(`${target} is not on the staff domain.`);
+    }
+
+    const inDirectory = await ctx.db
+      .query("entraDirectory")
+      .withIndex("by_email", (q) => q.eq("email", target))
+      .unique();
+    if (!inDirectory) {
+      throw new ConvexError(
+        `${target} is not in the Microsoft directory. Nobody without a real ` +
+        "account should be given one here.",
+      );
+    }
+
+    const existing = await ctx.db
+      .query("teachers")
+      .withIndex("by_email", (q) => q.eq("email", target))
+      .unique();
+    if (existing) {
+      if (existing.role === role) {
+        return { outcome: "unchanged", email: target, role, name: existing.name };
+      }
+      await ctx.db.patch(existing._id, { role });
+      return { outcome: "role-changed", email: target, role, previousRole: existing.role };
+    }
+
+    await ctx.db.insert("teachers", {
+      name: inDirectory.name || target,
+      email: target,
+      role,
+      ticketsAwarded: 0,
+      createdDate: new Date().toISOString(),
+    });
+    return { outcome: "invited", email: target, role, name: inDirectory.name };
+  },
+});
