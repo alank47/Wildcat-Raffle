@@ -451,3 +451,112 @@ export const loginHistoryFor = internalQuery({
     };
   },
 });
+
+/** What the attendance feed actually holds, and whether it can carry this. */
+export const attendanceShape = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("psAttendance").take(2000);
+    const num = (v: any) => (typeof v === "number" && isFinite(v) ? v : null);
+    const withAbs = rows.filter((r) => num(r.daysAbsentYtd) !== null);
+    const withTardy = rows.filter((r) => num(r.daysTardyTerm) !== null);
+    const absVals = withAbs.map((r) => r.daysAbsentYtd as number).sort((a, b) => b - a);
+    return {
+      rows: rows.length,
+      withAbsentYtd: withAbs.length,
+      withTardyTerm: withTardy.length,
+      // attendanceRowsYtd is how many attendance records exist for the
+      // student -- a proxy for days enrolled, which a rate needs.
+      withRowsYtd: rows.filter((r) => num(r.attendanceRowsYtd) !== null).length,
+      termFirstDay: rows[0]?.termFirstDay ?? null,
+      termLastDay: rows[0]?.termLastDay ?? null,
+      absentTop: absVals.slice(0, 8),
+      absentAtLeast: {
+        one: absVals.filter((v) => v >= 1).length,
+        two: absVals.filter((v) => v >= 2).length,
+        three: absVals.filter((v) => v >= 3).length,
+        five: absVals.filter((v) => v >= 5).length,
+      },
+      sample: rows.slice(0, 2).map((r) => ({
+        n: r.studentNumber, abs: r.daysAbsentYtd, absTerm: r.daysAbsentTerm,
+        tardy: r.daysTardyTerm, rowsYtd: r.attendanceRowsYtd,
+        first: r.termFirstDay, last: r.termLastDay,
+      })),
+    };
+  },
+});
+
+/** What a 10% rule actually flags today, at each tier. */
+export const absenteeismPreview = internalQuery({
+  args: { schoolDays: v.number() },
+  handler: async (ctx, { schoolDays }) => {
+    const rows = await ctx.db.query("psAttendance").take(2000);
+    const days = Math.max(1, schoolDays);
+    const rate = (a: number) => a / days;
+    const abs = rows
+      .map((r) => (typeof r.daysAbsentYtd === "number" ? r.daysAbsentYtd : null))
+      .filter((v): v is number => v !== null);
+    const tardy = rows
+      .map((r) => (typeof r.daysTardyTerm === "number" ? r.daysTardyTerm : null))
+      .filter((v): v is number => v !== null);
+
+    const tier = (lo: number, hi: number) => abs.filter((a) => rate(a) >= lo && rate(a) < hi).length;
+    return {
+      schoolDays: days,
+      students: abs.length,
+      thresholdDays: Number((days * 0.1).toFixed(2)),
+      absence: {
+        satisfactory_under5: abs.filter((a) => rate(a) < 0.05).length,
+        atRisk_5to10: tier(0.05, 0.10),
+        chronic_10to20: tier(0.10, 0.20),
+        severe_20plus: abs.filter((a) => rate(a) >= 0.20).length,
+      },
+      chronicTotal: abs.filter((a) => rate(a) >= 0.10).length,
+      tardy: {
+        none: tardy.filter((t) => t === 0).length,
+        oneToTwo: tardy.filter((t) => t >= 1 && t <= 2).length,
+        threeToFive: tardy.filter((t) => t >= 3 && t <= 5).length,
+        sixPlus: tardy.filter((t) => t >= 6).length,
+        max: tardy.length ? Math.max(...tardy) : 0,
+      },
+    };
+  },
+});
+
+/**
+ * Can the browser put a NAME beside each attendance row?
+ *
+ * attendanceList:schoolAttendance deliberately sends numbers only, and the
+ * page joins them to the roster it already holds. That is a real dependency,
+ * not a formality: roughly a third of student records have incomplete SIS
+ * identity, and a number that matches nothing renders as "Student 12345".
+ * Read-only, admin-only, and it returns counts rather than students.
+ */
+export const attendanceJoinCoverage = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const att = await ctx.db.query("psAttendance").take(3000);
+    const studs = await ctx.db.query("students").take(3000);
+    const byNumber = new Set<string>();
+    let studentsWithNumber = 0;
+    for (const s of studs) {
+      const n = (s as any).studentNumber ? String((s as any).studentNumber) : "";
+      if (n) { byNumber.add(n); studentsWithNumber++; }
+    }
+    let matched = 0, unmatched = 0;
+    const sampleUnmatched: string[] = [];
+    for (const a of att) {
+      const n = String(a.studentNumber || "");
+      if (n && byNumber.has(n)) matched++;
+      else { unmatched++; if (sampleUnmatched.length < 5) sampleUnmatched.push(n); }
+    }
+    return {
+      attendanceRows: att.length,
+      students: studs.length,
+      studentsWithNumber,
+      matched,
+      unmatched,
+      sampleUnmatched,
+    };
+  },
+});

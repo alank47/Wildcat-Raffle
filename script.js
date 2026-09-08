@@ -23187,6 +23187,7 @@
                 { id: 'review',    fn: 'switchDisciplineTab', label: wcIcon('monitor') + ' Open Referrals' },
                 { id: 'closed',    fn: 'switchDisciplineTab', label: wcIcon('audit') + ' Closed Referrals' },
                 { id: 'detention', fn: 'switchDisciplineTab', label: wcIcon('stopwatch') + ' Detention Tracker' },
+                { id: 'attendance', fn: 'switchDisciplineTab', label: wcIcon('calendar') + ' Attendance Watch' },
                 { id: 'history',   fn: 'switchDisciplineTab', label: wcIcon('book') + ' Student History' },
                 { id: 'analytics', fn: 'switchDisciplineTab', label: wcIcon('analytics') + ' Analytics' }
             ]
@@ -25881,6 +25882,7 @@
                 review:    { pane: 'behaviorReview',    btn: 'reviewTabBtn' },
                 closed:    { pane: 'behaviorClosed',    btn: null },
                 detention: { pane: 'behaviorDetention', btn: 'detentionTabBtn' },
+                attendance:{ pane: 'behaviorAttendance', btn: null },
                 history:   { pane: 'behaviorHistory',   btn: 'historyDisciplineTabBtn' },
                 analytics: { pane: 'behaviorAnalytics', btn: 'analyticsDisciplineTabBtn' }
             };
@@ -25932,11 +25934,235 @@
             } else if (subtab === 'detention') {
                 if (typeof initializeDetentionForm === 'function') initializeDetentionForm();
                 if (typeof updateDetentionLists === 'function') updateDetentionLists();
+            } else if (subtab === 'attendance') {
+                renderAttendanceWatch();
             } else if (subtab === 'history') {
                 populateHistoryStudentDropdown();
             } else if (subtab === 'analytics') {
                 updateReferralAnalytics();
                 switchAnalyticsTab(analyticsTab);
+            }
+        }
+
+        // ========================================
+        // ATTENDANCE WATCH
+        //
+        // Chronic absence, measured against the days school has actually been
+        // in session rather than a full year. WildcatRoster.attendanceRanking
+        // holds the rule and the tiers; everything here is fetching, joining
+        // to names the browser already has, and drawing.
+        //
+        // WHY THE TIERS AND NOT THE FLAT 10% THAT WAS ASKED FOR.
+        //
+        // 10% is the right definition and it is the one the tiers are built
+        // around -- but on 2026-09-08, nineteen days into the year, 10% was
+        // 1.9 days and the flat rule put 360 of 671 students on one list.
+        // That is a true statement about the school and a useless queue for
+        // the people who have to work it. Severe (20%+) was 196, chronic
+        // 10-20% another 164, and sorting worst-first puts the child who has
+        // missed a quarter of the year at the top where they belong. The flat
+        // 10% line is still drawn, and still counted, as "chronic and severe".
+        // ========================================
+
+        /** Cached response, so switching filters does not re-hit the server. */
+        let _attCache = null;
+        let _attTierFilter = 'chronicPlus';
+        let _attBusy = false;
+
+        function setAttendanceTierFilter(tier) {
+            _attTierFilter = tier;
+            document.querySelectorAll('#attTierFilter .analytics-tab').forEach(b => {
+                b.classList.toggle('active', b.getAttribute('data-atier') === tier);
+            });
+            renderAttendanceWatch();
+        }
+
+        /**
+         * Days school has been in session, from the start date on screen.
+         *
+         * The holiday subtraction is a number a human types, because no school
+         * calendar exists in this app -- bellScheduleDays is empty, and
+         * inventing one from weekday arithmetic would be a guess dressed as a
+         * fact. Left alone it counts every weekday, which makes the denominator
+         * slightly too LARGE and therefore every rate slightly too SMALL. That
+         * is the safe direction to be wrong in: it under-flags rather than
+         * telling a family their child is chronically absent when they are not.
+         */
+        function attendanceSchoolDays() {
+            const R = window.WildcatRoster;
+            const firstEl = document.getElementById('attFirstDay');
+            const offEl = document.getElementById('attNonSchoolDays');
+            const first = (firstEl && firstEl.value) || '2026-08-12';
+            const off = Math.max(0, Number(offEl && offEl.value) || 0);
+            const weekdays = R && R.schoolDaysElapsed ? R.schoolDaysElapsed(first, new Date()) : 0;
+            return { first: first, weekdays: weekdays, off: off, days: Math.max(0, weekdays - off) };
+        }
+
+        async function loadAttendanceRows(force) {
+            if (_attCache && !force) return _attCache;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) {
+                // Not a permissions refusal, and it must not read as one.
+                return { allowed: false, needsSignIn: true, rows: [],
+                         reason: 'Attendance comes from the SIS, which needs a Microsoft sign-in.' };
+            }
+            try {
+                const res = await auth.convexQuery('attendanceList:schoolAttendance', {}, session.idToken);
+                _attCache = res;
+                return res;
+            } catch (e) {
+                const msg = (e && e.message) || String(e);
+                if (/\b401\b|unauthor/i.test(msg)) {
+                    return { allowed: false, needsSignIn: true, rows: [],
+                             reason: 'Your sign-in expired. Sign in again to load attendance.' };
+                }
+                return { allowed: false, rows: [], reason: 'Attendance could not be loaded: ' + msg };
+            }
+        }
+
+        async function renderAttendanceWatch(force) {
+            const list = document.getElementById('attendanceList');
+            const cards = document.getElementById('attTierCards');
+            const note = document.getElementById('attBasisNote');
+            const foot = document.getElementById('attFoot');
+            if (!list) return;
+            const R = window.WildcatRoster;
+            if (!R || typeof R.attendanceRanking !== 'function') {
+                list.innerHTML = '<p class="wu-absent">Attendance rules did not load. Refresh the page.</p>';
+                return;
+            }
+
+            // THE GUARD IS ON THE FETCH, NOT ON THE RENDER.
+            //
+            // Guarding the whole function meant a keystroke arriving during the
+            // load was dropped and never retried, leaving a list that no longer
+            // matched the search box above it -- and no way to tell, because
+            // the wrong list looks exactly like a right one.
+            let res = _attCache;
+            if (!res || force) {
+                if (_attBusy) return;
+                _attBusy = true;
+                list.innerHTML = '<p class="wu-absent">Loading attendance&hellip;</p>';
+                try { res = await loadAttendanceRows(force === true); }
+                finally { _attBusy = false; }
+            }
+
+            if (!res || res.allowed === false) {
+                if (cards) cards.innerHTML = '';
+                if (foot) foot.textContent = '';
+                list.innerHTML = '<p class="wu-absent">' +
+                    escapeHtml((res && res.reason) || 'Attendance is not available to your access level.') + '</p>';
+                return;
+            }
+
+            const basis = attendanceSchoolDays();
+            if (note) {
+                note.textContent = basis.days > 0
+                    ? basis.days + ' school days so far (' + basis.weekdays + ' weekdays'
+                      + (basis.off ? ', less ' + basis.off + ' non-school' : '') + '). '
+                      + 'Chronic starts at ' + (basis.days * 0.10).toFixed(1) + ' days absent.'
+                    : 'No school days counted yet, so no rate can be worked out. Check the start date.';
+            }
+
+            // studentNumber -> the app's own student record, for the name. The
+            // server sent no names on purpose; this is where they are added.
+            const byNumber = {};
+            (students || []).forEach(st => {
+                const n = st && st.studentNumber ? String(st.studentNumber) : '';
+                if (n) byNumber[n] = st;
+            });
+
+            const rows = (res.rows || []).map(r => ({
+                student: byNumber[String(r.studentNumber)] || { studentNumber: r.studentNumber },
+                daysAbsent: r.daysAbsent,
+                daysTardy: r.daysTardy
+            }));
+
+            const ranked = R.attendanceRanking(rows, basis.days);
+
+            if (cards) {
+                const c = ranked.counts;
+                cards.innerHTML = [
+                    ['severe',  'Severe',  '20% or more', c.severe],
+                    ['chronic', 'Chronic', '10&ndash;19%',  c.chronic],
+                    ['at-risk', 'At risk', '5&ndash;9%',    c['at-risk']],
+                    ['satisfactory', 'Satisfactory', 'Under 5%', c.satisfactory]
+                ].map(t =>
+                    '<div class="wc-att-tier wc-att-' + t[0] + '">' +
+                        '<div class="wc-att-tier-n">' + t[3] + '</div>' +
+                        // NOT escaped: these four labels are literals three
+                        // lines up, and escaping them turns the &ndash; into a
+                        // visible "&ndash;" on the card.
+                        '<div class="wc-att-tier-l">' + t[1] + '</div>' +
+                        '<div class="wc-att-tier-s">' + t[2] + '</div>' +
+                    '</div>').join('');
+            }
+
+            const search = ((document.getElementById('attSearch') || {}).value || '').trim().toLowerCase();
+            let shown = ranked.ranked;
+            if (_attTierFilter === 'chronicPlus') {
+                shown = shown.filter(r => r.tier && (r.tier.key === 'chronic' || r.tier.key === 'severe'));
+            } else if (_attTierFilter === 'severe' || _attTierFilter === 'at-risk') {
+                shown = shown.filter(r => r.tier && r.tier.key === _attTierFilter);
+            } else if (_attTierFilter === 'tardy') {
+                // Tardies are their own axis. A student can be punctual-but-absent
+                // or present-but-always-late, and the second never appears on an
+                // absence ranking at all.
+                shown = shown.filter(r => (r.daysTardy || 0) > 0)
+                             .slice().sort((a, b) => (b.daysTardy || 0) - (a.daysTardy || 0));
+            }
+            if (search) {
+                shown = shown.filter(r => {
+                    const st = r.student || {};
+                    return (((st.firstName || '') + ' ' + (st.lastName || '')).toLowerCase().indexOf(search) !== -1)
+                        || String(st.studentNumber || '').toLowerCase().indexOf(search) !== -1;
+                });
+            }
+
+            const CAP = 150;
+            const clipped = shown.length > CAP;
+            const view = clipped ? shown.slice(0, CAP) : shown;
+
+            if (!view.length) {
+                list.innerHTML = '<p class="wu-absent">No students match this filter.</p>';
+            } else {
+                list.innerHTML = view.map(r => {
+                    const st = r.student || {};
+                    const name = escapeHtml(((st.firstName || '') + ' ' + (st.lastName || '')).trim()
+                                            || ('Student ' + (st.studentNumber || '?')));
+                    const meta = [st.grade ? 'Grade ' + st.grade : '', st.studentNumber || '']
+                        .filter(Boolean).map(escapeHtml).join('  &middot;  ');
+                    const pct = Math.round(r.rate * 100);
+                    const tierKey = r.tier ? r.tier.key : 'satisfactory';
+                    const openable = st.id ? ' onclick="openStudentProfile(\'' + escapeHtml(String(st.id)) + '\')"' : '';
+                    return '<button type="button" class="wc-att-row wc-att-' + tierKey + '"' + openable + '>' +
+                        '<span class="wc-att-name">' + name +
+                            (meta ? '<span class="wc-att-meta">' + meta + '</span>' : '') + '</span>' +
+                        '<span class="wc-att-figs">' +
+                            '<span class="wc-att-pct">' + pct + '%</span>' +
+                            '<span class="wc-att-days">' + r.daysAbsent + ' absent' +
+                                (r.daysTardy ? '  &middot;  ' + r.daysTardy + ' tardy' : '') + '</span>' +
+                        '</span>' +
+                        '<span class="wc-att-badge">' + escapeHtml(r.tier ? r.tier.label : '') + '</span>' +
+                    '</button>';
+                }).join('');
+            }
+
+            if (foot) {
+                const bits = [];
+                if (clipped) bits.push('Showing the first ' + CAP + ' of ' + shown.length + '. Search to narrow.');
+                // Said out loud rather than silently dropped. A student with no
+                // attendance row is not a student with perfect attendance, and
+                // the difference is the whole point of the null.
+                if (ranked.noData.length) {
+                    bits.push(ranked.noData.length + ' student' + (ranked.noData.length === 1 ? '' : 's') +
+                              ' have no attendance on file and are not ranked.');
+                }
+                if (res.truncated) bits.push('The attendance table was larger than this screen reads. Tell an administrator.');
+                if (res.lastSyncedAt) bits.push('Last synced ' + String(res.lastSyncedAt).slice(0, 16).replace('T', ' ') + '.');
+                // textContent, so nothing here can be escaped twice or not at all.
+                foot.textContent = bits.join(' ');
             }
         }
 

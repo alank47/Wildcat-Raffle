@@ -211,10 +211,18 @@
     return DISCIPLINE_ALL_ROLES.indexOf(trimmed(role).toLowerCase()) !== -1;
   }
 
-  /** Subtabs a role may open, in display order. */
+  /**
+   * Subtabs a role may open, in display order.
+   *
+   * ATTENDANCE SITS ON THE PRIVILEGED SIDE. It is a whole-school ranking that
+   * names the children the school is most worried about, which is the same
+   * kind of record as the referral history beside it. A teacher who may only
+   * file a referral about their own class has no business with the list, and
+   * convex/attendanceList.ts refuses them independently of this.
+   */
   function disciplineTabsFor(role) {
     return seesAllReferrals(role)
-      ? ['submit', 'review', 'closed', 'detention', 'history', 'analytics']
+      ? ['submit', 'review', 'closed', 'detention', 'attendance', 'history', 'analytics']
       : ['submit', 'review', 'closed'];
   }
 

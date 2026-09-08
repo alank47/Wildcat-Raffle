@@ -474,7 +474,129 @@
     return Math.max(1, Math.ceil(perDay));
   }
 
+
+  /**
+   * Chronic absenteeism, by the definition the school already uses.
+   *
+   * Chronic is missing 10% or more of the days school has been in session --
+   * not 10% of the whole year, which would flag nobody until spring. So the
+   * denominator grows daily and the threshold with it.
+   *
+   * THE TIERS ARE NOT DECORATION. A single "chronic / not chronic" line put 54%
+   * of this school on one list on 2026-09-08, because at 19 days in, 10% is 1.9
+   * days and half the school had missed two. The tiers are the ones districts
+   * actually intervene on, and they are what makes the list a queue rather than
+   * a roll call:
+   *
+   *   satisfactory   under 5%
+   *   at risk        5% to under 10%     watch
+   *   chronic        10% to under 20%    the state's definition
+   *   severe         20% and over        act now
+   *
+   * EARLY IN THE YEAR THIS IS NOISY AND THAT IS NOT A BUG. Two absences in
+   * August genuinely is 10% of August. The rate settles as the denominator
+   * grows, and a student who is severe in week three is worth a conversation
+   * even if they will not be by December.
+   *
+   * A RATE IS REFUSED, NOT GUESSED, when there are no school days yet or no
+   * attendance on file. Dividing by zero would put every child at 0% and
+   * absent data would render as perfect attendance, which is the worst
+   * possible way to be wrong about this.
+   */
+  var ATTENDANCE_TIERS = [
+    { key: 'severe',       label: 'Severe',       min: 0.20 },
+    { key: 'chronic',      label: 'Chronic',      min: 0.10 },
+    { key: 'at-risk',      label: 'At risk',      min: 0.05 },
+    { key: 'satisfactory', label: 'Satisfactory', min: 0 }
+  ];
+
+  function attendanceTier(rate) {
+    if (rate === null || rate === undefined || !isFinite(rate)) return null;
+    for (var i = 0; i < ATTENDANCE_TIERS.length; i++) {
+      if (rate >= ATTENDANCE_TIERS[i].min) return ATTENDANCE_TIERS[i];
+    }
+    return ATTENDANCE_TIERS[ATTENDANCE_TIERS.length - 1];
+  }
+
+  /**
+   * School days elapsed, counting weekdays from the first day to today.
+   *
+   * HOLIDAYS ARE NOT SUBTRACTED, and the direction of that error is the reason
+   * it is acceptable: a denominator that is too LARGE makes every rate too
+   * SMALL, so the list under-flags rather than over-flags. Being wrong in the
+   * other direction means telling a family their child is chronically absent
+   * when they are not.
+   *
+   * The count is shown on screen so it can be checked rather than trusted.
+   */
+  function schoolDaysElapsed(firstDay, today) {
+    var start = (firstDay instanceof Date) ? firstDay : new Date(String(firstDay) + 'T12:00:00');
+    var end = (today instanceof Date) ? today : (today ? new Date(String(today) + 'T12:00:00') : new Date());
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) return 0;
+    var n = 0;
+    var d = new Date(start.getTime());
+    while (d <= end) {
+      var wd = d.getDay();
+      if (wd !== 0 && wd !== 6) n++;
+      d.setDate(d.getDate() + 1);
+    }
+    return n;
+  }
+
+  /**
+   * Rank students by attendance, worst first.
+   *
+   * `rows` are { student, daysAbsent, daysTardy }. A student with no
+   * attendance on file keeps a null rate and is reported separately rather
+   * than sorted in as though they had perfect attendance.
+   */
+  function attendanceRanking(rows, schoolDays) {
+    var days = Number(schoolDays);
+    var usable = (typeof days === 'number' && isFinite(days) && days > 0) ? days : null;
+
+    var ranked = [];
+    var noData = [];
+    (rows || []).forEach(function (r) {
+      var abs = (r && typeof r.daysAbsent === 'number' && isFinite(r.daysAbsent)) ? r.daysAbsent : null;
+      var tardy = (r && typeof r.daysTardy === 'number' && isFinite(r.daysTardy)) ? r.daysTardy : null;
+      if (abs === null || usable === null) { noData.push({ student: r && r.student, daysAbsent: abs, daysTardy: tardy, rate: null, tier: null }); return; }
+      var rate = abs / usable;
+      ranked.push({
+        student: r.student,
+        daysAbsent: abs,
+        daysTardy: tardy,
+        rate: rate,
+        tier: attendanceTier(rate)
+      });
+    });
+
+    ranked.sort(function (a, b) {
+      if (b.rate !== a.rate) return b.rate - a.rate;
+      var at = (b.daysTardy || 0) - (a.daysTardy || 0);
+      if (at) return at;
+      var an = ((a.student && a.student.lastName) || '') + ((a.student && a.student.firstName) || '');
+      var bn = ((b.student && b.student.lastName) || '') + ((b.student && b.student.firstName) || '');
+      return an.localeCompare(bn);
+    });
+
+    var counts = { severe: 0, chronic: 0, 'at-risk': 0, satisfactory: 0 };
+    ranked.forEach(function (r) { if (r.tier) counts[r.tier.key] += 1; });
+
+    return {
+      schoolDays: usable,
+      thresholdDays: usable === null ? null : usable * 0.10,
+      ranked: ranked,
+      noData: noData,
+      counts: counts,
+      chronicOrWorse: counts.severe + counts.chronic
+    };
+  }
+
   root.WildcatRoster = {
+    ATTENDANCE_TIERS: ATTENDANCE_TIERS,
+    attendanceTier: attendanceTier,
+    schoolDaysElapsed: schoolDaysElapsed,
+    attendanceRanking: attendanceRanking,
     median: median,
     dailyGoal: dailyGoal,
     quietStudents: quietStudents,
