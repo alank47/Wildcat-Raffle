@@ -889,3 +889,24 @@ export const referralAttribution = internalQuery({
     return { found: !!hit, referral: scrubbed, signInsToday: todays };
   },
 });
+
+/** Full staff records, field by field, for comparison. Read-only. */
+export const staffRecordShape = internalQuery({
+  args: { emails: v.array(v.string()) },
+  handler: async (ctx, { emails }) => {
+    const want = new Set(emails.map((e) => e.trim().toLowerCase()));
+    const rows = await ctx.db.query("teachers").take(2000);
+    const hits = rows.filter((t: any) => want.has(String(t.email || "").toLowerCase()));
+    const allKeys = new Set<string>();
+    rows.forEach((t: any) => Object.keys(t).forEach((k) => allKeys.add(k)));
+    return {
+      records: hits.map((t: any) => {
+        const o: Record<string, unknown> = {};
+        Object.keys(t).sort().forEach((k) => { o[k] = t[k]; });
+        return o;
+      }),
+      // What fields do OTHER staff records carry that these might lack?
+      fieldsSeenAcrossAllStaff: [...allKeys].sort(),
+    };
+  },
+});

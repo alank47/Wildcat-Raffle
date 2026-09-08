@@ -8844,3 +8844,31 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 .wc-ref-refresh-note {
     font-size: 12px; color: var(--wc-gray-text, #8892a0);
 }
+
+/* Unsaved referral bar. Fixed, high contrast, and it does not go away on its
+   own: it means a record of a child's behaviour exists in one browser tab and
+   nowhere else. Amber rather than red -- nothing is broken yet, and the work
+   is recoverable for as long as the tab stays open. */
+.wc-unsaved-bar {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: 16px; z-index: 4000;
+    display: flex; align-items: center; gap: 12px;
+    max-width: min(680px, calc(100vw - 32px)); box-sizing: border-box;
+    padding: 12px 16px; border-radius: 12px;
+    background: #7c2d12; color: #fff;
+    border: 1px solid #9a3412;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .28);
+    font-size: 13.5px; line-height: 1.45;
+}
+.wc-unsaved-icon { font-size: 18px; flex: 0 0 auto; }
+.wc-unsaved-retry {
+    flex: 0 0 auto; margin-left: 4px;
+    padding: 7px 14px; border-radius: 8px; border: 0;
+    background: #fff; color: #7c2d12;
+    font-family: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.wc-unsaved-retry:hover { background: #fde68a; }
+.wc-unsaved-retry:disabled { opacity: .6; cursor: default; }
+@media (max-width: 560px) {
+    .wc-unsaved-bar { flex-wrap: wrap; bottom: 8px; }
+}

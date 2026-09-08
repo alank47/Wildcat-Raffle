@@ -27684,15 +27684,106 @@
 
             behaviorReferrals.push(referral);
 
-            // Confirm now; persist in the background.
-            showReferralToast(
-                `✅ <strong>Referral submitted</strong> for ${escapeHtml(referral.studentName)}, sent to administration for review.`, 'ok');
+            // THE TOAST USED TO FIRE HERE, BEFORE THE SAVE STARTED.
+            //
+            // "Referral submitted" was shown, the form was cleared, and only
+            // then did a fire-and-forget save begin. A teacher whose save
+            // failed had already been told it worked, had lost the form, and
+            // was holding the only copy of that referral in a tab's memory.
+            // Reported on 2026-09-08 as "Laura submitted a referral and it is
+            // not showing" -- and it was not on the server.
+            //
+            // The row is still added optimistically, so the table updates at
+            // once, but nothing CLAIMS the referral is filed until the server
+            // has it. Until then it is tracked as unsaved and says so.
             clearReferralForm();
             if (typeof updateReferralReviewTable === 'function') updateReferralReviewTable();
-            setButtonBusy(submitBtn, false);
+            markReferralUnsaved(referral);
+            showReferralToast(
+                `<strong>Saving referral</strong> for ${escapeHtml(referral.studentName)}…`, 'ok');
 
-            saveInBackground('Referral for ' + referral.studentName);
+            try {
+                const ok = await requestSave('Referral for ' + referral.studentName);
+                if (ok === false) throw new Error('the save did not complete');
+                markReferralSaved(referral.id);
+                showReferralToast(
+                    `✅ <strong>Referral submitted</strong> for ${escapeHtml(referral.studentName)}, sent to administration for review.`, 'ok');
+            } catch (e) {
+                console.error('[referral] save failed', e);
+                // The banner stays until it saves. A toast disappears, and a
+                // teacher who missed it would never learn the referral was
+                // never filed.
+                showReferralToast(
+                    `<strong>Not filed yet.</strong> The referral for ${escapeHtml(referral.studentName)} is still only on this device. ` +
+                    `Use Retry in the bar at the bottom before closing this tab.`, 'warn');
+            } finally {
+                setButtonBusy(submitBtn, false);
+            }
         }
+
+        // =====================================================================
+        // REFERRALS THIS TAB HAS ACCEPTED BUT THE SERVER HAS NOT CONFIRMED
+        //
+        // A referral exists in one place until a save succeeds: this tab's
+        // memory. Closing the tab loses it. That is survivable only if the
+        // person who wrote it KNOWS, which is why this is a persistent bar
+        // with a retry rather than a toast that fades.
+        // =====================================================================
+        const _unsavedReferrals = new Map();
+
+        function markReferralUnsaved(referral) {
+            if (!referral || !referral.id) return;
+            _unsavedReferrals.set(referral.id, referral);
+            renderUnsavedReferralBar();
+        }
+
+        function markReferralSaved(id) {
+            if (_unsavedReferrals.delete(id)) renderUnsavedReferralBar();
+        }
+
+        function renderUnsavedReferralBar() {
+            const bar = document.getElementById('unsavedReferralBar');
+            const text = document.getElementById('unsavedReferralText');
+            if (!bar || !text) return;
+            const n = _unsavedReferrals.size;
+            if (!n) { bar.hidden = true; return; }
+            const names = [..._unsavedReferrals.values()]
+                .map(r => r.studentName).filter(Boolean);
+            bar.hidden = false;
+            text.textContent = n === 1
+                ? `1 referral is not saved yet${names[0] ? ' (' + names[0] + ')' : ''}. It exists only on this device.`
+                : `${n} referrals are not saved yet. They exist only on this device.`;
+        }
+
+        async function retryUnsavedReferrals() {
+            const btn = document.getElementById('unsavedReferralRetry');
+            if (btn) { btn.disabled = true; btn.textContent = 'Retrying\u2026'; }
+            try {
+                // flush, not request: this is the button somebody presses when
+                // they are about to close the laptop.
+                const ok = await flushSaves();
+                if (ok !== false) {
+                    [..._unsavedReferrals.keys()].forEach(id => _unsavedReferrals.delete(id));
+                    renderUnsavedReferralBar();
+                    showReferralToast('\u2705 <strong>Saved.</strong> Everything is on the server.', 'ok');
+                } else {
+                    showReferralToast('<strong>Still not saved.</strong> Check your connection and try again.', 'warn');
+                }
+            } catch (e) {
+                showReferralToast('<strong>Still not saved.</strong> ' + escapeHtml((e && e.message) || String(e)), 'warn');
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+            }
+        }
+
+        // The last line of defence. A teacher closing a laptop on an unsaved
+        // referral gets the browser's own "leave site?" prompt.
+        window.addEventListener('beforeunload', function (e) {
+            if (!_unsavedReferrals.size) return;
+            e.preventDefault();
+            e.returnValue = '';
+            return '';
+        });
 
         // Closure action list — mirrors the "Closing the Loop Options" checklist.
         // DETENTION_CLOSING_ACTION is wired to auto-create a Detention Tracker
