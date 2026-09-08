@@ -560,3 +560,93 @@ export const attendanceJoinCoverage = internalQuery({
     };
   },
 });
+
+/**
+ * Is PowerSchool plugin 1.4.1 installed?
+ *
+ * Not answered by asking PowerSchool -- answered by looking at what the sync
+ * actually managed to WRITE. 1.4.1 adds one endpoint (section_points) and
+ * widens another (missing_work now returns ISMISSING). If psSectionPoints has
+ * rows, the new endpoint answered, and only 1.4.1 serves it.
+ *
+ * Read-only. Counts and timestamps, no student rows.
+ */
+export const pluginVersionEvidence = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const sp = await ctx.db.query("psSectionPoints").take(2000);
+    const mw = await ctx.db.query("psMissingWork").take(2000);
+    const gr = await ctx.db.query("psGrades").take(2000);
+
+    const latest = (rows: any[]) => {
+      let t: string | null = null;
+      for (const r of rows) {
+        const s = typeof r.syncedAt === "string" ? r.syncedAt : null;
+        if (s && (!t || s > t)) t = s;
+      }
+      return t;
+    };
+
+    // COUNTED, BUT NOT EVIDENCE, and the first read of it was wrong.
+    //
+    // isMissing looks like a 1.4.1 marker and is not one: sisAction writes
+    // `m.is_missing === undefined ? true : ...`, so a 1.3.1 row that carries
+    // no is_missing column still lands with isMissing = true. Every row here
+    // having the field, all of them flagged and none zero-scored, is the
+    // 1.3.1 DEFAULT rather than a teacher's flag. The tell is zeroScored: at
+    // 1.4.1 the widened query returns zero-scored work too, so a real 1.4.1
+    // sync cannot leave that at 0 across a thousand rows.
+    //
+    // section_points is the only unambiguous signal, because 1.3.1 has no
+    // such query to answer with.
+    let withIsMissing = 0, flaggedByTeacher = 0, zeroScored = 0;
+    for (const r of mw) {
+      if (typeof (r as any).isMissing === "boolean") {
+        withIsMissing++;
+        if ((r as any).isMissing) flaggedByTeacher++; else zeroScored++;
+      }
+    }
+
+    return {
+      sectionPoints: {
+        rows: sp.length,
+        students: new Set(sp.map((r) => r.studentNumber)).size,
+        lastSyncedAt: latest(sp),
+      },
+      missingWork: {
+        rows: mw.length,
+        withIsMissingField: withIsMissing,
+        flaggedByTeacher,
+        zeroScored,
+        lastSyncedAt: latest(mw),
+      },
+      grades: { rows: gr.length, lastSyncedAt: latest(gr) },
+      // The whole point: section_points is served ONLY by 1.4.1.
+      verdict: sp.length > 0 ? "1.4.1 IS INSTALLED" : "still 1.3.1 (no section_points data)",
+    };
+  },
+});
+
+/**
+ * What did the last few syncs say about the 1.4.x queries?
+ *
+ * sisAction records sectionPointsError and missingWorkError per run. A 404
+ * there is the plugin answering "I do not have that query", which is exactly
+ * what 1.3.1 says and exactly what 1.4.1 does not. Read-only.
+ */
+export const sectionPointsSyncErrors = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const runs = await ctx.db.query("syncRuns").withIndex("by_at").order("desc").take(6);
+    return runs.map((r) => {
+      const sum = (r.summary || {}) as any;
+      return {
+        at: r.at,
+        sectionPointsError: sum.sectionPointsError ?? null,
+        missingWorkError: sum.missingWorkError ?? null,
+        sectionPoints: sum.sectionPoints ?? null,
+        missingWork: sum.missingWork ?? null,
+      };
+    });
+  },
+});
