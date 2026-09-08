@@ -430,7 +430,53 @@
     };
   }
 
+
+  /**
+   * The middle value, not the mean.
+   *
+   * A handful of very active staff pull a mean upward and put most of the room
+   * "below average", which is arithmetically true and useless as a prompt: a
+   * target nobody typical reaches reads as noise within a week. The median is
+   * what the TYPICAL member of staff does, so half the room is at or above it
+   * and the other half has something reachable to aim at.
+   */
+  function median(values) {
+    // typeof first, deliberately. Number(null) is 0, so a .map(Number) turns a
+    // missing value into a real zero and drags the median down -- which for a
+    // staff count means a colleague who does not exist voting for a lower goal.
+    var xs = (values || [])
+      .filter(function (n) { return typeof n === 'number' && isFinite(n); })
+      .slice()
+      .sort(function (a, b) { return a - b; });
+    if (!xs.length) return 0;
+    var mid = Math.floor(xs.length / 2);
+    return xs.length % 2 ? xs[mid] : (xs[mid - 1] + xs[mid]) / 2;
+  }
+
+  /**
+   * Today's interaction goal, from what the typical member of staff does.
+   *
+   * DERIVED, NOT DECREED. A number I chose would be a number I made up, and
+   * staff can tell. This is the median colleague's daily rate, so it rises as
+   * the school takes the system up and never asks for more than half the room
+   * is already managing.
+   *
+   * FLOORED AT ONE. Before launch the median is zero, and a goal of zero is
+   * both unreachable-by-definition and an insult. One is honest at low volume
+   * and is quickly overtaken by the real figure.
+   *
+   * Rounded UP, so a median of 2.3 asks for 3. A goal below what the typical
+   * person already does is not a goal.
+   */
+  function dailyGoal(perStaffCounts, windowDays) {
+    var days = (typeof windowDays === 'number' && windowDays > 0) ? windowDays : 30;
+    var perDay = median(perStaffCounts) / days;
+    return Math.max(1, Math.ceil(perDay));
+  }
+
   root.WildcatRoster = {
+    median: median,
+    dailyGoal: dailyGoal,
     quietStudents: quietStudents,
     POSITIVITY_FLOOR: POSITIVITY_FLOOR,
     ALL_STUDENT_ROLES: ALL_STUDENT_ROLES,

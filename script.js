@@ -29555,9 +29555,31 @@
                 if (!actor) return;
                 awardsByActor[actor] = (awardsByActor[actor] || 0) + 1;
             });
-            const activeStaff = (Array.isArray(teachers) ? teachers : []).length || 1;
-            const staffAverage = moves.length / activeStaff;
+            // THE MEDIAN, NOT THE MEAN -- for the staff comparison and the goal.
+            //
+            // A handful of very active colleagues pull a mean upward and put
+            // most of the room "below average", which is arithmetically true
+            // and useless as a prompt: a target nobody typical reaches reads as
+            // noise within a week. Measured on synthetic staff counts, one
+            // heavy awarder moves the mean to 38.6 and the median to 1.5.
+            //
+            // Everyone counts, including the colleagues who awarded nothing --
+            // a median over only the active would flatter the school and set
+            // the goal by the keenest half of it.
+            const staffCounts = (Array.isArray(teachers) ? teachers : [])
+                .map(t => awardsByActor[t.id] || 0);
+            const staffMedian = R.median(staffCounts);
             const myAwards = (currentUser && awardsByActor[currentUser.id]) || 0;
+
+            // Today's goal, derived from what the typical colleague does rather
+            // than a number I picked. Rises as the school takes the system up.
+            const goal = R.dailyGoal(staffCounts, QUIET_WINDOW_DAYS);
+            const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+            const myToday = moves.filter(t => {
+                const actor = t.teacherId || t.addedBy || t.removedBy;
+                return actor && currentUser && actor === currentUser.id &&
+                       new Date(t.timestamp).getTime() >= todayStart.getTime();
+            }).length;
 
             const scoped = R.scopeStudents({
                 students: schoolStudents,
@@ -29582,13 +29604,36 @@
             // a meaningful number.
             const compare = (!seesAll && currentUser)
                 ? (function () {
-                    const behind = myAwards < staffAverage;
-                    return '<div class="wc-quiet-compare ' + (behind ? 'is-behind' : 'is-ahead') + '">' +
-                        '<span><b>' + myAwards + '</b> award' + (myAwards === 1 ? '' : 's') +
-                        ' from you in ' + QUIET_WINDOW_DAYS + ' days</span>' +
-                        '<span class="wc-quiet-vs">staff average <b>' +
-                        staffAverage.toFixed(1) + '</b></span>' +
-                    '</div>';
+                    const done = Math.min(myToday, goal);
+                    const hit = myToday >= goal;
+                    const pct = Math.round((done / goal) * 100);
+
+                    // The goal first, because it is the part somebody can act
+                    // on before lunch. The thirty-day figure is context under
+                    // it, not the headline.
+                    return '<div class="wc-goal ' + (hit ? 'is-hit' : '') + '">' +
+                            '<div class="wc-goal-head">' +
+                                '<span class="wc-goal-label">' +
+                                    (hit ? 'Today\u2019s goal reached' : 'Today\u2019s goal') +
+                                '</span>' +
+                                '<span class="wc-goal-count"><b>' + myToday + '</b> / ' + goal + '</span>' +
+                            '</div>' +
+                            '<div class="wc-goal-track" role="img" aria-label="' +
+                                myToday + ' of ' + goal + ' interactions today">' +
+                                '<span class="wc-goal-fill" style="width:' + pct + '%;"></span>' +
+                            '</div>' +
+                            '<p class="wc-goal-sub">' +
+                                (hit
+                                    ? 'That is more than half the staff manage on a normal day.'
+                                    : (goal - myToday) + ' more to match a typical day here.') +
+                            '</p>' +
+                        '</div>' +
+                        '<div class="wc-quiet-compare ' +
+                            (myAwards < staffMedian ? 'is-behind' : 'is-ahead') + '">' +
+                            '<span><b>' + myAwards + '</b> in ' + QUIET_WINDOW_DAYS + ' days</span>' +
+                            '<span class="wc-quiet-vs">typical colleague <b>' +
+                            staffMedian.toFixed(staffMedian % 1 ? 1 : 0) + '</b></span>' +
+                        '</div>';
                 })()
                 : '';
 

@@ -171,8 +171,8 @@ console.log("\nThe teacher comparison uses a denominator that is fair");
   // comparison is per member of staff; the student threshold is per student.
   check("the student threshold is interactions per student",
     /schoolAverage = schoolStudents\.length[\s\S]{0,120}moves\.length \/ schoolStudents\.length/.test(app));
-  check("the teacher comparison is awards per member of staff",
-    /staffAverage = moves\.length \/ activeStaff/.test(app));
+  check("the teacher comparison is per member of staff, counting everyone",
+    /staffCounts = \(Array\.isArray\(teachers\)[\s\S]{0,120}awardsByActor\[t\.id\] \|\| 0\)/.test(app));
   check("and the two are not confused with each other",
     /Same\s*\n?\s*\/\/ words, different denominators/.test(
       readFileSync(new URL("./script.js", import.meta.url), "utf8")));
@@ -187,6 +187,60 @@ console.log("\nThe teacher comparison uses a denominator that is fair");
   check("behind is amber, not red -- something to act on, not a failure",
     /\.wc-quiet-compare\.is-behind \{[^}]*--wc-amber-deep/.test(css));
   check("no other teacher is ever named", !/awardsByActor\[[^\]]*\]\s*\+[\s\S]{0,80}name/.test(app));
+}
+
+
+console.log("\nThe median, and a goal derived from it");
+{
+  check("median of an odd list is the middle", R.median([1, 2, 3]) === 2);
+  check("median of an even list is the midpoint", R.median([1, 2, 3, 4]) === 2.5);
+  check("median of nothing is zero, not NaN", R.median([]) === 0);
+  check("it ignores values that are not numbers",
+    R.median([1, "x", 3, null, undefined, NaN]) === 2);
+  check("and does not mutate the caller's array", (() => {
+    const a = [3, 1, 2]; R.median(a); return a.join(",") === "3,1,2"; })());
+
+  // THE REASON FOR THE MEDIAN. One very active colleague drags a mean far
+  // above what anybody typical does, and a target nobody typical reaches
+  // reads as noise within a week.
+  const counts = [0, 0, 1, 1, 2, 2, 3, 300];
+  const mean = counts.reduce((a, b) => a + b, 0) / counts.length;
+  check("one heavy awarder moves the mean but not the median",
+    mean > 38 && R.median(counts) === 1.5);
+
+  // Goal.
+  check("before launch, with nobody awarding, the goal is 1 rather than 0",
+    R.dailyGoal([0, 0, 0, 0], 30) === 1);
+  check("a goal of zero is never produced", R.dailyGoal([], 30) >= 1);
+  check("it rounds up, so it is never below what the typical person does",
+    R.dailyGoal([60, 69, 70, 90], 30) === 3);
+  check("it rises with the school's own practice",
+    R.dailyGoal([300, 300, 300], 30) > R.dailyGoal([30, 30, 30], 30));
+  check("a bad window falls back rather than dividing by zero",
+    R.dailyGoal([30, 30], 0) >= 1 && isFinite(R.dailyGoal([30, 30], 0)));
+}
+
+console.log("\nThe goal and the comparison are on screen");
+{
+  const app = readFileSync(new URL("./script.js", import.meta.url), "utf8")
+    .replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  check("the comparison uses the median, not the mean",
+    /R\.median\(staffCounts\)/.test(app) && !/staffAverage/.test(app));
+  check("colleagues who awarded nothing are counted, so the bar is honest",
+    /teachers : \[\]\)\s*\n?\s*\.map\(t => awardsByActor\[t\.id\] \|\| 0\)/.test(app));
+  check("the goal comes from the same counts", /R\.dailyGoal\(staffCounts/.test(app));
+  check("progress is today's awards, not the window's", /todayStart/.test(app));
+  check("the bar is capped so it cannot overflow", /Math\.min\(myToday, goal\)/.test(app));
+  check("a reached goal is stated as reached", /goal reached/i.test(app));
+  check("and the track stays visible when it is",
+    /\.wc-goal\.is-hit \.wc-goal-fill/.test(css));
+  check("reached is green, in progress is blue",
+    /\.wc-goal \{[^}]*--wc-blue-mist/.test(css) &&
+    /\.wc-goal\.is-hit \{[^}]*--wc-green-mist/.test(css));
+  check("the fill animates, and not for anyone who asked it not to",
+    /prefers-reduced-motion[\s\S]{0,140}\.wc-goal-fill \{ transition: none/.test(css));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

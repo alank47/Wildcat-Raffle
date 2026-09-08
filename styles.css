@@ -3175,6 +3175,60 @@ body {
     border-left: 3px solid var(--wc-green-deep, #2E7D52);
 }
 
+/* ---- Today's goal -------------------------------------------------------
+   A bar that fills, not a badge that is won. The satisfying part of a daily
+   target is watching it close, so the track is always visible and the reached
+   state is a change of colour rather than a different component appearing. */
+.wc-goal {
+    margin: 0 0 8px; padding: 11px 12px;
+    border-radius: 10px;
+    background: var(--wc-blue-mist, #EAF1F9);
+    border-left: 3px solid var(--wc-blue, #2F67A7);
+}
+.wc-goal-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    margin-bottom: 7px;
+}
+.wc-goal-label {
+    font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--wc-blue-deep, #24507F);
+}
+.wc-goal-count {
+    font-size: 13px; color: var(--wc-blue-deep, #24507F);
+    font-variant-numeric: tabular-nums;
+}
+.wc-goal-count b { font-size: 16px; font-weight: 700; }
+
+.wc-goal-track {
+    height: 7px; border-radius: 999px; overflow: hidden;
+    background: rgba(47, 103, 167, 0.18);
+}
+.wc-goal-fill {
+    display: block; height: 100%; border-radius: 999px;
+    background: var(--wc-blue, #2F67A7);
+    transition: width .45s cubic-bezier(.2,.8,.3,1);
+}
+.wc-goal-sub {
+    margin: 7px 0 0; font-size: 12px; line-height: 1.4;
+    color: var(--wc-blue-deep, #24507F); opacity: .9;
+}
+
+/* Reached. Green, and the bar stays full rather than disappearing -- the
+   filled track IS the reward, so removing it takes the satisfaction away. */
+.wc-goal.is-hit {
+    background: var(--wc-green-mist, #E7F3EC);
+    border-left-color: var(--wc-green-deep, #2E7D52);
+}
+.wc-goal.is-hit .wc-goal-label,
+.wc-goal.is-hit .wc-goal-count,
+.wc-goal.is-hit .wc-goal-sub { color: var(--wc-green-deep, #2E7D52); }
+.wc-goal.is-hit .wc-goal-track { background: rgba(46, 125, 82, 0.18); }
+.wc-goal.is-hit .wc-goal-fill { background: var(--wc-green-deep, #2E7D52); }
+
+@media (prefers-reduced-motion: reduce) {
+    .wc-goal-fill { transition: none; }
+}
+
 /* The rotation is decoration. Somebody who has asked for less motion gets the
    tips without the fade, and the dots still work. */
 @media (prefers-reduced-motion: reduce) {
