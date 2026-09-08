@@ -451,3 +451,462 @@ export const loginHistoryFor = internalQuery({
     };
   },
 });
+
+/** What the attendance feed actually holds, and whether it can carry this. */
+export const attendanceShape = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("psAttendance").take(2000);
+    const num = (v: any) => (typeof v === "number" && isFinite(v) ? v : null);
+    const withAbs = rows.filter((r) => num(r.daysAbsentYtd) !== null);
+    const withTardy = rows.filter((r) => num(r.daysTardyTerm) !== null);
+    const absVals = withAbs.map((r) => r.daysAbsentYtd as number).sort((a, b) => b - a);
+    return {
+      rows: rows.length,
+      withAbsentYtd: withAbs.length,
+      withTardyTerm: withTardy.length,
+      // attendanceRowsYtd is how many attendance records exist for the
+      // student -- a proxy for days enrolled, which a rate needs.
+      withRowsYtd: rows.filter((r) => num(r.attendanceRowsYtd) !== null).length,
+      termFirstDay: rows[0]?.termFirstDay ?? null,
+      termLastDay: rows[0]?.termLastDay ?? null,
+      absentTop: absVals.slice(0, 8),
+      absentAtLeast: {
+        one: absVals.filter((v) => v >= 1).length,
+        two: absVals.filter((v) => v >= 2).length,
+        three: absVals.filter((v) => v >= 3).length,
+        five: absVals.filter((v) => v >= 5).length,
+      },
+      sample: rows.slice(0, 2).map((r) => ({
+        n: r.studentNumber, abs: r.daysAbsentYtd, absTerm: r.daysAbsentTerm,
+        tardy: r.daysTardyTerm, rowsYtd: r.attendanceRowsYtd,
+        first: r.termFirstDay, last: r.termLastDay,
+      })),
+    };
+  },
+});
+
+/** What a 10% rule actually flags today, at each tier. */
+export const absenteeismPreview = internalQuery({
+  args: { schoolDays: v.number() },
+  handler: async (ctx, { schoolDays }) => {
+    const rows = await ctx.db.query("psAttendance").take(2000);
+    const days = Math.max(1, schoolDays);
+    const rate = (a: number) => a / days;
+    const abs = rows
+      .map((r) => (typeof r.daysAbsentYtd === "number" ? r.daysAbsentYtd : null))
+      .filter((v): v is number => v !== null);
+    const tardy = rows
+      .map((r) => (typeof r.daysTardyTerm === "number" ? r.daysTardyTerm : null))
+      .filter((v): v is number => v !== null);
+
+    const tier = (lo: number, hi: number) => abs.filter((a) => rate(a) >= lo && rate(a) < hi).length;
+    return {
+      schoolDays: days,
+      students: abs.length,
+      thresholdDays: Number((days * 0.1).toFixed(2)),
+      absence: {
+        satisfactory_under5: abs.filter((a) => rate(a) < 0.05).length,
+        atRisk_5to10: tier(0.05, 0.10),
+        chronic_10to20: tier(0.10, 0.20),
+        severe_20plus: abs.filter((a) => rate(a) >= 0.20).length,
+      },
+      chronicTotal: abs.filter((a) => rate(a) >= 0.10).length,
+      tardy: {
+        none: tardy.filter((t) => t === 0).length,
+        oneToTwo: tardy.filter((t) => t >= 1 && t <= 2).length,
+        threeToFive: tardy.filter((t) => t >= 3 && t <= 5).length,
+        sixPlus: tardy.filter((t) => t >= 6).length,
+        max: tardy.length ? Math.max(...tardy) : 0,
+      },
+    };
+  },
+});
+
+/**
+ * Can the browser put a NAME beside each attendance row?
+ *
+ * attendanceList:schoolAttendance deliberately sends numbers only, and the
+ * page joins them to the roster it already holds. That is a real dependency,
+ * not a formality: roughly a third of student records have incomplete SIS
+ * identity, and a number that matches nothing renders as "Student 12345".
+ * Read-only, admin-only, and it returns counts rather than students.
+ */
+export const attendanceJoinCoverage = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const att = await ctx.db.query("psAttendance").take(3000);
+    const studs = await ctx.db.query("students").take(3000);
+    const byNumber = new Set<string>();
+    let studentsWithNumber = 0;
+    for (const s of studs) {
+      const n = (s as any).studentNumber ? String((s as any).studentNumber) : "";
+      if (n) { byNumber.add(n); studentsWithNumber++; }
+    }
+    let matched = 0, unmatched = 0;
+    const sampleUnmatched: string[] = [];
+    for (const a of att) {
+      const n = String(a.studentNumber || "");
+      if (n && byNumber.has(n)) matched++;
+      else { unmatched++; if (sampleUnmatched.length < 5) sampleUnmatched.push(n); }
+    }
+    return {
+      attendanceRows: att.length,
+      students: studs.length,
+      studentsWithNumber,
+      matched,
+      unmatched,
+      sampleUnmatched,
+    };
+  },
+});
+
+/**
+ * Is PowerSchool plugin 1.4.1 installed?
+ *
+ * Not answered by asking PowerSchool -- answered by looking at what the sync
+ * actually managed to WRITE. 1.4.1 adds one endpoint (section_points) and
+ * widens another (missing_work now returns ISMISSING). If psSectionPoints has
+ * rows, the new endpoint answered, and only 1.4.1 serves it.
+ *
+ * Read-only. Counts and timestamps, no student rows.
+ */
+export const pluginVersionEvidence = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const sp = await ctx.db.query("psSectionPoints").take(2000);
+    const mw = await ctx.db.query("psMissingWork").take(2000);
+    const gr = await ctx.db.query("psGrades").take(2000);
+
+    const latest = (rows: any[]) => {
+      let t: string | null = null;
+      for (const r of rows) {
+        const s = typeof r.syncedAt === "string" ? r.syncedAt : null;
+        if (s && (!t || s > t)) t = s;
+      }
+      return t;
+    };
+
+    // COUNTED, BUT NOT EVIDENCE, and the first read of it was wrong.
+    //
+    // isMissing looks like a 1.4.1 marker and is not one: sisAction writes
+    // `m.is_missing === undefined ? true : ...`, so a 1.3.1 row that carries
+    // no is_missing column still lands with isMissing = true. Every row here
+    // having the field, all of them flagged and none zero-scored, is the
+    // 1.3.1 DEFAULT rather than a teacher's flag. The tell is zeroScored: at
+    // 1.4.1 the widened query returns zero-scored work too, so a real 1.4.1
+    // sync cannot leave that at 0 across a thousand rows.
+    //
+    // section_points is the only unambiguous signal, because 1.3.1 has no
+    // such query to answer with.
+    let withIsMissing = 0, flaggedByTeacher = 0, zeroScored = 0;
+    for (const r of mw) {
+      if (typeof (r as any).isMissing === "boolean") {
+        withIsMissing++;
+        if ((r as any).isMissing) flaggedByTeacher++; else zeroScored++;
+      }
+    }
+
+    return {
+      sectionPoints: {
+        rows: sp.length,
+        students: new Set(sp.map((r) => r.studentNumber)).size,
+        lastSyncedAt: latest(sp),
+      },
+      missingWork: {
+        rows: mw.length,
+        withIsMissingField: withIsMissing,
+        flaggedByTeacher,
+        zeroScored,
+        lastSyncedAt: latest(mw),
+      },
+      grades: { rows: gr.length, lastSyncedAt: latest(gr) },
+      // The whole point: section_points is served ONLY by 1.4.1.
+      verdict: sp.length > 0 ? "1.4.1 IS INSTALLED" : "still 1.3.1 (no section_points data)",
+    };
+  },
+});
+
+/**
+ * What did the last few syncs say about the 1.4.x queries?
+ *
+ * sisAction records sectionPointsError and missingWorkError per run. A 404
+ * there is the plugin answering "I do not have that query", which is exactly
+ * what 1.3.1 says and exactly what 1.4.1 does not. Read-only.
+ */
+export const sectionPointsSyncErrors = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const runs = await ctx.db.query("syncRuns").withIndex("by_at").order("desc").take(6);
+    return runs.map((r) => {
+      const sum = (r.summary || {}) as any;
+      return {
+        at: r.at,
+        sectionPointsError: sum.sectionPointsError ?? null,
+        missingWorkError: sum.missingWorkError ?? null,
+        sectionPoints: sum.sectionPoints ?? null,
+        missingWork: sum.missingWork ?? null,
+      };
+    });
+  },
+});
+
+/**
+ * Find one person across the three places they can exist, before changing
+ * anything about them. Read-only, and it takes a name fragment because the
+ * whole question is usually "what address are they actually under".
+ */
+export const findStaff = internalQuery({
+  args: { needle: v.string() },
+  handler: async (ctx, { needle }) => {
+    const q = needle.trim().toLowerCase();
+    const hit = (...vals: unknown[]) =>
+      vals.some((v) => typeof v === "string" && v.toLowerCase().includes(q));
+
+    const dir = await ctx.db.query("entraDirectory").take(3000);
+    const teach = await ctx.db.query("teachers").take(2000);
+    const roster = await ctx.db.query("psRoster").take(4000);
+
+    const inDirectory = dir
+      .filter((d: any) => hit(d.email, d.displayName, d.givenName, d.surname))
+      .map((d: any) => ({
+        email: d.email, displayName: d.displayName, jobTitle: d.jobTitle ?? null,
+        accountEnabled: d.accountEnabled ?? null,
+      }));
+
+    const inTeachers = teach
+      .filter((t: any) => hit(t.email, t.name, t.psEmail))
+      .map((t: any) => ({
+        email: t.email, name: t.name, role: t.role,
+        psEmail: t.psEmail ?? null, id: t._id,
+      }));
+
+    // Do they have SIS sections at all? That is the difference between "no
+    // roster loaded" and "loaded, and it is empty".
+    const emails = new Set<string>();
+    inTeachers.forEach((t: any) => {
+      if (t.email) emails.add(String(t.email).toLowerCase());
+      if (t.psEmail) emails.add(String(t.psEmail).toLowerCase());
+    });
+    inDirectory.forEach((d: any) => { if (d.email) emails.add(String(d.email).toLowerCase()); });
+
+    const sections = new Map<string, number>();
+    let rosterRows = 0;
+    for (const r of roster as any[]) {
+      const te = typeof r.teacherEmail === "string" ? r.teacherEmail.toLowerCase() : "";
+      if (te && emails.has(te)) {
+        rosterRows++;
+        const k = String(r.sectionId ?? "?");
+        sections.set(k, (sections.get(k) ?? 0) + 1);
+      }
+    }
+
+    return {
+      inDirectory,
+      inTeachers,
+      sisRoster: {
+        emailsTried: [...emails],
+        rows: rosterRows,
+        sections: [...sections.entries()].map(([sectionId, students]) => ({ sectionId, students })),
+      },
+    };
+  },
+});
+
+/**
+ * Which teacher addresses does the SIS actually use, and does one of them
+ * belong to a person the app has under a different address?
+ *
+ * This is the Jazmin case: the app knew jazmink@, PowerSchool wrote jazmina@,
+ * and the roster join found nothing. Read-only; it returns staff addresses and
+ * section counts, never students.
+ */
+export const rosterTeacherSearch = internalQuery({
+  args: { needle: v.string() },
+  handler: async (ctx, { needle }) => {
+    const q = needle.trim().toLowerCase();
+    const rows = await ctx.db.query("psRoster").take(4000);
+    const byTeacher = new Map<string, { name: string | null; sections: Set<string>; rows: number }>();
+    for (const r of rows as any[]) {
+      const em = typeof r.teacherEmail === "string" ? r.teacherEmail.toLowerCase() : "";
+      const nm = typeof r.teacherName === "string" ? r.teacherName : null;
+      if (!em && !nm) continue;
+      const key = em || `name:${nm}`;
+      const e = byTeacher.get(key) ?? { name: nm, sections: new Set<string>(), rows: 0 };
+      if (nm && !e.name) e.name = nm;
+      e.sections.add(String(r.sectionId ?? "?"));
+      e.rows++;
+      byTeacher.set(key, e);
+    }
+    const all = [...byTeacher.entries()].map(([email, v]) => ({
+      teacherEmail: email, teacherName: v.name, sections: v.sections.size, rows: v.rows,
+    }));
+    return {
+      matches: all.filter((t) =>
+        (t.teacherEmail && t.teacherEmail.includes(q)) ||
+        (t.teacherName && t.teacherName.toLowerCase().includes(q))),
+      totalTeachersInRoster: all.length,
+    };
+  },
+});
+
+/** How complete is the mirrored Entra directory, and how old? Read-only. */
+export const directoryHealth = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const dir = await ctx.db.query("entraDirectory").take(4000);
+    const teach = await ctx.db.query("teachers").take(2000);
+    const emails = new Set(dir.map((d: any) => String(d.email || "").toLowerCase()));
+    const missing = teach
+      .filter((t: any) => !emails.has(String(t.email || "").toLowerCase()))
+      .map((t: any) => ({ email: t.email, name: t.name, role: t.role }));
+    let newest: string | null = null, oldest: string | null = null;
+    for (const d of dir as any[]) {
+      const s = typeof d.syncedAt === "string" ? d.syncedAt : null;
+      if (!s) continue;
+      if (!newest || s > newest) newest = s;
+      if (!oldest || s < oldest) oldest = s;
+    }
+    return {
+      directoryRows: dir.length,
+      teacherRows: teach.length,
+      teachersNotInDirectory: missing.length,
+      missing,
+      mirrorNewest: newest,
+      mirrorOldest: oldest,
+    };
+  },
+});
+
+/**
+ * Every referral on the server, summarised. Read-only.
+ *
+ * Answers "was it saved at all" separately from "can the reader see it",
+ * which are the two halves of a missing-referral report and need opposite
+ * fixes. Names of STAFF, not students -- the student is reduced to whether a
+ * name is present, so this probe cannot itself become a student export.
+ */
+export const referralAudit = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db
+      .query("legacyMirror")
+      .withIndex("by_doc", (q) => q.eq("doc", "referrals"))
+      .collect();
+
+    const refs = rows
+      .filter((r) => r.collection === "behaviorReferrals")
+      .map((r) => r.payload as any);
+
+    const byId = new Map<string, number>();
+    for (const r of refs) {
+      const id = String(r?.id ?? "(none)");
+      byId.set(id, (byId.get(id) ?? 0) + 1);
+    }
+
+    const summarise = (r: any) => ({
+      id: r?.id ?? null,
+      status: r?.status ?? null,
+      date: r?.date ?? r?.timestamp ?? r?.createdAt ?? null,
+      referredBy: r?.referredBy ?? null,
+      filedByEmail: r?.filedByEmail ?? null,
+      referredByEmail: r?.referredByEmail ?? null,
+      filedByUsername: r?.filedByUsername ?? null,
+      hasStudent: !!(r?.studentName || r?.studentId || r?.studentNumber),
+    });
+
+    const statuses = new Map<string, number>();
+    for (const r of refs) statuses.set(String(r?.status ?? "(none)"), (statuses.get(String(r?.status ?? "(none)")) ?? 0) + 1);
+
+    // Newest last, so the tail is what was just filed.
+    const sorted = refs.slice().sort((a, b) =>
+      String(a?.date ?? "").localeCompare(String(b?.date ?? "")));
+
+    return {
+      storedRows: rows.length,
+      referrals: refs.length,
+      duplicateIds: [...byId.entries()].filter(([, n]) => n > 1).map(([id, n]) => ({ id, count: n })),
+      statusCounts: [...statuses.entries()].map(([status, count]) => ({ status, count })),
+      newest: sorted.slice(-12).map(summarise),
+    };
+  },
+});
+
+/** Recent sign-ins for one address. Read-only. */
+export const signInsFor = internalQuery({
+  args: { email: v.string() },
+  handler: async (ctx, { email }) => {
+    const e = email.trim().toLowerCase();
+    const rows = await ctx.db
+      .query("authEvents")
+      .withIndex("by_email", (q) => q.eq("email", e))
+      .collect();
+    const sorted = rows.slice().sort((a, b) => String(a.at).localeCompare(String(b.at)));
+    return {
+      email: e,
+      signIns: sorted.length,
+      first: sorted[0]?.at ?? null,
+      recent: sorted.slice(-8).map((r) => ({ at: r.at, provider: r.provider, kind: r.kind })),
+    };
+  },
+});
+
+/**
+ * One referral's ATTRIBUTION fields in full, plus every sign-in today.
+ * Read-only. The student is reduced to a yes/no; this is about which adult
+ * the record was written against, not about the child.
+ */
+export const referralAttribution = internalQuery({
+  args: { id: v.string() },
+  handler: async (ctx, { id }) => {
+    const rows = await ctx.db
+      .query("legacyMirror")
+      .withIndex("by_doc", (q) => q.eq("doc", "referrals"))
+      .collect();
+    const hit = rows
+      .filter((r) => r.collection === "behaviorReferrals")
+      .map((r) => r.payload as any)
+      .find((r) => String(r?.id) === id);
+
+    const scrubbed: Record<string, unknown> = {};
+    if (hit) {
+      for (const [k, v] of Object.entries(hit)) {
+        if (/^student|^demographics$|name$/i.test(k) && k !== "referredBy") {
+          scrubbed[k] = v === null || v === undefined ? v : "(present)";
+        } else {
+          scrubbed[k] = v;
+        }
+      }
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const auth = await ctx.db.query("authEvents").collect();
+    const todays = auth
+      .filter((a) => String(a.at).slice(0, 10) === today)
+      .sort((a, b) => String(a.at).localeCompare(String(b.at)))
+      .map((a) => ({ at: a.at, email: a.email }));
+
+    return { found: !!hit, referral: scrubbed, signInsToday: todays };
+  },
+});
+
+/** Full staff records, field by field, for comparison. Read-only. */
+export const staffRecordShape = internalQuery({
+  args: { emails: v.array(v.string()) },
+  handler: async (ctx, { emails }) => {
+    const want = new Set(emails.map((e) => e.trim().toLowerCase()));
+    const rows = await ctx.db.query("teachers").take(2000);
+    const hits = rows.filter((t: any) => want.has(String(t.email || "").toLowerCase()));
+    const allKeys = new Set<string>();
+    rows.forEach((t: any) => Object.keys(t).forEach((k) => allKeys.add(k)));
+    return {
+      records: hits.map((t: any) => {
+        const o: Record<string, unknown> = {};
+        Object.keys(t).sort().forEach((k) => { o[k] = t[k]; });
+        return o;
+      }),
+      // What fields do OTHER staff records carry that these might lack?
+      fieldsSeenAcrossAllStaff: [...allKeys].sort(),
+    };
+  },
+});

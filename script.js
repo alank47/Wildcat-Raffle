@@ -2852,6 +2852,48 @@
         // Check every hour for scheduled email send
         setInterval(checkWeeklyEmailSchedule, 60 * 60 * 1000); // Check every hour
 
+        /**
+         * Reload from the server WITHOUT destroying what this tab has not
+         * saved yet.
+         *
+         * THE INCIDENT, 2026-09-08. saveData's staleness guard fires when the
+         * server's lastSaveTimestamp is more than a minute ahead of this
+         * tab's. It then called loadData(), which assigns behaviorReferrals
+         * from the server copy -- and a referral typed in the last few minutes
+         * and not yet saved simply ceased to exist. Laura Baltazar filed a
+         * referral, the guard fired because somebody else had saved while she
+         * was typing, and the referral was gone before it was ever written.
+         *
+         * With 40+ staff filing tomorrow, somebody saves every few seconds, so
+         * almost every tab is more than a minute behind almost always. This
+         * was not an edge case; it was about to be the normal path.
+         *
+         * The guard itself is still right -- a stale tab must not roll back
+         * currentWeek or a cycle number. What was wrong is that reloading
+         * threw away work rather than rebasing it.
+         */
+        async function reloadPreservingUnsavedWork() {
+            const pendingReferrals = Array.isArray(behaviorReferrals) ? behaviorReferrals.slice() : [];
+            await loadData();
+            const D = window.WildcatDiscipline;
+            if (D && typeof D.mergeReferrals === 'function') {
+                // Union, so the server's newer referrals arrive AND anything
+                // this tab is still holding survives. Local-only rows are kept
+                // by mergeReferrals precisely because absence from the server
+                // is not a deletion.
+                const merged = D.mergeReferrals(pendingReferrals, behaviorReferrals);
+                behaviorReferrals = merged.referrals;
+                if (merged.added || pendingReferrals.length) {
+                    console.log('[save] rebased after reload:', pendingReferrals.length,
+                                'local referral(s) preserved,', merged.added, 'arrived from the server');
+                }
+            }
+            if (typeof updateReferralReviewTable === 'function') updateReferralReviewTable();
+        }
+
+        /** True while a stale-guard retry is already running, so it happens once. */
+        let _staleSaveRetry = false;
+
         async function saveData() {
             // TEACHER VIEW IS READ-ONLY, ENFORCED HERE.
             //
@@ -2874,7 +2916,10 @@
                 await new Promise(resolve => setTimeout(resolve, 100));
                 if (isSyncing) {
                     if (typeof showSavingIndicator === 'function') showSavingIndicator(false);
-                    return;
+                    // false, not undefined. Every caller tests `ok === false`,
+                    // so returning undefined here reported a save that never
+                    // ran as one that succeeded.
+                    return false;
                 }
             }
             
@@ -2897,7 +2942,31 @@
                         // open for hours from overwriting newer data with its stale
                         // in-memory copy.
                         // ============================================================
-                        const STALENESS_THRESHOLD_MS = 60000; // 1 minute
+                        // ONE MINUTE WAS TUNED FOR A QUIET SYSTEM.
+                        //
+                        // The check is `serverTs > localTs + threshold`, and
+                        // serverTs is the latest save by ANYONE. With 40 staff
+                        // filing referrals and awarding cash, that is roughly
+                        // "now" at all times, so the guard fires for any tab
+                        // that has not itself saved in the last minute -- which,
+                        // for one teacher going about a lesson, is most of the
+                        // time. Every firing is a full reload of 145 documents,
+                        // the roster and 8,600 audit entries, followed by a
+                        // retry. Forty tabs doing that per action is a reload
+                        // storm on the busiest morning of the year.
+                        //
+                        // Three minutes instead. The window this widens is the
+                        // one where two teachers award the SAME student and the
+                        // second save carries a balance computed before the
+                        // first landed -- the client-side balance problem
+                        // already logged for a server-side increment after
+                        // launch. Every other slice this save touches (referrals,
+                        // ticket history, audit, cash transactions) merges
+                        // server-side inside a transaction and cannot be rolled
+                        // back by a stale tab at any threshold. The reconciler
+                        // that recovers movements from student records on load
+                        // is the backstop, and it ran clean tonight.
+                        const STALENESS_THRESHOLD_MS = 180000; // 3 minutes
                         try {
                             // MOVED OFF FIRESTORE 2026-08-31. Same guard, one
                             // settings row instead of the whole document.
@@ -2912,12 +2981,28 @@
                                     console.warn(`   Local:    ${new Date(localTs).toISOString()}`);
                                     console.warn(`   Reloading from Firebase before save...`);
                                     isSyncing = false;
-                                    // Reload fresh state from Firebase so we can try again safely
-                                    await loadData();
-                                    // Don't retry the save automatically — the caller's intent
-                                    // might no longer apply to the refreshed state. Tell the user.
-                                    alert('⚠️ Your data was out of date and has been refreshed from the cloud. Please re-do your last action if needed.');
-                                    return;
+                                    // Rebase, do not discard. See
+                                    // reloadPreservingUnsavedWork for the incident.
+                                    await reloadPreservingUnsavedWork();
+
+                                    // RETRY ONCE, rather than telling a teacher to
+                                    // re-type a referral. The old code returned here
+                                    // with an alert saying "re-do your last action",
+                                    // which is the app admitting it dropped the work.
+                                    // A referral is additive and every slice it
+                                    // touches merges server-side, so the intent still
+                                    // applies to the refreshed state.
+                                    if (!_staleSaveRetry) {
+                                        _staleSaveRetry = true;
+                                        try { return await saveData(); }
+                                        finally { _staleSaveRetry = false; }
+                                    }
+                                    // Second failure in a row: stop, and say so
+                                    // truthfully. false, never undefined -- callers
+                                    // test `ok === false`, so a bare return here
+                                    // reported a BLOCKED save as a successful one.
+                                    console.warn('[save] still stale after one retry; giving up this pass.');
+                                    return false;
                                 }
                             }
                         } catch (staleCheckErr) {
@@ -2958,9 +3043,10 @@
                                     console.warn(`   Local cycleNumber:    ${localCycleNum}`);
                                     console.warn(`   Reloading fresh state from Firebase...`);
                                     isSyncing = false;
-                                    await loadData();
+                                    await reloadPreservingUnsavedWork();
                                     alert(`⚠️ Your tab was holding an outdated cycle number (Cycle ${localCycleNum}). The system has refreshed to the current cycle (Cycle ${serverCycleNum}). Please re-do your last action if needed.`);
-                                    return;
+                                    // false, not undefined: this save did NOT happen.
+                                    return false;
                                 }
                                 
                                 // WEEK GUARD: only enforce when cycles match. If our cycle is older,
@@ -2974,9 +3060,10 @@
                                     console.warn(`   Local currentWeek:    ${currentWeek}`);
                                     console.warn(`   Reloading fresh state from Firebase...`);
                                     isSyncing = false;
-                                    await loadData();
+                                    await reloadPreservingUnsavedWork();
                                     alert(`⚠️ Your tab was holding an outdated week number (Week ${currentWeek}). The system has refreshed to the current week (${serverWeek}). Please re-do your last action if needed.`);
-                                    return;
+                                    // false, not undefined: this save did NOT happen.
+                                    return false;
                                 }
                             }
                         } catch (weekGuardErr) {
@@ -23210,6 +23297,7 @@
                 { id: 'review',    fn: 'switchDisciplineTab', label: wcIcon('monitor') + ' Open Referrals' },
                 { id: 'closed',    fn: 'switchDisciplineTab', label: wcIcon('audit') + ' Closed Referrals' },
                 { id: 'detention', fn: 'switchDisciplineTab', label: wcIcon('stopwatch') + ' Detention Tracker' },
+                { id: 'attendance', fn: 'switchDisciplineTab', label: wcIcon('calendar') + ' Attendance Watch' },
                 { id: 'history',   fn: 'switchDisciplineTab', label: wcIcon('book') + ' Student History' },
                 { id: 'analytics', fn: 'switchDisciplineTab', label: wcIcon('analytics') + ' Analytics' }
             ]
@@ -23636,6 +23724,8 @@
         function updateCashTable(keepPage) {
             const periodFilter = document.getElementById('cashPeriodFilter').value;
             const gradeFilter = document.getElementById('cashGradeFilter').value;
+            const searchEl = document.getElementById('cashStudentSearch');
+            const search = (searchEl ? searchEl.value : '').trim().toLowerCase();
             const tbody = document.getElementById('cashStudentTableBody');
             const header = document.getElementById('cashClassHeader');
             const title = document.getElementById('cashClassTitle');
@@ -23680,6 +23770,31 @@
                 funnel.stage = scoped.scope === 'section' ? 'class period' : 'your class rosters';
             }
 
+            // SEARCH RUNS LAST, ON WHAT SCOPING ALREADY ALLOWED.
+            //
+            // Order is the whole security property here. Searching the roster
+            // first and scoping the matches afterwards would be the same rows
+            // in the end, but any later edit that forgot the second step would
+            // hand a teacher the whole school through the search box. Filtering
+            // the already-scoped set cannot do that: there is nothing in it to
+            // find that the teacher could not already award.
+            //
+            // Name is matched as "first last" AND "last, first", because the
+            // table is sorted the second way and people search the first way.
+            if (search) {
+                const beforeSearch = filteredStudents.length;
+                filteredStudents = filteredStudents.filter(st => {
+                    const first = String(st.firstName || '').toLowerCase();
+                    const last = String(st.lastName || '').toLowerCase();
+                    return (first + ' ' + last).indexOf(search) !== -1
+                        || (last + ', ' + first).indexOf(search) !== -1
+                        || String(st.studentNumber || '').toLowerCase().indexOf(search) !== -1
+                        || String(st.id || '').toLowerCase().indexOf(search) !== -1;
+                });
+                funnel.afterSearch = filteredStudents.length;
+                if (filteredStudents.length === 0 && beforeSearch > 0) funnel.stage = 'search';
+            }
+
             // A failed fetch is not an empty roster. Say which happened.
             if (!activeTeacherRoster() && sisRosterState === 'failed'
                 && !window.WildcatRoster.seesEveryStudent(currentUser && currentUser.role)) {
@@ -23716,6 +23831,16 @@
                     titleText = 'All Students';
                     subtitleText = `${filteredStudents.length} students total`;
                 }
+
+                // Said plainly, because a filtered table that looks like the
+                // whole roster is how someone awards the wrong child. Appended
+                // rather than replacing, so the period or grade in force is
+                // still visible alongside it.
+                if (search) {
+                    titleText += ' \u2014 matching \u201C' + search + '\u201D';
+                    subtitleText = `${filteredStudents.length} match` +
+                                   (filteredStudents.length === 1 ? '' : 'es');
+                }
                 
                 title.textContent = titleText;
                 subtitle.textContent = subtitleText;
@@ -23726,6 +23851,17 @@
             
             // Build table
             tbody.innerHTML = '';
+
+            // THE HEADER BOX FOLLOWS THE ROWS IT CLAIMS TO CONTROL.
+            //
+            // Every row below is drawn unchecked, so a "select all" left ticked
+            // from the previous view is a lie: it says the whole table is
+            // selected while nothing is. Harmless when redraws were rare;
+            // searching redraws on every keystroke, so a teacher would watch it
+            // stay ticked through a search and press Award believing the
+            // matches were selected.
+            const selectAllBox = document.getElementById('cashSelectAll');
+            if (selectAllBox) selectAllBox.checked = false;
             
             if (filteredStudents.length === 0) {
                 // An empty table that only says "empty" is a support ticket. This
@@ -23743,6 +23879,11 @@
                     // empties this is, and each one sends the reader somewhere
                     // different. Prefer its wording over a generic restatement.
                     why = funnel.scopeReason;
+                } else if (funnel.stage === 'search') {
+                    // A distinct message: nothing is wrong with the roster, the
+                    // typed text just matches nobody in it.
+                    why = `No student you can award matches \u201C${search}\u201D. ` +
+                          `Clear the search box to see all ${funnel.afterPeriod} again.`;
                 } else if (funnel.stage !== 'none') {
                     why = `${funnel.loaded} students are loaded, but the ${funnel.stage} matched none of them.`;
                 } else {
@@ -25904,6 +26045,7 @@
                 review:    { pane: 'behaviorReview',    btn: 'reviewTabBtn' },
                 closed:    { pane: 'behaviorClosed',    btn: null },
                 detention: { pane: 'behaviorDetention', btn: 'detentionTabBtn' },
+                attendance:{ pane: 'behaviorAttendance', btn: null },
                 history:   { pane: 'behaviorHistory',   btn: 'historyDisciplineTabBtn' },
                 analytics: { pane: 'behaviorAnalytics', btn: 'analyticsDisciplineTabBtn' }
             };
@@ -25949,17 +26091,245 @@
                 if (timeInput && !timeInput.value) timeInput.value = now.toTimeString().slice(0, 5);
                 if (typeof updateInterventionCount === 'function') updateInterventionCount();
             } else if (subtab === 'review') {
+                // Draw what we have immediately, then pull. A tab that shows
+                // nothing until the network answers reads as broken.
                 updateReferralReviewTable();
+                pullReferralsAndRedraw(false);
             } else if (subtab === 'closed') {
                 if (typeof updateClosedReferralsList === 'function') updateClosedReferralsList();
+                pullReferralsAndRedraw(false);
             } else if (subtab === 'detention') {
                 if (typeof initializeDetentionForm === 'function') initializeDetentionForm();
                 if (typeof updateDetentionLists === 'function') updateDetentionLists();
+            } else if (subtab === 'attendance') {
+                renderAttendanceWatch();
             } else if (subtab === 'history') {
                 populateHistoryStudentDropdown();
             } else if (subtab === 'analytics') {
                 updateReferralAnalytics();
                 switchAnalyticsTab(analyticsTab);
+            }
+        }
+
+        // ========================================
+        // ATTENDANCE WATCH
+        //
+        // Chronic absence, measured against the days school has actually been
+        // in session rather than a full year. WildcatRoster.attendanceRanking
+        // holds the rule and the tiers; everything here is fetching, joining
+        // to names the browser already has, and drawing.
+        //
+        // WHY THE TIERS AND NOT THE FLAT 10% THAT WAS ASKED FOR.
+        //
+        // 10% is the right definition and it is the one the tiers are built
+        // around -- but on 2026-09-08, nineteen days into the year, 10% was
+        // 1.9 days and the flat rule put 360 of 671 students on one list.
+        // That is a true statement about the school and a useless queue for
+        // the people who have to work it. Severe (20%+) was 196, chronic
+        // 10-20% another 164, and sorting worst-first puts the child who has
+        // missed a quarter of the year at the top where they belong. The flat
+        // 10% line is still drawn, and still counted, as "chronic and severe".
+        // ========================================
+
+        /** Cached response, so switching filters does not re-hit the server. */
+        let _attCache = null;
+        let _attTierFilter = 'chronicPlus';
+        let _attBusy = false;
+
+        function setAttendanceTierFilter(tier) {
+            _attTierFilter = tier;
+            document.querySelectorAll('#attTierFilter .analytics-tab').forEach(b => {
+                b.classList.toggle('active', b.getAttribute('data-atier') === tier);
+            });
+            renderAttendanceWatch();
+        }
+
+        /**
+         * Days school has been in session, from the start date on screen.
+         *
+         * The holiday subtraction is a number a human types, because no school
+         * calendar exists in this app -- bellScheduleDays is empty, and
+         * inventing one from weekday arithmetic would be a guess dressed as a
+         * fact. Left alone it counts every weekday, which makes the denominator
+         * slightly too LARGE and therefore every rate slightly too SMALL. That
+         * is the safe direction to be wrong in: it under-flags rather than
+         * telling a family their child is chronically absent when they are not.
+         */
+        function attendanceSchoolDays() {
+            const R = window.WildcatRoster;
+            const firstEl = document.getElementById('attFirstDay');
+            const offEl = document.getElementById('attNonSchoolDays');
+            const first = (firstEl && firstEl.value) || '2026-08-12';
+            const off = Math.max(0, Number(offEl && offEl.value) || 0);
+            const weekdays = R && R.schoolDaysElapsed ? R.schoolDaysElapsed(first, new Date()) : 0;
+            return { first: first, weekdays: weekdays, off: off, days: Math.max(0, weekdays - off) };
+        }
+
+        async function loadAttendanceRows(force) {
+            if (_attCache && !force) return _attCache;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) {
+                // Not a permissions refusal, and it must not read as one.
+                return { allowed: false, needsSignIn: true, rows: [],
+                         reason: 'Attendance comes from the SIS, which needs a Microsoft sign-in.' };
+            }
+            try {
+                const res = await auth.convexQuery('attendanceList:schoolAttendance', {}, session.idToken);
+                _attCache = res;
+                return res;
+            } catch (e) {
+                const msg = (e && e.message) || String(e);
+                if (/\b401\b|unauthor/i.test(msg)) {
+                    return { allowed: false, needsSignIn: true, rows: [],
+                             reason: 'Your sign-in expired. Sign in again to load attendance.' };
+                }
+                return { allowed: false, rows: [], reason: 'Attendance could not be loaded: ' + msg };
+            }
+        }
+
+        async function renderAttendanceWatch(force) {
+            const list = document.getElementById('attendanceList');
+            const cards = document.getElementById('attTierCards');
+            const note = document.getElementById('attBasisNote');
+            const foot = document.getElementById('attFoot');
+            if (!list) return;
+            const R = window.WildcatRoster;
+            if (!R || typeof R.attendanceRanking !== 'function') {
+                list.innerHTML = '<p class="wu-absent">Attendance rules did not load. Refresh the page.</p>';
+                return;
+            }
+
+            // THE GUARD IS ON THE FETCH, NOT ON THE RENDER.
+            //
+            // Guarding the whole function meant a keystroke arriving during the
+            // load was dropped and never retried, leaving a list that no longer
+            // matched the search box above it -- and no way to tell, because
+            // the wrong list looks exactly like a right one.
+            let res = _attCache;
+            if (!res || force) {
+                if (_attBusy) return;
+                _attBusy = true;
+                list.innerHTML = '<p class="wu-absent">Loading attendance&hellip;</p>';
+                try { res = await loadAttendanceRows(force === true); }
+                finally { _attBusy = false; }
+            }
+
+            if (!res || res.allowed === false) {
+                if (cards) cards.innerHTML = '';
+                if (foot) foot.textContent = '';
+                list.innerHTML = '<p class="wu-absent">' +
+                    escapeHtml((res && res.reason) || 'Attendance is not available to your access level.') + '</p>';
+                return;
+            }
+
+            const basis = attendanceSchoolDays();
+            if (note) {
+                note.textContent = basis.days > 0
+                    ? basis.days + ' school days so far (' + basis.weekdays + ' weekdays'
+                      + (basis.off ? ', less ' + basis.off + ' non-school' : '') + '). '
+                      + 'Chronic starts at ' + (basis.days * 0.10).toFixed(1) + ' days absent.'
+                    : 'No school days counted yet, so no rate can be worked out. Check the start date.';
+            }
+
+            // studentNumber -> the app's own student record, for the name. The
+            // server sent no names on purpose; this is where they are added.
+            const byNumber = {};
+            (students || []).forEach(st => {
+                const n = st && st.studentNumber ? String(st.studentNumber) : '';
+                if (n) byNumber[n] = st;
+            });
+
+            const rows = (res.rows || []).map(r => ({
+                student: byNumber[String(r.studentNumber)] || { studentNumber: r.studentNumber },
+                daysAbsent: r.daysAbsent,
+                daysTardy: r.daysTardy
+            }));
+
+            const ranked = R.attendanceRanking(rows, basis.days);
+
+            if (cards) {
+                const c = ranked.counts;
+                cards.innerHTML = [
+                    ['severe',  'Severe',  '20% or more', c.severe],
+                    ['chronic', 'Chronic', '10&ndash;19%',  c.chronic],
+                    ['at-risk', 'At risk', '5&ndash;9%',    c['at-risk']],
+                    ['satisfactory', 'Satisfactory', 'Under 5%', c.satisfactory]
+                ].map(t =>
+                    '<div class="wc-att-tier wc-att-' + t[0] + '">' +
+                        '<div class="wc-att-tier-n">' + t[3] + '</div>' +
+                        // NOT escaped: these four labels are literals three
+                        // lines up, and escaping them turns the &ndash; into a
+                        // visible "&ndash;" on the card.
+                        '<div class="wc-att-tier-l">' + t[1] + '</div>' +
+                        '<div class="wc-att-tier-s">' + t[2] + '</div>' +
+                    '</div>').join('');
+            }
+
+            const search = ((document.getElementById('attSearch') || {}).value || '').trim().toLowerCase();
+            let shown = ranked.ranked;
+            if (_attTierFilter === 'chronicPlus') {
+                shown = shown.filter(r => r.tier && (r.tier.key === 'chronic' || r.tier.key === 'severe'));
+            } else if (_attTierFilter === 'severe' || _attTierFilter === 'at-risk') {
+                shown = shown.filter(r => r.tier && r.tier.key === _attTierFilter);
+            } else if (_attTierFilter === 'tardy') {
+                // Tardies are their own axis. A student can be punctual-but-absent
+                // or present-but-always-late, and the second never appears on an
+                // absence ranking at all.
+                shown = shown.filter(r => (r.daysTardy || 0) > 0)
+                             .slice().sort((a, b) => (b.daysTardy || 0) - (a.daysTardy || 0));
+            }
+            if (search) {
+                shown = shown.filter(r => {
+                    const st = r.student || {};
+                    return (((st.firstName || '') + ' ' + (st.lastName || '')).toLowerCase().indexOf(search) !== -1)
+                        || String(st.studentNumber || '').toLowerCase().indexOf(search) !== -1;
+                });
+            }
+
+            const CAP = 150;
+            const clipped = shown.length > CAP;
+            const view = clipped ? shown.slice(0, CAP) : shown;
+
+            if (!view.length) {
+                list.innerHTML = '<p class="wu-absent">No students match this filter.</p>';
+            } else {
+                list.innerHTML = view.map(r => {
+                    const st = r.student || {};
+                    const name = escapeHtml(((st.firstName || '') + ' ' + (st.lastName || '')).trim()
+                                            || ('Student ' + (st.studentNumber || '?')));
+                    const meta = [st.grade ? 'Grade ' + st.grade : '', st.studentNumber || '']
+                        .filter(Boolean).map(escapeHtml).join('  &middot;  ');
+                    const pct = Math.round(r.rate * 100);
+                    const tierKey = r.tier ? r.tier.key : 'satisfactory';
+                    const openable = st.id ? ' onclick="openStudentProfile(\'' + escapeHtml(String(st.id)) + '\')"' : '';
+                    return '<button type="button" class="wc-att-row wc-att-' + tierKey + '"' + openable + '>' +
+                        '<span class="wc-att-name">' + name +
+                            (meta ? '<span class="wc-att-meta">' + meta + '</span>' : '') + '</span>' +
+                        '<span class="wc-att-figs">' +
+                            '<span class="wc-att-pct">' + pct + '%</span>' +
+                            '<span class="wc-att-days">' + r.daysAbsent + ' absent' +
+                                (r.daysTardy ? '  &middot;  ' + r.daysTardy + ' tardy' : '') + '</span>' +
+                        '</span>' +
+                        '<span class="wc-att-badge">' + escapeHtml(r.tier ? r.tier.label : '') + '</span>' +
+                    '</button>';
+                }).join('');
+            }
+
+            if (foot) {
+                const bits = [];
+                if (clipped) bits.push('Showing the first ' + CAP + ' of ' + shown.length + '. Search to narrow.');
+                // Said out loud rather than silently dropped. A student with no
+                // attendance row is not a student with perfect attendance, and
+                // the difference is the whole point of the null.
+                if (ranked.noData.length) {
+                    bits.push(ranked.noData.length + ' student' + (ranked.noData.length === 1 ? '' : 's') +
+                              ' have no attendance on file and are not ranked.');
+                }
+                if (res.truncated) bits.push('The attendance table was larger than this screen reads. Tell an administrator.');
+                if (res.lastSyncedAt) bits.push('Last synced ' + String(res.lastSyncedAt).slice(0, 16).replace('T', ' ') + '.');
+                // textContent, so nothing here can be escaped twice or not at all.
+                foot.textContent = bits.join(' ');
             }
         }
 
@@ -27429,15 +27799,106 @@
 
             behaviorReferrals.push(referral);
 
-            // Confirm now; persist in the background.
-            showReferralToast(
-                `✅ <strong>Referral submitted</strong> for ${escapeHtml(referral.studentName)}, sent to administration for review.`, 'ok');
+            // THE TOAST USED TO FIRE HERE, BEFORE THE SAVE STARTED.
+            //
+            // "Referral submitted" was shown, the form was cleared, and only
+            // then did a fire-and-forget save begin. A teacher whose save
+            // failed had already been told it worked, had lost the form, and
+            // was holding the only copy of that referral in a tab's memory.
+            // Reported on 2026-09-08 as "Laura submitted a referral and it is
+            // not showing" -- and it was not on the server.
+            //
+            // The row is still added optimistically, so the table updates at
+            // once, but nothing CLAIMS the referral is filed until the server
+            // has it. Until then it is tracked as unsaved and says so.
             clearReferralForm();
             if (typeof updateReferralReviewTable === 'function') updateReferralReviewTable();
-            setButtonBusy(submitBtn, false);
+            markReferralUnsaved(referral);
+            showReferralToast(
+                `<strong>Saving referral</strong> for ${escapeHtml(referral.studentName)}…`, 'ok');
 
-            saveInBackground('Referral for ' + referral.studentName);
+            try {
+                const ok = await requestSave('Referral for ' + referral.studentName);
+                if (ok === false) throw new Error('the save did not complete');
+                markReferralSaved(referral.id);
+                showReferralToast(
+                    `✅ <strong>Referral submitted</strong> for ${escapeHtml(referral.studentName)}, sent to administration for review.`, 'ok');
+            } catch (e) {
+                console.error('[referral] save failed', e);
+                // The banner stays until it saves. A toast disappears, and a
+                // teacher who missed it would never learn the referral was
+                // never filed.
+                showReferralToast(
+                    `<strong>Not filed yet.</strong> The referral for ${escapeHtml(referral.studentName)} is still only on this device. ` +
+                    `Use Retry in the bar at the bottom before closing this tab.`, 'warn');
+            } finally {
+                setButtonBusy(submitBtn, false);
+            }
         }
+
+        // =====================================================================
+        // REFERRALS THIS TAB HAS ACCEPTED BUT THE SERVER HAS NOT CONFIRMED
+        //
+        // A referral exists in one place until a save succeeds: this tab's
+        // memory. Closing the tab loses it. That is survivable only if the
+        // person who wrote it KNOWS, which is why this is a persistent bar
+        // with a retry rather than a toast that fades.
+        // =====================================================================
+        const _unsavedReferrals = new Map();
+
+        function markReferralUnsaved(referral) {
+            if (!referral || !referral.id) return;
+            _unsavedReferrals.set(referral.id, referral);
+            renderUnsavedReferralBar();
+        }
+
+        function markReferralSaved(id) {
+            if (_unsavedReferrals.delete(id)) renderUnsavedReferralBar();
+        }
+
+        function renderUnsavedReferralBar() {
+            const bar = document.getElementById('unsavedReferralBar');
+            const text = document.getElementById('unsavedReferralText');
+            if (!bar || !text) return;
+            const n = _unsavedReferrals.size;
+            if (!n) { bar.hidden = true; return; }
+            const names = [..._unsavedReferrals.values()]
+                .map(r => r.studentName).filter(Boolean);
+            bar.hidden = false;
+            text.textContent = n === 1
+                ? `1 referral is not saved yet${names[0] ? ' (' + names[0] + ')' : ''}. It exists only on this device.`
+                : `${n} referrals are not saved yet. They exist only on this device.`;
+        }
+
+        async function retryUnsavedReferrals() {
+            const btn = document.getElementById('unsavedReferralRetry');
+            if (btn) { btn.disabled = true; btn.textContent = 'Retrying\u2026'; }
+            try {
+                // flush, not request: this is the button somebody presses when
+                // they are about to close the laptop.
+                const ok = await flushSaves();
+                if (ok !== false) {
+                    [..._unsavedReferrals.keys()].forEach(id => _unsavedReferrals.delete(id));
+                    renderUnsavedReferralBar();
+                    showReferralToast('\u2705 <strong>Saved.</strong> Everything is on the server.', 'ok');
+                } else {
+                    showReferralToast('<strong>Still not saved.</strong> Check your connection and try again.', 'warn');
+                }
+            } catch (e) {
+                showReferralToast('<strong>Still not saved.</strong> ' + escapeHtml((e && e.message) || String(e)), 'warn');
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+            }
+        }
+
+        // The last line of defence. A teacher closing a laptop on an unsaved
+        // referral gets the browser's own "leave site?" prompt.
+        window.addEventListener('beforeunload', function (e) {
+            if (!_unsavedReferrals.size) return;
+            e.preventDefault();
+            e.returnValue = '';
+            return '';
+        });
 
         // Closure action list — mirrors the "Closing the Loop Options" checklist.
         // DETENTION_CLOSING_ACTION is wired to auto-create a Detention Tracker
@@ -27467,6 +27928,91 @@
         }
         function getOpenReferrals()   { return visibleReferrals().filter(r => r.status !== 'closed'); }
         function getClosedReferrals() { return visibleReferrals().filter(r => r.status === 'closed'); }
+
+        /**
+         * Pull referrals from the server on demand.
+         *
+         * THE BUG THIS FIXES. Referrals reached a tab once, at page load. The
+         * background auto-refresh is gated on AUTO_REFRESH_DELAY -- five
+         * minutes of INACTIVITY -- so the admin who opens Open Referrals
+         * looking for a colleague's referral, does not see it, and clicks
+         * around looking harder, resets that timer with every click and never
+         * gets the pull. The harder you looked, the longer it took. Reported
+         * twice, both times as "I cannot see the referral they just filed".
+         *
+         * One document, not the whole legacy set: this runs on every visit to
+         * the tab and must stay cheap.
+         *
+         * NOTHING LOCAL IS DISCARDED. WildcatDiscipline.mergeReferrals unions
+         * the two by id and lets the later updatedAt win, so a referral still
+         * sitting in this tab's save queue survives the refresh that goes
+         * looking for everyone else's.
+         */
+        let _referralPullBusy = false;
+        let _referralPullAt = null;
+        async function refreshReferralsFromServer(opts) {
+            const quiet = !(opts && opts.loud);
+            if (_referralPullBusy) return { skipped: 'busy' };
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            // A username session carries no Convex identity. Not an error, and
+            // not reported as one -- there is simply nothing to pull with.
+            if (!auth || !session) return { skipped: 'no-session' };
+
+            _referralPullBusy = true;
+            try {
+                const res = await loadLegacyDocsFromConvex(['referrals']);
+                // A FAILED READ IS NOT AN EMPTY SERVER. loadLegacyDocsFromConvex
+                // returns partial results by design, so a failure here would
+                // otherwise arrive as "the server has no referrals" and the
+                // merge would keep local rows but report nothing new -- the
+                // same screen as success, which is the worst way to fail.
+                if (res.failed && res.failed.indexOf('referrals') !== -1) {
+                    return { error: (res.errors && res.errors[0] && res.errors[0].error) || 'read failed' };
+                }
+                const doc = res.docs && res.docs.referrals;
+                const rows = doc && Array.isArray(doc.behaviorReferrals) ? doc.behaviorReferrals : null;
+                if (!rows) return { skipped: 'no-doc' };
+
+                const merged = window.WildcatDiscipline.mergeReferrals(behaviorReferrals, rows);
+                behaviorReferrals = merged.referrals;
+                _referralPullAt = new Date();
+                return { added: merged.added, updated: merged.updated, changed: merged.changed };
+            } catch (e) {
+                console.warn('[referrals] refresh failed:', e);
+                return { error: (e && e.message) || String(e) };
+            } finally {
+                _referralPullBusy = false;
+                if (!quiet) { /* caller redraws */ }
+            }
+        }
+
+        /** The tab's own Refresh button, and the automatic pull on opening it. */
+        async function pullReferralsAndRedraw(loud) {
+            const note = document.getElementById('referralRefreshNote');
+            if (note && loud) note.textContent = 'Checking\u2026';
+            const res = await refreshReferralsFromServer({ loud: !!loud });
+            updateReferralReviewTable();
+            if (typeof updateClosedReferralsList === 'function') updateClosedReferralsList();
+            if (!note) return;
+            if (res.error) {
+                note.textContent = 'Could not check the server: ' + res.error;
+            } else if (res.skipped === 'no-session') {
+                note.textContent = '';
+            } else if (res.added || res.updated) {
+                const bits = [];
+                if (res.added) bits.push(res.added + ' new');
+                if (res.updated) bits.push(res.updated + ' updated');
+                note.textContent = bits.join(', ') + ' \u00B7 ' + _fmtPullTime();
+            } else {
+                note.textContent = 'Up to date \u00B7 ' + _fmtPullTime();
+            }
+        }
+
+        function _fmtPullTime() {
+            const d = _referralPullAt || new Date();
+            return 'checked ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        }
 
         function updateReferralReviewTable() {
             const tbody = document.getElementById('referralReviewTable');
