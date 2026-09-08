@@ -4281,6 +4281,25 @@ body.wp-open { overflow: hidden; }
     letter-spacing: -0.01em;
     font-variant-numeric: tabular-nums;
 }
+/* An award and a deduction are not the same event and must not read the same.
+   Green for what a student earned, red for what came off, grey when the amount
+   is unknown -- never 0, which would read as an award of nothing. */
+.wp-rowend.wp-amt-up   { color: #6FD39A; }
+.wp-rowend.wp-amt-down { color: #F2938A; }
+.wp-rowend.wp-amt-flat { opacity: .52; font-size: 12px; font-weight: 400; }
+
+/* What the adult typed, under what they picked. Wraps, because a note is a
+   sentence and truncating it loses the half that explains the number -- unlike
+   .wp-rowsub above it, which is a date and a name and fits. */
+.wp-rownote {
+    display: block;
+    margin-top: 3px;
+    font-size: 12px;
+    line-height: 1.4;
+    opacity: .72;
+    overflow-wrap: anywhere;
+}
+
 /* "Not posted" is a fact, not a grade. It never renders as 0 and it
    never renders in the same weight as a real grade. */
 .wp-rowend.is-none {

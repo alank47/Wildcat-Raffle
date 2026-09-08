@@ -70,10 +70,16 @@ const grades = (rows) => ({ rows, available: true, reason: null });
 console.log("\n1. Everything the student asked to see is on it");
 const full = wpDashboard(FULL, sched([{ courseName: "Biology", period: "2", teacher: "Ms Okafor" }]),
   grades([{ courseName: "Biology", currentGrade: "B", currentPercent: 86 }]));
-for (const panel of ["Tickets", "What you have earned", "Wildcat Cash", "Grades", "Schedule", "Attendance"]) {
+// "Tickets" and "What you have earned" were removed 2026-09-08 with the Raffle
+// panels they named -- ticket sources, and jackpot draw entries. The school
+// launched on Wildcat Cash, so a student's own screen was leading with figures
+// from a system nobody had switched on. student-portal-cash.test.mjs covers
+// what replaced them.
+for (const panel of ["Wildcat Cash", "Your Wildcat Cash", "Grades", "Schedule", "Attendance"]) {
   check(`the ${panel} panel is rendered`, full.includes(">" + panel + "<"));
 }
-check("the ticket figures are the student's", /12/.test(full) && /\b7\b/.test(full));
+check("no raffle panel survives",
+  !full.includes(">Tickets<") && !full.includes(">What you have earned<"));
 check("cash is money, not a bare number", full.includes("$14.50"));
 
 console.log("\n2. NULL IS NOT ZERO");
@@ -89,11 +95,15 @@ check("an absent balance is not $0.00", !missing.includes("$0.00"));
 check("an absence is marked so CSS can shrink it", missing.includes('class="wp-stat is-none"'));
 
 console.log("\n3. A REAL ZERO IS A REAL ANSWER, and still looks like a number");
-check("zero tickets renders as 0, not as an absence",
-  full.includes('wp-stat-n') && missing.includes(">0<"),
-  "a student who has genuinely earned none must see 0, not 'not on file'");
+// The ticket stat this checked is gone with the Raffle panels. The rule it
+// protects is not, and zeroCash below is the fixture that actually carries a
+// real zero -- `missing` is the all-null fixture, deliberately, and asserting
+// a zero against it was asserting the opposite of what it exists to prove.
 const zeroCash = wpDashboard({ points: {}, wildcatCash: { balance: 0, earned: 0, spent: 0 }, attendance: {} },
   sched([]), grades([]));
+check("a real zero still renders as a figure, not as an absence",
+  zeroCash.includes("$0"),
+  "a student who has genuinely earned none must see $0, not 'not on file'");
 check("a balance of exactly zero is $0.00, not an absence", zeroCash.includes("$0.00"));
 // ASSERTED DIRECTLY, not by counting. This used to compare how many stats
 // carried is-none across the two fixtures, which was a proxy for the rule and

@@ -16592,12 +16592,11 @@
             // So each panel now carries only what its tile does not. The lead
             // chip goes with it: "23 this cycle" beside a tile reading 23 was
             // the same repetition in a smaller typeface.
-            const tickets = wpPanel('Ticket sources', 'Tickets', '',
-                '<div class="wp-stats">' +
-                    wpStat('PBIS', p.pbis) +
-                    wpStat('Attendance', p.attendance) +
-                    wpStat('Academic', p.academic) +
-                '</div>');
+            // "TICKET SOURCES" WAS REMOVED 2026-09-08. PBIS, Attendance and
+            // Academic ticket counts are Raffle, and the school launched on
+            // Wildcat Cash and Discipline -- so a student's own screen was
+            // leading with three numbers from a system nobody had switched on.
+            // The panel that replaces it is below: what they earned, and why.
 
             // FOUR USES OF THE WORD BALANCE IN ONE CARD, and the fix for all
             // four is the same removal: the eyebrow said Wallet, a pill said
@@ -16612,39 +16611,51 @@
                     wpStat('Spent', wpMoney(cash.spent)) +
                 '</div>');
 
-            // ---- awards ----------------------------------------------------
-            // Framed as what a student HAS, not as a scoreboard against other
-            // children: this portal is their own and nobody is ranked on it.
-            const entries = p.bigRaffleEntries;
-            const weeks = p.weeksQualified;
-            // ONE FIGURE, AND THE OTHER AS ITS SENTENCE. Weeks qualified and
-            // jackpot entries are one entry per qualified week, so in the
-            // ordinary case they are the same integer, and two identical
-            // numbers side by side at the same size read as a copy-paste
-            // before they read as data. The entries figure is the outcome and
-            // keeps the headline; the weeks become the line under it that says
-            // where the entries came from.
+            // ---- recent activity -------------------------------------------
             //
-            // NULL IS STILL NOT ZERO on the demoted one. An absent
-            // weeksQualified says it is absent rather than quietly printing
-            // nothing, which is the same rule the figure above it follows.
-            const weeksNote = (weeks === null || weeks === undefined)
-                ? 'weeks qualified not on file'
-                : weeks + (weeks === 1 ? ' week qualified' : ' weeks qualified');
-            const awards = wpPanel('Jackpot draw', 'What you have earned', '',
-                '<div class="wp-stats">' +
-                    wpStat('Jackpot entries', entries, weeksNote) +
-                '</div>' +
-                // THE ZERO BRANCH KEEPS BOTH ITS SENTENCES. A child looking at
-                // two noughts needs to be told what would change them and that
-                // the noughts are not a mark against them; that is the whole
-                // reason this panel is framed as what a student HAS. The
-                // non-zero branch had a sentence explaining arithmetic the two
-                // labels already do, and that one is gone.
-                ((entries === 0 || entries === null || entries === undefined)
-                    ? wpFoot('Qualify in a week and your name goes in the jackpot draw for it. ' +
-                             'Nothing here is counting against you.')
-                    : wpFoot('They stay in for the year.')));
+            // REPLACES THE JACKPOT PANEL, which showed draw entries and weeks
+            // qualified -- Raffle, and not running.
+            //
+            // A balance with no history is a number a child cannot question.
+            // "It says $30 and I thought I had $40" has no answer without
+            // this, and the answer is usually a deduction nobody told them
+            // about. The server has been sending these movements since the
+            // portal was built and nothing rendered them.
+            //
+            // Framed as their own record, not a scoreboard: this portal is
+            // theirs and nobody is ranked on it.
+            const recent = Array.isArray(cash.recent) ? cash.recent : [];
+            const awards = wpPanel('Recent activity', 'Your Wildcat Cash', '',
+                (!recent.length
+                    ? wpEmpty('Nothing yet. When a teacher awards you Wildcat Cash, it will show up here.')
+                    : '<div class="wp-rows wp-rows-nested">' +
+                        recent.slice(0, 8).map(function (r) {
+                            const amt = (typeof r.amount === 'number')
+                                ? (r.amount < 0 ? '\u2212' : '+') + '$' + Math.abs(r.amount)
+                                : '\u2014';
+                            const dir = (typeof r.amount !== 'number') ? 'flat'
+                                : (r.amount < 0 ? 'down' : 'up');
+                            const when = r.at ? wpWhen(r.at) : '';
+                            // reason is the behaviour the adult picked; note is
+                            // what they typed. They say different things, so
+                            // both are shown when both exist.
+                            const sub = [when, r.by].filter(Boolean).join('  \u00b7  ');
+                            return '<div class="wp-row wp-row-nested">' +
+                                '<span class="wp-rowmain">' +
+                                    '<span class="wp-rowtitle">' +
+                                        wpEsc(r.reason || 'Wildcat Cash') + '</span>' +
+                                    (sub ? '<span class="wp-rowsub">' + wpEsc(sub) + '</span>' : '') +
+                                    (r.note ? '<span class="wp-rownote">' + wpEsc(r.note) + '</span>' : '') +
+                                '</span>' +
+                                '<span class="wp-rowmain wp-rowright">' +
+                                    '<span class="wp-rowend wp-amt-' + dir + '">' + amt + '</span>' +
+                                '</span>' +
+                            '</div>';
+                        }).join('') +
+                      '</div>' +
+                      (recent.length > 8
+                        ? wpFoot('Showing your 8 most recent. Ask a teacher if something looks wrong.')
+                        : wpFoot('Ask a teacher if something here looks wrong.'))));
 
             // ---- attendance --------------------------------------------------
             // Three states, exactly as the server sends them: unavailable is not
@@ -16831,18 +16842,25 @@
             // the shape the staff dashboard already uses: the headline figures
             // across the top, then the detail underneath.
             //
-            // The tiles carry the same numbers as the Tickets, Wildcat Cash and
-            // Attendance panels below them, deliberately. A student opening a
-            // Chromebook wants "how am I doing" answered before they read
-            // anything, and the panels are where the breakdown lives.
-            // wpTile's `tone` carries the same temperature the panel eyebrows
-            // carry, so the three headline figures are already sorted into
-            // "what you have earned" and "what the school recorded" before a
-            // student has read a word of them.
+            // The tiles carry the same numbers as the panels below them,
+            // deliberately. A student opening a Chromebook wants "how am I
+            // doing" answered before they read anything, and the panels are
+            // where the breakdown lives. wpTile's `tone` carries the same
+            // temperature the panel eyebrows carry, so the figures are already
+            // sorted into "what you have earned" and "what the school
+            // recorded" before a student has read a word of them.
+            //
+            // "Tickets, this cycle" was the first tile until 2026-09-08. It is
+            // Raffle, and the school launched on Wildcat Cash -- so the first
+            // number a child saw on their own screen came from a system nobody
+            // had switched on. Balance leads now, because it is the number they
+            // came to look at, and what they have EARNED sits beside it: a
+            // balance falls when they spend, and a child who only sees the
+            // balance drop has no record of having earned anything.
             const tiles =
                 '<div class="wp-tiles">' +
-                    wpTile('Tickets', p.total, 'this cycle', 'warm') +
                     wpTile('Wildcat Cash', wpMoney(cash.balance), 'balance', 'warm') +
+                    wpTile('Earned', wpMoney(cash.earned), 'all year', 'warm') +
                     wpTile('Absent this term',
                         att.available ? att.daysAbsentTerm : null,
                         att.available ? 'days' : (att.reason || 'not available'),
@@ -16923,7 +16941,10 @@
             // wrong place for the one control on this screen a student needs in
             // a hurry and at a fixed moment. Placed first it opens the left
             // column, and Grades, the tallest panel, falls in under it.
-            return tiles + passPanel + gradePanel + schedule + tickets + money + awards + attendance;
+            // `tickets` is gone with the Raffle panel it drew. Order matters:
+            // the cash panels sit together, so "what I have" and "how I got it"
+            // are read as one thing rather than separated by the timetable.
+            return tiles + passPanel + gradePanel + money + awards + schedule + attendance;
         }
         /**
          * Open one course's missing-work list, or close it.
