@@ -91,6 +91,36 @@ if (emDashFiles.length > 0) {
   fail(`Em dash found in: ${emDashFiles.join(", ")}`);
 }
 
+// Guard: XML forbids a double hyphen inside a comment, and PowerSchool's
+// validator rejects the whole plugin for one ("String '--' not allowed in
+// comment"), which is how 1.4.1 failed to install on 2026-09-08. A double
+// hyphen inside a query's CDATA is legal XML, but it is an Oracle line comment,
+// and no query shipped so far has proven the PowerQuery engine keeps the line
+// breaks that stop one from eating the rest of the statement. Explanations go
+// in the XML comment above the query, written without the double hyphen.
+const DOUBLE_HYPHEN = "-" + "-";
+const lineOf = (text, index) => text.slice(0, index).split("\n").length;
+const hyphenProblems = [];
+for (const file of [PLUGIN_XML, ...queryFiles]) {
+  if (!existsSync(file)) continue;
+  const text = readFileSync(file, "utf8");
+  for (const m of text.matchAll(/<!--([\s\S]*?)-->/g)) {
+    const at = m[1].indexOf(DOUBLE_HYPHEN);
+    if (at !== -1) {
+      hyphenProblems.push(`${file}:${lineOf(text, m.index + 4 + at)} double hyphen inside an XML comment`);
+    }
+  }
+  for (const m of text.matchAll(/<!\[CDATA\[([\s\S]*?)\]\]>/g)) {
+    const at = m[1].indexOf(DOUBLE_HYPHEN);
+    if (at !== -1) {
+      hyphenProblems.push(`${file}:${lineOf(text, m.index + 9 + at)} SQL comment inside a query`);
+    }
+  }
+}
+if (hyphenProblems.length > 0) {
+  fail(`Double hyphen in shipped XML:\n  ${hyphenProblems.join("\n  ")}`);
+}
+
 // A query whose columns are not granted either fails validation on upload, which
 // is what SECTIONMEETING did in 1.0.0 and it took the whole plugin down with it,
 // or installs and 403s on every call. So a query file only ships once the access

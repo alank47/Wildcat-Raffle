@@ -73,6 +73,7 @@ The build refuses to produce a zip if any of these are true:
 - A client id or secret appears in `plugin.xml`
 - `plugin.xml` is not at the archive root
 - An em dash appears in a shipped file
+- A double hyphen appears inside an XML comment, or a SQL comment inside a query
 
 The archive root check matters more than it sounds. Zipping the folder rather
 than its contents is the most common install failure, and PowerSchool's error
