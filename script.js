@@ -2848,6 +2848,48 @@
         // Check every hour for scheduled email send
         setInterval(checkWeeklyEmailSchedule, 60 * 60 * 1000); // Check every hour
 
+        /**
+         * Reload from the server WITHOUT destroying what this tab has not
+         * saved yet.
+         *
+         * THE INCIDENT, 2026-09-08. saveData's staleness guard fires when the
+         * server's lastSaveTimestamp is more than a minute ahead of this
+         * tab's. It then called loadData(), which assigns behaviorReferrals
+         * from the server copy -- and a referral typed in the last few minutes
+         * and not yet saved simply ceased to exist. Laura Baltazar filed a
+         * referral, the guard fired because somebody else had saved while she
+         * was typing, and the referral was gone before it was ever written.
+         *
+         * With 40+ staff filing tomorrow, somebody saves every few seconds, so
+         * almost every tab is more than a minute behind almost always. This
+         * was not an edge case; it was about to be the normal path.
+         *
+         * The guard itself is still right -- a stale tab must not roll back
+         * currentWeek or a cycle number. What was wrong is that reloading
+         * threw away work rather than rebasing it.
+         */
+        async function reloadPreservingUnsavedWork() {
+            const pendingReferrals = Array.isArray(behaviorReferrals) ? behaviorReferrals.slice() : [];
+            await loadData();
+            const D = window.WildcatDiscipline;
+            if (D && typeof D.mergeReferrals === 'function') {
+                // Union, so the server's newer referrals arrive AND anything
+                // this tab is still holding survives. Local-only rows are kept
+                // by mergeReferrals precisely because absence from the server
+                // is not a deletion.
+                const merged = D.mergeReferrals(pendingReferrals, behaviorReferrals);
+                behaviorReferrals = merged.referrals;
+                if (merged.added || pendingReferrals.length) {
+                    console.log('[save] rebased after reload:', pendingReferrals.length,
+                                'local referral(s) preserved,', merged.added, 'arrived from the server');
+                }
+            }
+            if (typeof updateReferralReviewTable === 'function') updateReferralReviewTable();
+        }
+
+        /** True while a stale-guard retry is already running, so it happens once. */
+        let _staleSaveRetry = false;
+
         async function saveData() {
             // TEACHER VIEW IS READ-ONLY, ENFORCED HERE.
             //
@@ -2870,7 +2912,10 @@
                 await new Promise(resolve => setTimeout(resolve, 100));
                 if (isSyncing) {
                     if (typeof showSavingIndicator === 'function') showSavingIndicator(false);
-                    return;
+                    // false, not undefined. Every caller tests `ok === false`,
+                    // so returning undefined here reported a save that never
+                    // ran as one that succeeded.
+                    return false;
                 }
             }
             
@@ -2893,7 +2938,31 @@
                         // open for hours from overwriting newer data with its stale
                         // in-memory copy.
                         // ============================================================
-                        const STALENESS_THRESHOLD_MS = 60000; // 1 minute
+                        // ONE MINUTE WAS TUNED FOR A QUIET SYSTEM.
+                        //
+                        // The check is `serverTs > localTs + threshold`, and
+                        // serverTs is the latest save by ANYONE. With 40 staff
+                        // filing referrals and awarding cash, that is roughly
+                        // "now" at all times, so the guard fires for any tab
+                        // that has not itself saved in the last minute -- which,
+                        // for one teacher going about a lesson, is most of the
+                        // time. Every firing is a full reload of 145 documents,
+                        // the roster and 8,600 audit entries, followed by a
+                        // retry. Forty tabs doing that per action is a reload
+                        // storm on the busiest morning of the year.
+                        //
+                        // Three minutes instead. The window this widens is the
+                        // one where two teachers award the SAME student and the
+                        // second save carries a balance computed before the
+                        // first landed -- the client-side balance problem
+                        // already logged for a server-side increment after
+                        // launch. Every other slice this save touches (referrals,
+                        // ticket history, audit, cash transactions) merges
+                        // server-side inside a transaction and cannot be rolled
+                        // back by a stale tab at any threshold. The reconciler
+                        // that recovers movements from student records on load
+                        // is the backstop, and it ran clean tonight.
+                        const STALENESS_THRESHOLD_MS = 180000; // 3 minutes
                         try {
                             // MOVED OFF FIRESTORE 2026-08-31. Same guard, one
                             // settings row instead of the whole document.
@@ -2908,12 +2977,28 @@
                                     console.warn(`   Local:    ${new Date(localTs).toISOString()}`);
                                     console.warn(`   Reloading from Firebase before save...`);
                                     isSyncing = false;
-                                    // Reload fresh state from Firebase so we can try again safely
-                                    await loadData();
-                                    // Don't retry the save automatically — the caller's intent
-                                    // might no longer apply to the refreshed state. Tell the user.
-                                    alert('⚠️ Your data was out of date and has been refreshed from the cloud. Please re-do your last action if needed.');
-                                    return;
+                                    // Rebase, do not discard. See
+                                    // reloadPreservingUnsavedWork for the incident.
+                                    await reloadPreservingUnsavedWork();
+
+                                    // RETRY ONCE, rather than telling a teacher to
+                                    // re-type a referral. The old code returned here
+                                    // with an alert saying "re-do your last action",
+                                    // which is the app admitting it dropped the work.
+                                    // A referral is additive and every slice it
+                                    // touches merges server-side, so the intent still
+                                    // applies to the refreshed state.
+                                    if (!_staleSaveRetry) {
+                                        _staleSaveRetry = true;
+                                        try { return await saveData(); }
+                                        finally { _staleSaveRetry = false; }
+                                    }
+                                    // Second failure in a row: stop, and say so
+                                    // truthfully. false, never undefined -- callers
+                                    // test `ok === false`, so a bare return here
+                                    // reported a BLOCKED save as a successful one.
+                                    console.warn('[save] still stale after one retry; giving up this pass.');
+                                    return false;
                                 }
                             }
                         } catch (staleCheckErr) {
@@ -2954,9 +3039,10 @@
                                     console.warn(`   Local cycleNumber:    ${localCycleNum}`);
                                     console.warn(`   Reloading fresh state from Firebase...`);
                                     isSyncing = false;
-                                    await loadData();
+                                    await reloadPreservingUnsavedWork();
                                     alert(`⚠️ Your tab was holding an outdated cycle number (Cycle ${localCycleNum}). The system has refreshed to the current cycle (Cycle ${serverCycleNum}). Please re-do your last action if needed.`);
-                                    return;
+                                    // false, not undefined: this save did NOT happen.
+                                    return false;
                                 }
                                 
                                 // WEEK GUARD: only enforce when cycles match. If our cycle is older,
@@ -2970,9 +3056,10 @@
                                     console.warn(`   Local currentWeek:    ${currentWeek}`);
                                     console.warn(`   Reloading fresh state from Firebase...`);
                                     isSyncing = false;
-                                    await loadData();
+                                    await reloadPreservingUnsavedWork();
                                     alert(`⚠️ Your tab was holding an outdated week number (Week ${currentWeek}). The system has refreshed to the current week (${serverWeek}). Please re-do your last action if needed.`);
-                                    return;
+                                    // false, not undefined: this save did NOT happen.
+                                    return false;
                                 }
                             }
                         } catch (weekGuardErr) {
