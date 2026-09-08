@@ -8834,3 +8834,13 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     .wc-att-row { flex-wrap: wrap; }
     .wc-att-badge { order: 3; }
 }
+
+/* Refresh control on Open Referrals. The note beside it is the point: a table
+   that silently redraws leaves the reader wondering whether it checked. */
+.wc-ref-refresh {
+    display: flex; align-items: center; gap: 10px;
+    margin: 0 0 14px 0; flex-wrap: wrap;
+}
+.wc-ref-refresh-note {
+    font-size: 12px; color: var(--wc-gray-text, #8892a0);
+}

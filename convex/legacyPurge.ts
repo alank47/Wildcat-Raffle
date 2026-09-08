@@ -777,3 +777,115 @@ export const directoryHealth = internalQuery({
     };
   },
 });
+
+/**
+ * Every referral on the server, summarised. Read-only.
+ *
+ * Answers "was it saved at all" separately from "can the reader see it",
+ * which are the two halves of a missing-referral report and need opposite
+ * fixes. Names of STAFF, not students -- the student is reduced to whether a
+ * name is present, so this probe cannot itself become a student export.
+ */
+export const referralAudit = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db
+      .query("legacyMirror")
+      .withIndex("by_doc", (q) => q.eq("doc", "referrals"))
+      .collect();
+
+    const refs = rows
+      .filter((r) => r.collection === "behaviorReferrals")
+      .map((r) => r.payload as any);
+
+    const byId = new Map<string, number>();
+    for (const r of refs) {
+      const id = String(r?.id ?? "(none)");
+      byId.set(id, (byId.get(id) ?? 0) + 1);
+    }
+
+    const summarise = (r: any) => ({
+      id: r?.id ?? null,
+      status: r?.status ?? null,
+      date: r?.date ?? r?.timestamp ?? r?.createdAt ?? null,
+      referredBy: r?.referredBy ?? null,
+      filedByEmail: r?.filedByEmail ?? null,
+      referredByEmail: r?.referredByEmail ?? null,
+      filedByUsername: r?.filedByUsername ?? null,
+      hasStudent: !!(r?.studentName || r?.studentId || r?.studentNumber),
+    });
+
+    const statuses = new Map<string, number>();
+    for (const r of refs) statuses.set(String(r?.status ?? "(none)"), (statuses.get(String(r?.status ?? "(none)")) ?? 0) + 1);
+
+    // Newest last, so the tail is what was just filed.
+    const sorted = refs.slice().sort((a, b) =>
+      String(a?.date ?? "").localeCompare(String(b?.date ?? "")));
+
+    return {
+      storedRows: rows.length,
+      referrals: refs.length,
+      duplicateIds: [...byId.entries()].filter(([, n]) => n > 1).map(([id, n]) => ({ id, count: n })),
+      statusCounts: [...statuses.entries()].map(([status, count]) => ({ status, count })),
+      newest: sorted.slice(-12).map(summarise),
+    };
+  },
+});
+
+/** Recent sign-ins for one address. Read-only. */
+export const signInsFor = internalQuery({
+  args: { email: v.string() },
+  handler: async (ctx, { email }) => {
+    const e = email.trim().toLowerCase();
+    const rows = await ctx.db
+      .query("authEvents")
+      .withIndex("by_email", (q) => q.eq("email", e))
+      .collect();
+    const sorted = rows.slice().sort((a, b) => String(a.at).localeCompare(String(b.at)));
+    return {
+      email: e,
+      signIns: sorted.length,
+      first: sorted[0]?.at ?? null,
+      recent: sorted.slice(-8).map((r) => ({ at: r.at, provider: r.provider, kind: r.kind })),
+    };
+  },
+});
+
+/**
+ * One referral's ATTRIBUTION fields in full, plus every sign-in today.
+ * Read-only. The student is reduced to a yes/no; this is about which adult
+ * the record was written against, not about the child.
+ */
+export const referralAttribution = internalQuery({
+  args: { id: v.string() },
+  handler: async (ctx, { id }) => {
+    const rows = await ctx.db
+      .query("legacyMirror")
+      .withIndex("by_doc", (q) => q.eq("doc", "referrals"))
+      .collect();
+    const hit = rows
+      .filter((r) => r.collection === "behaviorReferrals")
+      .map((r) => r.payload as any)
+      .find((r) => String(r?.id) === id);
+
+    const scrubbed: Record<string, unknown> = {};
+    if (hit) {
+      for (const [k, v] of Object.entries(hit)) {
+        if (/^student|^demographics$|name$/i.test(k) && k !== "referredBy") {
+          scrubbed[k] = v === null || v === undefined ? v : "(present)";
+        } else {
+          scrubbed[k] = v;
+        }
+      }
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const auth = await ctx.db.query("authEvents").collect();
+    const todays = auth
+      .filter((a) => String(a.at).slice(0, 10) === today)
+      .sort((a, b) => String(a.at).localeCompare(String(b.at)))
+      .map((a) => ({ at: a.at, email: a.email }));
+
+    return { found: !!hit, referral: scrubbed, signInsToday: todays };
+  },
+});

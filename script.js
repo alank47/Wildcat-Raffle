@@ -25981,9 +25981,13 @@
                 if (timeInput && !timeInput.value) timeInput.value = now.toTimeString().slice(0, 5);
                 if (typeof updateInterventionCount === 'function') updateInterventionCount();
             } else if (subtab === 'review') {
+                // Draw what we have immediately, then pull. A tab that shows
+                // nothing until the network answers reads as broken.
                 updateReferralReviewTable();
+                pullReferralsAndRedraw(false);
             } else if (subtab === 'closed') {
                 if (typeof updateClosedReferralsList === 'function') updateClosedReferralsList();
+                pullReferralsAndRedraw(false);
             } else if (subtab === 'detention') {
                 if (typeof initializeDetentionForm === 'function') initializeDetentionForm();
                 if (typeof updateDetentionLists === 'function') updateDetentionLists();
@@ -27718,6 +27722,91 @@
         }
         function getOpenReferrals()   { return visibleReferrals().filter(r => r.status !== 'closed'); }
         function getClosedReferrals() { return visibleReferrals().filter(r => r.status === 'closed'); }
+
+        /**
+         * Pull referrals from the server on demand.
+         *
+         * THE BUG THIS FIXES. Referrals reached a tab once, at page load. The
+         * background auto-refresh is gated on AUTO_REFRESH_DELAY -- five
+         * minutes of INACTIVITY -- so the admin who opens Open Referrals
+         * looking for a colleague's referral, does not see it, and clicks
+         * around looking harder, resets that timer with every click and never
+         * gets the pull. The harder you looked, the longer it took. Reported
+         * twice, both times as "I cannot see the referral they just filed".
+         *
+         * One document, not the whole legacy set: this runs on every visit to
+         * the tab and must stay cheap.
+         *
+         * NOTHING LOCAL IS DISCARDED. WildcatDiscipline.mergeReferrals unions
+         * the two by id and lets the later updatedAt win, so a referral still
+         * sitting in this tab's save queue survives the refresh that goes
+         * looking for everyone else's.
+         */
+        let _referralPullBusy = false;
+        let _referralPullAt = null;
+        async function refreshReferralsFromServer(opts) {
+            const quiet = !(opts && opts.loud);
+            if (_referralPullBusy) return { skipped: 'busy' };
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            // A username session carries no Convex identity. Not an error, and
+            // not reported as one -- there is simply nothing to pull with.
+            if (!auth || !session) return { skipped: 'no-session' };
+
+            _referralPullBusy = true;
+            try {
+                const res = await loadLegacyDocsFromConvex(['referrals']);
+                // A FAILED READ IS NOT AN EMPTY SERVER. loadLegacyDocsFromConvex
+                // returns partial results by design, so a failure here would
+                // otherwise arrive as "the server has no referrals" and the
+                // merge would keep local rows but report nothing new -- the
+                // same screen as success, which is the worst way to fail.
+                if (res.failed && res.failed.indexOf('referrals') !== -1) {
+                    return { error: (res.errors && res.errors[0] && res.errors[0].error) || 'read failed' };
+                }
+                const doc = res.docs && res.docs.referrals;
+                const rows = doc && Array.isArray(doc.behaviorReferrals) ? doc.behaviorReferrals : null;
+                if (!rows) return { skipped: 'no-doc' };
+
+                const merged = window.WildcatDiscipline.mergeReferrals(behaviorReferrals, rows);
+                behaviorReferrals = merged.referrals;
+                _referralPullAt = new Date();
+                return { added: merged.added, updated: merged.updated, changed: merged.changed };
+            } catch (e) {
+                console.warn('[referrals] refresh failed:', e);
+                return { error: (e && e.message) || String(e) };
+            } finally {
+                _referralPullBusy = false;
+                if (!quiet) { /* caller redraws */ }
+            }
+        }
+
+        /** The tab's own Refresh button, and the automatic pull on opening it. */
+        async function pullReferralsAndRedraw(loud) {
+            const note = document.getElementById('referralRefreshNote');
+            if (note && loud) note.textContent = 'Checking\u2026';
+            const res = await refreshReferralsFromServer({ loud: !!loud });
+            updateReferralReviewTable();
+            if (typeof updateClosedReferralsList === 'function') updateClosedReferralsList();
+            if (!note) return;
+            if (res.error) {
+                note.textContent = 'Could not check the server: ' + res.error;
+            } else if (res.skipped === 'no-session') {
+                note.textContent = '';
+            } else if (res.added || res.updated) {
+                const bits = [];
+                if (res.added) bits.push(res.added + ' new');
+                if (res.updated) bits.push(res.updated + ' updated');
+                note.textContent = bits.join(', ') + ' \u00B7 ' + _fmtPullTime();
+            } else {
+                note.textContent = 'Up to date \u00B7 ' + _fmtPullTime();
+            }
+        }
+
+        function _fmtPullTime() {
+            const d = _referralPullAt || new Date();
+            return 'checked ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        }
 
         function updateReferralReviewTable() {
             const tbody = document.getElementById('referralReviewTable');

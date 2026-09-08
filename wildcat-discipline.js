@@ -614,7 +614,84 @@
     return dupes;
   }
 
+
+  /**
+   * Union a freshly-fetched referral list into the one this tab is holding.
+   *
+   * WHY A PULL EXISTS AT ALL. Referrals reach a tab exactly once, at page
+   * load. The background auto-refresh is gated on FIVE MINUTES of inactivity,
+   * so an admin who opens Open Referrals looking for a colleague's new
+   * referral, does not find it, and clicks around looking harder, resets that
+   * timer on every click and never gets the pull. Reported twice: a referral
+   * filed on one computer was invisible on another until a full reload.
+   *
+   * NEITHER SIDE IS AUTHORITATIVE, and that is the whole design:
+   *
+   *   in both      the later updatedAt wins. A tab open for an hour must not
+   *                push a stale copy over a colleague's edit, and a fetch must
+   *                not undo an edit this tab made a second ago.
+   *   local only   KEPT. It is almost certainly a referral just filed here and
+   *                still in the save queue. Absence from the server is not a
+   *                deletion -- treating it as one is how a refresh destroys
+   *                the referral a teacher is in the middle of writing.
+   *   server only  ADDED. This is the whole point.
+   *
+   * Returns the merged array plus what changed, so the screen can say "2 new"
+   * rather than redrawing silently and leaving the reader to wonder.
+   */
+  function mergeReferrals(local, server) {
+    var localRows = Array.isArray(local) ? local : [];
+    var serverRows = Array.isArray(server) ? server : [];
+
+    function stamp(r) {
+      // updatedAt is written on every edit; submittedAt only at filing. Either
+      // is a string ISO date, and string comparison is correct for those.
+      var u = r && (r.updatedAt || r.submittedAt);
+      return typeof u === 'string' ? u : '';
+    }
+
+    var byId = {};
+    var order = [];
+    function put(r, from) {
+      if (!r) return;
+      var id = trimmed(r.id);
+      // A referral with no id cannot be deduped, so it is kept as its own row
+      // rather than colliding every other id-less referral into one.
+      if (!id) { order.push({ id: null, row: r, from: from }); return; }
+      if (!Object.prototype.hasOwnProperty.call(byId, id)) {
+        byId[id] = { row: r, from: from };
+        order.push({ id: id, row: null, from: from });
+        return;
+      }
+      var have = byId[id];
+      if (stamp(r) > stamp(have.row)) byId[id] = { row: r, from: from };
+    }
+
+    localRows.forEach(function (r) { put(r, 'local'); });
+    var beforeIds = {};
+    Object.keys(byId).forEach(function (k) { beforeIds[k] = true; });
+    serverRows.forEach(function (r) { put(r, 'server'); });
+
+    var added = 0, updated = 0;
+    Object.keys(byId).forEach(function (id) {
+      if (!beforeIds[id]) added += 1;
+      else if (byId[id].from === 'server') updated += 1;
+    });
+
+    var out = [];
+    var seen = {};
+    order.forEach(function (o) {
+      if (o.id === null) { out.push(o.row); return; }
+      if (seen[o.id]) return;
+      seen[o.id] = true;
+      out.push(byId[o.id].row);
+    });
+
+    return { referrals: out, added: added, updated: updated, changed: added + updated > 0 };
+  }
+
   root.WildcatDiscipline = {
+    mergeReferrals: mergeReferrals,
     newReferralId: newReferralId,
     duplicateReferralIds: duplicateReferralIds,
     SMALL_GROUP: SMALL_GROUP,
