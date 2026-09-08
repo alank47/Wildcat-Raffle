@@ -339,3 +339,33 @@ export const cashTxOnStudents = internalQuery({
     return { studentsWithAny, total, byTeacher, byMonth: weeks };
   },
 });
+
+/** How large the payload appData:save ships on every single save is. */
+export const savePayloadSize = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const students = await ctx.db.query("students").take(2000);
+    const teachers = await ctx.db.query("teachers").take(200);
+    const WRITABLE = ["pbisTickets","attendanceTickets","academicTickets","bigRaffleQualified",
+      "weeksQualified","wildcatCashBalance","wildcatCashEarned","wildcatCashSpent",
+      "wildcatCashDeducted","wildcatCashRewardsRedeemed","wildcatCashTransactions",
+      "cashBalance","cashTransactions"];
+    // What the browser actually sends: the whole student object minus the
+    // slices stripped in saveData.
+    const shipped = students.map((s: any) => {
+      const c: any = { ...s };
+      delete c.ticketHistory; delete c.sections;
+      delete c.wildcatCashTransactions; delete c.cashTransactions;
+      return c;
+    });
+    const bytes = (v: unknown) => JSON.stringify(v).length;
+    return {
+      students: students.length,
+      teachers: teachers.length,
+      studentPayloadKB: Math.round(bytes(shipped) / 1024),
+      teacherPayloadKB: Math.round(bytes(teachers) / 1024),
+      totalKB: Math.round((bytes(shipped) + bytes(teachers)) / 1024),
+      writableFields: WRITABLE.length,
+    };
+  },
+});

@@ -29467,31 +29467,187 @@
          * It never invents one. With no cycle set it says so, in the same
          * voice every other missing value in this app uses.
          */
+        /**
+         * PBIS tips, in the space the cycle banner used to hold.
+         *
+         * WHY THE CYCLE WENT. The banner announced which cycle and week the
+         * school was in and that ticket counts reset at the end of it. That is
+         * Raffle vocabulary, and Raffle is not what the school launched on --
+         * so the one permanent fixture in the sidebar was explaining a system
+         * nobody was using, to people using Wildcat Cash and Discipline.
+         *
+         * The cycle system itself is untouched. currentCycle, cycleDuration and
+         * the settings that drive them are still there and still correct; when
+         * Raffle starts, this is a decision to revisit, not damage to repair.
+         *
+         * WHY TIPS AND NOT AN ANNOUNCEMENT FEED. An editable notice board needs
+         * somebody to edit it, and an empty one is worse than no board at all.
+         * These are fixed, short, and specific to how THIS school awards: the
+         * four expectations are the four buttons in Award Cash, so a tip that
+         * says "Be Specific" is naming the thing the teacher is about to click.
+         *
+         * ONE TIP PER DAY, the same one for everybody. Rotating on every render
+         * makes the sidebar flicker as a teacher moves between tabs, and two
+         * staff comparing screens would see different advice. The index comes
+         * from the date, so it changes overnight and is stable all day.
+         */
+        const PBIS_TIPS = [
+            {
+                title: 'Name the behaviour',
+                body: 'Say what they did, not just that it was good. ' +
+                      '"Thanks for holding the door" lands harder than "nice job".'
+            },
+            {
+                title: 'Catch the quiet ones',
+                body: 'The students who never cause trouble are the easiest to ' +
+                      'miss. Scan your roster for who has not been awarded this week.'
+            },
+            {
+                title: 'Award in the moment',
+                body: 'Points given the same period carry far more weight than ' +
+                      'points given at the end of the day.'
+            },
+            {
+                title: 'Five to one',
+                body: 'Aim for five positives for every correction. It is the ' +
+                      'ratio PBIS is built on, and the one most of us drift from.'
+            },
+            {
+                title: 'Use the notes field',
+                body: 'A line of context turns a number into a record. Future ' +
+                      'you, and the student\u2019s next teacher, will thank you.'
+            },
+            {
+                title: 'Be Safe is not just hallways',
+                body: 'It covers speaking up, asking for help, and telling an ' +
+                      'adult something is wrong. Award it when you see it.'
+            },
+            {
+                title: 'Deduct sparingly',
+                body: 'A deduction is a conversation, not a punishment. If it ' +
+                      'has not been discussed with the student, it is too soon.'
+            },
+            {
+                title: 'Be Responsible is a habit',
+                body: 'Turning work in late is still turning it in. Reward the ' +
+                      'student who fixed it, not only the one who never slipped.'
+            },
+            {
+                title: 'Recognise the recovery',
+                body: 'A student who resets after a hard start has done ' +
+                      'something difficult. That is exactly what Be Respectful ' +
+                      'looks like in practice.'
+            },
+            {
+                title: 'Consistency beats generosity',
+                body: 'The same behaviour earning the same award from every ' +
+                      'adult is what makes the system feel fair to students.'
+            }
+        ];
+
+        /**
+         * The tips carousel.
+         *
+         * ONE TIMER, EVER. wcRenderSidebarBanner is called from
+         * updateAllDisplays, which runs on every repaint -- every tab switch,
+         * every award, every save. Starting an interval inside it without
+         * clearing the last one would leave a timer per repaint, all writing to
+         * the same element, and the card would flick faster the longer somebody
+         * used the app. The handle lives out here and is cleared before each
+         * start.
+         *
+         * The starting tip is the day's, so two teachers opening the app at the
+         * same moment see the same one, and the sequence differs day to day
+         * rather than always opening on the same card.
+         */
+        let _pbisTipIndex = null;
+        let _pbisTipTimer = null;
+        const PBIS_TIP_MS = 9000;
+
+        /** Days since epoch: changes overnight, stable all day. */
+        function wcTipStartIndex() {
+            const day = Math.floor(Date.now() / 86400000);
+            return ((day % PBIS_TIPS.length) + PBIS_TIPS.length) % PBIS_TIPS.length;
+        }
+
+        function wcPaintTip() {
+            const host = document.getElementById('sidebarBanner');
+            if (!host) return;
+            const body = host.querySelector('.pbis-tip-body');
+            const dots = host.querySelectorAll('.pbis-dot');
+            if (!body) return;
+            const tip = PBIS_TIPS[_pbisTipIndex];
+
+            // Fade out, swap, fade in. The class does the work so
+            // prefers-reduced-motion can switch it off in CSS rather than here.
+            body.classList.add('is-out');
+            setTimeout(function () {
+                body.innerHTML =
+                    '<p class="pbis-tip-title">' + escapeHtml(tip.title) + '</p>' +
+                    '<p class="pbis-tip-text">' + escapeHtml(tip.body) + '</p>';
+                body.classList.remove('is-out');
+            }, 180);
+
+            dots.forEach(function (d, i) {
+                d.classList.toggle('is-on', i === _pbisTipIndex);
+                d.setAttribute('aria-current', i === _pbisTipIndex ? 'true' : 'false');
+            });
+        }
+
+        function wcAdvanceTip(step) {
+            _pbisTipIndex = (_pbisTipIndex + (step || 1) + PBIS_TIPS.length) % PBIS_TIPS.length;
+            wcPaintTip();
+        }
+
+        function wcStartTipTimer() {
+            if (_pbisTipTimer !== null) clearInterval(_pbisTipTimer);
+            _pbisTipTimer = setInterval(function () { wcAdvanceTip(1); }, PBIS_TIP_MS);
+        }
+
+        /** Jump to a tip and restart the clock, so a click is not cut short. */
+        function wcShowTip(i) {
+            _pbisTipIndex = ((i % PBIS_TIPS.length) + PBIS_TIPS.length) % PBIS_TIPS.length;
+            wcPaintTip();
+            wcStartTipTimer();
+        }
+        window.wcShowTip = wcShowTip;
+
         function wcRenderSidebarBanner() {
             const el = document.getElementById('sidebarBanner');
             if (!el) return;
-            const cyc = (typeof currentCycle === 'object' && currentCycle) ? currentCycle.cycleNumber : null;
-            const wk = (typeof currentWeek === 'number') ? currentWeek : null;
-            const dur = (typeof cycleDuration === 'number' && cycleDuration) ? cycleDuration : null;
-            const isAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin');
 
-            if (cyc === null || cyc === undefined || wk === null || dur === null) {
+            // Built once. Rebuilding the markup on every repaint would restart
+            // the fade mid-transition and lose the reader's place; after the
+            // first call this only keeps the timer alive.
+            if (!el.querySelector('.pbis-tip')) {
+                if (_pbisTipIndex === null) _pbisTipIndex = wcTipStartIndex();
                 el.innerHTML =
-                    '<p class="sidebar-banner-eyebrow">Westbrook Academy</p>' +
-                    '<p class="sidebar-banner-title">School notices</p>' +
-                    '<p class="wu-absent">No cycle has been set, so there is nothing to announce here yet.</p>';
-                return;
-            }
+                    '<div class="pbis-tip">' +
+                        '<p class="sidebar-banner-eyebrow">PBIS tip</p>' +
+                        '<div class="pbis-tip-body"></div>' +
+                        '<div class="pbis-dots" role="tablist" aria-label="Tips">' +
+                            PBIS_TIPS.map(function (t, i) {
+                                return '<button type="button" class="pbis-dot" role="tab" ' +
+                                       'onclick="wcShowTip(' + i + ')" ' +
+                                       'aria-label="' + escapeHtml(t.title) + '"></button>';
+                            }).join('') +
+                        '</div>' +
+                    '</div>';
 
-            el.innerHTML =
-                '<p class="sidebar-banner-eyebrow">Westbrook Academy</p>' +
-                '<p class="sidebar-banner-title">Cycle ' + escapeHtml(String(cyc)) +
-                    ' &middot; Week ' + escapeHtml(String(wk)) + ' of ' + escapeHtml(String(dur)) + '</p>' +
-                '<p class="sidebar-banner-body">Every ticket count resets when the week is ended.</p>' +
-                (isAdmin
-                    ? '<button type="button" class="sidebar-banner-link admin-only" onclick="switchTab(\'settings\')">' +
-                      'Cycle settings <span aria-hidden="true">&#8594;</span></button>'
-                    : '');
+                // Reading a tip should not be interrupted by the next one.
+                const card = el.querySelector('.pbis-tip');
+                card.addEventListener('mouseenter', function () {
+                    if (_pbisTipTimer !== null) { clearInterval(_pbisTipTimer); _pbisTipTimer = null; }
+                });
+                card.addEventListener('mouseleave', wcStartTipTimer);
+                card.addEventListener('focusin', function () {
+                    if (_pbisTipTimer !== null) { clearInterval(_pbisTipTimer); _pbisTipTimer = null; }
+                });
+                card.addEventListener('focusout', wcStartTipTimer);
+
+                wcPaintTip();
+            }
+            wcStartTipTimer();
         }
 
         // ------------------------------------------------------------
