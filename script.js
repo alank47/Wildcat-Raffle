@@ -23277,6 +23277,11 @@
         }
 
         function updateCycleBadge() {
+            // #cycleWeekBadge left the topbar on 2026-09-07 with the sidebar
+            // cycle notice: Raffle vocabulary on a school running Cash and
+            // Discipline. This already returned early on a missing element,
+            // which is why removing the markup did not repeat the
+            // #createAdminScreen fault. Kept whole for when Raffle starts.
             const badge = document.getElementById('cycleWeekBadge');
             if (!badge) return;
             const cyc = (typeof currentCycle === 'object' && currentCycle) ? currentCycle.cycleNumber : null;
@@ -30096,13 +30101,47 @@
 
             // ---- Stat tiles ----------------------------------------
             const isAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin');
-            const qualified = all.filter(isQualifiedForJackpot).length;
+            const seesAll = isAdmin || (currentUser && currentUser.role === 'pbis');
 
-            const mine = (Array.isArray(auditLog) ? auditLog : []).filter(e =>
-                e && e.action === 'Awarded Tickets' &&
-                currentUser && e.teacherId === currentUser.id &&
-                e.week === wk && entryBelongsToCurrentCycle(e));
-            const myTickets = mine.reduce((sum, e) => sum + (Number(e.ticketCount) || 0), 0);
+            // THIS WEEK'S CASH, AND THIS WEEK'S REFERRALS.
+            //
+            // The two tiles beside "Your students" were "Jackpot qualified" and
+            // "Your tickets this week" -- both Raffle, which the school is not
+            // running. The dashboard is the first screen a teacher sees, so it
+            // opened on figures from a system nobody had switched on.
+            //
+            // A CALENDAR week, not a Raffle cycle: this screen must not depend
+            // on a cycle being set, and the cycle notice is gone from the UI.
+            const weekStart = (function () {
+                const d = new Date();
+                d.setHours(0, 0, 0, 0);
+                // Monday. getDay() is 0 on Sunday, which unadjusted would start
+                // the week the day before it ends.
+                d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+                return d.getTime();
+            })();
+
+            const cashThisWeek = (Array.isArray(cashTransactions) ? cashTransactions : [])
+                .filter(t => {
+                    if (!t || !t.timestamp) return false;
+                    if (new Date(t.timestamp).getTime() < weekStart) return false;
+                    if (seesAll) return true;
+                    const actor = t.teacherId || t.addedBy || t.removedBy;
+                    // An unattributed movement belongs to nobody, not everybody
+                    // -- the same rule My Activity needed.
+                    return actor && currentUser && actor === currentUser.id;
+                });
+
+            // Awarded, not net. A teacher wants to know what they gave out;
+            // netting deductions against it answers a different question and
+            // makes a busy week look like a quiet one.
+            const cashAwarded = cashThisWeek
+                .filter(t => (Number(t.amount) || 0) > 0)
+                .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+
+            const openReferrals = (typeof visibleReferrals === 'function')
+                ? visibleReferrals().filter(r => r && r.status !== 'closed').length
+                : null;
 
             const tiles = document.getElementById('dashTiles');
             if (tiles) {
@@ -30121,65 +30160,70 @@
                           tone: 'brand',
                           onclick: isAdmin ? "switchTab('students')" : null,
                           arrowLabel: 'Open the student roster' }),
-                    wcTile('Jackpot qualified',
-                        all.length ? qualified : null,
-                        { absent: 'roster not loaded',
-                          onclick: isAdmin ? "switchTab('bigRaffle')" : null,
-                          arrowLabel: 'Open Wildcat Jackpot' }),
-                    // A measured zero here is a real fact: this teacher has
-                    // awarded nothing yet this week. It is only absent when
-                    // there is no week to count against.
-                    wcTile('Your tickets this week',
-                        wk === null ? null : myTickets,
-                        { absent: 'no week set',
-                          onclick: "switchTab('myActivity')",
-                          arrowLabel: 'Open My Activity' })
+                    // A measured zero is a real fact here -- nothing awarded
+                    // yet this week -- so it is never rendered as absent.
+                    wcTile(seesAll ? 'Cash awarded this week' : 'Cash you awarded this week',
+                        '$' + cashAwarded.toLocaleString(),
+                        { tone: 'good',
+                          onclick: "switchTab('cashActivity')",
+                          arrowLabel: 'Open cash activity' }),
+                    wcTile(seesAll ? 'Open referrals' : 'Your open referrals',
+                        openReferrals,
+                        { absent: 'discipline not loaded',
+                          tone: openReferrals ? 'warn' : null,
+                          onclick: "switchSystemMode('discipline')",
+                          arrowLabel: 'Open Discipline' })
                 ].join('');
             }
 
-            // ---- Arc gauge: jackpot qualification -------------------
+            // ---- Arc gauge: the PBIS ratio ---------------------------
+            //
+            // This measured Jackpot qualification, which is a Raffle figure on
+            // a school running Cash and Discipline.
+            //
+            // Five positives for every correction is the ratio PBIS is built
+            // on, and the one most staff drift from without noticing -- which
+            // is what a dashboard gauge is for. It is also the figure the
+            // sidebar tips talk about, so the two agree.
+            //
+            // Scoped like the tiles: a teacher sees their own practice, an
+            // admin or PBIS lead sees the school's. A teacher shown a
+            // school-wide ratio cannot act on it.
             const gauge = document.getElementById('dashGauge');
             const gaugeVal = document.getElementById('dashGaugeValue');
             const legs = document.getElementById('dashGaugeLegs');
-            const rate = all.length ? qualified / all.length : null;
 
-            wcSetGauge(gauge, rate, rate === null
-                ? 'Jackpot qualification rate: no roster loaded'
-                : `Jackpot qualification rate ${Math.round(rate * 100)} percent`);
+            const positives = cashThisWeek.filter(t => (Number(t.amount) || 0) > 0).length;
+            const negatives = cashThisWeek.filter(t => (Number(t.amount) || 0) < 0).length;
+
+            // Against a target of five. Nothing awarded at all is NOT a ratio
+            // of zero -- it is no measurement, and 0:1 would accuse a teacher
+            // of something they have not done.
+            const RATIO_TARGET = 5;
+            const ratio = (positives === 0 && negatives === 0)
+                ? null
+                : (negatives === 0 ? RATIO_TARGET : positives / negatives);
+            const rate = ratio === null ? null : Math.min(1, ratio / RATIO_TARGET);
+
+            wcSetGauge(gauge, rate, ratio === null
+                ? 'Positive to corrective ratio: nothing awarded yet this week'
+                : `Positive to corrective ratio ${ratio.toFixed(1)} to 1, against a target of ${RATIO_TARGET}`);
+
             if (gaugeVal) {
-                gaugeVal.innerHTML = rate === null
-                    ? '<span class="wu-absent">no roster</span>'
-                    : `${Math.round(rate * 100)}%`;
+                gaugeVal.innerHTML = ratio === null
+                    ? '<span class="wu-absent">no awards yet</span>'
+                    : (negatives === 0
+                        ? `${positives}<span style="font-size:.5em;"> : 0</span>`
+                        : `${ratio.toFixed(1)}<span style="font-size:.5em;"> : 1</span>`);
             }
 
             if (legs) {
-                if (!all.length) {
-                    legs.innerHTML = '<p class="wu-absent">Qualification needs a roster. Nothing has loaded yet.</p>';
-                } else {
-                    const byGrade = new Map();
-                    all.forEach(s => {
-                        const g = (s.grade === undefined || s.grade === null || s.grade === '') ? null : String(s.grade);
-                        if (g === null) return;
-                        if (!byGrade.has(g)) byGrade.set(g, { n: 0, q: 0 });
-                        const row = byGrade.get(g);
-                        row.n += 1;
-                        if (isQualifiedForJackpot(s)) row.q += 1;
-                    });
-                    const ranked = [...byGrade.entries()]
-                        .filter(([, r]) => r.n >= 5)
-                        .map(([g, r]) => ({ g, pct: Math.round((r.q / r.n) * 100) }))
-                        .sort((a, b) => b.pct - a.pct);
-                    if (ranked.length < 2) {
-                        legs.innerHTML = '<p class="wu-absent">Not enough graded groups to rank.</p>';
-                    } else {
-                        const best = ranked[0];
-                        const worst = ranked[ranked.length - 1];
-                        legs.innerHTML = '<div class="wu-subrings">' +
-                            wcSubring('Highest', 'Grade ' + best.g, best.pct, 'good') +
-                            wcSubring('Lowest', 'Grade ' + worst.g, worst.pct, 'bad') +
-                            '</div>';
-                    }
-                }
+                legs.innerHTML = (ratio === null)
+                    ? '<p class="wu-absent">' + (seesAll
+                        ? 'Nothing has been awarded this week yet.'
+                        : 'You have not awarded anything this week yet.') + '</p>'
+                    : wcSubring('Positive', 'this week', positives, 'good') +
+                      wcSubring('Corrective', 'this week', negatives, negatives ? 'bad' : null);
             }
 
             // ---- Day strip -----------------------------------------
