@@ -428,3 +428,26 @@ export const quietKidsProbe = internalQuery({
     };
   },
 });
+
+/** Login history rows matching a name. The legacy store, not authEvents. */
+export const loginHistoryFor = internalQuery({
+  args: { needle: v.string() },
+  handler: async (ctx, { needle }) => {
+    const rows = await ctx.db
+      .query("legacyMirror")
+      .withIndex("by_doc_collection", (q) =>
+        q.eq("doc", "secondary").eq("collection", "loginHistory"))
+      .take(2000);
+    const n = needle.trim().toLowerCase();
+    const hits = rows
+      .map((r) => r.payload as any)
+      .filter((p) => JSON.stringify(p ?? {}).toLowerCase().includes(n));
+    return {
+      totalRows: rows.length,
+      matches: hits.length,
+      sample: hits.slice(0, 6),
+      // Every distinct person in the store, so a near-miss is visible.
+      names: [...new Set(rows.map((r) => (r.payload as any)?.name).filter(Boolean))].sort(),
+    };
+  },
+});
