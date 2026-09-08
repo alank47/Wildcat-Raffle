@@ -23614,6 +23614,8 @@
         function updateCashTable(keepPage) {
             const periodFilter = document.getElementById('cashPeriodFilter').value;
             const gradeFilter = document.getElementById('cashGradeFilter').value;
+            const searchEl = document.getElementById('cashStudentSearch');
+            const search = (searchEl ? searchEl.value : '').trim().toLowerCase();
             const tbody = document.getElementById('cashStudentTableBody');
             const header = document.getElementById('cashClassHeader');
             const title = document.getElementById('cashClassTitle');
@@ -23658,6 +23660,31 @@
                 funnel.stage = scoped.scope === 'section' ? 'class period' : 'your class rosters';
             }
 
+            // SEARCH RUNS LAST, ON WHAT SCOPING ALREADY ALLOWED.
+            //
+            // Order is the whole security property here. Searching the roster
+            // first and scoping the matches afterwards would be the same rows
+            // in the end, but any later edit that forgot the second step would
+            // hand a teacher the whole school through the search box. Filtering
+            // the already-scoped set cannot do that: there is nothing in it to
+            // find that the teacher could not already award.
+            //
+            // Name is matched as "first last" AND "last, first", because the
+            // table is sorted the second way and people search the first way.
+            if (search) {
+                const beforeSearch = filteredStudents.length;
+                filteredStudents = filteredStudents.filter(st => {
+                    const first = String(st.firstName || '').toLowerCase();
+                    const last = String(st.lastName || '').toLowerCase();
+                    return (first + ' ' + last).indexOf(search) !== -1
+                        || (last + ', ' + first).indexOf(search) !== -1
+                        || String(st.studentNumber || '').toLowerCase().indexOf(search) !== -1
+                        || String(st.id || '').toLowerCase().indexOf(search) !== -1;
+                });
+                funnel.afterSearch = filteredStudents.length;
+                if (filteredStudents.length === 0 && beforeSearch > 0) funnel.stage = 'search';
+            }
+
             // A failed fetch is not an empty roster. Say which happened.
             if (!activeTeacherRoster() && sisRosterState === 'failed'
                 && !window.WildcatRoster.seesEveryStudent(currentUser && currentUser.role)) {
@@ -23694,6 +23721,16 @@
                     titleText = 'All Students';
                     subtitleText = `${filteredStudents.length} students total`;
                 }
+
+                // Said plainly, because a filtered table that looks like the
+                // whole roster is how someone awards the wrong child. Appended
+                // rather than replacing, so the period or grade in force is
+                // still visible alongside it.
+                if (search) {
+                    titleText += ' \u2014 matching \u201C' + search + '\u201D';
+                    subtitleText = `${filteredStudents.length} match` +
+                                   (filteredStudents.length === 1 ? '' : 'es');
+                }
                 
                 title.textContent = titleText;
                 subtitle.textContent = subtitleText;
@@ -23704,6 +23741,17 @@
             
             // Build table
             tbody.innerHTML = '';
+
+            // THE HEADER BOX FOLLOWS THE ROWS IT CLAIMS TO CONTROL.
+            //
+            // Every row below is drawn unchecked, so a "select all" left ticked
+            // from the previous view is a lie: it says the whole table is
+            // selected while nothing is. Harmless when redraws were rare;
+            // searching redraws on every keystroke, so a teacher would watch it
+            // stay ticked through a search and press Award believing the
+            // matches were selected.
+            const selectAllBox = document.getElementById('cashSelectAll');
+            if (selectAllBox) selectAllBox.checked = false;
             
             if (filteredStudents.length === 0) {
                 // An empty table that only says "empty" is a support ticket. This
@@ -23721,6 +23769,11 @@
                     // empties this is, and each one sends the reader somewhere
                     // different. Prefer its wording over a generic restatement.
                     why = funnel.scopeReason;
+                } else if (funnel.stage === 'search') {
+                    // A distinct message: nothing is wrong with the roster, the
+                    // typed text just matches nobody in it.
+                    why = `No student you can award matches \u201C${search}\u201D. ` +
+                          `Clear the search box to see all ${funnel.afterPeriod} again.`;
                 } else if (funnel.stage !== 'none') {
                     why = `${funnel.loaded} students are loaded, but the ${funnel.stage} matched none of them.`;
                 } else {

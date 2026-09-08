@@ -650,3 +650,102 @@ export const sectionPointsSyncErrors = internalQuery({
     });
   },
 });
+
+/**
+ * Find one person across the three places they can exist, before changing
+ * anything about them. Read-only, and it takes a name fragment because the
+ * whole question is usually "what address are they actually under".
+ */
+export const findStaff = internalQuery({
+  args: { needle: v.string() },
+  handler: async (ctx, { needle }) => {
+    const q = needle.trim().toLowerCase();
+    const hit = (...vals: unknown[]) =>
+      vals.some((v) => typeof v === "string" && v.toLowerCase().includes(q));
+
+    const dir = await ctx.db.query("entraDirectory").take(3000);
+    const teach = await ctx.db.query("teachers").take(2000);
+    const roster = await ctx.db.query("psRoster").take(4000);
+
+    const inDirectory = dir
+      .filter((d: any) => hit(d.email, d.displayName, d.givenName, d.surname))
+      .map((d: any) => ({
+        email: d.email, displayName: d.displayName, jobTitle: d.jobTitle ?? null,
+        accountEnabled: d.accountEnabled ?? null,
+      }));
+
+    const inTeachers = teach
+      .filter((t: any) => hit(t.email, t.name, t.psEmail))
+      .map((t: any) => ({
+        email: t.email, name: t.name, role: t.role,
+        psEmail: t.psEmail ?? null, id: t._id,
+      }));
+
+    // Do they have SIS sections at all? That is the difference between "no
+    // roster loaded" and "loaded, and it is empty".
+    const emails = new Set<string>();
+    inTeachers.forEach((t: any) => {
+      if (t.email) emails.add(String(t.email).toLowerCase());
+      if (t.psEmail) emails.add(String(t.psEmail).toLowerCase());
+    });
+    inDirectory.forEach((d: any) => { if (d.email) emails.add(String(d.email).toLowerCase()); });
+
+    const sections = new Map<string, number>();
+    let rosterRows = 0;
+    for (const r of roster as any[]) {
+      const te = typeof r.teacherEmail === "string" ? r.teacherEmail.toLowerCase() : "";
+      if (te && emails.has(te)) {
+        rosterRows++;
+        const k = String(r.sectionId ?? "?");
+        sections.set(k, (sections.get(k) ?? 0) + 1);
+      }
+    }
+
+    return {
+      inDirectory,
+      inTeachers,
+      sisRoster: {
+        emailsTried: [...emails],
+        rows: rosterRows,
+        sections: [...sections.entries()].map(([sectionId, students]) => ({ sectionId, students })),
+      },
+    };
+  },
+});
+
+/**
+ * Which teacher addresses does the SIS actually use, and does one of them
+ * belong to a person the app has under a different address?
+ *
+ * This is the Jazmin case: the app knew jazmink@, PowerSchool wrote jazmina@,
+ * and the roster join found nothing. Read-only; it returns staff addresses and
+ * section counts, never students.
+ */
+export const rosterTeacherSearch = internalQuery({
+  args: { needle: v.string() },
+  handler: async (ctx, { needle }) => {
+    const q = needle.trim().toLowerCase();
+    const rows = await ctx.db.query("psRoster").take(4000);
+    const byTeacher = new Map<string, { name: string | null; sections: Set<string>; rows: number }>();
+    for (const r of rows as any[]) {
+      const em = typeof r.teacherEmail === "string" ? r.teacherEmail.toLowerCase() : "";
+      const nm = typeof r.teacherName === "string" ? r.teacherName : null;
+      if (!em && !nm) continue;
+      const key = em || `name:${nm}`;
+      const e = byTeacher.get(key) ?? { name: nm, sections: new Set<string>(), rows: 0 };
+      if (nm && !e.name) e.name = nm;
+      e.sections.add(String(r.sectionId ?? "?"));
+      e.rows++;
+      byTeacher.set(key, e);
+    }
+    const all = [...byTeacher.entries()].map(([email, v]) => ({
+      teacherEmail: email, teacherName: v.name, sections: v.sections.size, rows: v.rows,
+    }));
+    return {
+      matches: all.filter((t) =>
+        (t.teacherEmail && t.teacherEmail.includes(q)) ||
+        (t.teacherName && t.teacherName.toLowerCase().includes(q))),
+      totalTeachersInRoster: all.length,
+    };
+  },
+});
