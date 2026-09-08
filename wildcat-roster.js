@@ -330,7 +330,96 @@
     return 'My students';
   }
 
+
+  /**
+   * The students nobody is noticing.
+   *
+   * THE PROBLEM, in the school's own words: quiet, well-behaved children do not
+   * earn as many points. They are never a problem, so they are never the reason
+   * an adult opens the app, and the reward system quietly passes them by. The
+   * school already had a definition -- below the average number of teacher
+   * interactions, but above the 5:1 positivity ratio -- and this is that,
+   * with one addition it needs to work at both ends of the volume range.
+   *
+   * TWO GROUPS, NOT ONE.
+   *
+   *   never    no interactions at all in the window
+   *   quiet    below average interactions AND at least 83% positive
+   *
+   * The strict definition cannot include the first group: a student with zero
+   * interactions has no positivity ratio to be above. But that student is the
+   * most invisible child in the room, and measured against production on
+   * 2026-09-07 -- 64 movements across 754 students, an average of 0.085 --
+   * "below average" WAS "has zero", so the strict rule returned nobody at all.
+   * At launch volume the second group fills out and the first shrinks. Both are
+   * reported, labelled, so the list is useful on day one and still correct in
+   * March.
+   *
+   * THE AVERAGE IS OVER THE STUDENTS PASSED IN, not the school. A teacher's
+   * question is "who in MY class am I missing", and an average taken across
+   * their own roster self-calibrates to how much that teacher awards.
+   *
+   * 83% is 5 positives to 1 correction, the same ratio the dashboard gauge and
+   * the sidebar tips use. One number, three places.
+   */
+  var POSITIVITY_FLOOR = 5 / 6;   // 5:1, to the same precision everywhere
+
+  function quietStudents(opts) {
+    var o = opts || {};
+    var roster = o.students || [];
+    var byStudent = o.interactions || {};   // id -> { positive, negative }
+    var limit = typeof o.limit === 'number' ? o.limit : 8;
+
+    if (!roster.length) return { never: [], quiet: [], average: 0, considered: 0 };
+
+    var rows = roster.map(function (s) {
+      var e = byStudent[String(s && s.id)] || {};
+      var pos = Number(e.positive) || 0;
+      var neg = Number(e.negative) || 0;
+      var total = pos + neg;
+      return {
+        student: s,
+        positive: pos,
+        negative: neg,
+        total: total,
+        // null, not 0: no interactions is no ratio. A 0 here would read as
+        // "entirely negative", which is the opposite of the truth.
+        positivity: total ? pos / total : null
+      };
+    });
+
+    var sum = rows.reduce(function (n, r) { return n + r.total; }, 0);
+    var average = sum / rows.length;
+
+    var never = rows.filter(function (r) { return r.total === 0; });
+    var quiet = rows.filter(function (r) {
+      return r.total > 0 && r.total < average && r.positivity >= POSITIVITY_FLOOR;
+    });
+
+    // Least noticed first in both, so the top of the list is the child who has
+    // had the least attention rather than whoever sorts first alphabetically.
+    var byNeed = function (a, b) {
+      if (a.total !== b.total) return a.total - b.total;
+      var an = ((a.student && a.student.lastName) || '') + ((a.student && a.student.firstName) || '');
+      var bn = ((b.student && b.student.lastName) || '') + ((b.student && b.student.firstName) || '');
+      return an.localeCompare(bn);
+    };
+    never.sort(byNeed);
+    quiet.sort(byNeed);
+
+    return {
+      average: average,
+      considered: rows.length,
+      neverCount: never.length,
+      quietCount: quiet.length,
+      never: never.slice(0, limit),
+      quiet: quiet.slice(0, limit)
+    };
+  }
+
   root.WildcatRoster = {
+    quietStudents: quietStudents,
+    POSITIVITY_FLOOR: POSITIVITY_FLOOR,
     ALL_STUDENT_ROLES: ALL_STUDENT_ROLES,
     SLOT_MAP: SLOT_MAP,
     classifySection: classifySection,

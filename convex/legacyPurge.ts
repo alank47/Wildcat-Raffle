@@ -369,3 +369,62 @@ export const savePayloadSize = internalQuery({
     };
   },
 });
+
+/** Would the "quiet kids" metric surface anything useful at current volume? */
+export const quietKidsProbe = internalQuery({
+  args: { days: v.optional(v.number()) },
+  handler: async (ctx, { days }) => {
+    const since = Date.now() - (days ?? 30) * 86400000;
+
+    // Every cash movement, from both stores, deduped by id -- the same union
+    // the app takes at load.
+    const seen = new Set<string>();
+    const moves: Array<{ studentId: string; amount: number }> = [];
+    const weekRows = await ctx.db
+      .query("legacyMirror")
+      .withIndex("by_doc_collection", (q) =>
+        q.eq("doc", "cash_tx_2026_W36").eq("collection", "transactions"))
+      .take(3000);
+    for (const r of weekRows) {
+      const p = r.payload as any;
+      if (!p?.id || seen.has(p.id)) continue;
+      if (new Date(p.timestamp ?? 0).getTime() < since) continue;
+      seen.add(p.id);
+      moves.push({ studentId: String(p.studentId ?? ""), amount: Number(p.amount) || 0 });
+    }
+    const students = await ctx.db.query("students").take(2000);
+    for (const s of students) {
+      for (const t of ((s as any).wildcatCashTransactions ?? [])) {
+        if (!t?.id || seen.has(t.id)) continue;
+        if (new Date(t.timestamp ?? 0).getTime() < since) continue;
+        seen.add(t.id);
+        moves.push({ studentId: String(t.studentId ?? s.legacyId ?? ""), amount: Number(t.amount) || 0 });
+      }
+    }
+
+    const per: Record<string, { pos: number; neg: number }> = {};
+    for (const m of moves) {
+      if (!m.studentId) continue;
+      const e = (per[m.studentId] ??= { pos: 0, neg: 0 });
+      if (m.amount > 0) e.pos++; else if (m.amount < 0) e.neg++;
+    }
+
+    const enrolled = students.filter((s: any) => s.enrolled !== false);
+    const counts = enrolled.map((s: any) => {
+      const e = per[String(s.legacyId ?? "")] ?? { pos: 0, neg: 0 };
+      return e.pos + e.neg;
+    });
+    const total = counts.reduce((a, b) => a + b, 0);
+    const avg = counts.length ? total / counts.length : 0;
+
+    return {
+      windowDays: days ?? 30,
+      movements: moves.length,
+      enrolled: enrolled.length,
+      studentsWithAnyInteraction: counts.filter((c) => c > 0).length,
+      averageInteractions: Number(avg.toFixed(3)),
+      belowAverage: counts.filter((c) => c < avg).length,
+      atZero: counts.filter((c) => c === 0).length,
+    };
+  },
+});

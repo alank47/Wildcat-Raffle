@@ -29496,6 +29496,101 @@
          * staff comparing screens would see different advice. The index comes
          * from the date, so it changes overnight and is stable all day.
          */
+        /** How far back the quiet-students panel looks. */
+        const QUIET_WINDOW_DAYS = 30;
+
+        /**
+         * The students nobody is awarding.
+         *
+         * The rule is WildcatRoster.quietStudents, kept pure and tested; this
+         * gathers the two inputs it needs -- who is in this teacher's classes,
+         * and how many times each has been interacted with -- and draws the
+         * result.
+         *
+         * Thirty days, not this week. A week at launch volume is a handful of
+         * movements per teacher, and an average taken over that is noise; a
+         * child who has been quiet for a month is the one worth surfacing.
+         */
+        function wcRenderQuietStudents(seesAll) {
+            const panel = document.getElementById('dashQuietPanel');
+            const list = document.getElementById('dashQuietList');
+            const chip = document.getElementById('dashQuietChip');
+            const sub = document.getElementById('dashQuietSub');
+            if (!panel || !list) return;
+
+            const R = window.WildcatRoster;
+            if (!R || typeof R.quietStudents !== 'function') { panel.hidden = true; return; }
+
+            // The teacher's own classes, through the same helper Award Cash
+            // uses, so this panel and that screen cannot disagree about who is
+            // in the room.
+            const scoped = R.scopeStudents({
+                students: enrolledStudents(),
+                role: currentUser && currentUser.role,
+                roster: activeTeacherRoster(),
+                sectionId: null
+            });
+            const mine = scoped.students || [];
+            if (!mine.length) { panel.hidden = true; return; }
+
+            const since = Date.now() - QUIET_WINDOW_DAYS * 86400000;
+            const interactions = {};
+            (Array.isArray(cashTransactions) ? cashTransactions : []).forEach(t => {
+                if (!t || !t.studentId || !t.timestamp) return;
+                if (new Date(t.timestamp).getTime() < since) return;
+                const amt = Number(t.amount) || 0;
+                if (!amt) return;
+                const e = (interactions[String(t.studentId)] ||= { positive: 0, negative: 0 });
+                if (amt > 0) e.positive += 1; else e.negative += 1;
+            });
+
+            const res = R.quietStudents({ students: mine, interactions: interactions, limit: 6 });
+            const rows = res.never.concat(res.quiet);
+
+            if (!rows.length) {
+                panel.hidden = false;
+                if (chip) chip.textContent = 'all noticed';
+                if (sub) sub.textContent =
+                    'Everyone in your classes has been awarded in the last ' + QUIET_WINDOW_DAYS + ' days.';
+                list.innerHTML = '<p class="wu-absent">Nothing to flag. That is the goal.</p>';
+                return;
+            }
+
+            panel.hidden = false;
+            const totalFlagged = res.neverCount + res.quietCount;
+            if (chip) chip.textContent = totalFlagged + ' of ' + res.considered;
+            if (sub) {
+                sub.textContent = seesAll
+                    ? 'Students awarded less than average, who are doing nothing wrong.'
+                    : 'Students in your classes awarded less than average, who are doing nothing wrong.';
+            }
+
+            list.innerHTML = rows.map(r => {
+                const s = r.student || {};
+                const name = escapeHtml(((s.firstName || '') + ' ' + (s.lastName || '')).trim() || 'Student');
+                const grade = s.grade ? 'Grade ' + escapeHtml(String(s.grade)) : '';
+                // Two different facts, said differently. "0 awards" is not a
+                // low score, it is no score, and a teacher reads them
+                // differently.
+                const note = r.total === 0
+                    ? '<span class="wc-quiet-never">never awarded</span>'
+                    : '<span class="wc-quiet-few">' + r.total + ' award' + (r.total === 1 ? '' : 's') +
+                      ' &middot; ' + Math.round(r.positivity * 100) + '% positive</span>';
+                return '<button type="button" class="wc-quiet-row" ' +
+                       'onclick="openStudentProfile(\'' + escapeHtml(String(s.id)) + '\')" ' +
+                       'aria-label="Open ' + name + '">' +
+                           '<span class="wc-quiet-main">' +
+                               '<span class="wc-quiet-name">' + name + '</span>' +
+                               (grade ? '<span class="wc-quiet-grade">' + grade + '</span>' : '') +
+                           '</span>' +
+                           note +
+                       '</button>';
+            }).join('') +
+            (totalFlagged > rows.length
+                ? '<p class="wc-quiet-more">and ' + (totalFlagged - rows.length) + ' more</p>'
+                : '');
+        }
+
         const PBIS_TIPS = [
             {
                 title: 'Name the behaviour',
@@ -30225,6 +30320,9 @@
                     : wcSubring('Positive', 'this week', positives, 'good') +
                       wcSubring('Corrective', 'this week', negatives, negatives ? 'bad' : null);
             }
+
+            // ---- Who is not being noticed ---------------------------
+            wcRenderQuietStudents(seesAll);
 
             // ---- Day strip -----------------------------------------
             // Today first, then backwards. The reference's strip runs forward

@@ -3112,6 +3112,46 @@ body {
 .pbis-dot.is-on { background: #fff; transform: scale(1.25); }
 .pbis-dot:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 
+/* ---- "Not being noticed" ------------------------------------------------
+   Rows, not cards. Each one is a child a teacher might award in the next
+   minute, so the list has to read as a short queue rather than a report. */
+.wc-quiet-list { display: flex; flex-direction: column; gap: 6px; }
+
+.wc-quiet-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    width: 100%; text-align: left;
+    padding: 9px 11px;
+    border: 1px solid var(--wc-line, #E7ECF2); border-radius: 10px;
+    background: var(--wc-surface, #fff);
+    font-family: inherit; font-size: 13px; cursor: pointer;
+    transition: border-color .15s ease, background .15s ease;
+}
+.wc-quiet-row:hover { border-color: var(--wc-blue, #2F67A7); background: var(--wc-blue-mist, #EAF1F9); }
+.wc-quiet-row:focus-visible { outline: 2px solid var(--wc-blue, #2F67A7); outline-offset: 2px; }
+
+.wc-quiet-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.wc-quiet-name { font-weight: 600; color: var(--wc-ink, #14171C); }
+.wc-quiet-grade { font-size: 11.5px; color: var(--wc-gray-text, #8892a0); }
+
+/* Never awarded is not a low score, it is no score. Amber says "look at this",
+   which is the whole point; green would say "fine" and red would say "wrong",
+   and the child has done nothing wrong. */
+.wc-quiet-never {
+    flex: none;
+    font-size: 11.5px; font-weight: 600; white-space: nowrap;
+    padding: 3px 9px; border-radius: 999px;
+    background: var(--wc-amber-mist, #FFF6E5); color: var(--wc-amber-deep, #8A5A00);
+}
+.wc-quiet-few {
+    flex: none;
+    font-size: 11.5px; white-space: nowrap;
+    color: var(--wc-gray-text, #8892a0);
+}
+.wc-quiet-more {
+    margin: 4px 0 0; font-size: 12px;
+    color: var(--wc-gray-text, #8892a0);
+}
+
 /* The rotation is decoration. Somebody who has asked for less motion gets the
    tips without the fade, and the dots still work. */
 @media (prefers-reduced-motion: reduce) {
