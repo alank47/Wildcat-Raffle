@@ -264,44 +264,31 @@
         // saveInBackground was still in flight when the page reloaded under
         // it, and the referral existed only in memory.
         //
-        // NOW: compare the VERSION, and never reload without being asked.
+        // NOW: compare the VERSION, and reload only at a free moment.
         //
         // index.html carries the deployed version in its ?v= cache buster.
         // Comparing that to the one this page loaded answers the actual
-        // question. A mismatch shows a bar; the person clicks it when they are
-        // between tasks. Nothing is reloaded out from under a save.
+        // question. A mismatch arms the automatic path below, which waits for
+        // a moment when losing the screen costs nothing. Nothing is shown, and
+        // nothing is reloaded out from under a save.
         const APP_VERSION = (function () {
             var tag = document.querySelector('script[src*="script.js?v="]');
             var m = tag && /[?&]v=([^"&]+)/.exec(tag.getAttribute('src'));
             return m ? m[1] : null;
         })();
 
-        function showUpdateBar(newVersion) {
-            // The bar stays, for anyone actively using the tab who would rather
-            // update now than wait for a free moment. The automatic path below
-            // is what covers the tab nobody is looking at.
+        function noteUpdateAvailable(newVersion) {
+            // SILENT ON PURPOSE. This used to build a bar with Reload now and
+            // Later. Later brought it back on the next five minute check, and
+            // once the cache had handed back the old version it stayed for the
+            // whole session. Teachers asked for it to go (2026-09-08). The
+            // automatic path is the system; the log line is for the morning
+            // somebody asks why a tab has not updated yet.
+            if (pendingUpdateVersion !== newVersion) {
+                console.log('[update] new version available:', newVersion, 'running:', APP_VERSION);
+            }
             pendingUpdateVersion = newVersion;
             maybeApplyUpdate();
-            if (document.getElementById('wcUpdateBar')) return;   // already shown
-            var bar = document.createElement('div');
-            bar.id = 'wcUpdateBar';
-            bar.className = 'wc-update-bar';
-            bar.innerHTML =
-                '<span>A new version of Wildcat Hub is available.</span>' +
-                '<button type="button" class="wc-update-reload">Reload now</button>' +
-                '<button type="button" class="wc-update-later" aria-label="Dismiss">Later</button>';
-            bar.querySelector('.wc-update-reload').addEventListener('click', function () {
-                // Flush anything outstanding first. The whole point of not
-                // reloading unprompted is that a reload can eat unsaved work.
-                Promise.resolve(typeof saveData === 'function' ? saveData() : null)
-                    .catch(function () { /* reload anyway; the user asked */ })
-                    .then(function () { location.reload(); });
-            });
-            bar.querySelector('.wc-update-later').addEventListener('click', function () {
-                bar.remove();
-            });
-            document.body.appendChild(bar);
-            console.log('[update] new version available:', newVersion, 'running:', APP_VERSION);
         }
 
         async function checkForAppUpdate() {
@@ -312,7 +299,7 @@
                 const html = await res.text();
                 const m = /script\.js\?v=([^"&]+)/.exec(html);
                 if (m && m[1] && m[1] !== APP_VERSION) {
-                    showUpdateBar(m[1]);
+                    noteUpdateAvailable(m[1]);
                 } else if (m && m[1]) {
                     // Quiet, but present. This check was entirely silent when
                     // it found nothing, so there was no way to tell a tab that
@@ -374,6 +361,8 @@
                 hasUpdate: true,
                 newVersion: pendingUpdateVersion,
                 attemptedVersion: sessionStorage.getItem('wcUpdateAttempt'),
+                attemptedAt: Number(sessionStorage.getItem('wcUpdateAttemptAt')),
+                now: Date.now(),
                 savePending: (typeof _saveQueue !== 'undefined' && _saveQueue)
                     ? _saveQueue.isPending() : false,
                 busy: screenHasUnfinishedWork(),
@@ -386,7 +375,10 @@
             console.log(`[update] reloading to ${pendingUpdateVersion}: ${decision.reason}`);
             // Remembered BEFORE the reload, so a reload that fails to deliver
             // the new version cannot start a loop across every teacher's screen.
-            try { sessionStorage.setItem('wcUpdateAttempt', pendingUpdateVersion); } catch (e) {}
+            try {
+                sessionStorage.setItem('wcUpdateAttempt', pendingUpdateVersion);
+                sessionStorage.setItem('wcUpdateAttemptAt', String(Date.now()));
+            } catch (e) {}
 
             // Everything outstanding goes first. This is the failure that got
             // automatic reloads removed the first time.
@@ -394,6 +386,18 @@
                 console.warn('[update] flush before reload failed; not reloading:', (e && e.message) || e);
                 return;
             }
+
+            // Where they were. The tab is already remembered (wcRememberTab);
+            // the scroll position was not, and a reload that lands at the top
+            // of the screen is a reload somebody notices.
+            try {
+                sessionStorage.setItem('wcResume', JSON.stringify(
+                    window.WildcatUpdate.resumeSnapshot({
+                        version: pendingUpdateVersion,
+                        scrollY: window.scrollY,
+                        now: Date.now()
+                    })));
+            } catch (e) {}
 
             const target = window.WildcatUpdate.reloadUrl(location.href, pendingUpdateVersion);
             if (target) location.replace(target); else location.reload();
@@ -14942,6 +14946,25 @@
             }
         }
 
+        /**
+         * And the scroll position, after a silent self-update. Stashed by
+         * maybeApplyUpdate just before it reloads; anything older than two
+         * minutes is a tab that never reloaded and must not jump later.
+         * Applied after the tab restore, because the tab decides how tall the
+         * page is, and once more a beat later for panels that render from data.
+         */
+        function wcRestoreScroll() {
+            var raw = null;
+            try { raw = window.sessionStorage.getItem('wcResume'); } catch (e) { return; }
+            try { window.sessionStorage.removeItem('wcResume'); } catch (e) { /* as above */ }
+            if (!raw || !window.WildcatUpdate || !window.WildcatUpdate.resumeFrom) return;
+            var resume = window.WildcatUpdate.resumeFrom(raw, { now: Date.now() });
+            if (!resume || !resume.scrollY) return;
+            var go = function () { window.scrollTo(0, resume.scrollY); };
+            window.requestAnimationFrame(go);
+            setTimeout(go, 400);
+        }
+
         function switchTab(tabName) {
             wcRememberTab(tabName);
             // A tab was picked from the nav — on a phone, close the drawer so the
@@ -15499,7 +15522,7 @@
                 // report needs to say which version it came from.
                 out.version = {
                     running: typeof APP_VERSION !== 'undefined' ? APP_VERSION : null,
-                    updateBarShowing: Boolean(document.getElementById('wcUpdateBar'))
+                    updatePending: pendingUpdateVersion || null
                 };
 
                 const auth = window.WildcatAuth;
@@ -22217,21 +22240,24 @@
             // owns the loader and its own watch hides it.
             const _isRedirectReturn = /[#&](code|error|id_token|access_token)=/.test(String(window.location.hash || ''));
             let _bootLoaderShown = false;
-            let _bootLoaderTimer = null;
             try {
                 if (!_isRedirectReturn &&
                     (sessionStorage.getItem('currentUser') ||
                      sessionStorage.getItem('currentStudent') ||
                      sessionStorage.getItem('wc_student_idtoken'))) {
-                    // DELAYED, so a refresh that is already fast never flashes a
-                    // loader at anybody. The loader exists to cover the login
-                    // screen showing during a slow restore; on a warm refresh
-                    // the restore beats this timer and the loader never appears
-                    // at all, which is what "refresh should be instant" means in
-                    // practice. On a slow one it still does its original job.
-                    _bootLoaderTimer = setTimeout(function () {
-                        if (typeof showLoader === 'function') { showLoader('Welcome back…'); _bootLoaderShown = true; }
-                    }, 260);
+                    // A QUIET COVER, NOT THE WILDCAT. This used to arm the
+                    // mascot loader on a 260ms timer, meant to lose the race on
+                    // a fast refresh. The restore is a Convex round trip and is
+                    // never that fast, so every refresh with a live session ran
+                    // the animation and then held it for the 4s minimum. Once
+                    // the tab started updating itself silently, that was a four
+                    // second animation nobody asked for, several times a day.
+                    //
+                    // The animation belongs to signing in. A refresh gets the
+                    // same overlay with nothing on it and no minimum: the login
+                    // screen still never flashes, and the app appears the
+                    // moment the restore is done.
+                    if (typeof showLoader === 'function') { showLoader('', { quiet: true, minMs: 0 }); _bootLoaderShown = true; }
                 }
             } catch (e) { /* private mode etc. — the flash is the worst case */ }
 
@@ -22367,17 +22393,14 @@
             // Initialize Data & Analytics time filter to "All Time" by default
             setDataTimeFilter('allTime');
 
-            // The session is resolved (app shown, or login shown) — lift the
-            // boot cover if we put it up. hideLoader honours the app-wide 4s
-            // minimum, so a fast restore still shows the loader for the same beat
-            // as a sign-in rather than blinking.
+            // The session is resolved (app shown, or login shown). Put the
+            // person back where they were, then lift the quiet cover.
             // Last, because the role branches above have finished deciding what
             // this person may see, and the restore has to respect that.
             try { wcRestoreTab(); } catch (e) { /* position is a nicety; never block boot */ }
+            try { wcRestoreScroll(); } catch (e) { /* as above */ }
 
-            // Cancels a loader that was scheduled but has not fired: the common
-            // case on a warm refresh, and the reason nothing flashes.
-            if (_bootLoaderTimer) { clearTimeout(_bootLoaderTimer); _bootLoaderTimer = null; }
+            // The quiet cover has no minimum, so this lifts it at once.
             if (_bootLoaderShown && typeof hideLoader === 'function') hideLoader();
         })();
 
@@ -26618,8 +26641,13 @@
         function showLoader(message, opts) {
             const el = document.getElementById('wildcatLoader');
             if (!el) return;
+            // The quiet variant: the same cover with nothing on it, for a
+            // refresh that already has a session. No mascot, no message, and
+            // the gif is not fetched for it. The animation is for signing in.
+            const quiet = Boolean(opts && opts.quiet);
+            el.classList.toggle('is-quiet', quiet);
             const img = document.getElementById('wildcatLoaderMascot');
-            if (img && !img.getAttribute('src')) img.setAttribute('src', 'assets/wildcat-loader.gif');
+            if (img && !quiet && !img.getAttribute('src')) img.setAttribute('src', 'assets/wildcat-loader.gif');
             const msg = document.getElementById('wildcatLoaderMsg');
             if (msg) msg.textContent = (message == null || message === '') ? 'Loading…' : String(message);
             el.classList.add('is-on');

@@ -549,10 +549,13 @@ check("the update check compares a VERSION, not a timestamp",
 // on purpose, and a guard that forbids naming a bug stops it being explained.
 check("SCRIPT_LOAD_TIME is gone from the CODE (the comment may still explain it)",
   !script.split("\n").some((l) => /SCRIPT_LOAD_TIME/.test(l) && !/^\s*(\/\/|\*)/.test(l)));
-check("an available update surfaces as a dismissible bar",
-  /wcUpdateBar/.test(script) && /wc-update-later/.test(script));
-check("and the reload button flushes a save before reloading",
-  /saveData\(\)[\s\S]{0,200}location\.reload\(\)/.test(script));
+// The bar went on 2026-09-08: it came back after Later on every check and
+// stayed all session once the cache handed back the old version. The update is
+// applied silently at a free moment instead (self-update.test.mjs).
+check("an available update is never a bar",
+  !/wcUpdateBar/.test(script) && !/wc-update-later/.test(script));
+check("and the automatic reload flushes saves before reloading",
+  /await flushSaves\(\);[\s\S]{0,1000}location\.replace\(target\)/.test(script));
 
 console.log("\nThe referral save merges, and the merge is atomic");
 // referral-save.test.mjs models this path. These assertions keep the model
