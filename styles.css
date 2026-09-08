@@ -3118,9 +3118,12 @@ body {
 .wc-quiet-list { display: flex; flex-direction: column; gap: 6px; }
 
 .wc-quiet-row {
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    width: 100%; text-align: left;
-    padding: 9px 11px;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    /* box-sizing so the border cannot push the row past 100% of the padded
+       list, which is what made the cards look clipped at the right edge. */
+    width: 100%; box-sizing: border-box; max-width: 100%;
+    text-align: left;
+    padding: 8px 10px;
     border: 1px solid var(--wc-line, #E7ECF2); border-radius: 10px;
     background: var(--wc-surface, #fff);
     font-family: inherit; font-size: 13px; cursor: pointer;
@@ -3155,10 +3158,10 @@ body {
     font-size: 11.5px; white-space: nowrap;
     color: var(--wc-gray-text, #8892a0);
 }
-/* Aligned with the rows above it, not with the panel edge -- it read as
-   detached text sitting outside the list it belongs to. */
+/* No indent of its own: the list is padded now, so the footer lines up with
+   the rows by sitting in the same box rather than by nudging itself over. */
 .wc-quiet-more {
-    margin: 2px 0 0; padding: 0 11px;
+    margin: 4px 0 0;
     font-size: 12px; line-height: 1.4;
     color: var(--wc-gray-text, #8892a0);
 }
@@ -3190,8 +3193,15 @@ body {
    A bar that fills, not a badge that is won. The satisfying part of a daily
    target is watching it close, so the track is always visible and the reached
    state is a change of colour rather than a different component appearing. */
-/* Its own panel now, so it needs no inner card of its own -- the panel is the
-   box. Only the track, the numbers under it, and the reached state. */
+/* .wu-panel carries NO padding of its own -- it lives on .wu-panel-head, which
+   is why a body added as a direct child sits flush against the panel edge.
+   Both of these bodies match the head's 20px sides and close the box at the
+   bottom, which is what "too close to the edge" and "cut off" were. */
+.wc-goal-panel #dashGoalBody,
+#dashQuietList {
+    padding: 0 var(--wu-s5, 20px) var(--wu-s5, 20px);
+}
+
 .wc-goal-panel .wu-chip { font-variant-numeric: tabular-nums; }
 
 .wc-goal-track {

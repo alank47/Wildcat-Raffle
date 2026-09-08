@@ -256,8 +256,15 @@ console.log("\nThe goal and the comparison are on screen");
     /\.wc-goal-panel\.is-hit \.wc-goal-fill \{[^}]*--wc-green-deep/.test(css));
   check("a long student name truncates instead of pushing the badge out",
     /\.wc-quiet-name \{[^}]*text-overflow: ellipsis/.test(css));
-  check("and the footer lines up with the rows above it",
-    /\.wc-quiet-more \{[^}]*padding: 0 11px/.test(css));
+  // .wu-panel carries NO padding of its own -- it lives on .wu-panel-head. A
+  // body added as a direct child therefore sits flush against the panel edge,
+  // which is what "too close to the edge" and "cut off" were.
+  check("both panel bodies carry the head's own side padding",
+    /#dashGoalBody,\s*\n#dashQuietList \{[^}]*--wu-s5/.test(css));
+  check("a row cannot outgrow its padded list",
+    /\.wc-quiet-row \{[^}]*box-sizing: border-box[^}]*max-width: 100%/s.test(css));
+  check("and the footer no longer fakes the alignment with an indent",
+    /\.wc-quiet-more \{(?:(?!padding)[^}])*\}/.test(css));
   check("the fill animates, and not for anyone who asked it not to",
     /prefers-reduced-motion[\s\S]{0,140}\.wc-goal-fill \{ transition: none/.test(css));
 }
