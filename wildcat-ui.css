@@ -1319,6 +1319,11 @@
     font-weight: 600;
     letter-spacing: .01em;
 }
+/* The quiet cover: a refresh that already has a session. The overlay still
+   hides the login screen while the restore runs, but nothing is shown on it
+   and script.js gives it no minimum, so it is a beat of ground rather than an
+   animation. The running wildcat is for signing in. */
+.wildcat-loader.is-quiet .wildcat-loader__inner { display: none; }
 /* Lock the page behind the overlay while it is up. */
 body.wc-loading { overflow: hidden; }
 

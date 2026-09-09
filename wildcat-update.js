@@ -27,14 +27,31 @@
  * version -- which is exactly what happens inside the ten minute cache window
  * -- an unguarded rule reloads again, and again, forever, on every teacher's
  * screen at once. That is far worse than a stale version. Hence
- * `attemptedVersion`: one automatic attempt per version, and if the attempt
- * does not change what is running, it stops and leaves the bar for a human.
+ * `attemptedVersion` and `attemptedAt`: one automatic attempt per version per
+ * cache window. If the attempt does not change what is running, the tab waits
+ * out the window and tries once more, rather than parking the version on a
+ * bar for a human. The bar itself went on 2026-09-08: it came back after
+ * Later on every check, and teachers asked for it to go. Nothing is shown.
+ *
+ * AND IT COMES BACK TO THE SAME PLACE. The tab is already remembered across a
+ * refresh; `resumeSnapshot` and `resumeFrom` carry the scroll position too,
+ * so a silent reload lands where the person was rather than at the top.
  */
 (function (root) {
   'use strict';
 
   /** How long a teacher must have been idle before a reload counts as free. */
   var IDLE_MS = 120000;
+
+  /**
+   * How long index.html is cached for (cache-control: max-age=600). A reload
+   * inside this window can be answered with the same file, so the same
+   * version is not attempted again until it has passed.
+   */
+  var RETRY_MS = 600000;
+
+  /** A resume snapshot older than this belongs to a tab that never reloaded. */
+  var RESUME_MAX_AGE_MS = 120000;
 
   /**
    * Should this tab reload itself right now?
@@ -48,12 +65,23 @@
 
     if (!s.hasUpdate) return { reload: false, reason: 'up to date' };
 
-    // ONE ATTEMPT PER VERSION. If a reload already happened for this version
-    // and the version on screen still is not it, reloading again will not help
-    // -- the browser is serving the cached index.html and will keep doing so
-    // until it expires. Stop, and let the bar ask a person.
+    // ONE ATTEMPT PER VERSION PER CACHE WINDOW. If a reload already happened
+    // for this version and the version on screen still is not it, reloading
+    // again right away will not help: the browser is serving the cached
+    // index.html and will keep doing so until it expires. Wait the window
+    // out, then try once more. An attempt recorded without a time (by code
+    // older than this rule) gets one more try, and that one is timestamped.
     if (s.attemptedVersion && s.attemptedVersion === s.newVersion) {
-      return { reload: false, reason: 'already tried this version; leaving it to the bar' };
+      var at = Number(s.attemptedAt);
+      var now = Number(s.now);
+      var retry = typeof s.retryMs === 'number' ? s.retryMs : RETRY_MS;
+      if (isFinite(at) && at > 0 && isFinite(now) && now - at < retry) {
+        return {
+          reload: false,
+          reason: 'tried this version ' + Math.round((now - at) / 1000) + 's ago; ' +
+            'the cache may still hold the old one, retrying after ' + Math.round(retry / 60000) + ' minutes'
+        };
+      }
     }
 
     // NEVER OVER UNSAVED WORK. This is the failure that got automatic reloads
@@ -112,10 +140,52 @@
     return url.toString();
   }
 
+  /**
+   * What to remember just before a silent reload: the version being loaded,
+   * the scroll position, and when this was taken. Small on purpose; the
+   * active tab is already remembered by the view restore.
+   */
+  function resumeSnapshot(state) {
+    var s = state || {};
+    var y = Number(s.scrollY);
+    return {
+      v: s.version == null ? null : String(s.version),
+      y: isFinite(y) && y > 0 ? Math.round(y) : 0,
+      at: Number(s.now) || 0
+    };
+  }
+
+  /**
+   * Read a snapshot back after boot. Null for anything that should not move
+   * the screen: garbage, a missing or negative position, or a snapshot old
+   * enough that the tab it came from never actually reloaded.
+   */
+  function resumeFrom(raw, opts) {
+    if (!raw) return null;
+    var snap;
+    try {
+      snap = JSON.parse(String(raw));
+    } catch (e) {
+      return null;
+    }
+    if (!snap || typeof snap !== 'object') return null;
+    var y = Number(snap.y);
+    if (!isFinite(y) || y < 0) return null;
+    var now = Number(opts && opts.now);
+    var at = Number(snap.at);
+    var maxAge = (opts && typeof opts.maxAgeMs === 'number') ? opts.maxAgeMs : RESUME_MAX_AGE_MS;
+    if (!isFinite(at) || !isFinite(now) || now - at > maxAge) return null;
+    return { scrollY: y, version: snap.v == null ? null : String(snap.v) };
+  }
+
   root.WildcatUpdate = {
     IDLE_MS: IDLE_MS,
+    RETRY_MS: RETRY_MS,
+    RESUME_MAX_AGE_MS: RESUME_MAX_AGE_MS,
     shouldAutoReload: shouldAutoReload,
     reloadUrl: reloadUrl,
-    cleanUrl: cleanUrl
+    cleanUrl: cleanUrl,
+    resumeSnapshot: resumeSnapshot,
+    resumeFrom: resumeFrom
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
