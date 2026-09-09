@@ -135,6 +135,57 @@ const MAX_ROWS_PER_SLICE = 20000;
  * what tombstones are for, and treating absence as intent is exactly how a
  * stale tab deletes another teacher's work.
  */
+/**
+ * When a row was last touched, as a number, from the same stamps the client's
+ * wildcat-merge.js reads: the LATEST of updatedAt, loopClosedAt, closedAt and
+ * submittedAt. Zero for a row with no usable stamp, so such rows never win a
+ * collision and the stored-wins rule holds for them unchanged.
+ */
+function touchedAt(payload: unknown): number {
+  if (!payload || typeof payload !== "object") return 0;
+  const p = payload as Record<string, unknown>;
+  let best = 0;
+  for (const field of ["updatedAt", "loopClosedAt", "closedAt", "submittedAt"]) {
+    const raw = p[field];
+    const t = typeof raw === "number" ? raw : typeof raw === "string" ? Date.parse(raw) : NaN;
+    if (Number.isFinite(t) && t > best) best = t;
+  }
+  return best;
+}
+
+/**
+ * Union incoming cash rows into what is stored, by transaction id. Stored rows
+ * are never deleted; a row is inserted only if its id is not already there. A
+ * row with no id cannot be compared and is kept rather than dropped.
+ *
+ * Pure, so it can be tested against the exact shape of the incident: a tab
+ * that loaded the week an hour ago sending back its snapshot after a
+ * colleague's award landed.
+ */
+export function unionCashRows(
+  existing: Array<{ payload: unknown }>,
+  rows: Array<{ key?: string; payload: unknown }>,
+): Array<{ key?: string; payload: unknown }> {
+  const idOf = (p: unknown) =>
+    p && typeof p === "object" ? (p as Record<string, unknown>).id : undefined;
+  const seen = new Set<string>();
+  for (const r of existing) {
+    const id = idOf(r.payload);
+    if (id !== undefined && id !== null) seen.add(String(id));
+  }
+  const out: Array<{ key?: string; payload: unknown }> = [];
+  for (const r of rows) {
+    const id = idOf(r.payload);
+    if (id !== undefined && id !== null) {
+      const token = String(id);
+      if (seen.has(token)) continue;
+      seen.add(token);
+    }
+    out.push(r);
+  }
+  return out;
+}
+
 export const mergeSlice = mutation({
   args: {
     doc: v.string(),
@@ -191,7 +242,17 @@ export const mergeSlice = mutation({
     // touched this slice".
     const seen = new Set<string>();
     const keptStored: typeof existing = [];
+    const storedByToken = new Map<string, (typeof existing)[number]>();
     const toInsert: Array<{ key?: string; payload: unknown }> = [];
+    // A stored row whose incoming copy was touched more recently. Added
+    // 2026-09-09: "stored wins" was written for rows that never change once
+    // written (audit entries, ticket history). Referrals DO change: closing
+    // one, or closing its loop, sets updatedAt on the client and re-sends the
+    // list through this merge, and stored-wins threw the edit away every
+    // time while the tab logged "Referrals saved". Newer wins now, judged by
+    // the same stamps the client uses (wildcat-merge.js lastTouched). Rows
+    // without any stamp keep the old rule exactly.
+    const toUpdate: Array<{ id: (typeof existing)[number]["_id"]; payload: unknown }> = [];
     let anonymous = 0;
 
     const tokenFor = (r: { key?: string; payload: unknown }) => {
@@ -209,10 +270,18 @@ export const mergeSlice = mutation({
       if (seen.has(token)) continue;   // a duplicate ALREADY in storage
       seen.add(token);
       keptStored.push(r);
+      storedByToken.set(token, r);
     }
     for (const r of rows) {
       const token = tokenFor(r);
-      if (seen.has(token)) continue;   // stored wins
+      if (seen.has(token)) {
+        // Stored wins, unless the incoming copy is the same row touched later.
+        const stored = storedByToken.get(token);
+        if (stored && touchedAt(r.payload) > touchedAt(stored.payload)) {
+          toUpdate.push({ id: stored._id, payload: r.payload });
+        }
+        continue;
+      }
       seen.add(token);
       toInsert.push(r);
     }
@@ -236,6 +305,9 @@ export const mergeSlice = mutation({
         mirroredAt,
       });
     }
+    for (const u of toUpdate) {
+      await ctx.db.patch(u.id, { payload: u.payload, mirroredAt });
+    }
 
     return {
       doc,
@@ -244,6 +316,7 @@ export const mergeSlice = mutation({
       incoming: rows.length,
       // So a caller can see that a re-send of unchanged data wrote nothing.
       inserted: toInsert.length,
+      updated: toUpdate.length,
       deleted,
     };
 
@@ -271,6 +344,37 @@ export const saveSlice = mutation({
         q.eq("doc", doc).eq("collection", collection),
       )
       .collect();
+
+    // THE CASH LEDGER IS NEVER REPLACED. Added 2026-09-09, launch morning.
+    //
+    // The app sends each cash_tx_<week> document as the whole array it holds
+    // in memory, and this handler deleted every stored row before writing it.
+    // Two teachers awarding cash in the same week from tabs loaded at
+    // different times: whichever save landed second deleted the other's
+    // award, because its snapshot had never seen it. That is the one write
+    // path in the app where concurrency destroyed work rather than delaying
+    // it, and forty teachers award in the same week every week.
+    //
+    // A cash movement is only ever added, never edited, and carries a unique
+    // id, so the correct operation is a union by id. Done HERE, on the doc
+    // name, so a tab still running the old client is protected the moment
+    // this deploys; the client stops sending rows it knows are stored in the
+    // same change.
+    if (doc.startsWith("cash_tx_")) {
+      const fresh = unionCashRows(old, rows);
+      const mirroredAt = new Date().toISOString();
+      for (const r of fresh) {
+        await ctx.db.insert("legacyMirror", {
+          doc,
+          collection,
+          key: r.key,
+          payload: r.payload,
+          mirroredAt,
+        });
+      }
+      return { doc, collection, wrote: fresh.length, replaced: 0, unioned: true };
+    }
+
     for (const r of old) await ctx.db.delete(r._id);
 
     const mirroredAt = new Date().toISOString();

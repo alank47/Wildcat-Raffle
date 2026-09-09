@@ -11,6 +11,7 @@
 import type * as accessRules from "../accessRules.js";
 import type * as appData from "../appData.js";
 import type * as appDataShape from "../appDataShape.js";
+import type * as attendanceList from "../attendanceList.js";
 import type * as auditLog from "../auditLog.js";
 import type * as auditMigrate from "../auditMigrate.js";
 import type * as auditMigrateRead from "../auditMigrateRead.js";
@@ -39,6 +40,7 @@ import type * as push from "../push.js";
 import type * as pushSend from "../pushSend.js";
 import type * as raceRollup from "../raceRollup.js";
 import type * as restrictedPolicy from "../restrictedPolicy.js";
+import type * as roleChangeRules from "../roleChangeRules.js";
 import type * as rosterEmail from "../rosterEmail.js";
 import type * as scheduleRules from "../scheduleRules.js";
 import type * as seed from "../seed.js";
@@ -71,6 +73,7 @@ declare const fullApi: ApiFromModules<{
   accessRules: typeof accessRules;
   appData: typeof appData;
   appDataShape: typeof appDataShape;
+  attendanceList: typeof attendanceList;
   auditLog: typeof auditLog;
   auditMigrate: typeof auditMigrate;
   auditMigrateRead: typeof auditMigrateRead;
@@ -99,6 +102,7 @@ declare const fullApi: ApiFromModules<{
   pushSend: typeof pushSend;
   raceRollup: typeof raceRollup;
   restrictedPolicy: typeof restrictedPolicy;
+  roleChangeRules: typeof roleChangeRules;
   rosterEmail: typeof rosterEmail;
   scheduleRules: typeof scheduleRules;
   seed: typeof seed;

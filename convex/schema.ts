@@ -51,7 +51,10 @@ export default defineSchema({
     psEmail: v.optional(v.string()),
     // NOTE: no `password` field, deliberately. The cleartext password column is
     // what this whole migration exists to delete. Do not carry it across.
-  }).index("by_email", ["email"]),
+  })
+    .index("by_email", ["email"])
+    // Same reason as students.by_legacyId: a save reads only its own rows.
+    .index("by_legacyId", ["legacyId"]),
 
   // Students. Joined to Google by email once PowerSchool manifest field 19
   // (Student Email) is approved and syncing. Optional until then: records exist
@@ -124,7 +127,10 @@ export default defineSchema({
     dailyPassLimit: v.optional(v.number()),
   })
     .index("by_email", ["email"])
-    .index("by_studentNumber", ["studentNumber"]),
+    .index("by_studentNumber", ["studentNumber"])
+    // So a save can look up the students it was SENT instead of reading the
+    // whole table inside the mutation. See appData.ts, lookupStudents.
+    .index("by_legacyId", ["legacyId"]),
 
   // Was five separate ticket_history* documents split by school and grade band
   // (ms, hs, hs_910, hs_1112). Splitting existed to keep blobs under Firestore's

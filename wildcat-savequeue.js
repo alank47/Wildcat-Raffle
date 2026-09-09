@@ -145,6 +145,25 @@
 
       inFlight = settled.then(function (result) {
         inFlight = null;
+        // A SAVE THAT SAYS false DID NOT SAVE. saveData resolves false on
+        // every path that refuses (a stale tab, a guard, another save still
+        // running) and never rejects. Treating that as success meant the
+        // queue went quiet with the work still in memory and nothing would
+        // ever write it: a referral or an award sat in one tab until the next
+        // unrelated action. It is re-armed like a failure, with the same
+        // backoff, but callers are RESOLVED with false rather than rejected,
+        // because every caller already tests `ok === false` and none expects
+        // a throw (5).
+        if (result === false) {
+          consecutiveFailures += 1;
+          stats.failures += 1;
+          dirty = true;
+          if (oldestRequestAt == null) oldestRequestAt = now();
+          for (var k = 0; k < covered.length; k++) covered[k].resolve(false);
+          try { onError(new Error('save reported false'), consecutiveFailures); } catch (e) { /* reporting must not break the queue */ }
+          schedule();
+          return false;
+        }
         consecutiveFailures = 0;
         for (var i = 0; i < covered.length; i++) covered[i].resolve(result);
         schedule();

@@ -245,7 +245,8 @@ console.log("\nThe ledger reaches Convex even though it is stripped from main");
   check("it re-attaches the cash ledger",
     /wildcatCashTransactions: tx\.slice\(-40\)/.test(script));
   check("and appData:save is sent that, not the stripped list",
-    /appData:save', \{\s*\n\s*students: studentsForConvex,/.test(script));
+    /const changedStudents = studentsForConvex\.filter\(/.test(script) &&
+    /convexMutation\('appData:save', \{\s*students: changedStudents,/.test(script));
   // The stripped list is what the save payload is built from. This asserted
   // `delete studentData.…` while three separate paths each stripped their own
   // copy; the Firestore transaction went to Convex on 2026-08-31 and the one
