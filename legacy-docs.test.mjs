@@ -175,8 +175,12 @@ console.log("\nEvery document loadData reads is on the list");
   // arrays the snapshots are read back with. Building them inside the loader
   // from a second clock reading could fetch a week under one key and look for
   // it under another across a boundary.
-  check("audit months are added from monthKeys at the call site",
-    /loadLegacyDocsFromConvex\(\s*\n?\s*LEGACY_FIXED_DOCS[\s\S]{0,200}monthKeys\.map\(auditDocName\)/.test(script));
+  // 2026-09-09: the audit months are no longer part of every load. They are
+  // fetched from the same monthKeys array only when the audit TABLE read
+  // fails, inside its catch.
+  check("audit months are fetched from monthKeys only as the table's fallback",
+    /table read failed, falling back to documents[\s\S]{0,600}loadLegacyDocsFromConvex\(\s*\n?\s*monthKeys\.map\(auditDocName\)\.concat\(\['audit_log'\]\)\)/.test(script)
+    && !/loadLegacyDocsFromConvex\(\s*\n?\s*LEGACY_FIXED_DOCS/.test(script));
   check("cash weeks are added from the same _cashWeekKeys array",
     /_cashWeekKeys\.map\(wk => `cash_tx_\$\{wk\}`\)/.test(script));
   check("neither family is hardcoded into LEGACY_FIXED_DOCS",

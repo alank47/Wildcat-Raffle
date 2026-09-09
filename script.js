@@ -607,6 +607,31 @@
             CASH_COUNTER_FIELDS.forEach(f => { d[f] = (Number(now && now[f]) || 0) - (Number(base && base[f]) || 0); });
             return d;
         }
+        /** Cash this tab has moved but the server has not confirmed, per student. */
+        function snapshotPendingCashDeltas() {
+            const pending = new Map();
+            (students || []).concat(nonEnrolledStudents || []).forEach(st => {
+                if (!st) return;
+                const base = _studentCashBase.get(String(st.id));
+                if (!base) return;
+                const d = cashDeltaBetween(st, base);
+                if (CASH_COUNTER_FIELDS.some(f => d[f])) pending.set(String(st.id), d);
+            });
+            return pending;
+        }
+        /** Put that movement back on top of freshly loaded server values, so the next save sends exactly it. */
+        function reapplyPendingCashDeltas(pending) {
+            if (!pending || !pending.size) return 0;
+            let reapplied = 0;
+            (students || []).concat(nonEnrolledStudents || []).forEach(st => {
+                const d = st && pending.get(String(st.id));
+                if (!d) return;
+                CASH_COUNTER_FIELDS.forEach(f => { st[f] = (Number(st[f]) || 0) + d[f]; });
+                reapplied++;
+            });
+            if (reapplied) console.log('[save] rebased after reload:', reapplied, 'student(s) keep this tab\'s unconfirmed cash movement');
+            return reapplied;
+        }
         function rememberCashBase(st) {
             if (st && st.id !== undefined && st.id !== null) _studentCashBase.set(String(st.id), cashCountersOf(st));
         }
@@ -1726,6 +1751,33 @@
             'ticket_history_unknown', 'audit_log'
         ];
 
+        /**
+         * WHAT A LOAD READS IS WHAT THE SCREEN SHOWS. Added 2026-09-09.
+         *
+         * A load fetched all eleven fixed documents plus every audit month and
+         * cash week: about 145 reads and 46 MB of database I/O per teacher per
+         * page load, on a Convex plan that includes 50 GB a month. Almost all
+         * of it was two things Cash mode never shows: the six raffle
+         * ticket-history documents (about 9,600 rows) and the legacy audit
+         * months, which the audit TABLE has replaced since 2026-09-04 and which
+         * were read again on every load as a fallback in case the table read
+         * failed.
+         *
+         * Now a load reads the four documents Cash and Discipline use. The
+         * audit months are fetched only if the table read fails. The ticket
+         * histories are fetched the first time Raffle mode is opened
+         * (loadTicketHistoriesOnDemand) and on every load after that in the
+         * same session, and until then they are marked unread so no save can
+         * write over what it never read.
+         */
+        const LEGACY_CASH_MODE_DOCS = ['main', 'secondary', 'referrals', 'schedules'];
+        const TICKET_HISTORY_DOCS = [
+            'ticket_history', 'ticket_history_ms', 'ticket_history_hs',
+            'ticket_history_hs_910', 'ticket_history_hs_1112', 'ticket_history_unknown'
+        ];
+        /** True from the first time Raffle mode is opened in this session. */
+        let _ticketHistoriesWanted = false;
+
         /** How many document reads are in flight at once. */
         const LEGACY_LOAD_CONCURRENCY = 8;
 
@@ -1979,9 +2031,13 @@
                         signedIn: Boolean(window.WildcatAuth && window.WildcatAuth.getSession
                                           && window.WildcatAuth.getSession())
                     });
+                    // ONLY WHAT THIS MODE SHOWS. See LEGACY_CASH_MODE_DOCS. The
+                    // audit months are fetched below only if the audit table
+                    // cannot be read; the ticket histories only once Raffle
+                    // mode has been opened this session.
                     const _legacyResult = await loadLegacyDocsFromConvex(
-                        LEGACY_FIXED_DOCS
-                            .concat(monthKeys.map(auditDocName))
+                        LEGACY_CASH_MODE_DOCS
+                            .concat(_ticketHistoriesWanted ? TICKET_HISTORY_DOCS : [])
                             .concat(_cashWeekKeys.map(wk => `cash_tx_${wk}`)));
                     const _legacy = _legacyResult.docs;
 
@@ -1998,10 +2054,14 @@
                             `⚠️ ${unreadLegacyDocs.size} document(s) could not be read and will NOT be written: ` +
                             (_legacyResult.errors || []).map(e => `${e.doc} (${e.message})`).join('; '));
                     }
-                    const snapOf = (name) => {
-                        const d = _legacy[name];
-                        return { exists: () => Boolean(d), data: () => d || {} };
-                    };
+                    // Not read this session, so not written by any save either.
+                    if (!_ticketHistoriesWanted) TICKET_HISTORY_DOCS.forEach(d => unreadLegacyDocs.add(d));
+                    // Lazy, so a document fetched later in this same load (the
+                    // audit fallback below) is seen by a snapshot taken earlier.
+                    const snapOf = (name) => ({
+                        exists: () => Boolean(_legacy[name]),
+                        data: () => _legacy[name] || {}
+                    });
 
                     // `main` is assembled, not read. Its arrays live in the
                     // mirror; its settings and both entity arrays come from
@@ -2179,6 +2239,16 @@
                             // migration copied, so a failed table read degrades
                             // to the old behaviour rather than an empty log.
                             console.warn('[audit] table read failed, falling back to documents:', e && e.message);
+                            // Fetched only now. Every load used to read the
+                            // whole log twice, table and documents, in case
+                            // this branch was needed.
+                            try {
+                                const fallback = await loadLegacyDocsFromConvex(
+                                    monthKeys.map(auditDocName).concat(['audit_log']));
+                                Object.assign(_legacy, fallback.docs || {});
+                            } catch (fe) {
+                                console.warn('[audit] document fallback failed too:', fe && fe.message);
+                            }
                         }
 
                         monthlyAuditSnaps.forEach(snap => {
@@ -3007,25 +3077,9 @@
             // reload takes the server's counters (which may include other
             // tabs' awards by now) and this puts our own movement back on top,
             // so the next save sends exactly that as its delta.
-            const pendingDeltas = new Map();
-            (students || []).concat(nonEnrolledStudents || []).forEach(st => {
-                if (!st) return;
-                const base = _studentCashBase.get(String(st.id));
-                if (!base) return;
-                const d = cashDeltaBetween(st, base);
-                if (CASH_COUNTER_FIELDS.some(f => d[f])) pendingDeltas.set(String(st.id), d);
-            });
+            const pendingDeltas = snapshotPendingCashDeltas();
             await loadData();
-            if (pendingDeltas.size) {
-                let reapplied = 0;
-                (students || []).concat(nonEnrolledStudents || []).forEach(st => {
-                    const d = st && pendingDeltas.get(String(st.id));
-                    if (!d) return;
-                    CASH_COUNTER_FIELDS.forEach(f => { st[f] = (Number(st[f]) || 0) + d[f]; });
-                    reapplied++;
-                });
-                console.log('[save] rebased after reload:', reapplied, 'student(s) keep this tab\'s unconfirmed cash movement');
-            }
+            reapplyPendingCashDeltas(pendingDeltas);
             {
                 const have = new Set((auditLog || []).map(e => ensureEntryId(e)));
                 let back = 0;
@@ -3053,8 +3107,6 @@
             if (typeof updateReferralReviewTable === 'function') updateReferralReviewTable();
         }
 
-        /** True while a stale-guard retry is already running, so it happens once. */
-        let _staleSaveRetry = false;
 
         async function saveData() {
             // TEACHER VIEW IS READ-ONLY, ENFORCED HERE.
@@ -3164,35 +3216,20 @@
                             if (mainPeek.exists()) {
                                 const serverTs = mainPeek.data().lastSaveTimestamp || 0;
                                 const localTs = lastSaveTimestamp || 0;
-                                // If Firebase is significantly newer, our local data is stale
+                                // NO RELOAD. Until 2026-09-09 a server save more
+                                // than three minutes newer than this tab's meant a
+                                // full reload (145 documents, the roster and the
+                                // audit table) and a retry, before every award,
+                                // from every tab in the school. It existed so a
+                                // stale tab could not overwrite other people's
+                                // work. That is the server's job now: cash rows
+                                // are unioned, referral edits win by timestamp,
+                                // and balances are added as deltas. What is left
+                                // of the guard is the two checks below, that a
+                                // tab cannot roll the week or the cycle number
+                                // backwards, and those still reload.
                                 if (serverTs > localTs + STALENESS_THRESHOLD_MS) {
-                                    console.warn(`🛑 SAVE BLOCKED: local data is stale.`);
-                                    console.warn(`   Server: ${new Date(serverTs).toISOString()}`);
-                                    console.warn(`   Local:    ${new Date(localTs).toISOString()}`);
-                                    console.warn(`   Reloading from Firebase before save...`);
-                                    isSyncing = false;
-                                    // Rebase, do not discard. See
-                                    // reloadPreservingUnsavedWork for the incident.
-                                    await reloadPreservingUnsavedWork();
-
-                                    // RETRY ONCE, rather than telling a teacher to
-                                    // re-type a referral. The old code returned here
-                                    // with an alert saying "re-do your last action",
-                                    // which is the app admitting it dropped the work.
-                                    // A referral is additive and every slice it
-                                    // touches merges server-side, so the intent still
-                                    // applies to the refreshed state.
-                                    if (!_staleSaveRetry) {
-                                        _staleSaveRetry = true;
-                                        try { return await saveData(); }
-                                        finally { _staleSaveRetry = false; }
-                                    }
-                                    // Second failure in a row: stop, and say so
-                                    // truthfully. false, never undefined -- callers
-                                    // test `ok === false`, so a bare return here
-                                    // reported a BLOCKED save as a successful one.
-                                    console.warn('[save] still stale after one retry; giving up this pass.');
-                                    return false;
+                                    console.log('[save] the server has newer saves than this tab; merging on the server, not reloading');
                                 }
                             }
                         } catch (staleCheckErr) {
@@ -3612,6 +3649,11 @@
                             // admin deleted would come straight back the moment
                             // any tab re-sent it. Filtering locally means the
                             // deleted entry is never in the payload at all.
+                            // A session that never opened Raffle mode has not
+                            // read these documents and has nothing of theirs to
+                            // merge; a ticket awarded here anyway waits in the
+                            // local history until Raffle mode loads them.
+                            if (!_ticketHistoriesWanted) return { mergedHistories: {}, skipped: 'raffle history not loaded this session' };
                             const tombstonedIds = new Set(localTombstones.map(t => (
                                 typeof t.entryId === 'string'
                                     ? t.entryId
@@ -4343,8 +4385,20 @@
                         
                         // Only load if Firebase is newer
                         if (serverTimestampValue > localTimestamp) {
-                            console.log('🔄 Auto-refreshing data in background (Firebase has newer data)');
-                            await loadData();
+                            console.log('🔄 Auto-refreshing data in background (the server has newer data)');
+                            // THE ROSTER, NOT THE WORLD. This was a full
+                            // loadData(): 145 documents and the whole audit
+                            // table, from every idle tab in the school, several
+                            // times a day. What another teacher's save changes
+                            // on this tab is balances and tickets on the
+                            // roster, which appData:load carries in one read;
+                            // the audit and cash panels are kept current by the
+                            // live pull. This tab's own unconfirmed cash is put
+                            // back on top, as the stale-guard rebase does.
+                            const pendingCash = snapshotPendingCashDeltas();
+                            await refreshRosterFromConvex('idle refresh', { redraw: false });
+                            reapplyPendingCashDeltas(pendingCash);
+                            if (typeof pullLiveActivity === 'function') pullLiveActivity('idle');
                             
                             // DON'T call updateAllDisplays() - it redraws everything and is disruptive
                             // The data is updated in memory, and will show when teacher naturally navigates
@@ -15389,6 +15443,50 @@
             setTimeout(go, 400);
         }
 
+        /**
+         * The raffle ticket histories, fetched the first time Raffle mode is
+         * opened. Merged into each student's ticketHistory by entryId, so a
+         * ticket awarded in this session before the histories arrived is kept.
+         * Documents that could not be read stay unread; the rest become
+         * writable again, and every later load in this session includes them.
+         */
+        async function loadTicketHistoriesOnDemand() {
+            if (_ticketHistoriesWanted) return;
+            _ticketHistoriesWanted = true;
+            const result = await loadLegacyDocsFromConvex(TICKET_HISTORY_DOCS);
+            const docs = result.docs || {};
+            (result.failed || []).forEach(d => unreadLegacyDocs.add(d));
+            TICKET_HISTORY_DOCS.forEach(d => { if (docs[d]) unreadLegacyDocs.delete(d); });
+            const perStudent = new Map();
+            TICKET_HISTORY_DOCS.forEach(d => {
+                const histories = (docs[d] && docs[d].histories) || {};
+                Object.keys(histories).forEach(sid => {
+                    const byId = perStudent.get(sid) || new Map();
+                    (histories[sid] || []).forEach(e => {
+                        const id = ensureEntryId(e);
+                        if (!byId.has(id)) byId.set(id, { ...e, entryId: id });
+                    });
+                    perStudent.set(sid, byId);
+                });
+            });
+            let merged = 0;
+            (students || []).concat(nonEnrolledStudents || []).forEach(st => {
+                const byId = st && perStudent.get(String(st.id));
+                if (!byId) return;
+                (st.ticketHistory || []).forEach(e => {
+                    const id = ensureEntryId(e);
+                    if (!byId.has(id)) byId.set(id, { ...e, entryId: id });
+                });
+                st.ticketHistory = Array.from(byId.values())
+                    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                merged++;
+            });
+            console.log(`[raffle] ticket history loaded on demand: ${merged} student(s), ${(result.failed || []).length} document(s) unreadable`);
+            if (typeof updateAllDisplays === 'function') {
+                try { updateAllDisplays(); } catch (e) { /* display only */ }
+            }
+        }
+
         /* ============================================================
            THE AUDIT LOG AND THE ACTIVITY PANELS ARE LIVE.
 
@@ -15629,6 +15727,7 @@
 
             // Sync raffle buttons to the currently-selected category
             if (tabName === 'raffle') {
+                loadTicketHistoriesOnDemand().catch(e => console.warn('[raffle] history load failed:', e && e.message));
                 try { updateRaffleControls(); } catch (e) { /* silent */ }
             }
             
@@ -15799,7 +15898,7 @@
          * are carried across by id here, otherwise signing in would silently
          * empty every student's history.
          */
-        async function refreshRosterFromConvex(reason) {
+        async function refreshRosterFromConvex(reason, opts) {
             if (DATA_SOURCE !== 'convex') return;
             try {
                 const fresh = await loadRosterFromConvex();
@@ -15868,10 +15967,12 @@
                 // onclick="switchTab('tickets')", so the name is read back out of
                 // that. Falls back to the students view, which is the one this
                 // refresh exists to correct.
-                const active = document.querySelector('#mainApp .tab.active');
-                const handler = (active && active.getAttribute('onclick')) || '';
-                const named = handler.match(/switchTab\('([^']+)'\)/);
-                if (typeof switchTab === 'function') switchTab(named ? named[1] : 'tickets');
+                if (!(opts && opts.redraw === false)) {
+                    const active = document.querySelector('#mainApp .tab.active');
+                    const handler = (active && active.getAttribute('onclick')) || '';
+                    const named = handler.match(/switchTab\('([^']+)'\)/);
+                    if (typeof switchTab === 'function') switchTab(named ? named[1] : 'tickets');
+                }
             } catch (err) {
                 console.error(`[roster] Convex refresh after ${reason} failed:`, err.message);
             }
@@ -23735,7 +23836,12 @@
             // Raffle is the default mode, and its landing screen is the Dashboard
             // (student count + PowerSchool figures), not the ticket-award tab. A
             // teacher who wants to award opens Award Tickets from the rail.
-            if (mode === 'raffle') switchTab('dashboard');
+            if (mode === 'raffle') {
+                // The histories are not part of a load any more; this is the
+                // moment they are wanted.
+                loadTicketHistoriesOnDemand().catch(e => console.warn('[raffle] history load failed:', e && e.message));
+                switchTab('dashboard');
+            }
             // cash: updateTabVisibility (called inside switchSystemMode) handles its landing tab
             // hallpass/discipline: switchSystemMode opens their own views
             closeMobileSidebar();
