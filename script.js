@@ -8315,6 +8315,17 @@
             if (!behaviorId) { alert('Please select a behavior'); return; }
             if (!selectedStudentForCash) return;
 
+            // THE NOTE IS REQUIRED. WildcatRoster.cashNoteVerdict holds the
+            // rule; checked at all three award paths, because a rule enforced
+            // on two of three screens is not a rule.
+            const noteVerdict = window.WildcatRoster.cashNoteVerdict(notes);
+            if (!noteVerdict.ok) {
+                alert(noteVerdict.reason);
+                const el = document.getElementById('addCashNotes');
+                if (el) el.focus();
+                return;
+            }
+
             const behavior = wildcatCashBehaviors.find(b => b.id === behaviorId);
             if (!behavior) { alert('Behavior not found'); return; }
 
@@ -8418,6 +8429,17 @@
             const notes = (document.getElementById('removeCashNotes') || {}).value || '';
             if (!behaviorId) { alert('Please select a behavior'); return; }
             if (!selectedStudentForCash) return;
+
+            // THE NOTE IS REQUIRED. WildcatRoster.cashNoteVerdict holds the
+            // rule; checked at all three award paths, because a rule enforced
+            // on two of three screens is not a rule.
+            const noteVerdict = window.WildcatRoster.cashNoteVerdict(notes);
+            if (!noteVerdict.ok) {
+                alert(noteVerdict.reason);
+                const el = document.getElementById('removeCashNotes');
+                if (el) el.focus();
+                return;
+            }
 
             const behavior = wildcatCashBehaviors.find(b => b.id === behaviorId);
             if (!behavior) { alert('Behavior not found'); return; }
@@ -24233,6 +24255,18 @@
 
             if (!behaviorType) { alert('Please select a behavior type (Positive or Negative)'); return; }
             if (!behaviorId)   { alert('Please select a specific behavior'); return; }
+
+            // THE NOTE IS REQUIRED. WildcatRoster.cashNoteVerdict holds the
+            // rule; checked at all three award paths, because a rule enforced
+            // on two of three screens is not a rule.
+            const noteVerdict = window.WildcatRoster.cashNoteVerdict(notes);
+            if (!noteVerdict.ok) {
+                alert(noteVerdict.reason);
+                const el = document.getElementById('cashNotes');
+                if (el) el.focus();
+                return;
+            }
+
 
             const behavior = wildcatCashBehaviors.find(b => b.id === behaviorId);
             if (!behavior) { alert('Behavior not found'); return; }

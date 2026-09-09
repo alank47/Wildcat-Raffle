@@ -592,7 +592,52 @@
     };
   }
 
+
+  /**
+   * Is this Wildcat Cash note good enough to save?
+   *
+   * The note was optional and is now required, asked for on 2026-09-09. The
+   * reason it matters is what the note is FOR: a cash movement already records
+   * the behaviour, the amount and the adult, and none of that says what the
+   * child actually did. "Respectful" plus five dollars is a category; "held the
+   * door for the 6th graders at lunch" is the thing a parent can be told and
+   * the thing a PBIS review can read six weeks later.
+   *
+   * MINIMUM LENGTH, NOT JUST NON-EMPTY, and this is the part to argue with. A
+   * required field that accepts "." is a required field in name only -- the
+   * first person to find that types it every time and the data is worse than
+   * when the field was honestly optional, because now it looks filled in.
+   * Three characters stops "." and "x" without standing between a teacher and
+   * a legitimate short note: "ran" and "sat" both pass.
+   *
+   * Punctuation and whitespace alone do not count as characters, so "..." and
+   * "   " are refused for the same reason "" is.
+   *
+   * Lives here, with quietStudents and the attendance rules, because this file
+   * is loaded on every screen and imports nothing -- the property that makes
+   * these rules testable in plain node.
+   */
+  var CASH_NOTE_MIN = 3;
+
+  function cashNoteVerdict(note) {
+    var text = (note === null || note === undefined) ? '' : String(note).trim();
+    if (!text) {
+      return { ok: false, reason: 'Add a note saying what the student did.' };
+    }
+    // Letters and digits only, so punctuation cannot pad a note to length.
+    var meaningful = text.replace(/[^a-z0-9]/gi, '');
+    if (meaningful.length < CASH_NOTE_MIN) {
+      return {
+        ok: false,
+        reason: 'That note is too short. Say what the student did, in a few words.'
+      };
+    }
+    return { ok: true, note: text };
+  }
+
   root.WildcatRoster = {
+    CASH_NOTE_MIN: CASH_NOTE_MIN,
+    cashNoteVerdict: cashNoteVerdict,
     ATTENDANCE_TIERS: ATTENDANCE_TIERS,
     attendanceTier: attendanceTier,
     schoolDaysElapsed: schoolDaysElapsed,
