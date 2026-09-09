@@ -53,10 +53,19 @@ const js = ts.transpileModule(upToReturn, {
 const MAX_ROWS_PER_SLICE = Number(
   /const MAX_ROWS_PER_SLICE = (\d+);/.exec(src)[1]);
 
+// touchedAt is module scope in the source, so it is lifted out and transpiled
+// the same way, and passed in: the handler must run against the shipped one.
+const touchedStart = src.indexOf("function touchedAt(");
+const touchedEnd = src.indexOf("\n}\n", touchedStart) + 3;
+const touchedJs = ts.transpileModule(src.slice(touchedStart, touchedEnd), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+}).outputText;
+
 const runNew = new Function("ctx", "doc", "collection", "rows", "dedupeField",
   "MAX_ROWS_PER_SLICE",
+  touchedJs +
   "return (async () => {" + js +
-  "\nreturn { inserted: toInsert.length, deleted };" +
+  "\nreturn { inserted: toInsert.length, updated: toUpdate.length, deleted };" +
   "})();");
 
 /** The OLD algorithm, verbatim. The thing the new one must still agree with. */
@@ -93,6 +102,11 @@ function fakeDb(existing) {
           if (i >= 0) live.splice(i, 1);
         },
         insert: async (_t, row) => { writes++; live.push({ ...row, _id: "new" + writes }); },
+        patch: async (id, fields) => {
+          writes++;
+          const r = live.find((x) => x._id === id);
+          if (r) Object.assign(r, fields);
+        },
       },
       rowsInOrder: () => live.map((r) => ({ key: r.key, payload: r.payload })),
     },
@@ -193,6 +207,54 @@ console.log("\nThe guarantees that were already there are still written down");
   check("the row cap is unchanged", /MAX_ROWS_PER_SLICE/.test(src));
   check("and the reason for the change is recorded where it was made",
     /Convex counts a delete as a READ/.test(src));
+}
+
+console.log("\nA row touched more recently wins, which is how a referral edit lands");
+{
+  // 2026-09-09. Closing a referral set updatedAt on the client and re-sent the
+  // list, and stored-wins discarded the edit every time. Rows without stamps
+  // keep the old rule so audit and ticket history are untouched by this.
+  const t1 = "2026-09-08T10:00:00.000Z", t2 = "2026-09-08T11:00:00.000Z";
+  const run = async (existing, rows) => {
+    const f = fakeDb(existing);
+    const ctx = { db: { ...f.ctx.db }, rowsInOrder: f.ctx.rowsInOrder };
+    const result = await runNew(ctx, "referrals", "behaviorReferrals", rows, "id", MAX_ROWS_PER_SLICE);
+    return { result, final: f.ctx.rowsInOrder(), cost: f.cost() };
+  };
+  {
+    const r = await run([row({ id: "R1", status: "open", updatedAt: t1 })],
+                        [row({ id: "R1", status: "closed", updatedAt: t2 })]);
+    check("a newer incoming copy replaces the stored one", r.final[0].payload.status === "closed");
+    check("and is counted as an update, not an insert", r.result.updated === 1 && r.result.inserted === 0);
+    check("nothing is deleted to do it", r.result.deleted === 0);
+    check("the read cost is still the one collect", r.cost.reads === 1);
+  }
+  {
+    const r = await run([row({ id: "R1", status: "closed", updatedAt: t2 })],
+                        [row({ id: "R1", status: "open", updatedAt: t1 })]);
+    check("an older incoming copy is ignored", r.final[0].payload.status === "closed" && r.result.updated === 0);
+  }
+  {
+    const r = await run([row({ id: "R1", status: "closed", updatedAt: t1 })],
+                        [row({ id: "R1", status: "open", updatedAt: t1 })]);
+    check("equal stamps keep the stored copy", r.final[0].payload.status === "closed" && r.result.updated === 0);
+  }
+  {
+    const r = await run([row({ id: "R1", status: "closed" })],
+                        [row({ id: "R1", status: "open" })]);
+    check("no stamps at all keeps the stored copy, the original rule", r.final[0].payload.status === "closed");
+  }
+  {
+    const r = await run([row({ id: "R1", status: "open", submittedAt: t1 })],
+                        [row({ id: "R1", status: "closed", submittedAt: t1, loopClosedAt: t2 })]);
+    check("the latest of the four stamps decides, not just updatedAt", r.final[0].payload.status === "closed");
+  }
+  {
+    const r = await run([row({ id: "R1", status: "open", updatedAt: t1 })],
+                        [row({ id: "R1", status: "closed", updatedAt: t2 }), row({ id: "R2", updatedAt: t2 })]);
+    check("an update and an insert in the same batch both land",
+      r.result.updated === 1 && r.result.inserted === 1 && r.final.length === 2);
+  }
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
