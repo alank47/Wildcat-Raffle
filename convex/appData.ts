@@ -1,4 +1,5 @@
 import { query, mutation, internalQuery } from "./_generated/server";
+import type { MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { requireStaff } from "./identity";
 import {
@@ -249,6 +250,65 @@ export const savePlanDryRun = internalQuery({
   },
 });
 
+/**
+ * READ ONLY THE ROWS A SAVE IS ABOUT.
+ *
+ * This used to collect() the whole students table, 734 rows, before planning
+ * a save that patches a handful of them. A Convex mutation is a serializable
+ * transaction: if any row it READ was written by a mutation that committed
+ * first, it is thrown away and retried. Reading every student made every
+ * teacher's save conflict with every other teacher's save by construction,
+ * not by chance. With forty tabs saving on a launch morning they queued behind
+ * one another and retried into exactly the "slow, or never landed" that was
+ * reported on 2026-09-08.
+ *
+ * Looking each incoming record up by its key reads only the rows this save can
+ * touch, so two teachers awarding different students no longer conflict at
+ * all, and two awarding the same student conflict on that one row. planSave is
+ * unchanged: it is handed the rows that were found and still decides, field by
+ * field, what to write. A key that finds nothing is reported as skipped, as
+ * before; the browser never creates a student.
+ */
+async function lookupStudents(ctx: MutationCtx, incoming: Array<Record<string, any>>) {
+  const found = new Map<string, Record<string, any>>();
+  for (const record of incoming ?? []) {
+    const key = String(record?.id ?? record?.studentNumber ?? "");
+    if (!key) continue;
+    let row = await ctx.db
+      .query("students")
+      .withIndex("by_legacyId", (q) => q.eq("legacyId", key))
+      .first();
+    if (!row) {
+      row = await ctx.db
+        .query("students")
+        .withIndex("by_studentNumber", (q) => q.eq("studentNumber", key))
+        .first();
+    }
+    if (row && !found.has(String(row._id))) found.set(String(row._id), row);
+  }
+  return [...found.values()];
+}
+
+/** Same rule for staff: the record's id is a row id or a Firestore-era T-number. */
+async function lookupTeachers(ctx: MutationCtx, incoming: Array<Record<string, any>>) {
+  const found = new Map<string, Record<string, any>>();
+  for (const record of incoming ?? []) {
+    const key = String(record?.id ?? "");
+    if (!key) continue;
+    let row: Record<string, any> | null = null;
+    const asId = ctx.db.normalizeId("teachers", key);
+    if (asId) row = await ctx.db.get(asId);
+    if (!row) {
+      row = await ctx.db
+        .query("teachers")
+        .withIndex("by_legacyId", (q) => q.eq("legacyId", key))
+        .first();
+    }
+    if (row && !found.has(String(row._id))) found.set(String(row._id), row);
+  }
+  return [...found.values()];
+}
+
 export const save = mutation({
   args: {
     students: v.optional(v.array(v.any())),
@@ -265,7 +325,7 @@ export const save = mutation({
     let studentsChanged = 0;
     let skipped: string[] = [];
     if (args.students?.length) {
-      const rows = await ctx.db.query("students").collect();
+      const rows = await lookupStudents(ctx, args.students);
       const plan = planSave(rows, args.students, STUDENT_WRITABLE, (r) => [
         r.legacyId,
         r.studentNumber,
@@ -279,7 +339,7 @@ export const save = mutation({
 
     let teachersChanged = 0;
     if (args.teachers?.length) {
-      const rows = await ctx.db.query("teachers").collect();
+      const rows = await lookupTeachers(ctx, args.teachers);
       const plan = planSave(rows, args.teachers, TEACHER_WRITABLE, (r) => [
         r.legacyId,
         String(r._id),
