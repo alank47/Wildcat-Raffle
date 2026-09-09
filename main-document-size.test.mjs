@@ -95,7 +95,7 @@ console.log("\nThe authoritative copy is untouched");
   // The point of the change is that nothing is LOST: cash_tx_* is the ledger
   // and it is written independently of main.
   check("weekly cash documents are still written",
-    /saveLegacySlice\(`cash_tx_\$\{wk\}`, 'transactions', txs\)/.test(script));
+    /mergeLegacySlice\(`cash_tx_\$\{wk\}`, 'transactions', txs, 'id'\)/.test(script));
   // Reads moved to Convex on 2026-08-31. The assertion is unchanged in intent:
   // every known cash week is still fetched on load, one document per week, and
   // the ledger is never folded back into `main`.
