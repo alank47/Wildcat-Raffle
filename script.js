@@ -291,9 +291,40 @@
             maybeApplyUpdate();
         }
 
+        /** The last index.html identity we saw, so an unchanged page costs nothing. */
+        let _lastIndexEtag = null;
+        let _lastCheckAt = 0;
+
         async function checkForAppUpdate() {
             if (!APP_VERSION) return;   // cannot compare what we cannot read
+
+            // THROTTLE. This runs on focus and visibilitychange as well as a
+            // timer, and on 2026-09-09 that was eight checks in the first
+            // minute of one session. index.html is 367 KB, so that is ~3 MB per
+            // teacher before they have done anything, on a school connection,
+            // times forty of them.
+            const now = Date.now();
+            if (now - _lastCheckAt < 20000) return;
+            _lastCheckAt = now;
+
             try {
+                // ASK FOR THE HEADERS FIRST. GitHub Pages sends a strong ETag
+                // that changes with every build, so an unchanged page can be
+                // ruled out for a few hundred bytes instead of 367 KB. Any
+                // doubt at all -- no ETag, a HEAD that fails, a server that
+                // does not support it -- falls through to the full GET below,
+                // which is exactly what this did before.
+                try {
+                    const head = await fetch('index.html?vcheck=' + Date.now(), {
+                        method: 'HEAD', cache: 'no-store'
+                    });
+                    const etag = head.ok ? head.headers.get('etag') : null;
+                    if (etag) {
+                        if (_lastIndexEtag === etag) return;   // byte-identical page
+                        _lastIndexEtag = etag;
+                    }
+                } catch (e) { /* fall through to the GET */ }
+
                 const res = await fetch('index.html?vcheck=' + Date.now(), { cache: 'no-store' });
                 if (!res.ok) return;
                 const html = await res.text();
@@ -332,6 +363,7 @@
         /** Work that exists only on this screen and would die in a reload. */
         function screenHasUnfinishedWork() {
             try {
+                if (_unsavedReferrals.size || _unsavedCash.size) return true;
                 if (document.querySelector('.modal:not(.hidden)')) return true;
                 const dlg = document.getElementById('wcDialogRoot');
                 if (dlg && dlg.childElementCount > 0) return true;
@@ -406,6 +438,20 @@
         // Five minutes is the floor, not the mechanism: Chrome throttles timers
         // hard in a background tab, which is exactly the tab this is for. The
         // events below are what actually make it reliable.
+        // CHECK IMMEDIATELY, NOT IN FIVE MINUTES.
+        //
+        // setInterval does not fire on the way in, so the first check happened
+        // five minutes after load. GitHub Pages serves index.html with
+        // max-age=600, so a teacher opening the app within ten minutes of
+        // their last visit gets the CACHED html -- the old ?v= stamp, the old
+        // script.js -- and then ran it unchecked for five more minutes. That
+        // is the window in which "you must hard refresh" was true.
+        //
+        // A beat after load, so it does not compete with sign-in and the first
+        // roster fetch for the connection, then again shortly after in case
+        // the first attempt lost that race anyway.
+        setTimeout(checkForAppUpdate, 3000);
+        setTimeout(checkForAppUpdate, 30000);
         setInterval(checkForAppUpdate, 300000);
         // Once an update is known, look for a free moment far more often than
         // five minutes -- otherwise a teacher switches away, comes back, and
@@ -519,6 +565,25 @@
          * drop entries whenever a batch failed.
          */
         let auditIdsOnServer = new Set();
+        /**
+         * Cash movements the server has confirmed, by transaction id. Filled
+         * from the weekly documents at load and after each successful write,
+         * so a save sends only what the server has not seen. Added 2026-09-09,
+         * with the union on the server: the weekly slice used to be sent whole
+         * and REPLACED whole, and a tab loaded an hour ago deleted every award
+         * a colleague had landed since.
+         */
+        let cashIdsOnServer = new Set();
+        /**
+         * What each student looked like the last time appData:save accepted
+         * it, keyed by id. A save sends only students whose writable shape
+         * differs, so an award to one child is one row on the wire instead of
+         * seven hundred and thirty-four. Cleared on every load, so the first
+         * save after a load sends everything: the cautious direction.
+         */
+        const _studentSaveFingerprint = new Map();
+        /** Audit entries minted in this tab, so a failed table read cannot turn into re-sending the whole log. */
+        const auditIdsMintedHere = new Set();
 
         /**
          * Legacy documents this tab could not READ on its last load.
@@ -935,6 +1000,19 @@
             } catch (e) {
                 console.warn('Audit outbox clear failed:', e);
             }
+        }
+        /**
+         * Drop from the outbox only the entries the server has confirmed. The
+         * whole key used to be removed after a save, which also removed any
+         * entry a teacher added WHILE that save's batches were in flight; those
+         * survived only in memory, and the next reload replaced memory.
+         */
+        function pruneAuditOutbox(confirmedIds) {
+            const outbox = readAuditOutbox();
+            if (!outbox.length) return;
+            const keep = outbox.filter(e => !confirmedIds.has(ensureEntryId(e)));
+            if (keep.length === outbox.length) return;
+            if (keep.length) writeAuditOutbox(keep); else clearAuditOutbox();
         }
 
         // Drain outbox into auditLog on load. Entries already present
@@ -1921,6 +1999,9 @@
                         }
                     });
                     cashTransactions.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                    // Everything read from the weekly documents is, by
+                    // definition, on the server. The save below sends the rest.
+                    cashIdsOnServer = new Set(cashTransactions.map(t => t && t.id).filter(Boolean));
                     console.log(`✅ Cash transactions loaded: ${cashTransactions.length}`);
 
                     // Check if we have data (at least main document should exist)
@@ -2022,6 +2103,7 @@
                         saveDirty.forget();
 
                         auditIdsOnServer = new Set();
+                        _studentSaveFingerprint.clear();
                         try {
                             // Declared here for the same reason the append
                             // block declares its own: the `auth` and `session`
@@ -2874,7 +2956,24 @@
          */
         async function reloadPreservingUnsavedWork() {
             const pendingReferrals = Array.isArray(behaviorReferrals) ? behaviorReferrals.slice() : [];
+            // The same rule for the two other things a tab can hold that the
+            // server has not confirmed. loadData replaces both arrays.
+            const pendingAudit = (auditLog || []).filter(e => {
+                const id = ensureEntryId(e); return id && !auditIdsOnServer.has(id);
+            });
+            const pendingCash = (cashTransactions || []).filter(t => t && t.id && !cashIdsOnServer.has(t.id));
             await loadData();
+            {
+                const have = new Set((auditLog || []).map(e => ensureEntryId(e)));
+                let back = 0;
+                pendingAudit.forEach(e => { if (!have.has(ensureEntryId(e))) { auditLog.push(e); back++; } });
+                if (back) auditLog.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                const haveCash = new Set((cashTransactions || []).map(t => t && t.id));
+                let backCash = 0;
+                pendingCash.forEach(t => { if (!haveCash.has(t.id)) { cashTransactions.push(t); backCash++; } });
+                if (backCash) cashTransactions.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                if (back || backCash) console.log('[save] rebased after reload:', back, 'audit entr(ies) and', backCash, 'cash movement(s) preserved');
+            }
             const D = window.WildcatDiscipline;
             if (D && typeof D.mergeReferrals === 'function') {
                 // Union, so the server's newer referrals arrive AND anything
@@ -2908,22 +3007,50 @@
             // caller already handles.
             if (typeof isPreviewingTeacher === 'function' && isPreviewingTeacher()) {
                 console.warn('[teacher view] Save blocked. Exit teacher view to make changes.');
+                // false: a refused save, which every caller treats as such.
+                // The queue retries a false with backoff; in a read-only view
+                // that is a no-op every thirty seconds at most, which is fine.
                 return false;
             }
             let saveSucceeded = false;
             if (typeof showSavingIndicator === 'function') showSavingIndicator(true);
+            // WAIT FOR THE SAVE IN FLIGHT rather than giving up on it. This
+            // waited 100ms and returned false, and 84 call sites call
+            // saveData() directly, so a cash adjustment made while a coalesced
+            // save was running was dropped after a tenth of a second, behind a
+            // green toast. A save takes a few seconds; waiting for it is what
+            // the caller asked for. Twenty seconds is the ceiling, and false
+            // after that is retried by the queue rather than forgotten.
             if (isSyncing) {
-                await new Promise(resolve => setTimeout(resolve, 100));
+                for (let waited = 0; isSyncing && waited < 20000; waited += 100) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
                 if (isSyncing) {
                     if (typeof showSavingIndicator === 'function') showSavingIndicator(false);
-                    // false, not undefined. Every caller tests `ok === false`,
-                    // so returning undefined here reported a save that never
-                    // ran as one that succeeded.
+                    // false, not undefined. Every caller tests `ok === false`.
                     return false;
                 }
             }
             
             isSyncing = true;
+            // ONE PEEK PER SAVE. The freshness row was read three times per
+            // save: three serialized round trips before the first byte was
+            // written, inside the window where a second save gives up. Same
+            // row, same instant, read once.
+            let _peekInSave = null;
+            const peekOnceInSave = () => (_peekInSave || (_peekInSave = peekServerState()));
+            // Every write that did not reach the server, by name. The return
+            // value used to be true whenever the function reached its end,
+            // including the path where every Convex write threw and only
+            // localStorage was written.
+            const writesFailed = [];
+            // Unsaved work that existed BEFORE this save started. A fully
+            // successful save proves it is on the server; anything marked
+            // during the save belongs to the next one.
+            const unsavedAtStart = {
+                referrals: new Set(_unsavedReferrals.keys()),
+                cash: new Set(_unsavedCash.keys()),
+            };
 
             try {
                 // The save is a sequence of Convex mutations now. Each one is
@@ -2934,7 +3061,7 @@
                         // The server's own counters, read once, so both id
                         // counters below can take a max against what the server
                         // actually holds rather than what this tab loaded.
-                        const serverCounters = (await peekServerState()).data() || {};
+                        const serverCounters = (await peekOnceInSave()).data() || {};
 
                         // ============================================================
                         // STALENESS CHECK: Refuse to save if our local state is too
@@ -2970,7 +3097,7 @@
                         try {
                             // MOVED OFF FIRESTORE 2026-08-31. Same guard, one
                             // settings row instead of the whole document.
-                            const mainPeek = await peekServerState();
+                            const mainPeek = await peekOnceInSave();
                             if (mainPeek.exists()) {
                                 const serverTs = mainPeek.data().lastSaveTimestamp || 0;
                                 const localTs = lastSaveTimestamp || 0;
@@ -3028,7 +3155,7 @@
                             // still refuses to roll currentWeek or cycleNumber
                             // backwards — the 2026-04-27 incident this was
                             // written for.
-                            const weekPeek = await peekServerState();
+                            const weekPeek = await peekOnceInSave();
                             if (weekPeek.exists()) {
                                 const peekData = weekPeek.data();
                                 const serverWeek = peekData.currentWeek;
@@ -3228,8 +3355,16 @@
                                         });
                                     });
 
+                                // ONLY THE STUDENTS THAT CHANGED. The whole
+                                // roster went on every save, 734 records and
+                                // about 360KB, for an award to one child. The
+                                // server now looks each record up by key, so
+                                // what is sent is what is read; sending the
+                                // changed ones makes both small.
+                                const changedStudents = studentsForConvex.filter(st =>
+                                    st && JSON.stringify(st) !== _studentSaveFingerprint.get(String(st.id)));
                                 const result = await auth.convexMutation('appData:save', {
-                                    students: studentsForConvex,
+                                    students: changedStudents,
                                     teachers: mainTransactionResult.teachersToSave,
                                     settings: {
                                         currentWeek, cycleDuration, pbisSubcategories,
@@ -3269,14 +3404,18 @@
                                         entityTombstones,
                                     },
                                 }, session.idToken);
+                                // Recorded only once the server has answered.
+                                changedStudents.forEach(st =>
+                                    _studentSaveFingerprint.set(String(st.id), JSON.stringify(st)));
                                 console.log(
-                                    `✅ Convex: ${result.studentsChanged} student(s), ` +
+                                    `✅ Convex: ${result.studentsChanged} student(s) of ${changedStudents.length} sent, ` +
                                     `${result.teachersChanged} staff changed` +
                                     (result.skippedUnknownStudents
                                         ? `, ${result.skippedUnknownStudents} unknown skipped`
                                         : ''),
                                 );
                             } catch (err) {
+                                writesFailed.push('students');
                                 console.error('[save] Convex shadow write failed:', err.message);
                             }
                         }
@@ -3322,6 +3461,7 @@
                             await mergeLegacySlice('referrals', 'behaviorReferrals', behaviorReferrals, 'id');
                             console.log(`✅ Referrals saved (${(behaviorReferrals || []).length} records, merged)`);
                         } catch (refErr) {
+                            writesFailed.push('referrals');
                             console.error('❌ referrals save failed:', refErr?.code, refErr?.message);
                         }
                         
@@ -3563,9 +3703,16 @@
                             // because append keeps whatever it is given: an
                             // entry an admin deleted would otherwise return the
                             // moment any tab re-sent it.
+                            // If the table could not be read at load, nothing
+                            // is known to be stored and "not confirmed" is the
+                            // whole log: 8,600 entries in 18 batches from every
+                            // tab in that state. Only what this tab minted can
+                            // possibly be missing, so only that is offered.
+                            const tableUnread = window._wcAuditTableRead && window._wcAuditTableRead.ok === false;
                             const pending = (auditLog || []).filter(e => {
                                 const id = ensureEntryId(e);
                                 if (!id || tombstonedIds.has(id)) return false;
+                                if (tableUnread && !auditIdsMintedHere.has(id)) return false;
                                 // Already confirmed stored by this tab. The set
                                 // is filled from the load and after each
                                 // successful append, so a failed append leaves
@@ -3596,6 +3743,7 @@
                             // committing. Loud, because a silent audit failure
                             // is exactly what went unnoticed before.
                             auditSaveSucceeded = false;
+                            writesFailed.push('audit');
                             console.error('⚠️ AUDIT LOG SAVE FAILED:', auditErr?.message || auditErr);
                         }
 
@@ -3603,7 +3751,7 @@
                         // If it failed, entries remain in the outbox and get replayed next load.
                         if (auditSaveSucceeded) {
                             try {
-                                clearAuditOutbox();
+                                pruneAuditOutbox(auditIdsOnServer);
                             } catch (e) {
                                 console.warn('Outbox clear failed (non-fatal):', e);
                             }
@@ -3620,20 +3768,28 @@
                         //   (9 sections x 446 students was 372KB, over half of main).
                         // Cash transactions: one document per ISO week, written
                         // alongside the other independent documents.
+                        // ONLY WHAT THE SERVER HAS NOT CONFIRMED, AS A UNION.
+                        //
+                        // Until 2026-09-09 every save sent each week's whole
+                        // ledger and legacyData:saveSlice deleted the stored
+                        // rows first. Two teachers in the same week from tabs
+                        // loaded at different times: whichever saved last
+                        // deleted the other's award, because its snapshot had
+                        // never seen it. The server now unions cash documents
+                        // by id whatever it is sent, and this side sends only
+                        // rows it has not seen confirmed, so a routine save
+                        // that awarded nothing writes no cash at all. A row
+                        // without an id cannot be confirmed and is not sent: it
+                        // was loaded from the server, so it is already there.
                         const cashByWeek = {};
                         (cashTransactions || []).forEach(t => {
+                            if (!t || !t.id || cashIdsOnServer.has(t.id)) return;
                             const k = cashWeekKey(t.timestamp);
                             (cashByWeek[k] = cashByWeek[k] || []).push(t);
                         });
-                        // WRITES MOVED OFF FIRESTORE 2026-08-31. One slice per
-                        // week, replaced wholesale, exactly as setDoc did — the
-                        // caller sends the array it wants the slice to BE, and
-                        // legacyData:saveSlice deletes the old rows first.
-                        // Appending here would double every transaction on every
-                        // save, which reconciles to a number twice the truth and
-                        // looks like a working ledger.
                         const cashWrites = Object.entries(cashByWeek).map(([wk, txs]) =>
-                            saveLegacySlice(`cash_tx_${wk}`, 'transactions', txs));
+                            mergeLegacySlice(`cash_tx_${wk}`, 'transactions', txs, 'id')
+                                .then(r => { txs.forEach(t => cashIdsOnServer.add(t.id)); return r; }));
 
                         // Schedules change when the SIS syncs, which is twice a
                         // day, not on every award. Skipping an unchanged one
@@ -3652,7 +3808,10 @@
                         ];
                         independentWrites.forEach((res, i) => {
                             if (res.status === 'fulfilled') console.log(`✅ ${writeNames[i]} saved`);
-                            else console.error(`❌ ${writeNames[i]} save failed:`, res.reason?.code, res.reason?.message);
+                            else {
+                                writesFailed.push(writeNames[i]);
+                                console.error(`❌ ${writeNames[i]} save failed:`, res.reason?.code, res.reason?.message);
+                            }
                         });
 
                         // TRANSACTION 3: the secondary document.
@@ -3850,6 +4009,7 @@
                         }
                         
                     } catch (error) {
+                        writesFailed.push('convex');
                         console.error('❌ Firebase save error:', error);
                         console.error('Error details:', error.message, error.code);
                         // Fall back to localStorage only
@@ -3892,7 +4052,21 @@
                         console.log('✅ Saved to localStorage (fallback)');
                     }
                 }
-                saveSucceeded = true;
+                // TRUE ONLY IF EVERYTHING REACHED THE SERVER. Partial is
+                // reported as false so the queue retries the pass; every
+                // write is idempotent, so what already landed lands again as
+                // a no-op.
+                saveSucceeded = writesFailed.length === 0;
+                if (!saveSucceeded) {
+                    console.error('[save] did not reach the server:', writesFailed.join(', '));
+                } else {
+                    // Everything that was unsaved when this pass began is now
+                    // on the server. Work marked during the pass waits for the
+                    // next one.
+                    unsavedAtStart.referrals.forEach(id => _unsavedReferrals.delete(id));
+                    unsavedAtStart.cash.forEach(id => _unsavedCash.delete(id));
+                    if (typeof renderUnsavedReferralBar === 'function') renderUnsavedReferralBar();
+                }
             } catch (error) {
                 console.error('Save error:', error);
                 saveSucceeded = false;
@@ -7077,6 +7251,7 @@
             }
             
             auditLog.push(logEntry);
+            auditIdsMintedHere.add(logEntry.entryId);
             
             // OUTBOX: persist to localStorage immediately so a failed save
             // doesn't lose this entry. Cleared after successful audit-log save.
@@ -7692,6 +7867,15 @@
             document.getElementById('editTeacherUsername').value = teacher.username || '';
             document.getElementById('editTeacherEmail').value = teacher.email || '';
             document.getElementById('editTeacherRole').value = teacher.role || 'teacher';
+            // Clear any refusal left over from a previous attempt, so an old
+            // red message cannot look like a fresh one.
+            const roleHint = document.getElementById('editTeacherRoleHint');
+            if (roleHint) {
+                roleHint.textContent = (teacher.email && teacher.email.trim())
+                    ? 'Changing this takes effect when they next sign in.'
+                    : 'This person has no email on record, so their access level cannot be changed here.';
+                roleHint.style.color = '';
+            }
             
             // Show modal
             document.getElementById('editTeacherModal').classList.remove('hidden');
@@ -7702,7 +7886,7 @@
             editingTeacherId = null;
         }
         
-        function saveTeacherEdit() {
+        async function saveTeacherEdit() {
             if (!editingTeacherId) return;
             
             const teacher = teachers.find(t => t.id === editingTeacherId);
@@ -7726,6 +7910,7 @@
             }
             
             // Update teacher
+            const previousRole = teacher.role;
             teacher.name = name;
             teacher.email = email;
             teacher.role = role;
@@ -7745,12 +7930,57 @@
                 document.getElementById('currentUserRole').textContent = getFriendlyRoleName(teacher.role);
             }
             
+            // ROLE DOES NOT TRAVEL IN THE WHOLE-APP SAVE, AND MUST NOT.
+            //
+            // appDataShape's TEACHER_WRITABLE is ["name", "ticketsAwarded"],
+            // so the assignment above changed the role on THIS SCREEN ONLY --
+            // the server dropped it and the next reload put it back. An admin
+            // switching somebody onto the PBIS team saw it work and it never
+            // did. That allowlist is right: the teachers array is sent by
+            // every tab, and a role riding along in it would let any tab
+            // promote anybody. So the role gets its own admin-gated mutation.
+            let roleResult = null;
+            let roleError = null;
+            if (role !== previousRole) {
+                // Put it back locally until the server agrees. Showing the new
+                // role while the server still holds the old one is exactly the
+                // lie this is fixing.
+                teacher.role = previousRole;
+                const auth = window.WildcatAuth;
+                const session = auth && auth.getSession && auth.getSession();
+                if (!auth || !session) {
+                    roleError = 'Access levels are stored on the server, which needs a Microsoft sign-in.';
+                } else {
+                    try {
+                        roleResult = await auth.convexMutation('staffInvites:setStaffRole',
+                            { email: teacher.email || '', role: role }, session.idToken);
+                        teacher.role = roleResult.role;
+                    } catch (e) {
+                        roleError = (e && e.message) || String(e);
+                    }
+                }
+            }
+
             saveData();
             updateTeachersTable();
             updateAllDisplays(); // Refresh all displays including period filter
+
+            if (roleError) {
+                // NOT closed, so the admin is looking at the dialog whose change
+                // did not take rather than a table that looks unchanged for
+                // reasons nobody explained.
+                const hint = document.getElementById('editTeacherRoleHint');
+                if (hint) { hint.textContent = roleError; hint.style.color = '#b91c1c'; }
+                document.getElementById('editTeacherRole').value = previousRole;
+                alert(`Name and email saved, but the access level did NOT change.\n\n${roleError}`);
+                return;
+            }
+
             closeEditTeacherModal();
-            
-            alert(`✅ Teacher updated!\n\n${name}'s information has been saved.`);
+            alert(roleResult
+                ? `✅ ${roleResult.name} is now ${getFriendlyRoleName(roleResult.role)}.\n\n` +
+                  `They need to sign out and back in for it to take effect.`
+                : `✅ Teacher updated!\n\n${name}'s information has been saved.`);
         }
 
         async function deleteTeacher(teacherId) {
@@ -7988,8 +8218,22 @@
             // other person and no database. The modal simply stayed open.
             if (typeof updateStudentAccounts === 'function') updateStudentAccounts();
             if (typeof updateCashTable === 'function') updateCashTable();
-            showToast(`✅ +$${Math.abs(amount)} · ${behavior.name}\n${selectedStudentForCash.firstName} ${selectedStudentForCash.lastName}`, 'success');
-            await saveData();
+            {
+                const summary = `+$${Math.abs(amount)} · ${behavior.name}\n${selectedStudentForCash.firstName} ${selectedStudentForCash.lastName}`;
+                const unsavedKey = 'cash:' + Date.now();
+                markCashUnsaved(unsavedKey, `+$${Math.abs(amount)} to ${selectedStudentForCash.firstName} ${selectedStudentForCash.lastName}`);
+                showToast(`Saving ${summary}`, 'info', 8000);
+                // Through the queue, not saveData() directly: a direct call
+                // during a save in flight used to be dropped.
+                const ok = await requestSave('Cash award');
+                if (ok === false) {
+                    showToast(`⚠️ NOT saved yet: ${summary}\nIt will retry. Do not close this tab.`, 'warn', 12000);
+                } else {
+                    _unsavedCash.delete(unsavedKey);
+                    renderUnsavedReferralBar();
+                    showToast(`✅ ${summary}`, 'success');
+                }
+            }
         }
 
         // Remove Cash Modal Functions
@@ -8068,8 +8312,20 @@
             cancelRemoveCash();   // was closeRemoveCashModal; see confirmAddCash.
             if (typeof updateStudentAccounts === 'function') updateStudentAccounts();
             if (typeof updateCashTable === 'function') updateCashTable();
-            showToast(`✅ -$${Math.abs(amount)} · ${behavior.name}\n${selectedStudentForCash.firstName} ${selectedStudentForCash.lastName}`, 'success');
-            await saveData();
+            {
+                const summary = `-$${Math.abs(amount)} · ${behavior.name}\n${selectedStudentForCash.firstName} ${selectedStudentForCash.lastName}`;
+                const unsavedKey = 'cash:' + Date.now();
+                markCashUnsaved(unsavedKey, `-$${Math.abs(amount)} from ${selectedStudentForCash.firstName} ${selectedStudentForCash.lastName}`);
+                showToast(`Saving ${summary}`, 'info', 8000);
+                const ok = await requestSave('Cash adjustment');
+                if (ok === false) {
+                    showToast(`⚠️ NOT saved yet: ${summary}\nIt will retry. Do not close this tab.`, 'warn', 12000);
+                } else {
+                    _unsavedCash.delete(unsavedKey);
+                    renderUnsavedReferralBar();
+                    showToast(`✅ ${summary}`, 'success');
+                }
+            }
         }
 
         // ============================================
@@ -8150,7 +8406,7 @@
                 updateHallMonitor();
                 // Auto-refresh every 30 seconds
                 if (hallMonitorInterval) clearInterval(hallMonitorInterval);
-                hallMonitorInterval = setInterval(updateHallMonitor, 30000);
+                hallMonitorInterval = setInterval(function () { if (!document.hidden) updateHallMonitor(); }, 30000);
             } else {
                 // Clear interval when leaving monitor tab
                 if (hallMonitorInterval) clearInterval(hallMonitorInterval);
@@ -8494,6 +8750,7 @@
                 wcMonitorTimer = setInterval(function () {
                     const tab = document.getElementById('hallMonitorTab');
                     if (!tab || tab.style.display === 'none') { stopHallMonitor(); return; }
+                    if (document.hidden) return;   // nobody is looking; the next tick will
                     updateHallMonitor();
                 }, WC_MONITOR_MS);
             }
@@ -13958,7 +14215,11 @@
             // Coalesced, but STILL awaited: requestSave resolves only once a
             // save carrying this award has actually landed, so the guarantee
             // the old comment describes is unchanged, not traded away.
-            await requestSave('Ticket award');
+            const ticketSaveOk = await requestSave('Ticket award');
+            if (ticketSaveOk === false) {
+                markCashUnsaved('tickets:' + Date.now(), `${amount} ticket(s) to ${checkboxes.length} student(s)`);
+                showToast(`⚠️ NOT saved yet: ${amount} ticket(s) to ${checkboxes.length} student(s).\nIt will retry. Do not close this tab.`, 'warn', 12000);
+            }
             
             // Verify after save completes
             setTimeout(() => {
@@ -13984,8 +14245,8 @@
                     undoButton.style.display = 'inline-block';
                 }
                 
-                // Show success toast with animation
-                showSuccessToast(`✅ Awarded ${amount} ticket(s) to ${checkboxes.length} student(s)!`);
+                // Show success toast with animation, only if the server has it
+                if (ticketSaveOk !== false) showSuccessToast(`✅ Awarded ${amount} ticket(s) to ${checkboxes.length} student(s)!`);
                 
                 // Trigger confetti animation
                 triggerConfetti();
@@ -15052,8 +15313,128 @@
             setTimeout(go, 400);
         }
 
+        /* ============================================================
+           THE AUDIT LOG AND THE ACTIVITY PANELS ARE LIVE.
+
+           Every activity panel renders the in-memory auditLog and
+           cashTransactions arrays, and until 2026-09-09 those were refilled
+           only by a full loadData(): 145 documents, the roster and the
+           whole audit table. The background refresh that might have run it
+           waited for five minutes of inactivity, and every save reset that
+           clock, so an active teacher never saw a colleague's award, and the
+           Audit Log tab showed the morning's state all day.
+
+           auditLog:list takes a `since`, so the log can be brought up to
+           date with one small page: everything stamped after the newest
+           entry this tab knows about, unioned by entryId. The current cash
+           week is one document. Both are pulled when a panel that shows
+           them opens, and every thirty seconds while one is on screen and
+           the tab is visible. Local-only entries are kept: absence from the
+           server is not a deletion, it is a save that has not landed yet.
+           ============================================================ */
+        let _liveActivityBusy = false;
+        let _liveActivityAt = 0;
+        const LIVE_ACTIVITY_MS = 30000;
+
+        function wcPanelOnScreen(id) {
+            const el = document.getElementById(id);
+            return Boolean(el && el.offsetParent !== null);
+        }
+
+        function wcActivityPanelOnScreen() {
+            return ['auditContent', 'cashAuditTab', 'cashActivityTab', 'studentAccountsTab', 'dashTimeline']
+                .some(wcPanelOnScreen);
+        }
+
+        async function pullAuditSince() {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) return 0;
+            let newest = 0;
+            (auditLog || []).forEach(e => {
+                const t = e && Date.parse(e.timestamp);
+                if (Number.isFinite(t) && t > newest) newest = t;
+            });
+            // Two minutes of overlap: the union makes a repeat harmless, and a
+            // clock a little behind the server's is not.
+            const since = newest ? new Date(newest - 120000).toISOString() : undefined;
+            const have = new Set((auditLog || []).map(e => ensureEntryId(e)));
+            // An entry an admin deleted must not come back through a pull.
+            const tombstonedIds = new Set((localTombstones || []).map(t => t && t.entryId).filter(Boolean));
+            let added = 0;
+            let cursor = null;
+            for (let guard = 0; guard < 50; guard++) {
+                const page = await auth.convexQuery('auditLog:list',
+                    Object.assign({}, since ? { since } : {}, cursor ? { cursor } : {}), session.idToken);
+                (page.entries || []).forEach(e => {
+                    const id = ensureEntryId(e);
+                    auditIdsOnServer.add(id);
+                    if (have.has(id) || tombstonedIds.has(id)) return;
+                    have.add(id);
+                    auditLog.push({ ...e, entryId: id });
+                    added++;
+                });
+                if (page.isDone) break;
+                cursor = page.cursor;
+            }
+            if (added) auditLog.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+            return added;
+        }
+
+        async function pullCashWeek() {
+            const doc = await readLegacyDoc(`cash_tx_${cashWeekKey(new Date().toISOString())}`);
+            if (!doc.exists()) return 0;
+            const rows = doc.data().transactions || [];
+            const have = new Set((cashTransactions || []).map(t => t && t.id).filter(Boolean));
+            let added = 0;
+            rows.forEach(t => {
+                if (!t || !t.id) return;
+                cashIdsOnServer.add(t.id);
+                if (have.has(t.id)) return;
+                have.add(t.id);
+                cashTransactions.push(t);
+                added++;
+            });
+            if (added) cashTransactions.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+            return added;
+        }
+
+        async function pullLiveActivity(reason) {
+            if (_liveActivityBusy || document.hidden) return;
+            if (!wcActivityPanelOnScreen()) return;
+            if (reason === 'tick' && Date.now() - _liveActivityAt < LIVE_ACTIVITY_MS - 1000) return;
+            _liveActivityBusy = true;
+            try {
+                const [audit, cash] = await Promise.all([
+                    pullAuditSince().catch(e => { console.warn('[live] audit pull failed:', e && e.message); return 0; }),
+                    pullCashWeek().catch(e => { console.warn('[live] cash pull failed:', e && e.message); return 0; }),
+                ]);
+                _liveActivityAt = Date.now();
+                if (!audit && !cash) return;
+                console.log(`[live] ${audit} audit entr${audit === 1 ? 'y' : 'ies'}, ${cash} cash movement(s) arrived (${reason})`);
+                // Redraw only what is on screen, and only because something
+                // arrived. The panels read the arrays, so this is a repaint.
+                try {
+                    if (audit && wcPanelOnScreen('auditContent') && typeof updateAuditLogTable === 'function') updateAuditLogTable(true);
+                    if (audit && wcPanelOnScreen('cashAuditTab') && typeof updateCashAuditLogTable === 'function') updateCashAuditLogTable();
+                    if (cash && wcPanelOnScreen('cashActivityTab') && typeof updateCashActivityLog === 'function') updateCashActivityLog();
+                    if (audit && wcPanelOnScreen('studentAccountsTab') && typeof updateStudentAccounts === 'function') updateStudentAccounts();
+                    if (audit && wcPanelOnScreen('dashTimeline') && typeof renderTeacherDashboard === 'function') renderTeacherDashboard();
+                } catch (e) { console.warn('[live] repaint failed:', e && e.message); }
+            } finally {
+                _liveActivityBusy = false;
+            }
+        }
+
+        setInterval(function () { pullLiveActivity('tick'); }, LIVE_ACTIVITY_MS);
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'visible') pullLiveActivity('visible');
+        });
+
         function switchTab(tabName) {
             wcRememberTab(tabName);
+            // After the tab is shown, so the on-screen check sees it.
+            setTimeout(function () { pullLiveActivity('tab:' + tabName); }, 0);
             // A tab was picked from the nav — on a phone, close the drawer so the
             // chosen screen is actually visible rather than hidden behind it.
             closeMobileSidebar();
@@ -21024,6 +21405,7 @@
                 wcActiveBoardTimer = setInterval(function () {
                     const tab = document.getElementById('myClassTab');
                     if (!tab || tab.style.display === 'none') { wcStopActiveBoard(); return; }
+                    if (document.hidden) return;
                     renderActivePassesBoard();
                 }, WC_ACTIVE_BOARD_MS);
             }
@@ -21675,7 +22057,7 @@
             if (_wcPassAlertTimer) return;
             _wcPassAlertPrimed = false;
             wcPollPassRequests();                               // prompt first check
-            _wcPassAlertTimer = setInterval(wcPollPassRequests, 8000);
+            _wcPassAlertTimer = setInterval(function () { if (!document.hidden) wcPollPassRequests(); }, 8000);
         }
 
         function wcStopPassAlertPolling() {
@@ -23715,9 +24097,22 @@
             if (typeof updateCashActivityLog === 'function') updateCashActivityLog();
 
             const sign = behavior.points >= 0 ? '+' : '-';
-            showToast(`✅ ${sign}$${Math.abs(behavior.points)} · ${behavior.name}\n${awarded.length} student${awarded.length === 1 ? '' : 's'}`, 'success');
-
-            await requestSave('Cash award');
+            const summary = `${sign}$${Math.abs(behavior.points)} · ${behavior.name}\n${awarded.length} student${awarded.length === 1 ? '' : 's'}`;
+            // THE TOAST FOLLOWS THE SAVE. It used to say ✅ and then call the
+            // save without looking at the answer; a teacher whose save was
+            // refused had been told it worked. The screen still updates at
+            // once, above; only the claim waits for the server.
+            const unsavedKey = 'cash:' + Date.now();
+            markCashUnsaved(unsavedKey, `${sign}$${Math.abs(behavior.points)} to ${awarded.length} student${awarded.length === 1 ? '' : 's'}`);
+            showToast(`Saving ${summary}`, 'info', 8000);
+            const ok = await requestSave('Cash award');
+            if (ok === false) {
+                showToast(`⚠️ NOT saved yet: ${summary}\nIt will retry. Do not close this tab.`, 'warn', 12000);
+            } else {
+                _unsavedCash.delete(unsavedKey);
+                renderUnsavedReferralBar();
+                showToast(`✅ ${summary}`, 'success');
+            }
         }
 
         // Update Cash Table
@@ -27034,6 +27429,15 @@
             clearTimeout(showLoader._minHideTimer);
             clearTimeout(showLoader._failsafe);
             showLoader._failsafe = setTimeout(function () {
+                // ONLY SHOUT IF THE LOADER IS ACTUALLY STILL UP.
+                //
+                // This fired on a normal, healthy sign-in on 2026-09-09 with
+                // the overlay long gone, because the failsafe outlived the
+                // hide (see hideLoader). A warning that cries wolf on every
+                // sign-in is worse than no warning: it is the line somebody
+                // scrolls past on the morning it means something.
+                var up = document.getElementById('wildcatLoader');
+                if (!up || !up.classList.contains('is-on')) return;
                 console.warn('[loader] auto-hid after 20s; a caller never called hideLoader()');
                 showLoader._minMs = 0; // never let the minimum outlast the failsafe
                 hideLoader();
@@ -27045,6 +27449,12 @@
             // minimum so it hides for real rather than re-deferring forever.
             const remaining = (showLoader._minMs || 0) - (Date.now() - (showLoader._shownAt || 0));
             if (remaining > 0) {
+                // DISARM HERE, NOT ONLY BELOW. A hide has been asked for, so
+                // the failsafe has nothing left to catch. Leaving it armed on
+                // this branch is what made it fire on a healthy sign-in: the
+                // deferred hide is cancelled if another showLoader arrives
+                // during the minimum, and the 20s timer then outlived both.
+                clearTimeout(showLoader._failsafe);
                 clearTimeout(showLoader._minHideTimer);
                 showLoader._minHideTimer = setTimeout(function () {
                     showLoader._minMs = 0;
@@ -27845,6 +28255,14 @@
         // with a retry rather than a toast that fades.
         // =====================================================================
         const _unsavedReferrals = new Map();
+        /** Cash awards and adjustments the server has not confirmed, keyed by a label. Same bar. */
+        const _unsavedCash = new Map();
+
+        function markCashUnsaved(key, label) {
+            if (!key) return;
+            _unsavedCash.set(String(key), String(label || 'a cash change'));
+            renderUnsavedReferralBar();
+        }
 
         function markReferralUnsaved(referral) {
             if (!referral || !referral.id) return;
@@ -27861,10 +28279,18 @@
             const text = document.getElementById('unsavedReferralText');
             if (!bar || !text) return;
             const n = _unsavedReferrals.size;
-            if (!n) { bar.hidden = true; return; }
+            const c = _unsavedCash.size;
+            if (!n && !c) { bar.hidden = true; return; }
+            bar.hidden = false;
+            if (!n) {
+                const labels = [..._unsavedCash.values()];
+                text.textContent = c === 1
+                    ? `${labels[0]} is not saved yet. It exists only on this device.`
+                    : `${c} cash changes are not saved yet. They exist only on this device.`;
+                return;
+            }
             const names = [..._unsavedReferrals.values()]
                 .map(r => r.studentName).filter(Boolean);
-            bar.hidden = false;
             text.textContent = n === 1
                 ? `1 referral is not saved yet${names[0] ? ' (' + names[0] + ')' : ''}. It exists only on this device.`
                 : `${n} referrals are not saved yet. They exist only on this device.`;
@@ -27876,9 +28302,18 @@
             try {
                 // flush, not request: this is the button somebody presses when
                 // they are about to close the laptop.
-                const ok = await flushSaves();
+                //
+                // NULL IS NOT SUCCESS. The queue resolves flush() with null
+                // when nothing is dirty, and `null !== false` would have
+                // cleared the bar and said "Saved" without a save having
+                // happened. If there is nothing queued but we are still
+                // holding unsaved referrals, the two disagree -- so ask for a
+                // real save and believe its answer instead.
+                let ok = await flushSaves();
+                if (ok === null || ok === undefined) ok = await requestSave('Retry unsaved referrals');
                 if (ok !== false) {
                     [..._unsavedReferrals.keys()].forEach(id => _unsavedReferrals.delete(id));
+                    [..._unsavedCash.keys()].forEach(id => _unsavedCash.delete(id));
                     renderUnsavedReferralBar();
                     showReferralToast('\u2705 <strong>Saved.</strong> Everything is on the server.', 'ok');
                 } else {
@@ -30836,7 +31271,7 @@
             stopHallPassBoard();
             loadHallPassBoard();
             // The server is asked rarely; the clocks move every second.
-            wcPassBoard.poll = setInterval(loadHallPassBoard, 20000);
+            wcPassBoard.poll = setInterval(function () { if (!document.hidden) loadHallPassBoard(); }, 20000);
             wcPassBoard.tick = setInterval(wcTickPassClocks, 1000);
         }
 

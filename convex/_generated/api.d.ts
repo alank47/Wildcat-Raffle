@@ -40,6 +40,7 @@ import type * as push from "../push.js";
 import type * as pushSend from "../pushSend.js";
 import type * as raceRollup from "../raceRollup.js";
 import type * as restrictedPolicy from "../restrictedPolicy.js";
+import type * as roleChangeRules from "../roleChangeRules.js";
 import type * as rosterEmail from "../rosterEmail.js";
 import type * as scheduleRules from "../scheduleRules.js";
 import type * as seed from "../seed.js";
@@ -101,6 +102,7 @@ declare const fullApi: ApiFromModules<{
   pushSend: typeof pushSend;
   raceRollup: typeof raceRollup;
   restrictedPolicy: typeof restrictedPolicy;
+  roleChangeRules: typeof roleChangeRules;
   rosterEmail: typeof rosterEmail;
   scheduleRules: typeof scheduleRules;
   seed: typeof seed;

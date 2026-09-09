@@ -8827,6 +8827,15 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
    own: it means a record of a child's behaviour exists in one browser tab and
    nowhere else. Amber rather than red -- nothing is broken yet, and the work
    is recoverable for as long as the tab stays open. */
+/* HIDDEN MUST WIN OVER display:flex.
+   The `hidden` attribute is enforced by a USER-AGENT rule, `[hidden]{display:none}`,
+   and any author `display` declaration outranks it. So `display: flex` below made
+   this bar permanently visible on every page load for every user, announcing an
+   unsaved referral that did not exist and offering a Retry for nothing. Shipped
+   2026-09-08, on screen until this rule was added. Anything toggled with
+   `el.hidden` and styled with a display value needs this line. */
+.wc-unsaved-bar[hidden] { display: none !important; }
+
 .wc-unsaved-bar {
     position: fixed; left: 50%; transform: translateX(-50%);
     bottom: 16px; z-index: 4000;

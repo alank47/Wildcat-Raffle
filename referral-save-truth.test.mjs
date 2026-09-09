@@ -73,6 +73,10 @@ console.log("\n-- an unsaved referral is impossible to miss --");
   check("it names the student, so the teacher knows which one", /r\.studentName/.test(script.slice(script.indexOf("function renderUnsavedReferralBar"), script.indexOf("async function retryUnsavedReferrals"))));
   check("it has a retry button", /id="unsavedReferralRetry"/.test(html));
   check("retry flushes rather than queues", /await flushSaves\(\)/.test(script));
+  // The queue resolves flush() with null when nothing is dirty, and
+  // `null !== false` would clear the bar and claim a save that never ran.
+  check("a null flush result is not mistaken for success",
+    /ok === null \|\| ok === undefined\) ok = await requestSave/.test(script));
   check("the bar is styled and fixed on screen", /\.wc-unsaved-bar/.test(css) && /position: fixed/.test(css.slice(css.indexOf(".wc-unsaved-bar"))));
 }
 
