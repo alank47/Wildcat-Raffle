@@ -1,5 +1,6 @@
 import { query, mutation, internalMutation } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
+import { roleChangeVerdict } from "./roleChangeRules";
 import { requireStaff, requireAdmin } from "./identity";
 import { normalizeEmail } from "./identityRules";
 
@@ -336,5 +337,78 @@ export const inviteStaffFromCli = internalMutation({
       createdDate: new Date().toISOString(),
     });
     return { outcome: "invited", email: target, role, name: inDirectory.name };
+  },
+});
+
+/**
+ * Change one staff member's access level.
+ *
+ * ITS OWN MUTATION, not a field on the whole-app save. appDataShape's
+ * TEACHER_WRITABLE is ["name", "ticketsAwarded"], so `role` is dropped from
+ * the teachers array every tab sends -- which is why the Edit Teacher dialog
+ * appeared to change a role and then reverted on the next reload. That
+ * allowlist is right and stays; this is the narrow, admin-gated door instead.
+ *
+ * Every decision is roleChangeVerdict's, so the rules are tested without an
+ * auth gate in the way. This reads the database and applies the answer.
+ */
+export const setStaffRole = mutation({
+  args: { email: v.string(), role: v.string() },
+  handler: async (ctx, { email, role }) => {
+    const actor = await requireStaff(ctx);
+    const target = normalizeEmail(email);
+
+    const targetRow = await ctx.db
+      .query("teachers")
+      .withIndex("by_email", (q) => q.eq("email", target))
+      .unique();
+
+    if (!targetRow) {
+      throw new ConvexError(`No staff record for ${target}.`);
+    }
+
+    // Counted, not assumed: the last-superadmin rule needs a real number.
+    const all = await ctx.db.query("teachers").collect();
+    const superadminCount = all.filter((t) => t.role === "superadmin").length;
+
+    const verdict = roleChangeVerdict({
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      targetEmail: target,
+      targetRole: targetRow.role,
+      newRole: role,
+      superadminCount,
+    });
+
+    if (!verdict.ok) throw new ConvexError(verdict.reason);
+
+    const previousRole = targetRow.role;
+    await ctx.db.patch(targetRow._id, { role: verdict.newRole });
+
+    // WRITTEN DOWN, ALWAYS. A change to who can see the school's discipline
+    // record is exactly the kind of thing that has to be answerable months
+    // later, and "who gave them access" is the first question asked.
+    const now = new Date().toISOString();
+    await ctx.db.insert("appAuditLog", {
+      entryId: `role_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`,
+      timestamp: now,
+      // The shape the app's own audit entries use; the table itself stores
+      // this as an opaque payload, and the reader expects these field names.
+      payload: {
+        action: "Changed access level",
+        teacher: actor.name || actor.email,
+        teacherName: actor.name || actor.email,
+        details: `${targetRow.name || target}: ${previousRole} \u2192 ${verdict.newRole}`,
+        userId: actor.email,
+        timestamp: now,
+      },
+    });
+
+    return {
+      email: target,
+      name: targetRow.name || target,
+      previousRole,
+      role: verdict.newRole,
+    };
   },
 });

@@ -7744,6 +7744,15 @@
             document.getElementById('editTeacherUsername').value = teacher.username || '';
             document.getElementById('editTeacherEmail').value = teacher.email || '';
             document.getElementById('editTeacherRole').value = teacher.role || 'teacher';
+            // Clear any refusal left over from a previous attempt, so an old
+            // red message cannot look like a fresh one.
+            const roleHint = document.getElementById('editTeacherRoleHint');
+            if (roleHint) {
+                roleHint.textContent = (teacher.email && teacher.email.trim())
+                    ? 'Changing this takes effect when they next sign in.'
+                    : 'This person has no email on record, so their access level cannot be changed here.';
+                roleHint.style.color = '';
+            }
             
             // Show modal
             document.getElementById('editTeacherModal').classList.remove('hidden');
@@ -7754,7 +7763,7 @@
             editingTeacherId = null;
         }
         
-        function saveTeacherEdit() {
+        async function saveTeacherEdit() {
             if (!editingTeacherId) return;
             
             const teacher = teachers.find(t => t.id === editingTeacherId);
@@ -7778,6 +7787,7 @@
             }
             
             // Update teacher
+            const previousRole = teacher.role;
             teacher.name = name;
             teacher.email = email;
             teacher.role = role;
@@ -7797,12 +7807,57 @@
                 document.getElementById('currentUserRole').textContent = getFriendlyRoleName(teacher.role);
             }
             
+            // ROLE DOES NOT TRAVEL IN THE WHOLE-APP SAVE, AND MUST NOT.
+            //
+            // appDataShape's TEACHER_WRITABLE is ["name", "ticketsAwarded"],
+            // so the assignment above changed the role on THIS SCREEN ONLY --
+            // the server dropped it and the next reload put it back. An admin
+            // switching somebody onto the PBIS team saw it work and it never
+            // did. That allowlist is right: the teachers array is sent by
+            // every tab, and a role riding along in it would let any tab
+            // promote anybody. So the role gets its own admin-gated mutation.
+            let roleResult = null;
+            let roleError = null;
+            if (role !== previousRole) {
+                // Put it back locally until the server agrees. Showing the new
+                // role while the server still holds the old one is exactly the
+                // lie this is fixing.
+                teacher.role = previousRole;
+                const auth = window.WildcatAuth;
+                const session = auth && auth.getSession && auth.getSession();
+                if (!auth || !session) {
+                    roleError = 'Access levels are stored on the server, which needs a Microsoft sign-in.';
+                } else {
+                    try {
+                        roleResult = await auth.convexMutation('staffInvites:setStaffRole',
+                            { email: teacher.email || '', role: role }, session.idToken);
+                        teacher.role = roleResult.role;
+                    } catch (e) {
+                        roleError = (e && e.message) || String(e);
+                    }
+                }
+            }
+
             saveData();
             updateTeachersTable();
             updateAllDisplays(); // Refresh all displays including period filter
+
+            if (roleError) {
+                // NOT closed, so the admin is looking at the dialog whose change
+                // did not take rather than a table that looks unchanged for
+                // reasons nobody explained.
+                const hint = document.getElementById('editTeacherRoleHint');
+                if (hint) { hint.textContent = roleError; hint.style.color = '#b91c1c'; }
+                document.getElementById('editTeacherRole').value = previousRole;
+                alert(`Name and email saved, but the access level did NOT change.\n\n${roleError}`);
+                return;
+            }
+
             closeEditTeacherModal();
-            
-            alert(`✅ Teacher updated!\n\n${name}'s information has been saved.`);
+            alert(roleResult
+                ? `✅ ${roleResult.name} is now ${getFriendlyRoleName(roleResult.role)}.\n\n` +
+                  `They need to sign out and back in for it to take effect.`
+                : `✅ Teacher updated!\n\n${name}'s information has been saved.`);
         }
 
         async function deleteTeacher(teacherId) {
