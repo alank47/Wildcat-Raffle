@@ -910,3 +910,40 @@ export const staffRecordShape = internalQuery({
     };
   },
 });
+
+/**
+ * Who has been active since a given moment, and what did they do?
+ * Read-only. Staff addresses and counts; no student rows.
+ */
+export const activitySince = internalQuery({
+  args: { sinceIso: v.string() },
+  handler: async (ctx, { sinceIso }) => {
+    const since = sinceIso;
+
+    const auth = await ctx.db.query("authEvents").collect();
+    const signIns = auth.filter((a) => String(a.at) >= since);
+    const byPerson = new Map<string, number>();
+    for (const a of signIns) byPerson.set(a.email, (byPerson.get(a.email) ?? 0) + 1);
+
+    // Audit entries -- who awarded/deducted what.
+    const audit = await ctx.db.query("appAuditLog").withIndex("by_timestamp").order("desc").take(1200);
+    const recent = audit.filter((r: any) => String(r.timestamp ?? "") >= since);
+    const byActor = new Map<string, number>();
+    for (const r of recent as any[]) {
+      const who = String(r.teacherName ?? r.teacher ?? r.userId ?? "(unknown)");
+      byActor.set(who, (byActor.get(who) ?? 0) + 1);
+    }
+
+    const syncs = await ctx.db.query("syncRuns").withIndex("by_at").order("desc").take(20);
+
+    return {
+      since,
+      signIns: [...byPerson.entries()].map(([email, n]) => ({ email, n }))
+        .sort((a, b) => b.n - a.n),
+      auditEntries: recent.length,
+      auditByActor: [...byActor.entries()].map(([who, n]) => ({ who, n }))
+        .sort((a, b) => b.n - a.n).slice(0, 15),
+      syncRuns: syncs.filter((r) => String(r.at) >= since).length,
+    };
+  },
+});
