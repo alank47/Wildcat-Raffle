@@ -29,3 +29,7 @@ brand-preview.html
 modal-preview.html
 colour-preview.html
 cards-preview.html
+
+# Local data exports. 61 MB of ticket history does not belong in git;
+# these are the pre-wipe safety copy from 2026-09-09.
+backups/

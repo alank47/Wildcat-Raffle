@@ -947,3 +947,33 @@ export const activitySince = internalQuery({
     };
   },
 });
+
+/**
+ * Size of ONE legacy document, read in bounded pages so the probe itself
+ * cannot hit the 16 MiB limit it is measuring. Read-only.
+ */
+export const legacyDocSize = internalQuery({
+  args: { doc: v.string(), cap: v.optional(v.number()) },
+  handler: async (ctx, { doc, cap }) => {
+    const limit = Math.min(cap ?? 3000, 6000);
+    const rows = await ctx.db
+      .query("legacyMirror")
+      .withIndex("by_doc", (q) => q.eq("doc", doc))
+      .take(limit);
+    let bytes = 0;
+    const byCollection = new Map<string, number>();
+    for (const r of rows as any[]) {
+      try { bytes += JSON.stringify(r.payload ?? "").length; } catch { /* skip */ }
+      const c = String(r.collection);
+      byCollection.set(c, (byCollection.get(c) ?? 0) + 1);
+    }
+    return {
+      doc,
+      rowsRead: rows.length,
+      hitCap: rows.length >= limit,
+      approxMB: Number((bytes / 1048576).toFixed(2)),
+      avgRowKB: rows.length ? Number((bytes / rows.length / 1024).toFixed(1)) : 0,
+      collections: [...byCollection.entries()].map(([c, n]) => ({ collection: c, rows: n })),
+    };
+  },
+});
