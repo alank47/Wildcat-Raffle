@@ -114,7 +114,7 @@ console.log("\nOnly what changed is sent");
   check("a failed append leaves entries pending rather than dropping them",
     /auditSaveSucceeded = false;[\s\S]{0,200}AUDIT LOG SAVE FAILED/.test(code));
   check("the outbox is still only cleared on success",
-    /if \(auditSaveSucceeded\) \{\s*try \{\s*clearAuditOutbox\(\);/.test(code));
+    /if \(auditSaveSucceeded\) \{\s*try \{\s*pruneAuditOutbox\(auditIdsOnServer\);/.test(code));
   check("nothing writes the audit log through mergeSlice any more",
     !/mergeLegacySlice\(auditDocName/.test(code));
 }
