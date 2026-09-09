@@ -27873,7 +27873,15 @@
             try {
                 // flush, not request: this is the button somebody presses when
                 // they are about to close the laptop.
-                const ok = await flushSaves();
+                //
+                // NULL IS NOT SUCCESS. The queue resolves flush() with null
+                // when nothing is dirty, and `null !== false` would have
+                // cleared the bar and said "Saved" without a save having
+                // happened. If there is nothing queued but we are still
+                // holding unsaved referrals, the two disagree -- so ask for a
+                // real save and believe its answer instead.
+                let ok = await flushSaves();
+                if (ok === null || ok === undefined) ok = await requestSave('Retry unsaved referrals');
                 if (ok !== false) {
                     [..._unsavedReferrals.keys()].forEach(id => _unsavedReferrals.delete(id));
                     renderUnsavedReferralBar();
