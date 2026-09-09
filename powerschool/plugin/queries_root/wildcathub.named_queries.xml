@@ -464,10 +464,10 @@
 
        ISMISSING IS A TEACHER'S FLAG, NOT AN INFERENCE. An UNSCORED assignment
        is not the same thing: it may be ungraded yet, excused, or not collected,
-       and it is still excluded -- telling a child they are missing work they
+       and it is still excluded: telling a child they are missing work they
        are not missing is worse than telling them nothing.
 
-       A ZERO IS RETURNED TOO, from 1.4.1, and is_missing says which is which.
+       A ZERO IS RETURNED TOO, from 1.4.2, and is_missing says which is which.
        At this school 634 of 1,054 flagged items also carry a zero, because that
        is how most teachers record work not handed in. But a zero WITHOUT the
        flag is a different situation: the work was handed in and scored nothing,
@@ -478,6 +478,12 @@
        itself, because NULL = 0 is NULL in Oracle. That is deliberate rather
        than incidental: an ungraded assignment must not be reported to a child
        as a zero.
+
+       NO SQL COMMENTS INSIDE THE QUERY. The two conditions in the WHERE clause
+       are the whole change and the reasoning lives here. A double hyphen is
+       illegal inside an XML comment (PowerSchool refused 1.4.1 for one), and
+       inside the CDATA it is an Oracle line comment that no shipped query has
+       yet proven survives the PowerQuery engine. The build refuses both.
 
        ISCOUNTEDINFINALGRADE filters the rest. Practice work that cannot move a
        grade should not appear on a card about what to do next.
@@ -511,8 +517,8 @@
 
        One row per student per section: how many points they have earned and
        how many the graded work was worth. That is everything a percentage
-       projection needs, and it is the ONLY thing missing_work could not give
-       -- that query returns the work not handed in, never the work already
+       projection needs, and it is the ONLY thing missing_work could not give:
+       that query returns the work not handed in, never the work already
        done, so there was no denominator.
 
        WHY AGGREGATED, NOT ONE ROW PER ASSIGNMENT. Every assignment for every
@@ -642,15 +648,6 @@
           AND S.ENROLL_STATUS         = 0
           AND (
                 SCORE.ISMISSING = 1
-                -- A zero the teacher did NOT flag. Different situation and a
-                -- different thing to ask for: the work was handed in and scored
-                -- nothing, so the question is a retake, not "can I still turn
-                -- it in". Returned so the app can say which.
-                --
-                -- SCOREPOINTS = 0 only. A NULL score is not a zero -- it is
-                -- ungraded, excused or not collected -- and NULL = 0 is NULL in
-                -- Oracle, so nulls are excluded by the comparison itself
-                -- rather than by an assumption.
                 OR SCORE.SCOREPOINTS = 0
               )
           AND ASEC.ISCOUNTEDINFINALGRADE = 1

@@ -237,9 +237,14 @@ console.log("\n1. The real plugin grant blocks every write, read not attempted")
   // 1.4.0 adds section_points: earned and possible per student per section,
   // which is the denominator a PERCENTAGE projection needs. missing_work could
   // never supply it -- it returns the work not handed in, never the work
-  // already done -- so the card could only ever talk in points. Also NOT
-  // installed; the same administrator step applies.
-  check("plugin version is 1.4.1", grants.pluginVersion === "1.4.1", String(grants.pluginVersion));
+  // already done -- so the card could only ever talk in points.
+  //
+  // 1.4.1 was refused by PowerSchool at upload (a double hyphen inside an XML
+  // comment). 1.4.2 is the same access request and was installed and enabled
+  // on the instance on 2026-09-08. INSTALLED_PLUGIN_VERSION below still says
+  // 1.0.6 on purpose: that pin gates WRITES, and moving it is a decision about
+  // what a human verified was granted, not a side effect of a test.
+  check("plugin version is 1.4.2", grants.pluginVersion === "1.4.2", String(grants.pluginVersion));
   check("164 fields declared", grants.counts.total === 164, String(grants.counts.total));
   check("every one of them is ViewOnly", grants.counts.viewOnly === 164, String(grants.counts.viewOnly));
   check("ZERO FullAccess grants exist", grants.counts.fullAccess === 0, String(grants.counts.fullAccess));
@@ -1247,7 +1252,7 @@ console.log("\n24. REGRESSION: the grant check cannot be answered with a file of
     grantSourceProblems(installedGrant()).join(" | "),
   );
   check("the recorded installed version is still 1.0.6", INSTALLED_PLUGIN_VERSION === "1.0.6", INSTALLED_PLUGIN_VERSION);
-  check("the working tree has moved ahead of it", installedGrant().pluginVersion === "1.4.1", String(installedGrant().pluginVersion));
+  check("the working tree has moved ahead of it", installedGrant().pluginVersion === "1.4.2", String(installedGrant().pluginVersion));
 
   // And the loopback carve-out is genuinely narrow: an override is honoured
   // only for a target that cannot be a PowerSchool instance.
