@@ -47,7 +47,11 @@ console.log("\n-- NO BLOCKED PATH RETURNS undefined --");
   check("no bare `return;` survives in saveData", bare.length === 0);
   check("the busy-syncing path returns false",
     /if \(isSyncing\) \{[\s\S]{0,400}return false;/.test(save));
-  check("the staleness path returns false", /still stale after one retry[\s\S]{0,200}return false;/.test(save));
+  // 2026-09-09: the staleness path no longer reloads or refuses. The server
+  // merges (cash union, referral newer-wins, counters as deltas), so a save
+  // from a tab behind the server is applied, not blocked.
+  check("the staleness path neither reloads nor refuses",
+    /if \(serverTs > localTs \+ STALENESS_THRESHOLD_MS\) \{\s*console\.log\('\[save\] the server has newer saves than this tab; merging on the server, not reloading'\);\s*\}/.test(save));
   check("the cycle guard returns false",
     /outdated cycle number[\s\S]{0,300}return false;/.test(save));
   check("the week guard returns false",
@@ -58,11 +62,11 @@ console.log("\n-- a forced reload REBASES, it does not discard --");
 {
   check("the destructive bare loadData() is gone from the guards",
     !/isSyncing = false;\s*\n\s*(\/\/[^\n]*\n\s*)*await loadData\(\);/.test(save));
-  check("all three guards reload through the preserving path",
-    (save.match(/await reloadPreservingUnsavedWork\(\)/g) || []).length === 3);
+  check("the two rollback guards reload through the preserving path, and only they do",
+    (save.match(/await reloadPreservingUnsavedWork\(\)/g) || []).length === 2);
 
   const fn = script.slice(script.indexOf("async function reloadPreservingUnsavedWork"),
-                          script.indexOf("let _staleSaveRetry"));
+                          script.indexOf("async function saveData()"));
   check("it snapshots the referrals BEFORE reloading",
     fn.indexOf("behaviorReferrals.slice()") < fn.indexOf("await loadData()"));
   check("and merges them back AFTER", fn.indexOf("mergeReferrals") > fn.indexOf("await loadData()"));
@@ -93,15 +97,12 @@ console.log("\n-- the rebase actually preserves the referral --");
     merged.referrals.length === new Set(merged.referrals.map((r) => r.id)).size);
 }
 
-console.log("\n-- retry once, not forever --");
+console.log("\n-- no retry, because there is nothing to retry --");
 {
-  check("a retry flag exists", /let _staleSaveRetry = false;/.test(script));
-  check("the retry is guarded by it", /if \(!_staleSaveRetry\) \{[\s\S]{0,200}saveData\(\)/.test(save));
-  check("the flag is cleared in a finally, so a throw cannot wedge it",
-    /_staleSaveRetry = true;[\s\S]{0,200}finally \{ _staleSaveRetry = false; \}/.test(save));
-  check("the second failure gives up rather than looping",
-    /still stale after one retry/.test(save));
-  // The old behaviour told the teacher to retype the referral.
+  // The reload-and-retry was a second full load per blocked save. With no
+  // reload there is no retry, and the flag that bounded it is gone with it.
+  check("the retry flag is gone", !/_staleSaveRetry/.test(script));
+  check("and so is the give-up message", !/still stale after one retry/.test(save));
   check("the staleness path no longer tells the teacher to re-do their work",
     !/out of date and has been refreshed from the cloud/.test(save));
 }
@@ -109,7 +110,7 @@ console.log("\n-- retry once, not forever --");
 console.log("\n-- the threshold --");
 {
   check("the threshold is 3 minutes, not 1", /STALENESS_THRESHOLD_MS = 180000/.test(save));
-  check("the guard itself is still there -- it was not removed",
+  check("the comparison is still made, and logged, so a tab behind the server can be seen in its console",
     /serverTs > localTs \+ STALENESS_THRESHOLD_MS/.test(save));
   check("the week guard still refuses to roll a week backwards",
     /would roll currentWeek backwards/.test(save));

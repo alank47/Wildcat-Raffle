@@ -140,8 +140,9 @@ console.log("\nCash counters travel as deltas, so two tabs awarding the same chi
     /_studentSaveFingerprint\.set\(String\(st\.id\), JSON\.stringify\(st\)\)\);[\s\S]{0,200}changedStudents\.forEach\(rememberCashBase\);/.test(save));
   check("the load-time merge takes the server's counters over the local overlay",
     /\.\.\.localStudent,[^\n]*\n[\s\S]{0,600}\.\.\.serverCashCounters\(serverStudent\),\s*pbisTickets: pbisTotal,/.test(code));
-  check("a stale-guard reload keeps this tab's own unconfirmed movement, as a delta",
-    /const pendingDeltas = new Map\(\);[\s\S]{0,900}await loadData\(\);[\s\S]{0,200}if \(pendingDeltas\.size\)/.test(code));
+  check("a rollback reload keeps this tab's own unconfirmed movement, as a delta",
+    /const pendingDeltas = snapshotPendingCashDeltas\(\);\s*await loadData\(\);\s*reapplyPendingCashDeltas\(pendingDeltas\);/.test(code)
+    && /function snapshotPendingCashDeltas\(\)/.test(code) && /function reapplyPendingCashDeltas\(pending\)/.test(code));
   const shape = readFileSync(new URL("./convex/appDataShape.ts", import.meta.url), "utf8");
   check("the server applies them (appDataShape.planPatch)", /export function planPatch\(/.test(shape) && /const patch = planPatch\(row, record, writable\);/.test(shape));
 }
