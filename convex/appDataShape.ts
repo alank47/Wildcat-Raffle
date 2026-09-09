@@ -182,6 +182,65 @@ function pick(source: Record<string, any>, keys: readonly string[]): Record<stri
   return out;
 }
 
+/**
+ * THE CASH COUNTERS ARE INCREMENTED, NOT OVERWRITTEN.
+ *
+ * A balance is computed in the browser: award ten dollars, the tab adds ten
+ * to the number it loaded and sends the sum. Two tabs that loaded the same
+ * child at 100 and each award ten both send 110, and the second to land
+ * erases the first: the ledger shows two awards and the balance shows one.
+ * Until 2026-09-09 the only protection was the staleness guard, a three
+ * minute window that forty teachers cross all day.
+ *
+ * So a record may carry `cashDelta`: for each counter, how much THIS tab
+ * changed it since the value it last confirmed with the server. The server
+ * adds the delta to what it holds. Both tabs above send +10, and the child
+ * ends at 120, which is what happened. A record without cashDelta (an older
+ * client) is merged as before, absolute values and all.
+ */
+export const CASH_COUNTERS = [
+  "wildcatCashBalance",
+  "wildcatCashEarned",
+  "wildcatCashSpent",
+  "wildcatCashDeducted",
+] as const;
+
+/** The usable deltas on a record: finite, non-zero numbers only. Null when none was sent. */
+export function cashDeltaOf(record: Record<string, any>): Record<string, number> | null {
+  const d = record?.cashDelta;
+  if (!d || typeof d !== "object" || Array.isArray(d)) return null;
+  const out: Record<string, number> = {};
+  for (const field of CASH_COUNTERS) {
+    const v = Number((d as Record<string, unknown>)[field]);
+    if (Number.isFinite(v) && v !== 0) out[field] = v;
+  }
+  return out;
+}
+
+/**
+ * The patch for one record. Counters go by delta when the record carries one
+ * (their absolute values are then ignored, because they describe the tab's
+ * view and not the server's); everything else goes through mergeIncoming
+ * exactly as before.
+ */
+export function planPatch(
+  row: Record<string, any>,
+  record: Record<string, any>,
+  writable: readonly string[],
+): Record<string, unknown> {
+  const fields = pick(record, writable);
+  const delta = cashDeltaOf(record);
+  if (delta === null) return mergeIncoming(row, fields);
+  const counters = new Set<string>(CASH_COUNTERS);
+  const rest: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(fields)) if (!counters.has(key)) rest[key] = value;
+  const patch = mergeIncoming(row, rest);
+  for (const [field, d] of Object.entries(delta)) {
+    patch[field] = (Number(row[field]) || 0) + d;
+  }
+  return patch;
+}
+
 export type PlannedPatch = { key: string; rowId: unknown; patch: Record<string, unknown> };
 export type SavePlan = { patches: PlannedPatch[]; skipped: string[] };
 
@@ -218,7 +277,7 @@ export function planSave(
       if (key) skipped.push(key);
       continue;
     }
-    const patch = mergeIncoming(row, pick(record, writable));
+    const patch = planPatch(row, record, writable);
     if (Object.keys(patch).length > 0) patches.push({ key, rowId: row._id, patch });
   }
   return { patches, skipped };
