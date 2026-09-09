@@ -383,5 +383,39 @@ console.log("\nThe app wires it up so the guarantees actually apply");
     /the guarantee\n\s*\/\/ the old comment describes is unchanged/.test(script));
 }
 
+console.log("\nA save that resolves false is a save that did not happen");
+{
+  // 2026-09-09. saveData resolves false on every path that refuses and never
+  // rejects. The queue read a resolved promise as success: dirty stayed
+  // false, nothing was rescheduled, and the award or referral sat in memory
+  // until some unrelated action enqueued again. Now false re-arms exactly as
+  // a rejection does, while callers still get false rather than a throw.
+  const results = [false, false, "ok"];
+  const save = async () => results.shift();
+  const h = harness({ save });
+  const a = track(h.q.request("award"));
+  await h.advance(1000);
+  check("the first attempt ran", results.length === 2);
+  check("the caller was RESOLVED with false, not rejected", a.done && a.ok === false && !a.err);
+  check("the queue is dirty again", h.q.stats().pending === true);
+  check("it counts as a failure", h.q.stats().failures === 1);
+  check("and onError heard about it", h.errors.length === 1 && /reported false/.test(h.errors[0].e.message));
+  check("the retry is backed off, not immediate", h.nextDelay() === 2000);
+  await h.advance(2000);
+  check("the second attempt ran and failed too", results.length === 1 && h.q.stats().failures === 2);
+  check("with a doubled backoff", h.nextDelay() === 4000);
+  await h.advance(4000);
+  check("the third attempt succeeded and the queue is quiet", results.length === 0 && h.q.stats().pending === false);
+  check("failures reset on success", h.nextDelay() === null);
+}
+{
+  // A preview-mode save returns null: nothing to save is not a failure.
+  const h = harness({ save: async () => null });
+  const a = track(h.q.request("preview"));
+  await h.advance(1000);
+  check("null is not retried", h.q.stats().pending === false && h.q.stats().failures === 0);
+  check("and the caller gets null", a.done && a.ok === null);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
