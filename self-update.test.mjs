@@ -187,6 +187,15 @@ console.log("\nThe manual bar still exists for anyone who wants it now");
 
   // The check itself must never be answered from cache, or it would compare
   // the running version against a stale copy of index.html and see no update.
+  // 8 checks in the first minute of one real session, each pulling a 367 KB
+  // index.html. Focus and visibilitychange both fire it, and neither is rare.
+  check("repeat checks are throttled", /now - _lastCheckAt < 20000\) return;/.test(script));
+  check("an unchanged page is ruled out by ETag before downloading it",
+    /method: 'HEAD', cache: 'no-store'/.test(script) && /_lastIndexEtag === etag\) return/.test(script));
+  check("a HEAD failure falls through to the full GET rather than giving up",
+    /catch \(e\) \{ \/\* fall through to the GET \*\/ \}/.test(script));
+  check("no ETag means the GET still happens", /if \(etag\) \{/.test(script));
+
   check("the version check bypasses the HTTP cache",
     /fetch\('index\.html\?vcheck=' \+ Date\.now\(\), \{ cache: 'no-store' \}\)/.test(script));
 

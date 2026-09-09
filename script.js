@@ -315,9 +315,40 @@
             console.log('[update] new version available:', newVersion, 'running:', APP_VERSION);
         }
 
+        /** The last index.html identity we saw, so an unchanged page costs nothing. */
+        let _lastIndexEtag = null;
+        let _lastCheckAt = 0;
+
         async function checkForAppUpdate() {
             if (!APP_VERSION) return;   // cannot compare what we cannot read
+
+            // THROTTLE. This runs on focus and visibilitychange as well as a
+            // timer, and on 2026-09-09 that was eight checks in the first
+            // minute of one session. index.html is 367 KB, so that is ~3 MB per
+            // teacher before they have done anything, on a school connection,
+            // times forty of them.
+            const now = Date.now();
+            if (now - _lastCheckAt < 20000) return;
+            _lastCheckAt = now;
+
             try {
+                // ASK FOR THE HEADERS FIRST. GitHub Pages sends a strong ETag
+                // that changes with every build, so an unchanged page can be
+                // ruled out for a few hundred bytes instead of 367 KB. Any
+                // doubt at all -- no ETag, a HEAD that fails, a server that
+                // does not support it -- falls through to the full GET below,
+                // which is exactly what this did before.
+                try {
+                    const head = await fetch('index.html?vcheck=' + Date.now(), {
+                        method: 'HEAD', cache: 'no-store'
+                    });
+                    const etag = head.ok ? head.headers.get('etag') : null;
+                    if (etag) {
+                        if (_lastIndexEtag === etag) return;   // byte-identical page
+                        _lastIndexEtag = etag;
+                    }
+                } catch (e) { /* fall through to the GET */ }
+
                 const res = await fetch('index.html?vcheck=' + Date.now(), { cache: 'no-store' });
                 if (!res.ok) return;
                 const html = await res.text();
@@ -27031,6 +27062,15 @@
             clearTimeout(showLoader._minHideTimer);
             clearTimeout(showLoader._failsafe);
             showLoader._failsafe = setTimeout(function () {
+                // ONLY SHOUT IF THE LOADER IS ACTUALLY STILL UP.
+                //
+                // This fired on a normal, healthy sign-in on 2026-09-09 with
+                // the overlay long gone, because the failsafe outlived the
+                // hide (see hideLoader). A warning that cries wolf on every
+                // sign-in is worse than no warning: it is the line somebody
+                // scrolls past on the morning it means something.
+                var up = document.getElementById('wildcatLoader');
+                if (!up || !up.classList.contains('is-on')) return;
                 console.warn('[loader] auto-hid after 20s; a caller never called hideLoader()');
                 showLoader._minMs = 0; // never let the minimum outlast the failsafe
                 hideLoader();
@@ -27042,6 +27082,12 @@
             // minimum so it hides for real rather than re-deferring forever.
             const remaining = (showLoader._minMs || 0) - (Date.now() - (showLoader._shownAt || 0));
             if (remaining > 0) {
+                // DISARM HERE, NOT ONLY BELOW. A hide has been asked for, so
+                // the failsafe has nothing left to catch. Leaving it armed on
+                // this branch is what made it fire on a healthy sign-in: the
+                // deferred hide is cancelled if another showLoader arrives
+                // during the minimum, and the 20s timer then outlived both.
+                clearTimeout(showLoader._failsafe);
                 clearTimeout(showLoader._minHideTimer);
                 showLoader._minHideTimer = setTimeout(function () {
                     showLoader._minMs = 0;
