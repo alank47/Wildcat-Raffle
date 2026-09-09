@@ -68,7 +68,9 @@ console.log("\nOnly what changed goes on the wire");
   check("students are fingerprinted per id", /const _studentSaveFingerprint = new Map\(\);/.test(code));
   check("a save sends only students whose shape differs",
     /const changedStudents = studentsForConvex\.filter\(st =>\s*st && JSON\.stringify\(st\) !== _studentSaveFingerprint\.get\(String\(st\.id\)\)\);/.test(save));
-  check("and that is what appData:save receives", /convexMutation\('appData:save', \{\s*students: changedStudents,/.test(save));
+  check("and that, with each one's cash delta attached, is what appData:save receives",
+    /const studentsToSend = changedStudents\.map\(st => \{\s*const base = _studentCashBase\.get\(String\(st\.id\)\);\s*return base \? Object\.assign\(\{\}, st, \{ cashDelta: cashDeltaBetween\(st, base\) \}\) : st;/.test(save)
+    && /convexMutation\('appData:save', \{\s*students: studentsToSend,/.test(save));
   check("the fingerprint is recorded only after the server answered",
     /\}, session\.idToken\);\s*changedStudents\.forEach\(st =>\s*_studentSaveFingerprint\.set/.test(save));
   check("a load forgets every fingerprint", /auditIdsOnServer = new Set\(\);\s*_studentSaveFingerprint\.clear\(\);/.test(code));
@@ -109,6 +111,39 @@ console.log("\nThe toast follows the save, on every award path");
     /\[\.\.\._unsavedCash\.keys\(\)\]\.forEach\(id => _unsavedCash\.delete\(id\)\);/.test(code));
   check("the self-update will not reload over unsaved work",
     /if \(_unsavedReferrals\.size \|\| _unsavedCash\.size\) return true;/.test(code));
+}
+
+console.log("\nCash counters travel as deltas, so two tabs awarding the same child add up");
+{
+  // The pure pieces are lifted out of the shipped script.js and run.
+  const lift = (name) => {
+    const start = code.indexOf(`function ${name}(`);
+    const end = code.indexOf("\n        }\n", start) + 11;
+    return code.slice(start, end);
+  };
+  const fields = "const CASH_COUNTER_FIELDS = ['wildcatCashBalance', 'wildcatCashEarned', 'wildcatCashSpent', 'wildcatCashDeducted'];";
+  const H = new Function(fields + lift("cashCountersOf") + lift("cashDeltaBetween") + lift("serverCashCounters") +
+    "\nreturn { cashCountersOf, cashDeltaBetween, serverCashCounters };")();
+  const base = H.cashCountersOf({ wildcatCashBalance: 100, wildcatCashEarned: 100 });
+  check("the base carries all four counters, zero when absent",
+    base.wildcatCashBalance === 100 && base.wildcatCashSpent === 0 && base.wildcatCashDeducted === 0);
+  const d = H.cashDeltaBetween({ wildcatCashBalance: 90, wildcatCashEarned: 100, wildcatCashDeducted: 10 }, base);
+  check("a deduction is a negative balance delta and a positive deducted delta",
+    d.wildcatCashBalance === -10 && d.wildcatCashDeducted === 10 && d.wildcatCashEarned === 0);
+  check("no movement is all zeros", Object.values(H.cashDeltaBetween(base, base)).every((v) => v === 0));
+  check("the server's counters are taken only where it has them",
+    JSON.stringify(H.serverCashCounters({ wildcatCashBalance: 5, wildcatCashEarned: "x" })) === '{"wildcatCashBalance":5}');
+
+  check("the base is recorded from what the server returned at load",
+    /data\.students\.forEach\(rememberCashBase\);\s*return \{\s*students: data\.students,/.test(code));
+  check("and again from what was sent, once the server answered",
+    /_studentSaveFingerprint\.set\(String\(st\.id\), JSON\.stringify\(st\)\)\);[\s\S]{0,200}changedStudents\.forEach\(rememberCashBase\);/.test(save));
+  check("the load-time merge takes the server's counters over the local overlay",
+    /\.\.\.localStudent,[^\n]*\n[\s\S]{0,600}\.\.\.serverCashCounters\(serverStudent\),\s*pbisTickets: pbisTotal,/.test(code));
+  check("a stale-guard reload keeps this tab's own unconfirmed movement, as a delta",
+    /const pendingDeltas = new Map\(\);[\s\S]{0,900}await loadData\(\);[\s\S]{0,200}if \(pendingDeltas\.size\)/.test(code));
+  const shape = readFileSync(new URL("./convex/appDataShape.ts", import.meta.url), "utf8");
+  check("the server applies them (appDataShape.planPatch)", /export function planPatch\(/.test(shape) && /const patch = planPatch\(row, record, writable\);/.test(shape));
 }
 
 console.log("\nThe audit log and the activity panels are live");

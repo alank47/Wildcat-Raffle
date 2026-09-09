@@ -6,7 +6,7 @@
 // backfill wrote its stale view over everything. That is not hypothetical: it
 // wiped 38 staff emails on 2026-08-11. These tests reproduce that shape.
 
-import { toAppStudent, toAppTeacher, mergeIncoming, planSave, STUDENT_WRITABLE } from "./appDataShape.ts";
+import { toAppStudent, toAppTeacher, mergeIncoming, planSave, planPatch, cashDeltaOf, CASH_COUNTERS, STUDENT_WRITABLE } from "./appDataShape.ts";
 
 let pass = 0;
 let fail = 0;
@@ -157,6 +157,46 @@ const keysOf = (r) => [r.legacyId, r.studentNumber];
   // The 2026-08-11 incident, at save scope.
   const plan = planSave(ROWS, [{ id: "s-1", wildcatCashBalance: null }, { id: "s-2", wildcatCashBalance: "" }], STUDENT_WRITABLE, keysOf);
   check("a stale tab cannot null a balance", plan.patches.length === 0, JSON.stringify(plan));
+}
+
+console.log("\nCash counters are incremented, so two tabs awarding the same child add up");
+{
+  // Stored 100. Tab A loaded at 100 and awarded 10; tab B loaded at 100 and
+  // awarded 5. Before: A sends 110, B sends 105, the child ends at 105 with
+  // two awards in the ledger. Now each sends its delta.
+  const stored = { _id: "s1", legacyId: "12217", wildcatCashBalance: 100, wildcatCashEarned: 100 };
+  const fromA = { id: "12217", wildcatCashBalance: 110, wildcatCashEarned: 110,
+                  cashDelta: { wildcatCashBalance: 10, wildcatCashEarned: 10 } };
+  const afterA = { ...stored, ...planPatch(stored, fromA, STUDENT_WRITABLE) };
+  check("A's delta lands", afterA.wildcatCashBalance === 110 && afterA.wildcatCashEarned === 110);
+  const fromB = { id: "12217", wildcatCashBalance: 105, wildcatCashEarned: 105,
+                  cashDelta: { wildcatCashBalance: 5, wildcatCashEarned: 5 } };
+  const afterB = { ...afterA, ...planPatch(afterA, fromB, STUDENT_WRITABLE) };
+  check("B's delta is added to what A left, not to what B saw", afterB.wildcatCashBalance === 115);
+  check("earned too", afterB.wildcatCashEarned === 115);
+  check("B's absolute values were ignored", afterB.wildcatCashBalance !== 105);
+
+  const patch = planPatch(stored, { id: "12217", wildcatCashBalance: 999, cashDelta: { wildcatCashBalance: 0 } }, STUDENT_WRITABLE);
+  check("a zero delta writes nothing for that counter, whatever the absolute says", !("wildcatCashBalance" in patch));
+
+  const older = planPatch(stored, { id: "12217", wildcatCashBalance: 110 }, STUDENT_WRITABLE);
+  check("a record with no cashDelta (an older client) still merges the absolute value", older.wildcatCashBalance === 110);
+
+  const missing = planPatch({ _id: "s2" }, { id: "x", cashDelta: { wildcatCashDeducted: 25 } }, STUDENT_WRITABLE);
+  check("a counter the row never had starts from zero", missing.wildcatCashDeducted === 25);
+
+  const mixed = planPatch(stored, { id: "12217", pbisTickets: 3, cashDelta: { wildcatCashBalance: -20 } }, STUDENT_WRITABLE);
+  check("other writable fields still merge beside a delta", mixed.pbisTickets === 3 && mixed.wildcatCashBalance === 80);
+
+  check("garbage deltas are ignored", cashDeltaOf({ cashDelta: { wildcatCashBalance: "ten", wildcatCashEarned: NaN } }) !== null
+    && Object.keys(cashDeltaOf({ cashDelta: { wildcatCashBalance: "ten", wildcatCashEarned: NaN } })).length === 0);
+  check("an array is not a delta", cashDeltaOf({ cashDelta: [1, 2] }) === null);
+  check("cashDelta itself is never written as a field", !("cashDelta" in planPatch(stored, fromA, STUDENT_WRITABLE)));
+  check("the four counters are the balance and the three running totals",
+    CASH_COUNTERS.join() === "wildcatCashBalance,wildcatCashEarned,wildcatCashSpent,wildcatCashDeducted");
+
+  const plan = planSave([stored], [fromA], STUDENT_WRITABLE, (r) => [r.legacyId, r.studentNumber]);
+  check("planSave carries the delta rule end to end", plan.patches.length === 1 && plan.patches[0].patch.wildcatCashBalance === 110);
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

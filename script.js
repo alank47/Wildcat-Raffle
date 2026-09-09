@@ -115,6 +115,9 @@
             if (!data || !Array.isArray(data.students)) {
                 throw new Error('appData:load returned no students array.');
             }
+            // What the server holds is the base every cash delta is measured
+            // from, until a save confirms a new one.
+            data.students.forEach(rememberCashBase);
             return {
                 students: data.students,
                 teachers: Array.isArray(data.teachers) ? data.teachers : [],
@@ -582,6 +585,37 @@
          * save after a load sends everything: the cautious direction.
          */
         const _studentSaveFingerprint = new Map();
+        /**
+         * THE BASE FOR CASH DELTAS. What the server held for each student's
+         * four cash counters the last time this tab confirmed them: at load,
+         * and after each save the server accepted. A save sends the counters
+         * as the DIFFERENCE from this base, and the server adds it to what it
+         * holds, so two tabs awarding the same child add up instead of the
+         * later save overwriting the earlier one with a stale sum. Added
+         * 2026-09-09; the server side is planPatch in appDataShape.ts.
+         */
+        const _studentCashBase = new Map();
+        const CASH_COUNTER_FIELDS = ['wildcatCashBalance', 'wildcatCashEarned', 'wildcatCashSpent', 'wildcatCashDeducted'];
+        function cashCountersOf(st) {
+            const out = {};
+            CASH_COUNTER_FIELDS.forEach(f => { out[f] = Number(st && st[f]) || 0; });
+            return out;
+        }
+        /** How much this tab has moved each counter since `base`. Pure. */
+        function cashDeltaBetween(now, base) {
+            const d = {};
+            CASH_COUNTER_FIELDS.forEach(f => { d[f] = (Number(now && now[f]) || 0) - (Number(base && base[f]) || 0); });
+            return d;
+        }
+        function rememberCashBase(st) {
+            if (st && st.id !== undefined && st.id !== null) _studentCashBase.set(String(st.id), cashCountersOf(st));
+        }
+        /** The server's counters, for the load-time merge: only the ones it actually has. */
+        function serverCashCounters(st) {
+            const out = {};
+            CASH_COUNTER_FIELDS.forEach(f => { if (st && typeof st[f] === 'number') out[f] = st[f]; });
+            return out;
+        }
         /** Audit entries minted in this tab, so a failed table read cannot turn into re-sending the whole log. */
         const auditIdsMintedHere = new Set();
 
@@ -2274,6 +2308,13 @@
                                 return {
                                     ...serverStudent, // Start with Firebase (newer data from others)
                                     ...localStudent, // Overlay local changes (preserve local awards)
+                                    // THE CASH COUNTERS ARE THE SERVER'S. The local
+                                    // overlay kept a stale tab's balance over every
+                                    // award anyone else had made since, and the next
+                                    // save wrote it back. This tab's own unconfirmed
+                                    // movement is put back on top afterwards by
+                                    // reloadPreservingUnsavedWork, as a delta.
+                                    ...serverCashCounters(serverStudent),
                                     pbisTickets: pbisTotal,
                                     attendanceTickets: attendanceTotal,
                                     academicTickets: academicTotal,
@@ -2962,7 +3003,29 @@
                 const id = ensureEntryId(e); return id && !auditIdsOnServer.has(id);
             });
             const pendingCash = (cashTransactions || []).filter(t => t && t.id && !cashIdsOnServer.has(t.id));
+            // Cash this tab has moved but not confirmed, per student. The
+            // reload takes the server's counters (which may include other
+            // tabs' awards by now) and this puts our own movement back on top,
+            // so the next save sends exactly that as its delta.
+            const pendingDeltas = new Map();
+            (students || []).concat(nonEnrolledStudents || []).forEach(st => {
+                if (!st) return;
+                const base = _studentCashBase.get(String(st.id));
+                if (!base) return;
+                const d = cashDeltaBetween(st, base);
+                if (CASH_COUNTER_FIELDS.some(f => d[f])) pendingDeltas.set(String(st.id), d);
+            });
             await loadData();
+            if (pendingDeltas.size) {
+                let reapplied = 0;
+                (students || []).concat(nonEnrolledStudents || []).forEach(st => {
+                    const d = st && pendingDeltas.get(String(st.id));
+                    if (!d) return;
+                    CASH_COUNTER_FIELDS.forEach(f => { st[f] = (Number(st[f]) || 0) + d[f]; });
+                    reapplied++;
+                });
+                console.log('[save] rebased after reload:', reapplied, 'student(s) keep this tab\'s unconfirmed cash movement');
+            }
             {
                 const have = new Set((auditLog || []).map(e => ensureEntryId(e)));
                 let back = 0;
@@ -3363,8 +3426,18 @@
                                 // changed ones makes both small.
                                 const changedStudents = studentsForConvex.filter(st =>
                                     st && JSON.stringify(st) !== _studentSaveFingerprint.get(String(st.id)));
+                                // COUNTERS AS DELTAS. Each record carries how
+                                // much this tab moved the four cash counters
+                                // since the value it last confirmed, and the
+                                // server adds that to what it holds. A student
+                                // this tab never confirmed (no base) goes as
+                                // before, absolute values and all.
+                                const studentsToSend = changedStudents.map(st => {
+                                    const base = _studentCashBase.get(String(st.id));
+                                    return base ? Object.assign({}, st, { cashDelta: cashDeltaBetween(st, base) }) : st;
+                                });
                                 const result = await auth.convexMutation('appData:save', {
-                                    students: changedStudents,
+                                    students: studentsToSend,
                                     teachers: mainTransactionResult.teachersToSave,
                                     settings: {
                                         currentWeek, cycleDuration, pbisSubcategories,
@@ -3407,6 +3480,9 @@
                                 // Recorded only once the server has answered.
                                 changedStudents.forEach(st =>
                                     _studentSaveFingerprint.set(String(st.id), JSON.stringify(st)));
+                                // The counters just sent are the new base: the
+                                // next delta is measured from here.
+                                changedStudents.forEach(rememberCashBase);
                                 console.log(
                                     `✅ Convex: ${result.studentsChanged} student(s) of ${changedStudents.length} sent, ` +
                                     `${result.teachersChanged} staff changed` +
