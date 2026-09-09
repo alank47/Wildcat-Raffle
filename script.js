@@ -295,7 +295,18 @@
                 // reloading unprompted is that a reload can eat unsaved work.
                 Promise.resolve(typeof saveData === 'function' ? saveData() : null)
                     .catch(function () { /* reload anyway; the user asked */ })
-                    .then(function () { location.reload(); });
+                    .then(function () {
+                        // reloadUrl, NOT location.reload(). GitHub Pages serves
+                        // index.html with max-age=600, so a plain reload can be
+                        // answered from cache with the very version this button
+                        // exists to escape -- the teacher presses "Reload now",
+                        // waits, and gets the same old page back. Adding ?wcv=
+                        // makes it a URL the cache has never seen. The automatic
+                        // path already did this; the button did not.
+                        var target = window.WildcatUpdate &&
+                                     window.WildcatUpdate.reloadUrl(location.href, pendingUpdateVersion);
+                        if (target) location.replace(target); else location.reload();
+                    });
             });
             bar.querySelector('.wc-update-later').addEventListener('click', function () {
                 bar.remove();
@@ -402,6 +413,20 @@
         // Five minutes is the floor, not the mechanism: Chrome throttles timers
         // hard in a background tab, which is exactly the tab this is for. The
         // events below are what actually make it reliable.
+        // CHECK IMMEDIATELY, NOT IN FIVE MINUTES.
+        //
+        // setInterval does not fire on the way in, so the first check happened
+        // five minutes after load. GitHub Pages serves index.html with
+        // max-age=600, so a teacher opening the app within ten minutes of
+        // their last visit gets the CACHED html -- the old ?v= stamp, the old
+        // script.js -- and then ran it unchecked for five more minutes. That
+        // is the window in which "you must hard refresh" was true.
+        //
+        // A beat after load, so it does not compete with sign-in and the first
+        // roster fetch for the connection, then again shortly after in case
+        // the first attempt lost that race anyway.
+        setTimeout(checkForAppUpdate, 3000);
+        setTimeout(checkForAppUpdate, 30000);
         setInterval(checkForAppUpdate, 300000);
         // Once an update is known, look for a free moment far more often than
         // five minutes -- otherwise a teacher switches away, comes back, and

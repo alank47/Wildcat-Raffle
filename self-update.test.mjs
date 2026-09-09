@@ -153,5 +153,59 @@ console.log("\nThe manual bar still exists for anyone who wants it now");
   check("on the same version as script.js", v && v === sv);
 }
 
+
+// ---------------------------------------------------------------------------
+// THE FIVE-MINUTE BLIND WINDOW, and the button that could not escape the cache.
+//
+// Added 2026-09-09 after "is there a way we can make it so no one has to hard
+// refresh for any purpose?". Two real gaps, both in the triggering rather than
+// the mechanism:
+//
+//   1. setInterval does not fire on the way in, so the FIRST update check
+//      happened five minutes after load. GitHub Pages serves index.html with
+//      cache-control: max-age=600, so a teacher opening the app within ten
+//      minutes of their last visit was handed the cached html -- old ?v= stamp,
+//      old script.js -- and then ran it unchecked for five more minutes.
+//
+//   2. The "Reload now" button called location.reload(), which for a document
+//      inside its max-age window can be answered from cache with the very
+//      version the button exists to escape. The AUTOMATIC path already went
+//      through reloadUrl and added ?wcv=, which is a URL the cache has never
+//      seen. The button did not.
+// ---------------------------------------------------------------------------
+{
+  const script = readFileSync(new URL("./script.js", import.meta.url), "utf8");
+
+  check("the update check runs at startup, not only on an interval",
+    /setTimeout\(checkForAppUpdate, 3000\)/.test(script));
+  check("and again shortly after, in case the first lost the race to sign-in",
+    /setTimeout\(checkForAppUpdate, 30000\)/.test(script));
+  check("the five-minute interval is still there as the backstop",
+    /setInterval\(checkForAppUpdate, 300000\)/.test(script));
+  check("returning to the tab still forces a check",
+    /window\.addEventListener\('focus', checkForAppUpdate\)/.test(script));
+
+  // The check itself must never be answered from cache, or it would compare
+  // the running version against a stale copy of index.html and see no update.
+  check("the version check bypasses the HTTP cache",
+    /fetch\('index\.html\?vcheck=' \+ Date\.now\(\), \{ cache: 'no-store' \}\)/.test(script));
+
+  const btn = script.slice(script.indexOf("wc-update-reload').addEventListener"),
+                           script.indexOf("wc-update-later')"));
+  check("the Reload button goes through reloadUrl", /WildcatUpdate\.reloadUrl\(location\.href/.test(btn));
+  check("it falls back to a plain reload if that fails", /else location\.reload\(\)/.test(btn));
+  check("it still saves before reloading", btn.indexOf("saveData") < btn.indexOf("reloadUrl"));
+
+  // reloadUrl is what makes any of this cache-proof: a new query parameter is
+  // a URL the browser cache has never seen, so max-age cannot answer it.
+  const U = globalThis.WildcatUpdate;
+  const target = U.reloadUrl("https://wildcatraffle.com/", "20260909b");
+  check("reloadUrl produces a URL the cache cannot have", target.includes("wcv=20260909b"));
+  check("it preserves an existing query, which carries tap and pass ids",
+    U.reloadUrl("https://wildcatraffle.com/?pass=abc", "v2").includes("pass=abc"));
+  check("and the stamp is stripped on the way back in",
+    U.cleanUrl("https://wildcatraffle.com/?wcv=v2") === "https://wildcatraffle.com/");
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);
