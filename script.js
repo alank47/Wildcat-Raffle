@@ -295,7 +295,18 @@
                 // reloading unprompted is that a reload can eat unsaved work.
                 Promise.resolve(typeof saveData === 'function' ? saveData() : null)
                     .catch(function () { /* reload anyway; the user asked */ })
-                    .then(function () { location.reload(); });
+                    .then(function () {
+                        // reloadUrl, NOT location.reload(). GitHub Pages serves
+                        // index.html with max-age=600, so a plain reload can be
+                        // answered from cache with the very version this button
+                        // exists to escape -- the teacher presses "Reload now",
+                        // waits, and gets the same old page back. Adding ?wcv=
+                        // makes it a URL the cache has never seen. The automatic
+                        // path already did this; the button did not.
+                        var target = window.WildcatUpdate &&
+                                     window.WildcatUpdate.reloadUrl(location.href, pendingUpdateVersion);
+                        if (target) location.replace(target); else location.reload();
+                    });
             });
             bar.querySelector('.wc-update-later').addEventListener('click', function () {
                 bar.remove();
@@ -304,9 +315,40 @@
             console.log('[update] new version available:', newVersion, 'running:', APP_VERSION);
         }
 
+        /** The last index.html identity we saw, so an unchanged page costs nothing. */
+        let _lastIndexEtag = null;
+        let _lastCheckAt = 0;
+
         async function checkForAppUpdate() {
             if (!APP_VERSION) return;   // cannot compare what we cannot read
+
+            // THROTTLE. This runs on focus and visibilitychange as well as a
+            // timer, and on 2026-09-09 that was eight checks in the first
+            // minute of one session. index.html is 367 KB, so that is ~3 MB per
+            // teacher before they have done anything, on a school connection,
+            // times forty of them.
+            const now = Date.now();
+            if (now - _lastCheckAt < 20000) return;
+            _lastCheckAt = now;
+
             try {
+                // ASK FOR THE HEADERS FIRST. GitHub Pages sends a strong ETag
+                // that changes with every build, so an unchanged page can be
+                // ruled out for a few hundred bytes instead of 367 KB. Any
+                // doubt at all -- no ETag, a HEAD that fails, a server that
+                // does not support it -- falls through to the full GET below,
+                // which is exactly what this did before.
+                try {
+                    const head = await fetch('index.html?vcheck=' + Date.now(), {
+                        method: 'HEAD', cache: 'no-store'
+                    });
+                    const etag = head.ok ? head.headers.get('etag') : null;
+                    if (etag) {
+                        if (_lastIndexEtag === etag) return;   // byte-identical page
+                        _lastIndexEtag = etag;
+                    }
+                } catch (e) { /* fall through to the GET */ }
+
                 const res = await fetch('index.html?vcheck=' + Date.now(), { cache: 'no-store' });
                 if (!res.ok) return;
                 const html = await res.text();
@@ -403,6 +445,20 @@
         // Five minutes is the floor, not the mechanism: Chrome throttles timers
         // hard in a background tab, which is exactly the tab this is for. The
         // events below are what actually make it reliable.
+        // CHECK IMMEDIATELY, NOT IN FIVE MINUTES.
+        //
+        // setInterval does not fire on the way in, so the first check happened
+        // five minutes after load. GitHub Pages serves index.html with
+        // max-age=600, so a teacher opening the app within ten minutes of
+        // their last visit gets the CACHED html -- the old ?v= stamp, the old
+        // script.js -- and then ran it unchecked for five more minutes. That
+        // is the window in which "you must hard refresh" was true.
+        //
+        // A beat after load, so it does not compete with sign-in and the first
+        // roster fetch for the connection, then again shortly after in case
+        // the first attempt lost that race anyway.
+        setTimeout(checkForAppUpdate, 3000);
+        setTimeout(checkForAppUpdate, 30000);
         setInterval(checkForAppUpdate, 300000);
         // Once an update is known, look for a free moment far more often than
         // five minutes -- otherwise a teacher switches away, comes back, and
@@ -27301,6 +27357,15 @@
             clearTimeout(showLoader._minHideTimer);
             clearTimeout(showLoader._failsafe);
             showLoader._failsafe = setTimeout(function () {
+                // ONLY SHOUT IF THE LOADER IS ACTUALLY STILL UP.
+                //
+                // This fired on a normal, healthy sign-in on 2026-09-09 with
+                // the overlay long gone, because the failsafe outlived the
+                // hide (see hideLoader). A warning that cries wolf on every
+                // sign-in is worse than no warning: it is the line somebody
+                // scrolls past on the morning it means something.
+                var up = document.getElementById('wildcatLoader');
+                if (!up || !up.classList.contains('is-on')) return;
                 console.warn('[loader] auto-hid after 20s; a caller never called hideLoader()');
                 showLoader._minMs = 0; // never let the minimum outlast the failsafe
                 hideLoader();
@@ -27312,6 +27377,12 @@
             // minimum so it hides for real rather than re-deferring forever.
             const remaining = (showLoader._minMs || 0) - (Date.now() - (showLoader._shownAt || 0));
             if (remaining > 0) {
+                // DISARM HERE, NOT ONLY BELOW. A hide has been asked for, so
+                // the failsafe has nothing left to catch. Leaving it armed on
+                // this branch is what made it fire on a healthy sign-in: the
+                // deferred hide is cancelled if another showLoader arrives
+                // during the minimum, and the 20s timer then outlived both.
+                clearTimeout(showLoader._failsafe);
                 clearTimeout(showLoader._minHideTimer);
                 showLoader._minHideTimer = setTimeout(function () {
                     showLoader._minMs = 0;
@@ -28157,12 +28228,18 @@
             const btn = document.getElementById('unsavedReferralRetry');
             if (btn) { btn.disabled = true; btn.textContent = 'Retrying\u2026'; }
             try {
-                // request, then flush: flushSaves() resolves null when the
-                // queue is not dirty, which is exactly the state after a save
-                // resolved false, and null was being read as "saved". Marking
-                // the queue dirty first means this button always writes.
-                const ok = await requestSave('Retry unsaved work');
-                if (ok !== false && ok !== null) {
+                // flush, not request: this is the button somebody presses when
+                // they are about to close the laptop.
+                //
+                // NULL IS NOT SUCCESS. The queue resolves flush() with null
+                // when nothing is dirty, and `null !== false` would have
+                // cleared the bar and said "Saved" without a save having
+                // happened. If there is nothing queued but we are still
+                // holding unsaved referrals, the two disagree -- so ask for a
+                // real save and believe its answer instead.
+                let ok = await flushSaves();
+                if (ok === null || ok === undefined) ok = await requestSave('Retry unsaved referrals');
+                if (ok !== false) {
                     [..._unsavedReferrals.keys()].forEach(id => _unsavedReferrals.delete(id));
                     [..._unsavedCash.keys()].forEach(id => _unsavedCash.delete(id));
                     renderUnsavedReferralBar();

@@ -104,8 +104,9 @@ console.log("\nThe toast follows the save, on every award path");
   check("and the confetti toast is conditional on it", /if \(ticketSaveOk !== false\) showSuccessToast/.test(tickets));
   check("a successful save clears the work that was unsaved when it began",
     /unsavedAtStart\.referrals\.forEach\(id => _unsavedReferrals\.delete\(id\)\);\s*unsavedAtStart\.cash\.forEach\(id => _unsavedCash\.delete\(id\)\);/.test(save));
-  check("the retry button always requests, since a quiet queue used to read as saved",
-    /const ok = await requestSave\('Retry unsaved work'\);\s*if \(ok !== false && ok !== null\)/.test(code));
+  check("the retry button always makes a real save, since a quiet queue used to read as saved",
+    /ok === null \|\| ok === undefined\) ok = await requestSave/.test(code) &&
+    /\[\.\.\._unsavedCash\.keys\(\)\]\.forEach\(id => _unsavedCash\.delete\(id\)\);/.test(code));
   check("the self-update will not reload over unsaved work",
     /if \(_unsavedReferrals\.size \|\| _unsavedCash\.size\) return true;/.test(code));
 }
