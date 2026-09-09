@@ -300,5 +300,36 @@ console.log("\nThe module is served, on the same version as the app");
     U.cleanUrl("https://wildcatraffle.com/?wcv=v2") === "https://wildcatraffle.com/");
 }
 
+
+// ---------------------------------------------------------------------------
+// EVERY STAMP IN index.html AGREES.
+//
+// 2026-09-09: after a merge and two version bumps in one morning, the service
+// worker was still registered as sw.js?v=20260909f while every other asset was
+// on ...h. Harmless that day because sw.js had not changed -- but the stamp is
+// the only thing that makes the browser look again, so a worker that HAD
+// changed would have been served from the ten-minute cache instead.
+//
+// The bump is a sed across the file. Anything the sed misses is a file frozen
+// at an old version with nothing to say so.
+// ---------------------------------------------------------------------------
+{
+  const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
+  const stamps = [...html.matchAll(/\?v=([0-9a-z]+)/g)].map((m) => m[1]);
+  const distinct = [...new Set(stamps)];
+  check("index.html carries version stamps at all", stamps.length > 5);
+  check(
+    distinct.length === 1
+      ? "every ?v= stamp in index.html is the same version"
+      : `stamps disagree: ${distinct.join(", ")}`,
+    distinct.length === 1
+  );
+  // The service worker is the one that gets missed, because it is registered
+  // from inline script rather than sitting in a <script src>.
+  const sw = html.match(/sw\.js\?v=([0-9a-z]+)/);
+  check("the service worker is stamped", !!sw);
+  check("and on the same version as everything else", sw && sw[1] === distinct[0]);
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);
