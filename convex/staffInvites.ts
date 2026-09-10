@@ -431,3 +431,71 @@ export const setStaffRole = mutation({
     };
   },
 });
+
+/**
+ * Remove a staff record, for somebody who has left.
+ *
+ * WHAT THIS ACTUALLY DOES, AND WHAT IT DOES NOT. requireStaff refuses anyone
+ * with no record, so deleting the record is what closes the door -- their
+ * Microsoft account is not ours to disable, and it may well still be live.
+ *
+ * It does NOT erase their history. Audit entries record the adult by NAME as
+ * a string, so every ticket they ever awarded is still attributable and still
+ * reads correctly. Removing the record removes their ACCESS, not the account
+ * of what they did, which is the distinction a discipline system has to keep.
+ *
+ * NO TOMBSTONE IS NEEDED. appDataShape.planSave only ever PATCHES rows it can
+ * match and skips the rest, so an open tab holding the departed teacher cannot
+ * re-insert them. entityTombstones exists for the old Firestore main-document
+ * merge; it does not apply to this table.
+ */
+export const removeStaffFromCli = internalMutation({
+  args: { email: v.string(), reason: v.optional(v.string()) },
+  handler: async (ctx, { email, reason }) => {
+    const target = normalizeEmail(email);
+    const row = await ctx.db
+      .query("teachers")
+      .withIndex("by_email", (q) => q.eq("email", target))
+      .unique();
+    if (!row) throw new ConvexError(`No staff record for ${target}.`);
+
+    // A superadmin is the account that can restore everyone else's access.
+    // Removing one from a script, with no second pair of eyes, is not a thing
+    // this should make easy.
+    if (row.role === "superadmin") {
+      throw new ConvexError(
+        `${target} is a super admin. Demote them first, deliberately, before removing the record.`,
+      );
+    }
+
+    const now = new Date().toISOString();
+    const entryId = `staffdel_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+    const summary = `${row.name || target} (${row.role}) removed from staff`;
+
+    // WRITTEN DOWN BEFORE THE DELETE, so a failure halfway leaves a record of
+    // the intent rather than a silently vanished colleague.
+    await ctx.db.insert("appAuditLog", {
+      entryId,
+      timestamp: now,
+      payload: {
+        entryId,
+        action: "Removed staff record",
+        teacher: "Administrator (CLI)",
+        teacherName: "Administrator (CLI)",
+        details: summary + (reason ? ` -- ${reason}` : ""),
+        reason: summary + (reason ? ` -- ${reason}` : ""),
+        userId: target,
+        timestamp: now,
+      },
+    });
+
+    await ctx.db.delete(row._id);
+    return {
+      removed: target,
+      name: row.name,
+      role: row.role,
+      ticketsAwarded: row.ticketsAwarded ?? 0,
+      auditEntryId: entryId,
+    };
+  },
+});
