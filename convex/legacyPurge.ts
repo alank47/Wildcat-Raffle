@@ -1445,3 +1445,26 @@ export const leaderboardCostProbe = internalQuery({
     };
   },
 });
+
+/** What calendar data the app actually holds right now. Read-only. */
+export const calendarStateToday = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const bell = await ctx.db.query("bellSchedules").take(200);
+    const att = await ctx.db.query("psAttendance").take(5);
+    const terms = new Set<string>();
+    let first: string | null = null, last: string | null = null;
+    for (const a of att as any[]) {
+      if (a.termId) terms.add(String(a.termId));
+      if (a.termFirstDay && !first) first = a.termFirstDay;
+      if (a.termLastDay && !last) last = a.termLastDay;
+    }
+    return {
+      bellScheduleRows: bell.length,
+      bellScheduleSample: bell.slice(0, 2).map((b: any) => Object.keys(b)),
+      termIdsSeen: [...terms],
+      termFirstDay: first,
+      termLastDay: last,
+    };
+  },
+});
