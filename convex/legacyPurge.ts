@@ -1195,3 +1195,160 @@ export const duplicateStudentNumbers = internalQuery({
     return { counts: seen, rows: page.page.length, cursor: page.continueCursor, isDone: page.isDone };
   },
 });
+
+/** How many 11th graders, and what SIS data exists for them? Read-only, counts. */
+export const gradeElevenShape = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const students = await ctx.db.query("students").take(2000);
+    const eleven = (students as any[]).filter(
+      (s) => String(s.grade ?? "").trim() === "11" && s.enrolled !== false,
+    );
+    const numbers = new Set(eleven.map((s) => String(s.studentNumber ?? "")).filter(Boolean));
+    const grades = await ctx.db.query("psGrades").take(4000);
+    const withGrades = new Set(
+      (grades as any[]).map((g) => String(g.studentNumber ?? "")).filter((n) => numbers.has(n)),
+    );
+    const courses = new Set(
+      (grades as any[])
+        .filter((g) => numbers.has(String(g.studentNumber ?? "")))
+        .map((g) => String(g.courseName ?? "")),
+    );
+    return {
+      enrolledGrade11: eleven.length,
+      withStudentNumber: numbers.size,
+      withAnyGradeRow: withGrades.size,
+      distinctCoursesSeen: [...courses].filter(Boolean).slice(0, 25),
+    };
+  },
+});
+
+/**
+ * What do audit entries actually look like, and is the ACTOR recorded?
+ *
+ * "Who gave what" is the question the PBIS team opens this log to answer, so
+ * an entry with no attributable adult is worse than a missing entry: it looks
+ * like a record. Read-only; staff names and field names, no student rows.
+ */
+export const auditShape = internalQuery({
+  args: { sinceIso: v.optional(v.string()) },
+  handler: async (ctx, { sinceIso }) => {
+    const rows = await ctx.db
+      .query("appAuditLog")
+      .withIndex("by_timestamp")
+      .order("desc")
+      .take(1500);
+    const recent = sinceIso ? rows.filter((r) => String(r.timestamp) >= sinceIso) : rows;
+
+    const keyCounts: Record<string, number> = {};
+    const actorFields = ["teacher", "teacherName", "userId", "user", "awardedBy", "staff", "by"];
+    const withActor: Record<string, number> = {};
+    let noActorAtAll = 0;
+    const actionCounts: Record<string, number> = {};
+
+    for (const r of recent) {
+      const p = (r as any).payload ?? {};
+      for (const k of Object.keys(p)) keyCounts[k] = (keyCounts[k] ?? 0) + 1;
+      const act = String(p.action ?? "(none)");
+      actionCounts[act] = (actionCounts[act] ?? 0) + 1;
+      let found = false;
+      for (const f of actorFields) {
+        const v = p[f];
+        if (typeof v === "string" && v.trim()) { withActor[f] = (withActor[f] ?? 0) + 1; found = true; }
+      }
+      if (!found) noActorAtAll++;
+    }
+
+    return {
+      scanned: rows.length,
+      inWindow: recent.length,
+      payloadKeys: Object.entries(keyCounts).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k}: ${n}`),
+      actorFieldsPresent: Object.entries(withActor).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k}: ${n}`),
+      entriesWithNoActorAtAll: noActorAtAll,
+      actions: Object.entries(actionCounts).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k}: ${n}`),
+    };
+  },
+});
+
+/** Audit entries whose shape differs from the app's own. Read-only. */
+export const auditOddities = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db
+      .query("appAuditLog").withIndex("by_timestamp").order("desc").take(600);
+    const odd: any[] = [];
+    for (const r of rows) {
+      const p = (r as any).payload ?? {};
+      const missing = !p.entryId || !p.reason;
+      if (missing) {
+        odd.push({
+          rowEntryId: (r as any).entryId ?? null,
+          payloadEntryId: p.entryId ?? null,
+          action: p.action ?? null,
+          teacher: p.teacher ?? null,
+          hasReason: typeof p.reason === "string",
+          hasDetails: typeof p.details === "string",
+          timestamp: r.timestamp,
+        });
+      }
+    }
+    return { scanned: rows.length, oddCount: odd.length, odd: odd.slice(0, 10) };
+  },
+});
+
+/** Every "Changed access level" entry, to see whether they multiply. Read-only. */
+export const roleAuditGrowth = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db
+      .query("appAuditLog").withIndex("by_timestamp").order("desc").take(2000);
+    const hits = rows.filter((r) => String(((r as any).payload ?? {}).action ?? "") === "Changed access level");
+    const byTimestamp: Record<string, number> = {};
+    for (const h of hits) byTimestamp[String(h.timestamp)] = (byTimestamp[String(h.timestamp)] ?? 0) + 1;
+    return {
+      total: hits.length,
+      distinctMoments: Object.keys(byTimestamp).length,
+      copiesPerMoment: Object.entries(byTimestamp).map(([t, n]) => ({ at: t, rows: n })),
+      withoutPayloadEntryId: hits.filter((h) => !((h as any).payload ?? {}).entryId).length,
+      details: hits.slice(0, 6).map((h) => ({
+        rowEntryId: (h as any).entryId,
+        payloadEntryId: ((h as any).payload ?? {}).entryId ?? null,
+        details: ((h as any).payload ?? {}).details ?? null,
+      })),
+    };
+  },
+});
+
+/**
+ * Give any audit entry whose payload lacks an entryId the one from its column.
+ *
+ * NOT a delete. An audit row is a record of something that happened, and the
+ * fix for a badly shaped one is to shape it correctly, not to remove it. The
+ * only change is adding the id the row already has, which is what stops a
+ * browser deriving its own and uploading the event a second time.
+ *
+ * Idempotent: an entry that already carries one is left alone, so this can be
+ * re-run safely. Paged, because a delete-or-patch loop over the whole log is
+ * past the read limit.
+ */
+export const repairAuditPayloadIds = internalMutation({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const take = Math.min(limit ?? 400, 800);
+    const rows = await ctx.db
+      .query("appAuditLog").withIndex("by_timestamp").order("desc").take(take);
+
+    let patched = 0, alreadyFine = 0, noColumnId = 0;
+    const examples: string[] = [];
+    for (const r of rows) {
+      const p = ((r as any).payload ?? {}) as Record<string, unknown>;
+      if (typeof p.entryId === "string" && p.entryId) { alreadyFine++; continue; }
+      const id = (r as any).entryId;
+      if (typeof id !== "string" || !id) { noColumnId++; continue; }
+      await ctx.db.patch(r._id, { payload: { ...p, entryId: id } });
+      patched++;
+      if (examples.length < 5) examples.push(`${id} (${String(p.action ?? "?")})`);
+    }
+    return { scanned: rows.length, patched, alreadyFine, noColumnId, examples };
+  },
+});

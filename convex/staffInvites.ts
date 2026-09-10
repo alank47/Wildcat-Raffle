@@ -389,16 +389,35 @@ export const setStaffRole = mutation({
     // record is exactly the kind of thing that has to be answerable months
     // later, and "who gave them access" is the first question asked.
     const now = new Date().toISOString();
+    // THE ID GOES IN THE PAYLOAD TOO, NOT ONLY IN THE COLUMN.
+    //
+    // The browser reads entries out of `payload` and calls ensureEntryId on
+    // each one, which trusts a string `payload.entryId` and otherwise DERIVES
+    // one from the entry's contents. A server-written entry with the id only
+    // in the column therefore arrived looking unidentified: the client minted
+    // its own `e_...` id and uploaded the same event back as a second row.
+    // One duplicate per server-written entry -- bounded, because the derived
+    // id is a content hash rather than random, so every client agrees on it
+    // and append dedupes the rest. Bounded is not the same as harmless in a
+    // log whose whole purpose is answering "who did this, once".
+    const entryId = `role_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
     await ctx.db.insert("appAuditLog", {
-      entryId: `role_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`,
+      entryId,
       timestamp: now,
       // The shape the app's own audit entries use; the table itself stores
       // this as an opaque payload, and the reader expects these field names.
       payload: {
+        // Repeated here on purpose: see the note above.
+        entryId,
         action: "Changed access level",
         teacher: actor.name || actor.email,
         teacherName: actor.name || actor.email,
+        // BOTH NAMES, because the two readers disagree. The app's own entries
+        // carry `reason` and the audit tables render that; `details` is what
+        // this mutation wrote first, and it showed as a blank cell. Writing
+        // one and hoping is how a role change becomes an unexplained row.
         details: `${targetRow.name || target}: ${previousRole} \u2192 ${verdict.newRole}`,
+        reason: `${targetRow.name || target}: ${previousRole} \u2192 ${verdict.newRole}`,
         userId: actor.email,
         timestamp: now,
       },
