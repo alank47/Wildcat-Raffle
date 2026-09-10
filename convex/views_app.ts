@@ -80,10 +80,24 @@ export const teacherRoster = query({
     const numbers = [...new Set(rows.map((r) => r.studentNumber))];
     const students = new Map<string, any>();
     for (const num of numbers) {
+      // .first(), NOT .unique(), and the reason is three hundred lines below
+      // this file's own note about psAttendance: .unique() answers a data
+      // fault by throwing a PLAIN Error, which Convex redacts to "Server
+      // Error" in production. Here that error is not scoped to the one
+      // student -- it takes down the WHOLE roster fetch, so a teacher with two
+      // records sharing a student number sees no classes at all, which from
+      // her chair is indistinguishable from not being timetabled.
+      //
+      // Checked 2026-09-09: 757 students, 757 distinct numbers, so nothing is
+      // throwing today. That is exactly when to fix it. One duplicated number
+      // from one import is all it takes, and the symptom it produces --
+      // "I cannot see my rosters" -- is the one we spent the morning chasing.
+      // Showing one of two duplicates is wrong in a way somebody can see;
+      // showing a teacher an empty school is not.
       const s = await ctx.db
         .query("students")
         .withIndex("by_studentNumber", (q) => q.eq("studentNumber", num))
-        .unique();
+        .first();
       if (s) students.set(num, s);
     }
 
@@ -200,10 +214,24 @@ export const teacherRosterFor = query({
     const numbers = [...new Set(rows.map((r) => r.studentNumber))];
     const students = new Map<string, any>();
     for (const num of numbers) {
+      // .first(), NOT .unique(), and the reason is three hundred lines below
+      // this file's own note about psAttendance: .unique() answers a data
+      // fault by throwing a PLAIN Error, which Convex redacts to "Server
+      // Error" in production. Here that error is not scoped to the one
+      // student -- it takes down the WHOLE roster fetch, so a teacher with two
+      // records sharing a student number sees no classes at all, which from
+      // her chair is indistinguishable from not being timetabled.
+      //
+      // Checked 2026-09-09: 757 students, 757 distinct numbers, so nothing is
+      // throwing today. That is exactly when to fix it. One duplicated number
+      // from one import is all it takes, and the symptom it produces --
+      // "I cannot see my rosters" -- is the one we spent the morning chasing.
+      // Showing one of two duplicates is wrong in a way somebody can see;
+      // showing a teacher an empty school is not.
       const s = await ctx.db
         .query("students")
         .withIndex("by_studentNumber", (q) => q.eq("studentNumber", num))
-        .unique();
+        .first();
       if (s) students.set(num, s);
     }
 

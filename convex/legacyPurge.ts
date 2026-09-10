@@ -977,3 +977,221 @@ export const legacyDocSize = internalQuery({
     };
   },
 });
+
+/**
+ * Which staff can actually see students, and which cannot?
+ *
+ * The launch-day question behind "she says she cannot see her rosters".
+ * A classroom teacher with no psRoster rows sees NOBODY -- deliberately, since
+ * absent data must not read as unrestricted access. So this counts, per staff
+ * member, how many roster rows join to their address. Staff addresses and
+ * counts only; no student rows.
+ */
+export const rosterCoverageByStaff = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const staff = await ctx.db.query("teachers").take(2000);
+    const roster = await ctx.db.query("psRoster").take(4000);
+
+    const sectionsByEmail = new Map<string, Set<string>>();
+    for (const r of roster as any[]) {
+      const em = typeof r.teacherEmail === "string" ? r.teacherEmail.toLowerCase() : "";
+      if (!em) continue;
+      const set = sectionsByEmail.get(em) ?? new Set<string>();
+      set.add(String(r.sectionId ?? "?"));
+      sectionsByEmail.set(em, set);
+    }
+
+    const rows = (staff as any[]).map((t) => {
+      const em = String(t.email || "").toLowerCase();
+      const ps = String(t.psEmail || "").toLowerCase();
+      const sections = (sectionsByEmail.get(em)?.size ?? 0) || (sectionsByEmail.get(ps)?.size ?? 0);
+      return { name: t.name, email: t.email, role: t.role, sections };
+    });
+
+    // Roster addresses that match no staff record at all -- vacancies and
+    // teachers PowerSchool knows under a name the app has never seen.
+    const staffEmails = new Set(rows.map((r) => String(r.email || "").toLowerCase()));
+    const orphanRoster = [...sectionsByEmail.entries()]
+      .filter(([em]) => !staffEmails.has(em))
+      .map(([em, set]) => ({ teacherEmail: em, sections: set.size }));
+
+    const seesAll = ["admin", "superadmin", "campusaide", "pbis"];
+    return {
+      staff: rows.length,
+      withSections: rows.filter((r) => r.sections > 0).length,
+      blockedTeachers: rows
+        .filter((r) => r.sections === 0 && !seesAll.includes(String(r.role)))
+        .map((r) => ({ name: r.name, email: r.email, role: r.role })),
+      unaffectedBecauseTheySeeEveryone: rows.filter((r) => r.sections === 0 && seesAll.includes(String(r.role))).length,
+      orphanRoster,
+    };
+  },
+});
+
+/**
+ * Exactly what me:get would return for one teacher, run through the SAME
+ * index. Read-only, and it counts students rather than naming them.
+ *
+ * The previous version of this probe scanned psRoster with .take(4000) and
+ * reported 0 sections for a teacher who has 8, because her rows sit past the
+ * cap in a 5,564 row table. That is the difference between "the SIS does not
+ * know her" and "my probe could not see her", and they lead to opposite
+ * conclusions about a teacher standing in front of a class.
+ */
+export const sectionsForTeacher = internalQuery({
+  args: { email: v.string() },
+  handler: async (ctx, { email }) => {
+    const want = email.trim().toLowerCase();
+    const rows = await ctx.db
+      .query("psRoster")
+      .withIndex("by_teacherEmail", (q) => q.eq("teacherEmail", want))
+      .collect();
+
+    const bySection = new Map<string, { course: string | null; period: string | null; students: number }>();
+    for (const r of rows as any[]) {
+      const id = String(r.sectionId ?? `${r.courseNumber}-${r.sectionNumber}`);
+      const e = bySection.get(id) ?? { course: r.courseName ?? null, period: r.period ?? null, students: 0 };
+      e.students += 1;
+      bySection.set(id, e);
+    }
+    return {
+      email: want,
+      rows: rows.length,
+      sectionCount: bySection.size,
+      sections: [...bySection.entries()].map(([sectionId, v]) => ({ sectionId, ...v })),
+    };
+  },
+});
+
+export const jobTitlesFor = internalQuery({
+  args: { emails: v.array(v.string()) },
+  handler: async (ctx, { emails }) => {
+    const want = new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean));
+    const dir = await ctx.db.query("entraDirectory").take(3000);
+    const hits = new Map<string, string | null>();
+    for (const d of dir as any[]) {
+      const em = String(d.email || "").toLowerCase();
+      if (want.has(em)) hits.set(em, d.jobTitle ?? null);
+    }
+    return [...want].map((email) => ({
+      email,
+      jobTitle: hits.has(email) ? hits.get(email) : "(not in directory)",
+    }));
+  },
+});
+
+/**
+ * psRoster, one page at a time, summarised per teacher.
+ *
+ * PAGINATED BECAUSE .take(4000) LIED. psRoster holds 5,564 rows, so every
+ * probe that read it with a cap saw a PREFIX, and the conclusions drawn from
+ * those -- "only 25 teachers have sections", "18 teachers are blocked" -- were
+ * artefacts of the cap rather than facts about the school. The caller
+ * aggregates across pages.
+ */
+export const rosterPage = internalQuery({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, { cursor }) => {
+    const page = await ctx.db.query("psRoster").paginate({
+      cursor: cursor ?? null, numItems: 1000,
+    });
+    const byTeacher: Record<string, string[]> = {};
+    for (const r of page.page as any[]) {
+      const em = typeof r.teacherEmail === "string" ? r.teacherEmail.toLowerCase() : "";
+      if (!em) continue;
+      (byTeacher[em] ??= []).push(String(r.sectionId ?? "?"));
+    }
+    return { byTeacher, rows: page.page.length, cursor: page.continueCursor, isDone: page.isDone };
+  },
+});
+
+/** Staff records, paged, so this comparison is not capped either. */
+export const staffPage = internalQuery({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, { cursor }) => {
+    const page = await ctx.db.query("teachers").paginate({
+      cursor: cursor ?? null, numItems: 500,
+    });
+    return {
+      staff: (page.page as any[]).map((t) => ({
+        name: t.name, email: String(t.email || "").toLowerCase(),
+        psEmail: String(t.psEmail || "").toLowerCase(), role: t.role,
+      })),
+      cursor: page.continueCursor, isDone: page.isDone,
+    };
+  },
+});
+
+/**
+ * Do one teacher's SIS students join to the app's student records?
+ *
+ * scopeStudents matches psRoster rows to the students array on studentNumber.
+ * A teacher can have eight perfectly good sections and still see NOBODY if the
+ * numbers on those rows match no student record -- which looks identical, from
+ * the teacher's chair, to having no roster at all. Counts only.
+ */
+export const rosterJoinForTeacher = internalQuery({
+  args: { email: v.string() },
+  handler: async (ctx, { email }) => {
+    const want = email.trim().toLowerCase();
+    const rows = await ctx.db
+      .query("psRoster")
+      .withIndex("by_teacherEmail", (q) => q.eq("teacherEmail", want))
+      .collect();
+
+    let matched = 0, unmatched = 0, noNumber = 0;
+    const sampleUnmatched: string[] = [];
+    const enrolledMatched = new Set<string>();
+    for (const r of rows as any[]) {
+      const num = r.studentNumber ? String(r.studentNumber) : "";
+      if (!num) { noNumber++; continue; }
+      const st = await ctx.db
+        .query("students")
+        .withIndex("by_studentNumber", (q) => q.eq("studentNumber", num))
+        .first();
+      if (st) {
+        matched++;
+        if ((st as any).enrolled !== false) enrolledMatched.add(num);
+      } else {
+        unmatched++;
+        if (sampleUnmatched.length < 5) sampleUnmatched.push(num);
+      }
+    }
+    return {
+      email: want,
+      rosterRows: rows.length,
+      matchedToAppStudent: matched,
+      matchedAndEnrolled: enrolledMatched.size,
+      unmatched,
+      rowsWithNoStudentNumber: noNumber,
+      sampleUnmatched,
+    };
+  },
+});
+
+/**
+ * Duplicate studentNumbers, which .unique() answers by THROWING.
+ *
+ * views_app:teacherRoster looks each of a teacher's students up with
+ * .unique(). Two records sharing a number is a data fault, and .unique()
+ * reports a data fault by throwing a plain Error, which Convex redacts to
+ * "Server Error" in production -- taking down that teacher's WHOLE roster
+ * fetch, not just the one student. From her chair that is indistinguishable
+ * from having no classes at all. Paged, so this probe is not itself capped.
+ */
+export const duplicateStudentNumbers = internalQuery({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, { cursor }) => {
+    const page = await ctx.db.query("students").paginate({
+      cursor: cursor ?? null, numItems: 500,
+    });
+    const seen: Record<string, number> = {};
+    for (const s of page.page as any[]) {
+      const n = s.studentNumber ? String(s.studentNumber) : "";
+      if (!n) continue;
+      seen[n] = (seen[n] ?? 0) + 1;
+    }
+    return { counts: seen, rows: page.page.length, cursor: page.continueCursor, isDone: page.isDone };
+  },
+});
