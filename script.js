@@ -4187,6 +4187,15 @@
                             detentionIdCounter,
                             detentionLocations,
                             detentionReasons,
+                            // THE CATALOGUE BELONGS IN THIS BRANCH TOO.
+                            // This is the blob written when the SERVER writes
+                            // failed -- the one moment loadDataLocal will
+                            // actually read it back. Omitting it made the
+                            // recovery cache the single copy guaranteed NOT to
+                            // hold the rewards, so a failed save dropped the
+                            // school back to the five hardcoded defaults at the
+                            // exact moment it was relying on the cache.
+                            wildcatCashRewards,
                             loginHistory,
                             autoWeekEnabled,
                             lastAutoResetDate,

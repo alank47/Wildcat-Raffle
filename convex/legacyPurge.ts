@@ -1580,3 +1580,32 @@ export const signInReadinessDetail = internalQuery({
     };
   },
 });
+
+/**
+ * Could a reward be gated on "C or better in every class"? Counts only.
+ *
+ * The question is not whether the data exists but whether it is COMPLETE
+ * enough to refuse a child with. A student blocked because a teacher has not
+ * posted grades yet has been punished for an adult's paperwork.
+ */
+export const gradeGateFeasibility = internalQuery({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, { cursor }) => {
+    const page = await ctx.db.query("psGrades").paginate({
+      cursor: cursor ?? null, numItems: 1000,
+    });
+    const byStudent: Record<string, { rows: number; withLetter: number; withPct: number; letters: string[]; pcts: number[] }> = {};
+    for (const g of page.page as any[]) {
+      const n = String(g.studentNumber ?? "");
+      if (!n) continue;
+      const e = byStudent[n] ?? { rows: 0, withLetter: 0, withPct: 0, letters: [], pcts: [] };
+      e.rows++;
+      const L = typeof g.currentGrade === "string" ? g.currentGrade.trim() : "";
+      const P = typeof g.currentPercent === "number" && Number.isFinite(g.currentPercent) ? g.currentPercent : null;
+      if (L) { e.withLetter++; e.letters.push(L); }
+      if (P !== null) { e.withPct++; e.pcts.push(P); }
+      byStudent[n] = e;
+    }
+    return { byStudent, rows: page.page.length, cursor: page.continueCursor, isDone: page.isDone };
+  },
+});

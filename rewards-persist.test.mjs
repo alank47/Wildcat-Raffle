@@ -94,7 +94,17 @@ console.log("\n-- what must NOT have changed --");
   check("legacyData needed no reward-specific code", !/wildcatCashRewards/.test(convexRewards));
   check("the hardcoded defaults are still there as the seed",
     /let wildcatCashRewards = \[/.test(script) && /Homework Pass/.test(script));
-  check("the localStorage fallback write is untouched", /wildcatCashRewards,\n\s+cashReceipts,/.test(script) || true);
+  // BOTH localStorage branches carry it. The error-fallback blob is the one
+  // moment loadDataLocal actually reads the cache back, so omitting it there
+  // made the recovery copy the single one guaranteed not to hold the rewards.
+  // Found by an independent check after the first version of this fix shipped.
+  const fallback = script.slice(script.indexOf("// Fall back to localStorage only"),
+                                script.indexOf("}));", script.indexOf("// Fall back to localStorage only")));
+  check("the error-fallback localStorage blob was located", fallback.length > 200);
+  check("and it carries the catalogue too", /wildcatCashRewards,/.test(fallback));
+  const success = script.slice(script.indexOf("// Also save to localStorage"),
+                               script.indexOf("}));", script.indexOf("// Also save to localStorage")));
+  check("as does the success branch", /wildcatCashRewards,/.test(success));
 }
 
 console.log("\n-- the union really is a union --");
