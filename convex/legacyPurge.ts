@@ -1505,3 +1505,78 @@ export const bellScheduleContents = internalQuery({
     }));
   },
 });
+
+/** Can enrolled students actually sign in? Counts only, no addresses. Read-only. */
+export const studentSignInReadiness = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("students").collect();
+    let enrolled = 0, withEmail = 0, noEmail = 0, badDomain = 0;
+    const domains: Record<string, number> = {};
+    for (const s of all as any[]) {
+      if (!s.studentNumber) continue;
+      const hit = await ctx.db
+        .query("psRoster")
+        .withIndex("by_studentNumber", (q) => q.eq("studentNumber", s.studentNumber))
+        .first();
+      if (!hit) continue;
+      enrolled++;
+      const em = String(s.email || "").trim().toLowerCase();
+      if (!em) { noEmail++; continue; }
+      withEmail++;
+      const d = em.split("@")[1] || "(none)";
+      domains[d] = (domains[d] ?? 0) + 1;
+      if (d !== "westbrookacademy.org") badDomain++;
+    }
+    return { enrolled, withEmail, noEmail, badDomain, domains };
+  },
+});
+
+/**
+ * Sign-in readiness, with the few problem cases named so the office can fix
+ * them. Student NUMBERS and grades only -- no names, no addresses beyond the
+ * domain, because this is a diagnostic and not an export.
+ */
+export const signInReadinessDetail = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("students").collect();
+    const missing: any[] = [];
+    const oddDomain: any[] = [];
+    let enrolled = 0, ok = 0;
+    const domains: Record<string, number> = {};
+    for (const s of all as any[]) {
+      if (!s.studentNumber) continue;
+      const hit = await ctx.db
+        .query("psRoster")
+        .withIndex("by_studentNumber", (q) => q.eq("studentNumber", s.studentNumber))
+        .first();
+      if (!hit) continue;
+      enrolled++;
+      const em = String(s.email || "").trim().toLowerCase();
+      if (!em) {
+        missing.push({ studentNumber: s.studentNumber, grade: s.grade ?? null });
+        continue;
+      }
+      const d = em.split("@")[1] || "(malformed)";
+      domains[d] = (domains[d] ?? 0) + 1;
+      if (d !== "westbrookacademy.org") {
+        oddDomain.push({ studentNumber: s.studentNumber, grade: s.grade ?? null, domain: d });
+      } else ok++;
+    }
+    // Real-world proof: distinct students who have actually signed in.
+    const auth = await ctx.db.query("authEvents").collect();
+    const studentSignIns = new Set(
+      auth.filter((a: any) => a.kind === "student").map((a: any) => a.email),
+    );
+    return {
+      enrolled,
+      readyToSignIn: ok,
+      noEmail: missing.length,
+      missing,
+      oddDomain,
+      domains,
+      distinctStudentsWhoHaveActuallySignedIn: studentSignIns.size,
+    };
+  },
+});
