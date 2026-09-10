@@ -1468,3 +1468,40 @@ export const calendarStateToday = internalQuery({
     };
   },
 });
+
+/** Every distinct course/period pair that looks like Promise Time. Read-only. */
+export const promiseTimeShape = internalQuery({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, { cursor }) => {
+    const page = await ctx.db.query("psRoster").paginate({
+      cursor: cursor ?? null, numItems: 1000,
+    });
+    const pairs: Record<string, number> = {};
+    const allPeriods: Record<string, number> = {};
+    for (const r of page.page as any[]) {
+      const course = String(r.courseName ?? "");
+      const period = String(r.period ?? "?");
+      allPeriods[period] = (allPeriods[period] ?? 0) + 1;
+      if (/promise/i.test(course)) {
+        const k = course + " || " + period;
+        pairs[k] = (pairs[k] ?? 0) + 1;
+      }
+    }
+    return { pairs, allPeriods, cursor: page.continueCursor, isDone: page.isDone };
+  },
+});
+
+/** The actual contents of the hand-entered bell schedules. Read-only. */
+export const bellScheduleContents = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("bellSchedules").take(50);
+    return rows.map((r: any) => ({
+      name: r.name,
+      active: r.active,
+      weekdays: r.weekdays,
+      periodCount: Array.isArray(r.periods) ? r.periods.length : 0,
+      periods: Array.isArray(r.periods) ? r.periods.slice(0, 14) : null,
+    }));
+  },
+});
