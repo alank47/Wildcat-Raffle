@@ -2538,6 +2538,19 @@
                         detentionLocations = secondaryData.detentionLocations || ['Main Office', 'Library', 'Room 101', 'Room 102', 'Cafeteria', 'Gym'];
                         detentionReasons = secondaryData.detentionReasons || ['Disrupting Class', 'Tardiness', 'Dress Code Violation', 'Inappropriate Behavior', 'Defiance/Disrespect', 'Cell Phone Violation', 'Missing Assignment', 'Other'];
                         
+                        // THE REWARD CATALOGUE. Absent from the server means a
+                        // school that has never saved one, not a school with no
+                        // rewards -- so the hardcoded defaults are left in place
+                        // and the next save seeds them. Once the server holds a
+                        // list, it wins outright: an admin who retires a reward
+                        // must not have it resurrected by another tab's defaults.
+                        const serverRewards = secondaryData.wildcatCashRewards;
+                        if (Array.isArray(serverRewards) && serverRewards.length) {
+                            wildcatCashRewards = serverRewards.map(function (r) {
+                                return window.WildcatStore.normalizeReward(r, Date.now(), {});
+                            });
+                        }
+
                         // Receipts merge by id, the same union-by-id shape the
                         // rest of this loader uses, so a receipt raised on one
                         // device is not dropped by a save from another.
@@ -3982,6 +3995,24 @@
                                 hallPasses,
                                 preventionGroups,
                                 cashReceipts,
+                                // THE REWARD CATALOGUE, WHICH HAS NEVER PERSISTED.
+                                //
+                                // It was written into the localStorage blob at the
+                                // bottom of this function and read back ONLY inside
+                                // loadDataLocal, which runs only when the Convex load
+                                // throws. On every healthy load the app therefore
+                                // started from the five hardcoded defaults at :1325,
+                                // so an admin's edits died on reload and reward.stock
+                                // reset to full -- while the receipt and the cash
+                                // debit for that purchase persisted. Sold an item,
+                                // kept the receipt, forgot the item.
+                                //
+                                // It belongs HERE rather than in the settings blob:
+                                // rewards carry ids, so mergeSlice unions them by id
+                                // and two admins editing different rewards both
+                                // survive. The settings row is a whole-value replace,
+                                // where the last tab to save would win the lot.
+                                wildcatCashRewards,
                             };
                             // TEN SEQUENTIAL ROUND TRIPS, AWAITED ONE AT A TIME.
                             //
@@ -4058,6 +4089,7 @@
                                 hallPasses = mergedSecondary.hallPasses;
                                 preventionGroups = mergedSecondary.preventionGroups;
                                 cashReceipts = mergedSecondary.cashReceipts;
+                                wildcatCashRewards = mergedSecondary.wildcatCashRewards;
                                 detentionIdCounter = mergedSecondary.detentionIdCounter;
                             }
                             console.log(
@@ -26033,7 +26065,16 @@
 
             // Stock only decrements for a limited reward. null means unlimited
             // and must stay null rather than becoming NaN.
-            if (built.stockAfter !== null) reward.stock = built.stockAfter;
+            if (built.stockAfter !== null) {
+                reward.stock = built.stockAfter;
+                // STAMPED, or the decrement does not survive the trip.
+                // legacyData.touchedAt reads updatedAt and three closing fields
+                // when deciding which copy of a row wins a merge; a bare stock
+                // change scores zero and loses to the stored copy, so the shelf
+                // would refill itself on the next load and the item could be
+                // sold more times than the school owns.
+                reward.updatedAt = new Date().toISOString();
+            }
 
             // The per-student redemption list is kept for the existing store UI.
             if (!Array.isArray(student.wildcatCashRewardsRedeemed)) student.wildcatCashRewardsRedeemed = [];

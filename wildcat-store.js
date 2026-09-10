@@ -128,7 +128,14 @@
 
   function retireReward(reward, now, actor) {
     var next = applyRewardEdit(reward, { available: false }, now, actor);
-    next.retiredAt = new Date(now).toISOString();
+    var stamp = new Date(now).toISOString();
+    next.retiredAt = stamp;
+    // updatedAt TOO, and not for tidiness. legacyData.touchedAt only reads
+    // updatedAt / loopClosedAt / closedAt / submittedAt when deciding which
+    // copy of a row wins a merge. retiredAt is not on that list, so a
+    // retirement that set only retiredAt scored zero, tied with the stored
+    // un-retired copy, and lost -- the reward would come back on the next
+    // load. Same reason applyRewardEdit sets it.
     next.retiredBy = trimmed(actor && (actor.name || actor.username)) || 'system';
     return next;
   }
