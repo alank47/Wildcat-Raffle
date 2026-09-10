@@ -36,6 +36,26 @@ console.log("\n-- the server decides, and sends only the top --");
     !/cashLeaderboard/.test(roster));
 }
 
+console.log("\n-- enrolment is DERIVED, not read off the record --");
+{
+  // THE BUG THIS CAME FROM. No student row carries an `enrolled` field -- all
+  // 757 have it undefined -- so `enrolled !== false` passed every record and
+  // the board ranked 139 students who had left the school. The dashboard said
+  // 618 and the leaderboard said 757, which is how it was spotted.
+  check("the query does not trust a stored enrolled flag",
+    !/students\"\)\.collect\(\)[\s\S]{0,200}cashLeaderboard/.test(server));
+  check("it looks each student up in psRoster", /withIndex\("by_studentNumber"/.test(server));
+  check("and sets enrolled from whether a roster row exists",
+    /enrolled: Boolean\(hit\)/.test(server));
+  check("the definition is documented as matching appData's",
+    /same DEFINITION as appData/i.test(server));
+  // The cheaper method is the point: this runs on every portal load.
+  check("the read cost is recorded", /1,514 documents|about 1,514/.test(server));
+  // The ranking rule still filters, so a caller passing enrolled:false is honoured.
+  check("the rule still drops unenrolled students",
+    /s\.enrolled !== false/.test(readFileSync(new URL("./convex/leaderboardRules.ts", import.meta.url), "utf8")));
+}
+
 console.log("\n-- the three bands --");
 {
   ["academy", "hs", "ms"].forEach((b) =>

@@ -1368,3 +1368,80 @@ export const studentsTableSize = internalQuery({
     return { rows: page.page.length, bytes, txBytes, cursor: page.continueCursor, isDone: page.isDone };
   },
 });
+
+/** What the leaderboard actually counts, versus what the roster says. Read-only. */
+export const leaderboardCounts = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("students").collect();
+    const enrolledTrue = all.filter((s: any) => s.enrolled === true).length;
+    const enrolledFalse = all.filter((s: any) => s.enrolled === false).length;
+    const enrolledMissing = all.filter((s: any) => s.enrolled === undefined || s.enrolled === null).length;
+
+    // The rule the leaderboard uses.
+    const pool = all.filter((s: any) => s.enrolled !== false);
+    const withEarned = pool.filter(
+      (s: any) => typeof s.wildcatCashEarned === "number" &&
+                  Number.isFinite(s.wildcatCashEarned) && s.wildcatCashEarned >= 0,
+    ).length;
+    const zeroEarned = pool.filter((s: any) => s.wildcatCashEarned === 0).length;
+
+    return {
+      studentsTable: all.length,
+      enrolledTrue,
+      enrolledFalse,
+      enrolledMissingField: enrolledMissing,
+      leaderboardPool: pool.length,
+      rankedOnTheBoard: withEarned,
+      unknownEarned: pool.length - withEarned,
+      ofWhichZero: zeroEarned,
+    };
+  },
+});
+
+/** The leaderboard pool with enrolment DERIVED, as appData does it. Read-only. */
+export const leaderboardCountsFixed = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rosterRows = await ctx.db.query("psRoster").collect();
+    const enrolledNumbers = new Set(rosterRows.map((r) => r.studentNumber).filter(Boolean));
+    const all = await ctx.db.query("students").collect();
+    const enrolled = all.filter((s: any) => s.studentNumber && enrolledNumbers.has(s.studentNumber));
+    const ranked = enrolled.filter(
+      (s: any) => typeof s.wildcatCashEarned === "number" &&
+                  Number.isFinite(s.wildcatCashEarned) && s.wildcatCashEarned >= 0,
+    );
+    return {
+      docsRead: rosterRows.length + all.length,
+      studentsTable: all.length,
+      enrolledDerived: enrolled.length,
+      former: all.length - enrolled.length,
+      rankedOnBoard: ranked.length,
+      unknownEarned: enrolled.length - ranked.length,
+    };
+  },
+});
+
+/** Same answer, per-student index lookups instead of a full psRoster scan. */
+export const leaderboardCostProbe = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("students").collect();
+    let enrolled = 0, lookups = 0;
+    for (const s of all as any[]) {
+      if (!s.studentNumber) continue;
+      const hit = await ctx.db
+        .query("psRoster")
+        .withIndex("by_studentNumber", (q) => q.eq("studentNumber", s.studentNumber))
+        .first();
+      lookups++;
+      if (hit) enrolled++;
+    }
+    return {
+      studentsTable: all.length,
+      indexLookups: lookups,
+      approxDocsRead: all.length + lookups,
+      enrolledDerived: enrolled,
+    };
+  },
+});
