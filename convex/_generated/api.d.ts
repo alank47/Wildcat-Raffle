@@ -26,6 +26,8 @@ import type * as hallPassRules from "../hallPassRules.js";
 import type * as hallPasses from "../hallPasses.js";
 import type * as identity from "../identity.js";
 import type * as identityRules from "../identityRules.js";
+import type * as leaderboard from "../leaderboard.js";
+import type * as leaderboardRules from "../leaderboardRules.js";
 import type * as legacyData from "../legacyData.js";
 import type * as legacyPurge from "../legacyPurge.js";
 import type * as mail from "../mail.js";
@@ -88,6 +90,8 @@ declare const fullApi: ApiFromModules<{
   hallPasses: typeof hallPasses;
   identity: typeof identity;
   identityRules: typeof identityRules;
+  leaderboard: typeof leaderboard;
+  leaderboardRules: typeof leaderboardRules;
   legacyData: typeof legacyData;
   legacyPurge: typeof legacyPurge;
   mail: typeof mail;

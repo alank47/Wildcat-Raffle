@@ -635,6 +635,7 @@
     return { ok: true, note: text };
   }
 
+
   root.WildcatRoster = {
     CASH_NOTE_MIN: CASH_NOTE_MIN,
     cashNoteVerdict: cashNoteVerdict,

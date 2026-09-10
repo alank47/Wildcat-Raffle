@@ -17246,6 +17246,133 @@
             return (v === null || v === undefined) ? null : '$' + Number(v).toFixed(2);
         }
 
+        // =====================================================================
+        // WILDCAT CASH LEADERBOARD
+        //
+        // The portal used to say, in this file, "framed as their own record,
+        // not a scoreboard: this portal is theirs and nobody is ranked on it".
+        // The school asked for a board on 2026-09-10, so that principle is
+        // deliberately reversed here rather than left contradicting the code.
+        //
+        // What survives of it is the shape of what the server sends: the top
+        // ten by name, and the reader's OWN place. Nobody can read the bottom
+        // of the board off this screen, because the bottom never leaves the
+        // server. See convex/leaderboardRules.ts.
+        //
+        // RANKED ON EARNED, NOT BALANCE. Balance falls when a student spends,
+        // so a board built on it would quietly punish using the store -- the
+        // one behaviour the whole economy exists to produce.
+        // =====================================================================
+        let _wpBoardBand = 'academy';
+        let _wpBoardData = null;
+        let _wpBoardError = null;
+        let _wpBoardBusy = false;
+
+        function wpBoardPanel() {
+            const board = _wpBoardData;
+            const bands = (board && board.bands) || [
+                { key: 'academy', label: 'Academy' },
+                { key: 'hs', label: 'High School' },
+                { key: 'ms', label: 'Middle School' }
+            ];
+
+            const tabs = '<div class="wp-board-tabs" role="tablist">' + bands.map(function (b) {
+                const on = b.key === _wpBoardBand;
+                return '<button type="button" role="tab" class="wp-board-tab' + (on ? ' is-on' : '') + '"' +
+                       ' aria-selected="' + (on ? 'true' : 'false') + '"' +
+                       ' onclick="wpSetBoardBand(\'' + wpEsc(b.key) + '\')">' + wpEsc(b.label) + '</button>';
+            }).join('') + '</div>';
+
+            let body;
+            if (_wpBoardError) {
+                body = wpEmpty('The leaderboard could not be loaded just now. Everything else on this page is unaffected.');
+            } else if (!board) {
+                body = wpEmpty('Loading the leaderboard\u2026');
+            } else if (!board.top.length) {
+                body = wpEmpty('No Wildcat Cash has been awarded in this group yet.');
+            } else {
+                body = '<ol class="wp-board-list">' + board.top.map(function (r) {
+                    const mine = board.viewer && board.viewer.rank === r.rank &&
+                                 board.viewer.amount === r.amount;
+                    return '<li class="wp-board-row' + (mine ? ' is-me' : '') +
+                                (r.rank <= 3 ? ' is-podium' : '') + '">' +
+                        '<span class="wp-board-rank">' + r.rank + '</span>' +
+                        '<span class="wp-board-name">' + wpEsc(r.name) +
+                            (r.grade ? '<span class="wp-board-grade">Grade ' + wpEsc(String(r.grade)) + '</span>' : '') +
+                        '</span>' +
+                        '<span class="wp-board-amount">' + wpMoney(r.amount) + '</span>' +
+                    '</li>';
+                }).join('') + '</ol>';
+            }
+
+            // WHERE THEY STAND, said to them and to nobody else.
+            let you = '';
+            if (board && board.viewer) {
+                const v = board.viewer;
+                if (!v.inBand) {
+                    you = '<p class="wp-board-you is-quiet">You are not in this group, so you are not ranked here. ' +
+                          'Try the Academy board.</p>';
+                } else if (v.rank === null) {
+                    you = '<p class="wp-board-you is-quiet">You do not have a Wildcat Cash total yet, so you are not ranked. ' +
+                          'That is not a zero.</p>';
+                } else {
+                    you = '<p class="wp-board-you">You are <strong>#' + v.rank + '</strong> of ' + v.of +
+                          ' with ' + wpMoney(v.amount) +
+                          (v.tiedWith > 0
+                            ? ' \u2014 level with ' + v.tiedWith + ' other' + (v.tiedWith === 1 ? '' : 's') + '.'
+                            : '.') +
+                          '</p>';
+                }
+            }
+
+            const lead = board ? (board.total + ' ranked') : '';
+            return wpPanel('Wildcat Cash', 'Leaderboard', lead,
+                tabs + '<div id="wpBoardBody">' + body + you + '</div>');
+        }
+
+        /**
+         * Switch band and refetch just the board.
+         *
+         * Only the board is refetched, not the whole dashboard: re-running the
+         * page load would close whatever else the student had open and re-deal
+         * every card, for a change that affects one panel.
+         */
+        async function wpSetBoardBand(band) {
+            if (_wpBoardBusy || band === _wpBoardBand) return;
+            _wpBoardBand = band;
+            _wpBoardBusy = true;
+            // Repaint at once so the chosen tab highlights before the network
+            // answers; a tab that only moves when the data lands feels broken.
+            wpRepaintBoard();
+            try {
+                const auth = window.WildcatAuth;
+                const session = auth && auth.getSession && auth.getSession();
+                if (!session) return;
+                _wpBoardData = await auth.convexQuery('leaderboard:cash',
+                    { band: _wpBoardBand, topN: 10 }, session.idToken);
+                _wpBoardError = null;
+            } catch (e) {
+                _wpBoardData = null;
+                _wpBoardError = (e && e.message) || String(e);
+            } finally {
+                _wpBoardBusy = false;
+                wpRepaintBoard();
+            }
+        }
+
+        /** Redraw the board panel in place, leaving the rest of the page alone. */
+        function wpRepaintBoard() {
+            const host = document.getElementById('wpBoardBody');
+            if (!host || !host.parentNode) return;
+            const fresh = document.createElement('div');
+            fresh.innerHTML = wpBoardPanel();
+            const newBody = fresh.querySelector('#wpBoardBody');
+            const newTabs = fresh.querySelector('.wp-board-tabs');
+            const oldTabs = host.parentNode.querySelector('.wp-board-tabs');
+            if (newBody) host.innerHTML = newBody.innerHTML;
+            if (newTabs && oldTabs) oldTabs.innerHTML = newTabs.innerHTML;
+        }
+
         function wpDashboard(mine, sched, grades, pass) {
             // Recorded HERE rather than at the call site. The modal reads these
             // to render a course without a network round trip, and setting it
@@ -17312,8 +17439,11 @@
             // about. The server has been sending these movements since the
             // portal was built and nothing rendered them.
             //
-            // Framed as their own record, not a scoreboard: this portal is
-            // theirs and nobody is ranked on it.
+            // Their own record, and it stays that way: this panel is the
+            // student's own movements, unranked. The Leaderboard panel above
+            // is where standing is shown, added 2026-09-10 at the school's
+            // request -- and even there, only the top ten are named and the
+            // rest of the ordering never leaves the server.
             const recent = Array.isArray(cash.recent) ? cash.recent : [];
             const awards = wpPanel('Recent activity', 'Your Wildcat Cash', '',
                 (!recent.length
@@ -17634,7 +17764,7 @@
             // `tickets` is gone with the Raffle panel it drew. Order matters:
             // the cash panels sit together, so "what I have" and "how I got it"
             // are read as one thing rather than separated by the timetable.
-            return tiles + passPanel + gradePanel + money + awards + schedule + attendance;
+            return tiles + passPanel + gradePanel + money + wpBoardPanel() + awards + schedule + attendance;
         }
         /**
          * Open one course's missing-work list, or close it.
@@ -19354,10 +19484,22 @@
                 auth.convexQuery('passCard:mine', {}, token),
                 auth.convexQuery('views_app:myStudentView', {}, token),
                 auth.convexQuery('me:get', {}, token),
+                // The board the student last chose, not always the Academy: the
+                // dashboard re-renders wholesale on every poll, so a band held
+                // only in the DOM would snap back to Academy every few seconds
+                // while they were reading it.
+                auth.convexQuery('leaderboard:cash', { band: _wpBoardBand, topN: 10 }, token),
             ]);
             const pass = results[0].status === 'fulfilled' ? results[0].value : null;
             const mine = results[1].status === 'fulfilled' ? results[1].value : null;
             const me = results[2].status === 'fulfilled' ? results[2].value : null;
+            // A failed board is not an empty board. Left as null so the panel
+            // says it could not load rather than showing an empty leaderboard,
+            // which reads as "nobody has earned anything".
+            _wpBoardData = results[3].status === 'fulfilled' ? results[3].value : null;
+            _wpBoardError = results[3].status === 'rejected'
+                ? ((results[3].reason && results[3].reason.message) || 'Could not load')
+                : null;
 
             if (!pass) {
                 const stack = wpById('wpStack');

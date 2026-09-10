@@ -29,8 +29,14 @@ const check = (n, c) => { c ? (pass++, console.log(`  PASS  ${n}`)) : (fail++, c
 const grab = (re) => [...wallet.matchAll(re)].map((m) => m[1]);
 
 const check0 = (n, c) => { c ? (pass++, console.log(`  PASS  ${n}`)) : (fail++, console.log(`  FAIL  ${n}`)); };
+// RELATIVE, NOT A MAGIC NUMBER. This guard exists to catch a boundary that
+// matched nothing and swallowed the file, and it was written as "< 120000".
+// script.js grows -- adding the student leaderboard on 2026-09-10 pushed this
+// block to 123,191 and failed a test that had found its block perfectly well.
+// A quarter of the file still catches the failure it is for, and stops
+// somebody re-tuning a constant every time the app gains a feature.
 check0("the wallet block was located, not the whole file",
-  wStart > 0 && wEnd > wStart && wallet.length < 120000);
+  wStart > 0 && wEnd > wStart && wallet.length < script.length / 4);
 
 // Words that stay lowercase inside a Title Case heading.
 const SMALL = new Set(["a", "an", "the", "of", "and", "or", "in", "on", "at", "to", "for"]);

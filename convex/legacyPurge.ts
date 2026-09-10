@@ -1352,3 +1352,19 @@ export const repairAuditPayloadIds = internalMutation({
     return { scanned: rows.length, patched, alreadyFine, noColumnId, examples };
   },
 });
+
+/** How heavy is a full students read? Paged so the probe cannot blow the limit. */
+export const studentsTableSize = internalQuery({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, { cursor }) => {
+    const page = await ctx.db.query("students").paginate({
+      cursor: cursor ?? null, numItems: 200,
+    });
+    let bytes = 0, txBytes = 0;
+    for (const s of page.page as any[]) {
+      try { bytes += JSON.stringify(s).length; } catch { /* skip */ }
+      try { txBytes += JSON.stringify(s.wildcatCashTransactions ?? []).length; } catch { /* skip */ }
+    }
+    return { rows: page.page.length, bytes, txBytes, cursor: page.continueCursor, isDone: page.isDone };
+  },
+});

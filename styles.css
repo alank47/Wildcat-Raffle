@@ -8859,3 +8859,62 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 @media (max-width: 560px) {
     .wc-unsaved-bar { flex-wrap: wrap; bottom: 8px; }
 }
+
+/* ---- Wildcat Cash leaderboard, student portal ---------------------------
+   A board of children shown to children. Warm rather than competitive: the
+   podium is marked, but nothing is coloured to say "you are losing", because
+   only the top ten are ever named and everyone else reads their own line. */
+
+.wp-board-tabs {
+    display: flex; gap: 6px; margin: 0 0 12px; flex-wrap: wrap;
+}
+.wp-board-tab {
+    flex: 1 1 auto; min-width: 92px;
+    padding: 8px 12px; border-radius: 999px;
+    border: 1px solid var(--wc-line, #E7ECF2);
+    background: var(--wc-surface, #fff); color: var(--wc-ink, #14171C);
+    font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.wp-board-tab:hover { border-color: var(--wc-blue, #2F67A7); }
+.wp-board-tab.is-on {
+    background: var(--wc-blue, #2F67A7); border-color: var(--wc-blue, #2F67A7); color: #fff;
+}
+.wp-board-tab:focus-visible { outline: 2px solid var(--wc-blue, #2F67A7); outline-offset: 2px; }
+
+.wp-board-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+
+.wp-board-row {
+    display: flex; align-items: center; gap: 10px;
+    /* box-sizing so a border cannot push a row past its padded panel, the
+       same fault that made the quiet-students cards look clipped. */
+    width: 100%; box-sizing: border-box;
+    padding: 8px 10px; border-radius: 10px;
+    background: var(--wc-surface, #fff);
+    border: 1px solid var(--wc-line, #E7ECF2);
+    font-size: 13.5px;
+}
+.wp-board-row.is-podium { border-color: #F3C969; background: #FFFBF0; }
+/* Their own row, marked so they can find themselves without counting. */
+.wp-board-row.is-me { border-color: var(--wc-blue, #2F67A7); background: var(--wc-blue-mist, #EAF1F9); }
+
+.wp-board-rank {
+    flex: 0 0 auto; min-width: 26px; text-align: center;
+    font-weight: 700; font-size: 14px; color: var(--wc-gray-text, #8892a0);
+}
+.wp-board-row.is-podium .wp-board-rank { color: #B07C13; }
+
+.wp-board-name {
+    flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px;
+    font-weight: 600; color: var(--wc-ink, #14171C);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wp-board-grade { font-size: 11.5px; font-weight: 400; color: var(--wc-gray-text, #8892a0); }
+.wp-board-amount { flex: 0 0 auto; font-weight: 700; color: var(--wc-ink, #14171C); }
+
+.wp-board-you {
+    margin: 12px 0 0; padding: 10px 12px; border-radius: 10px;
+    background: var(--wc-blue-mist, #EAF1F9); color: var(--wc-ink, #14171C);
+    font-size: 13px; line-height: 1.5;
+}
+.wp-board-you.is-quiet { background: transparent; color: var(--wc-gray-text, #8892a0); padding: 8px 0 0; }

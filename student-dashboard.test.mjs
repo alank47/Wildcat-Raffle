@@ -151,7 +151,22 @@ const order = wpDashboard(FULL, sched([
   { courseName: "Lunch", period: "Nutrition" },
   { courseName: "Middle", period: "3" },
 ]), grades([]));
-const seq = ["First", "Middle", "Last", "Lunch"].map((n) => order.indexOf(n));
+// SEARCHED INSIDE THE SCHEDULE PANEL, not across the whole page.
+//
+// This looked for the bare words "First", "Middle", "Last" anywhere in the
+// rendered dashboard, and the leaderboard added on 2026-09-10 put a "Middle
+// School" tab above the schedule -- so "Middle" was found in a button, the
+// order looked wrong, and a correctly sorted schedule failed. The panel the
+// assertion is about is the one it should read.
+const schedulePanel = (() => {
+  const panels = order.split("<article").filter((p) => /wp-panel-title[^<]*>Schedule</.test(p)
+    || />Schedule</.test(p));
+  return panels.length ? panels[0] : order;
+})();
+check("the schedule panel was located, not the whole page",
+  schedulePanel.length > 0 && schedulePanel.length < order.length);
+const seq = ["First", "Middle", "Last", "Lunch"].map((n) => schedulePanel.indexOf(n));
+check("every course was found in it", seq.every((i) => i !== -1));
 check("periods are sorted ascending", seq[0] < seq[1] && seq[1] < seq[2]);
 check("an unparseable period sorts last, not first", seq[3] > seq[2]);
 
