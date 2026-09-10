@@ -37,19 +37,35 @@ console.log("\nNo raffle vocabulary on a student's own screen");
     !/\+ tickets \+/.test(portal));
 }
 
-console.log("\nThe tiles lead with what the student came to see");
+console.log("\nOne card leads with what the student came to see");
 {
-  check("balance is first", /wpTile\('Wildcat Cash', wpMoney\(cash\.balance\)/.test(portal));
+  // THE PRINCIPLES HERE ARE UNCHANGED; ONLY THEIR LOCATION MOVED.
+  // Until 2026-09-10 the balance and Earned were TILES and this block asserted
+  // wpTile(...). The school asked for the four Wildcat Cash cards to become
+  // one, so the figures moved into the card and the tiles were removed rather
+  // than duplicated. What must still hold is what these checks were always
+  // really about: the balance leads, and Earned is visible beside it.
+  check("the balance still leads, now as the card's hero figure",
+    /wp-cash-balance">' \+ wpMoney\(cash\.balance\)/.test(portal));
   // A balance falls when they spend. A child who only sees it drop has no
   // record of ever having earned anything.
-  check("earned sits beside it, so spending does not read as loss",
-    /wpTile\('Earned', wpMoney\(cash\.earned\)/.test(portal));
+  check("earned sits with it, so spending does not read as loss",
+    /wp-cash-stat-v">' \+ wpMoney\(cash\.earned\)/.test(portal));
+  check("and spent, which is the other half of the balance",
+    /wp-cash-stat-v">' \+ wpMoney\(cash\.spent\)/.test(portal));
   check("attendance is still there", /Absent this term/.test(portal));
+
+  // The rule this file has held since 2026-09-08: a figure appears once.
+  // Consolidating must not quietly reintroduce the repetition it was fixing.
+  check("the balance is NOT also a tile", !/wpTile\('Wildcat Cash'/.test(portal));
+  check("nor is Earned", !/wpTile\('Earned'/.test(portal));
 }
 
 console.log("\nRecent activity: a balance a child can question");
 {
-  check("the panel exists", /wpPanel\('Recent activity', 'Your Wildcat Cash'/.test(portal));
+  check("the movements live in that same card, not a fourth one",
+    /wp-cash-activity/.test(portal) && !/wpPanel\('Recent activity'/.test(portal));
+  check("under a heading that says what they are", /Recent activity<\/p>/.test(portal));
   check("it reads the movements the server already sends", /cash\.recent/.test(portal));
   check("and defends against a non-array", /Array\.isArray\(cash\.recent\)/.test(portal));
 
@@ -99,6 +115,39 @@ console.log("\nA note wraps; a date does not");
   // number. The sub-line is a date and a name, and fits.
   check("the note wraps", /\.wp-rownote \{[^}]*overflow-wrap: anywhere/.test(css));
   check("the sub-line still truncates", /\.wp-rowsub \{[^}]*text-overflow: ellipsis/.test(css));
+}
+
+
+console.log("\nThe one card is styled for the portal, not the staff app");
+{
+  const card = css.slice(css.indexOf("/* ---- The one Wildcat Cash card"),
+                         css.indexOf("@media (max-width: 460px) {\n    .wp-cash {"));
+  check("the card's styles were located", card.length > 400);
+  // THE PORTAL IS ITS OWN THEME, and it flips: dark on a phone, light in the
+  // wide laptop layout. --wp-fg / --wp-dim are redefined per theme; the staff
+  // app's --wc-ink / --wc-gray-text are not, so using them renders the balance
+  // as near-black text on the dark portal. Caught by looking at it.
+  check("the balance uses the portal's foreground token", /\.wp-cash-balance \{[^}]*--wp-fg/.test(card));
+  check("so do the earned and spent figures", /\.wp-cash-stat-v \{[^}]*--wp-fg/.test(card));
+  check("and the labels use the portal's dim token", /--wp-dim/.test(card));
+  check("no staff-app light-theme token survives in the card",
+    !/--wc-ink|--wc-gray-text/.test(card));
+
+  // The divider has to be visible on a dark surface too.
+  check("the divider is an alpha white, not a light-theme hairline",
+    /border-bottom: 1px solid rgba\(255, 255, 255/.test(card));
+
+  // The balance is the thing they came for; it must dominate.
+  check("the balance is the largest figure on the card", /\.wp-cash-balance \{[^}]*font-size: 34px/.test(card));
+  check("earned and spent are smaller", /\.wp-cash-stat-v \{[^}]*font-size: 16px/.test(card));
+
+  // One tile is left in the row; a hardcoded 3-column grid stranded it.
+  check("the tile row adapts to however many tiles there are",
+    /grid-template-columns: repeat\(auto-fit, minmax\(0, 1fr\)\)/.test(css));
+
+  // The Coming Soon card had the same token mistake.
+  check("the coming-soon copy also uses the portal's dim token",
+    /\.wp-soon \{[^}]*--wp-dim/.test(css));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

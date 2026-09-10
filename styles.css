@@ -8019,7 +8019,12 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
        in the reference at all. */
     .wp-wide .wp-tiles {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        /* auto-fit, NOT a hardcoded 3. The Wildcat Cash tiles moved into the
+           one cash card on 2026-09-10, leaving a single tile here; against
+           repeat(3, ...) it sat in the first third of the row with two empty
+           columns beside it. auto-fit means the row is correct for however
+           many tiles there are, including when one is added back. */
+        grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
         gap: var(--wu-s5);
         margin-bottom: var(--wu-s5);
     }
@@ -8925,5 +8930,50 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     margin: 0;
     font-size: 13.5px;
     line-height: 1.55;
-    color: var(--wc-gray-text, #8892a0);
+    /* --wp-dim, not --wc-gray-text: the portal is its own dark theme and the
+       staff app's light tokens render as unreadable grey on it. */
+    color: var(--wp-dim, #8E9199);
+}
+
+/* ---- The one Wildcat Cash card, student portal -------------------------
+   Four cards became one on 2026-09-10. The balance leads because it is the
+   number a student came to look at; Earned and Spent sit under it because
+   they are what it is made of; the movements follow because they are the
+   answer to "it says $30 and I thought I had $40". */
+
+.wp-cash {
+    display: flex; align-items: flex-end; justify-content: space-between;
+    gap: 18px; flex-wrap: wrap;
+    padding-bottom: 14px; margin-bottom: 14px;
+    /* The portal is a dark surface; a light-theme line is invisible on it. */
+    border-bottom: 1px solid rgba(255, 255, 255, .10);
+}
+
+.wp-cash-hero { display: flex; flex-direction: column; gap: 0; min-width: 0; }
+.wp-cash-balance {
+    font-size: 34px; font-weight: 700; line-height: 1.05;
+    color: var(--wp-fg, #F6F4EF); letter-spacing: -0.01em;
+}
+.wp-cash-balance-label {
+    font-size: 11.5px; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--wp-dim, #8E9199); margin-top: 2px;
+}
+
+/* Earned and Spent read as a pair, and never compete with the balance. */
+.wp-cash-split { display: flex; gap: 22px; flex: 0 0 auto; }
+.wp-cash-stat { display: flex; flex-direction: column; gap: 1px; }
+.wp-cash-stat-v { font-size: 16px; font-weight: 600; color: var(--wp-fg, #F6F4EF); }
+.wp-cash-stat-k { font-size: 11.5px; color: var(--wp-dim, #8E9199); }
+
+.wp-cash-heading {
+    margin: 0 0 8px; font-size: 11.5px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .07em;
+    color: var(--wp-dim, #8E9199);
+}
+
+/* On a narrow Chromebook the split drops under the balance rather than
+   squeezing the one figure the card exists for. */
+@media (max-width: 460px) {
+    .wp-cash { align-items: flex-start; }
+    .wp-cash-split { width: 100%; justify-content: flex-start; }
 }

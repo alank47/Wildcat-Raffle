@@ -71,7 +71,19 @@ console.log("\n-- it cannot break the portal --");
 console.log("\n-- styled --");
 {
   check(".wp-soon is styled", css.includes(".wp-soon"));
-  check("it is quieter than live content", /\.wp-soon \{[\s\S]{0,200}color: var\(--wc-gray-text/.test(css));
+  // --wp-dim, the PORTAL's dim token, not the staff app's --wc-gray-text.
+  // The portal has its own theme and flips between dark and light; the staff
+  // tokens do not, so they render as unreadable grey on the dark layout. This
+  // assertion originally pinned the wrong one, which is how it got shipped.
+  check("it is quieter than live content", /\.wp-soon \{[\s\S]{0,300}color: var\(--wp-dim/.test(css));
+  // Checked against the DECLARATION, not any mention: the comment inside the
+  // rule names --wc-gray-text while explaining why it is not used, and a bare
+  // string search cannot tell a citation from a use. Third time this exact
+  // trap has cost a red test today.
+  const soon = css.slice(css.indexOf(".wp-soon {"), css.indexOf("}", css.indexOf(".wp-soon {")));
+  const decls = soon.replace(/\/\*[\s\S]*?\*\//g, "");
+  check("and its colour declaration does not use the staff app's token",
+    !/--wc-gray-text/.test(decls));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

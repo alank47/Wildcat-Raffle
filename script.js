@@ -17478,67 +17478,94 @@
             // leading with three numbers from a system nobody had switched on.
             // The panel that replaces it is below: what they earned, and why.
 
-            // FOUR USES OF THE WORD BALANCE IN ONE CARD, and the fix for all
-            // four is the same removal: the eyebrow said Wallet, a pill said
-            // "balance" while carrying no value, a column header said BALANCE
-            // over the figure the tile already showed, and a footnote explained
-            // what balance meant. The tile owns the balance. This card owns the
-            // two figures that add up to it, and needs no sentence to say so
-            // because the labels do.
-            const money = wpPanel('Earned and spent', 'Wildcat Cash', '',
-                '<div class="wp-stats">' +
-                    wpStat('Earned', wpMoney(cash.earned)) +
-                    wpStat('Spent', wpMoney(cash.spent)) +
-                '</div>');
-
-            // ---- recent activity -------------------------------------------
+            // ---- Wildcat Cash: ONE card ------------------------------------
             //
-            // REPLACES THE JACKPOT PANEL, which showed draw entries and weeks
-            // qualified -- Raffle, and not running.
+            // Four cards carried this student's money: the balance and Earned
+            // as tiles, a card with Earned and Spent, a card of recent
+            // movements, plus the store and the leaderboard. The school asked
+            // for one, 2026-09-10, and they were right -- a child looking for
+            // "how much do I have" was reading the same two figures in three
+            // typefaces before reaching the list that explains them.
             //
-            // A balance with no history is a number a child cannot question.
-            // "It says $30 and I thought I had $40" has no answer without
-            // this, and the answer is usually a deduction nobody told them
-            // about. The server has been sending these movements since the
-            // portal was built and nothing rendered them.
+            // ONE NUMBER, ONE PLACE. The rule this file has held since
+            // 2026-09-08 is that a figure appears once and the panel carries
+            // only what its tile does not. The tiles are gone rather than
+            // repeated, so that rule survives the consolidation instead of
+            // being quietly dropped by it.
             //
-            // Their own record, and it stays that way: this panel is the
-            // student's own movements, unranked. The Leaderboard panel above
-            // is where standing is shown, added 2026-09-10 at the school's
+            // THE ORDER IS THE QUESTION ORDER. Balance is what they came to
+            // look at, so it leads and is the biggest thing on the card.
+            // Earned and Spent sit under it because they are what it is made
+            // of -- a balance that only ever falls, with no record of having
+            // earned anything, is how a child concludes the system is taking
+            // from them. Then the movements, which are the answer to "it says
+            // $30 and I thought I had $40".
+            //
+            // NULL IS NOT ZERO, and on this card it is money. wpMoney already
+            // renders an absent figure as absent rather than as $0.00; a
+            // balance that reads zero because a field did not sync is
+            // indistinguishable from one that has been spent.
+            //
+            // THEIR OWN RECORD, AND IT STAYS THAT WAY. The movements below are
+            // this student's own, unranked. The Leaderboard panel above is
+            // where standing is shown, added 2026-09-10 at the school's
             // request -- and even there, only the top ten are named and the
-            // rest of the ordering never leaves the server.
+            // rest of the ordering never leaves the server. The portal's
+            // original no-ranking principle was reversed deliberately for the
+            // board; this card is the half of it that did not change. The
+            // wording of that reversal lives with the board, once, so a search
+            // for the old claim finds the explanation and not a live promise.
             const recent = Array.isArray(cash.recent) ? cash.recent : [];
-            const awards = wpPanel('Recent activity', 'Your Wildcat Cash', '',
-                (!recent.length
-                    ? wpEmpty('Nothing yet. When a teacher awards you Wildcat Cash, it will show up here.')
-                    : '<div class="wp-rows wp-rows-nested">' +
-                        recent.slice(0, 8).map(function (r) {
-                            const amt = (typeof r.amount === 'number')
-                                ? (r.amount < 0 ? '\u2212' : '+') + '$' + Math.abs(r.amount)
-                                : '\u2014';
-                            const dir = (typeof r.amount !== 'number') ? 'flat'
-                                : (r.amount < 0 ? 'down' : 'up');
-                            const when = r.at ? wpWhen(r.at) : '';
-                            // reason is the behaviour the adult picked; note is
-                            // what they typed. They say different things, so
-                            // both are shown when both exist.
-                            const sub = [when, r.by].filter(Boolean).join('  \u00b7  ');
-                            return '<div class="wp-row wp-row-nested">' +
-                                '<span class="wp-rowmain">' +
-                                    '<span class="wp-rowtitle">' +
-                                        wpEsc(r.reason || 'Wildcat Cash') + '</span>' +
-                                    (sub ? '<span class="wp-rowsub">' + wpEsc(sub) + '</span>' : '') +
-                                    (r.note ? '<span class="wp-rownote">' + wpEsc(r.note) + '</span>' : '') +
-                                '</span>' +
-                                '<span class="wp-rowmain wp-rowright">' +
-                                    '<span class="wp-rowend wp-amt-' + dir + '">' + amt + '</span>' +
-                                '</span>' +
-                            '</div>';
-                        }).join('') +
-                      '</div>' +
-                      (recent.length > 8
-                        ? wpFoot('Showing your 8 most recent. Ask a teacher if something looks wrong.')
-                        : wpFoot('Ask a teacher if something here looks wrong.'))));
+            const money = wpPanel('Your money', 'Wildcat Cash', '',
+                '<div class="wp-cash">' +
+                    '<div class="wp-cash-hero">' +
+                        '<span class="wp-cash-balance">' + wpMoney(cash.balance) + '</span>' +
+                        '<span class="wp-cash-balance-label">balance</span>' +
+                    '</div>' +
+                    '<div class="wp-cash-split">' +
+                        '<span class="wp-cash-stat">' +
+                            '<span class="wp-cash-stat-v">' + wpMoney(cash.earned) + '</span>' +
+                            '<span class="wp-cash-stat-k">Earned all year</span>' +
+                        '</span>' +
+                        '<span class="wp-cash-stat">' +
+                            '<span class="wp-cash-stat-v">' + wpMoney(cash.spent) + '</span>' +
+                            '<span class="wp-cash-stat-k">Spent</span>' +
+                        '</span>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="wp-cash-activity">' +
+                    '<p class="wp-cash-heading">Recent activity</p>' +
+                    (!recent.length
+                        ? wpEmpty('Nothing yet. When a teacher awards you Wildcat Cash, it will show up here.')
+                        : '<div class="wp-rows wp-rows-nested">' +
+                            recent.slice(0, 8).map(function (r) {
+                                const amt = (typeof r.amount === 'number')
+                                    ? (r.amount < 0 ? '\u2212' : '+') + '$' + Math.abs(r.amount)
+                                    : '\u2014';
+                                const dir = (typeof r.amount !== 'number') ? 'flat'
+                                    : (r.amount < 0 ? 'down' : 'up');
+                                const when = r.at ? wpWhen(r.at) : '';
+                                // reason is the behaviour the adult picked; note is
+                                // what they typed. They say different things, so
+                                // both are shown when both exist.
+                                const sub = [when, r.by].filter(Boolean).join('  \u00b7  ');
+                                return '<div class="wp-row wp-row-nested">' +
+                                    '<span class="wp-rowmain">' +
+                                        '<span class="wp-rowtitle">' +
+                                            wpEsc(r.reason || 'Wildcat Cash') + '</span>' +
+                                        (sub ? '<span class="wp-rowsub">' + wpEsc(sub) + '</span>' : '') +
+                                        (r.note ? '<span class="wp-rownote">' + wpEsc(r.note) + '</span>' : '') +
+                                    '</span>' +
+                                    '<span class="wp-rowmain wp-rowright">' +
+                                        '<span class="wp-rowend wp-amt-' + dir + '">' + amt + '</span>' +
+                                    '</span>' +
+                                '</div>';
+                            }).join('') +
+                          '</div>' +
+                          (recent.length > 8
+                            ? wpFoot('Showing your 8 most recent. Ask a teacher if something looks wrong.')
+                            : '')) +
+                '</div>');
 
             // ---- attendance --------------------------------------------------
             // Three states, exactly as the server sends them: unavailable is not
@@ -17740,10 +17767,17 @@
             // came to look at, and what they have EARNED sits beside it: a
             // balance falls when they spend, and a child who only sees the
             // balance drop has no record of having earned anything.
+            // THE CASH TILES MOVED INTO THE CARD, 2026-09-10, at the school's
+            // request to consolidate four Wildcat Cash cards into one.
+            //
+            // They are not duplicated there, they are RELOCATED. The rule this
+            // file has held since 2026-09-08 is that a number appears once:
+            // "the tile owns the balance" was the fix then, and the card owning
+            // it is the same fix applied the other way now that the card is
+            // where a student reads their money. Leaving the tiles up would put
+            // the balance on screen twice and Earned three times.
             const tiles =
                 '<div class="wp-tiles">' +
-                    wpTile('Wildcat Cash', wpMoney(cash.balance), 'balance', 'warm') +
-                    wpTile('Earned', wpMoney(cash.earned), 'all year', 'warm') +
                     wpTile('Absent this term',
                         att.available ? att.daysAbsentTerm : null,
                         att.available ? 'days' : (att.reason || 'not available'),
@@ -17831,7 +17865,7 @@
             // the bottom: it answers "what is this money for", which is the
             // question the balance directly above it provokes.
             return tiles + passPanel + gradePanel + money + wpStoreSoonPanel() +
-                   wpBoardPanel() + awards + schedule + attendance;
+                   wpBoardPanel() + schedule + attendance;
         }
         /**
          * Open one course's missing-work list, or close it.

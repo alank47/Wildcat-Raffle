@@ -75,9 +75,19 @@ const full = wpDashboard(FULL, sched([{ courseName: "Biology", period: "2", teac
 // launched on Wildcat Cash, so a student's own screen was leading with figures
 // from a system nobody had switched on. student-portal-cash.test.mjs covers
 // what replaced them.
-for (const panel of ["Wildcat Cash", "Your Wildcat Cash", "Grades", "Schedule", "Attendance"]) {
+// "Your Wildcat Cash" left this list on 2026-09-10, when the school asked for
+// the four Wildcat Cash cards to become one. Its CONTENT did not leave -- the
+// recent movements moved into the single card -- so the checks below prove the
+// consolidation rather than accepting a panel that simply disappeared.
+for (const panel of ["Wildcat Cash", "Grades", "Schedule", "Attendance"]) {
   check(`the ${panel} panel is rendered`, full.includes(">" + panel + "<"));
 }
+check("the separate Your Wildcat Cash panel is gone", !full.includes(">Your Wildcat Cash<"));
+check("and its movements moved into the one card, not out of the app",
+  full.includes("wp-cash-activity") && full.includes("Recent activity"));
+check("the one card carries the balance", full.includes("wp-cash-balance"));
+check("what they earned", full.includes("Earned all year"));
+check("and what they spent", full.includes(">Spent<"));
 check("no raffle panel survives",
   !full.includes(">Tickets<") && !full.includes(">What you have earned<"));
 check("cash is money, not a bare number", full.includes("$14.50"));
