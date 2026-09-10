@@ -8918,3 +8918,12 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     font-size: 13px; line-height: 1.5;
 }
 .wp-board-you.is-quiet { background: transparent; color: var(--wc-gray-text, #8892a0); padding: 8px 0 0; }
+
+/* "Coming soon" body copy in the student portal. Quieter than a live panel's
+   content, because it is a promise rather than a thing they can act on. */
+.wp-soon {
+    margin: 0;
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: var(--wc-gray-text, #8892a0);
+}

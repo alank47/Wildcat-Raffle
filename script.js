@@ -17414,6 +17414,28 @@
             if (newTabs && oldTabs) oldTabs.innerHTML = newTabs.innerHTML;
         }
 
+        /**
+         * The Student Rewards Store, announced before it exists.
+         *
+         * A PLACEHOLDER ON PURPOSE, and it earns its place: students already
+         * see a balance, a leaderboard and a list of what they have earned,
+         * with nothing anywhere telling them what the money is FOR. A currency
+         * with no visible way to spend it is the question every child asks
+         * first, and until the store ships this card is the answer.
+         *
+         * Static. No query, no state, no failure mode -- it cannot be the
+         * reason a portal fails to load.
+         */
+        function wpStoreSoonPanel() {
+            return wpPanel(
+                'Wildcat Cash',
+                'Student Rewards Store',
+                'Coming soon',
+                '<p class="wp-soon">You\u2019ll be able to use your Wildcat Cash to purchase ' +
+                'a variety of awesome rewards. Stay tuned!</p>'
+            );
+        }
+
         function wpDashboard(mine, sched, grades, pass) {
             // Recorded HERE rather than at the call site. The modal reads these
             // to render a course without a network round trip, and setting it
@@ -17805,7 +17827,11 @@
             // `tickets` is gone with the Raffle panel it drew. Order matters:
             // the cash panels sit together, so "what I have" and "how I got it"
             // are read as one thing rather than separated by the timetable.
-            return tiles + passPanel + gradePanel + money + wpBoardPanel() + awards + schedule + attendance;
+            // The store sits with the other Wildcat Cash panels rather than at
+            // the bottom: it answers "what is this money for", which is the
+            // question the balance directly above it provokes.
+            return tiles + passPanel + gradePanel + money + wpStoreSoonPanel() +
+                   wpBoardPanel() + awards + schedule + attendance;
         }
         /**
          * Open one course's missing-work list, or close it.

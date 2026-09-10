@@ -107,7 +107,14 @@ console.log("\n-- switching band does not re-deal the page --");
 
 console.log("\n-- the panel is in the dashboard, and styled --");
 {
-  check("the panel is rendered into the stack", /\+ wpBoardPanel\(\) \+/.test(script));
+  // Asserted against the RETURN EXPRESSION rather than a literal "+ x() +".
+  // Adding the store card wrapped that line, so the old regex stopped matching
+  // while the code was correct -- a test that depends on where a line breaks
+  // fails on formatting, not on behaviour.
+  const renderStart = script.indexOf("return tiles + passPanel");
+  const renderExpr = script.slice(renderStart, script.indexOf(";", renderStart));
+  check("the render expression was located", renderStart !== -1 && renderExpr.length < 400);
+  check("the panel is rendered into the stack", renderExpr.includes("wpBoardPanel()"));
   // The phrase survives ONCE, inside the leaderboard block that explains why
   // the principle was reversed. What must not survive is the original claim
   // sitting beside the cash-activity panel, where it described the code.

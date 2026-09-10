@@ -1,0 +1,78 @@
+// The Student Rewards Store card, announced before the store exists.
+//
+// Students already see a balance, a leaderboard and a list of what they have
+// earned, and nothing anywhere says what the money is FOR. This card is the
+// answer until the store ships.
+//
+// It is static on purpose. The portal loads four queries in a Promise.allSettled
+// and the student-facing lesson from the leaderboard was that a panel which can
+// fail is a panel that must SAY it failed. This one cannot fail, so it needs
+// none of that -- and the tests below pin that it stays that way.
+//
+// Run: npm test
+
+import { readFileSync } from "node:fs";
+
+const script = readFileSync(new URL("./script.js", import.meta.url), "utf8");
+const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+let pass = 0, fail = 0;
+const check = (n, c) => { c ? (pass++, console.log(`  PASS  ${n}`)) : (fail++, console.log(`  FAIL  ${n}`)); };
+
+const fn = script.slice(script.indexOf("function wpStoreSoonPanel()"),
+                        script.indexOf("function wpDashboard(mine, sched, grades, pass)"));
+
+console.log("\n-- the card exists and is in the portal --");
+{
+  check("wpStoreSoonPanel is defined", fn.length > 100);
+  check("it is rendered into the dashboard", /\+ wpStoreSoonPanel\(\) \+/.test(script));
+  // Next to the balance, which is what provokes the question it answers.
+  // The end marker is searched FROM the return statement, not from the top of
+  // the file. Searching from 0 found an earlier "attendance;" and produced a
+  // backwards slice, so both order assertions failed while the code was right.
+  const orderStart = script.indexOf("return tiles + passPanel");
+  const orderEnd = script.indexOf("attendance;", orderStart);
+  check("the render order line was located", orderStart !== -1 && orderEnd > orderStart);
+  const order = script.slice(orderStart, orderEnd + 12);
+  check("it sits after the Wildcat Cash balance panel",
+    order.indexOf("money") < order.indexOf("wpStoreSoonPanel"));
+  check("and before the schedule and attendance panels",
+    order.indexOf("wpStoreSoonPanel") < order.indexOf("schedule"));
+}
+
+console.log("\n-- it says what was asked for --");
+{
+  check("the title names the store", /'Student Rewards Store'/.test(fn));
+  check("it says coming soon", /'Coming soon'/.test(fn));
+  check("the body explains what the money is for",
+    /use your Wildcat Cash to purchase/.test(fn));
+  check("and it says stay tuned", /Stay tuned!/.test(fn));
+  check("it is filed under Wildcat Cash, like the balance and the board",
+    /wpPanel\(\s*'Wildcat Cash'/.test(fn));
+  // A typographic apostrophe, not a straight one, matching the rest of the
+  // portal's copy.
+  check("the apostrophe is the curly one the portal uses elsewhere",
+    /\\u2019ll be able/.test(fn));
+}
+
+console.log("\n-- it cannot break the portal --");
+{
+  // The portal's four boot queries are in a Promise.allSettled; a panel that
+  // reads none of them has no failure state to render and no load to wait on.
+  check("it takes no arguments", /function wpStoreSoonPanel\(\)/.test(fn));
+  check("it makes no network call", !/convexQuery|convexMutation|fetch\(/.test(fn));
+  check("it reads no live data", !/mine\.|cash\.|grades\.|sched\.|_wp[A-Z]/.test(fn));
+  check("it holds no state", !/let |const _|= null/.test(fn.replace(/\/\*[\s\S]*?\*\//g, "")));
+  check("it has no failure or loading branch", !/catch|Loading|could not/.test(fn));
+  check("it was NOT added to the portal's boot queries",
+    !/allSettled[\s\S]{0,400}wpStoreSoonPanel/.test(script));
+}
+
+console.log("\n-- styled --");
+{
+  check(".wp-soon is styled", css.includes(".wp-soon"));
+  check("it is quieter than live content", /\.wp-soon \{[\s\S]{0,200}color: var\(--wc-gray-text/.test(css));
+}
+
+console.log(`\n${pass} passed, ${fail} failed`);
+if (fail) process.exit(1);
