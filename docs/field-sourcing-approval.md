@@ -68,6 +68,30 @@ aggregate-only grant may be computed, and academics aggregates are gated to
 remains "NOT approved" below, and special-education status, which this system
 does not hold and must not infer from course enrolment.
 
+**Confirmed by Alan K on 2026-09-10, after reading this entry back.** The
+purpose above is his, the access scope is his, and both were checked against
+the written record rather than assumed from the instruction that started the
+work. `pbis` was offered and declined: PBIS holds wide discipline rights, and
+extending them to academic outcomes by race is a separate grant that has not
+been asked for.
+
+**REVIEW DUE 2027-09-10.** The first review date in this file, set at the
+owner's request.
+
+Why it matters more than the other entries: this one rests on numbers that were
+true in September 2026 and will not stay true. Four categories are withheld
+today because they hold between two and seven children, and an intake could
+change that. The two reportable groups show no detectable difference at
+coverage of 77%, and that figure climbs every week. A decision made against
+week-four data deserves to be looked at again against a full year of it.
+
+What the review should ask: are the same four categories still too small; does
+the gap finding still hold once coverage is complete; is the purpose above
+still the decision this informs; and has anyone asked for `pbis` since.
+
+A date in a file is not a reminder. If this should actually happen, it wants a
+calendar entry owned by a person — the file can only record that it was agreed.
+
 ### Amended the same day: admin verification access
 
 **Approved 2026-08-19 by Alan K (app owner).**
