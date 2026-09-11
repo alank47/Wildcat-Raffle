@@ -24389,12 +24389,13 @@
             cov.innerHTML =
                 '<div class="wc-acad-cov-head">' +
                     '<span class="wc-acad-cov-pct">' + pct(s.coverage) + '%</span>' +
-                    '<span class="wc-acad-cov-lab">of enrolments have a grade posted</span>' +
+                    '<span class="wc-acad-cov-lab">of this term\u2019s class grades are posted</span>' +
                 '</div>' +
                 '<p class="wc-acad-cov-note">' +
-                    s.markedRows.toLocaleString() + ' of ' + s.rows.toLocaleString() +
-                    ' class enrolments carry a mark. Every figure below is over the grades that ' +
-                    'have been posted, and will change as teachers enter more. It is a floor, not a rate.' +
+                    'That is ' + s.markedRows.toLocaleString() + ' of ' + s.rows.toLocaleString() +
+                    ' \u2014 one grade for each student in each class. Teachers are still entering ' +
+                    'them, so every number below covers only the grades that are in. Read each one ' +
+                    'as a starting point, not a final answer.' +
                 '</p>';
 
             const overall = document.getElementById('acadOverall');
@@ -24413,15 +24414,16 @@
             // posts, so it would climb for weeks with no child's work changing.
             if (oHint) {
                 oHint.textContent =
-                    'Counted, not rated. A student is here if any posted grade is a D, F or NP. ' +
-                    'This number can only go up as more grades are entered.';
+                    'A count, not a percentage \u2014 a percentage would climb for weeks as ' +
+                    'teachers post, with no child\u2019s work changing. A student is counted once ' +
+                    'if any posted grade is a D, F or NP (no pass). The count can only go up.';
             }
 
             rows.innerHTML = d.cells.map(function (c) {
                 if (c.withheld) {
                     return '<div class="wc-acad-row is-withheld">' +
                         '<span class="wc-acad-name">' + escapeHtml(c.label) + '</span>' +
-                        '<span class="wc-acad-withheld">' + escapeHtml(c.reason || 'Withheld') + '</span>' +
+                        '<span class="wc-acad-withheld">' + escapeHtml(c.reason || 'Not shown') + '</span>' +
                     '</div>';
                 }
                 const lo = c.interval ? pct(c.interval[0]) : null;
@@ -24447,14 +24449,16 @@
             const foot = document.getElementById('acadRaceFoot');
             if (foot) {
                 foot.textContent = d.reportableCount + ' of ' + d.totalCategories +
-                    ' groups are large enough to report. ' +
+                    ' groups have enough students to report. ' +
                     (d.reportableCount < 2
-                        ? 'With fewer than two reportable groups there is nothing to compare.'
+                        ? 'With fewer than two groups to compare, this page can show nothing ' +
+                          'either way.'
                         : (d.anySeparate
-                            ? 'At least one pair differs by more than the ranges overlap.'
-                            : 'No two groups differ once the ranges are allowed for. That is not ' +
-                              'the same as no gap: the smaller a group, the wider its range, and ' +
-                              'only a large gap would be visible here at all.'));
+                            ? 'At least two of them are further apart than their ranges can ' +
+                              'explain.'
+                            : 'Those two are too close to call. That does not mean there is no ' +
+                              'gap \u2014 the smaller a group, the less this page can see, and only ' +
+                              'a very large gap would show up here at all.'));
             }
 
             renderAcademicsCourses();
@@ -24508,8 +24512,8 @@
                 return '<div class="wc-acad-row">' +
                     '<span class="wc-acad-name">' + escapeHtml(b.label) +
                         '<span class="wc-acad-sub">' +
-                        (share !== null ? share + '% of the students failing anything' : '') +
-                        (b.merged ? ' \u00b7 widened, because a narrower band held too few students to print' : '') +
+                        (share !== null ? share + '% of the students failing at least one class' : '') +
+                        (b.merged ? ' \u00b7 widened, because a narrower band held too few students to show' : '') +
                         '</span></span>' +
                     '<span class="wc-acad-figs"><span class="wc-acad-pct">' +
                         num(b.students) + '</span>' +
@@ -24524,14 +24528,14 @@
             const dFoot = document.getElementById('acadDepthFoot');
             if (dFoot) {
                 dFoot.textContent =
-                    'Counted over the ' + num(d.depthDenominator) + ' students who have any ' +
-                    'grade posted, and counting any course NOT PASSED \u2014 a D, an F or an ' +
-                    'NP. That is a slightly wider net than the D/F rate below, which can only ' +
-                    'count courses that award letters. A student failing one course and a ' +
-                    'student failing five are not the same problem: the first is usually about ' +
-                    'the course, and the second is usually not about school at all. Deep ' +
-                    'failure is an attendance, health or home conversation before it is a ' +
-                    'tutoring one.';
+                    'Failing one class and failing five are not the same problem. One class is ' +
+                    'usually about that class. Five is usually not about school at all \u2014 that ' +
+                    'is an attendance, health or home conversation before it is a tutoring one.' +
+                    '\n\n' +
+                    'Counted over the ' + num(d.depthDenominator) + ' students with any grade ' +
+                    'posted. A class counts here if the student is not passing it \u2014 a D, an F ' +
+                    'or an NP. That is a wider net than the class list below, which can only ' +
+                    'count D and F, because a pass-fail class has no D to give.';
             }
 
             // ---- which courses ------------------------------------------------
@@ -24546,11 +24550,11 @@
                 const sub = escapeHtml(String(c.subject)) +
                     (c.failingStudents !== null
                         ? ' \u00b7 ' + num(c.failingStudents) + ' of ' +
-                          num(c.studentsWithMarks) + ' graded'
+                          num(c.studentsWithMarks) + ' graded students have a D or F'
                         : '') +
-                    (c.coverage !== null ? ' \u00b7 ' + pct(c.coverage) + '% posted' : '');
+                    (c.coverage !== null ? ' \u00b7 ' + pct(c.coverage) + '% of grades posted' : '');
                 const fig = c.rate === null
-                    ? '<span class="wc-acad-ci">rate withheld</span>'
+                    ? '<span class="wc-acad-ci">percentage not shown</span>'
                     : '<span class="wc-acad-pct">' + pct(c.rate) + '%</span>' +
                       (lo !== null
                         ? '<span class="wc-acad-ci">could be ' + lo + '\u2013' + hi + '%</span>'
@@ -24562,16 +24566,45 @@
                             ? ' \u00b7 ' + escapeHtml(c.notRankedReason)
                             : '') +
                         (!unranked && c.envelopeWide && c.envelope
-                            ? ' \u00b7 with the unposted marks it could be anywhere from ' +
-                              pct(c.envelope.best) + '% to ' + pct(c.envelope.worst) + '%'
+                            ? ' \u00b7 with the grades still to come, this could be anywhere ' +
+                              'from ' + pct(c.envelope.best) + '% to ' + pct(c.envelope.worst) + '%'
                             : '') +
                         '</span></span>' +
                     '<span class="wc-acad-figs">' + fig + '</span>' +
                 '</div>';
             };
 
+            // WHERE ALL THE CLASSES WENT, as four counts that add up.
+            //
+            // The old footer named the ranked, the withheld and the protected
+            // -- 57 of 73 -- and never mentioned the 16 in between. Anyone who
+            // added it up found a hole. This cannot drift out of sync the same
+            // way, because it is built from the same four numbers the lists
+            // are built from.
+            const tally = document.getElementById('acadCourseTally');
+            if (tally) {
+                const line = function (n, k, isTotal) {
+                    return '<div class="wc-acad-tally-row' + (isTotal ? ' is-total' : '') + '">' +
+                        '<span class="wc-acad-tally-n">' + num(n) + '</span>' +
+                        '<span class="wc-acad-tally-k">' + escapeHtml(k) + '</span>' +
+                    '</div>';
+                };
+                tally.innerHTML =
+                    line(d.coursesTotal, 'classes in total', true) +
+                    line(d.courses.length, 'ranked below') +
+                    (d.notRanked.length
+                        ? line(d.notRanked.length, 'not ranked yet \u2014 not enough grades entered')
+                        : '') +
+                    (d.withheldCourses
+                        ? line(d.withheldCourses, 'too few students to show')
+                        : '') +
+                    (d.cohortExcluded
+                        ? line(d.cohortExcluded, 'left out to protect students')
+                        : '');
+            }
+
             courseEl.innerHTML = d.courses.length === 0
-                ? '<p class="wu-absent">No course has enough posted grades to rank yet.</p>'
+                ? '<p class="wu-absent">No class has enough grades entered to rank yet.</p>'
                 : d.courses.map(function (c) { return courseRow(c, false); }).join('');
 
             const uHead = document.getElementById('acadUnrankedHead');
@@ -24582,9 +24615,10 @@
                     unrankedEl.innerHTML = '';
                 } else {
                     uHead.textContent =
-                        'Listed but not ranked \u2014 too few graded students, or too much of ' +
-                        'the gradebook still empty, to place them in an order. They are shown ' +
-                        'rather than dropped, because a course missing from a list is invisible.';
+                        'Listed but not ranked. Too few students graded, or too much of the ' +
+                        'gradebook still empty, to put these in a fair order. They stay on ' +
+                        'screen rather than disappear: being here says where the grading ' +
+                        'stands, not how the class is going.';
                     unrankedEl.innerHTML = d.notRanked
                         .map(function (c) { return courseRow(c, true); }).join('');
                 }
@@ -24594,24 +24628,29 @@
             if (cFoot) {
                 const above = d.courses.filter(function (c) { return c.aboveSchool; }).length;
                 cFoot.textContent =
-                    d.courses.length + ' of ' + d.coursesTotal + ' courses are ranked. ' +
                     'School-wide, ' + pct(d.school.rate) + '% of posted letter grades are a D ' +
-                    'or an F. ' + above + ' of the courses listed sit clearly above the rest ' +
-                    'of the school once the range is allowed for \u2014 each course is compared ' +
-                    'against the school with its own students taken back out, so a big course ' +
-                    'is not measured partly against itself. The others are high, but not ' +
-                    'distinguishable from the school as a whole. ' +
+                    'or an F.' +
+                    '\n\n' +
+                    above + ' of the ' + d.courses.length + ' ranked classes fail a clearly ' +
+                    'higher share of students than the rest of the school. Each class is ' +
+                    'compared with the school after its own students are taken out, so a big ' +
+                    'class is not partly compared with itself. The rest are high, but not ' +
+                    'clearly higher than the school as a whole.' +
+                    (d.withheldCourses > 0 || d.cohortExcluded > 0 ? '\n\n' : '') +
                     (d.withheldCourses > 0
-                        ? d.withheldCourses + ' course' + (d.withheldCourses === 1 ? ' is' : 's are') +
-                          ' withheld for being too small to report at all. '
+                        ? 'The ' + d.withheldCourses + ' class' +
+                          (d.withheldCourses === 1 ? '' : 'es') + ' too small to show ' +
+                          (d.withheldCourses === 1 ? 'is' : 'are') + ' held back because a ' +
+                          'figure over a group that small can point to a child. '
                         : '') +
                     (d.cohortExcluded > 0
-                        ? d.cohortExcluded + ' special-education, English-learner or ' +
-                          'heritage-language section' +
-                          (d.cohortExcluded === 1 ? ' is' : 's are') + ' left out entirely: the ' +
-                          'roster of such a course is itself a protected group, so a rate over ' +
-                          'it would be the disclosure rather than an aggregate. Those students ' +
-                          'still count in every school-wide figure above.'
+                        ? 'The ' + d.cohortExcluded + ' left out ' +
+                          (d.cohortExcluded === 1 ? 'is a' : 'are') + ' special-education, ' +
+                          'English-learner and heritage-language section' +
+                          (d.cohortExcluded === 1 ? '' : 's') + ': everyone in one of those ' +
+                          'classes shares the same protected label, so a percentage about the ' +
+                          'class would be a fact about those students. Their grades still count ' +
+                          'in every school-wide number above.'
                         : '');
             }
 
@@ -24619,10 +24658,11 @@
             const sHint = document.getElementById('acadSubjectHint');
             if (sHint) {
                 sHint.textContent =
-                    'Subject is GUESSED from the course name. PowerSchool knows the real ' +
-                    'answer and has not granted us the field, so every row here rests on ' +
-                    'reading a title. Treat it as a pointer, not a finding \u2014 and never as ' +
-                    'a ranking of departments: the rows are in catalogue order, not rate order.';
+                    'We guess the subject from the class name. PowerSchool has the real answer ' +
+                    'and has not given us that field, so every row here rests on reading a ' +
+                    'title. Use these rows to decide where to look, not as a finding \u2014 and ' +
+                    'never as a ranking of departments. They are ordered by how many classes ' +
+                    'each subject has, never by percentage.';
             }
 
             // THE WHOLE ROLLUP IS REFUSED when too little of the gradebook sits
@@ -24632,27 +24672,27 @@
                 subjEl.innerHTML = '<p class="wu-absent">' +
                     'Not shown. Only ' +
                     (d.naming.weightedFraction !== null ? pct(d.naming.weightedFraction) + '%' : 'some') +
-                    ' of posted grades sit in a course whose subject we could read from its ' +
-                    'name, and below 80% a subject rollup says more about the guessing than ' +
-                    'about the school.</p>';
+                    ' of posted grades sit in a class whose subject we could read from its ' +
+                    'name. Below 80%, these rows would say more about our guessing than about ' +
+                    'the school.</p>';
             } else {
                 subjEl.innerHTML = d.subjects.map(function (c) {
                     if (c.withheld) {
                         return '<div class="wc-acad-row is-withheld">' +
                             '<span class="wc-acad-name">' + escapeHtml(c.label) +
-                                '<span class="wc-acad-sub">' + c.courses + ' course' +
-                                (c.courses === 1 ? '' : 's') + '</span></span>' +
-                            '<span class="wc-acad-withheld">' + escapeHtml(c.reason || 'Withheld') + '</span>' +
+                                '<span class="wc-acad-sub">' + c.courses + ' class' +
+                                (c.courses === 1 ? '' : 'es') + '</span></span>' +
+                            '<span class="wc-acad-withheld">' + escapeHtml(c.reason || 'Not shown') + '</span>' +
                         '</div>';
                     }
                     const lo = c.interval ? pct(c.interval[0]) : null;
                     const hi = c.interval ? pct(c.interval[1]) : null;
                     return '<div class="wc-acad-row">' +
                         '<span class="wc-acad-name">' + escapeHtml(c.label) +
-                            '<span class="wc-acad-sub">' + c.courses + ' course' +
-                            (c.courses === 1 ? '' : 's') + ' \u00b7 ' +
+                            '<span class="wc-acad-sub">' + c.courses + ' class' +
+                            (c.courses === 1 ? '' : 'es') + ' \u00b7 ' +
                             num(c.failingRows) + ' of ' + num(c.gradedRows) +
-                            ' posted grades \u00b7 ' + num(c.studentsWithMarks) +
+                            ' posted grades are a D or F \u00b7 ' + num(c.studentsWithMarks) +
                             ' students</span></span>' +
                         '<span class="wc-acad-figs">' +
                             '<span class="wc-acad-pct">' + pct(c.rate) + '%</span>' +
@@ -24668,18 +24708,18 @@
             if (sFoot) {
                 const n = d.naming;
                 sFoot.textContent =
-                    num(n.classified) + ' of ' + num(n.total) + ' courses could be given a ' +
-                    'subject from their name' +
+                    'We could name a subject for ' + num(n.classified) + ' of ' +
+                    num(n.total) + ' classes' +
                     (n.weightedFraction !== null
-                        ? ', covering ' + pct(n.weightedFraction) + '% of all graded classes'
+                        ? ', covering ' + pct(n.weightedFraction) + '% of all posted grades'
                         : '') +
-                    '. Each percentage is a share of posted grades, not of students: a ' +
-                    'student with a D in two maths classes contributes two of them. ' +
+                    '. Each percentage counts grades, not students: a student with a D in two ' +
+                    'maths classes is counted twice.' +
                     (n.unclassified.length
-                        ? 'Not categorised: ' + n.unclassified.join(', ') +
-                          '. Those rows are shown above rather than hidden, so a name we ' +
-                          'cannot read is a prompt to fix it and never a silent omission.'
-                        : 'Every course name was recognised.');
+                        ? '\n\nNot categorised: ' + n.unclassified.join(', ') +
+                          ' \u2014 listed above rather than hidden, so a name we cannot read is ' +
+                          'something to fix, never a quiet omission.'
+                        : '\n\nEvery class name was recognised.');
             }
         }
 

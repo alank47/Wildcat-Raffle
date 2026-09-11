@@ -137,8 +137,8 @@ export function cellOf(input: CellInput): Cell {
       ...base,
       withheld: "privacy",
       reason:
-        `Withheld: fewer than ${SMALL_GROUP} students in this group. ` +
-        `A figure over a group that small can identify a child.`,
+        `Not shown: fewer than ${SMALL_GROUP} students in this group. ` +
+        `A figure over a group that small can point to a child.`,
     };
   }
 
@@ -148,8 +148,8 @@ export function cellOf(input: CellInput): Cell {
       students: input.students,
       withheld: "too-few-failing",
       reason:
-        `Withheld: fewer than ${MIN_CELL_COUNT} students in this group have a D or F. ` +
-        `The group size is shown; the count is not, because a number that small ` +
+        `Not shown: fewer than ${MIN_CELL_COUNT} students in this group have a D or F. ` +
+        `The group size is on screen; the count is not, because a number that small ` +
         `names the children in it.`,
     };
   }
@@ -370,8 +370,8 @@ export function courseCell(input: {
       ...base,
       withheld: "privacy",
       reason:
-        `Withheld: fewer than ${SMALL_GROUP} students in this course have a grade ` +
-        `posted yet. A figure over a group that small can identify a child.`,
+        `Not shown: fewer than ${SMALL_GROUP} students in this class have a grade ` +
+        `yet. A figure over a group that small can point to a child.`,
     };
   }
 
@@ -382,8 +382,9 @@ export function courseCell(input: {
       studentsWithMarks: input.graded,
       withheld: "too-few-failing",
       reason:
-        `Fewer than ${COURSE_MIN_FAIL} students here have a D or F. The rate is ` +
-        `withheld too, because a rate over a known class size gives the count back.`,
+        `Not shown: fewer than ${COURSE_MIN_FAIL} students here have a D or F. The ` +
+        `percentage is not shown either \u2014 with the class size on screen, a ` +
+        `percentage hands the count straight back.`,
     };
   }
 
@@ -439,8 +440,8 @@ export function collapseDepth(
 ): Array<{ label: string; min: number; max: number | null; students: number; merged: boolean }> {
   const label = (min: number, max: number | null): string => {
     if (max === null) return `${min} or more`;
-    if (min === max) return min === 1 ? "1 course" : `${min} courses`;
-    return `${min} to ${max} courses`;
+    if (min === max) return min === 1 ? "1 class" : `${min} classes`;
+    return `${min} to ${max} classes`;
   };
   let bands = counts.map((c) => ({ ...c, merged: false }));
 

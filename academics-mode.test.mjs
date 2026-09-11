@@ -83,8 +83,15 @@ console.log("\n-- coverage is the loudest thing on the screen --");
 {
   check("coverage is rendered first", script.indexOf("acadCoverage") < script.indexOf("acadRaceRows"));
   check("as the largest figure", /\.wc-acad-cov-pct \{[^}]*font-size: 30px/.test(css));
-  check("it says the numbers are over posted grades only", /over the grades that/.test(script));
-  check("and that the figure is a floor, not a rate", /It is a floor, not a rate/.test(script));
+  check("it says the numbers are over posted grades only",
+    /covers only the grades that are in/.test(script));
+  // "A floor, not a rate" was a term of art. The replacement says the same
+  // thing in words a principal already uses -- and, unlike the original, does
+  // not claim a direction that is only true of the counts.
+  check("and that every figure is provisional",
+    /a starting point, not a final answer/.test(script));
+  check("and it says what the denominator actually counts",
+    /one grade for each student in each class/.test(script));
   check("coverage is never suppressed", /coverage/.test(server) && !/coverage: null,\s*withheld/.test(server));
 }
 
@@ -93,18 +100,32 @@ console.log("\n-- the count is a count, not a rate --");
   // A rate whose denominator grows every time a teacher posts would climb for
   // weeks with no child's work changing.
   check("students failing is shown as a number", /studentsFailingAny\.toLocaleString\(\)/.test(script));
-  check("and labelled as counted, not rated", /Counted, not rated/.test(script));
-  check("with the direction it can move", /can only go up as more grades are entered/.test(script));
+  // THE REASON COMES FIRST, because the reason is what stops a reader dividing
+  // the two numbers on this card and quoting the result as a failure rate.
+  check("and labelled a count, not a percentage", /A count, not a percentage/.test(script));
+  check("with the reason a percentage is refused",
+    /would climb for weeks as/.test(script) && /no child\\u2019s work changing/.test(script));
+  check("with the direction it can move", /The count can only go up/.test(script));
 }
 
 console.log("\n-- the interval, and the sentence that matters most --");
 {
   check("each reported group shows its range", /could be ' \+ lo \+/.test(script));
-  check("the footer says how many groups could be reported", /groups are large enough to report/.test(script));
+  check("the footer says how many groups could be reported",
+    /groups have enough students to report/.test(script));
   // The finding at this school is that the two reportable groups do NOT differ.
   check("and that no difference visible is not no difference",
-    /not\s*\n?\s*'the same as no gap/.test(script) || /same as no gap/.test(script));
-  check("it explains why a small group hides a gap", /the smaller a group, the wider its range/.test(script));
+    /does not mean there is no/.test(script.replace(/\s+/g, " ")));
+  check("it explains why a small group hides a gap",
+    /the smaller a group, the less this page can see/.test(script.replace(/\s+/g, " ")));
+  // All three branches are supplied, because the card used to change voice with
+  // the data and "nothing to compare" must never read as "nothing to worry
+  // about".
+  // Matched on the clause that survives the string concatenation, not across
+  // it: "show nothing ' + 'either way" has a quote and a plus in the middle,
+  // and asserting across that is a test about where a line happened to wrap.
+  check("the too-few branch refuses in both directions",
+    /this page can show nothing/.test(script) && /either way/.test(script));
   check("the separation test is the server's, not the screen's", /intervalsSeparate/.test(server));
 }
 

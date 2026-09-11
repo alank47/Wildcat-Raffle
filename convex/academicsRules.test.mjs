@@ -147,7 +147,13 @@ console.log("\n-- a course cell is not a race cell, and the floors differ --");
   // "2 of 28" rather than hide it.
   check("AND the rate, because a rate over a known size gives the count back",
     two.rate === null);
-  check("it says so rather than just blanking", /gives the count back/.test(two.reason));
+  check("it says so rather than just blanking",
+    /hands the count straight back/.test(two.reason));
+  // ONE WORD FOR ONE RULE. The screen used to say "withheld" on rows, "rate
+  // withheld" in the figures column and "Not shown" in the rollup refusal --
+  // three phrases for a single rule, which a reader takes for three rules.
+  check("and uses the screen's one word for a hidden figure",
+    /^Not shown/.test(two.reason));
   check("the class size is still shown", two.students === 28);
 
   const none = courseCell({ label: "X", graded: 30, failing: 0, rows: 30, markedRows: 30 });

@@ -377,9 +377,9 @@ export const courseFailure = query({
             ? null
             : !coverageOk
               ? "Not ranked: only " + Math.round((cell.coverage ?? 0) * 100) +
-                "% of this course's marks are posted."
+                "% of this class's grades are posted yet."
               : !cell.rankable
-                ? "Not ranked: fewer than " + RANKABLE_N + " students have a grade posted."
+                ? "Not ranked: fewer than " + RANKABLE_N + " students have a grade yet."
                 : null,
       };
     });
@@ -442,16 +442,16 @@ export const courseFailure = query({
           reason: !withheld
             ? null
             : privacy
-              ? `Withheld: too few students to report without naming them.`
+              ? `Not shown: too few students to report without naming them.`
               : fragile
-                ? `Withheld: one course we could not name could move this figure by ` +
-                  `${Math.round(swing * 100)} points, so it says more about the guess ` +
+                ? `Not shown: one class we could not name could move this figure by ` +
+                  `${Math.round(swing * 100)} points, so it would say more about our guess ` +
                   `than about the subject.`
                 : belowCoverage
-                  ? `Withheld: only ${Math.round((coverage ?? 0) * 100)}% of these marks ` +
+                  ? `Not shown: only ${Math.round((coverage ?? 0) * 100)}% of these grades ` +
                     `are posted.`
-                  : `Withheld: ${v.courses.size} course${v.courses.size === 1 ? "" : "s"} ` +
-                    `and ${students} students is too little to stand for a subject.`,
+                  : `Not shown: ${v.courses.size} class${v.courses.size === 1 ? "" : "es"} ` +
+                    `and ${students} students is too little to speak for a whole subject.`,
         };
       })
       // A FIXED ORDER, BY CATALOGUE SIZE, AND NEVER BY RATE. A guessed taxonomy

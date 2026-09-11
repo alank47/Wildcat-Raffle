@@ -71,7 +71,8 @@ console.log("\n-- a course whose roster IS a protected group is not rated --");
     /still count in every school-wide figure/.test(server) ||
     /NOT dropped from the school-wide totals/.test(subject));
   check("and the screen says how many courses were left out",
-    /cohortExcluded/.test(renderer) && /would be the disclosure/.test(renderer));
+    /cohortExcluded/.test(renderer) &&
+    /would be a fact about those students/.test(renderer));
 }
 
 console.log("\n-- the ranking is not the rate, and that is the point --");
@@ -89,7 +90,7 @@ console.log("\n-- the ranking is not the rate, and that is the point --");
   check("the reason it cannot rank on the floor alone is written down",
     /not monotone in n at the extremes/.test(rules));
   check("the screen says the order is not the percentage",
-    /Ordered by how much the evidence supports, not by the raw percentage/.test(html));
+    /The order is not the percentage order/.test(html.replace(/\s+/g, " ")));
   check("a course is only called worse than the school when its range clears it",
     /export function aboveSchoolRate/.test(rules) && /ci\[0\] > comparatorRate/.test(rules));
   // The first version compared a course to a mean it was inside, which drags
@@ -99,9 +100,12 @@ console.log("\n-- the ranking is not the rate, and that is the point --");
     /export function restOfSchoolRate/.test(rules) && /restOfSchoolRate\(schoolFailing, schoolGraded/.test(courseFn));
   check("a course behind on its gradebook is never badged at all",
     /NEVER BADGE A COURSE THE COVERAGE GATE HAS NOT CLEARED/.test(courseFn));
+  // Both clauses matched within a single string literal. "a clearly ' +
+  // 'higher share" spans a concatenation, and asserting across one is a test
+  // about where a line happened to wrap rather than about the copy.
   check("and the footer says the comparison excludes the course's own students",
-    /sit clearly above the rest/.test(renderer) &&
-    /own students taken back out/.test(renderer));
+    /higher share of students than the rest of the school/.test(renderer) &&
+    /its own students are taken out/.test(renderer));
 }
 
 console.log("\n-- a course list is not a teacher list --");
@@ -109,9 +113,9 @@ console.log("\n-- a course list is not a teacher list --");
   // At a school of 618 students, naming a course names a colleague. The number
   // cannot carry that caveat, so the copy has to.
   check("the screen says so in the card itself",
-    /This is a list of\s*\n?\s*<strong>courses<\/strong>, not of teachers/.test(html));
+    /<strong>classes, not teachers<\/strong>/.test(html));
   check("and says what the data cannot separate",
-    /who is placed in it, what it is required to cover/.test(html));
+    /who is placed in it, what it has to cover/.test(html.replace(/\s+/g, " ")));
   check("the server refuses to go down to section level",
     /It does not split by section/.test(server));
   // Rank INTEGERS were removed deliberately: the top two courses overlap
@@ -120,15 +124,27 @@ console.log("\n-- a course list is not a teacher list --");
   check("no rank integers are printed", !/wc-acad-rank/.test(renderer) && !/wc-acad-rank/.test(css));
   // Whitespace-tolerant: the sentence wraps in index.html, and asserting it on
   // one line is a test about line length rather than about copy.
+  // Shown with the concrete example rather than described in the abstract: a
+  // reader who sees 55% above 53% and no explanation files a bug.
   check("the card warns that a higher percentage can sit below a lower one",
-    /higher percentage can sit below a lower one/.test(html.replace(/\s+/g, " ")));
+    /a 55% can sit below a 53%/.test(html.replace(/\s+/g, " ")));
+  // The range chip appears on dozens of rows across three cards and used to be
+  // explained nowhere.
+  check("and explains the range chip once, in words",
+    /means the true figure sits/.test(html.replace(/\s+/g, " ")));
 }
 
 console.log("\n-- subject is a guess and never pretends otherwise --");
 {
-  check("the hint says it is guessed", /Subject is GUESSED from the course name/.test(renderer));
+  check("the hint says it is guessed", /We guess the subject from the class name/.test(renderer));
   check("and names why: PowerSchool has not granted the field",
-    /has not granted us the field/.test(renderer));
+    /has not given us that field/.test(renderer));
+  // The old wording claimed "catalogue order". The code sorts by how many
+  // classes each subject holds, so that was a claim a reader could catch out --
+  // and being caught out is how a warning stops being believed.
+  check("and describes the real sort order, not an invented one",
+    /ordered by how many classes/.test(renderer) &&
+    /b\.courses - a\.courses/.test(courseFn));
   check("an unreadable name is admitted, not filed somewhere plausible",
     /Not categorised/.test(subject) && /unclassified/.test(renderer));
   check("coverage is reported in two units, not one",
@@ -136,16 +152,16 @@ console.log("\n-- subject is a guess and never pretends otherwise --");
   check("because one big unnamed course outweighs five small ones",
     /distorts a rollup\s*\n?\s*\* more than five/.test(subject));
   check("the counting unit is stated on the card",
-    /share of posted grades, not of students/.test(renderer));
+    /counts grades, not students/.test(renderer));
   // A rollup over a catalogue half of which we could not read is a statement
   // about the guesser.
   check("the whole rollup is refused below 80% of the gradebook",
     /rollupOk = \(naming\.weightedFraction \?\? 0\) >= 0\.8/.test(courseFn) &&
-    /says more about the guessing/.test(renderer));
+    /say more about our guessing/.test(renderer));
   check("one unnamed course that could swing a subject suppresses it",
     /SINGLE-COURSE SENSITIVITY/.test(courseFn) && /swing > 0\.05/.test(courseFn));
   check("subjects are ordered by catalogue size, never by rate",
-    /never by rate/i.test(courseFn) && /never as\s*\n?\s*'a ranking of departments|ranking of departments/.test(renderer));
+    /never by rate/i.test(courseFn) && /ranking of departments/.test(renderer));
   check("privacy floors are checked against distinct students, not rows",
     /DISTINCT STUDENTS, which is what the privacy floors/.test(courseFn) &&
     /withMarks: Set<string>/.test(courseFn));
@@ -174,8 +190,63 @@ console.log("\n-- how deep, which is a different question from how many --");
   // depth count includes it (for a student, "not passed" is the same fact).
   // Both are right and they will not reconcile, so they are labelled apart.
   check("the wider net of the depth count is named, not left to be discovered",
-    /counting any course NOT PASSED/.test(renderer) &&
-    /wider net than the D\/F rate/.test(renderer));
+    /if the student is not passing it/.test(renderer) &&
+    /wider net than the class list below/.test(renderer));
+  // ...and WHY the two cards disagree, so the mismatch does not read as a bug.
+  check("and the reason the two cards differ is given",
+    /a pass-fail class has no D to give/.test(renderer));
+}
+
+console.log("\n-- every class is accounted for, and the total adds up --");
+{
+  // THE BUG THIS FIXES IS ARITHMETIC. The old footer named the ranked, the
+  // too-small and the protected -- 37 + 14 + 6 = 57 of 73 -- and never
+  // mentioned the 16 listed-but-not-ranked at all. Anyone who added it up
+  // found a hole, and the owner effectively did: he pasted that paragraph
+  // back and asked what it meant.
+  check("there is a tally, and it is in the courses card",
+    /id="acadCourseTally"/.test(html) &&
+    html.indexOf('id="acadCourseTally"') < html.indexOf('id="acadCourses"'));
+  check("it is built from the same four numbers the lists are built from",
+    /line\(d\.coursesTotal/.test(renderer) &&
+    /line\(d\.courses\.length/.test(renderer) &&
+    /line\(d\.notRanked\.length/.test(renderer) &&
+    /line\(d\.withheldCourses/.test(renderer) &&
+    /line\(d\.cohortExcluded/.test(renderer));
+  // The four parts are what the server splits the catalogue into, so they add
+  // up by construction rather than by a number somebody typed.
+  check("and the server's four buckets partition the catalogue",
+    /coursesTotal: byCourse\.size/.test(courseFn) &&
+    /const notRanked = built\.filter/.test(courseFn) &&
+    /const withheldCourses = built\.filter/.test(courseFn) &&
+    /cohortExcluded = byCourse\.size - rated\.length/.test(courseFn));
+  check("the total is set apart from its parts", /is-total/.test(renderer) &&
+    /\.wc-acad-tally-row\.is-total/.test(css));
+  check("the counts are tabular so the column reads as a sum",
+    /\.wc-acad-tally-n \{[^}]*tabular-nums/.test(css));
+
+  // The footer no longer OPENS by reciting the catalogue split -- "37 of 73
+  // courses are ranked" is the tally's job now, and saying it twice was most of
+  // what made that paragraph unreadable. It still names 14 and 6, but as the
+  // subjects of the sentences that give their reasons ("The 14 classes too
+  // small to show are held back because..."), which is what ties a tally line
+  // to its justification rather than restating it.
+  const footer = renderer.slice(renderer.indexOf("cFoot.textContent"));
+  check("the footer no longer recites the catalogue total",
+    !/coursesTotal/.test(footer));
+  check("but each held-back group still carries its reason",
+    /held back because a/.test(footer) && /shares the same protected label/.test(footer));
+}
+
+console.log("\n-- the footers can actually break into paragraphs --");
+{
+  // These footers answer several questions and are set with textContent, so a
+  // blank line is the only paragraph break available to them. Without pre-line
+  // the newlines collapse and the footer is one breathless wall again.
+  check("footers preserve the line breaks written into them",
+    /\.wc-acad-foot \{[^}]*white-space: pre-line/.test(css));
+  check("and the long footers actually use them",
+    /\\n\\n/.test(renderer));
 }
 
 console.log("\n-- wired into the app --");

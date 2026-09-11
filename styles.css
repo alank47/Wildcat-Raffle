@@ -9035,7 +9035,36 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 .wc-acad-foot {
     margin: 14px 0 0; font-size: 12.5px; line-height: 1.6;
     color: var(--wc-gray-text, #8892a0); max-width: 78ch;
+    /* THESE FOOTERS ANSWER SEVERAL QUESTIONS AND ARE SET WITH textContent, so a
+       blank line is the only paragraph break available to them. Without
+       pre-line the newlines collapse and the footer is one breathless wall
+       again -- which is the exact thing the owner could not read. */
+    white-space: pre-line;
 }
+
+/* The class accounting: four counts that add up to the total, so a reader can
+   see at a glance where every class went. Numbers are tabular and right-aligned
+   in their own column so the column itself reads as a sum. */
+.wc-acad-tally {
+    display: flex; flex-direction: column; gap: 2px;
+    margin: 0 0 14px; padding: 10px 12px;
+    border-radius: 10px; background: var(--wc-bg-soft, #F4F6F9);
+    font-size: 12.5px;
+}
+.wc-acad-tally-row { display: flex; align-items: baseline; gap: 10px; }
+.wc-acad-tally-n {
+    flex: 0 0 auto; min-width: 2.4em; text-align: right;
+    font-weight: 700; font-variant-numeric: tabular-nums;
+    color: var(--wc-ink, #14171C);
+}
+.wc-acad-tally-k { color: var(--wc-gray-text, #8892a0); }
+/* The total sits above its parts and is separated from them, so the four lines
+   below read as a breakdown rather than as five equal facts. */
+.wc-acad-tally-row.is-total {
+    padding-bottom: 5px; margin-bottom: 4px;
+    border-bottom: 1px solid var(--wc-line, #E7ECF2);
+}
+.wc-acad-tally-row.is-total .wc-acad-tally-k { color: var(--wc-ink, #14171C); font-weight: 600; }
 
 /* A course that is listed but not ranked reads as set aside, not as a result.
    Same dashed treatment as a withheld row, because it is the same kind of
