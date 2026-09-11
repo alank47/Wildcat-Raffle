@@ -1609,3 +1609,42 @@ export const gradeGateFeasibility = internalQuery({
     return { byStudent, rows: page.page.length, cursor: page.continueCursor, isDone: page.isDone };
   },
 });
+
+/** What Academics Mode could actually compute today. Counts only. Read-only. */
+export const academicsDataAudit = internalQuery({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, { cursor }) => {
+    const page = await ctx.db.query("psGrades").paginate({
+      cursor: cursor ?? null, numItems: 1000,
+    });
+    let withLetter = 0, withPercent = 0, both = 0, neither = 0;
+    const sources: Record<string, number> = {};
+    const courses: Record<string, Set<string>> = {};   // course -> sectionIds
+    const bubble: Record<string, number> = {};
+    for (const g of page.page as any[]) {
+      const L = typeof g.currentGrade === "string" && g.currentGrade.trim() && g.currentGrade !== "--";
+      const P = typeof g.currentPercent === "number" && Number.isFinite(g.currentPercent);
+      if (L) withLetter++;
+      if (P) withPercent++;
+      if (L && P) both++;
+      if (!L && !P) neither++;
+      const src = String(g.gradeSource ?? "(none)");
+      sources[src] = (sources[src] ?? 0) + 1;
+      const cn = String(g.courseName ?? "(none)");
+      (courses[cn] ??= new Set()).add(String(g.sectionId ?? "?"));
+      if (P) {
+        const v = g.currentPercent as number;
+        if (v >= 55 && v < 65) bubble["55-65"] = (bubble["55-65"] ?? 0) + 1;
+        if (v >= 65 && v < 70) bubble["65-70"] = (bubble["65-70"] ?? 0) + 1;
+      }
+    }
+    return {
+      rows: page.page.length,
+      withLetter, withPercent, both, neither, sources, bubble,
+      coursesToSections: Object.fromEntries(
+        Object.entries(courses).map(([c, set]) => [c, [...set]]),
+      ),
+      cursor: page.continueCursor, isDone: page.isDone,
+    };
+  },
+});
