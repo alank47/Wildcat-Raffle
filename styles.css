@@ -9037,6 +9037,13 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     color: var(--wc-gray-text, #8892a0); max-width: 78ch;
 }
 
+/* A course that is listed but not ranked reads as set aside, not as a result.
+   Same dashed treatment as a withheld row, because it is the same kind of
+   statement: this row is here, and the screen is declining to say something
+   about it. */
+.wc-acad-row.is-unranked { background: transparent; border-style: dashed; }
+.wc-acad-row.is-unranked .wc-acad-pct { color: var(--wc-gray-text, #8892a0); }
+
 @media (max-width: 560px) {
     .wc-acad-row { flex-wrap: wrap; }
     .wc-acad-withheld { text-align: left; max-width: none; }

@@ -58,6 +58,44 @@ the chart than it can carry:**
    order of fifteen points — would be visible. "No difference visible" is NOT
    "no difference", and the screen says so.
 
+#### Added 2026-09-10: course-level failure, and three kinds of course it refuses
+
+Course failure rates and the multi-course failure distribution (metrics 1 and 3
+of the twelve) were built the same day. **They read no protected field at all** —
+`convex/academics.ts`'s `courseFailure` opens `psGrades` and nothing else, never
+`psRestricted` — so they need no extension of the grant above. They are recorded
+here anyway, because they introduced a refusal that is not obvious from the code.
+
+**Three kinds of course are dropped from the ranking and from the subject
+rollup**, listed in `isUnratedCohort` in `convex/courseSubject.ts`:
+
+| Kind | Example | Why |
+|---|---|---|
+| Special education | `RSP A` (course 7002A, two sections, 20 students) | Enrolment is disability status. Never requested, never granted. |
+| English-learner programme | `ELD 1A`, newcomer sections | EL status is recorded below as **NOT approved**. |
+| Heritage language | `Spanish for Spanish Speakers` | Enrolment is the language spoken at home, a proxy for national origin. |
+
+**The reasoning, which is the part worth keeping.** Each of these is an
+aggregate, and an aggregate is normally the safe form. But when the ROSTER OF
+THE COURSE IS THE PROTECTED GROUP, the aggregate is the disclosure — "68% of
+students in RSP A are failing" is a sentence about students with disabilities
+wearing a course label. Publishing it because the field was never technically
+read would be routing around the refusal rather than honouring it.
+
+Those students are **not** removed from the school-wide figures, where they
+identify nobody: they count in coverage, in students failing anything, and in
+the depth distribution. Only the per-course row and the subject rollup exclude
+them, and the screen prints how many were left out rather than silently
+shrinking.
+
+**Two further limits recorded at the same time.** A course-level rate is a
+statement about an adult as well as about children — at 618 students a course
+resolves to one or two teachers — so the query refuses to split by section, and
+the card says in its own copy that it is a list of courses and not of teachers.
+And **subject is guessed from the course name**, because `Courses.Credit_Type`
+has never been granted; the screen prints what share of the gradebook it could
+name and lists the names it could not.
+
 **What was granted:** nothing new. No role gains a field. `restrictedPolicy.ts`
 is untouched, and `ALLOWED_BY_ROLE` still gives `teacher`, `campusaide` and
 `pbis` nothing. This extends only the PURPOSE for which the existing

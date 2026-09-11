@@ -1648,3 +1648,57 @@ export const academicsDataAudit = internalQuery({
     };
   },
 });
+
+/** How many courses have enough graded students to report a rate? Counts only. */
+export const courseFailureShape = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("psGrades").collect();
+    const byCourse = new Map<string, { name: string; graded: number; df: number }>();
+    let pct = 0, band5565 = 0, band6570 = 0;
+    const letters: Record<string, number> = {};
+    for (const g of all as any[]) {
+      const L = typeof g.currentGrade === "string" ? g.currentGrade.trim().toUpperCase() : "";
+      if (L) letters[L] = (letters[L] ?? 0) + 1;
+      const P = typeof g.currentPercent === "number" && Number.isFinite(g.currentPercent) ? g.currentPercent : null;
+      if (P !== null) { pct++; if (P >= 55 && P < 65) band5565++; if (P >= 65 && P < 70) band6570++; }
+      if (!["A","B","C","D","F"].includes(L)) continue;
+      const key = String(g.courseNumber ?? g.courseName ?? "?");
+      const e = byCourse.get(key) ?? { name: String(g.courseName ?? key), graded: 0, df: 0 };
+      e.graded++; if (L === "D" || L === "F") e.df++;
+      byCourse.set(key, e);
+    }
+    const rows = [...byCourse.values()];
+    return {
+      coursesWithAnyGrades: rows.length,
+      coursesWith10PlusGraded: rows.filter((r) => r.graded >= 10).length,
+      coursesWith20PlusGraded: rows.filter((r) => r.graded >= 20).length,
+      worstFew: rows.filter((r) => r.graded >= 20).sort((a, b) => (b.df / b.graded) - (a.df / a.graded))
+        .slice(0, 6).map((r) => ({ course: r.name, graded: r.graded, df: r.df, rate: Math.round((r.df / r.graded) * 100) })),
+      rowsWithPercent: pct, band5565, band6570, letters,
+    };
+  },
+});
+
+/** Every distinct course name with its graded count. Counts only; no student. */
+export const courseNameCatalogue = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("psGrades").collect();
+    const byCourse = new Map<string, { name: string; number: string; rows: number; graded: number; df: number }>();
+    for (const g of all as any[]) {
+      const name = String(g.courseName ?? "").trim();
+      const num = String(g.courseNumber ?? "").trim();
+      const key = num || name || "?";
+      const e = byCourse.get(key) ?? { name: name || "(unnamed)", number: num, rows: 0, graded: 0, df: 0 };
+      e.rows++;
+      const L = typeof g.currentGrade === "string" ? g.currentGrade.trim().toUpperCase() : "";
+      if (["A", "B", "C", "D", "F"].includes(L)) { e.graded++; if (L === "D" || L === "F") e.df++; }
+      byCourse.set(key, e);
+    }
+    return {
+      total: byCourse.size,
+      courses: [...byCourse.values()].sort((a, b) => b.rows - a.rows),
+    };
+  },
+});

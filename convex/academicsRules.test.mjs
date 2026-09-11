@@ -19,6 +19,8 @@
 
 import {
   markOf, cellOf, wilson95, intervalsSeparate, SMALL_GROUP, MIN_CELL_COUNT,
+  courseCell, collapseDepth, coverageEnvelope, restOfSchoolRate, rankScore,
+  aboveSchoolRate, depthBucket, COURSE_MIN_FAIL, RANKABLE_N,
 } from "./academicsRules.ts";
 
 let pass = 0, fail = 0;
@@ -122,6 +124,136 @@ console.log("\n-- the constants are stated, not buried --");
 {
   check("the privacy floor matches discipline's", SMALL_GROUP === 10);
   check("the numerator floor is stated", MIN_CELL_COUNT === 10);
+}
+
+console.log("\n-- a course cell is not a race cell, and the floors differ --");
+{
+  // The privacy floor is checked against GRADED students, not enrolments. The
+  // first version checked enrolments while computing the rate over graded
+  // rows, so a course with 12 enrolled and 4 graded cleared the floor and then
+  // printed a rate over four children.
+  const thin = courseCell({ label: "X", graded: 4, failing: 3, rows: 12, markedRows: 4 });
+  check("a course with 12 enrolled but 4 graded is withheld", thin.withheld === "privacy");
+  check("and reports nothing about those four", thin.rate === null && thin.failingStudents === null);
+  check("coverage survives suppression, because it is about teachers not children",
+    Math.round(thin.coverage * 100) === 33);
+
+  // A numerator floor of 10 would delete every course that is doing WELL,
+  // leaving a list of the worst with the reassuring cases removed.
+  check("the course numerator floor is three, not ten", COURSE_MIN_FAIL === 3);
+  const two = courseCell({ label: "X", graded: 28, failing: 2, rows: 30, markedRows: 28 });
+  check("two failures withholds the count", two.failingStudents === null);
+  // rate x n recovers the count exactly, so showing "7% of 28" would spell out
+  // "2 of 28" rather than hide it.
+  check("AND the rate, because a rate over a known size gives the count back",
+    two.rate === null);
+  check("it says so rather than just blanking", /gives the count back/.test(two.reason));
+  check("the class size is still shown", two.students === 28);
+
+  const none = courseCell({ label: "X", graded: 30, failing: 0, rows: 30, markedRows: 30 });
+  check("zero failures is published, because it names nobody",
+    none.withheld === null && none.rate === 0 && none.failingStudents === 0);
+
+  const real = courseCell({ label: "CC Math 8A", graded: 147, failing: 104, rows: 152, markedRows: 150 });
+  check("a real course reports in full", real.withheld === null && real.failingStudents === 104);
+  check("and is rankable at 147 graded", real.rankable === true);
+  const small = courseCell({ label: "X", graded: 15, failing: 9, rows: 15, markedRows: 15 });
+  check("a 15-student course reports but is not rankable",
+    small.withheld === null && small.rankable === false);
+  check("the rankable threshold is stated", RANKABLE_N === 20);
+}
+
+console.log("\n-- ranking, and the case the floor alone gets wrong --");
+{
+  // Same rate to one decimal place; the floor separates them by the only thing
+  // that differs, which is how much is known.
+  check("a 147-student course outranks a 41-student one at the same rate",
+    rankScore(104, 147) > rankScore(29, 41));
+  check("and a ten-student course at 60% sinks below both",
+    rankScore(6, 10) < rankScore(78, 146));
+  // THE CASE THE GATE EXISTS FOR. The floor is not monotone in n at the
+  // extremes: ten out of ten scores higher than 104 out of 147.
+  check("but a 10-of-10 course would outrank the worst real course",
+    rankScore(10, 10) > rankScore(104, 147));
+  check("which is why n>=20 is a separate gate, not a consequence of the floor",
+    courseCell({ label: "X", graded: 10, failing: 10, rows: 10, markedRows: 10 }).rankable === false);
+  check("at twenty, failing everybody IS a finding and ranks",
+    courseCell({ label: "X", graded: 20, failing: 20, rows: 20, markedRows: 20 }).rankable === true);
+}
+
+console.log("\n-- a course is not compared to a mean it is inside --");
+{
+  const rest = restOfSchoolRate(976, 4091, 104, 147);
+  check("the school without Math 8A is 22.1%, not 23.9%",
+    Math.round(rest * 1000) / 10 === 22.1);
+  check("dropping the course lowers the bar it has to clear", rest < 976 / 4091);
+  check("a course that is the whole school has no comparator",
+    restOfSchoolRate(976, 4091, 976, 4091) === null);
+  check("Math 8A clears the rest-of-school rate", aboveSchoolRate(104, 147, rest));
+  check("an ordinary course does not", !aboveSchoolRate(7, 30, rest));
+}
+
+console.log("\n-- what is not posted bounds what is --");
+{
+  // Missing marks are not missing at random and the mechanisms run both ways,
+  // so bound it rather than model it.
+  const e = coverageEnvelope(11, 44, 130);
+  check("best case treats every unposted mark as a pass",
+    Math.round(e.best * 100) === 8);
+  check("worst case treats every one as a fail",
+    Math.round(e.worst * 100) === 75);
+  check("and the width is the reason the point estimate cannot be read alone",
+    e.width > 0.15);
+  const tight = coverageEnvelope(104, 147, 152);
+  check("a nearly-complete gradebook has a narrow envelope", tight.width < 0.05);
+  check("nonsense is refused rather than guessed", coverageEnvelope(5, 10, 4) === null);
+}
+
+console.log("\n-- thin bands are merged, because blanking one leaks it --");
+{
+  // The bands partition the students failing anything, and that total is
+  // published beside them. Nulling one and printing the other three is one
+  // subtraction away from publishing all four.
+  const out = collapseDepth([
+    { min: 1, max: 1, students: 186 },
+    { min: 2, max: 2, students: 118 },
+    { min: 3, max: 4, students: 97 },
+    { min: 5, max: null, students: 6 },
+  ]);
+  check("the thin top band is folded into its neighbour", out.length === 3);
+  check("and the surviving band carries both counts",
+    out[2].students === 103 && out[2].merged === true);
+  check("the label widens to say so", out[2].label === "3 or more");
+  check("the partition still adds up",
+    out.reduce((a, b) => a + b.students, 0) === 186 + 118 + 97 + 6);
+  check("untouched bands are not marked as merged", out[0].merged === false);
+
+  const fine = collapseDepth([
+    { min: 1, max: 1, students: 186 },
+    { min: 2, max: 2, students: 118 },
+  ]);
+  check("nothing is merged when nothing is thin",
+    fine.length === 2 && fine.every((b) => !b.merged));
+
+  // Two thin bands in a row still resolve rather than looping.
+  const both = collapseDepth([
+    { min: 1, max: 1, students: 200 },
+    { min: 2, max: 2, students: 4 },
+    { min: 3, max: 4, students: 5 },
+    { min: 5, max: null, students: 3 },
+  ]);
+  check("consecutive thin bands collapse until every printed one clears the floor",
+    both.every((b) => b.students === 0 || b.students >= SMALL_GROUP));
+  check("and the total is still preserved",
+    both.reduce((a, b) => a + b.students, 0) === 212);
+}
+
+console.log("\n-- the depth buckets are a rule, not a magic number --");
+{
+  check("one course is its own band", depthBucket(1) === "1 course");
+  check("three and four share one", depthBucket(3) === depthBucket(4));
+  check("five and nine share the top", depthBucket(5) === depthBucket(9));
+  check("zero is not a band at all", depthBucket(0) === null);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

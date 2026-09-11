@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20260910g">
-    <link rel="icon" href="favicon.ico?v=20260910g" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260910g" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260910g" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20260910h">
+    <link rel="icon" href="favicon.ico?v=20260910h" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260910h" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260910h" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260910g">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260910h">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20260910g">
+    <link rel="stylesheet" href="styles.css?v=20260910h">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260910g">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260910h">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20260910g">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260910h">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20260910g" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20260910h" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -184,7 +184,7 @@
                      asset, so there is one logo to replace when the school
                      changes it. -->
                 <div class="wp-brand">
-                    <img src="assets/westbrook-logo.png?v=20260910g"
+                    <img src="assets/westbrook-logo.png?v=20260910h"
                          alt="Westbrook Academy" class="wp-brandlogo" id="wpBrandLogo">
                     <!-- The product's name, which appeared nowhere on the
                          student's screen while the teacher's topbar has said
@@ -412,7 +412,7 @@
         <header class="app-topbar">
             <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-menu"></use></svg></button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20260910g" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20260910h" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -2870,6 +2870,71 @@
                     </div>
                     <p class="panel-hint" id="acadOverallHint"></p>
                     <div id="acadOverall" class="wc-acad-overall"></div>
+                </div>
+
+                <!-- METRIC 3. The card above says how many students are
+                     failing something. This one says how badly, and the
+                     difference is the whole point: 200 students with one bad
+                     class each is a credit-recovery problem, 60 students with
+                     four each is not an academic problem at all. -->
+                <div class="wc-card panel-card">
+                    <div class="panel-head">
+                        <span class="panel-icon"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-students"></use></svg></span>
+                        <h3>How many courses each student is failing</h3>
+                    </div>
+                    <p class="panel-hint">
+                        The same students as the card above, split by how deep it goes. A band
+                        holding fewer than 10 students is withheld &mdash; a number that small
+                        names the children in it.
+                    </p>
+                    <div id="acadDepth" class="wc-acad-rows"></div>
+                    <p class="wc-acad-foot" id="acadDepthFoot"></p>
+                </div>
+
+                <!-- METRIC 1. A COURSE LIST, NOT A TEACHER LIST, and the copy
+                     has to carry that because the number does not. Ranked by
+                     the lower bound of the interval rather than the raw rate,
+                     so a ten-student course cannot take the top spot on noise. -->
+                <div class="wc-card panel-card">
+                    <div class="panel-head">
+                        <span class="panel-icon"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-analytics"></use></svg></span>
+                        <h3>Courses failing the most students</h3>
+                    </div>
+                    <p class="panel-hint">
+                        Ordered by how much the evidence supports, not by the raw percentage, so
+                        a small course cannot reach the top by chance &mdash; which means a
+                        higher percentage can sit below a lower one. This is a list of
+                        <strong>courses</strong>, not of teachers: a course fails students for
+                        reasons &mdash; who is placed in it, what it is required to cover, how
+                        complete its gradebook is &mdash; that this data cannot separate from how
+                        it is taught.
+                    </p>
+                    <div id="acadCourses" class="wc-acad-rows"></div>
+                    <!-- LISTED, NEVER RANKED, AND TOLD WHY. A course is not
+                         hidden for being behind on its gradebook; it is just
+                         not put in an order it has not earned. Without this
+                         block the teacher who has posted everything looks
+                         worse than the one who has posted nothing, and the
+                         screen quietly teaches the staff that entering grades
+                         is punished. -->
+                    <p class="wc-acad-foot" id="acadUnrankedHead"></p>
+                    <div id="acadCoursesUnranked" class="wc-acad-rows"></div>
+                    <p class="wc-acad-foot" id="acadCoursesFoot"></p>
+                </div>
+
+                <!-- THE SUBJECT ROLLUP, WHICH IS A GUESS AND SAYS SO.
+                     PowerSchool's own Courses.Credit_Type is not granted to
+                     this integration, so subject is inferred from the course
+                     name. The card prints how much of the catalogue it could
+                     name and lists what it could not. -->
+                <div class="wc-card panel-card">
+                    <div class="panel-head">
+                        <span class="panel-icon"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-analytics"></use></svg></span>
+                        <h3>By subject</h3>
+                    </div>
+                    <p class="panel-hint" id="acadSubjectHint"></p>
+                    <div id="acadSubjects" class="wc-acad-rows"></div>
+                    <p class="wc-acad-foot" id="acadSubjectsFoot"></p>
                 </div>
 
                 <div class="wc-card panel-card">
@@ -5462,24 +5527,24 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260910g"></script>
+    <script src="wildcat-auth.js?v=20260910h"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
     <!-- The icon sprite. Injected at load, before anything renders, so an
          icon is never a blank square for a frame. -->
-    <script src="wildcat-icons.js?v=20260910g"></script>
-    <script src="wildcat-motion.js?v=20260910g"></script>
-    <script src="wildcat-discipline.js?v=20260910g"></script>
-    <script src="wildcat-audit.js?v=20260910g"></script>
-    <script src="wildcat-cashaudit.js?v=20260910g"></script>
-    <script src="wildcat-dirty.js?v=20260910g"></script>
-    <script src="wildcat-update.js?v=20260910g"></script>
-    <script src="wildcat-modes.js?v=20260910g"></script>
-    <script src="wildcat-merge.js?v=20260910g"></script>
-    <script src="wildcat-savequeue.js?v=20260910g"></script>
-    <script src="wildcat-roster.js?v=20260910g"></script>
-    <script src="wildcat-store.js?v=20260910g"></script>
-    <script src="script.js?v=20260910g"></script>
+    <script src="wildcat-icons.js?v=20260910h"></script>
+    <script src="wildcat-motion.js?v=20260910h"></script>
+    <script src="wildcat-discipline.js?v=20260910h"></script>
+    <script src="wildcat-audit.js?v=20260910h"></script>
+    <script src="wildcat-cashaudit.js?v=20260910h"></script>
+    <script src="wildcat-dirty.js?v=20260910h"></script>
+    <script src="wildcat-update.js?v=20260910h"></script>
+    <script src="wildcat-modes.js?v=20260910h"></script>
+    <script src="wildcat-merge.js?v=20260910h"></script>
+    <script src="wildcat-savequeue.js?v=20260910h"></script>
+    <script src="wildcat-roster.js?v=20260910h"></script>
+    <script src="wildcat-store.js?v=20260910h"></script>
+    <script src="script.js?v=20260910h"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -5489,7 +5554,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20260910g').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20260910h').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {

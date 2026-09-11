@@ -24323,6 +24323,11 @@
         // a claim about this file.
         // =====================================================================
         let _acadData = null;
+        // Metrics 1 and 3 come from a second query rather than being bolted
+        // onto the first. Two reads, not one, so a failure in either card
+        // leaves the other standing -- and so the race breakdown, which is
+        // the one under a named approval, keeps its own blast radius.
+        let _acadCourses = null;
         let _acadError = null;
         let _acadBusy = false;
 
@@ -24331,7 +24336,7 @@
             const rows = document.getElementById('acadRaceRows');
             if (!cov || !rows) return;
 
-            if (!_acadData || force) {
+            if (!_acadData || !_acadCourses || force) {
                 if (_acadBusy) return;
                 _acadBusy = true;
                 rows.innerHTML = '<p class="wu-absent">Loading\u2026</p>';
@@ -24341,11 +24346,21 @@
                     if (!session) {
                         _acadError = 'Academics needs a Microsoft sign-in.';
                     } else {
-                        _acadData = await auth.convexQuery('academics:raceBreakdown', {}, session.idToken);
+                        // IN PARALLEL, NOT IN SEQUENCE. Each query does its own
+                        // full read of the grade table, and running them one
+                        // after the other doubled the time to first paint for
+                        // no benefit -- they share nothing.
+                        const [race, courses] = await Promise.all([
+                            auth.convexQuery('academics:raceBreakdown', {}, session.idToken),
+                            auth.convexQuery('academics:courseFailure', {}, session.idToken)
+                        ]);
+                        _acadData = race;
+                        _acadCourses = courses;
                         _acadError = null;
                     }
                 } catch (e) {
                     _acadData = null;
+                    _acadCourses = null;
                     _acadError = (e && e.message) || String(e);
                 } finally {
                     _acadBusy = false;
@@ -24440,6 +24455,231 @@
                             : 'No two groups differ once the ranges are allowed for. That is not ' +
                               'the same as no gap: the smaller a group, the wider its range, and ' +
                               'only a large gap would be visible here at all.'));
+            }
+
+            renderAcademicsCourses();
+        }
+
+        /**
+         * Metrics 1 and 3: which courses fail the most students, how deep each
+         * student's failure goes, and a subject rollup that admits it is a
+         * guess.
+         *
+         * Split out of renderAcademics rather than inlined because it reads a
+         * different query, and a failure in one card must not blank the other.
+         */
+        /**
+         * Metrics 1 and 3: which courses fail the most students, how deep each
+         * student's failure goes, and a subject rollup that admits it is a
+         * guess.
+         *
+         * Split out of renderAcademics rather than inlined because it reads a
+         * different query, and a failure in one card must not blank the other.
+         */
+        function renderAcademicsCourses() {
+            const depthEl = document.getElementById('acadDepth');
+            const courseEl = document.getElementById('acadCourses');
+            const subjEl = document.getElementById('acadSubjects');
+            if (!depthEl || !courseEl || !subjEl) return;
+
+            const d = _acadCourses;
+            const miss = function (el, msg) {
+                if (el) el.innerHTML = '<p class="wu-absent">' + escapeHtml(msg) + '</p>';
+            };
+            if (!d || d.allowed === false) {
+                const why = (d && d.reason) || _acadError || 'Course figures could not be loaded.';
+                miss(depthEl, why); miss(courseEl, why); miss(subjEl, why);
+                return;
+            }
+
+            const pct = function (n) { return Math.round(n * 100); };
+            const num = function (n) { return Number(n).toLocaleString(); };
+
+            // ---- how deep ----------------------------------------------------
+            //
+            // Bands are already folded together by the server where one was too
+            // thin to print, so every band that arrives here is publishable and
+            // the four still add up to the total. Nothing is nulled, because a
+            // nulled band beside a published total is one subtraction away from
+            // being read.
+            depthEl.innerHTML = d.depth.map(function (b) {
+                const share = d.school.studentsFailingAny > 0
+                    ? pct(b.students / d.school.studentsFailingAny) : null;
+                return '<div class="wc-acad-row">' +
+                    '<span class="wc-acad-name">' + escapeHtml(b.label) +
+                        '<span class="wc-acad-sub">' +
+                        (share !== null ? share + '% of the students failing anything' : '') +
+                        (b.merged ? ' \u00b7 widened, because a narrower band held too few students to print' : '') +
+                        '</span></span>' +
+                    '<span class="wc-acad-figs"><span class="wc-acad-pct">' +
+                        num(b.students) + '</span>' +
+                        '<span class="wc-acad-ci">students</span></span>' +
+                '</div>';
+            }).join('');
+
+            // THE SENTENCE THIS CARD EXISTS FOR. A reader who takes only one
+            // thing from it should take the difference between a wide, shallow
+            // problem and a narrow, deep one, because the school does something
+            // completely different about each.
+            const dFoot = document.getElementById('acadDepthFoot');
+            if (dFoot) {
+                dFoot.textContent =
+                    'Counted over the ' + num(d.depthDenominator) + ' students who have any ' +
+                    'grade posted, and counting any course NOT PASSED \u2014 a D, an F or an ' +
+                    'NP. That is a slightly wider net than the D/F rate below, which can only ' +
+                    'count courses that award letters. A student failing one course and a ' +
+                    'student failing five are not the same problem: the first is usually about ' +
+                    'the course, and the second is usually not about school at all. Deep ' +
+                    'failure is an attendance, health or home conversation before it is a ' +
+                    'tutoring one.';
+            }
+
+            // ---- which courses ------------------------------------------------
+            //
+            // NO RANK NUMBERS. The list is in order, but printing "1, 2, 3"
+            // claims a resolution the intervals do not support: the top two
+            // courses here overlap across most of their ranges, and a reader
+            // who sees a 1 beside one of them will not hold that in mind.
+            const courseRow = function (c, unranked) {
+                const lo = c.interval ? pct(c.interval[0]) : null;
+                const hi = c.interval ? pct(c.interval[1]) : null;
+                const sub = escapeHtml(String(c.subject)) +
+                    (c.failingStudents !== null
+                        ? ' \u00b7 ' + num(c.failingStudents) + ' of ' +
+                          num(c.studentsWithMarks) + ' graded'
+                        : '') +
+                    (c.coverage !== null ? ' \u00b7 ' + pct(c.coverage) + '% posted' : '');
+                const fig = c.rate === null
+                    ? '<span class="wc-acad-ci">rate withheld</span>'
+                    : '<span class="wc-acad-pct">' + pct(c.rate) + '%</span>' +
+                      (lo !== null
+                        ? '<span class="wc-acad-ci">could be ' + lo + '\u2013' + hi + '%</span>'
+                        : '');
+                return '<div class="wc-acad-row' + (unranked ? ' is-unranked' : '') + '">' +
+                    '<span class="wc-acad-name">' + escapeHtml(c.label) +
+                        '<span class="wc-acad-sub">' + sub +
+                        (unranked && c.notRankedReason
+                            ? ' \u00b7 ' + escapeHtml(c.notRankedReason)
+                            : '') +
+                        (!unranked && c.envelopeWide && c.envelope
+                            ? ' \u00b7 with the unposted marks it could be anywhere from ' +
+                              pct(c.envelope.best) + '% to ' + pct(c.envelope.worst) + '%'
+                            : '') +
+                        '</span></span>' +
+                    '<span class="wc-acad-figs">' + fig + '</span>' +
+                '</div>';
+            };
+
+            courseEl.innerHTML = d.courses.length === 0
+                ? '<p class="wu-absent">No course has enough posted grades to rank yet.</p>'
+                : d.courses.map(function (c) { return courseRow(c, false); }).join('');
+
+            const uHead = document.getElementById('acadUnrankedHead');
+            const unrankedEl = document.getElementById('acadCoursesUnranked');
+            if (uHead && unrankedEl) {
+                if (!d.notRanked.length) {
+                    uHead.textContent = '';
+                    unrankedEl.innerHTML = '';
+                } else {
+                    uHead.textContent =
+                        'Listed but not ranked \u2014 too few graded students, or too much of ' +
+                        'the gradebook still empty, to place them in an order. They are shown ' +
+                        'rather than dropped, because a course missing from a list is invisible.';
+                    unrankedEl.innerHTML = d.notRanked
+                        .map(function (c) { return courseRow(c, true); }).join('');
+                }
+            }
+
+            const cFoot = document.getElementById('acadCoursesFoot');
+            if (cFoot) {
+                const above = d.courses.filter(function (c) { return c.aboveSchool; }).length;
+                cFoot.textContent =
+                    d.courses.length + ' of ' + d.coursesTotal + ' courses are ranked. ' +
+                    'School-wide, ' + pct(d.school.rate) + '% of posted letter grades are a D ' +
+                    'or an F. ' + above + ' of the courses listed sit clearly above the rest ' +
+                    'of the school once the range is allowed for \u2014 each course is compared ' +
+                    'against the school with its own students taken back out, so a big course ' +
+                    'is not measured partly against itself. The others are high, but not ' +
+                    'distinguishable from the school as a whole. ' +
+                    (d.withheldCourses > 0
+                        ? d.withheldCourses + ' course' + (d.withheldCourses === 1 ? ' is' : 's are') +
+                          ' withheld for being too small to report at all. '
+                        : '') +
+                    (d.cohortExcluded > 0
+                        ? d.cohortExcluded + ' special-education, English-learner or ' +
+                          'heritage-language section' +
+                          (d.cohortExcluded === 1 ? ' is' : 's are') + ' left out entirely: the ' +
+                          'roster of such a course is itself a protected group, so a rate over ' +
+                          'it would be the disclosure rather than an aggregate. Those students ' +
+                          'still count in every school-wide figure above.'
+                        : '');
+            }
+
+            // ---- by subject ---------------------------------------------------
+            const sHint = document.getElementById('acadSubjectHint');
+            if (sHint) {
+                sHint.textContent =
+                    'Subject is GUESSED from the course name. PowerSchool knows the real ' +
+                    'answer and has not granted us the field, so every row here rests on ' +
+                    'reading a title. Treat it as a pointer, not a finding \u2014 and never as ' +
+                    'a ranking of departments: the rows are in catalogue order, not rate order.';
+            }
+
+            // THE WHOLE ROLLUP IS REFUSED when too little of the gradebook sits
+            // in courses we could name. A subject rate built on a catalogue we
+            // half-read is a statement about the guesser.
+            if (!d.rollupOk) {
+                subjEl.innerHTML = '<p class="wu-absent">' +
+                    'Not shown. Only ' +
+                    (d.naming.weightedFraction !== null ? pct(d.naming.weightedFraction) + '%' : 'some') +
+                    ' of posted grades sit in a course whose subject we could read from its ' +
+                    'name, and below 80% a subject rollup says more about the guessing than ' +
+                    'about the school.</p>';
+            } else {
+                subjEl.innerHTML = d.subjects.map(function (c) {
+                    if (c.withheld) {
+                        return '<div class="wc-acad-row is-withheld">' +
+                            '<span class="wc-acad-name">' + escapeHtml(c.label) +
+                                '<span class="wc-acad-sub">' + c.courses + ' course' +
+                                (c.courses === 1 ? '' : 's') + '</span></span>' +
+                            '<span class="wc-acad-withheld">' + escapeHtml(c.reason || 'Withheld') + '</span>' +
+                        '</div>';
+                    }
+                    const lo = c.interval ? pct(c.interval[0]) : null;
+                    const hi = c.interval ? pct(c.interval[1]) : null;
+                    return '<div class="wc-acad-row">' +
+                        '<span class="wc-acad-name">' + escapeHtml(c.label) +
+                            '<span class="wc-acad-sub">' + c.courses + ' course' +
+                            (c.courses === 1 ? '' : 's') + ' \u00b7 ' +
+                            num(c.failingRows) + ' of ' + num(c.gradedRows) +
+                            ' posted grades \u00b7 ' + num(c.studentsWithMarks) +
+                            ' students</span></span>' +
+                        '<span class="wc-acad-figs">' +
+                            '<span class="wc-acad-pct">' + pct(c.rate) + '%</span>' +
+                            (lo !== null
+                                ? '<span class="wc-acad-ci">could be ' + lo + '\u2013' + hi + '%</span>'
+                                : '') +
+                        '</span>' +
+                    '</div>';
+                }).join('');
+            }
+
+            const sFoot = document.getElementById('acadSubjectsFoot');
+            if (sFoot) {
+                const n = d.naming;
+                sFoot.textContent =
+                    num(n.classified) + ' of ' + num(n.total) + ' courses could be given a ' +
+                    'subject from their name' +
+                    (n.weightedFraction !== null
+                        ? ', covering ' + pct(n.weightedFraction) + '% of all graded classes'
+                        : '') +
+                    '. Each percentage is a share of posted grades, not of students: a ' +
+                    'student with a D in two maths classes contributes two of them. ' +
+                    (n.unclassified.length
+                        ? 'Not categorised: ' + n.unclassified.join(', ') +
+                          '. Those rows are shown above rather than hidden, so a name we ' +
+                          'cannot read is a prompt to fix it and never a silent omission.'
+                        : 'Every course name was recognised.');
             }
         }
 
