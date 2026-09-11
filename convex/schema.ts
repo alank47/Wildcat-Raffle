@@ -482,6 +482,40 @@ export default defineSchema({
     at: v.string(),
   }).index("by_email", ["email"]),
 
+  /**
+   * One row per referral we have decided about, ever.
+   *
+   * THE BELT OVER THE BRACE. The primary once-only guarantee is mergeSlice's
+   * own insert path: the referrals slice is re-sent whole on every save, and a
+   * referral already stored falls into the update branch, never the insert one.
+   * This table covers the case that would defeat that -- a stored row deleted
+   * and a stale tab re-sending the slice -- because the read happens in the
+   * same transaction as the insert.
+   *
+   * A row is written on the SKIP paths too. A referral that was too old to
+   * mail, or arrived in a bulk restore, is permanently marked as decided rather
+   * than left looking unsent.
+   */
+  referralMailLog: defineTable({
+    referralId: v.string(),
+    state: v.union(
+      v.literal("queued"),
+      v.literal("sent"),
+      v.literal("failed"),
+      v.literal("skipped"),
+    ),
+    /** Why, when state is "skipped". */
+    reason: v.optional(v.string()),
+    /** The verified filer, from requireStaff -- never from the payload. */
+    filedByEmail: v.optional(v.string()),
+    recipients: v.optional(v.number()),
+    sent: v.optional(v.number()),
+    refused: v.optional(v.array(v.string())),
+    error: v.optional(v.string()),
+    at: v.string(),
+    finishedAt: v.optional(v.string()),
+  }).index("by_referral", ["referralId"]),
+
   /** One row per sync run: rows in, rows changed, duration, errors. */
   syncRuns: defineTable({
     at: v.string(),

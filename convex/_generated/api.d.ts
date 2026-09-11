@@ -46,6 +46,8 @@ import type * as psSync from "../psSync.js";
 import type * as push from "../push.js";
 import type * as pushSend from "../pushSend.js";
 import type * as raceRollup from "../raceRollup.js";
+import type * as referralMail from "../referralMail.js";
+import type * as referralMailRules from "../referralMailRules.js";
 import type * as restrictedPolicy from "../restrictedPolicy.js";
 import type * as roleChangeRules from "../roleChangeRules.js";
 import type * as rosterEmail from "../rosterEmail.js";
@@ -118,6 +120,8 @@ declare const fullApi: ApiFromModules<{
   push: typeof push;
   pushSend: typeof pushSend;
   raceRollup: typeof raceRollup;
+  referralMail: typeof referralMail;
+  referralMailRules: typeof referralMailRules;
   restrictedPolicy: typeof restrictedPolicy;
   roleChangeRules: typeof roleChangeRules;
   rosterEmail: typeof rosterEmail;

@@ -37,6 +37,14 @@ const handlerStart = src.indexOf("  handler: async (ctx, { doc, collection, rows
 const handlerEnd = src.indexOf("export const saveSlice");
 const tsBody = src.slice(handlerStart, handlerEnd)
   .replace("  handler: async (ctx, { doc, collection, rows, dedupeField }) => {", "")
+  // The identity was `await requireStaff(ctx);` and became
+  // `const me = await requireStaff(ctx);` on 2026-09-11, because the referral
+  // confirmation email must take its recipient from the VERIFIED token and
+  // never from `payload`, which is v.any() and caller-chosen. Stubbed rather
+  // than stripped, so the handler still binds `me` and the mail call below is
+  // really executed.
+  .replace(/const me = await requireStaff\(ctx\);/,
+           'const me = { email: "filer@example.org", name: "Test Filer" };')
   .replace(/await requireStaff\(ctx\);/, "")
   // The one substitution: the indexed query becomes the fake db's collect().
   .replace(/const existing = await ctx\.db[\s\S]*?\.collect\(\);/,
@@ -62,7 +70,7 @@ const touchedJs = ts.transpileModule(src.slice(touchedStart, touchedEnd), {
 }).outputText;
 
 const runNew = new Function("ctx", "doc", "collection", "rows", "dedupeField",
-  "MAX_ROWS_PER_SLICE",
+  "MAX_ROWS_PER_SLICE", "notifyNewReferrals",
   touchedJs +
   "return (async () => {" + js +
   "\nreturn { inserted: toInsert.length, updated: toUpdate.length, deleted };" +
@@ -118,13 +126,28 @@ function fakeDb(existing) {
 async function runBoth({ existing, rows, dedupeField }) {
   const f = fakeDb(existing);
   const ctx = { db: { ...f.ctx.db }, rowsInOrder: f.ctx.rowsInOrder };
-  const got = await runNew(ctx, "d", "c", rows, dedupeField, MAX_ROWS_PER_SLICE)
+  const got = await runNew(ctx, "d", "c", rows, dedupeField, MAX_ROWS_PER_SLICE, mailSpy().fn)
     .catch((e) => { throw new Error("handler failed: " + e.message); });
   return { result: got, final: f.ctx.rowsInOrder(), cost: f.cost(),
            expected: referenceMerge(existing, rows, dedupeField) };
 }
 
 const row = (payload, key) => (key === undefined ? { payload } : { key, payload });
+
+/**
+ * A spy for the referral-mail hook, so the handler's call site really executes.
+ *
+ * THE CLAIM IT PINS is the whole idempotency argument for the confirmation
+ * email: the referrals slice is re-sent whole on every save from every tab
+ * forever, so the ONLY thing that can make an email once-per-referral is that
+ * a stored id never reaches toInsert. If that ever stopped being true, every
+ * save would mail every referral to six people.
+ */
+function mailSpy() {
+  const calls = [];
+  const fn = async (_ctx, me, payloads) => { calls.push({ me, payloads }); };
+  return { fn, calls, mailed: () => calls.flatMap((c) => c.payloads.map((p) => p.id)) };
+}
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 console.log("\nThe merged result is identical to the old algorithm");
@@ -218,13 +241,19 @@ console.log("\nA row touched more recently wins, which is how a referral edit la
   const run = async (existing, rows) => {
     const f = fakeDb(existing);
     const ctx = { db: { ...f.ctx.db }, rowsInOrder: f.ctx.rowsInOrder };
-    const result = await runNew(ctx, "referrals", "behaviorReferrals", rows, "id", MAX_ROWS_PER_SLICE);
-    return { result, final: f.ctx.rowsInOrder(), cost: f.cost() };
+    const spy = mailSpy();
+    const result = await runNew(ctx, "referrals", "behaviorReferrals", rows, "id",
+                                MAX_ROWS_PER_SLICE, spy.fn);
+    return { result, final: f.ctx.rowsInOrder(), cost: f.cost(), mailed: spy.mailed() };
   };
   {
     const r = await run([row({ id: "R1", status: "open", updatedAt: t1 })],
                         [row({ id: "R1", status: "closed", updatedAt: t2 })]);
     check("a newer incoming copy replaces the stored one", r.final[0].payload.status === "closed");
+    // THE ONE THAT MATTERS FOR THE EMAIL. An edit to a referral already on the
+    // server is an update, so nobody is mailed again about it.
+    check("and nobody is emailed about a referral that was already stored",
+      r.mailed.length === 0);
     check("and is counted as an update, not an insert", r.result.updated === 1 && r.result.inserted === 0);
     check("nothing is deleted to do it", r.result.deleted === 0);
     check("the read cost is still the one collect", r.cost.reads === 1);
@@ -254,6 +283,56 @@ console.log("\nA row touched more recently wins, which is how a referral edit la
                         [row({ id: "R1", status: "closed", updatedAt: t2 }), row({ id: "R2", updatedAt: t2 })]);
     check("an update and an insert in the same batch both land",
       r.result.updated === 1 && r.result.inserted === 1 && r.final.length === 2);
+  }
+}
+
+console.log("\nThe referral email fires on the insert, and only on the insert");
+{
+  // THE WHOLE IDEMPOTENCY ARGUMENT, pinned here rather than reasoned about.
+  //
+  // The referrals slice is re-sent whole on every save from every tab forever.
+  // Nothing debounces it and nothing marks it clean. So the only reason a
+  // confirmation email is sent once per referral rather than once per save is
+  // that a stored id never reaches toInsert. If that stops being true, every
+  // save mails every referral to six people and the Chief of Schools finds out
+  // before we do.
+  const run = async (existing, rows, doc = "referrals", coll = "behaviorReferrals") => {
+    const f = fakeDb(existing);
+    const ctx = { db: { ...f.ctx.db }, rowsInOrder: f.ctx.rowsInOrder };
+    const spy = mailSpy();
+    const result = await runNew(ctx, doc, coll, rows, "id", MAX_ROWS_PER_SLICE, spy.fn);
+    return { result, mailed: spy.mailed(), calls: spy.calls };
+  };
+
+  {
+    const r = await run([], [row({ id: "R9", studentName: "A Student" })]);
+    check("a genuinely new referral is mailed", r.mailed.length === 1);
+    check("and it is the one that was inserted", r.mailed[0] === "R9");
+    check("counted as an insert", r.result.inserted === 1);
+    // The recipient comes from the token, never from the payload.
+    check("the filer passed on is the verified account, not a payload field",
+      r.calls[0].me.email === "filer@example.org");
+  }
+  {
+    // The same referral coming back on the next save, unchanged.
+    const r = await run([row({ id: "R9", studentName: "A Student" })],
+                        [row({ id: "R9", studentName: "A Student" })]);
+    check("a re-sent referral is mailed to nobody", r.mailed.length === 0);
+    check("and wrote nothing", r.result.inserted === 0 && r.result.updated === 0);
+  }
+  {
+    // Two new, one already stored: only the new ones.
+    const r = await run([row({ id: "R1" })], [row({ id: "R1" }), row({ id: "R2" }), row({ id: "R3" })]);
+    check("a mixed save mails only the new referrals",
+      r.mailed.length === 2 && r.mailed.includes("R2") && r.mailed.includes("R3"));
+    check("and not the stored one", !r.mailed.includes("R1"));
+  }
+  {
+    // Every other slice in the app goes through this same mutation.
+    const r = await run([], [row({ id: "T1" })], "main", "wildcatCashRewards");
+    check("no other collection triggers referral mail", r.mailed.length === 0);
+    const r2 = await run([], [row({ id: "T2" })], "referrals", "somethingElse");
+    check("nor a different collection in the referrals doc", r2.mailed.length === 0);
   }
 }
 

@@ -1,6 +1,7 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import { requireStaff } from "./identity";
+import { notifyNewReferrals } from "./referralMail";
 
 /**
  * The app-facing half of the legacy mirror.
@@ -194,7 +195,15 @@ export const mergeSlice = mutation({
     dedupeField: v.string(),
   },
   handler: async (ctx, { doc, collection, rows, dedupeField }) => {
-    await requireStaff(ctx);
+    // KEPT, NOT DISCARDED, and that one token is a security control.
+    //
+    // `payload` is v.any(), so every field on an incoming referral -- including
+    // filedByEmail -- is chosen by whoever called this. The referral
+    // confirmation email must never take a recipient from there: a teacher
+    // could edit one value in devtools and post a colleague a named child's
+    // discipline record. `me` is the account the token actually proves, and it
+    // is the only thing notifyNewReferrals will mail.
+    const me = await requireStaff(ctx);
 
     if (rows.length > MAX_ROWS_PER_SLICE) {
       throw new Error(
@@ -307,6 +316,20 @@ export const mergeSlice = mutation({
     }
     for (const u of toUpdate) {
       await ctx.db.patch(u.id, { payload: u.payload, mirroredAt });
+    }
+
+    // EMAIL ON A NEW REFERRAL, AND ONLY HERE.
+    //
+    // toInsert is the only place in this system that knows a referral is NEW.
+    // That is not a convenience, it IS the idempotency: the referrals slice is
+    // re-sent whole on every save from every tab forever, and a referral
+    // already stored matches by id above and lands in toUpdate, never here. A
+    // trigger anywhere else would mail every referral on every save.
+    //
+    // It cannot throw -- a referral that saved must not be rolled back because
+    // an email could not be scheduled.
+    if (doc === "referrals" && collection === "behaviorReferrals" && toInsert.length) {
+      await notifyNewReferrals(ctx, me, toInsert.map((r) => r.payload));
     }
 
     return {
