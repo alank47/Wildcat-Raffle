@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as academicsRaceProbe from "../academicsRaceProbe.js";
 import type * as accessRules from "../accessRules.js";
 import type * as appData from "../appData.js";
 import type * as appDataShape from "../appDataShape.js";
@@ -73,6 +74,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  academicsRaceProbe: typeof academicsRaceProbe;
   accessRules: typeof accessRules;
   appData: typeof appData;
   appDataShape: typeof appDataShape;
