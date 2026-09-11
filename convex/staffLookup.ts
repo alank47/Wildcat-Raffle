@@ -1,5 +1,6 @@
 import { internalQuery } from "./_generated/server";
 import { v } from "convex/values";
+import { matchesStaff, matchesStudent } from "./lookupRules";
 
 /**
  * WHO IS THIS PERSON, AND DO THEY HAVE AN ACCOUNT?
@@ -34,9 +35,10 @@ import { v } from "convex/values";
  *
  *   npx convex run staffLookup:findAccount '{"q":"nieves"}' --prod
  *
- * Search on a SURNAME first. A first name matches several people and a surname
- * usually does not; a zero-result surname with a first-name hit is the shape
- * that means "this person is not here under the name you were given".
+ * Matches a NAME or an EMAIL, in any of the three places. Search on a SURNAME
+ * first: a first name matches several people and a surname usually does not,
+ * and a zero-result surname with a first-name hit is the shape that means
+ * "this person is not here under the name you were given".
  *
  * internalQuery, so it needs the deploy key and no browser can reach it. That
  * is deliberate: it reads across staff, students and the staff directory at
@@ -50,8 +52,20 @@ export const findAccount = internalQuery({
     if (needle.length < 3) return { error: "Give at least three characters." };
 
     const staff = await ctx.db.query("teachers").collect();
+    // NAME *AND* EMAIL, and the second half was missing until 2026-09-11.
+    //
+    // THE BUG THAT FOUND IT. Eric Pichler had just been given an account.
+    // Searching "ericp@" returned him from the Entra directory and NOT from
+    // the hub, so the tool reported a real account as absent -- the exact
+    // wrong answer, on the exact question this file exists to answer, for
+    // somebody whose account had been created five minutes earlier.
+    //
+    // The student branch below already matched on its identifier as well as
+    // its name. Staff being name-only was an oversight, and an oversight that
+    // fails towards "this person has no account" is the dangerous direction:
+    // it invites creating a duplicate.
     const staffHits = (staff as any[])
-      .filter((t) => String(t.name ?? "").toLowerCase().includes(needle))
+      .filter((t) => matchesStaff(needle, t))
       .map((t) => ({
         kind: "staff",
         name: t.name,
@@ -64,11 +78,7 @@ export const findAccount = internalQuery({
 
     const students = await ctx.db.query("students").collect();
     const studentHits = (students as any[])
-      .filter((s) => {
-        const full = `${s.firstName ?? ""} ${s.lastName ?? ""}`.toLowerCase();
-        const rev = `${s.lastName ?? ""}, ${s.firstName ?? ""}`.toLowerCase();
-        return full.includes(needle) || rev.includes(needle);
-      })
+      .filter((s) => matchesStudent(needle, s))
       .map((s) => ({
         kind: "student",
         name: `${s.firstName ?? ""} ${s.lastName ?? ""}`.trim(),

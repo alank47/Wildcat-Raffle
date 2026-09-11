@@ -35,6 +35,7 @@ import type * as leaderboard from "../leaderboard.js";
 import type * as leaderboardRules from "../leaderboardRules.js";
 import type * as legacyData from "../legacyData.js";
 import type * as legacyPurge from "../legacyPurge.js";
+import type * as lookupRules from "../lookupRules.js";
 import type * as mail from "../mail.js";
 import type * as me from "../me.js";
 import type * as mealPins from "../mealPins.js";
@@ -109,6 +110,7 @@ declare const fullApi: ApiFromModules<{
   leaderboardRules: typeof leaderboardRules;
   legacyData: typeof legacyData;
   legacyPurge: typeof legacyPurge;
+  lookupRules: typeof lookupRules;
   mail: typeof mail;
   me: typeof me;
   mealPins: typeof mealPins;
