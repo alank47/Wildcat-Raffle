@@ -17218,14 +17218,12 @@
             return 'f';
         }
 
-        function wpTile(label, value, note, tone) {
-            const known = value !== null && value !== undefined && value !== '';
-            return '<article class="wp-tile' + (tone ? ' wp-tile-' + tone : '') + (known ? '' : ' is-none') + '">' +
-                '<p class="wp-tile-n">' + (known ? wpEsc(String(value)) : 'Not on file') + '</p>' +
-                '<p class="wp-tile-l">' + wpEsc(label) + '</p>' +
-                (note ? '<p class="wp-tile-s">' + wpEsc(note) + '</p>' : '') +
-            '</article>';
-        }
+        // wpTile was removed on 2026-09-10 with the tile row it drew.
+        // Its three figures live on the cards that own them now: the
+        // balance and Earned on the Wildcat Cash card, Absent this term
+        // on Attendance. A drawing function with nothing left to draw is
+        // the kind of thing that gets called again by accident.
+
 
         /**
          * The categories a panel can belong to, and the two temperatures.
@@ -17576,7 +17574,13 @@
                 ? wpPanel('Year to date', 'Attendance', 'Unavailable',
                     wpEmpty(att.reason || 'Attendance could not be looked up just now.'))
                 : wpPanel('Year to date', 'Attendance', '',
+                    // THIS TERM FIRST, then the year, then tardies. The two
+                    // absence figures belong beside each other -- "2 this term"
+                    // and "6 this year" only mean something read together --
+                    // and the nearer period leads because it is the one a
+                    // student can still do something about.
                     '<div class="wp-stats">' +
+                        wpStat('Absent this term', att.daysAbsentTerm) +
                         wpStat('Absent this year', att.daysAbsentYtd) +
                         wpStat('Tardy this term', att.daysTardyTerm) +
                     '</div>');
@@ -17767,22 +17771,18 @@
             // came to look at, and what they have EARNED sits beside it: a
             // balance falls when they spend, and a child who only sees the
             // balance drop has no record of having earned anything.
-            // THE CASH TILES MOVED INTO THE CARD, 2026-09-10, at the school's
-            // request to consolidate four Wildcat Cash cards into one.
+            // THERE IS NO TILE ROW ANY MORE, 2026-09-10.
             //
-            // They are not duplicated there, they are RELOCATED. The rule this
-            // file has held since 2026-09-08 is that a number appears once:
-            // "the tile owns the balance" was the fix then, and the card owning
-            // it is the same fix applied the other way now that the card is
-            // where a student reads their money. Leaving the tiles up would put
-            // the balance on screen twice and Earned three times.
-            const tiles =
-                '<div class="wp-tiles">' +
-                    wpTile('Absent this term',
-                        att.available ? att.daysAbsentTerm : null,
-                        att.available ? 'days' : (att.reason || 'not available'),
-                        'cool') +
-                '</div>';
+            // It held three figures. The balance and Earned moved into the one
+            // Wildcat Cash card when the school asked for four cards to become
+            // one, and "Absent this term" has now joined the two attendance
+            // figures it always belonged with -- it was a lone tile stretched
+            // across the top of the page saying one number that the Attendance
+            // card below was already the home for.
+            //
+            // The rule this file has held since 2026-09-08 survives intact: a
+            // figure appears once, on the card that owns it. What changed is
+            // that every figure now has a card, so nothing needs a tile.
 
             // ---- the hall pass, and the ID, as panels ---------------------
             //
@@ -17864,7 +17864,7 @@
             // The store sits with the other Wildcat Cash panels rather than at
             // the bottom: it answers "what is this money for", which is the
             // question the balance directly above it provokes.
-            return tiles + passPanel + gradePanel + money + wpStoreSoonPanel() +
+            return passPanel + gradePanel + money + wpStoreSoonPanel() +
                    wpBoardPanel() + schedule + attendance;
         }
         /**

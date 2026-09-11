@@ -30,10 +30,27 @@ console.log("\n-- the card exists and is in the portal --");
   // The end marker is searched FROM the return statement, not from the top of
   // the file. Searching from 0 found an earlier "attendance;" and produced a
   // backwards slice, so both order assertions failed while the code was right.
-  const orderStart = script.indexOf("return tiles + passPanel");
-  const orderEnd = script.indexOf("attendance;", orderStart);
-  check("the render order line was located", orderStart !== -1 && orderEnd > orderStart);
-  const order = script.slice(orderStart, orderEnd + 12);
+  const order = (() => {
+    // Anchored on wpDashboard's own return statement rather than on the first
+    // panel named in it. This was "return tiles + passPanel", and the tile row
+    // was removed on 2026-09-10 -- so a locator naming the first term broke
+    // while the code was fine. Twice, in two files.
+    // The render list is the return that names the panels -- NOT the first
+    // return in the function, which is the early-out for missing data, and not
+    // one identified by its first term, which broke when the tile row was
+    // removed. Found by what it contains.
+    const dStart = script.indexOf("function wpDashboard(");
+    let at = dStart, found = "";
+    for (;;) {
+      const r = script.indexOf("return ", at);
+      if (r === -1) break;
+      const stmt = script.slice(r, script.indexOf(";", r) + 1);
+      if (stmt.includes("passPanel") && stmt.includes("attendance")) { found = stmt; break; }
+      at = r + 7;
+    }
+    return found;
+  })();
+  check("the render order line was located", order.length > 40 && order.length < 400);
   check("it sits after the Wildcat Cash balance panel",
     order.indexOf("money") < order.indexOf("wpStoreSoonPanel"));
   check("and before the schedule and attendance panels",

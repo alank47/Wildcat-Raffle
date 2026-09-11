@@ -141,9 +141,25 @@ console.log("\nThe one card is styled for the portal, not the staff app");
   check("the balance is the largest figure on the card", /\.wp-cash-balance \{[^}]*font-size: 34px/.test(card));
   check("earned and spent are smaller", /\.wp-cash-stat-v \{[^}]*font-size: 16px/.test(card));
 
-  // One tile is left in the row; a hardcoded 3-column grid stranded it.
-  check("the tile row adapts to however many tiles there are",
-    /grid-template-columns: repeat\(auto-fit, minmax\(0, 1fr\)\)/.test(css));
+  // THE TILE ROW IS GONE ENTIRELY as of 2026-09-10. Its three figures live on
+  // the cards that own them: the balance and Earned on the Wildcat Cash card,
+  // Absent this term on Attendance. A lone tile stretched across the top of
+  // the page, saying one number a card below already owned, was the last thing
+  // left of it.
+  check("no tile row is rendered", !/<div class="wp-tiles">/.test(portal));
+  check("and the function that drew tiles went with it", !/function wpTile\(/.test(portal));
+  // Against `raw`, not `portal`: `portal` is comment-stripped by design, so a
+  // comment can never be found in it. Asserting a tombstone against the
+  // stripped copy can only ever fail.
+  check("a tombstone says where the figures went", /wpTile was removed on 2026-09-10/.test(raw));
+
+  // Absent this term must have LANDED somewhere, not merely been deleted.
+  check("Absent this term is now a figure on the Attendance card",
+    /wpStat\('Absent this term', att\.daysAbsentTerm\)/.test(portal));
+  check("beside the year figure it only means something next to",
+    /wpStat\('Absent this term'[\s\S]{0,120}wpStat\('Absent this year'/.test(portal));
+  check("and the tardy figure is still there",
+    /wpStat\('Tardy this term', att\.daysTardyTerm\)/.test(portal));
 
   // The Coming Soon card had the same token mistake.
   check("the coming-soon copy also uses the portal's dim token",

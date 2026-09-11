@@ -111,9 +111,27 @@ console.log("\n-- the panel is in the dashboard, and styled --");
   // Adding the store card wrapped that line, so the old regex stopped matching
   // while the code was correct -- a test that depends on where a line breaks
   // fails on formatting, not on behaviour.
-  const renderStart = script.indexOf("return tiles + passPanel");
-  const renderExpr = script.slice(renderStart, script.indexOf(";", renderStart));
-  check("the render expression was located", renderStart !== -1 && renderExpr.length < 400);
+  const renderExpr = (() => {
+    // Anchored on wpDashboard's own return statement rather than on the first
+    // panel named in it. This was "return tiles + passPanel", and the tile row
+    // was removed on 2026-09-10 -- so a locator naming the first term broke
+    // while the code was fine. Twice, in two files.
+    // The render list is the return that names the panels -- NOT the first
+    // return in the function, which is the early-out for missing data, and not
+    // one identified by its first term, which broke when the tile row was
+    // removed. Found by what it contains.
+    const dStart = script.indexOf("function wpDashboard(");
+    let at = dStart, found = "";
+    for (;;) {
+      const r = script.indexOf("return ", at);
+      if (r === -1) break;
+      const stmt = script.slice(r, script.indexOf(";", r) + 1);
+      if (stmt.includes("passPanel") && stmt.includes("attendance")) { found = stmt; break; }
+      at = r + 7;
+    }
+    return found;
+  })();
+  check("the render expression was located", renderExpr.length > 40 && renderExpr.length < 400);
   check("the panel is rendered into the stack", renderExpr.includes("wpBoardPanel()"));
   // The phrase survives ONCE, inside the leaderboard block that explains why
   // the principle was reversed. What must not survive is the original claim
