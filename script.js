@@ -15675,16 +15675,26 @@
             // A tab was picked from the nav — on a phone, close the drawer so the
             // chosen screen is actually visible rather than hidden behind it.
             closeMobileSidebar();
-            // If we're in Claw Pass / Discipline mode and the user picks a shared
-            // sidebar tab, restore normal tab-content visibility first (those modes
-            // hide all .tab-content divs with inline styles and show their own view).
+            // A MODE THAT TOOK OVER THE SCREEN HAS TO GIVE IT BACK before a
+            // shared sidebar tab can show. Asked of MODE_CONTAINERS rather
+            // than of a list of mode names.
+            //
+            // THE BUG THIS FIXES. This read
+            //   bodyCls.contains('hallpass-mode') || bodyCls.contains('discipline-mode')
+            // so in Academics the restore never ran: #academicsContent stayed
+            // up, the chosen tab never appeared, and clicking Settings,
+            // Students or Teachers did NOTHING AT ALL. No error, no hint --
+            // the button simply did not work, which is why it was reported as
+            // "settings disappear in other modes".
             const bodyCls = document.body.classList;
-            if (bodyCls.contains('hallpass-mode') || bodyCls.contains('discipline-mode')) {
+            const inAMode = Object.keys(MODE_CONTAINERS)
+                .some((m) => bodyCls.contains(m + '-mode'));
+            if (inAMode) {
                 document.querySelectorAll('#mainApp .content .tab-content').forEach(el => el.style.display = '');
-                const cp = document.getElementById('clawPassContent');
-                const dc = document.getElementById('disciplineContent');
-                if (cp) cp.style.display = 'none';
-                if (dc) dc.style.display = 'none';
+                Object.values(MODE_CONTAINERS).forEach((id) => {
+                    const el = document.getElementById(id);
+                    if (el) el.style.display = 'none';
+                });
                 document.querySelectorAll('#modeSubNav .tab').forEach(b => b.classList.remove('active'));
             }
             // Remove active class from all tabs and content
@@ -24117,6 +24127,35 @@
             closeMobileSidebar();
         }
 
+        /**
+         * A mode id to the content div that mode takes over the screen with.
+         *
+         * ONE TABLE, BECAUSE THIS EXACT KNOWLEDGE HAS BEEN HARDCODED THREE
+         * TIMES AND WAS WRONG THREE TIMES, all found on 2026-09-11:
+         *
+         *   sidebarSubTab      `mode === 'hallpass' ? 'clawPassContent'
+         *                       : 'disciplineContent'` sent Academics' Seniors
+         *                       button into Discipline Mode.
+         *   updateSidebarModeUI `mode === 'hallpass' || mode === 'discipline'`
+         *                       with an else that wiped innerHTML, so the
+         *                       Seniors subnav was built and destroyed in the
+         *                       same tick.
+         *   switchTab          `bodyCls.contains('hallpass-mode') ||
+         *                       bodyCls.contains('discipline-mode')` meant
+         *                       clicking Settings while in Academics did
+         *                       NOTHING -- the mode's own pane stayed up and
+         *                       the tab never appeared. A silent dead click.
+         *
+         * Each was written when two modes was all there was. Each was
+         * invisible until a third arrived. Each failed quietly. A new mode
+         * adds one line here and stops being a bug.
+         */
+        const MODE_CONTAINERS = {
+            hallpass: 'clawPassContent',
+            discipline: 'disciplineContent',
+            academics: 'academicsContent'
+        };
+
         const MODE_SUBTABS = {
             // ACADEMICS HAS TWO TABS THAT FOLLOW DIFFERENT RULES, and the
             // order is the point: Whole School is first and is where the mode
@@ -24183,17 +24222,8 @@
             const item = items.find(i => i.id === subId);
             if (!item) return;
             // If the user visited a shared tab, the mode's container was hidden — restore it.
-            // A LOOKUP, NOT A TERNARY. This read
-            //   mode === 'hallpass' ? 'clawPassContent' : 'disciplineContent'
-            // which sent every mode that was not hallpass to the discipline
-            // pane -- so the moment Academics got a subnav, its Seniors button
-            // opened Discipline Mode. A third arm would only have deferred the
-            // same bug to a fourth mode.
-            const MODE_CONTAINERS = {
-                hallpass: 'clawPassContent',
-                discipline: 'disciplineContent',
-                academics: 'academicsContent'
-            };
+            // MODE_CONTAINERS is module scope now -- see its definition for
+            // why it is a lookup and not a ternary.
             const container = document.getElementById(MODE_CONTAINERS[mode] || 'disciplineContent');
             const content = document.querySelector('#mainApp .content');
             if (content) content.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');

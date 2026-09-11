@@ -64,12 +64,76 @@ console.log("\nThe JavaScript that actually does the hiding is still there");
   // removal would silently reintroduce overlapping panes.
   check("switchTab restores pane visibility when leaving a mode view",
     /document\.querySelectorAll\('#mainApp \.content \.tab-content'\)\.forEach\(el => el\.style\.display = ''\)/.test(script));
-  check("and hides the mode container",
-    /if \(dc\) dc\.style\.display = 'none';/.test(script));
+  check("and hides every mode container, from the table",
+    /Object\.values\(MODE_CONTAINERS\)\.forEach/.test(script));
   check("entering a mode hides the shared panes inline",
     /contentContainer\.querySelectorAll\('\.tab-content'\)\.forEach\(el => el\.style\.display = 'none'\)/.test(script));
   check("returning to a mode subtab restores its container",
     /if \(container\) container\.style\.display = 'block';/.test(script));
+}
+
+console.log("\nEvery mode, not just the two that were named");
+{
+  // THE SECOND VERSION OF THIS BUG, found 2026-09-11 and reported as
+  // "settings for admin only exist in raffle mode". The CSS was fixed for
+  // Discipline in the round above; the JAVASCRIPT still named two modes:
+  //
+  //   bodyCls.contains('hallpass-mode') || bodyCls.contains('discipline-mode')
+  //
+  // So in Academics the restore never ran. #academicsContent stayed up, the
+  // chosen pane never appeared, and clicking Settings, Students or Teachers
+  // did NOTHING -- no error, no hint, the button simply did not work. The
+  // third hardcoded two-mode conditional to break a third mode in one day.
+  const code = script.replace(/\/\*[\s\S]*?\*\//g, "")
+                     .replace(/^\s*\/\/[^\n]*$/gm, "");
+  check("the restore asks a table which modes take over the screen",
+    /Object\.keys\(MODE_CONTAINERS\)\s*\n?\s*\.some\(\(m\) => bodyCls\.contains\(m \+ '-mode'\)\)/
+      .test(code.replace(/\s+/g, " ")) ||
+    /MODE_CONTAINERS[\s\S]{0,80}bodyCls\.contains\(m \+ '-mode'\)/.test(code));
+  check("and no surviving code names two modes to decide it",
+    !/contains\('(hallpass|discipline|academics)-mode'\)\s*\|\|\s*bodyCls\.contains\('/.test(code));
+
+  // THE ASSERTION THAT WOULD HAVE CAUGHT ALL THREE. Every mode that takes
+  // over the screen must appear in the one table the restore consults.
+  const modes = [...(readFileSync(new URL("./wildcat-modes.js", import.meta.url), "utf8")
+    .match(/var ALL_MODES = \[([^\]]+)\]/)?.[1] ?? "")
+    .matchAll(/'(\w+)'/g)].map((m) => m[1]);
+  const table = (code.match(/const MODE_CONTAINERS = \{([\s\S]*?)\};/) || [])[1] || "";
+  check("ALL_MODES was found", modes.length >= 5);
+  // raffle and cash have no container of their own -- they ARE the shell.
+  const takeOver = modes.filter((m) => m !== "raffle" && m !== "cash");
+  takeOver.forEach((m) =>
+    check(`'${m}' is in MODE_CONTAINERS, so a shared tab can escape it`,
+      new RegExp(`\\b${m}:`).test(table)));
+  check("and every container in the table exists in the markup",
+    [...table.matchAll(/'(\w+)'/g)].map((x) => x[1])
+      .every((id) => html.includes(`id="${id}"`)));
+}
+
+console.log("\nThe superadmin gate was a typo, and typos do not gate");
+{
+  // FOUND 2026-09-11 while answering a different question. Three settings
+  // panes and their three chips carried class="superadmin-only". The gate is
+  // applied by querySelectorAll('.super-admin-only') -- with a hyphen -- so
+  // the misspelling matched nothing and was never disabled for anyone.
+  //
+  // Backup & Security, School Branding and School Year Rollover were therefore
+  // reachable by all four admins rather than the two superadmins. School Year
+  // Rollover is destructive. Not open to teachers, because #settingsTab is
+  // correctly .admin-only, so the exposure was admin-versus-superadmin.
+  check("no element carries the inert spelling",
+    !/class="[^"]*(?<!-)\bsuperadmin-only\b/.test(html));
+  ["backupSettingsSubtab", "brandingSettingsSubtab", "schoolyearSettingsSubtab",
+   "backupSettingsContent", "brandingSettingsContent", "schoolyearSettingsContent"]
+    .forEach((id) => {
+      const tag = (html.match(new RegExp(`<[^>]*id="${id}"[^>]*>`)) || [])[0] || "";
+      check(`#${id} carries the gate that actually works`,
+        /\bsuper-admin-only\b/.test(tag));
+    });
+  // And the gate has to be a class the JS really looks for.
+  check("the JS disables exactly that class",
+    /querySelectorAll\('\.super-admin-only'\)/.test(script));
+  check("and .disabled really hides it", /\.super-admin-only\.disabled \{[^}]*display: none/.test(cssRaw));
 }
 
 console.log("\nThe shared tabs the user could not reach");

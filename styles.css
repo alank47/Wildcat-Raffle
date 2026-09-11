@@ -6177,7 +6177,7 @@ body.sidebar-collapsed .sidebar-banner { display: none; }
 
 /* Subtab rows, including every Settings sub-tab, become the
    reference's chip row. Same buttons, same handlers, same
-   .superadmin-only gates. */
+   .super-admin-only gates. */
 .subtab-bar {
     border-bottom: 0;
     padding-bottom: 0;

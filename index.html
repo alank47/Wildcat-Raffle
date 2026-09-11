@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20260911d">
-    <link rel="icon" href="favicon.ico?v=20260911d" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260911d" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260911d" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20260911e">
+    <link rel="icon" href="favicon.ico?v=20260911e" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260911e" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260911e" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260911d">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260911e">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20260911d">
+    <link rel="stylesheet" href="styles.css?v=20260911e">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260911d">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260911e">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20260911d">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260911e">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20260911d" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20260911e" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -184,7 +184,7 @@
                      asset, so there is one logo to replace when the school
                      changes it. -->
                 <div class="wp-brand">
-                    <img src="assets/westbrook-logo.png?v=20260911d"
+                    <img src="assets/westbrook-logo.png?v=20260911e"
                          alt="Westbrook Academy" class="wp-brandlogo" id="wpBrandLogo">
                     <!-- The product's name, which appeared nowhere on the
                          student's screen while the teacher's topbar has said
@@ -412,7 +412,7 @@
         <header class="app-topbar">
             <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-menu"></use></svg></button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20260911d" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20260911e" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -2143,16 +2143,16 @@
                     <button class="settings-subtab-button" onclick="switchSettingsSubtab('integrations')" id="integrationsSettingsSubtab">
                         📧 Integrations
                     </button>
-                    <button class="settings-subtab-button superadmin-only" onclick="switchSettingsSubtab('backup')" id="backupSettingsSubtab">
+                    <button class="settings-subtab-button super-admin-only" onclick="switchSettingsSubtab('backup')" id="backupSettingsSubtab">
                         💾 Backup & Security
                     </button>
-                    <button class="settings-subtab-button superadmin-only" onclick="switchSettingsSubtab('branding')" id="brandingSettingsSubtab">
+                    <button class="settings-subtab-button super-admin-only" onclick="switchSettingsSubtab('branding')" id="brandingSettingsSubtab">
                         🎨 Branding
                     </button>
                     <button class="settings-subtab-button" onclick="switchSettingsSubtab('cash')" id="cashSettingsSubtab">
                         💰 Cash Mode
                     </button>
-                    <button class="settings-subtab-button superadmin-only" onclick="switchSettingsSubtab('schoolyear')" id="schoolyearSettingsSubtab">
+                    <button class="settings-subtab-button super-admin-only" onclick="switchSettingsSubtab('schoolyear')" id="schoolyearSettingsSubtab">
                         🎓 School Year
                     </button>
                     <button class="settings-subtab-button" onclick="switchSettingsSubtab('corrections'); initCorrectionsPanel();" id="correctionsSettingsSubtab">
@@ -2313,7 +2313,7 @@
                 </div>
 
                 <!-- BACKUP & SECURITY SUBTAB -->
-                <div id="backupSettingsContent" class="settings-subtab-content superadmin-only" style="display: none;">
+                <div id="backupSettingsContent" class="settings-subtab-content super-admin-only" style="display: none;">
                     <div style="margin: 0; padding: 25px; background: #B3392F; border-radius: 12px; color: white;">
                         <h3 style="color: white; margin-bottom: 15px; font-size: 24px;">💾 Backup & Security</h3>
                         <p style="color: rgba(255,255,255,0.9); font-size: 14px; margin-bottom: 0;">
@@ -2382,7 +2382,7 @@
                 </div>
 
                 <!-- BRANDING SUBTAB -->
-                <div id="brandingSettingsContent" class="settings-subtab-content superadmin-only" style="display: none;">
+                <div id="brandingSettingsContent" class="settings-subtab-content super-admin-only" style="display: none;">
                     <div style="margin: 0; padding: 25px; background: #2F67A7; border-radius: 12px; color: white;">
                         <h3 style="color: white; margin-bottom: 15px; font-size: 24px;">🎨 School Branding</h3>
                         <p style="color: rgba(255,255,255,0.9); font-size: 14px; margin-bottom: 20px;">
@@ -2574,7 +2574,7 @@
                 </div>
 
                 <!-- CORRECTIONS SUBTAB -->
-                <div id="schoolyearSettingsContent" class="settings-subtab-content superadmin-only" style="display: none;">
+                <div id="schoolyearSettingsContent" class="settings-subtab-content super-admin-only" style="display: none;">
                     <div class="wc-card banner-card">
                         <h3 class="banner-title">🎓 School Year Rollover</h3>
                         <p class="banner-sub">Compare a new PowerSchool export against the current roster to see exactly what a rollover would change.</p>
@@ -5611,24 +5611,24 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260911d"></script>
+    <script src="wildcat-auth.js?v=20260911e"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
     <!-- The icon sprite. Injected at load, before anything renders, so an
          icon is never a blank square for a frame. -->
-    <script src="wildcat-icons.js?v=20260911d"></script>
-    <script src="wildcat-motion.js?v=20260911d"></script>
-    <script src="wildcat-discipline.js?v=20260911d"></script>
-    <script src="wildcat-audit.js?v=20260911d"></script>
-    <script src="wildcat-cashaudit.js?v=20260911d"></script>
-    <script src="wildcat-dirty.js?v=20260911d"></script>
-    <script src="wildcat-update.js?v=20260911d"></script>
-    <script src="wildcat-modes.js?v=20260911d"></script>
-    <script src="wildcat-merge.js?v=20260911d"></script>
-    <script src="wildcat-savequeue.js?v=20260911d"></script>
-    <script src="wildcat-roster.js?v=20260911d"></script>
-    <script src="wildcat-store.js?v=20260911d"></script>
-    <script src="script.js?v=20260911d"></script>
+    <script src="wildcat-icons.js?v=20260911e"></script>
+    <script src="wildcat-motion.js?v=20260911e"></script>
+    <script src="wildcat-discipline.js?v=20260911e"></script>
+    <script src="wildcat-audit.js?v=20260911e"></script>
+    <script src="wildcat-cashaudit.js?v=20260911e"></script>
+    <script src="wildcat-dirty.js?v=20260911e"></script>
+    <script src="wildcat-update.js?v=20260911e"></script>
+    <script src="wildcat-modes.js?v=20260911e"></script>
+    <script src="wildcat-merge.js?v=20260911e"></script>
+    <script src="wildcat-savequeue.js?v=20260911e"></script>
+    <script src="wildcat-roster.js?v=20260911e"></script>
+    <script src="wildcat-store.js?v=20260911e"></script>
+    <script src="script.js?v=20260911e"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -5638,7 +5638,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20260911d').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20260911e').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {
