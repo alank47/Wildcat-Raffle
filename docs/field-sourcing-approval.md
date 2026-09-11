@@ -21,6 +21,53 @@ as unanswered.
 > what races are being hit with referrals and the data just gives us an
 > aggregate. so we will never see that a specific child is a specific race."
 
+### Amended 2026-09-10: extended to ACADEMIC outcomes
+
+**Approved 2026-09-10 by Alan K (app owner), in response to a measured
+feasibility report rather than in the abstract.**
+
+The 2026-08-19 grant above names its purpose as *discipline disproportionality
+monitoring*. Academic outcomes are a different decision, so the extension is
+recorded separately rather than read into the original.
+
+**The decision it informs:** whether course failure falls disproportionately on
+any racial group. The same disproportionality question as discipline, asked of
+grades.
+
+**What was shown before approving.** The complete measurement, all 5,562 grade
+rows, students carrying at least one D or F among their posted A-F marks:
+
+| Category | Students | Failing 1+ | Rate | 95% interval |
+|---|---:|---:|---:|---|
+| Hispanic or Latino | 566 | 395 | 69.8% | 66–73% |
+| Black or African American | 47 | 34 | 72.3% | 58–83% |
+| White | 7 | — | — | withheld |
+| American Indian or Alaska Native | 4 | — | — | withheld |
+| Asian | 3 | — | — | withheld |
+| Native Hawaiian or Other Pacific Islander | 2 | — | — | withheld |
+
+**Three limits stated at the time of approval, so nobody later reads more into
+the chart than it can carry:**
+
+1. **Four of six categories can never be reported at this school.** They hold
+   between two and seven children. That is the `SMALL_GROUP` floor working, not
+   a gap in the data.
+2. **The two that can be reported show no detectable difference.** The
+   intervals overlap heavily.
+3. **This analysis has limited power.** At n=47, only a very large gap — on the
+   order of fifteen points — would be visible. "No difference visible" is NOT
+   "no difference", and the screen says so.
+
+**What was granted:** nothing new. No role gains a field. `restrictedPolicy.ts`
+is untouched, and `ALLOWED_BY_ROLE` still gives `teacher`, `campusaide` and
+`pbis` nothing. This extends only the PURPOSE for which the existing
+aggregate-only grant may be computed, and academics aggregates are gated to
+`admin` and `superadmin`.
+
+**Not granted, and explicitly still refused:** English-learner status, which
+remains "NOT approved" below, and special-education status, which this system
+does not hold and must not infer from course enrolment.
+
 ### Amended the same day: admin verification access
 
 **Approved 2026-08-19 by Alan K (app owner).**
