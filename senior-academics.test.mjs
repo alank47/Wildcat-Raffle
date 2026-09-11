@@ -260,6 +260,41 @@ console.log("-- a mode with subtabs keeps them, whoever asks --");
     script.indexOf("if (typeof updateSidebarModeUI === 'function') updateSidebarModeUI();\n                return;"));
 }
 
+console.log("-- the layout is not flush against its own edges --");
+{
+  // THE BUG THIS BLOCK EXISTS FOR. .ref-modal-card carries no padding of its
+  // own, and every modal body in this app got its padding from a hardcoded
+  // list of three ids. A fourth modal was simply not in the list, so every
+  // line of the senior record sat against the card edge.
+  check("modal bodies get padding from a class, not only from an id list",
+    /\.ref-modal-body,\s*\n#closeReferralBody/.test(css));
+  check("and the senior modal uses it",
+    /id="seniorDetailBody" class="ref-modal-body"/.test(html));
+
+  // .form-input does not exist in this stylesheet -- it was invented, so the
+  // search box rendered with the browser's own 1px of padding.
+  check("the search box uses a class this stylesheet actually defines",
+    /id="seniorSearch" class="wc-input/.test(html) && /\.wc-select, \.wc-input \{/.test(css));
+  check("and no element on this screen asks for a class that does not exist",
+    !/class="[^"]*\bform-input\b/.test(html));
+
+  // A margin-top on an inline span does nothing, so the course number butted
+  // straight against the course name: "Common Core English 12 A1003A".
+  check("the class meta line is a block, so it breaks",
+    /\.wc-sr-class-meta \{[^}]*display: block/.test(css));
+  check("and the class name is too",
+    /\.wc-sr-class-name \{[^}]*display: block/.test(css));
+
+  // Measured at 165 characters per line with line-height: normal before this.
+  check("the explaining paragraphs have a readable measure",
+    /#academicsContent \.panel-hint \{[^}]*max-width: 78ch/.test(css) &&
+    /#academicsContent \.panel-hint \{[^}]*line-height: 1\.6/.test(css));
+  check("scoped to this mode, because .panel-hint is used across every other one",
+    /used 57 times across/.test(css));
+  check("the counts block hugs its content instead of banding the card",
+    /\.wc-acad-tally \{[^}]*width: fit-content/.test(css));
+}
+
 console.log("-- wired into the app --");
 {
   check("the mode has a subnav key", /academics: \[\s*\n\s*\{ id: 'school'/.test(script));
