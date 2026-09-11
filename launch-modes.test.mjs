@@ -46,8 +46,18 @@ console.log("\n1. Staff see two modes and only two");
     check(`${role}: no Raffle in the switcher`, !modes.includes("raffle"));
     check(`${role}: no Claw Pass in the switcher`, !modes.includes("hallpass"));
   }
-  check("admins keep all four, because they are testing",
-    M.modesFor("admin").length === 4 && M.modesFor("superadmin").length === 4);
+  // Every mode there is, not a count of four. The same assertion measuring a
+  // number where it meant a property: Academics was added 2026-09-10 and this
+  // broke without anything being wrong.
+  check("admins keep every mode, because they are the ones testing",
+    M.modesFor("admin").length === M.ALL_MODES.length &&
+    M.modesFor("superadmin").length === M.ALL_MODES.length);
+  // The launch list is the thing this file is really about, and it did NOT
+  // change: Academics is in ALL_MODES and deliberately not in LAUNCH_MODES.
+  check("the launch list is still exactly Cash and Discipline",
+    M.LAUNCH_MODES.join(",") === "cash,discipline");
+  check("academics was added to ALL_MODES, not to the launch list",
+    M.ALL_MODES.includes("academics") && !M.LAUNCH_MODES.includes("academics"));
 }
 
 console.log("\n2. A teacher already parked in Raffle is moved, without touching their browser");

@@ -8977,3 +8977,67 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     .wp-cash { align-items: flex-start; }
     .wp-cash-split { width: 100%; justify-content: flex-start; }
 }
+
+/* ---- Academics Mode ------------------------------------------------------
+   Coverage leads and is visually the largest thing on the screen, because at
+   77% posted it is a bigger caveat than any finding underneath it. Withheld
+   rows keep their place in the list: a reader must be able to see that a group
+   exists and was refused, not wonder whether it was forgotten. */
+
+.wc-acad-coverage { padding: 16px 18px; margin-bottom: 18px; }
+.wc-acad-cov-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.wc-acad-cov-pct {
+    font-size: 30px; font-weight: 700; line-height: 1;
+    color: var(--wc-ink, #14171C);
+}
+.wc-acad-cov-lab { font-size: 13.5px; color: var(--wc-gray-text, #8892a0); }
+.wc-acad-cov-note {
+    margin: 8px 0 0; font-size: 12.5px; line-height: 1.55;
+    color: var(--wc-gray-text, #8892a0); max-width: 70ch;
+}
+
+.wc-acad-overall { display: flex; gap: 32px; flex-wrap: wrap; }
+.wc-acad-stat { display: flex; flex-direction: column; gap: 2px; }
+.wc-acad-stat-v { font-size: 26px; font-weight: 700; color: var(--wc-ink, #14171C); line-height: 1.1; }
+.wc-acad-stat-k { font-size: 12px; color: var(--wc-gray-text, #8892a0); }
+
+.wc-acad-rows { display: flex; flex-direction: column; gap: 6px; }
+
+.wc-acad-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    /* box-sizing for the same reason every other row in this app carries it:
+       a border must not push the row past its padded panel. */
+    width: 100%; box-sizing: border-box;
+    padding: 10px 12px; border-radius: 10px;
+    border: 1px solid var(--wc-line, #E7ECF2);
+    background: var(--wc-surface, #fff);
+    font-size: 13.5px;
+}
+/* Withheld reads as quiet and deliberate, never as an error. */
+.wc-acad-row.is-withheld { background: transparent; border-style: dashed; }
+
+.wc-acad-name {
+    display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto;
+    font-weight: 600; color: var(--wc-ink, #14171C);
+}
+.wc-acad-sub { font-size: 11.5px; font-weight: 400; color: var(--wc-gray-text, #8892a0); }
+.wc-acad-withheld {
+    flex: 1 1 auto; font-size: 12px; font-weight: 400;
+    color: var(--wc-gray-text, #8892a0); text-align: right; max-width: 46ch;
+}
+
+.wc-acad-figs { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; flex: 0 0 auto; }
+.wc-acad-pct { font-size: 17px; font-weight: 700; color: var(--wc-ink, #14171C); }
+/* The interval is not decoration: at 47 students it is 25 points wide, and the
+   difference between "no gap" and "no gap this could see" is the whole point. */
+.wc-acad-ci { font-size: 11.5px; color: var(--wc-gray-text, #8892a0); white-space: nowrap; }
+
+.wc-acad-foot {
+    margin: 14px 0 0; font-size: 12.5px; line-height: 1.6;
+    color: var(--wc-gray-text, #8892a0); max-width: 78ch;
+}
+
+@media (max-width: 560px) {
+    .wc-acad-row { flex-wrap: wrap; }
+    .wc-acad-withheld { text-align: left; max-width: none; }
+}

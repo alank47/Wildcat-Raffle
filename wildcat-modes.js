@@ -44,7 +44,12 @@
   'use strict';
 
   /** Order matters: this is the order the mode dropdown renders in. */
-  var ALL_MODES = ['raffle', 'cash', 'hallpass', 'discipline'];
+  // 'academics' added 2026-09-10. Deliberately NOT in LAUNCH_MODES: it is
+  // admin-only, it reads grades that are 77% posted four weeks into the year,
+  // and ALL_MODE_ROLES already gives admins every mode regardless. So it
+  // appears for the people who asked for it and for nobody else, without a
+  // launch decision being made by accident.
+  var ALL_MODES = ['raffle', 'cash', 'hallpass', 'discipline', 'academics'];
 
   /**
    * The modes the school is actually running from launch, 2026-09-09.
@@ -67,6 +72,25 @@
    * the same is how a role quietly acquires screens nobody decided to give it.
    */
   var ALL_MODE_ROLES = ['admin', 'superadmin'];
+
+  /**
+   * Who may open Academics Mode.
+   *
+   * Admin and superadmin, matching convex/academics.ts's own gate rather than
+   * relying on it. Two checks in two places for one permission is the pattern
+   * the discipline tabs already use: hiding a button is a courtesy, the server
+   * refusal is the rule, and neither is allowed to be the only one.
+   *
+   * NOT pbis, and that is a decision rather than an oversight. PBIS holds wide
+   * DISCIPLINE rights; academic outcomes by race is a different grant, and
+   * docs/field-sourcing-approval.md records it as one. Widening this list is a
+   * line in that file first.
+   */
+  var ACADEMICS_ROLES = ['admin', 'superadmin'];
+
+  function canOpenAcademics(role) {
+    return ACADEMICS_ROLES.indexOf(String(role || '').trim().toLowerCase()) !== -1;
+  }
 
   /**
    * Where somebody lands when they have no saved preference.
@@ -104,6 +128,8 @@
   }
 
   root.WildcatModes = {
+    ACADEMICS_ROLES: ACADEMICS_ROLES,
+    canOpenAcademics: canOpenAcademics,
     modesFor: modesFor,
     canUseMode: canUseMode,
     defaultModeFor: defaultModeFor,

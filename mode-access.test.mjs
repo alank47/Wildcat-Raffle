@@ -41,10 +41,28 @@ console.log("\nThe launch policy: Cash and Discipline for staff");
   }
 
   // Admins keep everything: they are the ones testing what staff cannot see.
+  //
+  // Asserted as "every mode there is" rather than a hardcoded list of four.
+  // Academics was added on 2026-09-10 and this broke, which is a test measuring
+  // a count where it meant a property -- the property is that ALL_MODE_ROLES
+  // holds the whole list, whatever the list becomes.
   for (const role of ["admin", "superadmin"]) {
-    check(`${role} keeps all four modes`,
-      M.modesFor(role).join(",") === "raffle,cash,hallpass,discipline");
+    check(`${role} keeps every mode there is`,
+      M.modesFor(role).join(",") === M.ALL_MODES.join(","));
+    check(`${role} gets academics`, M.modesFor(role).includes("academics"));
   }
+
+  // And it is genuinely admin-only: academics reads grades disaggregated by
+  // race, which docs/field-sourcing-approval.md grants for aggregate use to
+  // administrators and to nobody else.
+  for (const role of ["teacher", "campusaide", "pbis"]) {
+    check(`${role} does NOT get academics`, !M.modesFor(role).includes("academics"));
+    check(`${role} is refused by canOpenAcademics too`, M.canOpenAcademics(role) === false);
+  }
+  check("admin passes canOpenAcademics", M.canOpenAcademics("admin") === true);
+  check("superadmin passes canOpenAcademics", M.canOpenAcademics("superadmin") === true);
+  check("a missing role is refused, not defaulted",
+    M.canOpenAcademics(null) === false && M.canOpenAcademics("") === false);
 
   check("Cash is no longer superadmin-only, which is the reversal from 2026-09-04",
     M.canUseMode("teacher", "cash") === true && M.canUseMode("admin", "cash") === true);

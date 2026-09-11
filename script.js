@@ -24019,7 +24019,12 @@
             raffle:     { label: 'Raffle',       icon: window.wcIcon ? wcIcon('ticket') : '' },
             cash:       { label: 'Wildcat Cash', icon: window.wcIcon ? wcIcon('cash') : '' },
             hallpass:   { label: 'Claw Pass',    icon: window.wcIcon ? wcIcon('pass') : '' },
-            discipline: { label: 'Discipline',   icon: window.wcIcon ? wcIcon('discipline') : '' }
+            discipline: { label: 'Discipline',   icon: window.wcIcon ? wcIcon('discipline') : '' },
+            // Admin-only, and modeAllowed already enforces that through
+            // WildcatModes.canUseMode -- academics is in ALL_MODES but not in
+            // LAUNCH_MODES, so ALL_MODE_ROLES is what admits it and nobody
+            // else sees the row at all.
+            academics:  { label: 'Academics',    icon: window.wcIcon ? wcIcon('grade') : '' }
         };
 
         let _sidebarModeApplied = false; // reset on logout
@@ -24303,6 +24308,141 @@
             }
         }
 
+        // =====================================================================
+        // ACADEMICS MODE
+        //
+        // One screen, and deliberately one: coverage, how many students carry a
+        // D or F, and the same split by race. Twelve metrics were asked for;
+        // these are the three that are TRUE at 77% coverage four weeks into a
+        // year, and shipping the other nine now would lend them this one's
+        // credibility.
+        //
+        // EVERY NUMBER IS COMPUTED ON THE SERVER. convex/academics.ts holds the
+        // suppression, and a withheld cell is withheld before it crosses the
+        // wire -- so "aggregate only" is a property of the response rather than
+        // a claim about this file.
+        // =====================================================================
+        let _acadData = null;
+        let _acadError = null;
+        let _acadBusy = false;
+
+        async function renderAcademics(force) {
+            const cov = document.getElementById('acadCoverage');
+            const rows = document.getElementById('acadRaceRows');
+            if (!cov || !rows) return;
+
+            if (!_acadData || force) {
+                if (_acadBusy) return;
+                _acadBusy = true;
+                rows.innerHTML = '<p class="wu-absent">Loading\u2026</p>';
+                try {
+                    const auth = window.WildcatAuth;
+                    const session = auth && auth.getSession && auth.getSession();
+                    if (!session) {
+                        _acadError = 'Academics needs a Microsoft sign-in.';
+                    } else {
+                        _acadData = await auth.convexQuery('academics:raceBreakdown', {}, session.idToken);
+                        _acadError = null;
+                    }
+                } catch (e) {
+                    _acadData = null;
+                    _acadError = (e && e.message) || String(e);
+                } finally {
+                    _acadBusy = false;
+                }
+            }
+
+            const d = _acadData;
+            if (_acadError || !d) {
+                cov.innerHTML = '';
+                rows.innerHTML = '<p class="wu-absent">' +
+                    escapeHtml(_acadError || 'Academics could not be loaded.') + '</p>';
+                return;
+            }
+            if (d.allowed === false) {
+                cov.innerHTML = '';
+                rows.innerHTML = '<p class="wu-absent">' + escapeHtml(d.reason) + '</p>';
+                return;
+            }
+
+            const s = d.school;
+            const pct = (n) => Math.round(n * 100);
+
+            // COVERAGE FIRST. A failure rate over a gradebook that is 77% filled
+            // in is a statement about teachers' data entry as much as about
+            // children, and the reader has to meet that before the numbers.
+            cov.innerHTML =
+                '<div class="wc-acad-cov-head">' +
+                    '<span class="wc-acad-cov-pct">' + pct(s.coverage) + '%</span>' +
+                    '<span class="wc-acad-cov-lab">of enrolments have a grade posted</span>' +
+                '</div>' +
+                '<p class="wc-acad-cov-note">' +
+                    s.markedRows.toLocaleString() + ' of ' + s.rows.toLocaleString() +
+                    ' class enrolments carry a mark. Every figure below is over the grades that ' +
+                    'have been posted, and will change as teachers enter more. It is a floor, not a rate.' +
+                '</p>';
+
+            const overall = document.getElementById('acadOverall');
+            const oHint = document.getElementById('acadOverallHint');
+            if (overall) {
+                overall.innerHTML =
+                    '<div class="wc-acad-stat"><span class="wc-acad-stat-v">' +
+                        s.studentsFailingAny.toLocaleString() + '</span>' +
+                        '<span class="wc-acad-stat-k">students with at least one D or F</span></div>' +
+                    '<div class="wc-acad-stat"><span class="wc-acad-stat-v">' +
+                        s.studentsWithMarks.toLocaleString() + '</span>' +
+                        '<span class="wc-acad-stat-k">students with any grade posted</span></div>';
+            }
+            // A COUNT, NOT A PERCENTAGE, and that is deliberate. Dividing these
+            // two makes a rate whose denominator moves every time a teacher
+            // posts, so it would climb for weeks with no child's work changing.
+            if (oHint) {
+                oHint.textContent =
+                    'Counted, not rated. A student is here if any posted grade is a D, F or NP. ' +
+                    'This number can only go up as more grades are entered.';
+            }
+
+            rows.innerHTML = d.cells.map(function (c) {
+                if (c.withheld) {
+                    return '<div class="wc-acad-row is-withheld">' +
+                        '<span class="wc-acad-name">' + escapeHtml(c.label) + '</span>' +
+                        '<span class="wc-acad-withheld">' + escapeHtml(c.reason || 'Withheld') + '</span>' +
+                    '</div>';
+                }
+                const lo = c.interval ? pct(c.interval[0]) : null;
+                const hi = c.interval ? pct(c.interval[1]) : null;
+                return '<div class="wc-acad-row">' +
+                    '<span class="wc-acad-name">' + escapeHtml(c.label) +
+                        '<span class="wc-acad-sub">' + c.failingStudents + ' of ' +
+                        c.studentsWithMarks + ' students</span></span>' +
+                    '<span class="wc-acad-figs">' +
+                        '<span class="wc-acad-pct">' + pct(c.rate) + '%</span>' +
+                        (lo !== null ? '<span class="wc-acad-ci">could be ' + lo + '\u2013' + hi + '%</span>' : '') +
+                    '</span>' +
+                '</div>';
+            }).join('');
+
+            // THE MOST IMPORTANT SENTENCE ON THE SCREEN.
+            //
+            // Two groups can be reported and four cannot, and the two that can
+            // do not differ once the interval is allowed for. Left unsaid, a
+            // reader takes 73.5% against 74.5% as a finding. Said plainly, they
+            // learn what this school's numbers can and cannot show -- and that
+            // at 47 students only a very large gap would be visible at all.
+            const foot = document.getElementById('acadRaceFoot');
+            if (foot) {
+                foot.textContent = d.reportableCount + ' of ' + d.totalCategories +
+                    ' groups are large enough to report. ' +
+                    (d.reportableCount < 2
+                        ? 'With fewer than two reportable groups there is nothing to compare.'
+                        : (d.anySeparate
+                            ? 'At least one pair differs by more than the ranges overlap.'
+                            : 'No two groups differ once the ranges are allowed for. That is not ' +
+                              'the same as no gap: the smaller a group, the wider its range, and ' +
+                              'only a large gap would be visible here at all.'));
+            }
+        }
+
         function switchSystemMode(mode) {
             // Mode selection is per-teacher (stored per user account in this browser).
             // All roles may switch modes — the old admin-only beta gate is removed.
@@ -24333,7 +24473,33 @@
             const contentContainer = document.querySelector('.content');
             const clawPassContent = document.getElementById('clawPassContent');
             const disciplineContent = document.getElementById('disciplineContent');
-            
+            const academicsContent = document.getElementById('academicsContent');
+            if (academicsContent) academicsContent.style.display = 'none';
+
+            // ACADEMICS. Checked here as well as in the switcher, because a
+            // stale button or a call from the console must not open a screen of
+            // grades by race for somebody whose role does not carry it. The
+            // server refuses independently; this is the courtesy.
+            if (mode === 'academics') {
+                if (!window.WildcatModes.canOpenAcademics(currentUser && currentUser.role)) {
+                    console.warn('[academics] not available to your access level.');
+                    switchSystemMode('cash');
+                    return;
+                }
+                if (tabsContainer) tabsContainer.style.display = 'none';
+                if (contentContainer) {
+                    contentContainer.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+                }
+                if (clawPassContent) clawPassContent.style.display = 'none';
+                if (disciplineContent) disciplineContent.style.display = 'none';
+                if (academicsContent) academicsContent.style.display = 'block';
+                if (typeof removeCashTabButtons === 'function') removeCashTabButtons();
+                if (typeof renderModeSubnav === 'function') renderModeSubnav('academics');
+                renderAcademics();
+                if (typeof updateSidebarModeUI === 'function') updateSidebarModeUI();
+                return;
+            }
+
             if (disciplineModeEnabled) {
                 // Hide raffle/cash tabs and normal content, show Discipline Mode
                 if (tabsContainer) tabsContainer.style.display = 'none';
