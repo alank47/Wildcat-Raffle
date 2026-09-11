@@ -61,6 +61,7 @@ import type * as sisMerge from "../sisMerge.js";
 import type * as sisStats from "../sisStats.js";
 import type * as sisSync from "../sisSync.js";
 import type * as staffInvites from "../staffInvites.js";
+import type * as staffLookup from "../staffLookup.js";
 import type * as studentDetail from "../studentDetail.js";
 import type * as studentEmail from "../studentEmail.js";
 import type * as studentPortalRules from "../studentPortalRules.js";
@@ -132,6 +133,7 @@ declare const fullApi: ApiFromModules<{
   sisStats: typeof sisStats;
   sisSync: typeof sisSync;
   staffInvites: typeof staffInvites;
+  staffLookup: typeof staffLookup;
   studentDetail: typeof studentDetail;
   studentEmail: typeof studentEmail;
   studentPortalRules: typeof studentPortalRules;
