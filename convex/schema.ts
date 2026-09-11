@@ -256,7 +256,13 @@ export default defineSchema({
   })
     .index("by_teacherEmail", ["teacherEmail"])
     .index("by_studentEmail", ["studentEmail"])
-    .index("by_studentNumber", ["studentNumber"]),
+    .index("by_studentNumber", ["studentNumber"])
+    // ADDED 2026-09-11 for the senior list. Without it, "who is in grade 12"
+    // means collect() over every enrolment row -- 5,562 documents that grow
+    // with the school, on the table whose size has already broken a
+    // 4,096-read execution once (see the take(2000) note in sisStats.ts).
+    // With it the senior slice is about 298 rows.
+    .index("by_gradeLevel", ["gradeLevel"]),
 
   /**
    * Web Push subscriptions, one row per browser/device a staff member enabled

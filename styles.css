@@ -9066,6 +9066,122 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 }
 .wc-acad-tally-row.is-total .wc-acad-tally-k { color: var(--wc-ink, #14171C); font-weight: 600; }
 
+/* ---- Seniors: the one Academics tab that names a child -------------------
+   ITS OWN NAMESPACE ON PURPOSE. Every other selector on this screen is
+   .wc-acad-*, and those rows are aggregates over at least ten students. These
+   are named eighteen-year-olds. Keeping the prefixes apart means an edit to an
+   aggregate card can never reach a named-student row, and a reader grepping
+   for one never lands in the other. */
+
+/* A standing banner, not a dismissible toast: the reader should not be able to
+   get rid of the sentence that says this tab is different. */
+.wc-sr-banner {
+    margin: 0 0 18px; padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--wc-line, #E7ECF2);
+    border-left: 4px solid #f59e0b;
+    background: var(--wc-surface, #fff);
+    font-size: 12.5px; line-height: 1.6; max-width: 82ch;
+    color: var(--wc-gray-text, #8892a0);
+}
+.wc-sr-banner strong { color: var(--wc-ink, #14171C); }
+
+.wc-sr-search { max-width: 380px; margin: 4px 0 12px; }
+
+/* One senior. A button, because the whole row opens their record. */
+.wc-sr-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    width: 100%; box-sizing: border-box; text-align: left;
+    padding: 10px 12px; border-radius: 10px;
+    border: 1px solid var(--wc-line, #E7ECF2);
+    background: var(--wc-surface, #fff);
+    font: inherit; font-size: 13.5px; cursor: pointer;
+}
+.wc-sr-row:hover { border-color: #c7d2e0; }
+.wc-sr-row:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+
+/* The rows the app CANNOT answer for, pinned above the answers. Dashed, the
+   same treatment every "we are not telling you" row on this screen already
+   carries. */
+.wc-sr-row.is-unknown { background: transparent; border-style: dashed; }
+
+.wc-sr-name { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto;
+    font-weight: 600; color: var(--wc-ink, #14171C); }
+.wc-sr-sub { font-size: 11.5px; font-weight: 400; color: var(--wc-gray-text, #8892a0); }
+.wc-sr-figs { display: flex; align-items: center; gap: 14px; flex: 0 0 auto; }
+
+/* The count. Amber at one or more, and DELIBERATELY NOT the blue used for
+   "has activity" elsewhere -- blue reads as good news and this is not. */
+.wc-sr-count {
+    min-width: 2.2em; text-align: center;
+    padding: 2px 8px; border-radius: 999px;
+    font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.wc-sr-count.is-failing { background: #fef3c7; color: #92400e; }
+.wc-sr-count.is-clear { background: var(--wc-bg-soft, #F4F6F9); color: var(--wc-gray-text, #8892a0); }
+.wc-sr-letters { font-size: 12px; font-weight: 700; letter-spacing: .04em; color: #92400e;
+    white-space: nowrap; min-width: 5.5em; text-align: right; }
+
+/* ---- the record itself -------------------------------------------------- */
+.wc-sr-card { max-width: 760px; }
+.wc-sr-head-sub { margin: 2px 0 0; font-size: 12px; color: var(--wc-gray-text, #8892a0); }
+.wc-sr-section { margin: 18px 0 0; }
+.wc-sr-section h4 {
+    margin: 0 0 8px; font-size: 12px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .06em;
+    color: var(--wc-gray-text, #8892a0);
+}
+/* Read these first: every item is a concrete reason the count could be wrong,
+   and it sits ABOVE the classes rather than under them. */
+.wc-sr-caveats {
+    margin: 14px 0 0; padding: 10px 12px; border-radius: 10px;
+    border-left: 4px solid #f59e0b; background: #fffbeb;
+    font-size: 12.5px; line-height: 1.6; color: #78350f;
+}
+.wc-sr-caveats h4 { color: #92400e; margin: 0 0 6px; }
+.wc-sr-caveats ul { margin: 0; padding-left: 18px; }
+.wc-sr-caveats li { margin: 3px 0; }
+
+.wc-sr-class {
+    padding: 10px 12px; margin: 0 0 8px; border-radius: 10px;
+    border: 1px solid var(--wc-line, #E7ECF2); background: var(--wc-surface, #fff);
+}
+.wc-sr-class-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.wc-sr-class-name { font-weight: 600; color: var(--wc-ink, #14171C); font-size: 13.5px; }
+.wc-sr-class-meta { margin: 1px 0 0; font-size: 11.5px; color: var(--wc-gray-text, #8892a0); }
+.wc-sr-class-grade { display: flex; align-items: baseline; gap: 8px; flex: 0 0 auto; }
+.wc-sr-letter { font-size: 20px; font-weight: 700; color: var(--wc-ink, #14171C); line-height: 1; }
+.wc-sr-pct { font-size: 12.5px; color: var(--wc-gray-text, #8892a0); white-space: nowrap; }
+
+/* Arithmetic, phrased as arithmetic. Not a forecast and not a promise. */
+.wc-sr-projection { margin: 8px 0 0; font-size: 12px; line-height: 1.55; color: var(--wc-gray-text, #8892a0); }
+.wc-sr-projection strong { color: var(--wc-ink, #14171C); font-weight: 600; }
+.wc-sr-tally { margin: 6px 0 0; font-size: 11.5px; color: var(--wc-gray-text, #8892a0); }
+
+.wc-sr-work { margin: 10px 0 0; padding: 8px 0 0; border-top: 1px dashed var(--wc-line, #E7ECF2); }
+.wc-sr-work h5 { margin: 0 0 6px; font-size: 11.5px; font-weight: 700; color: var(--wc-gray-text, #8892a0); }
+.wc-sr-item { display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+    padding: 4px 0; font-size: 12.5px; }
+.wc-sr-item-name { color: var(--wc-ink, #14171C); min-width: 0; }
+.wc-sr-item-meta { display: block; font-size: 11px; color: var(--wc-gray-text, #8892a0); }
+.wc-sr-item-pts { flex: 0 0 auto; font-size: 11.5px; color: var(--wc-gray-text, #8892a0); white-space: nowrap; }
+/* Flagged missing AND carrying a score: the row this screen exists to surface. */
+.wc-sr-item.is-doubtful .wc-sr-item-meta { color: #92400e; }
+
+.wc-sr-quiet { font-size: 12.5px; line-height: 1.6; color: var(--wc-gray-text, #8892a0); }
+.wc-sr-pass { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0;
+    font-size: 12.5px; color: var(--wc-gray-text, #8892a0); }
+.wc-sr-pass strong { color: var(--wc-ink, #14171C); font-weight: 600; }
+
+.wc-sr-foot { margin: 18px 0 0; padding-top: 12px; border-top: 1px solid var(--wc-line, #E7ECF2);
+    font-size: 11.5px; line-height: 1.6; color: var(--wc-gray-text, #8892a0); white-space: pre-line; }
+
+@media (max-width: 560px) {
+    .wc-sr-row { flex-wrap: wrap; }
+    .wc-sr-figs { width: 100%; justify-content: flex-start; }
+    .wc-sr-letters { text-align: left; min-width: 0; }
+}
+
 /* A course that is listed but not ranked reads as set aside, not as a result.
    Same dashed treatment as a withheld row, because it is the same kind of
    statement: this row is here, and the screen is declining to say something

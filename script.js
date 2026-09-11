@@ -24118,6 +24118,14 @@
         }
 
         const MODE_SUBTABS = {
+            // ACADEMICS HAS TWO TABS THAT FOLLOW DIFFERENT RULES, and the
+            // order is the point: Whole School is first and is where the mode
+            // opens, so the mode's identity stays aggregate. Seniors names
+            // individual students and is somewhere you go on purpose.
+            academics: [
+                { id: 'school',  fn: 'switchAcademicsTab', label: wcIcon('analytics') + ' Whole School' },
+                { id: 'seniors', fn: 'switchAcademicsTab', label: wcIcon('students') + ' Seniors' }
+            ],
             hallpass: [
                 { id: 'myClass',              fn: 'switchHallPassTab',   label: wcIcon('class') + ' My Class' },
                 { id: 'hallMonitor',          fn: 'switchHallPassTab',   label: wcIcon('monitor') + ' Hall Monitor' },
@@ -24175,7 +24183,18 @@
             const item = items.find(i => i.id === subId);
             if (!item) return;
             // If the user visited a shared tab, the mode's container was hidden — restore it.
-            const container = document.getElementById(mode === 'hallpass' ? 'clawPassContent' : 'disciplineContent');
+            // A LOOKUP, NOT A TERNARY. This read
+            //   mode === 'hallpass' ? 'clawPassContent' : 'disciplineContent'
+            // which sent every mode that was not hallpass to the discipline
+            // pane -- so the moment Academics got a subnav, its Seniors button
+            // opened Discipline Mode. A third arm would only have deferred the
+            // same bug to a fourth mode.
+            const MODE_CONTAINERS = {
+                hallpass: 'clawPassContent',
+                discipline: 'disciplineContent',
+                academics: 'academicsContent'
+            };
+            const container = document.getElementById(MODE_CONTAINERS[mode] || 'disciplineContent');
             const content = document.querySelector('#mainApp .content');
             if (content) content.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
             if (container) container.style.display = 'block';
@@ -24723,6 +24742,453 @@
             }
         }
 
+        // ---- Academics: two tabs, two rules ---------------------------------
+        let _acadTab = 'school';
+        let _seniorData = null;
+        let _seniorError = null;
+        let _seniorBusy = false;
+
+        /**
+         * Switch between the aggregate tab and the named-student tab.
+         *
+         * EACH PANE FETCHES ONLY WHEN OPENED. Opening Academics must not pull
+         * forty-one named seniors across the wire on the way to a bar chart --
+         * loads-cost-what-they-show.test.mjs exists for exactly that habit.
+         */
+        function switchAcademicsTab(tab) {
+            _acadTab = (tab === 'seniors') ? 'seniors' : 'school';
+            const school = document.getElementById('acadPaneSchool');
+            const seniors = document.getElementById('acadPaneSeniors');
+            if (school) school.classList.toggle('hidden', _acadTab !== 'school');
+            if (seniors) seniors.classList.toggle('hidden', _acadTab !== 'seniors');
+            document.querySelectorAll('#modeSubNav .tab').forEach(function (b) { b.classList.remove('active'); });
+            const btn = document.getElementById('sideSub_academics_' + _acadTab);
+            if (btn) btn.classList.add('active');
+            if (_acadTab === 'seniors') loadSeniorAcademics(); else renderAcademics();
+        }
+
+        /** The Refresh button refreshes whichever tab is open, not both. */
+        function refreshAcademicsPane() {
+            if (_acadTab === 'seniors') loadSeniorAcademics(true); else renderAcademics(true);
+        }
+
+        async function loadSeniorAcademics(force) {
+            const rows = document.getElementById('acadSeniorRows');
+            if (!rows) return;
+            if (!_seniorData || force) {
+                if (_seniorBusy) return;
+                _seniorBusy = true;
+                rows.innerHTML = '<p class="wu-absent">Loading…</p>';
+                try {
+                    const auth = window.WildcatAuth;
+                    const session = auth && auth.getSession && auth.getSession();
+                    if (!session) {
+                        _seniorError = 'The senior list needs a Microsoft sign-in.';
+                    } else {
+                        _seniorData = await auth.convexQuery('seniorAcademics:failingList', {}, session.idToken);
+                        _seniorError = null;
+                    }
+                } catch (e) {
+                    _seniorData = null;
+                    // requireAdmin THROWS rather than returning a refusal, so a
+                    // non-admin arrives here. Say what the rule is instead of
+                    // showing them the server's bare "Admins only."
+                    const msg = (e && e.message) || String(e);
+                    _seniorError = /admin/i.test(msg)
+                        ? 'The senior list is limited to administrators, because it names individual students.'
+                        : msg;
+                } finally {
+                    _seniorBusy = false;
+                }
+            }
+            renderSeniorAcademics();
+        }
+
+        function renderSeniorAcademics() {
+            const rows = document.getElementById('acadSeniorRows');
+            const head = document.getElementById('acadSeniorHead');
+            const foot = document.getElementById('acadSeniorFoot');
+            const asOf = document.getElementById('acadSeniorAsOf');
+            const alerts = document.getElementById('acadSeniorAlerts');
+            if (!rows) return;
+
+            const d = _seniorData;
+            if (_seniorError || !d) {
+                if (asOf) asOf.textContent = '';
+                if (alerts) alerts.innerHTML = '';
+                if (head) head.textContent = '';
+                if (foot) foot.textContent = '';
+                rows.innerHTML = '<p class="wu-absent">' +
+                    escapeHtml(_seniorError || 'The senior list could not be loaded.') + '</p>';
+                return;
+            }
+
+            const t = d.totals;
+            const when = function (iso) {
+                if (!iso) return 'an unknown time';
+                const dt = new Date(iso);
+                return isNaN(dt.getTime()) ? String(iso) : dt.toLocaleString();
+            };
+
+            // PROVENANCE IS NOT A FOOTNOTE. A senior failing this morning may
+            // not be by Friday, and the reverse.
+            if (asOf) {
+                asOf.textContent = 'Grades as of ' + when(d.asOf.gradesSyncedAt) +
+                    '. This changes at every sync — write down the date you checked, ' +
+                    'not just what it said.';
+            }
+
+            // A SYNC IN FLIGHT CAN UNDERCOUNT, and on this screen an
+            // undercount grants a privilege. Said loudly, above the table.
+            if (alerts) {
+                let html = '';
+                if (d.dataState === 'in-flight') {
+                    html += '<div class="wc-sr-banner"><strong>A grade sync is running.</strong> ' +
+                        'Counts here are incomplete until it finishes, and a senior can show ' +
+                        'FEWER failing classes than they actually have. Wait a few minutes and ' +
+                        'refresh before acting on this.</div>';
+                }
+                if (t.enrolmentsWithNoStudentNumber > 0) {
+                    html += '<div class="wc-sr-banner">' + t.enrolmentsWithNoStudentNumber +
+                        ' twelfth-grade enrolment' + (t.enrolmentsWithNoStudentNumber === 1 ? '' : 's') +
+                        ' had no student number, so those grades could not be looked up. ' +
+                        'The office can add it in PowerSchool.</div>';
+                }
+                alerts.innerHTML = html;
+            }
+
+            const q = (document.getElementById('seniorSearch') || {}).value || '';
+            const needle = q.trim().toLowerCase();
+            const all = d.students || [];
+            const shown = !needle ? all : all.filter(function (s2) {
+                const name = (s2.firstName + ' ' + s2.lastName).toLowerCase();
+                const rev = (s2.lastName + ', ' + s2.firstName).toLowerCase();
+                return name.indexOf(needle) !== -1 || rev.indexOf(needle) !== -1 ||
+                    String(s2.studentNumber).toLowerCase().indexOf(needle) !== -1;
+            });
+
+            // THE WHOLE ALWAYS RESTATED, so a filtered table can never be
+            // mistaken for the senior class.
+            if (head) {
+                head.textContent = t.seniors + ' senior' + (t.seniors === 1 ? '' : 's') +
+                    ' · ' + t.withAnyFailing + ' failing at least one class' +
+                    (t.wouldDropIfFOnly > 0
+                        ? ' · ' + t.wouldDropIfFOnly + ' of them only because a D counts'
+                        : '') +
+                    (t.withUnpostedClass > 0
+                        ? ' · ' + t.withUnpostedClass + ' have a class with no grade posted yet'
+                        : '') +
+                    (needle ? ' — showing ' + shown.length + ' matching “' + q.trim() + '”' : '');
+            }
+
+            if (!all.length) {
+                rows.innerHTML = '<p class="wu-absent"><strong>No twelfth-grade students in the sync.</strong> ' +
+                    'Academics reads the same roster the rest of the app does. If seniors are ' +
+                    'enrolled in PowerSchool, the sync has not brought them across yet, or their ' +
+                    'grade level is written as something other than 12.</p>';
+            } else if (!shown.length) {
+                rows.innerHTML = '<p class="wu-absent">No senior matches “' +
+                    escapeHtml(q.trim()) + '”. Clear the search box to see all ' +
+                    t.seniors + ' again.</p>';
+            } else {
+                rows.innerHTML = shown.map(function (s2) {
+                    const unknown = s2.failingCount === null;
+                    const count = unknown
+                        ? '<span class="wu-absent">no grades synced</span>'
+                        : '<span class="wc-sr-count ' + (s2.failingCount > 0 ? 'is-failing' : 'is-clear') +
+                          '">' + s2.failingCount + '</span>';
+                    const marked = s2.sectionsMarked + ' of ' + s2.sectionsEnrolled + ' classes marked';
+                    const owed = (s2.notHandedIn + s2.scoredZero) > 0
+                        ? ' · ' + (s2.notHandedIn + s2.scoredZero) + ' outstanding (' +
+                          s2.notHandedIn + ' not in, ' + s2.scoredZero + ' scored zero)'
+                        : '';
+                    return '<button type="button" class="wc-sr-row' + (unknown ? ' is-unknown' : '') +
+                        '" onclick="openSeniorDetail(\'' + escapeHtml(String(s2.studentNumber)) + '\')">' +
+                        '<span class="wc-sr-name">' +
+                            escapeHtml((s2.lastName || '?') + ', ' + (s2.firstName || '?')) +
+                            '<span class="wc-sr-sub">#' + escapeHtml(String(s2.studentNumber)) +
+                            ' · ' + marked + owed + '</span>' +
+                        '</span>' +
+                        '<span class="wc-sr-figs">' +
+                            '<span class="wc-sr-letters">' + escapeHtml(s2.letters.join(' · ')) + '</span>' +
+                            count +
+                        '</span>' +
+                    '</button>';
+                }).join('');
+            }
+
+            // THE RULE IN FORCE, GENERATED FROM THE SERVER RATHER THAN TYPED,
+            // so it is on the screen it governs, in front of the person who
+            // has to defend it to a parent.
+            if (foot) {
+                foot.textContent =
+                    'Counting ' + d.rule.label + ' as failing.' +
+                    (t.wouldDropIfFOnly > 0
+                        ? ' ' + t.wouldDropIfFOnly + ' senior' + (t.wouldDropIfFOnly === 1 ? '' : 's') +
+                          (d.rule.threshold === 'DF'
+                            ? ' would show 0 failing classes if only an F counted.'
+                            : ' carry a D that is not counted here.')
+                        : '') +
+                    '\n\n' +
+                    'Built from the PowerSchool roster: ' + t.seniors + ' students listed in grade 12. ' +
+                    'A senior missing from that roster is missing from this list — this is not a ' +
+                    'record of who is enrolled.' +
+                    '\n\n' +
+                    'This screen shows grades. It does not decide eligibility, and nothing on it ' +
+                    'is sent to a student or a parent.';
+            }
+        }
+
+        /**
+         * One senior's record: the classes they are failing, the grades, and
+         * the work behind them.
+         *
+         * THIS POPUP HAS TO HOLD UP IF THE STUDENT CHALLENGES IT. So the
+         * timestamp is at the top rather than in a footer -- the first sentence
+         * out of a student's mouth is "I turned that in yesterday", and a
+         * footer timestamp is found after the argument is over. The classes
+         * nobody has marked are NAMED rather than omitted, because an omitted
+         * class is the one that flips the answer on Monday. And the reasons the
+         * count might be wrong sit ABOVE the classes, not under them.
+         */
+        async function openSeniorDetail(studentNumber) {
+            const modal = document.getElementById('seniorDetailModal');
+            const body = document.getElementById('seniorDetailBody');
+            const title = document.getElementById('seniorDetailName');
+            if (!modal || !body) return;
+            if (title) title.textContent = 'Loading…';
+            body.innerHTML = '<p class="wu-absent">Loading…</p>';
+            openRefModal('seniorDetailModal');
+
+            let d = null, err = null;
+            try {
+                const auth = window.WildcatAuth;
+                const session = auth && auth.getSession && auth.getSession();
+                if (!session) throw new Error('This needs a Microsoft sign-in.');
+                d = await auth.convexQuery('seniorAcademics:detail',
+                    { studentNumber: String(studentNumber) }, session.idToken);
+            } catch (e) {
+                const msg = (e && e.message) || String(e);
+                err = /admin/i.test(msg)
+                    ? 'A senior\'s record is limited to administrators.'
+                    : msg;
+            }
+
+            if (err || !d) {
+                if (title) title.textContent = 'Not available';
+                body.innerHTML = '<p class="wu-absent">' + escapeHtml(err || 'Could not load.') + '</p>';
+                return;
+            }
+            if (d.found === false) {
+                if (title) title.textContent = 'Not available';
+                body.innerHTML = '<p class="wu-absent">' + escapeHtml(d.reason) + '</p>';
+                return;
+            }
+
+            const pctTxt = function (n) {
+                return (typeof n === 'number' && isFinite(n))
+                    ? Math.round(n) + '%'
+                    : '<span class="wu-absent">no percent posted</span>';
+            };
+            const dateTxt = function (iso) {
+                if (!iso) return null;
+                const dt = new Date(iso);
+                return isNaN(dt.getTime()) ? String(iso) : dt.toLocaleDateString();
+            };
+            const daysSince = function (iso) {
+                if (!iso) return null;
+                const dt = new Date(iso);
+                if (isNaN(dt.getTime())) return null;
+                return Math.floor((Date.now() - dt.getTime()) / 86400000);
+            };
+
+            const who = d.student;
+            if (title) title.textContent = (who.firstName + ' ' + who.lastName).trim() || ('#' + who.studentNumber);
+
+            let html = '<p class="wc-sr-head-sub">Grade 12 · #' + escapeHtml(who.studentNumber) +
+                ' · grades as of ' + escapeHtml(dateTxt(d.asOf.gradesSyncedAt) || 'an unknown date') + '</p>';
+            if (d.asOf.gradesSyncedAt && d.asOf.missingSyncedAt &&
+                String(d.asOf.gradesSyncedAt).slice(0, 10) !== String(d.asOf.missingSyncedAt).slice(0, 10)) {
+                html += '<p class="wc-sr-head-sub">Grades and assignment lists came from different syncs.</p>';
+            }
+
+            // THE DENOMINATOR IN THE SUMMARY. "Failing three" means nothing
+            // without "of seven".
+            html += '<p class="wc-sr-quiet" style="margin-top:10px">Failing <strong>' + d.summary.failing +
+                '</strong> of the ' + d.summary.marked + ' classes with a posted grade' +
+                (d.summary.letters.length ? ' · ' + escapeHtml(d.summary.letters.join(' · ')) : '') + '.' +
+                (d.summary.unposted > 0
+                    ? ' <span class="wu-absent">' + d.summary.unposted + ' class' +
+                      (d.summary.unposted === 1 ? ' has' : 'es have') + ' no grade posted yet.</span>'
+                    : '') + '</p>';
+
+            // ---- read these first ------------------------------------------
+            const caveats = [];
+            d.unposted.forEach(function (c) {
+                caveats.push('<strong>' + escapeHtml(c.courseName || 'A class') + '</strong> has no grade posted yet, so it is counted as unknown — not as a pass and not as a fail.');
+            });
+            d.failing.forEach(function (c) {
+                const ago = daysSince(c.lastGradeUpdate);
+                if (ago !== null && ago > d.staleDays) {
+                    caveats.push('<strong>' + escapeHtml(c.courseName || 'A class') + '</strong> was last updated ' +
+                        escapeHtml(dateTxt(c.lastGradeUpdate)) + ' — ' + ago + ' days ago. The grade may not reflect recent work.');
+                }
+                if (c.flaggedButScored > 0) {
+                    caveats.push(c.flaggedButScored + ' assignment' + (c.flaggedButScored === 1 ? '' : 's') +
+                        ' in <strong>' + escapeHtml(c.courseName || 'a class') + '</strong> ' +
+                        (c.flaggedButScored === 1 ? 'is' : 'are') + ' flagged missing but already carry a score. ' +
+                        'The flag may be out of date — check with the teacher before counting ' +
+                        (c.flaggedButScored === 1 ? 'it' : 'them') + '.');
+                }
+                if (c.thinGradebook) {
+                    caveats.push('Only ' + c.pointsGraded + ' points have been graded in <strong>' +
+                        escapeHtml(c.courseName || 'a class') + '</strong>, so one assignment moves this grade a long way.');
+                }
+            });
+            if (caveats.length) {
+                html += '<div class="wc-sr-caveats"><h4>Read these first. Each one is a reason the count above could be wrong.</h4><ul>' +
+                    caveats.map(function (c) { return '<li>' + c + '</li>'; }).join('') + '</ul></div>';
+            }
+
+            // ---- one failing class, then its work --------------------------
+            const workBlock = function (c) {
+                if (!c.work.length) {
+                    // NEVER AN EMPTY BOX UNDER AN F. A senior can hold an F on
+                    // marked work alone, and an empty list reads as a data gap
+                    // -- which makes the administrator tell the student
+                    // something false.
+                    return '<div class="wc-sr-work"><p class="wc-sr-quiet">Nothing is outstanding in this class. ' +
+                        'The grade comes from work already marked, so this is a conversation with the ' +
+                        'teacher rather than a pile to hand in.</p></div>';
+                }
+                const heading = c.notHandedIn && c.scoredZero
+                    ? 'Work behind this grade · ' + c.notHandedIn + ' not handed in · ' + c.scoredZero + ' scored zero'
+                    : (c.scoredZero ? 'Scored zero · ' + c.scoredZero : 'Not handed in · ' + c.notHandedIn);
+                return '<div class="wc-sr-work"><h5>' + escapeHtml(heading) + '</h5>' +
+                    c.work.map(function (w) {
+                        const doubtful = w.flaggedMissing && (w.scorePoints || 0) > 0;
+                        const state = doubtful
+                            ? 'flagged missing, but a score is recorded — the flag may be out of date'
+                            : (w.flaggedMissing ? 'not handed in' : 'handed in, scored 0');
+                        // pointsPossible null: the cell is OMITTED, never
+                        // "worth 0 pts" -- a section can grade by something
+                        // other than points, and "worth 0" says it does not
+                        // matter.
+                        const pts = w.scorePoints !== null && w.pointsPossible !== null
+                            ? 'scored ' + w.scorePoints + ' of ' + w.pointsPossible
+                            : (w.pointsPossible !== null ? 'worth ' + w.pointsPossible + ' pts' : '');
+                        const meta = [
+                            w.dueDate ? 'Due ' + dateTxt(w.dueDate) : 'No due date',
+                            w.categoryName || null,
+                            w.isLate ? 'late' : null,
+                            state
+                        ].filter(Boolean).join(' · ');
+                        return '<div class="wc-sr-item' + (doubtful ? ' is-doubtful' : '') + '">' +
+                            '<span class="wc-sr-item-name">' + escapeHtml(w.assignmentName || 'Untitled assignment') +
+                                '<span class="wc-sr-item-meta">' + escapeHtml(meta) + '</span></span>' +
+                            (pts ? '<span class="wc-sr-item-pts">' + escapeHtml(pts) + '</span>' : '') +
+                        '</div>';
+                    }).join('') + '</div>';
+            };
+
+            const classCard = function (c, failing) {
+                const meta = [c.courseNumber, c.period ? 'Period ' + c.period : null,
+                    c.teacherEmail ? '<a href="mailto:' + escapeHtml(c.teacherEmail) + '">' + escapeHtml(c.teacherEmail) + '</a>' : null,
+                    c.lastGradeUpdate ? 'posted ' + dateTxt(c.lastGradeUpdate) : null]
+                    .filter(Boolean).join(' · ');
+                let out = '<div class="wc-sr-class">' +
+                    '<div class="wc-sr-class-head">' +
+                        '<span><span class="wc-sr-class-name">' + escapeHtml(c.courseName || 'Course ' + (c.courseNumber || '')) +
+                        '</span><span class="wc-sr-class-meta">' + meta + '</span></span>' +
+                        '<span class="wc-sr-class-grade">' +
+                            (c.letter ? '<span class="wc-sr-letter">' + escapeHtml(c.letter) + '</span>' : '') +
+                            '<span class="wc-sr-pct">' + pctTxt(c.percent) + '</span>' +
+                        '</span>' +
+                    '</div>';
+                if (!failing) {
+                    out += '<p class="wc-sr-quiet" style="margin:6px 0 0">No grade has been posted in this ' +
+                        'class yet. It is not counted as passing or failing.</p></div>';
+                    return out;
+                }
+                // ARITHMETIC, PHRASED AS ARITHMETIC. Every refusal is shown: a
+                // staff member shown silence concludes the app did not try.
+                const pr = c.projection;
+                if (pr && pr.canProject) {
+                    out += '<p class="wc-sr-projection">If every outstanding item were marked full credit, ' +
+                        'total points would come to <strong>' + Math.round(pr.projectedPercent) + '%</strong>. ' +
+                        'This app does not hold the school\'s grade scale, so it cannot tell you whether ' +
+                        'that clears the class. It can only tell you which way the number moves.</p>';
+                } else if (c.work.length === 0) {
+                    out += '';
+                } else {
+                    out += '<p class="wc-sr-projection">' + escapeHtml(
+                        (pr && pr.reason) || 'This class cannot be projected from points alone.') + '</p>';
+                }
+                // SUPPRESSED WHEN EVERYTHING IS ZERO. "0 outstanding · 0 not handed
+                // in · 0 scored zero · 0 points still on the table" sat directly
+                // above the sentence that says the same thing in words, and four
+                // zeros in a row read as a broken panel rather than as good news.
+                if (c.notHandedIn + c.scoredZero > 0) {
+                    out += '<p class="wc-sr-tally">' + (c.notHandedIn + c.scoredZero) + ' outstanding · ' +
+                        c.notHandedIn + ' not handed in · ' + c.scoredZero + ' scored zero' +
+                        // Points are omitted rather than shown as zero when the
+                        // outstanding work carries no point value: a section can
+                        // grade by something other than points, and "0 points
+                        // still on the table" beside "1 outstanding" reads as a
+                        // contradiction.
+                        (c.pointsAvailable > 0 ? ' · ' + c.pointsAvailable + ' points still on the table' : '') +
+                        '</p>';
+                }
+                out += workBlock(c) + '</div>';
+                return out;
+            };
+
+            if (d.failing.length) {
+                html += '<div class="wc-sr-section"><h4>Classes being failed (' + d.failing.length + ')</h4>' +
+                    d.failing.map(function (c) { return classCard(c, true); }).join('') + '</div>';
+            }
+            if (d.unposted.length) {
+                html += '<div class="wc-sr-section"><h4>Classes with no grade posted (' + d.unposted.length + ')</h4>' +
+                    d.unposted.map(function (c) { return classCard(c, false); }).join('') + '</div>';
+            }
+            if (d.passing.length) {
+                html += '<div class="wc-sr-section"><h4>Passing (' + d.passing.length + ')</h4>' +
+                    d.passing.map(function (c) {
+                        return '<div class="wc-sr-pass"><span>' + escapeHtml(c.courseName || 'Course') +
+                            '</span><span><strong>' + escapeHtml(c.letter || '') + '</strong> ' + pctTxt(c.percent) +
+                        '</span></div>';
+                    }).join('') + '</div>';
+            }
+            if (d.orphanWork.length) {
+                // These land nowhere in the student's own view either. An
+                // administrator counting rows against a total should find
+                // them, not a discrepancy nobody can chase.
+                html += '<div class="wc-sr-section"><h4>Work with no class recorded (' + d.orphanWork.length + ')</h4>' +
+                    '<p class="wc-sr-quiet">These assignments are not attached to any class on this ' +
+                    'student\'s timetable, so they are listed here rather than dropped.</p>' +
+                    d.orphanWork.map(function (w) {
+                        return '<div class="wc-sr-item"><span class="wc-sr-item-name">' +
+                            escapeHtml(w.assignmentName || 'Untitled assignment') +
+                            '<span class="wc-sr-item-meta">' +
+                            escapeHtml([w.courseName || 'No class recorded',
+                                w.dueDate ? 'Due ' + dateTxt(w.dueDate) : 'No due date'].join(' · ')) +
+                            '</span></span></div>';
+                    }).join('') + '</div>';
+            }
+
+            html += '<p class="wc-sr-foot">Counting ' + escapeHtml(d.rule.label) + ' as failing.' +
+                (d.summary.turnsOnTheRule
+                    ? ' This student\'s worst mark is a D — if only an F counted, they would show no failing classes.'
+                    : '') +
+                '\n\nThe student sees this same list of outstanding work in their own portal. ' +
+                'This screen shows grades: it does not decide eligibility, and nothing here is ' +
+                'sent to the student or a parent.' +
+                '\n\nOpened as ' + escapeHtml(d.viewedBy.role === 'superadmin' ? 'a super administrator' : 'an administrator') +
+                (d.viewedBy.email ? ' (' + escapeHtml(d.viewedBy.email) + ')' : '') + '.</p>';
+
+            body.innerHTML = html;
+        }
+
         function switchSystemMode(mode) {
             // Mode selection is per-teacher (stored per user account in this browser).
             // All roles may switch modes — the old admin-only beta gate is removed.
@@ -24775,7 +25241,9 @@
                 if (academicsContent) academicsContent.style.display = 'block';
                 if (typeof removeCashTabButtons === 'function') removeCashTabButtons();
                 if (typeof renderModeSubnav === 'function') renderModeSubnav('academics');
-                renderAcademics();
+                // DEFAULT IS THE AGGREGATE TAB. The mode's identity stays
+                // whole-school; the named list is somewhere you go on purpose.
+                switchAcademicsTab('school');
                 if (typeof updateSidebarModeUI === 'function') updateSidebarModeUI();
                 return;
             }

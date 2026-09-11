@@ -1702,3 +1702,211 @@ export const courseNameCatalogue = internalQuery({
     };
   },
 });
+
+/**
+ * Can a senior-eligibility screen be built from what is synced? Counts only.
+ *
+ * Read-only. Returns no student number, no name and no assignment title: only
+ * how many of each thing exists, so the question "is the data there" can be
+ * answered without pulling a single child's record onto a terminal.
+ */
+export const seniorEligibilityFeasibility = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const roster = await ctx.db.query("psRoster").collect();
+    const byGrade: Record<string, number> = {};
+    const seniors = new Set<string>();
+    for (const r of roster as any[]) {
+      const g = String(r.gradeLevel ?? "?").trim() || "?";
+      byGrade[g] = (byGrade[g] ?? 0) + 1;
+      if (g === "12") seniors.add(String(r.studentNumber ?? ""));
+    }
+
+    const grades = await ctx.db.query("psGrades").collect();
+    let seniorGradeRows = 0, seniorFailingRows = 0;
+    const letters: Record<string, number> = {};
+    const seniorsWithAnyMark = new Set<string>();
+    const seniorsFailing = new Set<string>();
+    const seniorsFailingFOnly = new Set<string>();
+    const seniorsWithADOnly = new Set<string>();
+    for (const g of grades as any[]) {
+      const sn = String(g.studentNumber ?? "");
+      if (!seniors.has(sn)) continue;
+      const L = typeof g.currentGrade === "string" ? g.currentGrade.trim().toUpperCase() : "";
+      if (!L || L === "--") continue;
+      seniorGradeRows++;
+      seniorsWithAnyMark.add(sn);
+      letters[L] = (letters[L] ?? 0) + 1;
+      if (L === "D" || L === "F" || L === "NP") { seniorFailingRows++; seniorsFailing.add(sn); }
+      if (L === "F" || L === "NP") { seniorsFailingFOnly.add(sn); }
+      if (L === "D") { seniorsWithADOnly.add(sn); }
+    }
+
+    const missing = await ctx.db.query("psMissingWork").collect();
+    let seniorMissingRows = 0, flagged = 0, scoredZero = 0, withName = 0, withDue = 0;
+    const seniorsWithMissing = new Set<string>();
+    for (const m of missing as any[]) {
+      const sn = String(m.studentNumber ?? "");
+      if (!seniors.has(sn)) continue;
+      seniorMissingRows++;
+      seniorsWithMissing.add(sn);
+      if (m.isMissing !== false) flagged++; else scoredZero++;
+      if (m.assignmentName) withName++;
+      if (m.dueDate) withDue++;
+    }
+
+    const points = await ctx.db.query("psSectionPoints").collect();
+    const seniorPointRows = (points as any[]).filter((p) => seniors.has(String(p.studentNumber ?? ""))).length;
+
+    return {
+      rosterRows: roster.length,
+      byGrade,
+      seniors: seniors.size,
+      seniorGradeRows,
+      seniorsWithAnyMark: seniorsWithAnyMark.size,
+      seniorFailingRows,
+      seniorLetters: letters,
+      seniorsFailingAtLeastOne: seniorsFailing.size,
+      seniorsWithAtLeastOneF: seniorsFailingFOnly.size,
+      seniorsWhoseWorstIsADOnly: [...seniorsWithADOnly].filter((s2) => !seniorsFailingFOnly.has(s2)).length,
+      missingWorkTableRows: missing.length,
+      seniorMissingRows,
+      seniorsWithMissing: seniorsWithMissing.size,
+      missingFlagged: flagged,
+      missingScoredZero: scoredZero,
+      missingWithName: withName,
+      missingWithDueDate: withDue,
+      sectionPointsTableRows: points.length,
+      seniorPointRows,
+    };
+  },
+});
+
+/**
+ * Do the two places that know a student's grade level agree?
+ *
+ * `students.grade` is the app's own roster, adopted in place from PowerSchool.
+ * `psRoster.gradeLevel` is the raw sync mirror, one row per enrolment. A senior
+ * screen has to pick one, and picking the wrong one silently drops or adds
+ * eighteen-year-olds from an eligibility list. Counts and overlaps only; no
+ * name, no student number.
+ */
+export const seniorSourceAgreement = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const students = await ctx.db.query("students").collect();
+    const roster = await ctx.db.query("psRoster").collect();
+
+    const appSeniors = new Set<string>();
+    let appNoNumber = 0, appSeniorsMissingName = 0;
+    for (const s of students as any[]) {
+      const n = String(s.studentNumber ?? "").trim();
+      if (!n) { appNoNumber++; continue; }
+      if (String(s.grade ?? "").trim() === "12") {
+        appSeniors.add(n);
+        if (!String(s.firstName ?? "").trim() || !String(s.lastName ?? "").trim()) appSeniorsMissingName++;
+      }
+    }
+
+    const sisSeniors = new Set<string>();
+    for (const r of roster as any[]) {
+      if (String(r.gradeLevel ?? "").trim() === "12") sisSeniors.add(String(r.studentNumber ?? "").trim());
+    }
+    sisSeniors.delete("");
+
+    const inBoth = [...appSeniors].filter((n) => sisSeniors.has(n)).length;
+    return {
+      studentsTableRows: students.length,
+      studentsWithNoNumber: appNoNumber,
+      seniorsByAppRoster: appSeniors.size,
+      seniorsBySisMirror: sisSeniors.size,
+      inBoth,
+      onlyInAppRoster: appSeniors.size - inBoth,
+      onlyInSisMirror: sisSeniors.size - inBoth,
+      appSeniorsMissingAName: appSeniorsMissingName,
+    };
+  },
+});
+
+/**
+ * Does the senior list actually work against live data?
+ *
+ * REDACTED ON PURPOSE. The real query is admin-gated and returns names, which
+ * is right for a browser and wrong for a terminal transcript. This mirrors its
+ * logic and returns SHAPE AND COUNTS ONLY: how many rows, how many of each
+ * kind, and whether the fields a screen needs are populated. No name, no
+ * student number, no course, no assignment title.
+ */
+export const seniorListShape = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const enrolments = await ctx.db
+      .query("psRoster")
+      .withIndex("by_gradeLevel", (q) => q.eq("gradeLevel", "12"))
+      .collect();
+    const keys = new Set<string>();
+    let noNumber = 0;
+    for (const r of enrolments as any[]) {
+      const k = String(r.studentNumber ?? "").trim();
+      if (!k) { noNumber++; continue; }
+      keys.add(k);
+    }
+
+    let named = 0, withGrades = 0, withMissing = 0, withPoints = 0;
+    let failingAny = 0, noMarkAtAll = 0, someUnposted = 0;
+    let periodsPresent = 0, teacherEmailsPresent = 0, lastUpdatePresent = 0;
+    const failingCounts: Record<string, number> = {};
+    for (const k of keys) {
+      const nm = await ctx.db.query("students")
+        .withIndex("by_studentNumber", (q) => q.eq("studentNumber", k)).take(1);
+      if (nm[0] && String(nm[0].firstName ?? "").trim()) named++;
+
+      const g = await ctx.db.query("psGrades")
+        .withIndex("by_studentNumber", (q) => q.eq("studentNumber", k)).collect();
+      const m = await ctx.db.query("psMissingWork")
+        .withIndex("by_studentNumber", (q) => q.eq("studentNumber", k)).collect();
+      const p = await ctx.db.query("psSectionPoints")
+        .withIndex("by_studentNumber", (q) => q.eq("studentNumber", k)).collect();
+      if (g.length) withGrades++;
+      if (m.length) withMissing++;
+      if (p.length) withPoints++;
+      if (g.some((r: any) => r.lastGradeUpdate)) lastUpdatePresent++;
+
+      let fails = 0, unposted = 0, marks = 0;
+      for (const row of g as any[]) {
+        const L = typeof row.currentGrade === "string" ? row.currentGrade.trim().toUpperCase() : "";
+        if (!L || L === "--" || L === "-") { unposted++; continue; }
+        marks++;
+        if (L === "NP" || L.charAt(0) === "F" || L.charAt(0) === "D") fails++;
+      }
+      if (marks === 0) noMarkAtAll++;
+      else if (fails > 0) failingAny++;
+      if (unposted > 0) someUnposted++;
+      const bucket = marks === 0 ? "no marks" : String(fails);
+      failingCounts[bucket] = (failingCounts[bucket] ?? 0) + 1;
+    }
+
+    for (const r of enrolments as any[]) {
+      if (r.period) periodsPresent++;
+      if (r.teacherEmail) teacherEmailsPresent++;
+    }
+
+    return {
+      indexWorked: true,
+      enrolmentRows: enrolments.length,
+      seniors: keys.size,
+      enrolmentsWithNoStudentNumber: noNumber,
+      seniorsWithAName: named,
+      seniorsWithGradeRows: withGrades,
+      seniorsWithMissingWork: withMissing,
+      seniorsWithSectionPoints: withPoints,
+      seniorsWithLastGradeUpdate: lastUpdatePresent,
+      failingAny,
+      noMarkAtAll,
+      someUnposted,
+      failingCountHistogram: failingCounts,
+      enrolmentsWithPeriod: periodsPresent,
+      enrolmentsWithTeacherEmail: teacherEmailsPresent,
+    };
+  },
+});

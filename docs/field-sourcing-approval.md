@@ -58,6 +58,70 @@ the chart than it can carry:**
    order of fifteen points — would be visible. "No difference visible" is NOT
    "no difference", and the screen says so.
 
+### Added 2026-09-11: individual senior academic records
+
+**Approved 2026-09-11 by Alan K (app owner), who was asked directly and
+answered with the live numbers in front of him.**
+
+Every other screen in Academics Mode is whole-school and says so. This one
+names a child. It is recorded as **a new decision, not a widening** of the
+2026-09-10 amendment above, whose own text says "What was granted: nothing
+new... This extends only the PURPOSE" and whose subject throughout is
+aggregates.
+
+**The decision it informs:** whether a named senior takes part in senior
+privileges. The school uses grades as the incentive and a failing grade
+withdraws it, so the decision is about a named child and cannot be made from an
+aggregate. "How many seniors are failing" cannot tell you whether a particular
+student goes to the breakfast.
+
+**What was granted:** admin and superadmin may see a named twelfth-grade
+student's posted course grades, which classes they are failing, and the
+assignments behind those grades.
+
+**What was NOT granted:**
+
+- nothing below grade 12 — the grade level is re-derived server side on every
+  open, so the grant is bounded by the code and not by which button the browser
+  drew;
+- nothing for `teacher`, `campusaide` or `pbis`, including a teacher's own
+  seniors. Teaching a senior is not a reason to see every class they are
+  failing, and senior privileges are administered rather than taught;
+- no demographic field. `restrictedPolicy.ts` is untouched, `RESTRICTED_FIELDS`
+  is unchanged, and neither query opens `psRestricted`;
+- no export, and no stored eligibility decision. The screen shows grades; it
+  does not record a verdict, and the words *eligible* and *ineligible* appear
+  nowhere on it.
+
+**The gate is `requireAdmin`, not `requireStaff` plus a role array.** The two
+express the same set today, and that is exactly the trap: the obvious future
+edit is appending `pbis` when PBIS asks for the aggregate dashboard. On an
+aggregate that hands over counts; here the same one-word edit would hand over
+forty-one named seniors' failing grades and their homework. Widening this means
+editing `identity.ts`.
+
+**Failing bar in force at approval: D, F and NP.** Chosen by the owner from the
+measured alternatives — four of the forty-one seniors have a D as their worst
+mark, and would show no failing classes under an F-only rule. The bar is one
+constant, `FAILING_THRESHOLD` in `convex/seniorEligibility.ts`, changed in a
+commit rather than in a browser: a privilege rule two administrators could have
+set differently in two settings screens is worse than either answer.
+
+**Limits recorded at the time of approval:**
+
+1. **An unmarked class is counted as unknown, never as a pass and never as a
+   fail.** Four weeks in, most gradebooks are incomplete. A student with no
+   posted grade at all is shown as unanswerable and sorted to the top, rather
+   than as a clean zero.
+2. **A running sync can undercount.** The grade table is cleared and refilled
+   in chunks, so a read mid-sync sees part of the truth. On this screen an
+   undercount grants a privilege, so the screen detects it and says so.
+3. **This screen is not a record of who is enrolled.** It lists the students the
+   PowerSchool roster puts in grade 12. A senior missing from that roster is
+   missing from this list.
+
+**Review due: 2027-09-11.**
+
 #### Added 2026-09-10: course-level failure, and three kinds of course it refuses
 
 Course failure rates and the multi-course failure distribution (metrics 1 and 3

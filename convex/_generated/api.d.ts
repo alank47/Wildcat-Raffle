@@ -53,6 +53,8 @@ import type * as scheduleRules from "../scheduleRules.js";
 import type * as seed from "../seed.js";
 import type * as seedBellSchedules from "../seedBellSchedules.js";
 import type * as seedTestRoster from "../seedTestRoster.js";
+import type * as seniorAcademics from "../seniorAcademics.js";
+import type * as seniorEligibility from "../seniorEligibility.js";
 import type * as sisAction from "../sisAction.js";
 import type * as sisManual from "../sisManual.js";
 import type * as sisMerge from "../sisMerge.js";
@@ -122,6 +124,8 @@ declare const fullApi: ApiFromModules<{
   seed: typeof seed;
   seedBellSchedules: typeof seedBellSchedules;
   seedTestRoster: typeof seedTestRoster;
+  seniorAcademics: typeof seniorAcademics;
+  seniorEligibility: typeof seniorEligibility;
   sisAction: typeof sisAction;
   sisManual: typeof sisManual;
   sisMerge: typeof sisMerge;

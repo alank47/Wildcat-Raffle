@@ -50,14 +50,24 @@ console.log("\n-- three gates, and the server is the real one --");
     /!ACADEMICS_ROLES\.includes\(staff\.role\)/.test(server));
   check("the mode switcher checks too", /canOpenAcademics\(currentUser && currentUser\.role\)/.test(script));
   check("and sends a refused caller somewhere safe", /switchSystemMode\('cash'\);/.test(script));
-  // SCOPED TO THE ACADEMICS RENDERER, not the whole file. script.js legitimately
-  // mentions raceCodes elsewhere -- the admin race-VERIFICATION screen, which
-  // the 2026-08-19 amendment approved so an administrator can check the
-  // aggregate against its source. Scanning the whole file caught that and
-  // failed for the wrong reason.
+  // SCOPED TO THE AGGREGATE RENDERERS, not the whole file and not the whole
+  // mode. script.js legitimately mentions raceCodes elsewhere -- the admin
+  // race-VERIFICATION screen, which the 2026-08-19 amendment approved so an
+  // administrator can check the aggregate against its source. Scanning the
+  // whole file caught that and failed for the wrong reason.
+  //
+  // THE END ANCHOR MOVED ON 2026-09-11 and the reason matters. The Seniors tab
+  // was added between renderAcademics and switchSystemMode, and it handles
+  // student numbers BY DESIGN -- it is the one tab in Academics approved to
+  // name a child. Ending the slice at switchSystemMode swept that code into an
+  // assertion written to protect the aggregate cards, so the test failed for
+  // doing its job on the wrong subject. The guard that matters for the senior
+  // code is its own gate, asserted in senior-academics.test.mjs.
   const renderer = script.slice(script.indexOf("async function renderAcademics"),
-                                script.indexOf("function switchSystemMode"));
+                                script.indexOf("// ---- Academics: two tabs, two rules"));
   check("the academics renderer was located", renderer.length > 1000);
+  check("and the slice stops before the named-student tab",
+    !/openSeniorDetail|renderSeniorAcademics/.test(renderer));
   check("the browser never computes the breakdown itself",
     !/reportedCategories|raceCodes|fedEthnicity|classifyEthnicity/.test(renderer));
   check("it never receives a student number either", !/studentNumber/.test(renderer));

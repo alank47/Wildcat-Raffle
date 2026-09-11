@@ -27,9 +27,14 @@ const check = (n, c) => { c ? (pass++, console.log(`  PASS  ${n}`)) : (fail++, c
 // The renderer for these cards, isolated the same way academics-mode.test.mjs
 // isolates the race one -- so a match here is about THIS code and not about
 // something that happens to be elsewhere in a 30,000-line file.
+// Ends at the Seniors tab, not at switchSystemMode. That tab was added between
+// the two on 2026-09-11 and handles student numbers BY DESIGN -- it is the one
+// tab in Academics approved to name a child. Its own gate is asserted in
+// senior-academics.test.mjs; sweeping it in here made an assertion written for
+// the aggregate cards fail on the wrong subject.
 const renderer = script.slice(
   script.indexOf("function renderAcademicsCourses"),
-  script.indexOf("function switchSystemMode"),
+  script.indexOf("// ---- Academics: two tabs, two rules"),
 );
 
 // The query, isolated to its own function body rather than matched with a
@@ -42,6 +47,8 @@ const courseFn = server.slice(
 console.log("\n-- the same gate as the rest of academics --");
 {
   check("the renderer was located", renderer.length > 1000);
+  check("and the slice stops before the named-student tab",
+    !/openSeniorDetail|renderSeniorAcademics/.test(renderer));
   check("the query is in the file the gate tests already read",
     /export const courseFailure = query\(/.test(server));
   check("the query body was isolated", courseFn.length > 2000);
