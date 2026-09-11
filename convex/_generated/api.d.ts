@@ -24,6 +24,7 @@ import type * as entraSync from "../entraSync.js";
 import type * as gradeProjection from "../gradeProjection.js";
 import type * as hallPassRules from "../hallPassRules.js";
 import type * as hallPasses from "../hallPasses.js";
+import type * as historyProbe from "../historyProbe.js";
 import type * as identity from "../identity.js";
 import type * as identityRules from "../identityRules.js";
 import type * as leaderboard from "../leaderboard.js";
@@ -88,6 +89,7 @@ declare const fullApi: ApiFromModules<{
   gradeProjection: typeof gradeProjection;
   hallPassRules: typeof hallPassRules;
   hallPasses: typeof hallPasses;
+  historyProbe: typeof historyProbe;
   identity: typeof identity;
   identityRules: typeof identityRules;
   leaderboard: typeof leaderboard;
