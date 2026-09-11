@@ -154,8 +154,31 @@ export function isHeritageLanguageSection(courseName: unknown): boolean {
                 "HERITAGE SPANISH", "FOR SPANISH SPEAKERS");
 }
 
+/**
+ * A COURSE WITH NO NAME AT ALL, which this app also refuses to rate.
+ *
+ * FOUND IN THE LIVE CATALOGUE ON 2026-09-10 AND IT IS THE CASE THAT MATTERS.
+ * Course 7002A carries no `courseName`: the grades PowerQuery LEFT JOINs
+ * COURSES, so a missing course row blanks the name rather than dropping the
+ * child's row. That course is "RSP A" (docs/sis-expansion.md:190) -- a
+ * special-education section of about twenty students.
+ *
+ * Every other refusal here works by READING the name. With no name, all of
+ * them return false, and a special-education section would have sailed
+ * through every guard and published a failure rate under the label
+ * "Course 7002A".
+ *
+ * So the rule is the conservative one: a course we cannot name is a course we
+ * cannot clear. It is listed in the catalogue count and left out of the
+ * ranking, and its students still count in every school-wide figure.
+ */
+export function isUnnamedCourse(courseName: unknown): boolean {
+  return normalise(courseName).trim() === "";
+}
+
 export function isUnratedCohort(courseName: unknown): boolean {
-  return isSpecialEducation(courseName) ||
+  return isUnnamedCourse(courseName) ||
+    isSpecialEducation(courseName) ||
     isEnglishLearnerProgram(courseName) ||
     isHeritageLanguageSection(courseName);
 }
@@ -369,7 +392,11 @@ const RULES: Rule[] = [
                         "COLLEGE AND CAREER", "COLLEGE CAREER", "OFFICE AIDE",
                         "TEACHER AIDE", "LIBRARY AIDE", "TEACHER ASSISTANT",
                         "STUDENT AIDE", "AIDE", "LIFE SKILLS", "SEL",
-                        "SOCIAL EMOTIONAL", "RESTORATIVE", "STUDY SKILLS"),
+                        "SOCIAL EMOTIONAL", "RESTORATIVE", "STUDY SKILLS",
+                        // ENRICHMENT is this school's own name for a
+                        // non-core block: four sections, read off the live
+                        // catalogue on 2026-09-10.
+                        "ENRICHMENT"),
   },
 
   // ==== BLOCK 3: names that genuinely mean two things =======================
@@ -404,9 +431,14 @@ const RULES: Rule[] = [
   },
   {
     subject: UNCLASSIFIED,
-    note: "GEO on its own is a real PowerSchool truncation and is genuinely " +
-          "undecidable between Geometry and Geography.",
-    test: (n) => has(n, "GEO"),
+    note: "GEO ON ITS OWN is a real PowerSchool truncation, undecidable " +
+          "between Geometry and Geography. It must NOT fire inside a name " +
+          "that already says which -- this school runs 'World History & Geo " +
+          "6A' and '7A', and the first version filed both as uncategorised " +
+          "on the strength of one abbreviation sitting next to the word that " +
+          "resolves it.",
+    test: (n) => has(n, "GEO") &&
+      !has(n, "HISTORY", "GEOGRAPHY", "GEOMETRY", "WORLD"),
   },
   {
     subject: UNCLASSIFIED,
@@ -460,7 +492,7 @@ const RULES: Rule[] = [
     subject: "Social Studies",
     test: (n) => has(n, "HISTORY", "GOVERNMENT", "GOVT", "CIVICS", "ECONOMICS",
                         "ECON", "GEOGRAPHY", "PSYCHOLOGY", "SOCIOLOGY",
-                        "WORLD CULTURES", "ANTHROPOLOGY"),
+                        "WORLD CULTURES", "ANTHROPOLOGY", "PHILOSOPHY"),
   },
   {
     subject: "Physical Education & Health",

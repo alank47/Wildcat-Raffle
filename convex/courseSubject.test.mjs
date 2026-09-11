@@ -17,7 +17,7 @@
 
 import {
   subjectOf, normalise, isSpecialEducation, isEnglishLearnerProgram,
-  isHeritageLanguageSection, isUnratedCohort, classificationCoverage,
+  isHeritageLanguageSection, isUnratedCohort, isUnnamedCourse, classificationCoverage,
   SUBJECTS, UNCLASSIFIED,
 } from "./courseSubject.ts";
 
@@ -236,6 +236,183 @@ console.log("\n-- coverage is measurable, because the screen has to print it --"
   check("nor a weighted one", classificationCoverage([]).weightedFraction === null);
   check("a catalogue with no weights still counts names",
     classificationCoverage([{ name: "Algebra 1A" }]).classified === 1);
+}
+
+
+// ============================================================================
+// WESTBROOK'S ACTUAL CATALOGUE, read off the live deployment on 2026-09-10 via
+// legacyPurge:courseNameCatalogue. All 73 distinct courses, course number and
+// name, no student data.
+//
+// THIS IS THE TEST THAT MATTERS. Everything above is my judgement about what a
+// California course catalogue looks like. This is what THIS school actually
+// runs, and the first draft got eight of them wrong.
+//
+// The course numbers are not decoration either: this school numbers by subject
+// -- 0 advisory, 1 English, 2 maths, 3 science, 4 social studies, 5 PE, 6 ELD,
+// 7 special education and support, 8 electives, 9 arts and media -- and the
+// name-based guess agrees with that numbering on every course it can name. The
+// numbering is NOT used to classify: it is one school's local scheme, it would
+// break the day the district renumbers, and on the prefix-8 electives the NAME
+// is the better signal anyway (Spanish is a world language, Art is an art,
+// Creative Writing is English, and the number says only "elective"). It is
+// used here as the independent check that the guessing is not merely
+// self-consistent.
+// ============================================================================
+const CATALOGUE = [
+  ["0000A", "Promise Time 9A"],
+  ["0001A", "Promise Time 10A"],
+  ["0002A", "Promise Time 11A"],
+  ["0003A", "Promise Time 12A"],
+  ["0004A", "Power Up 9A"],
+  ["0005A", "Power Up 10A"],
+  ["0006A", "Power Up 11A"],
+  ["0007A", "Power Up 12A"],
+  ["0100A", "Promise Time 6A"],
+  ["0101A", "Promise Time 7A"],
+  ["0102A", "Promise Time 8A"],
+  ["0103A", "Power Up 6A"],
+  ["0104A", "Power Up 7A"],
+  ["0105A", "Power Up 8A"],
+  ["1000A", "Common Core English 9 A"],
+  ["1001A", "Common Core English 10 A"],
+  ["1002A", "Common Core English 11 A"],
+  ["1003A", "Common Core English 12 A"],
+  ["1100A", "English 6A"],
+  ["1101A", "English 7A"],
+  ["1102A", "English 8A"],
+  ["2004A", "Pre-Calculus A"],
+  ["2005A", "Geometry A"],
+  ["2006A", "Algebra 1A"],
+  ["2007A", "Algebra 2A"],
+  ["2100A", "Common Core Math 6A"],
+  ["2101A", "Common Core Math 7A"],
+  ["2102A", "Common Core Math 8A"],
+  ["3000A", "The Living Earth A"],
+  ["3001A", "Chemistry in the Earth System A"],
+  ["3004A", "Anatomy A"],
+  ["3100A", "Integrated Science 6A"],
+  ["3101A", "Integrated Science 7A"],
+  ["3102A", "Integrated Science 8A"],
+  ["4000A", "World History A"],
+  ["4001A", "US History A"],
+  ["4004A", "Government"],
+  ["4005A", "Ethnic Studies A"],
+  ["4041A", "AP US History A"],
+  ["4100A", "World History & Geo 6A"],
+  ["4101A", "World History & Geo 7A"],
+  ["4102A", "US History 8A"],
+  ["5000A", "PE 1A"],
+  ["5021A", "PE Elective-Weight Training & Fitness"],
+  ["5101A", "PE 7A"],
+  ["5102A", "PE 8A"],
+  ["5103A", "PE 6A"],
+  ["6002A", "Designated ELD 1/2A"],
+  ["6004A", "Designated ELD 3A"],
+  ["6100A", "Designated ELD 1A"],
+  ["6101A", "Designated ELD 2/3A"],
+  ["7002A", ""],
+  ["7014A", "Math Support A"],
+  ["7101A", "RSP A"],
+  ["8000A", "Spanish 1A"],
+  ["8001A", "Spanish 2A"],
+  ["8025A", "Creative Writing A"],
+  ["8026A", "Philosophy A"],
+  ["8033A", "Associated Student Body (ASB) A"],
+  ["8035A", "Film AnalysisExpositoryReading&Writing A"],
+  ["8040A", "AP Spanish Language A"],
+  ["8100A", "Spanish 1A"],
+  ["8110A", "Enrichment 4A"],
+  ["8122A", "Enrichment 6A"],
+  ["8125A", "Enrichment 7A"],
+  ["8127A", "Art 1A"],
+  ["9003A", "Multimedia Production 1A"],
+  ["9004A", "Multimedia Production 2A"],
+  ["9005A", "Multimedia Production 3A"],
+  ["9027A", "Art 1A"],
+  ["9031A", "Intermediate Art 2A"],
+  ["9032A", "Newscasting A"],
+  ["9034A", "Graphic Design A"]
+];
+
+const PREFIX_SUBJECT = {
+  "1": "English", "2": "Mathematics", "3": "Science",
+  "4": "Social Studies", "5": "Physical Education & Health",
+  "9": "Visual & Performing Arts",
+};
+
+console.log("\n-- the school's real catalogue, all 73 courses --");
+{
+  const unnamed = CATALOGUE.filter(([, n]) => !n);
+  const named = CATALOGUE.filter(([, n]) => n);
+  const unclassified = named.filter(([, n]) => subjectOf(n) === UNCLASSIFIED);
+
+  check("the catalogue is all 73 courses", CATALOGUE.length === 73);
+  // Only RSP A survives, and it is refused on a different axis anyway.
+  check("at most one NAMED course is unclassified", unclassified.length <= 1);
+  check("and that one is the special-education section",
+    unclassified.every(([, n]) => isSpecialEducation(n)));
+
+  // THE CROSS-CHECK. Where the school's own numbering names a subject, the
+  // guess from the name must agree. Zero disagreements, measured 2026-09-10.
+  const disagreements = named.filter(([num, n]) => {
+    const want = PREFIX_SUBJECT[String(num).charAt(0)];
+    if (!want) return false;                       // 0/6/7/8 are not subjects
+    const got = subjectOf(n);
+    return got !== UNCLASSIFIED && got !== want;
+  });
+  check("no course disagrees with the school's own subject numbering",
+    disagreements.length === 0);
+
+  // The eight the first draft could not read. Every one is now named.
+  is("World History & Geo 6A", "Social Studies");
+  is("World History & Geo 7A", "Social Studies");
+  is("Philosophy A", "Social Studies");
+  is("Enrichment 7A", "Support & Advisory");
+  is("Chemistry in the Earth System A", "Science");
+  is("The Living Earth A", "Science");
+  is("PE Elective-Weight Training & Fitness", "Physical Education & Health");
+  is("Associated Student Body (ASB) A", "Support & Advisory");
+  // The words run together in the SIS, so this normalises to
+  // " FILM ANALYSISEXPOSITORYREADING WRITING A " and only WRITING survives as
+  // a token. That lands it in English, which is RIGHT: this is California's
+  // Expository Reading & Writing course taught through film, not a film
+  // elective. The mangled middle token is a reminder that a name can be
+  // unreadable and still classify correctly by accident -- and that the
+  // reverse is just as possible.
+  is("Film AnalysisExpositoryReading&Writing A", "English");
+
+  // ...while a bare truncation is still honestly undecidable.
+  is("Geo A", UNCLASSIFIED);
+
+  // Every one of this school's four ELD sections is refused.
+  const eld = CATALOGUE.filter(([num]) => String(num).charAt(0) === "6");
+  check("all four Designated ELD sections are refused",
+    eld.length === 4 && eld.every(([, n]) => isUnratedCohort(n)));
+
+  check("every course in the catalogue is either rated or refused for a reason",
+    CATALOGUE.every(([, n]) => isUnratedCohort(n) || subjectOf(n) !== UNCLASSIFIED ||
+      isSpecialEducation(n)));
+
+  check("exactly one course in this catalogue carries no name at all",
+    unnamed.length === 1);
+}
+
+console.log("\n-- a course with no name cannot be cleared --");
+{
+  // FOUND IN THE LIVE CATALOGUE AND IT IS THE CASE THAT MATTERS. Course 7002A
+  // has no courseName -- the grades query LEFT JOINs COURSES, so a missing
+  // course row blanks the name. That course is "RSP A", about twenty students.
+  // Every other refusal here works by READING the name, so with no name they
+  // all returned false and a special-education section would have published a
+  // failure rate labelled "Course 7002A".
+  check("an empty name is refused", isUnnamedCourse("") && isUnratedCohort(""));
+  check("so is whitespace", isUnratedCohort("   "));
+  check("so is a missing one", isUnratedCohort(undefined) && isUnratedCohort(null));
+  check("so is a non-string", isUnratedCohort(1234));
+  check("a real course is still rated", !isUnratedCohort("Algebra 1A"));
+  check("the real unnamed course in the catalogue is caught",
+    CATALOGUE.filter(([, n]) => !n).every(([, n]) => isUnratedCohort(n)));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

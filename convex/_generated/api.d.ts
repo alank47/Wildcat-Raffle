@@ -20,6 +20,7 @@ import type * as auditMigrate from "../auditMigrate.js";
 import type * as auditMigrateRead from "../auditMigrateRead.js";
 import type * as authEvents from "../authEvents.js";
 import type * as bellSchedules from "../bellSchedules.js";
+import type * as courseSubject from "../courseSubject.js";
 import type * as crons from "../crons.js";
 import type * as disciplineAggregates from "../disciplineAggregates.js";
 import type * as entraProbe from "../entraProbe.js";
@@ -88,6 +89,7 @@ declare const fullApi: ApiFromModules<{
   auditMigrateRead: typeof auditMigrateRead;
   authEvents: typeof authEvents;
   bellSchedules: typeof bellSchedules;
+  courseSubject: typeof courseSubject;
   crons: typeof crons;
   disciplineAggregates: typeof disciplineAggregates;
   entraProbe: typeof entraProbe;
