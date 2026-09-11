@@ -87,8 +87,10 @@ console.log("\n-- the ranking is not the rate, and that is the point --");
   // Ranking by raw rate hands the top of the list to the smallest courses.
   check("the sort key is the interval's lower bound", /export function rankScore/.test(rules));
   check("and it is Wilson, not a normal approximation", /wilson95\(failing, graded\)/.test(rules));
+  // The comparator moved into a named byScore when the class/support split
+  // landed, because two lists now share it.
   check("the query sorts by it, not by rate",
-    /\.sort\(\(a, b\) => \(b\.score \?\? -1\) - \(a\.score \?\? -1\)/.test(courseFn));
+    /const byScore = \(a: any, b: any\) =>\s*\n\s*\(b\.score \?\? -1\) - \(a\.score \?\? -1\)/.test(courseFn));
   // The floor alone is NOT enough: it is not monotone in n at the extremes, so
   // a course where 10 of 10 fail scores 72.2% and would outrank Common Core
   // Math 8A's 62.9% over 147 students.
@@ -113,6 +115,49 @@ console.log("\n-- the ranking is not the rate, and that is the point --");
   check("and the footer says the comparison excludes the course's own students",
     /higher share of students than the rest of the school/.test(renderer) &&
     /its own students are taken out/.test(renderer));
+}
+
+console.log("\n-- an intervention block is not a class --");
+{
+  // MEASURED ON THE LIVE CATALOGUE 2026-09-11. Nineteen of the seventy-three
+  // courses are support or advisory, twelve with twenty or more graded
+  // students -- a quarter of the rankable list. Promise Time 9A at 50% and
+  // Power Up 8A at 41% sat above most real academic classes, and the reason is
+  // selection rather than teaching: students are placed in Power Up BECAUSE
+  // they were already failing something. Ranking it beside Algebra 1A answers
+  // a question about who was enrolled.
+  check("the predicate lives with the classifier, not in the query",
+    /export function isSupportBlock/.test(subject) &&
+    /SUPPORT_SUBJECT: Subject = "Support & Advisory"/.test(subject));
+  check("and records why the rates are not comparable",
+    /NOT COMPARABLE TO A CLASS/.test(subject.replace(/\s+/g, " ")));
+  check("the query splits them into two lists",
+    /rankable\.filter\(\(c\) => !c\.support\)\.sort\(byScore\)/.test(courseFn) &&
+    /rankable\.filter\(\(c\) => c\.support\)\.sort\(byScore\)/.test(courseFn));
+  check("both are ranked by the same rule", /const byScore = /.test(courseFn));
+
+  // Being above the school rate is what PUTS a student in one of these, so the
+  // badge would be true, uninformative, and read as a finding.
+  check("a support block is never badged as worse than the school",
+    /!c\.support && coverageOk/.test(courseFn));
+  check("and the footer says why they are left out of that comparison",
+    /being above the school rate is what puts a student in one/.test(renderer));
+
+  check("they are shown rather than hidden",
+    /id="acadCoursesSupport"/.test(html) && /d\.support/.test(renderer));
+  // Asserted on DOM ORDER, not on source order: the renderer's empty-state
+  // branch assigns supportEl.innerHTML before the populated one, so comparing
+  // string positions in the source measured the wrong thing.
+  check("under a heading that states the caveat", /NOT comparable to/.test(renderer));
+  check("and the heading sits above the rows in the markup",
+    html.indexOf('id="acadSupportHead"') < html.indexOf('id="acadCoursesSupport"'));
+  check("and the tally counts them as their own group",
+    /support and advisory blocks, listed separately/.test(renderer));
+  // The five groups must still partition the catalogue, or the tally lies.
+  check("the split leaves the accounting complete",
+    /line\(d\.coursesTotal/.test(renderer) && /line\(d\.support\.length/.test(renderer) &&
+    /line\(d\.notRanked\.length/.test(renderer) && /line\(d\.withheldCourses/.test(renderer) &&
+    /line\(d\.cohortExcluded/.test(renderer));
 }
 
 console.log("\n-- a course list is not a teacher list --");

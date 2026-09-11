@@ -6,7 +6,7 @@ import {
   rankScore, aboveSchoolRate, restOfSchoolRate, courseCell, coverageEnvelope,
   collapseDepth, DEPTH_BUCKETS, SMALL_GROUP, MIN_CELL_COUNT, RANKABLE_N,
 } from "./academicsRules";
-import { subjectOf, isUnratedCohort, classificationCoverage } from "./courseSubject";
+import { subjectOf, isUnratedCohort, isSupportBlock, classificationCoverage } from "./courseSubject";
 
 /**
  * Academics: the school's grades, aggregated, and never a child.
@@ -207,6 +207,7 @@ export const courseFailure = query({
           "Academics is limited to administrators. Ask an administrator to " +
           "change your access level if you need it.",
         courses: [],
+        support: [],
         notRanked: [],
         subjects: [],
         depth: [],
@@ -222,6 +223,7 @@ export const courseFailure = query({
       name: string;
       subject: string;
       unrated: boolean;
+      support: boolean;
       rows: number;        // enrolments, marked or not
       markedRows: number;  // carrying any mark at all, including P/NP
       graded: number;      // carrying an A-F letter: the rate's denominator
@@ -269,6 +271,7 @@ export const courseFailure = query({
           name: name || "Course " + key,
           subject: String(subjectOf(name)),
           unrated: isUnratedCohort(name),
+          support: isSupportBlock(name),
           rows: 0, markedRows: 0, graded: 0, failing: 0,
         };
         byCourse.set(key, acc);
@@ -364,8 +367,13 @@ export const courseFailure = query({
         // NEVER BADGE A COURSE THE COVERAGE GATE HAS NOT CLEARED. A course at
         // half a gradebook is not a course with a problem; it is a course
         // nobody can see yet.
+        support: c.support,
+        // NEVER BADGED, and not because the arithmetic fails. A support block
+        // is above the school rate BY CONSTRUCTION -- its students are placed
+        // there for already failing -- so "clearly worse than the school" is
+        // true, uninformative, and reads as a finding.
         aboveSchool:
-          coverageOk && comparator !== null &&
+          !c.support && coverageOk && comparator !== null &&
           cell.failingStudents !== null && cell.studentsWithMarks !== null
             ? aboveSchoolRate(cell.failingStudents, cell.studentsWithMarks, comparator)
             : false,
@@ -384,9 +392,17 @@ export const courseFailure = query({
       };
     });
 
-    const courses = built
-      .filter((c) => c.withheld === null && c.notRankedReason === null)
-      .sort((a, b) => (b.score ?? -1) - (a.score ?? -1) || (b.studentsWithMarks ?? 0) - (a.studentsWithMarks ?? 0));
+    const byScore = (a: any, b: any) =>
+      (b.score ?? -1) - (a.score ?? -1) || (b.studentsWithMarks ?? 0) - (a.studentsWithMarks ?? 0);
+    const rankable = built.filter((c) => c.withheld === null && c.notRankedReason === null);
+    // TWO LISTS, NOT ONE. A support block's rate is not comparable to a
+    // class's: students are placed in Power Up because they were already
+    // failing, so ranking it beside Algebra 1A answers a question about who
+    // was enrolled. Measured 2026-09-11: twelve of the forty-eight rankable
+    // courses were support blocks, and Promise Time 9A at 50% sat above most
+    // real academic classes.
+    const courses = rankable.filter((c) => !c.support).sort(byScore);
+    const support = rankable.filter((c) => c.support).sort(byScore);
     // Listed, never ranked, and told why. A course is not hidden for being
     // behind on its gradebook -- it is just not put in an order it cannot earn.
     const notRanked = built.filter((c) => c.withheld === null && c.notRankedReason !== null);
@@ -486,6 +502,7 @@ export const courseFailure = query({
         failing: schoolFailing,
       },
       courses,
+      support,
       notRanked,
       coursesTotal: byCourse.size,
       coursesReportable: courses.length,

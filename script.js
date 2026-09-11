@@ -24626,6 +24626,9 @@
                 tally.innerHTML =
                     line(d.coursesTotal, 'classes in total', true) +
                     line(d.courses.length, 'ranked below') +
+                    ((d.support || []).length
+                        ? line(d.support.length, 'support and advisory blocks, listed separately')
+                        : '') +
                     (d.notRanked.length
                         ? line(d.notRanked.length, 'not ranked yet \u2014 not enough grades entered')
                         : '') +
@@ -24640,6 +24643,29 @@
             courseEl.innerHTML = d.courses.length === 0
                 ? '<p class="wu-absent">No class has enough grades entered to rank yet.</p>'
                 : d.courses.map(function (c) { return courseRow(c, false); }).join('');
+
+            // SUPPORT AND ADVISORY, RANKED AMONG THEMSELVES. Which
+            // intervention block is failing the most students is a real and
+            // useful question. It is just not the same question as which class
+            // is, and one list cannot answer both.
+            const sHead = document.getElementById('acadSupportHead');
+            const supportEl = document.getElementById('acadCoursesSupport');
+            if (sHead && supportEl) {
+                const sup = d.support || [];
+                if (!sup.length) {
+                    sHead.textContent = '';
+                    supportEl.innerHTML = '';
+                } else {
+                    sHead.textContent =
+                        'Support and advisory blocks \u2014 Power Up, Promise Time, Enrichment and ' +
+                        'the like \u2014 ranked among themselves. Their rates are NOT comparable to ' +
+                        'the classes above: students are placed in these because they were ' +
+                        'already failing something, so a high rate here is mostly a fact about ' +
+                        'who was enrolled. Which block is struggling most is still worth ' +
+                        'knowing, which is why they are here rather than hidden.';
+                    supportEl.innerHTML = sup.map(function (c) { return courseRow(c, false); }).join('');
+                }
+            }
 
             const uHead = document.getElementById('acadUnrankedHead');
             const unrankedEl = document.getElementById('acadCoursesUnranked');
@@ -24670,6 +24696,10 @@
                     'compared with the school after its own students are taken out, so a big ' +
                     'class is not partly compared with itself. The rest are high, but not ' +
                     'clearly higher than the school as a whole.' +
+                    ((d.support || []).length
+                        ? ' Support and advisory blocks are left out of that comparison: ' +
+                          'being above the school rate is what puts a student in one.'
+                        : '') +
                     (d.withheldCourses > 0 || d.cohortExcluded > 0 ? '\n\n' : '') +
                     (d.withheldCourses > 0
                         ? 'The ' + d.withheldCourses + ' class' +

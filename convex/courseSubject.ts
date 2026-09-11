@@ -520,6 +520,30 @@ const RULES: Rule[] = [
   },
 ];
 
+/** The bucket that is not a course of study. */
+export const SUPPORT_SUBJECT: Subject = "Support & Advisory";
+
+/**
+ * IS THIS AN INTERVENTION OR ADVISORY BLOCK RATHER THAN A CLASS?
+ *
+ * A SUPPORT BLOCK'S FAILURE RATE IS NOT COMPARABLE TO A CLASS'S, and the
+ * reason is selection, not teaching: students are placed in Power Up because
+ * they were already failing something. Ranking it beside Algebra 1A asks which
+ * is failing more students and answers a question about who was enrolled.
+ *
+ * Measured on the live catalogue 2026-09-11: nineteen of the seventy-three
+ * courses are support or advisory, twelve of them with twenty or more graded
+ * students -- a quarter of the ranked list. Promise Time 9A at 50% and Power
+ * Up 8A at 41% would have sat above most real academic classes.
+ *
+ * So they are listed, ranked among THEMSELVES, and never mixed into the class
+ * list. Which intervention block is failing the most students is a real and
+ * useful question; it is just a different one.
+ */
+export function isSupportBlock(courseName: unknown): boolean {
+  return subjectOf(courseName) === SUPPORT_SUBJECT;
+}
+
 /**
  * The subject this course name most likely belongs to, or "Not categorised".
  *

@@ -1,5 +1,8 @@
 import { internalQuery, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
+// Static, because Convex refuses a dynamic import at runtime.
+import { isUnratedCohort, isSupportBlock } from "./courseSubject";
+import { courseCell } from "./academicsRules";
 
 /**
  * Reading and removing a legacy document, in pages.
@@ -1907,6 +1910,40 @@ export const seniorListShape = internalQuery({
       failingCountHistogram: failingCounts,
       enrolmentsWithPeriod: periodsPresent,
       enrolmentsWithTeacherEmail: teacherEmailsPresent,
+    };
+  },
+});
+
+/** Does the class/support split still account for every course? Counts only. */
+export const courseSplitAddsUp = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("psGrades").collect();
+    const byCourse = new Map<string, { name: string; rows: number; marked: number; graded: number; failing: number }>();
+    for (const g of all as any[]) {
+      const name = String(g.courseName ?? "").trim();
+      const key = String(g.courseNumber ?? "") || name || "(unnamed)";
+      const e = byCourse.get(key) ?? { name, rows: 0, marked: 0, graded: 0, failing: 0 };
+      e.rows++;
+      const L = typeof g.currentGrade === "string" ? g.currentGrade.trim().toUpperCase() : "";
+      if (L && L !== "--" && L !== "-") e.marked++;
+      if (["A", "B", "C", "D", "F"].includes(L)) { e.graded++; if (L === "D" || L === "F") e.failing++; }
+      byCourse.set(key, e);
+    }
+    let unrated = 0, withheld = 0, notRanked = 0, cls = 0, sup = 0;
+    const schoolCoverage = 0.774, floor = Math.max(0.5, schoolCoverage - 0.15);
+    for (const c of byCourse.values()) {
+      if (isUnratedCohort(c.name)) { unrated++; continue; }
+      const cell = courseCell({ label: c.name, graded: c.graded, failing: c.failing, rows: c.rows, markedRows: c.marked });
+      if (cell.withheld !== null) { withheld++; continue; }
+      if (!cell.rankable || (cell.coverage ?? 0) < floor) { notRanked++; continue; }
+      if (isSupportBlock(c.name)) sup++; else cls++;
+    }
+    const total = byCourse.size;
+    return {
+      total, classesRanked: cls, supportRanked: sup, notRanked, withheld, unrated,
+      sum: cls + sup + notRanked + withheld + unrated,
+      addsUp: cls + sup + notRanked + withheld + unrated === total,
     };
   },
 });
