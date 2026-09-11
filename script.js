@@ -24249,11 +24249,26 @@
                 p.textContent = mode ? `${MODE_META[mode].label} Mode` : '';
             });
             // Nav visibility: raffle/cash → #modeNav (switchSystemMode owns show/hide);
-            // hallpass/discipline → #modeSubNav; no mode → hide both.
+            // A MODE SHOWS ITS SUBNAV IF IT HAS ONE. Asked of MODE_SUBTABS,
+            // not of a hardcoded list of mode names.
+            //
+            // THE BUG THIS FIXES, AND IT SHIPPED. This read
+            //   } else if (mode === 'hallpass' || mode === 'discipline') {
+            // with an else that set innerHTML = ''. So when Academics gained a
+            // subnav, switchSystemMode built the buttons with
+            // renderModeSubnav('academics') and then called this function one
+            // line later, which fell through to the else and WIPED them. The
+            // Seniors tab was rendered and destroyed in the same tick, and
+            // nothing errored -- the nav was simply empty and hidden.
+            //
+            // Second time in one feature that a hardcoded two-mode list broke a
+            // third mode; sidebarSubTab's container ternary was the first. Any
+            // future `mode === 'x' || mode === 'y'` in this file is this bug
+            // waiting to happen again.
             if (!mode) {
                 if (modeNav) modeNav.style.display = 'none';
                 if (subNav) { subNav.style.display = 'none'; subNav.innerHTML = ''; }
-            } else if (mode === 'hallpass' || mode === 'discipline') {
+            } else if (MODE_SUBTABS[mode]) {
                 if (subNav && subNav.innerHTML === '') renderModeSubnav(mode);
                 if (subNav) subNav.style.display = 'flex';
             } else {

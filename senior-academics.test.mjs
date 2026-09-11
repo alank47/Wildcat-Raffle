@@ -229,6 +229,37 @@ console.log("-- no demographic field is anywhere near this --");
     !/fedEthnicity|raceCodes|elaStatus|iepStatus|section504/.test(server));
 }
 
+console.log("-- a mode with subtabs keeps them, whoever asks --");
+{
+  // THE BUG THIS BLOCK EXISTS FOR, AND IT SHIPPED ONCE. updateSidebarModeUI
+  // rendered the subnav for `mode === 'hallpass' || mode === 'discipline'` and
+  // its else branch set innerHTML = ''. switchSystemMode('academics') built
+  // the Seniors buttons and then called that function one line later, which
+  // fell through to the else and WIPED them. Nothing errored; the nav was just
+  // empty, and the tab did not exist as far as anyone could tell.
+  //
+  // This was the SECOND hardcoded two-mode list to break a third mode in one
+  // feature -- sidebarSubTab's container ternary was the first. So the
+  // assertion is about the shape, not about academics: no code path may decide
+  // whether a mode has a subnav by naming modes.
+  const src = code(script);
+  check("the subnav branch asks MODE_SUBTABS, not a list of mode names",
+    /\} else if \(MODE_SUBTABS\[mode\]\) \{/.test(src));
+  check("no surviving code compares mode against two hardcoded names",
+    !/mode === '(hallpass|discipline|academics)' \|\| mode === '/.test(src));
+  check("the container lookup is a map too", /MODE_CONTAINERS = \{/.test(src));
+  check("and every mode with subtabs has a container entry", (() => {
+    const subtabKeys = [...(script.match(/^\s{12}(\w+): \[$/gm) || [])]
+      .map((l) => l.trim().replace(":", "").replace(" [", ""));
+    const containers = (src.match(/MODE_CONTAINERS = \{([\s\S]*?)\}/) || [])[1] || "";
+    return subtabKeys.length >= 3 && subtabKeys.every((k) => containers.includes(k + ":"));
+  })());
+  // And the ordering hazard that made it invisible rather than broken.
+  check("switchSystemMode renders the subnav before it updates the sidebar",
+    script.indexOf("renderModeSubnav('academics')") <
+    script.indexOf("if (typeof updateSidebarModeUI === 'function') updateSidebarModeUI();\n                return;"));
+}
+
 console.log("-- wired into the app --");
 {
   check("the mode has a subnav key", /academics: \[\s*\n\s*\{ id: 'school'/.test(script));
