@@ -32433,21 +32433,113 @@
                     </div>`;
         }
 
+        /* ------------------------------------------------------------
+           WHICH CATEGORY AN AUDIT ENTRY BELONGS TO.
+
+           The feed's chips and its coloured tags both come from here, so a
+           chip can never select a category no card can be in.
+
+           THE BUG THIS FIXES. This was six regexes over the action text, in
+           order, first match wins -- which reads as though the action text
+           were prose. It is not. The app writes eighteen FIXED strings in
+           two different styles, human ("Awarded Tickets") and machine
+           ("cash_deduct"), and the regexes were written against the human
+           ones, so the machine ones fell through the cracks. A student
+           SPENDING their Wildcat Cash writes cash_deduct, that matched
+           /deduct/, and the card read "Reversed" -- which tells a parent an
+           adult took something back, when the child had simply bought
+           something. Four more were wrong the same way: "Qualified for
+           Wildcat Jackpot" (525 of them) and "Reset Wildcat Jackpot Cycle"
+           both matched /jackpot/ and read "Winner" though nobody won, and
+           "Deleted Ticket Entry" (249) read "Tickets" though it is tickets
+           going away.
+
+           So: match the known strings EXACTLY, and let the keywords guess
+           only at an action nobody has written yet. The table below IS the
+           vocabulary -- grep addToAuditLog( and auditLog.push( -- and it is
+           small enough to list and to keep listed. dashboard-feed.test.mjs
+           pins every entry in it, and pins the fallback against the words
+           that used to send a purchase to "Reversed".
+           ------------------------------------------------------------ */
+
+        const FEED_CATS = {
+            award:   { key: 'award',   label: 'Tickets',       tag: 'wu-tag-award',   icon: '&#127903;' },
+            jackpot: { key: 'jackpot', label: 'Jackpot Entry', tag: 'wu-tag-jackpot', icon: '&#127919;' },
+            win:     { key: 'win',     label: 'Winner',        tag: 'wu-tag-win',     icon: '&#127942;' },
+            cash:    { key: 'cash',    label: 'Wildcat Cash',  tag: 'wu-tag-cash',    icon: '&#128176;' },
+            undo:    { key: 'undo',    label: 'Reversed',      tag: 'wu-tag-undo',    icon: '&#8630;'   },
+            fix:     { key: 'fix',     label: 'Correction',    tag: 'wu-tag-fix',     icon: '&#9998;'   },
+            pass:    { key: 'pass',    label: 'Claw Pass',     tag: 'wu-tag-pass',    icon: '&#127915;' },
+            flag:    { key: 'flag',    label: 'Discipline',    tag: 'wu-tag-flag',    icon: '&#128681;' },
+            system:  { key: 'system',  label: 'System',        tag: 'wu-tag-system',  icon: '&#9881;'   }
+        };
+
         /**
-         * Which category an audit entry belongs to.
+         * An action string, flattened to a lookup key.
          *
-         * The feed's chips and its coloured tags both come from here, so a
-         * chip can never select a category no card can be in. Order matters:
-         * "UNDID Award" is a reversal before it is an award.
+         * Lower case; anything that is not a letter, a digit or an underscore
+         * becomes a space. That is what lets ONE table hold both styles:
+         * "Deleted Ticket Entry" and "cash_deduct" both survive it intact.
+         * It also means the emoji on the front of "UNDID Award" falls away
+         * rather than having to be matched -- it is an arrow plus a
+         * variation selector, which does not survive being retyped, so a
+         * table keyed on it would look right and match nothing.
          */
+        function wcFeedActionKey(action) {
+            return String(action === null || action === undefined ? '' : action)
+                .toLowerCase()
+                .replace(/[^a-z0-9_]+/g, ' ')
+                .trim();
+        }
+
+        /** Every action string the app writes, and where it belongs. */
+        const FEED_ACTION_CATS = {
+            'awarded tickets':               'award',
+            'weekly leaderboard bonus':      'award',
+            'qualified for wildcat jackpot':  'jackpot',
+            'raffle winner':                 'win',
+            'wildcat jackpot winner':        'win',
+            'cash_award':                    'cash',
+            'cash_deduct':                   'cash',
+            'reward_redemption':             'cash',
+            'reward_fulfilled':              'cash',
+            'undid award':                   'undo',
+            'deleted ticket entry':          'undo',
+            'reward_cancelled':              'undo',
+            'admin correction':              'fix',
+            'backup exported':               'system',
+            'backup restored':               'system',
+            'reset wildcat jackpot cycle':   'system',
+            'reset_all_student_cash':        'system',
+            'school_year_rollover':          'system'
+        };
+
         function wcFeedCat(entry) {
-            const a = String((entry && entry.action) || '');
-            if (/undid|undo|revers|removed|deduct/i.test(a)) return { key: 'undo', label: 'Reversed', tag: 'wu-tag-undo', icon: '&#8630;' };
-            if (/winner|jackpot|raffle/i.test(a))            return { key: 'win',  label: 'Winner',   tag: 'wu-tag-win',  icon: '&#127942;' };
-            if (/cash|balance|redeem|purchase|store/i.test(a)) return { key: 'cash', label: 'Wildcat Cash', tag: 'wu-tag-cash', icon: '&#128176;' };
-            if (/hall pass|claw pass/i.test(a))              return { key: 'pass', label: 'Claw Pass', tag: 'wu-tag-pass', icon: '&#127915;' };
-            if (/referral|discipline|detention/i.test(a))    return { key: 'flag', label: 'Discipline', tag: 'wu-tag-flag', icon: '&#128681;' };
-            return { key: 'award', label: 'Tickets', tag: 'wu-tag-award', icon: '&#127903;' };
+            const key = wcFeedActionKey(entry && entry.action);
+            const known = FEED_ACTION_CATS[key];
+            if (known) return FEED_CATS[known];
+
+            // Nothing above matched, so this is an action added after this
+            // table was written and we are guessing. Guess quietly.
+            //
+            // "Reversed" is the one label that accuses an adult of taking
+            // something away from a child, so only a word that MEANS that may
+            // reach it. /deduct/ merely co-occurs with reversals, and letting
+            // it in is what mislabelled every purchase in the school.
+            //
+            // Underscores are spaces here so \b can see the ends of a machine
+            // name: in "cash_deduct" there is no word boundary between "cash"
+            // and the underscore.
+            const words = key.replace(/_/g, ' ');
+            if (/\b(undid|undo|reversed|reversal|cancelled|canceled|voided|deleted|removed)\b/.test(words)) return FEED_CATS.undo;
+            if (/\b(referral|discipline|detention|suspension)\b/.test(words))     return FEED_CATS.flag;
+            if (/\b(hall|claw) pass\b/.test(words))                               return FEED_CATS.pass;
+            if (/\bwinner\b/.test(words))                                         return FEED_CATS.win;
+            if (/\bqualified\b/.test(words))                                      return FEED_CATS.jackpot;
+            if (/\b(correction|corrected)\b/.test(words))                         return FEED_CATS.fix;
+            if (/\b(backup|export|exported|import|restore|restored|reset|sync|migration)\b/.test(words)) return FEED_CATS.system;
+            if (/\b(cash|reward|redeem|redemption|purchase|store|balance)\b/.test(words)) return FEED_CATS.cash;
+            return FEED_CATS.award;
         }
 
         /* ============================================================

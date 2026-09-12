@@ -1947,3 +1947,48 @@ export const courseSplitAddsUp = internalQuery({
     };
   },
 });
+
+/** Which legacyMirror docs/collections exist, so a probe can aim at the right one. */
+export const mirrorShape = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("legacyMirror").collect();
+    const counts: Record<string, number> = {};
+    for (const r of rows as any[]) {
+      const k = `${r.doc} / ${r.collection}`;
+      counts[k] = (counts[k] ?? 0) + 1;
+    }
+    return { total: rows.length, buckets: counts };
+  },
+});
+
+/**
+ * Every distinct audit action string, and how many entries carry it.
+ *
+ * The browser's `auditLog` array comes from legacyMirror, not from the Convex
+ * `auditLog` table, which is empty. This is the question to ask before
+ * touching the dashboard feed's classifier or the Audit Log's filters: the
+ * vocabulary is fixed and small (eighteen strings at the time of writing) and
+ * both of those read it, so "what is actually in the log" is answerable and
+ * worth answering rather than guessing at. dashboard-feed.test.mjs pins the
+ * answer; run this when the test's list and reality might have drifted.
+ */
+export const auditActionCatalogue = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = (await ctx.db.query("legacyMirror").collect())
+      .filter((r: any) => r.collection === "auditLog");
+    const counts: Record<string, number> = {};
+    for (const r of rows as any[]) {
+      const a = String(r.payload?.action ?? "(none)");
+      counts[a] = (counts[a] ?? 0) + 1;
+    }
+    return {
+      totalEntries: rows.length,
+      distinctActions: Object.keys(counts).length,
+      actions: Object.entries(counts)
+        .sort((a, b) => b[1] - a[1])
+        .map(([action, n]) => ({ action, n })),
+    };
+  },
+});
