@@ -32442,36 +32442,45 @@
            THE BUG THIS FIXES. This was six regexes over the action text, in
            order, first match wins -- which reads as though the action text
            were prose. It is not. The app writes eighteen FIXED strings in
-           two different styles, human ("Awarded Tickets") and machine
-           ("cash_deduct"), and the regexes were written against the human
-           ones, so the machine ones fell through the cracks. A student
-           SPENDING their Wildcat Cash writes cash_deduct, that matched
-           /deduct/, and the card read "Reversed" -- which tells a parent an
-           adult took something back, when the child had simply bought
-           something. Four more were wrong the same way: "Qualified for
-           Wildcat Jackpot" (525 of them) and "Reset Wildcat Jackpot Cycle"
-           both matched /jackpot/ and read "Winner" though nobody won, and
+           two styles, human ("Awarded Tickets") and machine ("cash_deduct"),
+           and the regexes were written against the human ones, so the
+           machine ones fell through the cracks. cash_deduct matched /deduct/
+           and came out labelled "Reversed" -- so an adult taking cash off a
+           child for a behaviour, which is a disciplinary record with a
+           required note on it, read as somebody undoing an award by mistake.
+           Those are different events and the school has to tell them apart.
+
+           Four more were wrong the same way: "Qualified for Wildcat Jackpot"
+           (525 of them) and "Reset Wildcat Jackpot Cycle" both matched
+           /jackpot/ and read "Winner" though nobody won anything, and
            "Deleted Ticket Entry" (249) read "Tickets" though it is tickets
            going away.
 
            So: match the known strings EXACTLY, and let the keywords guess
-           only at an action nobody has written yet. The table below IS the
-           vocabulary -- grep addToAuditLog( and auditLog.push( -- and it is
-           small enough to list and to keep listed. dashboard-feed.test.mjs
-           pins every entry in it, and pins the fallback against the words
-           that used to send a purchase to "Reversed".
+           only at an action nobody has written yet.
+
+           EVERY LABEL BELOW WAS READ OFF ITS CALL SITE, not off the name of
+           the action. The names mislead: "Weekly Leaderboard Bonus" writes
+           category 'Bonus Jackpot Entry' and buys a jackpot entry, not a
+           ticket; "cash_deduct" is a consequence, not a purchase, and
+           "reward_redemption" is the purchase. Guessing from the string is
+           how the old classifier got five of fourteen wrong, and it is worth
+           opening the call site before adding a nineteenth row here.
+           dashboard-feed.test.mjs pins all of them by name.
            ------------------------------------------------------------ */
 
         const FEED_CATS = {
-            award:   { key: 'award',   label: 'Tickets',       tag: 'wu-tag-award',   icon: '&#127903;' },
-            jackpot: { key: 'jackpot', label: 'Jackpot Entry', tag: 'wu-tag-jackpot', icon: '&#127919;' },
-            win:     { key: 'win',     label: 'Winner',        tag: 'wu-tag-win',     icon: '&#127942;' },
-            cash:    { key: 'cash',    label: 'Wildcat Cash',  tag: 'wu-tag-cash',    icon: '&#128176;' },
-            undo:    { key: 'undo',    label: 'Reversed',      tag: 'wu-tag-undo',    icon: '&#8630;'   },
-            fix:     { key: 'fix',     label: 'Correction',    tag: 'wu-tag-fix',     icon: '&#9998;'   },
-            pass:    { key: 'pass',    label: 'Claw Pass',     tag: 'wu-tag-pass',    icon: '&#127915;' },
-            flag:    { key: 'flag',    label: 'Discipline',    tag: 'wu-tag-flag',    icon: '&#128681;' },
-            system:  { key: 'system',  label: 'System',        tag: 'wu-tag-system',  icon: '&#9881;'   }
+            award:   { key: 'award',   label: 'Tickets',        tag: 'wu-tag-award',   icon: '&#127903;' },
+            jackpot: { key: 'jackpot', label: 'Jackpot Entry',  tag: 'wu-tag-jackpot', icon: '&#127919;' },
+            win:     { key: 'win',     label: 'Winner',         tag: 'wu-tag-win',     icon: '&#127942;' },
+            cash:    { key: 'cash',    label: 'Cash Earned',    tag: 'wu-tag-cash',    icon: '&#128176;' },
+            deduct:  { key: 'deduct',  label: 'Cash Deducted',  tag: 'wu-tag-deduct',  icon: '&#128184;' },
+            spend:   { key: 'spend',   label: 'Purchase',       tag: 'wu-tag-cash',    icon: '&#128717;' },
+            undo:    { key: 'undo',    label: 'Reversed',       tag: 'wu-tag-undo',    icon: '&#8630;'   },
+            fix:     { key: 'fix',     label: 'Correction',     tag: 'wu-tag-fix',     icon: '&#9998;'   },
+            pass:    { key: 'pass',    label: 'Claw Pass',      tag: 'wu-tag-pass',    icon: '&#127915;' },
+            flag:    { key: 'flag',    label: 'Discipline',     tag: 'wu-tag-flag',    icon: '&#128681;' },
+            system:  { key: 'system',  label: 'System',         tag: 'wu-tag-system',  icon: '&#9881;'   }
         };
 
         /**
@@ -32492,17 +32501,34 @@
                 .trim();
         }
 
-        /** Every action string the app writes, and where it belongs. */
+        /**
+         * Every action string the app writes, and where it belongs.
+         *
+         * Notes on the ones whose name argues with what they do:
+         *  - 'weekly leaderboard bonus' buys a JACKPOT ENTRY for the week's
+         *    top student, not a ticket. Its category field says so.
+         *  - 'cash_deduct' is a staff deduction against a negative behaviour,
+         *    with a note the app refuses to save without. It is money out, and
+         *    it is not the student buying anything.
+         *  - 'reward_redemption' is the purchase; 'reward_fulfilled' is the
+         *    same purchase later, when the item is handed over. Both read
+         *    "Purchase" and the line underneath says which.
+         *  - 'reward_cancelled' refunds the student, so it is a reversal.
+         *  - 'admin correction' covers both re-tagging a ticket and removing
+         *    one. Both are an adult editing the record, which is what
+         *    "Correction" says; the removal writes a negative count, so the
+         *    card shows the minus by itself.
+         */
         const FEED_ACTION_CATS = {
             'awarded tickets':               'award',
-            'weekly leaderboard bonus':      'award',
+            'weekly leaderboard bonus':      'jackpot',
             'qualified for wildcat jackpot':  'jackpot',
             'raffle winner':                 'win',
             'wildcat jackpot winner':        'win',
             'cash_award':                    'cash',
-            'cash_deduct':                   'cash',
-            'reward_redemption':             'cash',
-            'reward_fulfilled':              'cash',
+            'cash_deduct':                   'deduct',
+            'reward_redemption':             'spend',
+            'reward_fulfilled':              'spend',
             'undid award':                   'undo',
             'deleted ticket entry':          'undo',
             'reward_cancelled':              'undo',
@@ -32522,23 +32548,25 @@
             // Nothing above matched, so this is an action added after this
             // table was written and we are guessing. Guess quietly.
             //
-            // "Reversed" is the one label that accuses an adult of taking
-            // something away from a child, so only a word that MEANS that may
-            // reach it. /deduct/ merely co-occurs with reversals, and letting
-            // it in is what mislabelled every purchase in the school.
+            // "Reversed" says an award was undone. Only a word that MEANS
+            // that may reach it: /deduct/ merely co-occurs with reversals,
+            // and letting it in is what turned every cash deduction in the
+            // school into an undo.
             //
             // Underscores are spaces here so \b can see the ends of a machine
             // name: in "cash_deduct" there is no word boundary between "cash"
             // and the underscore.
             const words = key.replace(/_/g, ' ');
-            if (/\b(undid|undo|reversed|reversal|cancelled|canceled|voided|deleted|removed)\b/.test(words)) return FEED_CATS.undo;
+            if (/\b(undid|undo|reversed|reversal|cancelled|canceled|voided|deleted|removed|refunded)\b/.test(words)) return FEED_CATS.undo;
             if (/\b(referral|discipline|detention|suspension)\b/.test(words))     return FEED_CATS.flag;
             if (/\b(hall|claw) pass\b/.test(words))                               return FEED_CATS.pass;
             if (/\bwinner\b/.test(words))                                         return FEED_CATS.win;
-            if (/\bqualified\b/.test(words))                                      return FEED_CATS.jackpot;
-            if (/\b(correction|corrected)\b/.test(words))                         return FEED_CATS.fix;
-            if (/\b(backup|export|exported|import|restore|restored|reset|sync|migration)\b/.test(words)) return FEED_CATS.system;
-            if (/\b(cash|reward|redeem|redemption|purchase|store|balance)\b/.test(words)) return FEED_CATS.cash;
+            if (/\b(qualified|entry|entries)\b/.test(words))                      return FEED_CATS.jackpot;
+            if (/\b(correction|corrected|re ?tagged)\b/.test(words))              return FEED_CATS.fix;
+            if (/\b(backup|export|exported|import|restore|restored|reset|rollover|sync|migration)\b/.test(words)) return FEED_CATS.system;
+            if (/\b(deduct|deducted|deduction)\b/.test(words))                    return FEED_CATS.deduct;
+            if (/\b(redeem|redemption|purchase|purchased|fulfilled|spent)\b/.test(words)) return FEED_CATS.spend;
+            if (/\b(cash|reward|balance|store)\b/.test(words))                    return FEED_CATS.cash;
             return FEED_CATS.award;
         }
 
@@ -33285,8 +33313,16 @@
                 feed.innerHTML = items.length
                     ? items.map(e => {
                         const cat = wcFeedCat(e);
-                        const count = (e.ticketCount === undefined || e.ticketCount === null)
-                            ? '' : ` &middot; ${escapeHtml(String(e.ticketCount))}`;
+                        // A deduction is written with Math.abs() on the amount,
+                        // so the record does not carry its own sign and "5"
+                        // reads the same as an award of five. The category
+                        // knows the direction, so put the sign back. Guarded on
+                        // positive: the Admin Correction remove path already
+                        // writes a negative, and "--3" is not a number.
+                        const n = e.ticketCount;
+                        const count = (n === undefined || n === null)
+                            ? ''
+                            : ` &middot; ${cat.key === 'deduct' && Number(n) > 0 ? '&minus;' : ''}${escapeHtml(String(n))}`;
                         const detail = [
                             escapeHtml(String(e.reason || e.action || 'Activity')),
                             e.teacher ? escapeHtml(e.teacher) : ''
