@@ -84,7 +84,10 @@ console.log("\n2. The disabled backup cannot be mistaken for a backup");
 
 console.log("\n3. The rollover takes a real backup, or does not run");
 {
-  const roll = fn("async function startNewSchoolYear() {");
+  // THE INNER function. startNewSchoolYear is now the error wrapper; the work
+  // lives in _startNewSchoolYear. Slicing the wrapper found none of these and
+  // reported nine guarantees missing from code that still had all nine.
+  const roll = fn("async function _startNewSchoolYear() {");
   const body = code(roll);
   check("it no longer relies on the disabled backup", !/createAutomaticBackup/.test(body),
     "this is the exact call that returned without throwing");
@@ -111,7 +114,7 @@ console.log("\n4. The two buttons are still different, and both reachable");
   // resetAllStudentCash zeroes balances and nothing else. That is a legitimate
   // separate tool -- it must not quietly grow into a year rollover, and the
   // rollover must not be the only way to zero a balance.
-  const reset = fn("async function resetAllStudentCash() {");
+  const reset = fn("async function _resetAllStudentCash() {");
   check("the plain reset still exists", reset.length > 200);
   check("it still demands the typed phrase", /RESET ALL CASH/.test(reset));
   check("it does NOT archive or clear the ledger", !/cashYearArchives/.test(code(reset)));
@@ -133,6 +136,48 @@ console.log("\n4. The two buttons are still different, and both reachable");
   check("the rollover is not in the Danger Zone",
     html.indexOf('onclick="startNewSchoolYear()"') < dangerAt);
   check("the bare reset is", dangerAt < html.indexOf('onclick="resetAllStudentCash()"'));
+}
+
+console.log("\n5. Neither destructive button can fail silently");
+{
+  // THE BUG: "I pressed the blue button but don't see anything happening."
+  // Both of these are async functions wired to inline onclick attributes, so
+  // nothing awaits them and nothing catches them. Every throw inside became an
+  // unhandled promise rejection -- no dialog, no toast, no message -- which is
+  // indistinguishable from a dead control on the one button that closes a
+  // school year.
+  const roll = fn("async function startNewSchoolYear() {");
+  check("the rollover wrapper catches", /catch \(e\)/.test(roll));
+  check("and says the year was NOT closed", /The year was NOT closed/.test(roll));
+  check("and names the error", /e\.message/.test(roll));
+  check("and says nothing was changed", /Nothing was changed/.test(roll));
+  check("the work moved into an inner function", /_startNewSchoolYear\(\)/.test(roll));
+
+  const inner = fn("async function _startNewSchoolYear() {");
+  // The specific shape of the report: index.html current, wildcat-store.js
+  // answered from cache from before the rollover existed. An undefined method
+  // call there is a TypeError with nowhere to go.
+  check("a stale tab is detected by name, not left as a TypeError",
+    /typeof window\.WildcatStore\.buildYearEndRollover !== 'function'/.test(inner));
+  check("and it tells the operator to hard reload", /Ctrl-Shift-R/.test(inner));
+  const guardAt = inner.indexOf("buildYearEndRollover !== 'function'");
+  const useAt = inner.indexOf("WildcatStore.buildYearEndRollover({");
+  check("the guard runs BEFORE the call it protects",
+    guardAt !== -1 && useAt !== -1 && guardAt < useAt);
+
+  const reset = fn("async function resetAllStudentCash() {");
+  check("the red button is wrapped too", /catch \(e\)/.test(reset));
+  check("and says balances were NOT reset", /Balances were NOT reset/.test(reset));
+  check("its work moved into an inner function too", /_resetAllStudentCash\(\)/.test(reset));
+
+  // The net under everything else. This app had no handler of either kind, so
+  // every rejected promise nothing awaited went nowhere at all.
+  check("unhandled rejections reach the console", /addEventListener\('unhandledrejection'/.test(src));
+  check("so do uncaught errors", /addEventListener\('error'/.test(src));
+  // Console, not a banner: some rejections are benign and a toast on each
+  // would be launch-day noise.
+  const net = src.slice(src.indexOf("window.addEventListener('unhandledrejection'"));
+  check("the global net is quiet on screen", !/showToast|alert\(/.test(net.slice(0, 400)));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

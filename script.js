@@ -27349,7 +27349,43 @@
             ).join('');
         }
 
+        /**
+         * Close the year. Wrapped, because it cannot fail quietly.
+         *
+         * THE BUG THIS FIXES, reported 2026-09-13: "I pressed the blue button
+         * but don't see anything happening." This is an async function called
+         * from an inline onclick, so nothing awaits it and nothing catches it.
+         * Any throw anywhere inside became an unhandled promise rejection:
+         * no dialog, no message, no toast, nothing on screen. The operator
+         * cannot tell that apart from a dead button, and on the one control
+         * that closes a school year, "did that do anything?" is the worst
+         * question the app can leave them holding.
+         *
+         * Every failure now says so, by name, on screen.
+         */
         async function startNewSchoolYear() {
+            try {
+                return await _startNewSchoolYear();
+            } catch (e) {
+                console.error('[rollover] failed:', e);
+                alert('The year was NOT closed.\n\n' +
+                      ((e && e.message) || String(e)) +
+                      '\n\nNothing was changed. Send this message to whoever ' +
+                      'maintains the app.');
+            }
+        }
+
+        async function _startNewSchoolYear() {
+            if (!window.WildcatStore || typeof window.WildcatStore.buildYearEndRollover !== 'function') {
+                // The specific shape of a stale tab: index.html is current but
+                // wildcat-store.js was answered from cache from before the
+                // rollover existed. Named, because "nothing happened" sends
+                // somebody looking at the button.
+                throw new Error(
+                    'This page is running an old copy of the app. ' +
+                    'Reload with Ctrl-Shift-R (Cmd-Shift-R on a Mac) and try again.'
+                );
+            }
             const preview = window.WildcatStore.buildYearEndRollover({
                 students,
                 transactions: cashTransactions,
@@ -27490,6 +27526,16 @@
         }
 
         async function resetAllStudentCash() {
+            try {
+                return await _resetAllStudentCash();
+            } catch (e) {
+                console.error('[cash reset] failed:', e);
+                alert('Balances were NOT reset.\n\n' + ((e && e.message) || String(e)) +
+                      '\n\nNothing was changed.');
+            }
+        }
+
+        async function _resetAllStudentCash() {
             const confirmation = await showPrompt('⚠️ WARNING: This will reset ALL student Wildcat Cash balances to $0.\n\nType "RESET ALL CASH" to confirm:');
             
             if (confirmation !== 'RESET ALL CASH') {
@@ -29417,6 +29463,29 @@
                 ]
             });
         }
+
+        /* ---- NOTHING ASYNC FAILS SILENTLY ANY MORE -------------------------
+           This app had no unhandledrejection handler and no window.onerror, so
+           every rejected promise that nothing awaited went nowhere. Most of
+           this file's click handlers are `async function` wired to inline
+           onclick attributes, which means nothing awaits them and nothing
+           catches them: a throw inside one produced no dialog, no toast and no
+           console error a non-developer would ever look for. That is how
+           "I pressed the blue button and nothing happened" is indistinguishable
+           from a dead control.
+
+           Console, not a toast. A visible banner on every stray rejection
+           would be noise on launch day, and some of them are benign. The two
+           destructive buttons carry their own visible handlers, because on
+           those the operator has to know. This is the net under everything
+           else, so the next report comes with a line number attached. */
+        window.addEventListener('unhandledrejection', (e) => {
+            const r = e && e.reason;
+            console.error('[unhandled]', (r && (r.stack || r.message)) || r);
+        });
+        window.addEventListener('error', (e) => {
+            console.error('[uncaught]', (e && (e.error && e.error.stack)) || (e && e.message) || e);
+        });
 
         // Override the browser dialog so every existing alert() is restyled.
         window.alert = showAlert;
