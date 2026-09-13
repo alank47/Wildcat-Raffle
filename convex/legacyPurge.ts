@@ -2094,3 +2094,159 @@ export const receiptRawPeek = internalQuery({
     return { receipts, lines };
   },
 });
+
+/**
+ * For a named handful of students, every place the hub could hold an email.
+ *
+ * studentSignInReadiness reads students.email. The SIS writes
+ * psRoster.studentEmail (manifest field 19). Those are two different fields and
+ * "missing" in one is not missing in the other -- a student who signs in to a
+ * Chromebook every morning HAS an address, so a null here is a pipeline
+ * question, not a fact about the child. Read-only, and scoped to the numbers
+ * passed in so it is a diagnostic and not an export.
+ */
+export const emailSources = internalQuery({
+  args: { studentNumbers: v.array(v.string()) },
+  handler: async (ctx, { studentNumbers }) => {
+    const want = new Set(studentNumbers.map((n) => String(n).trim()));
+    const students = (await ctx.db.query("students").collect())
+      .filter((s: any) => want.has(String(s.studentNumber ?? "").trim()));
+    const out: any[] = [];
+    for (const s of students as any[]) {
+      const num = String(s.studentNumber ?? "").trim();
+      const roster = await ctx.db
+        .query("psRoster")
+        .withIndex("by_studentNumber", (q) => q.eq("studentNumber", num))
+        .collect();
+      const rosterEmails = [
+        ...new Set(roster.map((r: any) => r.studentEmail ?? null).filter(Boolean)),
+      ];
+      out.push({
+        studentNumber: num,
+        name: `${s.firstName ?? ""} ${s.lastName ?? ""}`.trim(),
+        grade: s.grade ?? null,
+        studentsTable_email: s.email ?? null,
+        psRoster_studentEmail: rosterEmails.length ? rosterEmails : null,
+        rosterRows: roster.length,
+      });
+    }
+    return out;
+  },
+});
+
+/** How many enrolled students have an email in psRoster but not in students. Read-only. */
+export const emailAdoptionGap = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const students = await ctx.db.query("students").collect();
+    let enrolled = 0, bothHave = 0, rosterOnly = 0, studentsOnly = 0, neither = 0, differ = 0;
+    const rosterOnlyNumbers: string[] = [];
+    for (const s of students as any[]) {
+      const num = String(s.studentNumber ?? "").trim();
+      if (!num) continue;
+      const row = await ctx.db
+        .query("psRoster")
+        .withIndex("by_studentNumber", (q) => q.eq("studentNumber", num))
+        .first();
+      if (!row) continue;
+      enrolled++;
+      const hub = String(s.email ?? "").trim().toLowerCase();
+      const sis = String((row as any).studentEmail ?? "").trim().toLowerCase();
+      if (hub && sis) { bothHave++; if (hub !== sis) differ++; }
+      else if (!hub && sis) { rosterOnly++; if (rosterOnlyNumbers.length < 25) rosterOnlyNumbers.push(num); }
+      else if (hub && !sis) studentsOnly++;
+      else neither++;
+    }
+    return { enrolled, bothHave, differ, rosterOnly, rosterOnlyNumbers, studentsOnly, neither };
+  },
+});
+
+/**
+ * The SHAPE of student addresses, as counts per pattern. No addresses returned.
+ *
+ * Four enrolled students have no email in PowerSchool, so the office has to
+ * find or issue one. Knowing the convention the other 615 follow turns that
+ * from a guess into a check. Classifies each local part against patterns built
+ * from that student's OWN name and number, so the answer is the rule and not a
+ * roster. Read-only.
+ */
+export const studentEmailPattern = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const students = await ctx.db.query("students").collect();
+    const clean = (v: unknown) =>
+      String(v ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+        .replace(/[^a-z0-9]/g, "");
+    const counts: Record<string, number> = {};
+    const domains: Record<string, number> = {};
+    let examined = 0;
+    for (const s of students as any[]) {
+      const em = String(s.email ?? "").trim().toLowerCase();
+      if (!em.includes("@")) continue;
+      const [local, domain] = em.split("@");
+      domains[domain] = (domains[domain] ?? 0) + 1;
+      examined++;
+      const f = clean(s.firstName), l = clean(s.lastName), n = clean(s.studentNumber);
+      const lp = clean(local);
+      let label = "other";
+      // The actual convention, read off a sample and then verified against all
+      // 646: first initial + last initial + student number, lower case.
+      if (f && l && n && lp === f[0] + l[0] + n) label = "finitial+linitial+number";
+      else if (n && lp === n) label = "studentNumber";
+      else if (f && l && lp === f + l) label = "firstlast";
+      else if (f && l && lp === f[0] + l) label = "finitial+last";
+      else if (f && l && lp === l + f) label = "lastfirst";
+      else if (f && l && lp === f + l[0]) label = "first+linitial";
+      else if (f && l && n && lp === f[0] + l + n) label = "finitial+last+number";
+      else if (f && l && n && lp === f + l + n) label = "firstlast+number";
+      else if (f && l && lp.startsWith(f[0] + l)) label = "finitial+last+suffix";
+      else if (f && l && lp.startsWith(f + l)) label = "firstlast+suffix";
+      counts[label] = (counts[label] ?? 0) + 1;
+    }
+    return { examined, patterns: counts, domains };
+  },
+});
+
+/** Six real student addresses beside their names, to infer the convention by eye. Read-only. */
+export const studentEmailSample = internalQuery({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const students = await ctx.db.query("students").collect();
+    const out: any[] = [];
+    for (const s of students as any[]) {
+      const em = String(s.email ?? "").trim().toLowerCase();
+      if (!em.includes("@")) continue;
+      out.push({
+        first: s.firstName, last: s.lastName, grade: s.grade ?? null,
+        studentNumber: s.studentNumber, local: em.split("@")[0],
+      });
+      if (out.length >= (limit ?? 6)) break;
+    }
+    return out;
+  },
+});
+
+/** The student addresses that do NOT follow the convention, so the exceptions are known. Read-only. */
+export const studentEmailOutliers = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const students = await ctx.db.query("students").collect();
+    const clean = (v: unknown) =>
+      String(v ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+        .replace(/[^a-z0-9]/g, "");
+    const out: any[] = [];
+    for (const s of students as any[]) {
+      const em = String(s.email ?? "").trim().toLowerCase();
+      if (!em.includes("@")) continue;
+      const lp = clean(em.split("@")[0]);
+      const f = clean(s.firstName), l = clean(s.lastName), n = clean(s.studentNumber);
+      if (f && l && n && lp === f[0] + l[0] + n) continue;
+      out.push({
+        first: s.firstName, last: s.lastName, studentNumber: s.studentNumber,
+        local: em.split("@")[0], grade: s.grade ?? null,
+        expected: f && l && n ? f[0] + l[0] + n : "(cannot build)",
+      });
+    }
+    return out;
+  },
+});
