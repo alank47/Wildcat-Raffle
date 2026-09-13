@@ -60,20 +60,30 @@ console.log("\nBack closes a dialog rather than leaving the app");
   check("a dialog pushes one history entry when it opens",
     /history\.pushState\(\{ wcDialogOpen: true \}/.test(script));
   check("closing it normally consumes that entry again",
-    /if \(history\.state && history\.state\.wcDialogOpen\) history\.back\(\);/.test(script));
+    /if \(history\.state && history\.state\.wcDialogOpen\) \{/.test(script) &&
+    /history\.back\(\);/.test(script));
 
   const i = script.indexOf("(function backClosesDialogs() {");
   const handler = script.slice(i, script.indexOf("})();", i));
   check("there is a popstate handler", i > 0);
+  // REWRITTEN 2026-09-13. This used to assert `if (!open) return;` and
+  // `host.innerHTML = '';` -- the handler read the DOM to decide whether a
+  // dialog was open, then wiped it. Wiping is exactly what hung every caller:
+  // the promise the dialog belonged to was never resolved, so an
+  // `await showConfirm(...)` stopped mid-function with nothing on screen and
+  // nothing in the console. See dialog-resolves.test.mjs. The handler now
+  // holds the dialog's own canceller, which resolves it.
   check("it does nothing unless a dialog is actually open",
-    /if \(!open\) return;/.test(handler));
-  check("it closes the dialog", /host\.innerHTML = '';/.test(handler));
+    /if \(!dismiss\) return;/.test(handler));
+  check("it closes the dialog by resolving it, not by wiping the DOM",
+    /dismiss\(\{ historyAlreadyConsumed: true \}\)/.test(handler) &&
+    !/host\.innerHTML = ''/.test(handler));
   check("and re-pushes the entry it consumed, so the stack is where it was",
     /history\.pushState\(\{ wcDialogClosed: true \}/.test(handler));
 
   // A trap is worse than the bad entry it protects against.
   check("it never blocks Back when no dialog is open",
-    handler.indexOf("if (!open) return;") < handler.indexOf("pushState"));
+    handler.indexOf("if (!dismiss) return;") < handler.indexOf("pushState"));
   check("every history call is guarded, so a blocked history API cannot break a dialog",
     (script.match(/try \{[^}]*history\.(pushState|back)/g) || []).length >= 3);
 }

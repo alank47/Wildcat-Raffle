@@ -29309,12 +29309,50 @@
          * normally everywhere else. Trapping Back to protect somebody from a
          * bad history entry is worse than the entry.
          */
+        /**
+         * The live dialog's canceller, or null when none is open.
+         *
+         * THE BUG THIS FIXES, reported 2026-09-13 as "I pressed the blue button
+         * and nothing happens". The Back handler below used to wipe the dialog
+         * straight out of the DOM:
+         *
+         *     host.innerHTML = '';
+         *
+         * and stop there. It had no way to reach the promise that dialog
+         * belonged to, so the promise was never resolved. Every `await
+         * showConfirm(...)` behind it hung forever: no dialog on screen, no
+         * error, no rejection, nothing in the console -- the caller simply
+         * stopped, mid-function, permanently.
+         *
+         * Measured in the owner's own tab: host present with 0 characters of
+         * HTML, no backdrop, and startNewSchoolYear() sitting on a pending
+         * promise. It closed a school-year rollover halfway through, and it
+         * could do the same to any of the ~216 dialogs in this file.
+         *
+         * A dialog is now dismissed through its OWN finish(), which resolves.
+         */
+        let _wcDialogDismiss = null;
+
+        /**
+         * How many popstate events we caused ourselves and must ignore.
+         *
+         * finish() calls history.back() to consume the entry its dialog
+         * pushed, and that back() fires a popstate a moment later. If a new
+         * dialog has opened in the meantime -- which is exactly what a chain
+         * of confirm-then-prompt does -- that trailing event would cancel the
+         * NEW dialog. Counting them keeps a dialog chain working.
+         */
+        let _wcDialogSelfBack = 0;
+
         (function backClosesDialogs() {
             window.addEventListener('popstate', function () {
-                var host = document.getElementById('wcDialogRoot');
-                var open = host && host.querySelector('.wc-dialog-backdrop');
-                if (!open) return;                       // nothing to absorb
-                host.innerHTML = '';
+                if (_wcDialogSelfBack > 0) { _wcDialogSelfBack--; return; }
+                const dismiss = _wcDialogDismiss;
+                if (!dismiss) return;                    // nothing to absorb
+                // Resolves the dialog's promise as a cancel, rather than only
+                // taking it off the screen. The history entry has already been
+                // consumed by this very event, so finish must not spend another.
+                dismiss({ historyAlreadyConsumed: true });
                 // Put back the entry the browser just consumed, so the dialog
                 // cost one Back press and the stack is where it was.
                 try { history.pushState({ wcDialogClosed: true }, document.title, location.href); }
@@ -29410,24 +29448,43 @@
 
                 const backdrop = document.getElementById('wcDialogBackdrop');
                 const inputEl = document.getElementById('wcDialogInput');
-                const finish = (val) => {
+                let settled = false;
+                const finish = (val, how) => {
+                    // Once only. Two routes can reach this in the same tick --
+                    // a click and a trailing popstate -- and resolving twice is
+                    // harmless while clearing twice is not.
+                    if (settled) return;
+                    settled = true;
+                    if (_wcDialogDismiss === dismiss) _wcDialogDismiss = null;
                     host.innerHTML = '';
                     document.removeEventListener('keydown', onKey);
                     // Consume the entry this dialog pushed. Without this, every
                     // open-and-close leaves a spent entry behind and they pile
                     // up: five dialogs would cost five dead Back presses before
-                    // the button did anything visible. The popstate handler
-                    // above finds no dialog open by now and lets it through.
-                    try {
-                        if (history.state && history.state.wcDialogOpen) history.back();
-                    } catch (e) { /* history unavailable; the dialog still closed */ }
+                    // the button did anything visible.
+                    //
+                    // Skipped when the popstate handler is what closed us: that
+                    // event already spent the entry, and spending another would
+                    // walk the operator back off the page.
+                    if (!(how && how.historyAlreadyConsumed)) {
+                        try {
+                            if (history.state && history.state.wcDialogOpen) {
+                                _wcDialogSelfBack++;
+                                history.back();
+                            }
+                        } catch (e) { /* history unavailable; the dialog still closed */ }
+                    }
                     resolve(val);
                 };
+                /** Cancel this dialog from outside, resolving it properly. */
+                const dismiss = (how) => {
+                    const cancelIdx = buttons.findIndex(b => b.value === false || b.value === null);
+                    finish(cancelIdx >= 0 ? buttons[cancelIdx].value
+                        : (buttons[0] && buttons[0].value !== undefined ? buttons[0].value : undefined), how);
+                };
+                _wcDialogDismiss = dismiss;
                 const onKey = (e) => {
-                    if (e.key === 'Escape') {
-                        const cancelIdx = buttons.findIndex(b => b.value === false || b.value === null);
-                        finish(cancelIdx >= 0 ? buttons[cancelIdx].value : (buttons[0].value !== undefined ? buttons[0].value : undefined));
-                    }
+                    if (e.key === 'Escape') dismiss();
                     if (e.key === 'Enter' && input) {
                         const okBtn = buttons.find(b => b.value !== false && b.value !== null);
                         if (okBtn) finish(inputEl ? inputEl.value : okBtn.value);
