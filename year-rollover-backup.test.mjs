@@ -180,5 +180,44 @@ console.log("\n5. Neither destructive button can fail silently");
   check("the global net is quiet on screen", !/showToast|alert\(/.test(net.slice(0, 400)));
 }
 
+console.log("\n6. A reset of ALL balances means all of them");
+{
+  // MEASURED AGAINST PRODUCTION 2026-09-13, right after the owner pressed the
+  // red button. The roster is split in two at load -- `students` is who is
+  // enrolled now, `nonEnrolledStudents` is everyone who has left -- and both
+  // buttons walked `students` only.
+  //
+  // 440 students held $6,633,000. The reset cleared 336 and left 104 holding
+  // $1,731,150, the largest $46,250. Every one of the 104 had left the school.
+  // It looked like it worked, because the only screens that show a balance
+  // show the enrolled -- and a student who re-enrols comes back holding it.
+  const both = /\(students \|\| \[\]\)\.concat\(nonEnrolledStudents \|\| \[\]\)/;
+
+  const reset = code(fn("async function _resetAllStudentCash() {"));
+  check("the reset builds a list of every student", both.test(reset));
+  check("and iterates that, not the enrolled array",
+    /everyStudent\.forEach\(/.test(reset) && !/^\s*students\.forEach\(/m.test(reset));
+
+  const roll = code(fn("async function _startNewSchoolYear() {"));
+  check("the rollover builds the same list", both.test(roll));
+  check("the preview counts every student", /students: everyStudent/.test(roll));
+  check("and the patches apply to every student", /everyStudent\.forEach\(/.test(roll));
+  check("the rollover no longer passes the enrolled-only array",
+    !/\{\s*\n\s*students,\s*\n\s*transactions: cashTransactions/.test(roll));
+
+  // THE SUCCESS MESSAGE HAS TO BE TRUE. It was `saveData();` with no await,
+  // then an immediate "Successfully reset N accounts" -- announcing a save
+  // still in flight, with a count of in-memory edits rather than rows that
+  // landed. A half-finished save said nothing at all.
+  const resetRaw = fn("async function _resetAllStudentCash() {");
+  check("the save is awaited", /await saveData\(\)/.test(resetRaw));
+  check("a failed save is reported, not celebrated", /did NOT complete/.test(resetRaw));
+  check("and it tells the operator not to trust the balances yet",
+    /Check the balances again/.test(resetRaw));
+  const awaitAt = resetRaw.indexOf("await saveData()");
+  const okAt = resetRaw.indexOf("Reset ${resetCount}");
+  check("the claim of success comes AFTER the save", awaitAt !== -1 && okAt !== -1 && awaitAt < okAt);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

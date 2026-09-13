@@ -27386,8 +27386,15 @@
                     'Reload with Ctrl-Shift-R (Cmd-Shift-R on a Mac) and try again.'
                 );
             }
+            // EVERY STUDENT, ENROLLED OR NOT. Same split-roster bug the plain
+            // reset had: `students` is the enrolled only, and closing a year
+            // while leaving every departed student's balance untouched is not
+            // closing a year. Their closing balances belong in the archive too
+            // -- "what did this child finish with" is asked most often about
+            // the ones who left.
+            const everyStudent = (students || []).concat(nonEnrolledStudents || []);
             const preview = window.WildcatStore.buildYearEndRollover({
-                students,
+                students: everyStudent,
                 transactions: cashTransactions,
                 receipts: cashReceipts,
                 actor: currentUser || {},
@@ -27467,7 +27474,7 @@
             // so the record matches what is actually being cleared rather than
             // what was on screen a moment ago.
             const roll = window.WildcatStore.buildYearEndRollover({
-                students,
+                students: everyStudent,
                 transactions: cashTransactions,
                 receipts: cashReceipts,
                 actor: currentUser || {},
@@ -27477,7 +27484,7 @@
 
             const patchById = {};
             roll.studentPatches.forEach(p => { patchById[p.studentId] = p; });
-            students.forEach(s => {
+            everyStudent.forEach(s => {
                 const p = patchById[s.id];
                 if (!p) return;
                 s.wildcatCashBalance = 0;
@@ -27547,6 +27554,23 @@
             
             let resetCount = 0;
 
+            // EVERY STUDENT, NOT JUST THE ENROLLED ONES.
+            //
+            // THE BUG THIS FIXES, measured against production 2026-09-13. The
+            // roster is split in two at load: `students` holds who is enrolled
+            // now, `nonEnrolledStudents` holds everyone who has left (see the
+            // filter at the Convex roster read). This loop walked `students`
+            // only, so a reset of "ALL student balances" left every departed
+            // student holding whatever they had.
+            //
+            // It was not a rounding error. 440 students held $6,633,000; the
+            // reset cleared 336 of them and left 104 with $1,731,150 between
+            // them, the largest $46,250 -- and every one of the 104 was a
+            // student who had left. Invisible, because the only screens that
+            // show a balance show the enrolled, and waiting: a student who
+            // re-enrols comes back holding it.
+            const everyStudent = (students || []).concat(nonEnrolledStudents || []);
+
             // Read the balance BEFORE zeroing it.
             //
             // The previous version set wildcatCashBalance = 0 and then recorded
@@ -27560,8 +27584,8 @@
             // movement, which writes to the ledger the balances are recomputed
             // from, so the zero survives a reconcile instead of being undone by
             // one.
-            students.forEach(student => {
-                if (student.wildcatCashBalance === undefined) return;
+            everyStudent.forEach(student => {
+                if (!student || student.wildcatCashBalance === undefined) return;
 
                 const balanceBefore = Number(student.wildcatCashBalance) || 0;
                 if (balanceBefore !== 0) {
@@ -27595,10 +27619,22 @@
                 studentId: 'all'
             };
             auditLog.push(logEntry);
-            
-            saveData();
-            
-            alert(`✅ Successfully reset ${resetCount} student cash accounts to $0!`);
+
+            // AWAITED, AND THE RESULT READ. This was `saveData();` with no
+            // await, immediately followed by a success alert -- so the message
+            // announced a reset that was still in flight, and a save that
+            // failed or half-completed said nothing at all. The count was of
+            // in-memory edits, never of rows that landed.
+            const saved = await saveData();
+            if (saved === false) {
+                alert('⚠️ ' + resetCount + ' balances were zeroed on this screen, ' +
+                      'but the save did NOT complete.\n\nDo not close this tab. ' +
+                      'It will retry. Check the balances again before telling anyone ' +
+                      'they are reset.');
+                return;
+            }
+
+            alert(`✅ Reset ${resetCount} student cash accounts to $0, including students who have left.`);
             
             // Refresh displays if on relevant tabs
             if (document.getElementById('studentAccountsTab').classList.contains('active')) {

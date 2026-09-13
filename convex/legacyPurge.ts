@@ -2481,3 +2481,45 @@ export const cashResetPreview = internalQuery({
     };
   },
 });
+
+/** Who still has a balance after a reset, and what they have in common. Counts only. */
+export const cashResetLeftovers = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const roster = await ctx.db.query("psRoster").take(8000);
+    const enrolled = new Set(
+      (roster as any[]).map((r) => String(r.studentNumber ?? "").trim()).filter(Boolean),
+    );
+    const students = await ctx.db.query("students").collect();
+    const left = (students as any[]).filter((s) => {
+      const b = Number(s.wildcatCashBalance);
+      return Number.isFinite(b) && b !== 0;
+    });
+    const tally: Record<string, number> = {};
+    const bump = (k: string) => { tally[k] = (tally[k] ?? 0) + 1; };
+    for (const s of left) {
+      bump("enrolled:" + (enrolled.has(String(s.studentNumber ?? "").trim()) ? "yes" : "no"));
+      bump("archived:" + (s.archived === true ? "yes" : s.archived === false ? "no" : "undefined"));
+      bump("enrolledFlag:" + (s.enrolled === false ? "false" : s.enrolled === true ? "true" : "undefined"));
+      bump("hasStudentNumber:" + (String(s.studentNumber ?? "").trim() ? "yes" : "no"));
+      bump("grade:" + String(s.grade ?? "(none)"));
+      bump("hasId:" + (s.id ? "yes" : "no"));
+    }
+    // And the same breakdown for the ones that DID reset, to compare.
+    const zeroed = (students as any[]).filter((s) => Number(s.wildcatCashBalance) === 0);
+    const zTally: Record<string, number> = {};
+    for (const s of zeroed) {
+      const k = "enrolled:" + (enrolled.has(String(s.studentNumber ?? "").trim()) ? "yes" : "no");
+      zTally[k] = (zTally[k] ?? 0) + 1;
+      const k2 = "hasId:" + (s.id ? "yes" : "no");
+      zTally[k2] = (zTally[k2] ?? 0) + 1;
+    }
+    return {
+      stillHaveBalance: left.length,
+      zeroed: zeroed.length,
+      undefinedBalance: (students as any[]).filter((s) => s.wildcatCashBalance === undefined).length,
+      leftoverProfile: tally,
+      zeroedProfile: zTally,
+    };
+  },
+});
