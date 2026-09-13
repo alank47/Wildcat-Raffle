@@ -2523,3 +2523,183 @@ export const cashResetLeftovers = internalQuery({
     };
   },
 });
+
+/** Can the 104 leftover students be matched by appData:save at all? Read-only. */
+export const leftoverIdentity = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const students = await ctx.db.query("students").collect();
+    const left = (students as any[]).filter((s) => {
+      const b = Number(s.wildcatCashBalance);
+      return Number.isFinite(b) && b !== 0;
+    });
+    const tally: Record<string, number> = {};
+    const bump = (k: string) => { tally[k] = (tally[k] ?? 0) + 1; };
+    for (const s of left) {
+      bump("legacyId:" + (s.legacyId ? "present" : "MISSING"));
+      bump("studentNumber:" + (String(s.studentNumber ?? "").trim() ? "present" : "MISSING"));
+      bump("archivedAt:" + (s.archivedAt ? "set" : "unset"));
+    }
+    // And for comparison, the ones that DID zero.
+    const zeroed = (students as any[]).filter((s) => Number(s.wildcatCashBalance) === 0);
+    const zt: Record<string, number> = {};
+    for (const s of zeroed) {
+      const k = "legacyId:" + (s.legacyId ? "present" : "MISSING");
+      zt[k] = (zt[k] ?? 0) + 1;
+    }
+    return {
+      leftover: left.length,
+      leftoverIdentity: tally,
+      zeroedIdentity: zt,
+      sampleLeftover: left.slice(0, 3).map((s) => ({
+        legacyId: s.legacyId ?? null,
+        studentNumber: s.studentNumber ?? null,
+        balance: s.wildcatCashBalance,
+        grade: s.grade ?? null,
+        archivedAt: s.archivedAt ?? null,
+      })),
+    };
+  },
+});
+
+/** The Convex auditLog table, newest actions first. Read-only. */
+export const auditTableRecent = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("auditLog").order("desc").take(40);
+    const all = await ctx.db.query("auditLog").take(12000);
+    const counts: Record<string, number> = {};
+    for (const r of all as any[]) {
+      const a = String(r.action ?? "(none)");
+      counts[a] = (counts[a] ?? 0) + 1;
+    }
+    return {
+      tableTotal: all.length,
+      byAction: counts,
+      newest: (rows as any[]).slice(0, 15).map((r) => ({
+        action: r.action, at: r.timestamp ?? r._creationTime,
+        teacher: r.teacher ?? r.teacherName ?? null,
+        reason: String(r.reason ?? r.details ?? "").slice(0, 90),
+      })),
+    };
+  },
+});
+
+/** What Analytics reads: per-student transaction arrays. Counts only. */
+export const analyticsSource = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const roster = await ctx.db.query("psRoster").take(8000);
+    const enrolled = new Set(
+      (roster as any[]).map((r) => String(r.studentNumber ?? "").trim()).filter(Boolean),
+    );
+    const students = await ctx.db.query("students").collect();
+    let withTx = 0, txRows = 0, withRedeemed = 0;
+    let enrolledWithTx = 0, departedWithTx = 0;
+    let withEarned = 0, withSpent = 0, withDeducted = 0;
+    for (const s of students as any[]) {
+      const tx = s.wildcatCashTransactions;
+      if (Array.isArray(tx) && tx.length) {
+        withTx++;
+        txRows += tx.length;
+        if (enrolled.has(String(s.studentNumber ?? "").trim())) enrolledWithTx++;
+        else departedWithTx++;
+      }
+      const rr = s.wildcatCashRewardsRedeemed;
+      if (Array.isArray(rr) && rr.length) withRedeemed++;
+      if (Number(s.wildcatCashEarned) > 0) withEarned++;
+      if (Number(s.wildcatCashSpent) > 0) withSpent++;
+      if (Number(s.wildcatCashDeducted) > 0) withDeducted++;
+    }
+    return {
+      students: students.length,
+      studentsWithTransactionArray: withTx,
+      transactionRowsOnStudentRecords: txRows,
+      enrolledWithTx, departedWithTx,
+      studentsWithRewardsRedeemed: withRedeemed,
+      studentsWithEarnedAboveZero: withEarned,
+      studentsWithSpentAboveZero: withSpent,
+      studentsWithDeductedAboveZero: withDeducted,
+    };
+  },
+});
+
+
+/**
+ * Zero the cash fields on every student, server-side. DRY RUN BY DEFAULT.
+ *
+ * WHY THIS EXISTS. The browser's reset and the year rollover both go through
+ * appData:save, and after three rounds of fixing them 104 students who have
+ * LEFT the school were still holding $1,731,150 between them. The server was
+ * proved willing: appData:savePlanDryRun matches every one of them by legacyId
+ * and reports a patch. So the payload is not reaching it, and chasing that
+ * through a 33,000 line file on launch eve is the wrong trade.
+ *
+ * This is the certainty. It patches rows directly, so nothing can lose it: not
+ * a stripped field, not a save fingerprint, not a changed-rows filter, not the
+ * enrolled/departed array split that caused the original miss.
+ *
+ * IT IS NOT A REPLACEMENT for the buttons. It writes no audit entry a teacher
+ * can read, files no year-end archive and takes no backup. It is for clearing
+ * what the buttons left behind, not for closing a year.
+ *
+ * Run it with no arguments first: that reports what it WOULD do and writes
+ * nothing. Pass apply:true only when the numbers are right.
+ */
+export const zeroAllStudentCash = internalMutation({
+  args: {
+    apply: v.optional(v.boolean()),
+    onlyNotEnrolled: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { apply, onlyNotEnrolled }) => {
+    const roster = await ctx.db.query("psRoster").take(8000);
+    const enrolled = new Set(
+      (roster as any[]).map((r) => String(r.studentNumber ?? "").trim()).filter(Boolean),
+    );
+    const students = await ctx.db.query("students").collect();
+
+    const CASH_FIELDS = [
+      "wildcatCashBalance", "wildcatCashEarned",
+      "wildcatCashSpent", "wildcatCashDeducted",
+    ];
+
+    let touched = 0, balanceCleared = 0, txRowsCleared = 0;
+    const patches: Array<{ id: any; patch: Record<string, unknown> }> = [];
+    for (const s of students as any[]) {
+      const isEnrolled = enrolled.has(String(s.studentNumber ?? "").trim());
+      if (onlyNotEnrolled && isEnrolled) continue;
+
+      const patch: Record<string, unknown> = {};
+      for (const f of CASH_FIELDS) {
+        if (Number(s[f]) !== 0) patch[f] = 0;
+      }
+      const tx = s.wildcatCashTransactions;
+      if (Array.isArray(tx) && tx.length) {
+        patch.wildcatCashTransactions = [];
+        txRowsCleared += tx.length;
+      }
+      const rr = s.wildcatCashRewardsRedeemed;
+      if (Array.isArray(rr) && rr.length) patch.wildcatCashRewardsRedeemed = [];
+
+      if (!Object.keys(patch).length) continue;
+      touched++;
+      if (patch.wildcatCashBalance !== undefined) {
+        balanceCleared += Number(s.wildcatCashBalance) || 0;
+      }
+      patches.push({ id: s._id, patch });
+    }
+
+    if (apply === true) {
+      for (const p of patches) await ctx.db.patch(p.id, p.patch as any);
+    }
+
+    return {
+      applied: apply === true,
+      scope: onlyNotEnrolled ? "students no longer enrolled" : "every student",
+      studentsExamined: students.length,
+      studentsThatWouldChange: touched,
+      balanceThatWouldClear: balanceCleared,
+      transactionRowsThatWouldClear: txRowsCleared,
+    };
+  },
+});

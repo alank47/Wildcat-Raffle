@@ -243,7 +243,15 @@ console.log("\nThe ledger reaches Convex even though it is stripped from main");
   check("a Convex-specific payload is built",
     /const studentsForConvex = mainTransactionResult\.studentsToSave/.test(script));
   check("it re-attaches the cash ledger",
-    /wildcatCashTransactions: tx\.slice\(-40\)/.test(script));
+    /wildcatCashTransactions: tx\.length \? tx\.slice\(-40\) : \[\]/.test(script));
+  // AND AN EMPTIED ONE. This used to assert only `tx.slice(-40)`, which the
+  // old `if (!tx.length) return st;` satisfied -- so it passed while a
+  // deliberately cleared history was the one thing that could not be saved.
+  // The year rollover zeroed 343 balances and left all 628 transaction rows on
+  // the server, which is what Cash Analytics reads. See
+  // year-rollover-backup.test.mjs section 7.
+  check("and sends an emptied ledger too, so a clear can actually clear",
+    /if \(!Array\.isArray\(tx\)\) return st;/.test(script));
   check("and appData:save is sent that, not the stripped list",
     /const changedStudents = studentsForConvex\.filter\(/.test(script) &&
     /convexMutation\('appData:save', \{\s*students: studentsToSend,/.test(script));

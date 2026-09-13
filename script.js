@@ -3458,13 +3458,43 @@
                                 const byId = {};
                                 (students || []).concat(nonEnrolledStudents || [])
                                     .forEach(st => { if (st) byId[String(st.id)] = st; });
+                                // AN EMPTIED ARRAY IS A VALUE, NOT AN ABSENCE.
+                                //
+                                // THE BUG THIS FIXES. studentsToSave deletes
+                                // wildcatCashTransactions from every record, so
+                                // the ledger is not shipped twice, and this map
+                                // put it back -- but only `if (tx.length)`. So
+                                // the one case that needed sending, a student
+                                // whose history had just been deliberately
+                                // CLEARED, was the case that sent nothing: the
+                                // field stayed deleted and the server kept the
+                                // rows it already had.
+                                //
+                                // The year rollover empties these arrays. It
+                                // zeroed 343 students' balances and left all
+                                // 628 of their transaction rows on the server,
+                                // so Cash Analytics still read a full year --
+                                // and reconcileCashLedger rebuilt the whole
+                                // ledger from them on the next load, which is
+                                // the "628 movement(s) recovered" line.
+                                //
+                                // Three cases, and they are different:
+                                //   undefined  never loaded. Omit, so a stale
+                                //              tab cannot blank a real history.
+                                //   []         deliberately cleared. SEND it.
+                                //   [rows]     send the tail, as before.
+                                // appDataShape.isAbsent already draws exactly
+                                // this line on the server: [] is a real value
+                                // there, and its comment says too narrow a
+                                // definition makes a deliberate reset silently
+                                // do nothing. This was that.
                                 const studentsForConvex = mainTransactionResult.studentsToSave
                                     .map(st => {
                                         const live = byId[String(st.id)];
                                         const tx = live && live.wildcatCashTransactions;
-                                        if (!Array.isArray(tx) || !tx.length) return st;
+                                        if (!Array.isArray(tx)) return st;
                                         return Object.assign({}, st, {
-                                            wildcatCashTransactions: tx.slice(-40)
+                                            wildcatCashTransactions: tx.length ? tx.slice(-40) : []
                                         });
                                     });
 

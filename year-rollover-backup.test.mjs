@@ -219,5 +219,37 @@ console.log("\n6. A reset of ALL balances means all of them");
   check("the claim of success comes AFTER the save", awaitAt !== -1 && okAt !== -1 && awaitAt < okAt);
 }
 
+console.log("\n7. A cleared transaction history actually clears");
+{
+  // THE BUG: the rollover zeroed 343 students' balances and left all 628 of
+  // their transaction rows on the server, so Cash Analytics still read a full
+  // year afterwards -- Analytics reads student.wildcatCashTransactions, not the
+  // ledger -- and reconcileCashLedger rebuilt the whole ledger from them on the
+  // next load.
+  //
+  // studentsToSave deletes the field from every record so the ledger is not
+  // shipped twice. The map that puts it back only did so `if (tx.length)`, so
+  // the one case that needed sending -- deliberately emptied -- sent nothing.
+  const save = src.slice(src.indexOf("const studentsForConvex ="));
+  const body = save.slice(0, save.indexOf("const result = await"));
+  check("an emptied array is still sent", /tx\.length \? tx\.slice\(-40\) : \[\]/.test(body));
+  check("the guard is on being an array, not on being non-empty",
+    /if \(!Array\.isArray\(tx\)\) return st;/.test(body));
+  check("a never-loaded field is still omitted, so a stale tab cannot blank a history",
+    /if \(!Array\.isArray\(tx\)\) return st;/.test(body) && !/tx === undefined/.test(body));
+
+  // The server already draws this line: [] is a real value, absence is not.
+  const shape = readFileSync(new URL("./convex/appDataShape.ts", import.meta.url), "utf8");
+  check("the server treats [] as a value, not an absence",
+    /return value === undefined \|\| value === null \|\| \(typeof value === "string" && value\.trim\(\) === ""\);/.test(shape));
+  check("and wildcatCashTransactions is writable at all",
+    /"wildcatCashTransactions",/.test(shape));
+
+  // The rollover really does empty them, which is what makes the above matter.
+  const roll = code(fn("async function _startNewSchoolYear() {"));
+  check("the rollover empties the per-student arrays",
+    /wildcatCashTransactions = \[\]/.test(roll));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
