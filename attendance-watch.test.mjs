@@ -218,5 +218,94 @@ console.log("\n-- the styles --");
     .every(t => css.includes(`.wc-att-row.wc-att-${t}`)));
 }
 
+console.log("\n-- the grade filter --");
+{
+  /** The closing brace matching the `{` at or after `from`. */
+  const blockEnd = (src, from) => {
+    let i = src.indexOf("{", from), depth = 0;
+    for (; i < src.length; i++) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}" && --depth === 0) return i + 1;
+    }
+    throw new Error("unbalanced");
+  };
+  // Run the real helpers rather than copies. Sliced by brace matching so the
+  // test does not pass for the wrong reason when a line is added above.
+  const kAt = script.indexOf("function attGradeKey(student) {");
+  const oAt = script.indexOf("function attGradeOrder(keys) {");
+  const helpers = script.slice(kAt, blockEnd(script, kAt)) + "\n" +
+                  script.slice(oAt, blockEnd(script, oAt));
+  const attGradeKey = new Function(helpers + "\nreturn attGradeKey;")();
+  const attGradeOrder = new Function(helpers + "\nreturn attGradeOrder;")();
+
+  // MEASURED AGAINST PRODUCTION 2026-09-13. The school is 6-12, not 7-12:
+  // 69 in grade 6, 124, 148, 106, 73, 58, and 41 seniors. Hardcoding a grade
+  // list in the markup would have shipped a filter missing 69 children, which
+  // is why the options are built from the data instead.
+  check("10 sorts after 9, not between 1 and 2",
+    attGradeOrder(["10", "6", "9", "11", "7", "12", "8"]).join(",") === "6,7,8,9,10,11,12");
+
+  // A student the roster has no grade for is a real case -- production has one
+  // attendance row with no student record at all -- and a filter that drops
+  // them silently hides a chronically absent child.
+  check("a missing grade is its own bucket, not a miss", attGradeKey({}) === "(none)");
+  check("blank and whitespace count as missing too",
+    attGradeKey({ grade: "" }) === "(none)" && attGradeKey({ grade: "  " }) === "(none)");
+  check("(none) sorts last so it never hides at the top",
+    attGradeOrder(["(none)", "9", "6"]).join(",") === "6,9,(none)");
+  check("a non-numeric grade still appears, after the numbers",
+    attGradeOrder(["K", "9", "(none)", "6"]).join(",") === "6,9,K,(none)");
+  // Grades arrive from the roster as strings; a number must key the same way
+  // or the selected value stops matching after a re-render.
+  check("a numeric grade keys the same as a string one",
+    attGradeKey({ grade: 9 }) === attGradeKey({ grade: "9" }));
+
+  // THE DESIGN DECISION, pinned: filtering after the ranking would leave the
+  // four tier cards showing whole-school numbers over a one-grade list, which
+  // reads as a broken screen rather than a filter.
+  const fn = script.slice(script.indexOf("async function renderAttendanceWatch(force)"));
+  const body = fn.slice(0, fn.indexOf("\n        }\n"));
+  const rankAt = body.indexOf("R.attendanceRanking(rows, basis.days)");
+  const filterAt = body.indexOf("_attGradeFilter === 'all'\n                ? allRows");
+  check("the grade filter is applied BEFORE the ranking", filterAt !== -1 && filterAt < rankAt);
+  check("the ranking is fed the filtered rows", /R\.attendanceRanking\(rows, basis\.days\)/.test(body));
+
+  // Option counts must come from the unfiltered set, or picking grade 9 puts
+  // "(0)" beside every other grade and reads as "that grade has nobody".
+  check("option counts are taken from allRows", /gradeCounts\[k\] = \(gradeCounts\[k\] \|\| 0\) \+ 1/.test(body) &&
+    /allRows\.forEach\(r => \{/.test(body));
+  check("the options are rebuilt only when they changed, so typing does not close the dropdown",
+    /data-built/.test(body));
+  check("a selected grade that leaves the data falls back to all",
+    /!gradeCounts\[_attGradeFilter\]\) _attGradeFilter = 'all'/.test(body));
+
+  // The screen has to say it is scoped, or the smaller tier numbers look wrong.
+  check("the footer says which grade the screen is scoped to", /Scoped to grade/.test(body));
+  check("and says the cards followed the filter", /the tiers and counts above cover only that grade/.test(body));
+  check("the empty state names the grade", /No students match this filter/.test(body) && /' in grade ' \+ _attGradeFilter/.test(body));
+
+  // The control exists, is labelled, and is wired.
+  const controls = html.slice(html.indexOf('class="wc-att-controls"'), html.indexOf('id="attendanceList"'));
+  check("the markup carries a grade select", /<select id="attGradeFilter"/.test(controls));
+  check("it is wired to the setter", /onchange="setAttendanceGradeFilter\(this\.value\)"/.test(controls));
+  check("it has a visible label, not a bare dropdown of numbers",
+    /<span class="wc-att-grade-label">Grade<\/span>/.test(controls));
+  check("the label points at the select", /for="attGradeFilter"/.test(controls));
+  // The grades are NOT hardcoded here: production is 6-12 and that can change.
+  check("no grade numbers are hardcoded in the markup",
+    !/<option value="(6|7|8|9|10|11|12)"/.test(controls));
+  ["wc-att-grade-wrap", "wc-att-grade-label", "wc-att-grade"].forEach((c) =>
+    check(`.${c} is styled`, css.includes("." + c + " ") || css.includes("." + c + "{") ||
+                             css.includes("." + c + ",") || css.includes("." + c + ":")));
+  check("the select cannot overflow its row", /\.wc-att-grade \{[^}]*box-sizing: border-box/.test(css));
+
+  // The server still sends no grade. attendanceList.ts exists so that a
+  // whole-school attendance answer can be given without a name, grade, address
+  // or race crossing the wire, and a grade filter must not be the thing that
+  // undoes that. The browser already holds the roster.
+  check("the grade filter did NOT add grade to the wire", !/\bgrade\b/.test(
+    conv.slice(conv.indexOf("const out = rows.map"), conv.indexOf("const out = rows.map") + 400)));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

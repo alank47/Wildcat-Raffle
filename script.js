@@ -27986,6 +27986,10 @@
         /** Cached response, so switching filters does not re-hit the server. */
         let _attCache = null;
         let _attTierFilter = 'chronicPlus';
+        // 'all', a grade level as a string, or '(none)' for the students the
+        // roster has no grade for. Not a number: grades arrive as strings and
+        // comparing '9' to 9 across a re-render is a bug waiting to be written.
+        let _attGradeFilter = 'all';
         let _attBusy = false;
 
         function setAttendanceTierFilter(tier) {
@@ -27994,6 +27998,40 @@
                 b.classList.toggle('active', b.getAttribute('data-atier') === tier);
             });
             renderAttendanceWatch();
+        }
+
+        function setAttendanceGradeFilter(grade) {
+            _attGradeFilter = String(grade == null ? 'all' : grade);
+            renderAttendanceWatch();
+        }
+
+        /** A student's grade as a filter key. '(none)' is a real bucket, not a miss. */
+        function attGradeKey(student) {
+            const g = String((student && student.grade) != null ? student.grade : '').trim();
+            return g === '' ? '(none)' : g;
+        }
+
+        /**
+         * Grade levels in the data, most junior first.
+         *
+         * Numeric where both sides are numeric, so 10 sorts after 9 instead of
+         * between 1 and 2. Anything non-numeric (K, TK, a stray label) sorts
+         * after the numbers rather than being dropped, and '(none)' sorts last
+         * of all -- a student the roster has no grade for must stay reachable,
+         * because a filter that silently hides a chronically absent child is
+         * worse than no filter.
+         */
+        function attGradeOrder(keys) {
+            return keys.slice().sort((a, b) => {
+                if (a === '(none)') return 1;
+                if (b === '(none)') return -1;
+                const na = Number(a), nb = Number(b);
+                const aNum = a !== '' && !isNaN(na), bNum = b !== '' && !isNaN(nb);
+                if (aNum && bNum) return na - nb;
+                if (aNum) return -1;
+                if (bNum) return 1;
+                return a.localeCompare(b);
+            });
         }
 
         /**
@@ -28092,11 +28130,53 @@
                 if (n) byNumber[n] = st;
             });
 
-            const rows = (res.rows || []).map(r => ({
+            const allRows = (res.rows || []).map(r => ({
                 student: byNumber[String(r.studentNumber)] || { studentNumber: r.studentNumber },
                 daysAbsent: r.daysAbsent,
                 daysTardy: r.daysTardy
             }));
+
+            // THE GRADE OPTIONS COME FROM THE DATA, and their counts come from
+            // allRows rather than from what is currently shown. Counting the
+            // filtered set would put "(0)" beside every grade but the chosen
+            // one, which reads as "that grade has nobody" instead of "you are
+            // not looking at it".
+            const gradeCounts = {};
+            allRows.forEach(r => {
+                const k = attGradeKey(r.student);
+                gradeCounts[k] = (gradeCounts[k] || 0) + 1;
+            });
+            const gradeKeys = attGradeOrder(Object.keys(gradeCounts));
+            const gradeSel = document.getElementById('attGradeFilter');
+            if (gradeSel) {
+                // A grade that has left the data cannot stay selected, or the
+                // list is empty for a reason the screen does not explain.
+                if (_attGradeFilter !== 'all' && !gradeCounts[_attGradeFilter]) _attGradeFilter = 'all';
+                const wanted = ['all=All grades (' + allRows.length + ')']
+                    .concat(gradeKeys.map(k => k + '=' +
+                        (k === '(none)' ? 'No grade on file' : 'Grade ' + k) + ' (' + gradeCounts[k] + ')'))
+                    .join('|');
+                // Rebuilt only when the options actually changed, so a render
+                // triggered by a keystroke does not reset the open dropdown.
+                if (gradeSel.getAttribute('data-built') !== wanted) {
+                    gradeSel.innerHTML = wanted.split('|').map(pair => {
+                        const eq = pair.indexOf('=');
+                        const val = pair.slice(0, eq);
+                        return '<option value="' + escapeHtml(val) + '">' +
+                               escapeHtml(pair.slice(eq + 1)) + '</option>';
+                    }).join('');
+                    gradeSel.setAttribute('data-built', wanted);
+                }
+                if (gradeSel.value !== _attGradeFilter) gradeSel.value = _attGradeFilter;
+            }
+
+            // FILTERED BEFORE RANKING, on purpose. The tiers, the four cards,
+            // the counts and the "no attendance on file" line all come out of
+            // attendanceRanking, so scoping here is what makes a grade filter
+            // scope the screen instead of just the list underneath it.
+            const rows = _attGradeFilter === 'all'
+                ? allRows
+                : allRows.filter(r => attGradeKey(r.student) === _attGradeFilter);
 
             const ranked = R.attendanceRanking(rows, basis.days);
 
@@ -28144,7 +28224,11 @@
             const view = clipped ? shown.slice(0, CAP) : shown;
 
             if (!view.length) {
-                list.innerHTML = '<p class="wu-absent">No students match this filter.</p>';
+                const where = _attGradeFilter === 'all' ? ''
+                    : (_attGradeFilter === '(none)' ? ' among students with no grade on file'
+                                                    : ' in grade ' + _attGradeFilter);
+                list.innerHTML = '<p class="wu-absent">' +
+                    escapeHtml('No students match this filter' + where + '.') + '</p>';
             } else {
                 list.innerHTML = view.map(r => {
                     const st = r.student || {};
@@ -28170,6 +28254,13 @@
 
             if (foot) {
                 const bits = [];
+                // Said before the rest: it explains why every other number on
+                // the screen is smaller than it was a moment ago.
+                if (_attGradeFilter !== 'all') {
+                    bits.push(_attGradeFilter === '(none)'
+                        ? 'Scoped to students with no grade on file; the tiers and counts above cover only those students.'
+                        : 'Scoped to grade ' + _attGradeFilter + '; the tiers and counts above cover only that grade.');
+                }
                 if (clipped) bits.push('Showing the first ' + CAP + ' of ' + shown.length + '. Search to narrow.');
                 // Said out loud rather than silently dropped. A student with no
                 // attendance row is not a student with perfect attendance, and

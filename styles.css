@@ -8768,11 +8768,39 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
     gap: 12px; margin-bottom: 14px;
 }
+/* The two controls that narrow the same list, kept on one line together and
+   pushed to the end of the row. As loose flex children under
+   justify-content: space-between they split apart at desktop width. */
+.wc-att-controls-end {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    flex: 1 1 340px; min-width: 0; justify-content: flex-end;
+}
 .wc-att-search {
-    flex: 1 1 220px; min-width: 0; box-sizing: border-box;
+    flex: 1 1 200px; min-width: 0; max-width: 340px; box-sizing: border-box;
     padding: 9px 12px; font-family: inherit; font-size: 13px;
     border: 1px solid var(--wc-line, #E7ECF2); border-radius: 8px;
 }
+
+/* The grade filter sits beside the search box and does not grow with it: a
+   select stretched to half the row looks like the primary control on a screen
+   whose primary control is the tier strip above it. The label is visible
+   rather than placeholder-only, because "6" and "7" in a bare dropdown could
+   be anything. */
+.wc-att-grade-wrap {
+    display: inline-flex; align-items: center; gap: 8px;
+    flex: 0 0 auto; min-width: 0;
+}
+.wc-att-grade-label {
+    font-size: 12px; font-weight: 600; letter-spacing: .02em;
+    color: var(--wc-gray-text, #8892a0); white-space: nowrap;
+}
+.wc-att-grade {
+    box-sizing: border-box; max-width: 100%;
+    padding: 9px 12px; font-family: inherit; font-size: 13px;
+    border: 1px solid var(--wc-line, #E7ECF2); border-radius: 8px;
+    background: var(--wc-surface, #fff); color: inherit; cursor: pointer;
+}
+.wc-att-grade:focus-visible { outline: 2px solid var(--wc-blue, #2F67A7); outline-offset: 2px; }
 
 .wc-att-list { display: flex; flex-direction: column; gap: 6px; }
 

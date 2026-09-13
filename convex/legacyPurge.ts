@@ -2250,3 +2250,135 @@ export const studentEmailOutliers = internalQuery({
     return out;
   },
 });
+
+/**
+ * Can Attendance Watch be filtered by grade with the data the BROWSER has?
+ *
+ * attendanceList:schoolAttendance sends numbers only -- no name, no grade -- on
+ * purpose, so a grade filter has to read students.grade in the browser. That
+ * only works if every student with an attendance row also has a roster record
+ * carrying a grade. This counts the joins that would fail. Read-only, counts
+ * only.
+ */
+export const attendanceGradeJoin = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const att = await ctx.db.query("psAttendance").take(3000);
+    const students = await ctx.db.query("students").collect();
+    const byNumber = new Map<string, any>();
+    for (const s of students as any[]) {
+      const n = String(s.studentNumber ?? "").trim();
+      if (n) byNumber.set(n, s);
+    }
+    const grades: Record<string, number> = {};
+    let noStudentRecord = 0, noGrade = 0, matched = 0;
+    const orphanNumbers: string[] = [];
+    for (const a of att as any[]) {
+      const n = String(a.studentNumber ?? "").trim();
+      const s = byNumber.get(n);
+      if (!s) {
+        noStudentRecord++;
+        if (orphanNumbers.length < 20) orphanNumbers.push(n);
+        continue;
+      }
+      const g = String(s.grade ?? "").trim();
+      if (!g) { noGrade++; continue; }
+      matched++;
+      grades[g] = (grades[g] ?? 0) + 1;
+    }
+    // And does students.grade agree with the SIS? psRoster.gradeLevel is the
+    // enrolment record; students.grade is the app's copy and can be stale.
+    let checked = 0, agree = 0;
+    const disagree: any[] = [];
+    for (const a of att as any[]) {
+      const n = String(a.studentNumber ?? "").trim();
+      const s = byNumber.get(n);
+      if (!s) continue;
+      const row = await ctx.db.query("psRoster")
+        .withIndex("by_studentNumber", (q) => q.eq("studentNumber", n)).first();
+      if (!row) continue;
+      const sis = String((row as any).gradeLevel ?? "").trim();
+      const hub = String(s.grade ?? "").trim();
+      if (!sis) continue;
+      checked++;
+      if (sis === hub) agree++;
+      else if (disagree.length < 20) disagree.push({ studentNumber: n, hub, sis });
+    }
+    return {
+      attendanceRows: att.length,
+      matched, noStudentRecord, noGrade, orphanNumbers,
+      grades,
+      gradeAgreement: { checked, agree, disagreeCount: checked - agree, disagree },
+    };
+  },
+});
+
+/** Enrolment grade levels from psRoster, and how many attendance rows belong to nobody enrolled. Read-only. */
+export const enrolledGradeLevels = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const roster = await ctx.db.query("psRoster").take(8000);
+    const byStudent = new Map<string, string>();
+    for (const r of roster as any[]) {
+      const n = String(r.studentNumber ?? "").trim();
+      if (!n) continue;
+      const g = String(r.gradeLevel ?? "").trim();
+      if (!byStudent.has(n) && g) byStudent.set(n, g);
+    }
+    const grades: Record<string, number> = {};
+    for (const g of byStudent.values()) grades[g] = (grades[g] ?? 0) + 1;
+
+    const att = await ctx.db.query("psAttendance").take(3000);
+    const students = await ctx.db.query("students").collect();
+    const gradeOf = new Map<string, string>();
+    for (const s of students as any[]) {
+      const n = String(s.studentNumber ?? "").trim();
+      if (n) gradeOf.set(n, String(s.grade ?? "").trim());
+    }
+    let enrolledRows = 0;
+    const notEnrolledByHubGrade: Record<string, number> = {};
+    for (const a of att as any[]) {
+      const n = String(a.studentNumber ?? "").trim();
+      if (byStudent.has(n)) { enrolledRows++; continue; }
+      const g = gradeOf.get(n) || "(no hub record)";
+      notEnrolledByHubGrade[g] = (notEnrolledByHubGrade[g] ?? 0) + 1;
+    }
+    return {
+      enrolledStudents: byStudent.size,
+      enrolledByGrade: grades,
+      attendanceRows: att.length,
+      attendanceRowsForEnrolled: enrolledRows,
+      attendanceRowsForNobodyEnrolled: att.length - enrolledRows,
+      notEnrolledByHubGrade,
+    };
+  },
+});
+
+/** Do the attendance rows for students who left carry students.enrolled === false? Read-only. */
+export const attendanceEnrolledFlag = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const roster = await ctx.db.query("psRoster").take(8000);
+    const enrolledNumbers = new Set(
+      (roster as any[]).map((r) => String(r.studentNumber ?? "").trim()).filter(Boolean),
+    );
+    const att = await ctx.db.query("psAttendance").take(3000);
+    const students = await ctx.db.query("students").collect();
+    const byNumber = new Map<string, any>();
+    for (const s of students as any[]) {
+      const n = String(s.studentNumber ?? "").trim();
+      if (n) byNumber.set(n, s);
+    }
+    const tally: Record<string, number> = {};
+    for (const a of att as any[]) {
+      const n = String(a.studentNumber ?? "").trim();
+      const inRoster = enrolledNumbers.has(n);
+      const s = byNumber.get(n);
+      const flag = !s ? "noHubRecord" : s.enrolled === false ? "enrolled:false"
+        : s.enrolled === true ? "enrolled:true" : "enrolled:undefined";
+      const k = `${inRoster ? "inRoster" : "notInRoster"} / ${flag}`;
+      tally[k] = (tally[k] ?? 0) + 1;
+    }
+    return { attendanceRows: att.length, tally };
+  },
+});
