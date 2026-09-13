@@ -157,6 +157,65 @@ console.log("\n-- the panel is in the dashboard, and styled --");
     /\.wp-board-row \{[\s\S]{0,400}box-sizing: border-box/.test(css));
   check("the viewer's row and the podium look different from each other",
     css.includes(".wp-board-row.is-me") && css.includes(".wp-board-row.is-podium"));
+
+  // ---- THE ROW GEOMETRY, reported 2026-09-13 as "the box the balances are
+  // in are a bit cut off". Two faults in one row.
+  //
+  // COMMENT-STRIPPED, as insurance rather than as a present necessity. These
+  // rules carry long comments naming the properties they REPLACED, and a
+  // regex over raw CSS would match that prose and pass either way -- an
+  // assertion that .wp-board-name no longer says `text-overflow` matching the
+  // comment that explains `text-overflow` never worked. That is avoided today
+  // by keeping both comments ABOVE their selector, so the rule bodies hold no
+  // prose at all and these assertions would pass without the strip. Review
+  // caught the version where one comment sat inside the block. The strip stays
+  // so that moving a comment back inside cannot silently turn these into
+  // tautologies; it is the cheap half of the fix and the placement is the
+  // fragile half.
+  const rule = (sel) => {
+    const at = css.indexOf(sel + " {");
+    if (at === -1) return "";
+    return css.slice(at, css.indexOf("}", at))
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+  };
+  const nameRule = rule(".wp-board-name");
+  const rowRule = rule(".wp-board-row");
+  const amountRule = rule(".wp-board-amount");
+  check("the three rules were located", nameRule && rowRule && amountRule);
+
+  // FAULT 1, the one the owner saw. 10px was the entire distance between the
+  // last word of a name and a 700-weight figure, so they read as one run of
+  // text and the money looked chopped.
+  check("the figure is not 10px from the row edge any more", /padding: 8px 12px/.test(rowRule));
+  check("nor 10px from the name beside it", /gap: 12px/.test(rowRule));
+
+  // FAULT 2. The standard truncation recipe was on a display:flex box, where
+  // text-overflow does nothing: it acts on the inline content of a BLOCK box
+  // and is not inherited, and the name is an anonymous flex item. So
+  // "Christopher Alexander Villanueva-Hernandez" stopped mid-word with no
+  // ellipsis. Compound surnames are common on this roster.
+  check("the dead ellipsis is gone from the declarations", !/text-overflow/.test(nameRule));
+  check("and the nowrap that hard-clipped the name with it", !/white-space:\s*nowrap/.test(nameRule));
+  check("a long name wraps instead", /overflow-wrap: anywhere/.test(nameRule));
+  check("and can still shrink below its content width", /min-width: 0/.test(nameRule));
+
+  // A wrapped name must not leave the rank and the figure floating in the
+  // middle of it. Caught by review, not by the design pass.
+  check("rank and figure hang off the FIRST line of a wrapped name",
+    /align-items: flex-start/.test(rowRule) && !/align-items: center/.test(rowRule));
+
+  // THE MONEY NEVER GIVES WAY. "$1,2" over "450.00" is a different number.
+  check("the figure never shrinks", /flex: 0 0 auto/.test(amountRule));
+  check("and never wraps", /white-space: nowrap/.test(amountRule));
+  // The measured reason is recorded elsewhere in this stylesheet: a tabular
+  // full stop takes a whole digit cell in this face and typesets "$14 . 50".
+  // Every figure here carries a full stop.
+  check("and carries no tabular numerals", !/font-variant-numeric/.test(amountRule));
+
+  // The grade line inherited the nowrap that just went, and inherits
+  // `anywhere` instead -- which would break "Grade 12" after "Grade 1".
+  check("the grade label keeps its own nowrap",
+    /white-space: nowrap/.test(rule(".wp-board-grade")));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

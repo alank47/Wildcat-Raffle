@@ -8925,11 +8925,17 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 .wp-board-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 
 .wp-board-row {
-    display: flex; align-items: center; gap: 10px;
+    display: flex; align-items: flex-start; gap: 12px;
     /* box-sizing so a border cannot push a row past its padded panel, the
        same fault that made the quiet-students cards look clipped. */
     width: 100%; box-sizing: border-box;
-    padding: 8px 10px; border-radius: 10px;
+    /* 12px a side, and the 12px gap above, because 10px was the ENTIRE
+       distance between the last word of a name and a 700-weight figure, so
+       the two read as one run of text and the money looked chopped. Neither
+       number is tuned to a figure's width: the money never shrinks and never
+       wraps, the name is the only thing that gives, so the row holds at any
+       column width with any data. */
+    padding: 8px 12px; border-radius: 10px;
     background: var(--wc-surface, #fff);
     border: 1px solid var(--wc-line, #E7ECF2);
     font-size: 13.5px;
@@ -8944,13 +8950,69 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 }
 .wp-board-row.is-podium .wp-board-rank { color: #B07C13; }
 
+/* A LONG NAME WRAPS. It used to stop mid-word.
+   This rule carried the standard truncation recipe -- overflow:hidden,
+   ellipsis, nowrap -- and one third of it never did anything. An ellipsis acts
+   on the inline content of a BLOCK box; this box is display:flex, and the name
+   arrives as a bare text node beside .wp-board-grade, which makes it an
+   anonymous flex item no selector can reach. Nor is that property inherited,
+   so it could not arrive that way either. "Christopher Alexander
+   Villanueva-Hernandez" was hard-clipped at the box edge and simply stopped,
+   with no ellipsis at all. The same dead recipe is still sitting on
+   .wc-att-name a hundred lines up.
+
+   white-space and overflow-wrap ARE inherited, so they do reach that
+   anonymous item: dropping nowrap lets the name wrap, and `anywhere` breaks
+   inside a word only when one word alone cannot fit. Wrapping is also the
+   right answer for this roster rather than merely the reachable one --
+   compound surnames are common in this school, and a cut at this width lands
+   around 33-41 characters, which would systematically hide the second half of
+   exactly those names while short ones rendered in full. A child's whole name
+   is worth more than equal row heights.
+
+   THE COST, stated honestly: rows get taller, .wp-dash is a balanced
+   multi-column flow, and break-inside:avoid means the browser grows the
+   columns rather than splitting a panel -- so nothing clips, but panels after
+   this one in source order can move columns as the balanced height rises.
+
+   min-width: 0 stays: it is what lets the only flexible item shrink below its
+   max-content size, and `anywhere` lowers the min-content floor to one glyph,
+   so no single unbroken surname can overflow the row. overflow: hidden stays
+   as belt and braces; it has no reachable trigger now that nothing is nowrap,
+   and is kept only against a height being added later. .wc-quiet-name uses an
+   ellipsis correctly, because there the name is a block with a sibling. */
 .wp-board-name {
     flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px;
     font-weight: 600; color: var(--wc-ink, #14171C);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    overflow: hidden; overflow-wrap: anywhere;
 }
-.wp-board-grade { font-size: 11.5px; font-weight: 400; color: var(--wc-gray-text, #8892a0); }
-.wp-board-amount { flex: 0 0 auto; font-weight: 700; color: var(--wc-ink, #14171C); }
+/* Its own nowrap, because it used to inherit one from .wp-board-name and that
+   is now gone -- and it inherits `overflow-wrap: anywhere` instead, which
+   would let "Grade 12" break after "Grade 1". The name may wrap; the two
+   short labels beside it may not. */
+.wp-board-grade {
+    font-size: 11.5px; font-weight: 400; color: var(--wc-gray-text, #8892a0);
+    white-space: nowrap;
+}
+/* THE MONEY NEVER GIVES WAY. flex:0 0 auto so it never shrinks, nowrap so it
+   never breaks: "$1,2" over "450.00" is a different number, and a wrapped
+   figure is a lie about a child's total. The name absorbs every shortage
+   instead, and can shrink to one glyph without overflowing the row. The nowrap
+   is defensive rather than load-bearing -- flex:0 0 auto already sizes this to
+   max-content -- but wrapping is now permitted 12px away, so this says out
+   loud that it is exempt.
+
+   NO tabular numerals, however much a column of ten figures wants them. The
+   measured reason is recorded a few hundred lines up under "NO TABULAR
+   NUMERALS ON THIS PAGE, and money is why": a tabular full stop takes a whole
+   digit cell in this face and typesets "$14 . 50". Every figure here carries a
+   full stop, so it would break ten rows at once. No min-width or text-align
+   either: the right edges already line up, because the name is the only
+   flexible item and absorbs every spare pixel. */
+.wp-board-amount {
+    flex: 0 0 auto; white-space: nowrap;
+    font-weight: 700; color: var(--wc-ink, #14171C);
+}
 
 .wp-board-you {
     margin: 12px 0 0; padding: 10px 12px; border-radius: 10px;
