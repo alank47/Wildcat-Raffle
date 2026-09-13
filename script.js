@@ -4280,6 +4280,25 @@
                 currentCycle,
                 cycleHistory,
                 cycleStartTimestamp,
+
+                // WILDCAT CASH. Missing from here until 2026-09-13, which
+                // mattered most in the one place a backup is load-bearing:
+                // startNewSchoolYear zeroes balances, empties cashTransactions
+                // and empties cashReceipts, and says a full backup was written
+                // first. The file it pointed at carried none of those, so the
+                // ledger and the receipts it filed away were not in the only
+                // copy that survived.
+                //
+                // Balances themselves were always here, inside `students`, so
+                // the money was recoverable. The RECORD of how it moved -- who
+                // awarded what, who bought what, what was still owed -- was
+                // not, and that is what a parent asking about a deduction is
+                // answered from.
+                cashTransactions,
+                cashReceipts,
+                wildcatCashRewards,
+                cashYearArchives,
+
                 backupDate: new Date().toISOString(),
                 backupType: 'manual'
             };
@@ -4299,13 +4318,31 @@
         }
         
         // Automatic daily backup to Firebase - DISABLED DUE TO DATA SIZE
+        /**
+         * NOT A BACKUP. Throws, on purpose.
+         *
+         * Automatic Firebase backups stopped working when the data outgrew the
+         * 1MB document limit, and this was left returning early with a console
+         * line -- which made it a function that SUCCEEDS at doing nothing.
+         *
+         * That is the dangerous shape. startNewSchoolYear awaited this inside a
+         * try/catch, treated the absence of a throw as proof, set
+         * `backupRef = backups/<date>_cash`, and went on to irreversibly zero
+         * every balance and empty the ledger -- then wrote that made-up path
+         * into the permanent audit record. The one action in this app that says
+         * it cannot be undone was running with no backup behind it and telling
+         * the operator there was one.
+         *
+         * So it throws now. A caller that needs a backup gets an error it has
+         * to handle; a caller that merely wanted one opportunistically catches
+         * it and carries on. Either way nothing can conclude a backup exists
+         * because this returned.
+         */
         async function createAutomaticBackup() {
-            // DISABLED: Automatic backups now exceed Firebase's 1MB document limit
-            // The 4-document split keeps operational data under limit
-            // Use manual backup export instead (downloads JSON file)
-            console.log('ℹ️ Automatic Firebase backups disabled (data size exceeds 1MB limit)');
-            console.log('💡 Use "Export Backup" button for manual backups instead');
-            return;
+            throw new Error(
+                'Automatic backups are disabled: the data outgrew the 1MB document limit. ' +
+                'Use Export Backup, which downloads a file.'
+            );
             
             // The Firebase backup code that sat here is deleted, not disabled.
             //
@@ -4386,7 +4423,13 @@
             const today = new Date().toISOString().split('T')[0];
             
             if (lastBackup !== today && teachers.length > 0) {
-                await createAutomaticBackup();
+                // Opportunistic, and it is expected to fail: automatic backups
+                // are disabled. Swallowed here so a page load is not broken by
+                // it, and deliberately NOT swallowed in startNewSchoolYear,
+                // where a missing backup has to stop the rollover.
+                try { await createAutomaticBackup(); } catch (e) {
+                    console.log('ℹ️', (e && e.message) || e);
+                }
                 localStorage.setItem('lastAutomaticBackup', today);
             }
         }
@@ -27343,18 +27386,44 @@
                 return;
             }
 
-            // BACKUP FIRST, and stop if it fails. Everything below is
+            // BACKUP FIRST, AND A REAL ONE. Everything below is
             // irreversible; a rollover with no backup behind it is not.
+            //
+            // This awaited createAutomaticBackup(), which has been a no-op
+            // since automatic backups outgrew the 1MB limit. It returned
+            // without throwing, so the catch never fired, backupRef was set to
+            // a path that had never been written, and the rollover proceeded to
+            // wipe every balance and empty the ledger while reporting a backup
+            // that did not exist -- and filed that invented path in the audit
+            // record. exportBackup() downloads a file the operator can see, and
+            // now carries the cash ledger, the receipts and the reward
+            // catalogue that this function is about to clear.
             let backupRef = null;
             try {
                 showToast('Backing up before closing the year…', 'info');
-                await createAutomaticBackup();
-                backupRef = `backups/${new Date().toISOString().split('T')[0]}_cash`;
+                exportBackup();
+                backupRef = `wildcat-backup-${new Date().toISOString().split('T')[0]}.json`;
             } catch (e) {
                 console.error('[rollover] backup failed:', e);
                 alert('❌ The backup failed, so nothing was changed.\n\n' +
                       ((e && e.message) || String(e)) +
                       '\n\nFix the backup first: this step is what makes the rollover recoverable.');
+                return;
+            }
+
+            // THE FILE HAS TO BE IN THEIR HANDS, not merely requested. A
+            // download can be blocked, cancelled, or land somewhere the
+            // operator cannot find, and none of that throws. Asking is the
+            // only way to know, and this is the last moment the answer can
+            // still change the outcome.
+            const haveIt = await showConfirm(
+                `A backup file should have downloaded:\n\n  ${backupRef}\n\n` +
+                `Check your Downloads folder and confirm you have it before ` +
+                `continuing. Everything after this point cannot be undone from ` +
+                `inside the app.\n\nDo you have the file?`
+            );
+            if (!haveIt) {
+                alert('Nothing was changed. Take a backup with Export Backup, then run this again.');
                 return;
             }
 

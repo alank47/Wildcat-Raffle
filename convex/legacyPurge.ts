@@ -2416,3 +2416,68 @@ export const hallPassStates = internalQuery({
     };
   },
 });
+
+/**
+ * What a cash reset would actually be clearing. Counts and totals, no names.
+ *
+ * Asked before pressing the red button on launch eve: "reset the balances" has
+ * two possible meanings in this app and they do different things.
+ * resetAllStudentCash zeroes balances and nothing else; the year rollover also
+ * archives the ledger, the receipts and the leaderboard. Knowing whether there
+ * IS a stale ledger behind the balances is what decides which one is wanted.
+ */
+export const cashResetPreview = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const students = await ctx.db.query("students").collect();
+    let withBalance = 0, totalBalance = 0, negative = 0, totalEarned = 0, totalSpent = 0;
+    let biggest = 0;
+    for (const s of students as any[]) {
+      const b = Number(s.wildcatCashBalance);
+      if (Number.isFinite(b) && b !== 0) {
+        withBalance++;
+        totalBalance += b;
+        if (b < 0) negative++;
+        if (Math.abs(b) > Math.abs(biggest)) biggest = b;
+      }
+      const e = Number(s.wildcatCashEarned);
+      if (Number.isFinite(e)) totalEarned += e;
+      const p = Number(s.wildcatCashSpent);
+      if (Number.isFinite(p)) totalSpent += p;
+    }
+
+    // The other things the rollover clears and the plain reset does not.
+    const mirror = await ctx.db.query("legacyMirror").collect();
+    const countOf = (c: string) =>
+      (mirror as any[]).filter((r) => r.collection === c).length;
+    const receipts = (mirror as any[])
+      .filter((r) => r.collection === "cashReceipts")
+      .map((r) => r.payload);
+    const openReceipts = receipts.filter(
+      (r: any) => String(r?.status) !== "fulfilled" && String(r?.status) !== "cancelled",
+    ).length;
+
+    const txDates = (mirror as any[])
+      .filter((r) => String(r.collection).startsWith("cashTransactions"))
+      .map((r: any) => String(r.payload?.timestamp ?? r.payload?.at ?? ""))
+      .filter(Boolean)
+      .sort();
+
+    return {
+      students: students.length,
+      studentsWithNonZeroBalance: withBalance,
+      totalBalanceOutstanding: Math.round(totalBalance * 100) / 100,
+      studentsInDebt: negative,
+      biggestSingleBalance: biggest,
+      lifetimeEarnedOnRecords: Math.round(totalEarned * 100) / 100,
+      lifetimeSpentOnRecords: Math.round(totalSpent * 100) / 100,
+      cashReceipts: receipts.length,
+      openReceipts,
+      cashTransactionRows: txDates.length,
+      oldestTransaction: txDates[0] ?? null,
+      newestTransaction: txDates[txDates.length - 1] ?? null,
+      auditLogRows: countOf("auditLog"),
+      rewardCatalogue: countOf("wildcatCashRewards"),
+    };
+  },
+});
