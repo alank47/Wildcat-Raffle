@@ -251,6 +251,9 @@
       cancelledAt: null,
       cancelledBy: null,
       cancelReason: null,
+      // The merge stamp. Null on a new receipt because an insert has nothing
+      // to beat; every LATER change to this row must set it. See applyFulfill.
+      updatedAt: null,
       // Filled in by the caller once recordCashTransaction returns, so the
       // receipt and the ledger row can always be matched to each other.
       txId: null,
@@ -294,12 +297,34 @@
     return { allowed: true };
   }
 
+  /**
+   * Hand the item over. Returns a NEW receipt; the caller replaces.
+   *
+   * THE BUG THIS FIXES. This set status, fulfilledAt and fulfilledBy, and the
+   * fulfilment then silently did not persist -- the receipt was back to
+   * "issued" on the next load, so the desk was told to hand over an item it
+   * had already handed over.
+   *
+   * cashReceipts is saved with mergeLegacySlice(..., 'id'), and
+   * legacyData.touchedAt decides a same-id collision from the LATEST of
+   * updatedAt / loopClosedAt / closedAt / submittedAt only. fulfilledAt is
+   * not on that list. So the incoming fulfilled row scored 0, the stored
+   * issued row scored 0, `incoming > stored` was false, and the server kept
+   * the issued copy. Then the loader's union takes the server's copy for any
+   * id it already has, and the fulfilment was gone with no error anywhere.
+   *
+   * This is the second time this exact bug has been written here: retireReward
+   * set only retiredAt and rewards un-retired themselves on reload. Any new
+   * field that records a state change on a row saved by id needs updatedAt
+   * set alongside it, or it does not survive the trip.
+   */
   function applyFulfill(receipt, now, actor) {
     var next = {};
     for (var k in receipt) if (Object.prototype.hasOwnProperty.call(receipt, k)) next[k] = receipt[k];
     next.status = 'fulfilled';
     next.fulfilledAt = new Date(now).toISOString();
     next.fulfilledBy = trimmed(actor && (actor.name || actor.username)) || 'Unknown';
+    next.updatedAt = next.fulfilledAt;
     return next;
   }
 
@@ -337,6 +362,11 @@
     next.cancelledAt = new Date(now).toISOString();
     next.cancelledBy = trimmed(actor.name || actor.username) || 'Unknown';
     next.cancelReason = trimmed(o.reason) || 'No reason given';
+    // Same reason as applyFulfill, and the stakes are higher here: the refund
+    // is a separate ledger row carrying its own id, so it inserts and sticks
+    // whatever happens to this one. A cancellation that did not persist left
+    // the student refunded AND the receipt still open to collect against.
+    next.updatedAt = next.cancelledAt;
 
     var transactionRequest = null;
     if (refund && o.student) {

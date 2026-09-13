@@ -1992,3 +1992,105 @@ export const auditActionCatalogue = internalQuery({
     };
   },
 });
+
+/**
+ * Receipts whose stored status disagrees with the audit log. Read-only.
+ *
+ * applyFulfill and buildCancel used to change a receipt without setting
+ * updatedAt, so legacyData.touchedAt scored the change 0, tied with the stored
+ * copy, and lost. The audit entry for the same action DID persist (it carries
+ * its own id and is an insert), so the log is the record of what really
+ * happened and the receipt row is the one that reverted. This names the gap so
+ * the desk can be told which receipts were actually handed over.
+ */
+export const receiptStatusDrift = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("legacyMirror").collect();
+    const receipts = rows
+      .filter((r: any) => r.collection === "cashReceipts")
+      .map((r: any) => r.payload)
+      .filter(Boolean);
+    const audit = rows.filter((r: any) => r.collection === "auditLog");
+
+    // "Handed over X, receipt R" / "Cancelled X, receipt R. reason"
+    const idsIn = (action: string) => {
+      const out = new Set<string>();
+      for (const a of audit as any[]) {
+        if (String(a.payload?.action ?? "") !== action) continue;
+        const m = String(a.payload?.reason ?? "").match(/receipt ([A-Za-z0-9_-]+)/);
+        if (m) out.add(m[1]);
+      }
+      return out;
+    };
+    const fulfilled = idsIn("reward_fulfilled");
+    const cancelled = idsIn("reward_cancelled");
+
+    const drift: any[] = [];
+    for (const r of receipts as any[]) {
+      const id = String(r.id ?? "");
+      const status = String(r.status ?? "");
+      const saysFulfilled = fulfilled.has(id);
+      const saysCancelled = cancelled.has(id);
+      if (saysFulfilled && status !== "fulfilled") {
+        drift.push({ id, storedStatus: status, auditSays: "fulfilled", hasUpdatedAt: !!r.updatedAt });
+      } else if (saysCancelled && status !== "cancelled") {
+        drift.push({ id, storedStatus: status, auditSays: "cancelled", hasUpdatedAt: !!r.updatedAt });
+      }
+    }
+    const byStatus: Record<string, number> = {};
+    for (const r of receipts as any[]) {
+      const k = String(r.status ?? "(none)");
+      byStatus[k] = (byStatus[k] ?? 0) + 1;
+    }
+    // A receipt the log says was fulfilled but that is not stored AT ALL is a
+    // different failure from one whose status reverted, and the loop above
+    // cannot see it because it walks the stored rows. Missing rows are the old
+    // bug fixed at script.js:3958 -- receipts were written to localStorage only
+    // and came back as an empty array on every load -- not this one. Counting
+    // them as "no drift" would have read as "nothing to repair".
+    const storedIds = new Set((receipts as any[]).map((r) => String(r.id ?? "")));
+    const goneFulfilled = [...fulfilled].filter((id) => !storedIds.has(id));
+    const goneCancelled = [...cancelled].filter((id) => !storedIds.has(id));
+    return {
+      receipts: receipts.length,
+      byStatus,
+      withUpdatedAt: (receipts as any[]).filter((r) => !!r.updatedAt).length,
+      auditSaysFulfilled: fulfilled.size,
+      auditSaysCancelled: cancelled.size,
+      drift,
+      notStoredAtAll: { fulfilled: goneFulfilled, cancelled: goneCancelled },
+      // When the fulfilments happened matters: cashReceipts only started going
+      // through legacyData:mergeSlice on 2026-08-31 (see script.js:3958). A
+      // fulfilment before that date was not exposed to this bug.
+      fulfilTimes: (audit as any[])
+        .filter((a) => String(a.payload?.action ?? "") === "reward_fulfilled")
+        .map((a) => a.payload?.timestamp)
+        .sort(),
+    };
+  },
+});
+
+/** The raw receipt rows and the fulfil/cancel audit lines, to check the match by eye. Read-only. */
+export const receiptRawPeek = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("legacyMirror").collect();
+    const receipts = rows
+      .filter((r: any) => r.collection === "cashReceipts")
+      .map((r: any) => ({
+        id: r.payload?.id, status: r.payload?.status,
+        purchasedAt: r.payload?.purchasedAt, fulfilledAt: r.payload?.fulfilledAt,
+        cancelledAt: r.payload?.cancelledAt, updatedAt: r.payload?.updatedAt ?? null,
+        reward: r.payload?.rewardName, doc: r.doc,
+      }));
+    const lines = rows
+      .filter((r: any) => r.collection === "auditLog" &&
+        /^reward_(fulfilled|cancelled|redemption)$/.test(String(r.payload?.action ?? "")))
+      .map((r: any) => ({
+        action: r.payload?.action, reason: r.payload?.reason,
+        at: r.payload?.timestamp, doc: r.doc,
+      }));
+    return { receipts, lines };
+  },
+});

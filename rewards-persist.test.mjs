@@ -119,5 +119,91 @@ console.log("\n-- the union really is a union --");
     /touchedAt\(r\.payload\) > touchedAt\(stored\.payload\)/.test(merge));
 }
 
+console.log("\n-- a receipt that changes state has to survive the trip --");
+{
+  // THE SAME BUG, A SECOND TIME, in the row right next to the catalogue.
+  // applyFulfill set status/fulfilledAt/fulfilledBy and buildCancel set
+  // status/cancelledAt/cancelledBy. touchedAt reads NEITHER fulfilledAt nor
+  // cancelledAt, so the changed row scored 0, tied with the stored copy at 0,
+  // `incoming > stored` was false, and the server kept the old status. The
+  // loader's union then takes the server's copy for any id it already holds,
+  // so the change was gone with no error: the desk was told to hand over an
+  // item it had already handed over.
+  //
+  // VERIFIED AGAINST PRODUCTION 2026-09-12, and the timing is the point. All
+  // six fulfilments in the audit log happened 2026-08-18 to 2026-08-25;
+  // cashReceipts only started going through mergeSlice on 2026-08-31. So the
+  // bug was live and had never once fired, with exactly one receipt
+  // outstanding (WC-XPSGVE, bought 2026-09-10) waiting to be the first.
+  const fields = legacy.slice(legacy.indexOf("function touchedAt"), legacy.indexOf("function touchedAt") + 400);
+  check("touchedAt does not read fulfilledAt", !/fulfilledAt/.test(fields));
+  check("nor cancelledAt", !/cancelledAt/.test(fields));
+
+  // Receipts ride the same by-id merge the catalogue does, which is what makes
+  // the stamp load-bearing rather than decorative.
+  check("cashReceipts is in the by-id secondary list",
+    /const secondaryLists = \{[\s\S]{0,400}cashReceipts,/.test(script));
+
+  // A balance, or canPurchase refuses and there is no receipt to test.
+  const student = { id: "s1", firstName: "Kay", lastName: "L", grade: "8", wildcatCashBalance: 100 };
+  const reward = { id: "r1", name: "Homework Pass", cost: 5, category: "General", stock: null, available: true };
+  const built = S.buildPurchase({
+    student, reward, quantity: 1, actor: { name: "Desk" }, now: 1000, channel: "staff",
+  });
+  check("a purchase can be built", !!(built && built.ok), built && built.reason);
+  const issued = built.receipt;
+  check("a new receipt is issued", issued.status === "issued");
+  // Null, not a stamp: an insert has nothing to beat, and a value here would
+  // let a stale tab's untouched copy outrank a real later change.
+  check("a new receipt carries updatedAt as null", issued.updatedAt === null);
+
+  const done = S.applyFulfill(issued, 5000, { name: "Desk" });
+  check("applyFulfill marks it fulfilled", done.status === "fulfilled");
+  check("applyFulfill sets fulfilledAt", done.fulfilledAt === new Date(5000).toISOString());
+  check("applyFulfill ALSO sets updatedAt, so the fulfilment wins the merge",
+    done.updatedAt === new Date(5000).toISOString());
+  check("the original is not mutated", issued.status === "issued" && issued.updatedAt === null);
+
+  const cancelled = S.buildCancel({
+    receipt: issued, student, reason: "Out of stock", refund: true,
+    actor: { name: "Desk" }, now: 6000,
+  });
+  check("a cancel can be built", cancelled.ok, cancelled.reason);
+  check("buildCancel marks it cancelled", cancelled.receipt.status === "cancelled");
+  check("buildCancel sets cancelledAt", cancelled.receipt.cancelledAt === new Date(6000).toISOString());
+  check("buildCancel ALSO sets updatedAt", cancelled.receipt.updatedAt === new Date(6000).toISOString());
+  // Why cancelling was the worse of the two: the refund is its own ledger row
+  // with its own id, so it INSERTS and sticks regardless of what happens to
+  // the receipt. A cancellation that did not persist left the student refunded
+  // and the receipt still open to collect against.
+  check("cancelling still raises a separate refund transaction",
+    !!cancelled.transactionRequest && cancelled.transactionRequest.amount === issued.totalCost);
+  check("and the refund is forward-facing, not an edit of the charge",
+    cancelled.transactionRequest.amount > 0);
+
+  // The actual merge decision, run for real rather than asserted about.
+  const touchedAt = (payload) => {
+    let best = 0;
+    for (const f of ["updatedAt", "loopClosedAt", "closedAt", "submittedAt"]) {
+      const t = Date.parse(payload[f]);
+      if (Number.isFinite(t) && t > best) best = t;
+    }
+    return best;
+  };
+  check("BEFORE: an unstamped fulfilment tied with the stored copy and lost",
+    !(0 > touchedAt(issued)));
+  check("AFTER: the fulfilment outscores the stored issued copy",
+    touchedAt(done) > touchedAt(issued));
+  check("AFTER: the cancellation does too", touchedAt(cancelled.receipt) > touchedAt(issued));
+  // And a receipt already stored WITHOUT a stamp -- all four in production --
+  // still loses to a fulfilment, which is what makes this fix retroactive.
+  check("an already-stored unstamped receipt loses to a new fulfilment",
+    touchedAt(done) > touchedAt({ ...issued, updatedAt: undefined }));
+
+  // A stale tab holding the issued copy must not undo a fulfilment that landed.
+  check("a stale untouched copy cannot beat a stamped fulfilment",
+    !(touchedAt(issued) > touchedAt(done)));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
