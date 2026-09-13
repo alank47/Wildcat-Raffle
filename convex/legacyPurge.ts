@@ -2703,3 +2703,56 @@ export const zeroAllStudentCash = internalMutation({
     };
   },
 });
+
+
+/**
+ * Everything zeroAllStudentCash is about to clear, as data. Read-only.
+ *
+ * Taken and saved to a file BEFORE the apply, because that mutation patches
+ * rows directly and Convex has no undo. The buttons take a backup first and
+ * refuse to run without one; a tool that bypasses the buttons has to honour
+ * the same rule or it is just a faster way to lose the record.
+ *
+ * Names are included, unlike every other probe in this file. This is a
+ * restore file, not a diagnostic: a closing balance with no name on it cannot
+ * answer "what did this child finish with", which is the only question anyone
+ * asks of it later.
+ */
+export const exportStudentCash = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const roster = await ctx.db.query("psRoster").take(8000);
+    const enrolled = new Set(
+      (roster as any[]).map((r) => String(r.studentNumber ?? "").trim()).filter(Boolean),
+    );
+    const students = await ctx.db.query("students").collect();
+    const rows = (students as any[])
+      .map((s) => ({
+        legacyId: s.legacyId ?? null,
+        studentNumber: s.studentNumber ?? null,
+        name: `${s.firstName ?? ""} ${s.lastName ?? ""}`.trim(),
+        grade: s.grade ?? null,
+        enrolledNow: enrolled.has(String(s.studentNumber ?? "").trim()),
+        wildcatCashBalance: s.wildcatCashBalance ?? null,
+        wildcatCashEarned: s.wildcatCashEarned ?? null,
+        wildcatCashSpent: s.wildcatCashSpent ?? null,
+        wildcatCashDeducted: s.wildcatCashDeducted ?? null,
+        wildcatCashTransactions: Array.isArray(s.wildcatCashTransactions) ? s.wildcatCashTransactions : [],
+        wildcatCashRewardsRedeemed: Array.isArray(s.wildcatCashRewardsRedeemed) ? s.wildcatCashRewardsRedeemed : [],
+      }))
+      .filter((r) =>
+        Number(r.wildcatCashBalance) !== 0 ||
+        Number(r.wildcatCashEarned) !== 0 ||
+        Number(r.wildcatCashSpent) !== 0 ||
+        Number(r.wildcatCashDeducted) !== 0 ||
+        r.wildcatCashTransactions.length > 0 ||
+        r.wildcatCashRewardsRedeemed.length > 0);
+    return {
+      takenFor: "legacyPurge:zeroAllStudentCash",
+      studentsWithAnyCashState: rows.length,
+      totalBalance: rows.reduce((n, r) => n + (Number(r.wildcatCashBalance) || 0), 0),
+      totalTransactionRows: rows.reduce((n, r) => n + r.wildcatCashTransactions.length, 0),
+      students: rows,
+    };
+  },
+});
