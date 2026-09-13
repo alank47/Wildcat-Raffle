@@ -12,6 +12,7 @@ import {
   canForceClose,
   canRedeemTapIntent,
   canRequest,
+  canRequestWhenOpen,
   elapsedMinutes,
   hasCorruptClock,
   isAbandoned,
@@ -28,6 +29,8 @@ import {
   trimReason,
   validatePassMinutes,
   withinTapRateLimit,
+  STUDENT_PASS_REQUESTS_OPEN,
+  PASS_REQUESTS_CLOSED_REASON,
   EXPIRY_GRACE_MINUTES,
   MAX_PASSES_PER_SCHOOL_DAY,
   MAX_PASS_MINUTES,
@@ -307,10 +310,10 @@ const doneToday = (n) =>
 
 console.log("\nA student asking for their own pass");
 {
-  check("a student with no history may ask", canRequest([], OPEN_ROOM, NOW).ok);
+  check("a student with no history may ask", canRequestWhenOpen([], OPEN_ROOM, NOW).ok);
   check(
     "a student whose passes are all closed may ask",
-    canRequest(
+    canRequestWhenOpen(
       [
         { state: "returned", requestedAt: T(0) },
         { state: "denied", requestedAt: T(0) },
@@ -327,7 +330,7 @@ console.log("\nA student asking for their own pass");
   // pass until something writes a terminal state. If this check ever passes,
   // the escape hatch below is the only thing standing between a child and a
   // year with no hall passes.
-  const stuck = canRequest([{ state: "requested", requestedAt: T(0) }], OPEN_ROOM, NOW);
+  const stuck = canRequestWhenOpen([{ state: "requested", requestedAt: T(0) }], OPEN_ROOM, NOW);
   check("an unanswered request BLOCKS a new one", !stuck.ok, JSON.stringify(stuck));
   check(
     "and the refusal names the way out rather than only refusing",
@@ -339,15 +342,15 @@ console.log("\nA student asking for their own pass");
   // taps afterwards, so the record becomes unreadable exactly when it matters.
   check(
     "a second request while one is active is refused",
-    !canRequest([{ state: "active", requestedAt: T(0) }], OPEN_ROOM, NOW).ok,
+    !canRequestWhenOpen([{ state: "active", requestedAt: T(0) }], OPEN_ROOM, NOW).ok,
   );
   check(
     "a second request while already out is refused",
-    !canRequest([{ state: "out", requestedAt: T(0) }], OPEN_ROOM, NOW).ok,
+    !canRequestWhenOpen([{ state: "out", requestedAt: T(0) }], OPEN_ROOM, NOW).ok,
   );
   check(
     "one live pass among many closed ones still blocks",
-    !canRequest(
+    !canRequestWhenOpen(
       [
         { state: "returned", requestedAt: T(0) },
         { state: "active", requestedAt: T(0) },
@@ -358,11 +361,11 @@ console.log("\nA student asking for their own pass");
     ).ok,
   );
 
-  check("a room with no tag is refused", !canRequest([], null, NOW).ok);
-  check("a retired tag is refused", !canRequest([], RETIRED_ROOM, NOW).ok);
+  check("a room with no tag is refused", !canRequestWhenOpen([], null, NOW).ok);
+  check("a retired tag is refused", !canRequestWhenOpen([], RETIRED_ROOM, NOW).ok);
   check(
     "a retired tag and an unknown one read identically to a student",
-    canRequest([], null, NOW).reason === canRequest([], RETIRED_ROOM, NOW).reason,
+    canRequestWhenOpen([], null, NOW).reason === canRequestWhenOpen([], RETIRED_ROOM, NOW).reason,
     "otherwise the picker becomes a way to enumerate tags that used to exist",
   );
 
@@ -371,7 +374,7 @@ console.log("\nA student asking for their own pass");
   check(
     "a stuck pass is reported before a bad room",
     /already have/i.test(
-      canRequest([{ state: "requested", requestedAt: T(0) }], null, NOW).reason,
+      canRequestWhenOpen([{ state: "requested", requestedAt: T(0) }], null, NOW).reason,
     ),
   );
 }
@@ -388,11 +391,11 @@ console.log("\nThe daily write ceiling");
   const atLimit = doneToday(MAX_PASSES_PER_SCHOOL_DAY);
   const belowLimit = doneToday(MAX_PASSES_PER_SCHOOL_DAY - 1);
 
-  check("under the limit is allowed", canRequest(belowLimit, OPEN_ROOM, NOW).ok);
+  check("under the limit is allowed", canRequestWhenOpen(belowLimit, OPEN_ROOM, NOW).ok);
 
-  const capped = canRequest(atLimit, OPEN_ROOM, NOW);
+  const capped = canRequestWhenOpen(atLimit, OPEN_ROOM, NOW);
   check("at the limit is refused", !capped.ok, JSON.stringify(capped));
-  check("and one over is refused", !canRequest(doneToday(50), OPEN_ROOM, NOW).ok);
+  check("and one over is refused", !canRequestWhenOpen(doneToday(50), OPEN_ROOM, NOW).ok);
   check(
     "the refusal tells the student the count and points at a teacher",
     /\d/.test(capped.reason) && /teacher/i.test(capped.reason),
@@ -402,7 +405,7 @@ console.log("\nThe daily write ceiling");
   // A loop cannot walk past it: every attempt adds a row, and every row counts.
   check(
     "1000 passes today is still refused, not wrapped around",
-    !canRequest(doneToday(1000), OPEN_ROOM, NOW).ok,
+    !canRequestWhenOpen(doneToday(1000), OPEN_ROOM, NOW).ok,
   );
 
   // Yesterday's passes must not consume today's allowance.
@@ -410,19 +413,19 @@ console.log("\nThe daily write ceiling");
     state: "returned",
     requestedAt: "2026-08-01T18:00:00.000Z",
   }));
-  check("yesterday's passes do not count against today", canRequest(yesterday, OPEN_ROOM, NOW).ok);
+  check("yesterday's passes do not count against today", canRequestWhenOpen(yesterday, OPEN_ROOM, NOW).ok);
 
   // Ordering: the cap is reported before the room, so a student who is out of
   // passes is not sent off to pick a different room first.
   check(
     "the cap is reported before a bad room",
-    /limit/i.test(canRequest(atLimit, null, NOW).reason),
+    /limit/i.test(canRequestWhenOpen(atLimit, null, NOW).reason),
   );
   // But a live pass still outranks it, because that one has an escape hatch.
   check(
     "a live pass is still reported before the cap",
     /already have/i.test(
-      canRequest([...atLimit, { state: "requested", requestedAt: T(0) }], OPEN_ROOM, NOW).reason,
+      canRequestWhenOpen([...atLimit, { state: "requested", requestedAt: T(0) }], OPEN_ROOM, NOW).reason,
     ),
   );
 
@@ -430,7 +433,7 @@ console.log("\nThe daily write ceiling");
     "a corrupt timestamp is not counted into today",
     passesTakenOnDay([{ requestedAt: "nonsense", approvedAt: T(1) }], NOW) === 0,
   );
-  check("nor can it be used to exhaust an allowance", canRequest(
+  check("nor can it be used to exhaust an allowance", canRequestWhenOpen(
     Array.from({ length: 99 }, () => ({ state: "returned", requestedAt: "nonsense", approvedAt: T(1) })),
     OPEN_ROOM,
     NOW,
@@ -454,21 +457,21 @@ console.log("\nOnly passes actually TAKEN count against the cap");
 
   check(
     "eight cancelled requests cost nothing",
-    canRequest(many(MAX_PASSES_PER_SCHOOL_DAY, { state: "cancelled" }), OPEN_ROOM, NOW).ok,
+    canRequestWhenOpen(many(MAX_PASSES_PER_SCHOOL_DAY, { state: "cancelled" }), OPEN_ROOM, NOW).ok,
     "cancelling is the escape hatch; charging for it makes it a trap",
   );
   check(
     "eight denied requests cost nothing",
-    canRequest(many(MAX_PASSES_PER_SCHOOL_DAY, { state: "denied" }), OPEN_ROOM, NOW).ok,
+    canRequestWhenOpen(many(MAX_PASSES_PER_SCHOOL_DAY, { state: "denied" }), OPEN_ROOM, NOW).ok,
   );
   check(
     "requests that expired unanswered cost nothing",
-    canRequest(many(MAX_PASSES_PER_SCHOOL_DAY, { state: "expired" }), OPEN_ROOM, NOW).ok,
+    canRequestWhenOpen(many(MAX_PASSES_PER_SCHOOL_DAY, { state: "expired" }), OPEN_ROOM, NOW).ok,
     "the teacher ignored them; the student was never out of class",
   );
   check(
     "but an approved pass that was later force-closed DOES count",
-    !canRequest(
+    !canRequestWhenOpen(
       many(MAX_PASSES_PER_SCHOOL_DAY, { state: "expired", approvedAt: T(1) }),
       OPEN_ROOM,
       NOW,
@@ -477,7 +480,7 @@ console.log("\nOnly passes actually TAKEN count against the cap");
   );
   check(
     "and a returned one counts",
-    !canRequest(
+    !canRequestWhenOpen(
       many(MAX_PASSES_PER_SCHOOL_DAY, { state: "returned", approvedAt: T(1) }),
       OPEN_ROOM,
       NOW,
@@ -490,7 +493,7 @@ console.log("\nOnly passes actually TAKEN count against the cap");
     ...many(9, { state: "cancelled" }),
     ...many(4, { state: "denied" }),
   ];
-  check("three taken plus thirteen refused is still under the cap", canRequest(mixed, OPEN_ROOM, NOW).ok);
+  check("three taken plus thirteen refused is still under the cap", canRequestWhenOpen(mixed, OPEN_ROOM, NOW).ok);
   check("and the count reported is the taken one", passesTakenOnDay(mixed, NOW) === 3);
 }
 
@@ -527,7 +530,7 @@ console.log("\nCancelling a pass: the escape hatch, and its limits");
   // Which is the whole point: this is what unsticks the case above.
   check(
     "cancelling clears the block, so the student can ask again",
-    canRequest([{ state: "cancelled", requestedAt: T(0) }], OPEN_ROOM, NOW).ok,
+    canRequestWhenOpen([{ state: "cancelled", requestedAt: T(0) }], OPEN_ROOM, NOW).ok,
   );
 
   const approved = canCancel(owned("active"), MINE);
@@ -1076,7 +1079,7 @@ console.log("\nAt most one live pass, always the newest row");
     const current = live()[0];
 
     if (op === "request") {
-      if (canRequest(window, { active: true }, now()).ok) {
+      if (canRequestWhenOpen(window, { active: true }, now()).ok) {
         passes.push({ ...base, state: "requested", studentId: MINE, requestedAt: now() });
         opened++;
       }
@@ -1117,6 +1120,44 @@ console.log("\nAt most one live pass, always the newest row");
   const before = violations;
   invariant("deliberately corrupted state");
   check("and the checker detects two live passes when they exist", violations > before);
+}
+
+console.log("\n-- the school-wide switch, off since 2026-09-13 --");
+{
+  // Hall passes are not part of the student launch. The portal hides its
+  // request button, but hiding a button is not closing a door: requestMine is
+  // a public mutation, and /app/ -- the React build committed under app/ and
+  // live on the domain, verified HTTP 200 on 2026-09-13 -- still calls it, as
+  // does the Capacitor bundle and any browser holding a cached index.html.
+  // canRequest is the one place all of those pass through.
+  check("requests are closed", STUDENT_PASS_REQUESTS_OPEN === false);
+  check("so a student who could otherwise ask is refused",
+    !canRequest([], OPEN_ROOM, NOW).ok);
+  check("and the refusal is the school's sentence, not a rule's",
+    canRequest([], OPEN_ROOM, NOW).reason === PASS_REQUESTS_CLOSED_REASON);
+  // The refusal has to name an actor. "Not currently available" reads as a
+  // fault to retry; this has to read as a decision, with somebody to ask.
+  check("it says who to ask", /teacher/i.test(PASS_REQUESTS_CLOSED_REASON));
+  check("and does not read as a glitch to retry",
+    !/error|try again|unavailable|failed|sorry/i.test(PASS_REQUESTS_CLOSED_REASON));
+
+  // THE POINT OF THE SPLIT. Every rule above is asserted through
+  // canRequestWhenOpen, so throwing the switch did not quietly stop testing
+  // the daily cap, the per-child cap, the room check or the escape hatch --
+  // which is what happened when the flag lived inside canRequest itself:
+  // sixteen assertions about rules a school argues about turned into sixteen
+  // assertions that the flag was off.
+  check("with the switch open, the rules are what decide",
+    canRequestWhenOpen([], OPEN_ROOM, NOW).ok);
+  check("the switch is the ONLY thing canRequest adds",
+    canRequest([], OPEN_ROOM, NOW).reason === PASS_REQUESTS_CLOSED_REASON &&
+    canRequestWhenOpen([{ state: "active", requestedAt: T(0) }], OPEN_ROOM, NOW).ok === false);
+
+  // CANCELLING STAYS OPEN. A student holding a pass from before the switch
+  // went off must still be able to put it down; gating that would strand them
+  // with a live pass and no way out, which is worse than the feature being on.
+  const mineBase = { _id: "p1", studentId: "me", state: "requested", requestedAt: T(0) };
+  check("cancelling is not gated by the switch", canCancel(mineBase, "me").ok === true);
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

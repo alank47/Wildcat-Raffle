@@ -51,7 +51,7 @@ import {
   applyTap,
   canApprove,
   canRedeemTapIntent,
-  canRequest,
+  canRequestWhenOpen,
   elapsedMinutes,
   isAbandoned,
   isDuplicateTapEvent,
@@ -292,8 +292,8 @@ console.log("\nA teacher-issued pass, all the way round");
   );
   check(
     "so they may ask for another one",
-    canRequest([t.pass], { active: true }, T(30)).ok,
-    canRequest([t.pass], { active: true }, T(30)).reason,
+    canRequestWhenOpen([t.pass], { active: true }, T(30)).ok,
+    canRequestWhenOpen([t.pass], { active: true }, T(30)).reason,
   );
 
   // --- the record the trip leaves ---
@@ -472,7 +472,7 @@ console.log("\nA pass that can never be overdue can still be closed");
   check("the student is unblocked", !hasLivePass([t.pass]));
   check(
     "which is the point: an untimed pass is not an unclosable one",
-    canRequest([t.pass], { active: true }, T(120)).ok,
+    canRequestWhenOpen([t.pass], { active: true }, T(120)).ok,
   );
 }
 

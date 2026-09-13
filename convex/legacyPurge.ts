@@ -2382,3 +2382,37 @@ export const attendanceEnrolledFlag = internalQuery({
     return { attendanceRows: att.length, tally };
   },
 });
+
+/**
+ * Hall passes by state, so "is any student mid-errand right now" is answerable.
+ *
+ * Asked before hiding the student portal's request button: a student holding an
+ * OPEN pass with the UI taken away would be stranded, unable to close it, which
+ * is worse than the feature being visible for one more day. Counts only.
+ */
+export const hallPassStates = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("hallPasses").take(3000);
+    const byState: Record<string, number> = {};
+    for (const r of rows as any[]) {
+      const k = String(r.state ?? "(none)");
+      byState[k] = (byState[k] ?? 0) + 1;
+    }
+    const OPEN = new Set(["requested", "active", "out"]);
+    const open = (rows as any[]).filter((r) => OPEN.has(String(r.state)));
+    return {
+      total: rows.length,
+      byState,
+      openNow: open.length,
+      openDetail: open.map((r) => ({
+        state: r.state, requestedAt: r.requestedAt,
+        approvedAt: r.approvedAt ?? null, outAt: r.outAt ?? null,
+      })),
+      newest: (rows as any[])
+        .map((r) => String(r.requestedAt ?? ""))
+        .sort()
+        .slice(-3),
+    };
+  },
+});

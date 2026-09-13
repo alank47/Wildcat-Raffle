@@ -17171,6 +17171,34 @@
            the cash figures and every attendance count are OPTIONAL in the
            schema, and a field a sync dropped renders as an absence here, never
            as a 0 a student would read as "you have earned nothing". */
+        /* ---- ONE FLAG: THE HALL PASS REQUEST -----------------------------
+           HIDDEN, NOT REMOVED, AND NOT "COMING SOON". Hall passes are not in
+           use for the student launch (2026-09-14), so the two places a student
+           can ASK for one are ABSENT: this screen's Hallway panel and the
+           wallet card's request face. A teaser would be worse than nothing,
+           because it advertises a thing no teacher can answer -- Claw Pass is
+           not in LAUNCH_MODES (wildcat-modes.js:63).
+
+           TO PUT IT BACK: set this to true, set STUDENT_PASS_REQUESTS_OPEN in
+           convex/hallPassRules.ts to true, then bump the ?v= stamps here. Both
+           flags, because this one hides the button and that one closes the
+           door -- see the note there for why a button is not a door.
+
+           WHAT IS DELIBERATELY NOT BEHIND IT. A pass a teacher or admin opened
+           still appears everywhere it did before: the wallet card, the
+           full-screen takeover, the check-in bar under the stack. Hiding the
+           way to ask for a pass must never hide a pass that is RUNNING
+           against a clock the student cannot see. The gate is "can a student
+           ask", never "is there a pass". A real server refusal still shows,
+           for the same reason.
+
+           DECLARED HERE, inside the desk-dashboard markers, because
+           student-dashboard.test.mjs evaluates script.js between
+           "/* ---- the desk dashboard ---" and "/* ---- end desk dashboard"
+           inside new Function, with no window. A flag outside that range
+           throws ReferenceError and takes every check in that file with it. */
+        const WP_HALL_PASS_REQUEST = false;
+
         function wpStat(label, value, sub) {
             const known = value !== null && value !== undefined && value !== '';
             return '<div class="wp-stat' + (known ? '' : ' is-none') + '">' +
@@ -17847,6 +17875,13 @@
                         wpStat('Minutes allowed', hp.clockLimitMinutes) +
                     '</div>' +
                     wpFoot('Your phone shows the live timer and the check-in tap.'))
+                // HIDDEN, NOT A TEASER, 2026-09-13. See WP_HALL_PASS_REQUEST.
+                // A student with nothing to show gets no panel here at all:
+                // no title, no empty state, no button. A real server refusal
+                // still gets one, because hpBroken is news about a pass rather
+                // than an invitation to ask for one -- and that branch has
+                // never carried a button.
+                : (!WP_HALL_PASS_REQUEST && !hpBroken) ? ''
                 : wpPanel('Hallway', 'Hall pass',
                     hpBroken ? 'Unavailable' : 'None active',
                     hpBroken
@@ -17866,16 +17901,28 @@
             // short card placed fourth lands wherever the balancing puts it.
             // On a 1366x768 Chromebook that was below the fold, which is the
             // wrong place for the one control on this screen a student needs in
-            // a hurry and at a fixed moment. Placed first it opens the left
-            // column, and Grades, the tallest panel, falls in under it.
+            // a hurry and at a fixed moment. It STAYS the first term while
+            // WP_HALL_PASS_REQUEST is off, where it evaluates to the empty
+            // string, so setting the flag back to true restores the order this
+            // paragraph describes with no edit here.
+            // WHILE IT IS HIDDEN the balance opens the left column instead.
+            // The layout is CSS multi-column (styles.css: .wp-dash columns: 3),
+            // and the only slot a balanced column flow guarantees is the first
+            // term in document order: top of column one, above the fold. That
+            // guarantee is why the pass was put there, so whatever inherits it
+            // is the first thing a student sees. Wildcat Cash is one of the two
+            // launch modes and the balances are real, which Grades cannot yet
+            // promise. This file has already made this exact call once: the
+            // paragraph above records the day the screen stopped leading with a
+            // system nobody had switched on.
             // `tickets` is gone with the Raffle panel it drew. Order matters:
             // the cash panels sit together, so "what I have" and "how I got it"
             // are read as one thing rather than separated by the timetable.
             // The store sits with the other Wildcat Cash panels rather than at
             // the bottom: it answers "what is this money for", which is the
             // question the balance directly above it provokes.
-            return passPanel + gradePanel + money + wpStoreSoonPanel() +
-                   wpBoardPanel() + schedule + attendance;
+            return passPanel + money + wpStoreSoonPanel() +
+                   wpBoardPanel() + gradePanel + schedule + attendance;
         }
         /**
          * Open one course's missing-work list, or close it.
@@ -19702,7 +19749,26 @@
             cards.push(wpMealCard(pass.meal || pass.lunchId));
             cards.push(wpReasonCard('Clever', pass.cleverBadge, WP_FACE.clever, WP_FACE.cleverOff));
             const hallPassIdx = cards.length;
-            cards.push(wpHallPassCard(pass.hallPass));
+            // 2026-09-13: THE PASS CARD IS IN THE STACK WHEN THERE IS A PASS.
+            // Its first face IS the request button, so while
+            // WP_HALL_PASS_REQUEST is off a student with no pass gets no pass
+            // card rather than a dead one. A pass a TEACHER opened still deals
+            // exactly where it always did, fourth, so the takeover, the
+            // check-in bar and the taller pass geometry are untouched for the
+            // student who has one.
+            //
+            // hpLive is the complement of wpHallPassCard's own request-face
+            // guard (`!live || state === 'none'`), so no payload can both deal
+            // the card and land on the request face.
+            //
+            // hallPassIdx above stays cards.length: with the push skipped it
+            // collapses onto studentIdIdx, which is what the default open card
+            // should be for a student with no pass anyway.
+            const hpLive = Boolean(
+                pass.hallPass && pass.hallPass.available &&
+                String(pass.hallPass.state || 'none').toLowerCase() !== 'none'
+            );
+            if (WP_HALL_PASS_REQUEST || hpLive) cards.push(wpHallPassCard(pass.hallPass));
             const studentIdIdx = cards.length;
             cards.push(wpStudentIdCard(pass.studentId));
 
@@ -19729,7 +19795,12 @@
 
             // Over the wallet while the pass is running. Same card object, so the
             // two cannot disagree; see wpRenderFull.
-            wpRenderFull(cards[hallPassIdx], pass.hallPass);
+            // Whenever wpTakeoverKey returns a key, hpLive is true, so the
+            // card was dealt and this is that card. hpLive is also true for
+            // requested/pending and the terminal states, where no takeover
+            // paints and none should. Guarded anyway: reading cards[4] out of
+            // a four-card stack is how a takeover paints an undefined card.
+            wpRenderFull(hpLive ? cards[hallPassIdx] : null, pass.hallPass);
 
             if (pass.studentId && pass.studentId.available && window.JsBarcode) {
                 try {
@@ -19830,6 +19901,17 @@
         }
 
         function openHallPassSheet() {
+            // THE IN-PAGE CHOKE POINT. Both buttons that reach this are
+            // already behind the flag; this covers the rest of THIS page --
+            // the window export below, a console, a bookmarklet.
+            //
+            // It does NOT cover a browser running the previous script.js from
+            // cache, which has no guard in it at all, and it does not cover
+            // /app/ or the installed app, which never load this file. Those
+            // are closed by STUDENT_PASS_REQUESTS_OPEN in
+            // convex/hallPassRules.ts, server-side, which is the only place
+            // that reaches every surface.
+            if (!WP_HALL_PASS_REQUEST) return;
             const sheet = wpById('wpSheet');
             const scrim = wpById('wpScrim');
             if (!sheet || !scrim) return;
@@ -19996,6 +20078,11 @@
         }
 
         async function submitHallPassRequest() {
+            // Belt and braces for the window export. Under this file the
+            // sheet can never be open, because openHallPassSheet returns
+            // first -- so nothing in the UI can reach this line. It is here so
+            // that the export cannot post either.
+            if (!WP_HALL_PASS_REQUEST) { closeHallPassSheet(); return; }
             if (wpBusy) return;
             // The server decides this too, and refuses with the same sentence.
             // The check here only stops a pointless round trip.

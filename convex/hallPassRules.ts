@@ -398,6 +398,42 @@ export type Verdict = { ok: boolean; reason: string };
 export const MAX_PASSES_PER_SCHOOL_DAY = 8;
 
 /**
+ * Whether students may ask for a hall pass at all. School-wide, server-side.
+ *
+ * OFF SINCE 2026-09-13, at the school's request: hall passes are not part of
+ * the student launch and will not be for a while. TO TURN IT BACK ON: set this
+ * to true and deploy Convex. That is the whole restore.
+ *
+ * WHY THE REFUSAL LIVES HERE AND NOT ONLY IN THE UI. The student portal hides
+ * its request button behind its own flag, and that is what a student sees --
+ * but hiding a button is not closing a door. `hallPasses.requestMine` is a
+ * public mutation, and there are at least three other ways to reach it:
+ *
+ *   - /app/, the React build committed at app/ and served on the live domain
+ *     (verified 2026-09-13: HTTP 200, and its bundle still calls
+ *     hallPasses:requestMine). No flag in script.js can reach it.
+ *   - the Capacitor build, which bundles its own copy of the portal, so a
+ *     phone with the app installed keeps whatever script.js it shipped with.
+ *   - any browser holding the previous index.html from cache.
+ *
+ * So "hidden for all students" is only true if the server says no. This is the
+ * one place that is true of: canRequest is called from requestMine and from
+ * nowhere else in the repo, so this closes the student request and leaves
+ * every staff-side pass flow exactly as it was.
+ */
+export const STUDENT_PASS_REQUESTS_OPEN = false;
+
+/**
+ * What a student is told while requests are closed.
+ *
+ * A sentence, not a code. Whatever surface they reached this through is going
+ * to print it at them, and "not currently available" with no actor in it reads
+ * as a fault they should retry. This says the school decided, and who to ask.
+ */
+export const PASS_REQUESTS_CLOSED_REASON =
+  "Hall passes are not switched on yet. Ask your teacher if you need to leave the room.";
+
+/**
  * Minutes to shift a timestamp back before taking its date, so the daily counter
  * rolls over in the middle of the night rather than in the middle of a lesson.
  *
@@ -738,6 +774,39 @@ export function passLimitFor(student: { dailyPassLimit?: number | null }): numbe
 }
 
 export function canRequest(
+  existing: Array<{ state: PassState; requestedAt: string; approvedAt?: string }>,
+  origin: { active: boolean } | null,
+  now: string,
+  ownLimit?: number | null,
+): Verdict {
+  // THE SWITCH IS THE ONLY THING THIS FUNCTION ADDS. It is checked first
+  // because it is the most general refusal and it is not about this student:
+  // no ordering of the rules below can matter while nobody may ask at all.
+  //
+  // Cancelling is NOT gated. canCancel is a separate function and stays open,
+  // so a student holding a pass from before this was switched off can still
+  // put it down.
+  if (!STUDENT_PASS_REQUESTS_OPEN) {
+    return { ok: false, reason: PASS_REQUESTS_CLOSED_REASON };
+  }
+  return canRequestWhenOpen(existing, origin, now, ownLimit);
+}
+
+/**
+ * Every rule that decides a request once requests are open at all.
+ *
+ * SPLIT OUT FROM canRequest so that switching requests off does not switch
+ * these rules off in the tests too. Folding the flag into one function turned
+ * sixteen assertions -- the daily cap, the per-child cap, the escape hatch,
+ * the order the refusals come in -- into sixteen assertions that only proved
+ * the flag was off. The rules a school argues about would have stopped being
+ * checked on the day they stopped being reachable, and would have been found
+ * broken whenever somebody switched passes back on.
+ *
+ * So the flag is tested by canRequest and the rules are tested here, and both
+ * keep being tested whichever way the flag is set.
+ */
+export function canRequestWhenOpen(
   existing: Array<{ state: PassState; requestedAt: string; approvedAt?: string }>,
   origin: { active: boolean } | null,
   now: string,

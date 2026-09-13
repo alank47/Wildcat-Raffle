@@ -34,8 +34,13 @@ function slice(start, end) {
 }
 
 // The region under test, plus the two helpers it borrows from the card stack.
-const { wpDashboard, wpGradeOpen, wpGradeTone, __el, __store } = new Function(
-  `const wpEsc = (v) => String(v == null ? "" : v)
+//
+// BUILT THROUGH A HELPER so the same region can be evaluated twice: once as it
+// ships, and once with WP_HALL_PASS_REQUEST forced true. Without the second
+// build, every assertion about the hidden hall pass panel is an absence, and
+// an absence is equally satisfied by the panel having been deleted - so the
+// day somebody turns passes back on would be the day they find out.
+const PRELUDE = `const wpEsc = (v) => String(v == null ? "" : v)
      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
    const wpEmpty = (t) => '<p class="wp-empty">' + wpEsc(t) + '</p>';
    const wpFoot  = (t) => '<p class="wp-foot">' + wpEsc(t) + '</p>';
@@ -54,10 +59,13 @@ const { wpDashboard, wpGradeOpen, wpGradeTone, __el, __store } = new Function(
      getItem: (k) => (__store.has(k) ? __store.get(k) : null),
      setItem: (k, v) => __store.set(k, String(v)),
    };
-   globalThis.__el = __el; globalThis.__store = __store;\n` +
-  slice("/* ---- the desk dashboard ---", "/* ---- end desk dashboard ---- */") +
-  "\nreturn { wpDashboard, wpGradeOpen, wpGradeTone, wpUnseenTotal, __el, __store };",
-)();
+   globalThis.__el = __el; globalThis.__store = __store;\n`;
+
+const DESK = slice("/* ---- the desk dashboard ---", "/* ---- end desk dashboard ---- */");
+const build = (deskSrc) => new Function(PRELUDE + deskSrc +
+  "\nreturn { wpDashboard, wpGradeOpen, wpGradeTone, wpUnseenTotal, __el, __store };")();
+
+const { wpDashboard, wpGradeOpen, wpGradeTone, __el, __store } = build(DESK);
 
 const FULL = {
   points: { pbis: 12, attendance: 4, academic: 7, total: 23, weeksQualified: 5, bigRaffleEntries: 5 },
@@ -332,7 +340,7 @@ console.log("\n11. Grades wear a band, and an unposted grade wears none");
     />A</.test(out) && />F</.test(out));
 }
 
-console.log("\n12. A student with no pass is offered one");
+console.log("\n12. A student with no pass is offered nothing while the request is hidden");
 {
   // THE OUTAGE THIS EXISTS TO PREVENT. passCard:mine ends its hall pass block
   // `live ? { available: true, ... } : { available: false, state: "none" }`.
@@ -347,19 +355,35 @@ console.log("\n12. A student with no pass is offered one");
   const none = wpDashboard(FULL, sched([]), grades([]), {
     hallPass: { available: false, state: "none" },
   });
-  check("no live pass offers the Request button",
-    /openHallPassSheet\(\)/.test(none),
-    "available:false is the ordinary state of a student sitting in class, not an outage");
-  check("and does not claim the lookup failed",
+  // HIDDEN 2026-09-13, see WP_HALL_PASS_REQUEST in script.js. A student who
+  // cannot ask for a pass is offered NOTHING rather than a teaser, so these
+  // now prove the panel is gone. The outage comment above stays because the
+  // bug it records is what the flag must not reintroduce when it flips back:
+  // the branch that returns has to be the one with the button in it.
+  check("with the request hidden, no Hallway panel is drawn at all",
+    !/openHallPassSheet\(\)/.test(none) && !/Hall pass/.test(none));
+  check("and no empty shell is left behind either",
+    !/None active/.test(none) && !/No pass right now/.test(none));
+  check("still does not claim the lookup failed",
     !/could not be looked up/.test(none) && !/Unavailable/.test(none));
-  check("it reads as None active", /None active/.test(none));
 
-  // The shape an older or partial payload can take. Same answer: offer it.
-  check("a missing hallPass key still offers the button",
-    /openHallPassSheet\(\)/.test(wpDashboard(FULL, sched([]), grades([]), {})));
-  check("a bare available:false, with no state, still offers the button",
-    /openHallPassSheet\(\)/.test(
+  // The shapes an older or partial payload can take. Same answer: nothing.
+  check("a missing hallPass key draws no panel",
+    !/openHallPassSheet\(\)/.test(wpDashboard(FULL, sched([]), grades([]), {})));
+  check("a bare available:false, with no state, draws no panel",
+    !/openHallPassSheet\(\)/.test(
       wpDashboard(FULL, sched([]), grades([]), { hallPass: { available: false } })));
+
+  // POSITIVE OFF-PATH CHECK. Every assertion above is an absence, and an
+  // absence is equally satisfied by the panel having been DELETED. This is
+  // what tells the difference between hidden and gone, so that flipping the
+  // flag back on in a month restores a panel that still exists.
+  const deskSrc = src.slice(src.indexOf("/* ---- the desk dashboard ---"),
+                            src.indexOf("/* ---- end desk dashboard ---- */"));
+  check("the panel it will draw again is still written down",
+    /No pass right now\. Ask for one/.test(deskSrc) && /openHallPassSheet\(\)/.test(deskSrc));
+  check("and it is one flag away, not a rewrite",
+    /const WP_HALL_PASS_REQUEST = false;/.test(deskSrc));
 
   // A REAL refusal is still honoured, and is still not a button. The server
   // does not send one today; if it ever does, a student must not be handed a
@@ -379,8 +403,13 @@ console.log("\n12. A student with no pass is offered one");
     !/openHallPassSheet/.test(live) && /Office/.test(live));
 
   // The phone card is the reference reading; the desk copy is what drifted.
+  // SLICED TO THE FUNCTION, because this exact expression is also QUOTED in a
+  // comment on the desk panel, so testing the whole file passed on the prose
+  // and would have kept passing with the code gone.
+  const phoneCard = src.slice(src.indexOf("function wpHallPassCard(hp) {"),
+                              src.indexOf("function wpStudentIdCard("));
   check("the phone card reads available:false the same way",
-    /if \(!live \|\| state === 'none'\)/.test(src),
+    phoneCard.length > 200 && /if \(!live \|\| state === 'none'\)/.test(phoneCard),
     "two screens must not tell a student different things about the same field");
 }
 
@@ -395,6 +424,64 @@ console.log("\n13. The desk view drops the ID card");
   check("and no barcode element is left behind", !/wpDashBarcode/.test(out));
   const src = readFileSync(new URL("./script.js", import.meta.url), "utf8");
   check("the drawing function went with it", !/function wpDashBarcode/.test(src));
+}
+
+console.log("\n14. The hall pass request is hidden by one flag, and it flips back");
+{
+  const DECL = "const WP_HALL_PASS_REQUEST = false;";
+  check("the flag is declared exactly once, and is off",
+    src.split(DECL).length - 1 === 1);
+  check("only the declaration assigns it, so there is one source of truth",
+    (src.match(/WP_HALL_PASS_REQUEST\s*=[^=]/g) || []).length === 1);
+  check("it is declared inside the region this file evaluates", DESK.includes(DECL),
+    "a flag outside the desk markers throws ReferenceError under new Function");
+
+  // THE FLIP-BACK, EXECUTED. Same region, same fixtures, flag forced on: the
+  // panel has to come back, in its documented first position, with the button
+  // in it. This is the assertion that makes "hidden" different from "deleted".
+  const ON = build(DESK.replace(DECL, "const WP_HALL_PASS_REQUEST = true;"));
+  const noneOn = ON.wpDashboard(FULL, sched([]), grades([]), {
+    hallPass: { available: false, state: "none" },
+  });
+  check("flipped on, a student with no pass is offered one again",
+    /openHallPassSheet\(\)/.test(noneOn));
+  check("and it reads as None active, as it always did", /None active/.test(noneOn));
+  check("and it does not claim the lookup failed",
+    !/could not be looked up/.test(noneOn) && !/Unavailable/.test(noneOn));
+  // Its documented slot: first term of the return, so top of column one and
+  // above the fold on a 1366x768 Chromebook.
+  check("flipped on, the Hallway panel is the FIRST panel again",
+    noneOn.indexOf("Hall pass") < noneOn.indexOf("Wildcat Cash"));
+
+  // And with it hidden, the balance inherits that guaranteed slot.
+  const noneOff = wpDashboard(FULL, sched([]), grades([]), {
+    hallPass: { available: false, state: "none" },
+  });
+  check("hidden, the balance opens the screen instead",
+    noneOff.indexOf("Wildcat Cash") >= 0 &&
+    noneOff.indexOf("Wildcat Cash") < noneOff.indexOf("Grades"));
+  check("and no blank first panel is left where the pass was",
+    !/^\s*<section[^>]*>\s*<\/section>/.test(noneOff));
+
+  // A pass a TEACHER opened is never hidden. The gate is "can a student ask",
+  // never "is there a pass": a student must always be able to see a clock that
+  // is running against them.
+  const liveOff = wpDashboard(FULL, sched([]), grades([]), {
+    hallPass: { available: true, state: "approved", sentTo: "Office", clockLimitMinutes: 8 },
+  });
+  check("a running pass still shows while the request is hidden",
+    /Office/.test(liveOff) && /Hall pass/.test(liveOff));
+  check("and still grows no request button under it", !/openHallPassSheet/.test(liveOff));
+
+  // The server is the door; this flag is only the button. Both have to agree
+  // or a student gets a control that throws.
+  const rules = readFileSync(new URL("./convex/hallPassRules.ts", import.meta.url), "utf8");
+  check("the server-side switch exists and is off too",
+    /export const STUDENT_PASS_REQUESTS_OPEN = false;/.test(rules));
+  check("canRequest checks it before any rule",
+    /if \(!STUDENT_PASS_REQUESTS_OPEN\)/.test(rules));
+  check("and the rules themselves stay testable through canRequestWhenOpen",
+    /export function canRequestWhenOpen\(/.test(rules));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
