@@ -3880,3 +3880,44 @@ export const clearCashHistoryBefore = internalMutation({
     };
   },
 });
+
+/**
+ * Set or clear the history cutoff that legacyData:mergeSlice enforces.
+ *
+ * Rows in a HISTORY slice (referrals, the cash_tx_* ledger) dated more than an
+ * hour before this are refused on INSERT, so a tab open since before a clear
+ * cannot re-insert last term's rows. Updates are never guarded; an undated row
+ * is never refused.
+ *
+ * WHY IT IS SERVER-SIDE AND NOT A CLIENT FLAG: the owner cannot ask 40+ staff
+ * to hard-refresh, and should not have to. A stale tab has to become harmless
+ * on its own. Pass iso: null to remove the cutoff entirely.
+ */
+export const setHistoryCutoff = internalMutation({
+  args: { iso: v.union(v.string(), v.null()) },
+  handler: async (ctx, { iso }) => {
+    if (iso !== null && !Number.isFinite(Date.parse(iso))) {
+      throw new Error(`"${iso}" is not a date; refusing to set a cutoff nobody can parse.`);
+    }
+    const row = await ctx.db
+      .query("appState")
+      .withIndex("by_key", (q) => q.eq("key", "historyCutoff"))
+      .unique();
+    const now = new Date().toISOString();
+    if (row) await ctx.db.patch(row._id, { value: { iso }, mirroredAt: now });
+    else await ctx.db.insert("appState", { key: "historyCutoff", value: { iso }, mirroredAt: now });
+    return { cutoff: iso, at: now, note: iso === null ? "Cutoff removed." : "Cutoff set." };
+  },
+});
+
+/** What the cutoff currently is. Read-only. */
+export const historyCutoff = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const row = await ctx.db
+      .query("appState")
+      .withIndex("by_key", (q) => q.eq("key", "historyCutoff"))
+      .unique();
+    return { set: Boolean(row), value: row ? (row.value as any) : null };
+  },
+});

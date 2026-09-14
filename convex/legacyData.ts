@@ -142,6 +142,46 @@ const MAX_ROWS_PER_SLICE = 20000;
  * submittedAt. Zero for a row with no usable stamp, so such rows never win a
  * collision and the stored-wins rule holds for them unchanged.
  */
+/**
+ * Slices whose rows are HISTORY: written once, never edited, and meaningless
+ * to re-send. These are the only slices the history cutoff below applies to.
+ *
+ * Kept deliberately short. mergeSlice is one mutation carrying detentions,
+ * hall passes, prevention groups, receipts and the rewards catalogue as well,
+ * and none of those is history -- a detention gets marked served, a receipt
+ * gets fulfilled, a reward gets repriced. Applying a cutoff to them would
+ * refuse legitimate edits. So the list is an allowlist, not a denylist: a
+ * slice added later is unguarded until somebody decides it is history.
+ */
+function isHistorySlice(doc: string, collection: string): boolean {
+  if (collection === "behaviorReferrals") return true;
+  if (doc.startsWith("cash_tx_")) return true;
+  return false;
+}
+
+/**
+ * How far before the cutoff a row may still be dated and be inserted.
+ *
+ * The row's date comes from the CLIENT, so a device with a wrong clock could
+ * stamp a genuinely new filing in the past and have it refused -- losing real
+ * work, which is worse than the pollution this guard exists to stop. An hour
+ * of slack means a clock has to be badly wrong before that happens, while a
+ * re-sent row from last term is months out and still refused.
+ */
+const HISTORY_CUTOFF_SLACK_MS = 60 * 60 * 1000;
+
+/** The row's own date, from the fields each history slice actually uses. */
+function rowDate(payload: unknown): number {
+  if (!payload || typeof payload !== "object") return NaN;
+  const p = payload as Record<string, unknown>;
+  for (const field of ["submittedAt", "timestamp", "dateTime", "date"]) {
+    const raw = p[field];
+    const t = typeof raw === "number" ? raw : typeof raw === "string" ? Date.parse(raw) : NaN;
+    if (Number.isFinite(t)) return t;
+  }
+  return NaN;
+}
+
 function touchedAt(payload: unknown): number {
   if (!payload || typeof payload !== "object") return 0;
   const p = payload as Record<string, unknown>;
@@ -205,6 +245,20 @@ export const mergeSlice = mutation({
     // is the only thing notifyNewReferrals will mail.
     const me = await requireStaff(ctx);
 
+    // THE CUTOFF IS THE SERVER'S, not the caller's. Stored in appState by
+    // legacyPurge:setHistoryCutoff, read once per save. A client cannot send
+    // it, raise it or clear it -- the whole point is that a stale client has
+    // no say in whether its stale rows are accepted. Null means no cutoff is
+    // set and nothing is guarded, which is the behaviour every slice had
+    // before this existed.
+    const cutoffRow = await ctx.db
+      .query("appState")
+      .withIndex("by_key", (q) => q.eq("key", "historyCutoff"))
+      .unique();
+    const cutoffRaw = (cutoffRow?.value as Record<string, unknown> | undefined)?.iso;
+    const cutoffParsed = typeof cutoffRaw === "string" ? Date.parse(cutoffRaw) : NaN;
+    const cutoff = Number.isFinite(cutoffParsed) ? cutoffParsed : null;
+
     if (rows.length > MAX_ROWS_PER_SLICE) {
       throw new Error(
         `legacyData:mergeSlice refused ${rows.length} rows for ${doc}.${collection}; the cap is ${MAX_ROWS_PER_SLICE}.`,
@@ -263,6 +317,8 @@ export const mergeSlice = mutation({
     // without any stamp keep the old rule exactly.
     const toUpdate: Array<{ id: (typeof existing)[number]["_id"]; payload: unknown }> = [];
     let anonymous = 0;
+    /** Rows refused by the history cutoff. Reported, never silent. */
+    let refusedAsHistory = 0;
 
     const tokenFor = (r: { key?: string; payload: unknown }) => {
       const id = idOf(r.payload);
@@ -292,6 +348,35 @@ export const mergeSlice = mutation({
         continue;
       }
       seen.add(token);
+
+      // THE HISTORY CUTOFF. A row older than the school's cutoff is not
+      // inserted, and the caller is told how many were refused.
+      //
+      // WHY THIS EXISTS. Pre-launch rows deleted on 2026-09-13 came back
+      // repeatedly through this exact line: the slice merges by id, a stored
+      // row that was DELETED is no longer a collision, so a tab open since
+      // before the clear re-inserted its whole copy on its next save. It
+      // happened to the cash ledger, to the referrals, and to the per-student
+      // transaction arrays, three times over one day.
+      //
+      // Until now the only answer was asking forty staff to hard-refresh,
+      // which the owner rightly called unfeasible -- there is no channel that
+      // reaches them all and no way to confirm they did it. A fix that needs
+      // every human to cooperate is not a fix. So the server refuses instead,
+      // and a stale tab becomes harmless rather than urgent.
+      //
+      // UPDATES ARE NOT GUARDED, only inserts. A referral being closed is an
+      // edit to a row that is already here and must still land.
+      //
+      // AN UNDATED ROW IS INSERTED. A row whose date will not parse cannot be
+      // proved old, and refusing it would lose real work to be tidy.
+      if (cutoff !== null && isHistorySlice(doc, collection)) {
+        const when = rowDate(r.payload);
+        if (Number.isFinite(when) && when < cutoff - HISTORY_CUTOFF_SLACK_MS) {
+          refusedAsHistory++;
+          continue;
+        }
+      }
       toInsert.push(r);
     }
 
@@ -341,6 +426,10 @@ export const mergeSlice = mutation({
       inserted: toInsert.length,
       updated: toUpdate.length,
       deleted,
+      // Rows the history cutoff refused. A caller that sees this is running a
+      // build older than the cutoff and is re-sending last term; it is not an
+      // error and nothing was lost, because the rows were deleted on purpose.
+      refusedAsHistory,
     };
 
   },

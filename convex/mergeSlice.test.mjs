@@ -48,7 +48,13 @@ const tsBody = src.slice(handlerStart, handlerEnd)
   .replace(/await requireStaff\(ctx\);/, "")
   // The one substitution: the indexed query becomes the fake db's collect().
   .replace(/const existing = await ctx\.db[\s\S]*?\.collect\(\);/,
-           "const existing = await ctx.db.collect();");
+           "const existing = await ctx.db.collect();")
+  // The history cutoff, added 2026-09-14, reads appState. Injected rather than
+  // stubbed to null, so the guard itself can be tested: a cutoff a client
+  // cannot influence is exactly the thing worth asserting, since it is what
+  // makes a stale tab harmless instead of asking 40 staff to hard-refresh.
+  .replace(/const cutoffRow = await ctx\.db[\s\S]*?\.unique\(\);/,
+           "const cutoffRow = ctx.__cutoffRow ?? null;");
 
 // Everything up to the final `return`, then our own reporting return.
 const upToReturn = tsBody.slice(0, tsBody.lastIndexOf("return {"));
@@ -63,9 +69,26 @@ const MAX_ROWS_PER_SLICE = Number(
 
 // touchedAt is module scope in the source, so it is lifted out and transpiled
 // the same way, and passed in: the handler must run against the shipped one.
-const touchedStart = src.indexOf("function touchedAt(");
-const touchedEnd = src.indexOf("\n}\n", touchedStart) + 3;
-const touchedJs = ts.transpileModule(src.slice(touchedStart, touchedEnd), {
+// Lifted the same way, and for the same reason: the handler must run against
+// the SHIPPED helpers, not against copies in this file that could drift.
+// isHistorySlice / rowDate / HISTORY_CUTOFF_SLACK_MS joined touchedAt on
+// 2026-09-14 with the history cutoff.
+function liftDecl(startsWith) {
+  const a = src.indexOf(startsWith);
+  if (a === -1) throw new Error("declaration not found in legacyData.ts: " + startsWith);
+  // A const ends at the first semicolon; a function at the first line-start brace.
+  const end = startsWith.startsWith("const")
+    ? src.indexOf(";", a) + 1
+    : src.indexOf("\n}\n", a) + 3;
+  return src.slice(a, end);
+}
+const moduleScopeTs = [
+  liftDecl("function touchedAt("),
+  liftDecl("function isHistorySlice("),
+  liftDecl("function rowDate("),
+  liftDecl("const HISTORY_CUTOFF_SLACK_MS"),
+].join("\n");
+const touchedJs = ts.transpileModule(moduleScopeTs, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
 }).outputText;
 
@@ -73,7 +96,7 @@ const runNew = new Function("ctx", "doc", "collection", "rows", "dedupeField",
   "MAX_ROWS_PER_SLICE", "notifyNewReferrals",
   touchedJs +
   "return (async () => {" + js +
-  "\nreturn { inserted: toInsert.length, updated: toUpdate.length, deleted };" +
+  "\nreturn { inserted: toInsert.length, updated: toUpdate.length, deleted, refusedAsHistory };" +
   "})();");
 
 /** The OLD algorithm, verbatim. The thing the new one must still agree with. */
@@ -123,10 +146,12 @@ function fakeDb(existing) {
   };
 }
 
-async function runBoth({ existing, rows, dedupeField }) {
+async function runBoth({ existing, rows, dedupeField, cutoffIso, doc, collection }) {
   const f = fakeDb(existing);
   const ctx = { db: { ...f.ctx.db }, rowsInOrder: f.ctx.rowsInOrder };
-  const got = await runNew(ctx, "d", "c", rows, dedupeField, MAX_ROWS_PER_SLICE, mailSpy().fn)
+  if (cutoffIso !== undefined) ctx.__cutoffRow = { value: { iso: cutoffIso } };
+  const got = await runNew(ctx, doc ?? "d", collection ?? "c", rows, dedupeField,
+                           MAX_ROWS_PER_SLICE, mailSpy().fn)
     .catch((e) => { throw new Error("handler failed: " + e.message); });
   return { result: got, final: f.ctx.rowsInOrder(), cost: f.cost(),
            expected: referenceMerge(existing, rows, dedupeField) };
@@ -334,6 +359,94 @@ console.log("\nThe referral email fires on the insert, and only on the insert");
     const r2 = await run([], [row({ id: "T2" })], "referrals", "somethingElse");
     check("nor a different collection in the referrals doc", r2.mailed.length === 0);
   }
+}
+
+console.log("\n-- the history cutoff: a stale tab cannot re-insert last term --");
+{
+  // THE INCIDENT THIS CLOSES, 2026-09-13 and 14. Pre-launch rows deleted from
+  // the cash ledger and the referrals came back repeatedly through the insert
+  // path here: the slice merges by id, a DELETED stored row is no longer a
+  // collision, so a tab open since before the clear re-inserted its whole copy
+  // on its next save. Three stores, three times in one day.
+  //
+  // The only remedy until now was asking 40+ staff to hard-refresh, which the
+  // owner said plainly is never feasible -- there is no channel that reaches
+  // them all and no way to confirm. A fix that needs every human to cooperate
+  // is not a fix, so the SERVER refuses and a stale tab becomes harmless.
+  const CUT = "2026-09-14T15:30:00Z";
+  const oldRow  = { id: "r-old",  submittedAt: "2026-08-20T16:37:14.634Z" };
+  const newRow  = { id: "r-new",  submittedAt: "2026-09-14T19:36:56.719Z" };
+  const noDate  = { id: "r-none" };
+
+  const refs = async (rows, existing = []) => runBoth({
+    existing, rows: rows.map((p) => ({ payload: p })), dedupeField: "id",
+    cutoffIso: CUT, doc: "referrals", collection: "behaviorReferrals",
+  });
+
+  let r = await refs([oldRow]);
+  check("a pre-cutoff referral is refused", r.result.inserted === 0);
+  check("and the refusal is counted, not silent", r.result.refusedAsHistory === 1);
+  check("so nothing lands in the slice", r.final.length === 0);
+
+  r = await refs([newRow]);
+  check("today's referral still lands", r.result.inserted === 1);
+  check("and is not counted as refused", r.result.refusedAsHistory === 0);
+
+  r = await refs([oldRow, newRow]);
+  check("a mixed save keeps today and drops last term",
+    r.result.inserted === 1 && r.result.refusedAsHistory === 1);
+  check("and the one kept is the new one", r.final[0].payload.id === "r-new");
+
+  // AN UNDATED ROW IS INSERTED. It cannot be proved old, and refusing it would
+  // lose real work in order to be tidy.
+  r = await refs([noDate]);
+  check("an undated row is inserted rather than refused",
+    r.result.inserted === 1 && r.result.refusedAsHistory === 0);
+
+  // UPDATES ARE NOT GUARDED. A referral being CLOSED is an edit to a row that
+  // is already here, and closing the loop on an old referral must still work.
+  const storedOld = [{ key: undefined, payload: { ...oldRow, updatedAt: "2026-08-21T00:00:00Z" } }];
+  r = await refs([{ ...oldRow, updatedAt: "2026-09-14T20:00:00Z", status: "closed" }], storedOld);
+  check("closing a pre-cutoff referral still updates it", r.result.updated === 1);
+  check("and is not refused", r.result.refusedAsHistory === 0);
+  check("the edit really landed", r.final[0].payload.status === "closed");
+
+  // THE ALLOWLIST. mergeSlice also carries detentions, hall passes, prevention
+  // groups, receipts and the rewards catalogue, and NONE of those is history:
+  // a detention gets marked served, a receipt fulfilled, a reward repriced.
+  // Guarding them would refuse legitimate edits.
+  r = await runBoth({
+    existing: [], rows: [{ payload: oldRow }], dedupeField: "id",
+    cutoffIso: CUT, doc: "secondary", collection: "detentions",
+  });
+  check("a non-history slice is NOT guarded", r.result.inserted === 1);
+  check("and reports no refusal", r.result.refusedAsHistory === 0);
+
+  // The cash ledger is guarded by its DOC name, not its collection.
+  r = await runBoth({
+    existing: [], rows: [{ payload: { id: "t1", timestamp: "2026-08-20T16:00:00Z" } }],
+    dedupeField: "id", cutoffIso: CUT, doc: "cash_tx_2026_W34", collection: "transactions",
+  });
+  check("the cash ledger is guarded too", r.result.inserted === 0 && r.result.refusedAsHistory === 1);
+
+  // NO CUTOFF SET means nothing is guarded -- the behaviour every slice had
+  // before this existed.
+  r = await runBoth({
+    existing: [], rows: [{ payload: oldRow }], dedupeField: "id",
+    doc: "referrals", collection: "behaviorReferrals",
+  });
+  check("with no cutoff set, nothing is refused",
+    r.result.inserted === 1 && r.result.refusedAsHistory === 0);
+
+  // CLOCK SLACK. The row's date comes from the client, so a device with a
+  // wrong clock could stamp a new filing in the past. An hour of slack means a
+  // clock has to be badly wrong before real work is lost; last term is months
+  // out and still refused.
+  r = await refs([{ id: "r-skew", submittedAt: "2026-09-14T15:00:00Z" }]);
+  check("a row 30 minutes before the cutoff is still accepted (clock slack)",
+    r.result.inserted === 1);
+  r = await refs([{ id: "r-way-off", submittedAt: "2026-09-14T13:00:00Z" }]);
+  check("a row two hours before it is not", r.result.inserted === 0);
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
