@@ -3548,3 +3548,105 @@ export const clearReferralsBefore = internalMutation({
     };
   },
 });
+
+/** Receipts and any refund movements, so a cancellation can be audited. Read-only. */
+export const receiptAndRefunds = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const receipts = (mirror as any[])
+      .filter((r) => r.collection === "cashReceipts")
+      .map((r) => ({
+        id: r.payload?.id, status: r.payload?.status,
+        student: r.payload?.studentName, studentId: r.payload?.studentId,
+        reward: r.payload?.rewardName, cost: r.payload?.totalCost,
+        purchasedAt: r.payload?.purchasedAt,
+        cancelledAt: r.payload?.cancelledAt ?? null,
+        cancelledBy: r.payload?.cancelledBy ?? null,
+        cancelReason: r.payload?.cancelReason ?? null,
+        refundTxId: r.payload?.refundTxId ?? null,
+      }));
+    // Anything in the ledger that looks like a refund.
+    const ledger = (mirror as any[])
+      .filter((r) => String(r.doc ?? "").startsWith("cash_tx_"))
+      .filter((r) => /refund/i.test(String(r.payload?.behaviorName ?? "")) ||
+                     /refund/i.test(String(r.payload?.behaviorId ?? "")) ||
+                     /Cancelled receipt/i.test(String(r.payload?.notes ?? "")))
+      .map((r) => ({
+        doc: r.doc, id: r.payload?.id, amount: r.payload?.amount,
+        behavior: r.payload?.behaviorName, kind: r.payload?.kind,
+        studentId: r.payload?.studentId, studentName: r.payload?.studentName,
+        notes: r.payload?.notes, at: r.payload?.timestamp,
+      }));
+    return { receipts, refundLedgerRows: ledger };
+  },
+});
+
+/**
+ * Reverse ONE refund that minted money, by transaction id.
+ *
+ * WHY THIS HAPPENS. buildCancel refunds the receipt's totalCost, which is
+ * right when the student actually paid it. It is wrong when the purchase
+ * predates a balance reset: the deduction was wiped, so the refund is money
+ * from nothing. WC-XPSGVE was bought 2026-09-10, the balances were cleared on
+ * 2026-09-13, and cancelling it on launch day credited $1,000 that had never
+ * been taken.
+ *
+ * Reverses all four places the refund reached: the balance, the earned
+ * counter, the shared ledger row and the copy on the student's own record.
+ * The RECEIPT stays cancelled -- that part was correct and intended.
+ *
+ * Targeted by transaction id, never by amount or by name, and it refuses to
+ * act if the id is not found or the counters would go negative.
+ */
+export const reverseRefund = internalMutation({
+  args: { txId: v.string(), apply: v.optional(v.boolean()) },
+  handler: async (ctx, { txId, apply }) => {
+    const id = txId.trim();
+    if (!id) throw new Error("txId required");
+
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const ledgerRow = (mirror as any[]).find(
+      (r) => String(r.doc ?? "").startsWith("cash_tx_") && String(r.payload?.id ?? "") === id);
+    if (!ledgerRow) return { found: false, note: "No ledger row with that transaction id." };
+
+    const amount = Number(ledgerRow.payload?.amount) || 0;
+    const studentId = String(ledgerRow.payload?.studentId ?? "");
+    const students = await ctx.db.query("students").collect();
+    const student = (students as any[]).find(
+      (s) => String(s.legacyId ?? "") === studentId || String(s.studentNumber ?? "") === studentId);
+    if (!student) return { found: false, note: "Ledger row found but no matching student." };
+
+    const balBefore = Number(student.wildcatCashBalance) || 0;
+    const earnBefore = Number(student.wildcatCashEarned) || 0;
+    const balAfter = balBefore - amount;
+    const earnAfter = earnBefore - amount;
+    if (balAfter < 0 || earnAfter < 0) {
+      return { found: true, refused: true,
+               note: `Reversing ${amount} would take a counter negative (${balAfter}/${earnAfter}); refusing.` };
+    }
+
+    const arr = Array.isArray(student.wildcatCashTransactions) ? student.wildcatCashTransactions : [];
+    const arrAfter = arr.filter((t: any) => String(t?.id ?? "") !== id);
+
+    if (apply === true) {
+      await ctx.db.delete(ledgerRow._id);
+      await ctx.db.patch(student._id, {
+        wildcatCashBalance: balAfter,
+        wildcatCashEarned: earnAfter,
+        wildcatCashTransactions: arrAfter,
+      });
+    }
+    return {
+      found: true, applied: apply === true,
+      student: `${student.firstName ?? ""} ${student.lastName ?? ""}`.trim(),
+      studentNumber: student.studentNumber,
+      txId: id, amountReversed: amount,
+      behavior: ledgerRow.payload?.behaviorName ?? null,
+      balance: { before: balBefore, after: balAfter },
+      earned: { before: earnBefore, after: earnAfter },
+      recordRows: { before: arr.length, after: arrAfter.length },
+      note: apply === true ? "Reversed." : "Dry run. Pass apply: true.",
+    };
+  },
+});
