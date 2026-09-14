@@ -68,9 +68,16 @@ console.log("\nOnly what changed goes on the wire");
   check("students are fingerprinted per id", /const _studentSaveFingerprint = new Map\(\);/.test(code));
   check("a save sends only students whose shape differs",
     /const changedStudents = studentsForConvex\.filter\(st =>\s*st && JSON\.stringify\(st\) !== _studentSaveFingerprint\.get\(String\(st\.id\)\)\);/.test(save));
+  // The second half was /convexMutation\('appData:save', \{\s*students: …/ and
+  // broke on 2026-09-13 when a `clientVersion` field was added ahead of
+  // `students`. The property is which LIST is sent, not which key is first.
   check("and that, with each one's cash delta attached, is what appData:save receives",
     /const studentsToSend = changedStudents\.map\(st => \{\s*const base = _studentCashBase\.get\(String\(st\.id\)\);\s*return base \? Object\.assign\(\{\}, st, \{ cashDelta: cashDeltaBetween\(st, base\) \}\) : st;/.test(save)
-    && /convexMutation\('appData:save', \{\s*students: studentsToSend,/.test(save));
+    && /students: studentsToSend,/.test(save));
+  // AND THE BUILD IS NAMED. A save that cannot say which build sent it is a
+  // save the server cannot refuse, which is how a four-day-stale tab put
+  // $4,901,850 back on 2026-09-13.
+  check("the save says which build is asking", /clientVersion: \(typeof APP_VERSION/.test(save));
   check("the fingerprint is recorded only after the server answered",
     /\}, session\.idToken\);\s*changedStudents\.forEach\(st =>\s*_studentSaveFingerprint\.set/.test(save));
   check("a load forgets every fingerprint", /auditIdsOnServer = new Set\(\);\s*_studentSaveFingerprint\.clear\(\);/.test(code));

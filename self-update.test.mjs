@@ -331,5 +331,65 @@ console.log("\nThe module is served, on the same version as the app");
   check("and on the same version as everything else", sw && sw[1] === distinct[0]);
 }
 
+console.log("\n-- the busy deadline: a weekend tab cannot hold write access forever --");
+{
+  // THE INCIDENT, 2026-09-13. `busy` blocked a reload indefinitely, and it is
+  // true of a tab with a modal left open, a half-typed referral, one ticked
+  // checkbox, or ANY exception inside screenHasUnfinishedWork, which fails to
+  // "assume busy". A tab backgrounded on Friday with a dialog open therefore
+  // never updated -- and a four-day-stale tab re-sent its pre-reset view over
+  // a server-side cash reset, restoring $4,901,850 across 336 students.
+  //
+  // The school has 40+ staff. "Ask everyone to refresh" is not a mechanism,
+  // which is what the owner said and was right about.
+  const HOUR = 3600000;
+  const at = (s) => U.shouldAutoReload({ hasUpdate: true, newVersion: "NEW", now: 1e9, ...s });
+
+  // UNCHANGED: politeness while somebody is actually looking at the screen.
+  check("busy and visible still waits, however long it has waited",
+    at({ busy: true, hidden: false, pendingForMs: 99 * HOUR }).reload === false);
+  // UNCHANGED: a hidden tab with a clean screen reloads at once.
+  check("hidden and not busy reloads immediately",
+    at({ busy: false, hidden: true, pendingForMs: 0 }).reload === true);
+
+  // THE FIX.
+  check("hidden and busy still waits inside the deadline",
+    at({ busy: true, hidden: true, pendingForMs: HOUR }).reload === false);
+  const overdue = at({ busy: true, hidden: true, pendingForMs: 3 * HOUR });
+  check("a hidden tab overdue past the deadline reloads", overdue.reload === true);
+  check("and says why, because somebody will ask", /unfinished screen work/.test(overdue.reason));
+  check("the weekend case: hidden, busy, three days",
+    at({ busy: true, hidden: true, pendingForMs: 72 * HOUR }).reload === true);
+
+  // UNSAVED WORK IS NOT SCREEN WORK, and the deadline must never reach it.
+  // This is the failure that got automatic reloads removed the first time.
+  check("a pending save blocks regardless of the deadline",
+    at({ savePending: true, busy: true, hidden: true, pendingForMs: 99 * HOUR }).reload === false);
+  check("and the reason still names the save",
+    /save is still pending/.test(at({ savePending: true, hidden: true, pendingForMs: 99 * HOUR }).reason));
+
+  // Overridable, so a test need not wait two hours and the window can be
+  // tightened without touching the module.
+  check("the deadline can be set by the caller",
+    at({ busy: true, hidden: true, pendingForMs: 60000, busyDeadlineMs: 1000 }).reload === true);
+  // A caller that does not send pendingForMs must keep the politer behaviour
+  // rather than being read as overdue.
+  check("no pendingForMs means not overdue, so busy still blocks",
+    at({ busy: true, hidden: true }).reload === false);
+
+  // The client has to actually measure it, or the deadline is decorative.
+  check("script.js stamps when the pending version was first seen",
+    /_pendingUpdateSince = Date\.now\(\)/.test(script));
+  check("and feeds the elapsed time to the decision",
+    /pendingForMs: _pendingUpdateSince \? Date\.now\(\) - _pendingUpdateSince : 0/.test(script));
+
+  // And the refusal path that gets a proven-stale tab current at once.
+  check("a refused cash counter forces a reload", /wcForceReload\('cash counters refused'\)/.test(script));
+  check("the force reload is rate limited, so a cached reload cannot loop",
+    /wcForceReloadAt/.test(script) && /force reload suppressed/.test(script));
+  check("and the save sends the build asking, so the server can tell",
+    /clientVersion: \(typeof APP_VERSION/.test(script));
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);

@@ -195,8 +195,21 @@ function pick(source: Record<string, any>, keys: readonly string[]): Record<stri
  * So a record may carry `cashDelta`: for each counter, how much THIS tab
  * changed it since the value it last confirmed with the server. The server
  * adds the delta to what it holds. Both tabs above send +10, and the child
- * ends at 120, which is what happened. A record without cashDelta (an older
- * client) is merged as before, absolute values and all.
+ * ends at 120, which is what happened.
+ *
+ * A record WITHOUT cashDelta cannot move a counter at all. This sentence used
+ * to read "is merged as before, absolute values and all", and on 2026-09-13
+ * that is exactly what let one tab re-send its pre-reset view over a
+ * server-side reset and restore $4,901,850 across 336 students. A record with
+ * no delta is describing its own memory, not a change. Its other writable
+ * fields still merge, and planSave names every record this happened to in
+ * `countersIgnored`, because the only thing worse than a visible resurrection
+ * is an award dropped in silence.
+ *
+ * A delta is also refused where it would drive a counter below zero. See the
+ * clamp in planPatch: after a clear, a stale tab's own reset button sends
+ * minus the balance it remembers, which is the same incident with the sign
+ * flipped.
  */
 export const CASH_COUNTERS = [
   "wildcatCashBalance",
@@ -218,6 +231,41 @@ export function cashDeltaOf(record: Record<string, any>): Record<string, number>
 }
 
 /**
+ * The counters a record tried to SET rather than MOVE, or tried to drive below
+ * zero. Named so a refusal is reported rather than swallowed.
+ *
+ * Quiet for the ordinary case on purpose. A current client sends its absolute
+ * counters ALONGSIDE its delta, so a record is only named here when it would
+ * actually have changed a stored balance without being able to say by how
+ * much. A staff record can never appear: TEACHER_WRITABLE holds no counters.
+ *
+ * The zero-delta case is treated as no delta. A record claiming it moved
+ * nothing while naming a different balance is making the same mistake as one
+ * with no delta at all -- it is reporting a remembered number -- and that is
+ * the shape a tab seated from cache takes.
+ */
+export function refusedCashCounters(
+  row: Record<string, any>,
+  record: Record<string, any>,
+  writable: readonly string[],
+): string[] {
+  const delta = cashDeltaOf(record) ?? {};
+  const fields = pick(record, writable);
+  const refused: string[] = [];
+  for (const f of CASH_COUNTERS) {
+    const d = delta[f];
+    if (d === undefined) {
+      // No movement stated. Named only if it would have changed the row.
+      if (!isAbsent(fields[f]) && !same(row[f], fields[f])) refused.push(f);
+      continue;
+    }
+    // Movement stated, but it would have gone below zero and was clamped.
+    if ((Number(row[f]) || 0) + d < 0) refused.push(f);
+  }
+  return refused;
+}
+
+/**
  * The patch for one record. Counters go by delta when the record carries one
  * (their absolute values are then ignored, because they describe the tab's
  * view and not the server's); everything else goes through mergeIncoming
@@ -229,20 +277,42 @@ export function planPatch(
   writable: readonly string[],
 ): Record<string, unknown> {
   const fields = pick(record, writable);
-  const delta = cashDeltaOf(record);
-  if (delta === null) return mergeIncoming(row, fields);
+  // NO DELTA, NO COUNTERS. A record that cannot say how much IT moved a
+  // counter is describing a balance it remembers, not a change it made. On
+  // 2026-09-13 one such tab re-sent its pre-reset view over a server-side
+  // reset and put $4,901,850 back across 336 students, through a
+  // `delta === null` early return that used to sit on this line and hand
+  // `fields` -- absolute counters and all -- straight to mergeIncoming.
+  //
+  // The branch is DELETED rather than special-cased, so there is no longer any
+  // path on which a browser-supplied absolute counter reaches the database.
+  // An empty delta already behaved this way.
+  const delta: Record<string, number> = cashDeltaOf(record) ?? {};
   const counters = new Set<string>(CASH_COUNTERS);
   const rest: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(fields)) if (!counters.has(key)) rest[key] = value;
   const patch = mergeIncoming(row, rest);
   for (const [field, d] of Object.entries(delta)) {
-    patch[field] = (Number(row[field]) || 0) + d;
+    const next = (Number(row[field]) || 0) + d;
+    // CLAMPED AT ZERO, and this is the inverted form of the same incident
+    // rather than a tidiness rule. After a server-side clear, a stale tab
+    // pressing "Reset ALL student balances" computes its delta against the
+    // balance IT remembers: 0 - 30500 = -30500. The server holds 0, so the
+    // student lands at -$30,500, and across the school that is the same
+    // $4.9M as debt instead of credit. A purchase against a balance the tab
+    // imagines does the same thing more quietly.
+    //
+    // A real over-deduction is rare, visible and re-appliable by the adult who
+    // made it. Phantom debt on hundreds of children's records is none of those.
+    // So the movement is refused rather than trusted, and refusedCashCounters
+    // names it so the refusal is never silent.
+    patch[field] = next < 0 ? 0 : next;
   }
   return patch;
 }
 
 export type PlannedPatch = { key: string; rowId: unknown; patch: Record<string, unknown> };
-export type SavePlan = { patches: PlannedPatch[]; skipped: string[] };
+export type SavePlan = { patches: PlannedPatch[]; skipped: string[]; countersIgnored: string[] };
 
 /**
  * Decide what a save WOULD write, without writing anything.
@@ -270,6 +340,7 @@ export function planSave(
 
   const patches: PlannedPatch[] = [];
   const skipped: string[] = [];
+  const countersIgnored: string[] = [];
   for (const record of incoming ?? []) {
     const key = String(record?.id ?? record?.studentNumber ?? "");
     const row = key ? byKey.get(key) : undefined;
@@ -278,7 +349,12 @@ export function planSave(
       continue;
     }
     const patch = planPatch(row, record, writable);
+    // BEFORE the emptiness guard below, deliberately. A record carrying
+    // nothing but refused counters produces an EMPTY patch and would
+    // otherwise vanish from the save's answer entirely -- which is the exact
+    // shape of failure the `skipped` report above exists to prevent.
+    if (refusedCashCounters(row, record, writable).length) countersIgnored.push(key);
     if (Object.keys(patch).length > 0) patches.push({ key, rowId: row._id, patch });
   }
-  return { patches, skipped };
+  return { patches, skipped, countersIgnored };
 }

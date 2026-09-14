@@ -290,6 +290,7 @@
             if (pendingUpdateVersion !== newVersion) {
                 console.log('[update] new version available:', newVersion, 'running:', APP_VERSION);
             }
+            if (pendingUpdateVersion !== newVersion) _pendingUpdateSince = Date.now();
             pendingUpdateVersion = newVersion;
             maybeApplyUpdate();
         }
@@ -362,6 +363,8 @@
         // that decision and is tested against the cases that would lose work.
         // ---------------------------------------------------------------
         let pendingUpdateVersion = null;
+        /** When this tab first saw the pending version, for the busy deadline. */
+        let _pendingUpdateSince = 0;
 
         /** Work that exists only on this screen and would die in a reload. */
         function screenHasUnfinishedWork() {
@@ -386,6 +389,54 @@
         }
 
         /**
+         * Get current NOW, because this tab has proved it is not.
+         *
+         * Called when the server refuses to set a cash counter, which means
+         * this tab's view of the money is not the server's. Waiting for a free
+         * moment is the right rule for a routine update and the wrong one
+         * here: the tab is already sending numbers the server will not take,
+         * and every further save is another refusal a teacher does not see.
+         *
+         * ONE ATTEMPT PER MINUTE, and that guard is the whole reason this is a
+         * function rather than a location.reload(). If the reload is answered
+         * from cache the tab comes back just as stale, refuses again, and
+         * reloads again -- a loop on every affected teacher's screen at once.
+         */
+        function wcForceReload(reason) {
+            const KEY = 'wcForceReloadAt';
+            try {
+                const last = Number(sessionStorage.getItem(KEY) || 0);
+                if (last && Date.now() - last < 60000) {
+                    console.warn('[update] force reload suppressed: tried ' +
+                        Math.round((Date.now() - last) / 1000) + 's ago. ' +
+                        'The cache is probably still serving the old file.');
+                    return false;
+                }
+                sessionStorage.setItem(KEY, String(Date.now()));
+            } catch (e) { /* private mode: proceed once rather than never */ }
+
+            console.warn('[update] forcing a reload:', reason);
+            // Where they were, on the same snapshot the polite path uses.
+            try {
+                if (window.WildcatUpdate && window.WildcatUpdate.resumeSnapshot) {
+                    sessionStorage.setItem('wcResume', JSON.stringify(
+                        window.WildcatUpdate.resumeSnapshot({
+                            version: pendingUpdateVersion || APP_VERSION,
+                            scrollY: window.scrollY, now: Date.now()
+                        })));
+                }
+            } catch (e) {}
+
+            // A cache buster even when no new version was advertised: the point
+            // is to stop running THIS file, whether or not a newer one is known.
+            const v = pendingUpdateVersion || ('force-' + Date.now());
+            const target = (window.WildcatUpdate && window.WildcatUpdate.reloadUrl)
+                ? window.WildcatUpdate.reloadUrl(location.href, v) : null;
+            if (target) location.replace(target); else location.reload();
+            return true;
+        }
+
+        /**
          * Reload if this is a free moment. Re-evaluated often, because the
          * free moment usually arrives a little after the update does.
          */
@@ -402,6 +453,12 @@
                     ? _saveQueue.isPending() : false,
                 busy: screenHasUnfinishedWork(),
                 hidden: document.visibilityState === 'hidden',
+                // How long this tab has known it is out of date. After the
+                // deadline, unfinished SCREEN work stops holding the update
+                // back on a hidden tab -- which is the weekend tab that
+                // resurrected $4.9M. Unsaved work still blocks, via
+                // savePending above.
+                pendingForMs: _pendingUpdateSince ? Date.now() - _pendingUpdateSince : 0,
                 idleMs: Date.now() - (typeof lastUserActivity === 'number' ? lastUserActivity : Date.now())
             });
 
@@ -3517,6 +3574,12 @@
                                     return base ? Object.assign({}, st, { cashDelta: cashDeltaBetween(st, base) }) : st;
                                 });
                                 const result = await auth.convexMutation('appData:save', {
+                                    // WHICH BUILD IS ASKING. The server refuses a
+                                    // save from a client below its floor and says
+                                    // so, and the handler below reloads this tab
+                                    // rather than asking a teacher to. Nobody can
+                                    // be told to refresh forty devices.
+                                    clientVersion: (typeof APP_VERSION !== 'undefined' && APP_VERSION) || null,
                                     students: studentsToSend,
                                     teachers: mainTransactionResult.teachersToSave,
                                     settings: {
@@ -3570,6 +3633,27 @@
                                         ? `, ${result.skippedUnknownStudents} unknown skipped`
                                         : ''),
                                 );
+                                // A REFUSED COUNTER IS NEVER SILENT.
+                                //
+                                // The server will not let a browser SET a cash
+                                // balance, only move one by a stated delta, and it
+                                // will not let a delta go below zero. Both refusals
+                                // mean this tab's view of the money is not the
+                                // server's -- which is the state that put $4.9M
+                                // back on 2026-09-13 -- so the honest thing is to
+                                // say so and get the tab current, not to print a
+                                // tick.
+                                if (result.cashCountersIgnored) {
+                                    console.warn(
+                                        `[save] the server refused to set cash on ${result.cashCountersIgnored} ` +
+                                        `student(s) because this tab could not say how much it had moved it` +
+                                        (result.cashCountersIgnoredSample && result.cashCountersIgnoredSample.length
+                                            ? ` (e.g. ${result.cashCountersIgnoredSample.join(', ')})`
+                                            : '') +
+                                        '. This tab is out of date with the server. Reloading.');
+                                    showToast('This tab was out of date, so some money was not saved. Reloading to get current.', 'warn', 9000);
+                                    wcForceReload('cash counters refused');
+                                }
                             } catch (err) {
                                 writesFailed.push('students');
                                 console.error('[save] Convex shadow write failed:', err.message);

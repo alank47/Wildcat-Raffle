@@ -252,9 +252,16 @@ console.log("\nThe ledger reaches Convex even though it is stripped from main");
   // year-rollover-backup.test.mjs section 7.
   check("and sends an emptied ledger too, so a clear can actually clear",
     /if \(!Array\.isArray\(tx\)\) return st;/.test(script));
+  // Sliced rather than matched adjacently. This asserted
+  // /convexMutation\('appData:save', \{\s*students: studentsToSend,/ and broke
+  // on 2026-09-13 when a `clientVersion` field was added ahead of `students`
+  // -- the property under test was untouched, only the line above it. A regex
+  // that pins which field comes FIRST in a call is testing formatting.
+  const saveCall = script.slice(script.indexOf("convexMutation('appData:save'"),
+                                script.indexOf("convexMutation('appData:save'") + 1200);
   check("and appData:save is sent that, not the stripped list",
     /const changedStudents = studentsForConvex\.filter\(/.test(script) &&
-    /convexMutation\('appData:save', \{\s*students: studentsToSend,/.test(script));
+    /students: studentsToSend,/.test(saveCall));
   // The stripped list is what the save payload is built from. This asserted
   // `delete studentData.…` while three separate paths each stripped their own
   // copy; the Firestore transaction went to Convex on 2026-08-31 and the one

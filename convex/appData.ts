@@ -324,6 +324,7 @@ export const save = mutation({
     // an auth gate that a test cannot reach.
     let studentsChanged = 0;
     let skipped: string[] = [];
+    let countersIgnored: string[] = [];
     if (args.students?.length) {
       const rows = await lookupStudents(ctx, args.students);
       const plan = planSave(rows, args.students, STUDENT_WRITABLE, (r) => [
@@ -335,6 +336,7 @@ export const save = mutation({
         studentsChanged++;
       }
       skipped = plan.skipped;
+      countersIgnored = plan.countersIgnored;
     }
 
     let teachersChanged = 0;
@@ -381,6 +383,17 @@ export const save = mutation({
       // "nothing changed" from "I did not recognise any of these students".
       skippedUnknownStudents: skipped.length,
       skippedSample: skipped.slice(0, 5),
+      // COUNTERS THE SERVER REFUSED TO SET, named for the same reason
+      // skippedUnknownStudents is counted rather than swallowed.
+      //
+      // A browser may move a cash counter by a delta and may never set one.
+      // Where it tried to set one, or tried to move one below zero, the
+      // counter was left alone and the student is named here. The client logs
+      // it loudly: a save that quietly drops a teacher's award is worse than
+      // the resurrection this rule exists to prevent, because the
+      // resurrection was at least visible in the totals.
+      cashCountersIgnored: countersIgnored.length,
+      cashCountersIgnoredSample: countersIgnored.slice(0, 5),
     };
   },
 });

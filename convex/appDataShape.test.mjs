@@ -6,7 +6,10 @@
 // backfill wrote its stale view over everything. That is not hypothetical: it
 // wiped 38 staff emails on 2026-08-11. These tests reproduce that shape.
 
-import { toAppStudent, toAppTeacher, mergeIncoming, planSave, planPatch, cashDeltaOf, CASH_COUNTERS, STUDENT_WRITABLE } from "./appDataShape.ts";
+import {
+  toAppStudent, toAppTeacher, mergeIncoming, planSave, planPatch, cashDeltaOf,
+  refusedCashCounters, CASH_COUNTERS, STUDENT_WRITABLE,
+} from "./appDataShape.ts";
 
 let pass = 0;
 let fail = 0;
@@ -179,8 +182,66 @@ console.log("\nCash counters are incremented, so two tabs awarding the same chil
   const patch = planPatch(stored, { id: "12217", wildcatCashBalance: 999, cashDelta: { wildcatCashBalance: 0 } }, STUDENT_WRITABLE);
   check("a zero delta writes nothing for that counter, whatever the absolute says", !("wildcatCashBalance" in patch));
 
+  // THE INCIDENT, 2026-09-13. This assertion used to read "a record with no
+  // cashDelta (an older client) still merges the absolute value", and that
+  // behaviour is what put $4,901,850 back across 336 students: a tab running a
+  // build older than 2026-09-09 re-sent its pre-reset in-memory view over a
+  // server-side clear, and planPatch handed the absolute counters straight to
+  // mergeIncoming. The arithmetic identified it exactly -- the original
+  // $6,633,000 less the $1,731,150 held by the 104 students a browser never
+  // loads is $4,901,850, to the dollar.
+  //
+  // A browser may MOVE a counter and may never SET one.
   const older = planPatch(stored, { id: "12217", wildcatCashBalance: 110 }, STUDENT_WRITABLE);
-  check("a record with no cashDelta (an older client) still merges the absolute value", older.wildcatCashBalance === 110);
+  check("a record with no cashDelta cannot set a counter at all",
+    !("wildcatCashBalance" in older));
+  check("and cannot resurrect a cleared balance",
+    !("wildcatCashBalance" in planPatch({ ...stored, wildcatCashBalance: 0 },
+      { id: "12217", wildcatCashBalance: 30500 }, STUDENT_WRITABLE)));
+  // Its OTHER writable fields still apply. The refusal is about cash, not
+  // about the record.
+  const alsoTickets = planPatch(stored, { id: "12217", wildcatCashBalance: 110, pbisTickets: 7 },
+    STUDENT_WRITABLE);
+  check("but the rest of that record still merges", alsoTickets.pbisTickets === 7);
+  // And it is REPORTED. A dropped counter that nobody is told about is worse
+  // than the resurrection, because the resurrection was at least visible.
+  check("the refusal is named, not swallowed",
+    refusedCashCounters(stored, { id: "12217", wildcatCashBalance: 110 }, STUDENT_WRITABLE)
+      .includes("wildcatCashBalance"));
+  check("an ordinary save with a delta is not reported",
+    refusedCashCounters(stored, fromA, STUDENT_WRITABLE).length === 0);
+  check("nor is a record that merely restates the stored balance",
+    refusedCashCounters(stored, { id: "12217", wildcatCashBalance: 100 }, STUDENT_WRITABLE).length === 0);
+
+  // THE SAME INCIDENT WITH THE SIGN FLIPPED, which review caught and which is
+  // worse than the original. After a clear, a stale tab pressing "Reset ALL
+  // student balances" computes its delta against the balance IT remembers:
+  // 0 - 30500 = -30500. The server holds 0. Unclamped that is -$30,500 for one
+  // child and $4.9M of phantom debt across the school.
+  const cleared = { ...stored, wildcatCashBalance: 0, wildcatCashEarned: 0 };
+  const staleReset = planPatch(cleared,
+    { id: "12217", wildcatCashBalance: 0, cashDelta: { wildcatCashBalance: -30500 } },
+    STUDENT_WRITABLE);
+  check("a delta cannot drive a balance below zero", staleReset.wildcatCashBalance === 0);
+  check("and that clamp is reported too",
+    refusedCashCounters(cleared,
+      { id: "12217", cashDelta: { wildcatCashBalance: -30500 } }, STUDENT_WRITABLE)
+      .includes("wildcatCashBalance"));
+  // A LEGITIMATE deduction still lands in full. The clamp only bites where the
+  // movement exceeds what the server actually holds.
+  const realDeduct = planPatch(stored,
+    { id: "12217", cashDelta: { wildcatCashBalance: -40, wildcatCashDeducted: 40 } },
+    STUDENT_WRITABLE);
+  check("a real deduction still applies", realDeduct.wildcatCashBalance === 60);
+  check("and its counter moves with it", realDeduct.wildcatCashDeducted === 40);
+  check("a deduction within the balance is not reported",
+    refusedCashCounters(stored,
+      { id: "12217", cashDelta: { wildcatCashBalance: -40 } }, STUDENT_WRITABLE).length === 0);
+  // And spending, which is the same movement by a different name.
+  const spend = planPatch(stored,
+    { id: "12217", cashDelta: { wildcatCashBalance: -25, wildcatCashSpent: 25 } },
+    STUDENT_WRITABLE);
+  check("a purchase applies", spend.wildcatCashBalance === 75 && spend.wildcatCashSpent === 25);
 
   const missing = planPatch({ _id: "s2" }, { id: "x", cashDelta: { wildcatCashDeducted: 25 } }, STUDENT_WRITABLE);
   check("a counter the row never had starts from zero", missing.wildcatCashDeducted === 25);

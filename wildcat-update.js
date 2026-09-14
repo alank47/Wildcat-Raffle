@@ -54,6 +54,25 @@
   var RESUME_MAX_AGE_MS = 120000;
 
   /**
+   * How long unfinished work on screen may hold an update back.
+   *
+   * WHY THERE IS A DEADLINE AT ALL. `busy` used to block indefinitely, and it
+   * is true of a tab with a modal left open, a half-typed referral, one ticked
+   * checkbox, or any exception inside the check (which fails to "assume
+   * busy"). So a tab backgrounded on Friday with a dialog open never updated,
+   * and on 2026-09-13 a tab four days stale re-sent its pre-reset view over a
+   * server-side cash reset and restored $4,901,850 across 336 students.
+   *
+   * Two hours of politeness is generous for a half-finished screen. After
+   * that, a draft nobody has returned to is not a draft, and the tab's write
+   * access is the bigger risk. The deadline only ever unblocks a tab NOBODY IS
+   * LOOKING AT -- see the hidden check below -- so it cannot pull a screen out
+   * from under a teacher mid-sentence. Unsaved work in the outbox still blocks
+   * forever, deadline or not: that is data, not screen state.
+   */
+  var BUSY_DEADLINE_MS = 7200000;
+
+  /**
    * Should this tab reload itself right now?
    *
    * Returns a reason either way. The reason is logged rather than discarded,
@@ -89,12 +108,29 @@
     if (s.savePending) return { reload: false, reason: 'a save is still pending' };
 
     // A dialog, a half-typed referral, students ticked ready to award. All are
-    // work that exists only on screen.
-    if (s.busy) return { reload: false, reason: 'the screen has unfinished work on it' };
+    // work that exists only on screen -- which is why it stops mattering once
+    // the update has been waiting long enough that nobody is coming back to
+    // it, and only ever while the tab is hidden.
+    var pendingFor = Number(s.pendingForMs);
+    var deadline = typeof s.busyDeadlineMs === 'number' ? s.busyDeadlineMs : BUSY_DEADLINE_MS;
+    var overdue = isFinite(pendingFor) && pendingFor >= deadline;
+    if (s.busy && !(s.hidden && overdue)) {
+      return { reload: false, reason: 'the screen has unfinished work on it' };
+    }
 
     // The best moment there is: nobody is looking. They come back to the new
-    // version and never see a flicker.
-    if (s.hidden) return { reload: true, reason: 'tab is in the background' };
+    // version and never see a flicker. Checked AFTER busy in the visible case
+    // and allowed to override it in the overdue hidden case, which is the one
+    // that leaves a weekend tab holding write access it should not have.
+    if (s.hidden) {
+      return {
+        reload: true,
+        reason: overdue && s.busy
+          ? 'tab is in the background and the update has waited ' +
+            Math.round(pendingFor / 3600000) + 'h over unfinished screen work'
+          : 'tab is in the background'
+      };
+    }
 
     var idle = typeof s.idleMs === 'number' ? s.idleMs : 0;
     var threshold = typeof s.idleThresholdMs === 'number' ? s.idleThresholdMs : IDLE_MS;
