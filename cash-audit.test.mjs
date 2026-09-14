@@ -197,5 +197,64 @@ console.log("\nThe history fits without dragging sideways");
     /\.cash-history-row\.act-redeem \{ border-left-color: #6D4AB8; \}/.test(css));
 }
 
+console.log("\n-- intervention flags behaviour, not spending --");
+{
+  // THE INCIDENT, 2026-09-14, launch afternoon. The owner reported a student
+  // flagged for intervention with no deductions beside her name. She was the
+  // ONLY child in the school the predicate flagged, and all five of her
+  // flagging rows were kind:'redeem' Homework Pass purchases. She had never
+  // had a dollar deducted for behaviour. She was named in a red "needs
+  // intervention" table for spending her own money.
+  //
+  // WHY. recordCashTransaction moves the four protected counters by branching
+  // on `kind` -- correctly, redeem to Spent -- and then writes the row's own
+  // `type` field from the SIGN of the amount alone, discarding kind. So a
+  // purchase, and every row written by "Reset ALL student balances", is
+  // stamped identically to a discipline deduction. Eleven analytics panels
+  // counted by that stamp.
+  const src = readFileSync(new URL("./script.js", import.meta.url), "utf8");
+  const fn = src.slice(src.indexOf("function updateInterventionStudents()"));
+  const body = fn.slice(0, fn.indexOf("\n        function "));
+  const code = body.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+  check("the flag no longer counts anything with a minus sign",
+    !/t\.type === 'negative'/.test(code));
+  check("it counts deductions by kind", /t\.kind === 'deduct'/.test(code));
+  check("and excludes administrative resets",
+    /t\.behaviorId !== 'system_reset'/.test(code));
+  // The flag and the figure printed beside it must come from one pass over one
+  // set of rows. The column used to print wildcatCashDeducted -- a different
+  // store from the one the flag was computed on -- so a red "5" sat beside $0,
+  // because a redemption increments wildcatCashSpent and never Deducted.
+  check("the money column is summed from the rows the flag counted",
+    /totalDeducted = deductions\.reduce/.test(code));
+  check("and no longer reads the counter the flag never looked at",
+    !/totalDeducted = student\.wildcatCashDeducted/.test(code));
+  check("both the predicate and the render use the same filter",
+    (code.match(/t\.kind === 'deduct'/g) || []).length === 2);
+
+  // Run the rule itself against the real row shapes.
+  const flagged = (rows) => rows.filter(
+    (t) => t && t.kind === "deduct" && t.behaviorId !== "system_reset");
+  const purchases = Array.from({ length: 5 }, () => ({ kind: "redeem", type: "negative", amount: -1000 }));
+  const resets = [{ kind: "deduct", type: "negative", behaviorId: "system_reset", amount: -30500 }];
+  const realDeducts = Array.from({ length: 5 }, () => ({ kind: "deduct", behaviorId: "wc7", amount: -100 }));
+  check("five reward purchases flag nobody", flagged(purchases).length === 0);
+  check("a reset row flags nobody", flagged(resets).length === 0);
+  check("and shows no money against them",
+    flagged(resets).reduce((n, t) => n + Math.abs(t.amount), 0) === 0);
+  check("five real deductions still flag", flagged(realDeducts).length === 5);
+  check("and show the right money",
+    flagged(realDeducts).reduce((n, t) => n + Math.abs(t.amount), 0) === 500);
+
+  // THE UNDERLYING FIELD IS STILL WRONG and this records that it is known.
+  // `type` is written from the sign in recordCashTransaction and ten other
+  // panels still read it. Fixing the field itself is a write-path change and
+  // was deliberately not made on launch day.
+  check("the double-stamping that caused this is still in the writer",
+    /type: amount >= 0 \? 'positive' : 'negative'/.test(src),
+    "if this fails somebody fixed `type` itself -- good, but re-check the ten other panels that read it");
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);

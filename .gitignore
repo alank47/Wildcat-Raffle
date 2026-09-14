@@ -39,3 +39,4 @@ wildcat-raffle-backup-*.json
 wildcat-referrals-backup-*.json
 wildcat-ledger-precutoff-backup-*.json
 wildcat-referrals-precutoff-backup-*.json
+wildcat-cash-history-backup-*.json

@@ -3650,3 +3650,233 @@ export const reverseRefund = internalMutation({
     };
   },
 });
+
+/** What one staff member can actually reach today. Read-only. */
+export const staffScope = internalQuery({
+  args: { email: v.string() },
+  handler: async (ctx, { email }) => {
+    const em = email.trim().toLowerCase();
+    const staff = (await ctx.db.query("teachers").collect())
+      .find((t: any) => String(t.email ?? "").toLowerCase() === em);
+    const roster = await ctx.db.query("psRoster").take(8000);
+    const mine = (roster as any[]).filter(
+      (r) => String(r.teacherEmail ?? "").toLowerCase() === em);
+    const sections = [...new Set(mine.map((r) => String(r.sectionId ?? "")))].filter(Boolean);
+    const studentNums = [...new Set(mine.map((r) => String(r.studentNumber ?? "")))].filter(Boolean);
+    // And how many students are High School, for the ask.
+    const byGrade: Record<string, number> = {};
+    const seen = new Set<string>();
+    for (const r of roster as any[]) {
+      const n = String(r.studentNumber ?? "");
+      if (!n || seen.has(n)) continue;
+      seen.add(n);
+      const g = String(r.gradeLevel ?? "?");
+      byGrade[g] = (byGrade[g] ?? 0) + 1;
+    }
+    const hs = ["9", "10", "11", "12"].reduce((n, g) => n + (byGrade[g] ?? 0), 0);
+    const ms = ["6", "7", "8"].reduce((n, g) => n + (byGrade[g] ?? 0), 0);
+    return {
+      found: Boolean(staff),
+      name: staff ? (staff as any).name : null,
+      role: staff ? (staff as any).role : null,
+      sectionsInPowerSchool: sections.length,
+      studentsSheCanSeeToday: studentNums.length,
+      courses: [...new Set(mine.map((r) => String(r.courseName ?? "")))].filter(Boolean).slice(0, 12),
+      schoolWide: { highSchool: hs, middleSchool: ms, total: hs + ms, byGrade },
+    };
+  },
+});
+
+/** Full mail-log detail for one or more referrals, including per-message recipient counts. Read-only. */
+export const referralMailDetail = internalQuery({
+  args: { referralIds: v.optional(v.array(v.string())) },
+  handler: async (ctx, { referralIds }) => {
+    const want = referralIds && referralIds.length ? new Set(referralIds) : null;
+    const rows = await ctx.db.query("referralMailLog").take(2000);
+    return (rows as any[])
+      .filter((r) => !want || want.has(String(r.referralId ?? "")))
+      .map((r) => ({
+        referralId: r.referralId,
+        state: r.state,
+        filedByEmail: r.filedByEmail ?? null,
+        recipients: r.recipients ?? null,
+        sent: r.sent ?? null,
+        refused: r.refused ?? null,
+        error: r.error ?? null,
+        at: r.at,
+        finishedAt: r.finishedAt ?? null,
+        reason: r.reason ?? null,
+      }))
+      .sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  },
+});
+
+
+/**
+ * Does the intervention flag disagree with the figure shown beside it?
+ *
+ * updateInterventionStudents flags on negativeCount >= 5, counted from
+ * student.wildcatCashTransactions -- the array that stale tabs re-populate --
+ * and then PRINTS wildcatCashDeducted, which is delta-protected and clean. A
+ * student can therefore be flagged while the column next to the flag reads 0.
+ * Read-only.
+ */
+export const interventionDisagreement = internalQuery({
+  args: { cutoffIso: v.string() },
+  handler: async (ctx, { cutoffIso }) => {
+    const cut = Date.parse(cutoffIso);
+    const students = await ctx.db.query("students").collect();
+    const rows: any[] = [];
+    for (const s of students as any[]) {
+      const arr = Array.isArray(s.wildcatCashTransactions) ? s.wildcatCashTransactions : [];
+      if (!arr.length) continue;
+      const neg = arr.filter((t: any) => t?.type === "negative");
+      const negAfterCutoff = neg.filter((t: any) => {
+        const ts = Date.parse(String(t?.timestamp ?? ""));
+        return Number.isFinite(ts) && ts >= cut;
+      });
+      const deducted = Number(s.wildcatCashDeducted) || 0;
+      const flagged = neg.length >= 5 || deducted > 2000;
+      if (!flagged && negAfterCutoff.length === 0) continue;
+      rows.push({
+        name: `${s.firstName ?? ""} ${s.lastName ?? ""}`.trim(),
+        studentNumber: s.studentNumber,
+        flaggedByCode: flagged,
+        negativeRowsOnRecord: neg.length,
+        negativeRowsSinceCutoff: negAfterCutoff.length,
+        deductedCounterShown: deducted,
+        disagrees: flagged && deducted === 0,
+      });
+    }
+    return {
+      cutoffIso,
+      flagged: rows.filter((r) => r.flaggedByCode).length,
+      flaggedButShowsZeroDeducted: rows.filter((r) => r.disagrees).length,
+      detail: rows.sort((a, b) => b.negativeRowsOnRecord - a.negativeRowsOnRecord).slice(0, 12),
+    };
+  },
+});
+
+/** What a date-scoped clear of the per-student arrays WOULD keep and remove. Read-only. */
+export const studentArraySplit = internalQuery({
+  args: { cutoffIso: v.string() },
+  handler: async (ctx, { cutoffIso }) => {
+    const cut = Date.parse(cutoffIso);
+    const students = await ctx.db.query("students").collect();
+    let before = 0, after = 0, undated = 0, studentsTouched = 0;
+    const byBehaviourAfter: Record<string, number> = {};
+    for (const s of students as any[]) {
+      const arr = Array.isArray(s.wildcatCashTransactions) ? s.wildcatCashTransactions : [];
+      if (!arr.length) continue;
+      let hadBefore = false;
+      for (const t of arr) {
+        const ts = Date.parse(String(t?.timestamp ?? ""));
+        if (!Number.isFinite(ts)) { undated++; continue; }
+        if (ts >= cut) {
+          after++;
+          const b = String(t?.behaviorName ?? "(none)");
+          byBehaviourAfter[b] = (byBehaviourAfter[b] ?? 0) + 1;
+        } else { before++; hadBefore = true; }
+      }
+      if (hadBefore) studentsTouched++;
+    }
+    return {
+      cutoffIso,
+      wouldRemove: before,
+      wouldKeep: after,
+      undatedWouldBeKept: undated,
+      studentsWithPreCutoffRows: studentsTouched,
+      todaysBehaviours: Object.entries(byBehaviourAfter).sort((a, b) => b[1] - a[1]),
+    };
+  },
+});
+
+/** The pre-cutoff rows from BOTH cash history stores, for the backup. Read-only. */
+export const exportCashBefore = internalQuery({
+  args: { cutoffIso: v.string() },
+  handler: async (ctx, { cutoffIso }) => {
+    const cut = Date.parse(cutoffIso);
+    const old = (t: unknown) => {
+      const ts = Date.parse(String(t ?? ""));
+      return Number.isFinite(ts) && ts < cut;
+    };
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const students = await ctx.db.query("students").collect();
+    return {
+      takenFor: "legacyPurge:clearCashHistoryBefore",
+      cutoffIso,
+      ledger: (mirror as any[])
+        .filter((r) => String(r.doc ?? "").startsWith("cash_tx_"))
+        .filter((r) => old(r.payload?.timestamp ?? r.payload?.date))
+        .map((r) => ({ doc: r.doc, key: r.key ?? null, payload: r.payload })),
+      studentArrays: (students as any[])
+        .map((s) => ({
+          studentNumber: s.studentNumber ?? null,
+          name: `${s.firstName ?? ""} ${s.lastName ?? ""}`.trim(),
+          removing: (Array.isArray(s.wildcatCashTransactions) ? s.wildcatCashTransactions : [])
+            .filter((t: any) => old(t?.timestamp)),
+        }))
+        .filter((r) => r.removing.length),
+    };
+  },
+});
+
+/**
+ * Clear pre-cutoff cash history from BOTH stores, in one transaction.
+ *
+ * TOGETHER, and that is the point. reconcileCashLedger (script.js:865) unions
+ * each student's wildcatCashTransactions array back into the shared ledger on
+ * load, and the next save writes it into the weekly documents. Clearing the
+ * ledger alone -- which is what I did at midday -- is undone by the arrays on
+ * the next reconcile. There is no tombstone defence for cash.
+ *
+ * Scoped by arithmetic on the timestamp, never by judgement about which rows
+ * look old. An UNDATED row is kept in both stores: a row that cannot be proved
+ * pre-cutoff must not be deleted on a day when a teacher's award of the year
+ * is in these tables. The counters are not touched at all -- they are
+ * delta-protected, they are correct, and they are not history.
+ */
+export const clearCashHistoryBefore = internalMutation({
+  args: { cutoffIso: v.string(), apply: v.optional(v.boolean()) },
+  handler: async (ctx, { cutoffIso, apply }) => {
+    const cut = Date.parse(cutoffIso);
+    if (!Number.isFinite(cut)) throw new Error("cutoffIso did not parse; refusing to guess");
+    const old = (t: unknown) => {
+      const ts = Date.parse(String(t ?? ""));
+      return Number.isFinite(ts) && ts < cut;
+    };
+
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const ledgerAll = (mirror as any[]).filter((r) => String(r.doc ?? "").startsWith("cash_tx_"));
+    const ledgerDoomed = ledgerAll.filter((r) => old(r.payload?.timestamp ?? r.payload?.date));
+
+    const students = await ctx.db.query("students").collect();
+    let arrayRowsRemoved = 0, arrayRowsKept = 0, studentsPatched = 0, undatedKept = 0;
+    const patches: Array<{ id: any; next: any[] }> = [];
+    for (const s of students as any[]) {
+      const arr = Array.isArray(s.wildcatCashTransactions) ? s.wildcatCashTransactions : [];
+      if (!arr.length) continue;
+      const next = arr.filter((t: any) => {
+        const ts = Date.parse(String(t?.timestamp ?? ""));
+        if (!Number.isFinite(ts)) { undatedKept++; return true; }
+        if (ts < cut) return false;
+        return true;
+      });
+      arrayRowsRemoved += arr.length - next.length;
+      arrayRowsKept += next.length;
+      if (next.length !== arr.length) { patches.push({ id: s._id, next }); studentsPatched++; }
+    }
+
+    if (apply === true) {
+      for (const r of ledgerDoomed) await ctx.db.delete(r._id);
+      for (const p of patches) await ctx.db.patch(p.id, { wildcatCashTransactions: p.next });
+    }
+    return {
+      applied: apply === true, cutoffIso,
+      ledger: { removed: ledgerDoomed.length, kept: ledgerAll.length - ledgerDoomed.length },
+      studentArrays: { rowsRemoved: arrayRowsRemoved, rowsKept: arrayRowsKept, studentsPatched },
+      undatedKept,
+      note: apply === true ? "Both stores cleared." : "Dry run. Pass apply: true.",
+    };
+  },
+});

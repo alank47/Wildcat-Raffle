@@ -28061,9 +28061,43 @@
             const flaggedStudents = students.filter(student => {
                 if (!student.wildcatCashTransactions) return false;
                 
-                const negativeCount = student.wildcatCashTransactions.filter(t => t.type === 'negative').length;
+                // COUNT DEDUCTIONS, NOT MINUS SIGNS.
+                //
+                // This filtered on `type`, and recordCashTransaction writes
+                // that field from the SIGN of the amount alone -- see
+                // `amount >= 0 ? 'positive' : 'negative'` -- discarding the
+                // `kind` it had already branched on correctly seventeen lines
+                // earlier. So a reward PURCHASE, and every row written by
+                // "Reset ALL student balances", is stamped identically to a
+                // discipline deduction.
+                //
+                // Maria Agaton Colin was the ONLY child in the school this
+                // predicate flagged, and all five of her flagging rows were
+                // kind:'redeem' Homework Pass purchases. She had never had a
+                // dollar deducted for behaviour. She was named in a red
+                // "needs intervention" table for spending her own money.
+                //
+                // `kind` is correct on every row in every store, and the app's
+                // own audit vocabulary draws the same line: cash_deduct and
+                // reward_redemption are separate actions (wildcat-cashaudit.js).
+                //
+                // system_reset is excluded for the same reason as a purchase:
+                // "Reset ALL student balances" writes one row per student with
+                // kind 'deduct' and the whole balance as the amount
+                // (script.js:27746), so a reset would otherwise read as a
+                // deduction of thousands against a child who did nothing.
+                // Administrative housekeeping is not a behaviour either.
+                const deductions = student.wildcatCashTransactions.filter(t =>
+                    t && t.kind === 'deduct' && t.behaviorId !== 'system_reset');
+                const negativeCount = deductions.length;
                 const balance = student.wildcatCashBalance || 0;
-                const totalDeducted = student.wildcatCashDeducted || 0;
+                // SUMMED FROM THE SAME ROWS THE FLAG COUNTED. This printed
+                // wildcatCashDeducted -- a different store from the one the
+                // flag was computed on -- so a red "5" sat beside $0, because
+                // a redemption increments wildcatCashSpent and never
+                // wildcatCashDeducted. A flag and its own evidence have to
+                // come from one pass over one set of rows.
+                const totalDeducted = deductions.reduce((n, t) => n + Math.abs(Number(t.amount) || 0), 0);
                 
                 // INTERVENTION IS ABOUT BEHAVIOUR, NOT ABOUT BEING POOR.
                 //
@@ -28090,9 +28124,14 @@
             }
             
             tbody.innerHTML = flaggedStudents.map(student => {
-                const negativeCount = student.wildcatCashTransactions.filter(t => t.type === 'negative').length;
+                // The same two figures as the predicate, from the same rows.
+                // See the comment on the filter above: `type` is the sign of
+                // the amount; `kind` is what actually happened.
+                const deductions = student.wildcatCashTransactions.filter(t =>
+                    t && t.kind === 'deduct' && t.behaviorId !== 'system_reset');
+                const negativeCount = deductions.length;
                 const balance = student.wildcatCashBalance || 0;
-                const totalDeducted = student.wildcatCashDeducted || 0;
+                const totalDeducted = deductions.reduce((n, t) => n + Math.abs(Number(t.amount) || 0), 0);
                 
                 // Find teachers who have interacted with this student
                 const teachersSet = new Set();
