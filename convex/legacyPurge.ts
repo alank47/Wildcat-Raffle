@@ -2756,3 +2756,134 @@ export const exportStudentCash = internalQuery({
     };
   },
 });
+
+/** Wildcat Cash actions, mirrored from wildcat-cashaudit.js CASH_ACTIONS plus the two resets. */
+const CASH_AUDIT_ACTIONS = [
+  "cash_award", "cash_deduct",
+  "reward_redemption", "reward_fulfilled", "reward_cancelled",
+  "reset_all_student_cash", "school_year_rollover",
+];
+
+/**
+ * The two Wildcat Cash stores a balance reset does NOT touch, and what a
+ * teacher still sees because of them.
+ *
+ * zeroAllStudentCash clears the counters and the per-student transaction
+ * arrays. It cannot reach these, and they are what two screens read:
+ *
+ *   cash_tx_* / transactions   -> the browser's `cashTransactions`, which is
+ *                                 what "Most Common Behaviors (All Time)"
+ *                                 counts (script.js:26693).
+ *   audit_log* / auditLog      -> the per-student "Recent Activity" on the
+ *                                 account cards, filtered to the six cash
+ *                                 actions by WildcatCashAudit.forStudent
+ *                                 (script.js:26528, wildcat-cashaudit.js:120).
+ *
+ * TICKET AND RAFFLE AUDIT ROWS ARE NOT COUNTED HERE. "Awarded Tickets" and the
+ * raffle draws are a different system's record and a reset of Wildcat Cash has
+ * no business erasing them.
+ */
+export const cashRemnants = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("legacyMirror").collect();
+    const want = new Set(CASH_AUDIT_ACTIONS);
+    const tx = rows.filter((r: any) => String(r.doc ?? "").startsWith("cash_tx_"));
+    const audit = rows.filter((r: any) => r.collection === "auditLog");
+    const cashAudit = audit.filter((r: any) => want.has(String(r.payload?.action ?? "")));
+
+    const txByDoc: Record<string, number> = {};
+    for (const r of tx as any[]) txByDoc[r.doc] = (txByDoc[r.doc] ?? 0) + 1;
+    const behaviours: Record<string, number> = {};
+    for (const r of tx as any[]) {
+      const b = String(r.payload?.behaviorName ?? "(none)");
+      behaviours[b] = (behaviours[b] ?? 0) + 1;
+    }
+    const cashByAction: Record<string, number> = {};
+    for (const r of cashAudit as any[]) {
+      const a = String(r.payload?.action ?? "");
+      cashByAction[a] = (cashByAction[a] ?? 0) + 1;
+    }
+    return {
+      transactionRows: tx.length,
+      transactionsByDoc: txByDoc,
+      mostCommonBehavioursShown: Object.entries(behaviours)
+        .sort((a, b) => b[1] - a[1]).slice(0, 10),
+      auditRowsTotal: audit.length,
+      cashAuditRows: cashAudit.length,
+      cashAuditByAction: cashByAction,
+      ticketAndRaffleAuditRowsKept: audit.length - cashAudit.length,
+      studentsWithCashActivityShown: new Set(
+        (cashAudit as any[]).map((r) => String(r.payload?.studentId ?? "")).filter(Boolean),
+      ).size,
+    };
+  },
+});
+
+/** Everything clearCashRemnants would delete, as data, for the backup file. Read-only. */
+export const exportCashRemnants = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("legacyMirror").collect();
+    const want = new Set(CASH_AUDIT_ACTIONS);
+    return {
+      takenFor: "legacyPurge:clearCashRemnants",
+      transactions: (rows as any[])
+        .filter((r) => String(r.doc ?? "").startsWith("cash_tx_"))
+        .map((r) => ({ doc: r.doc, key: r.key ?? null, payload: r.payload })),
+      cashAudit: (rows as any[])
+        .filter((r) => r.collection === "auditLog" && want.has(String(r.payload?.action ?? "")))
+        .map((r) => ({ doc: r.doc, key: r.key ?? null, payload: r.payload })),
+    };
+  },
+});
+
+/**
+ * Delete the two Wildcat Cash stores a balance reset cannot reach.
+ *
+ * BATCHED, and the caller loops until `remaining` is 0. Convex allows 4,096
+ * document reads per execution and a delete is charged as one, which is the
+ * limit psSync.clearRoster was rewritten around after it worked at 3,805 rows
+ * and broke at 5,812.
+ *
+ * SCOPED TO WILDCAT CASH. cash_tx_* documents entirely, and auditLog rows
+ * whose action is one of the six cash actions plus the two resets. Every
+ * ticket and raffle row is left where it is: that is a different system's
+ * record, and clearing the cash economy has no business erasing it.
+ */
+export const clearCashRemnants = internalMutation({
+  args: { apply: v.optional(v.boolean()), limit: v.optional(v.number()) },
+  handler: async (ctx, { apply, limit }) => {
+    const cap = Math.max(1, Math.min(1200, limit ?? 800));
+    const want = new Set(CASH_AUDIT_ACTIONS);
+
+    // BY INDEX, PER DOCUMENT, not .take() over the table.
+    //
+    // The first version of this read `.take(4000)` and filtered. legacyMirror
+    // holds 14,165 rows, so that reads a PREFIX: it matched 2 of 660 and
+    // reported "remaining: 0", which is a clear that says it is done and is
+    // not. Exactly the failure psSync.clearRoster was rewritten around, in a
+    // table twice the size.
+    //
+    // The document names are enumerated rather than scanned because by_doc is
+    // an equality index: there is no prefix query for "every doc starting
+    // cash_tx_". The weeks come from the caller's own measurement
+    // (legacyPurge:cashRemnants reports transactionsByDoc), and any week not
+    // listed is simply not deleted, which is the safe direction to be wrong in.
+    const docs = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const doomed = (docs as any[]).filter((r) =>
+      String(r.doc ?? "").startsWith("cash_tx_") ||
+      (r.collection === "auditLog" && want.has(String(r.payload?.action ?? ""))));
+    const batch = doomed.slice(0, cap);
+    if (apply === true) for (const r of batch) await ctx.db.delete(r._id);
+    return {
+      applied: apply === true,
+      matchedInThisPage: doomed.length,
+      deleted: apply === true ? batch.length : 0,
+      remaining: apply === true ? doomed.length - batch.length : doomed.length,
+      note: apply === true
+        ? "Call again while remaining > 0; the page is re-read each time."
+        : "Dry run. Pass apply: true to delete.",
+    };
+  },
+});

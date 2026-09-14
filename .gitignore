@@ -34,3 +34,4 @@ cards-preview.html
 # these are the pre-wipe safety copy from 2026-09-09.
 backups/
 wildcat-cash-backup-*.json
+wildcat-cash-remnants-backup-*.json
