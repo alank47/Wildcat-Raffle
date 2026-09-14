@@ -221,10 +221,32 @@ export const loadSelfCheck = internalQuery({
  * "the row was never matched" or "the patch was empty".
  */
 export const savePlanDryRun = internalQuery({
-  args: { key: v.string(), pbisTickets: v.optional(v.number()) },
+  args: {
+    key: v.string(),
+    pbisTickets: v.optional(v.number()),
+    // THE CASH RULE, ASKABLE AGAINST PRODUCTION WITHOUT WRITING TO IT.
+    //
+    // Added 2026-09-13. A browser may MOVE a cash counter by a stated delta
+    // and may never SET one, and a delta may not drive one below zero. Both
+    // rules live in planPatch, which this query already calls through
+    // planSave -- so passing the shape a stale tab sends answers "would that
+    // land" from the deployed code rather than from reading it.
+    //
+    // `balance` is the absolute value a stale tab would send. `delta` is what a
+    // current tab sends. Send balance alone to reproduce the 2026-09-13
+    // incident; send a large negative delta to reproduce its inverted form.
+    balance: v.optional(v.number()),
+    delta: v.optional(v.number()),
+  },
   handler: async (ctx, args) => {
     const rows = await ctx.db.query("students").collect();
-    const incoming = [{ id: args.key, pbisTickets: args.pbisTickets ?? 99 }];
+    const record: Record<string, unknown> = {
+      id: args.key,
+      pbisTickets: args.pbisTickets ?? 99,
+    };
+    if (args.balance !== undefined) record.wildcatCashBalance = args.balance;
+    if (args.delta !== undefined) record.cashDelta = { wildcatCashBalance: args.delta };
+    const incoming = [record];
     const plan = planSave(rows, incoming, STUDENT_WRITABLE, (r) => [r.legacyId, r.studentNumber]);
 
     const matched = rows.find(
@@ -233,6 +255,13 @@ export const savePlanDryRun = internalQuery({
     return {
       totalRows: rows.length,
       rowMatched: Boolean(matched),
+      storedBalance: matched ? (matched as any).wildcatCashBalance ?? null : null,
+      // The whole point: what the patch WOULD set, if anything. Absent means
+      // the server refused to touch the balance.
+      wouldSetBalance: plan.patches.length && "wildcatCashBalance" in plan.patches[0].patch
+        ? (plan.patches[0].patch as any).wildcatCashBalance
+        : "(refused - balance left alone)",
+      cashCountersIgnored: plan.countersIgnored,
       matchedBy: matched
         ? matched.legacyId === args.key
           ? "legacyId"
