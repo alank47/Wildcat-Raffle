@@ -36,3 +36,4 @@ backups/
 wildcat-cash-backup-*.json
 wildcat-cash-remnants-backup-*.json
 wildcat-raffle-backup-*.json
+wildcat-referrals-backup-*.json

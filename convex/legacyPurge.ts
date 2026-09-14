@@ -3103,3 +3103,127 @@ export const ticketHistoryTable = internalQuery({
     return { rows: rows.length, top: Object.entries(byAction).sort((a, b) => b[1] - a[1]).slice(0, 6) };
   },
 });
+
+/**
+ * Every store holding referral DATA, so clearing it is one pass and not four.
+ *
+ * The Wildcat Cash reset took four rounds because the money lived in places no
+ * single tool knew about and each round ended with a confident "cleared" that
+ * was false. Read-only; counts and shapes only.
+ */
+export const referralFootprint = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const mirrorReferrals = (mirror as any[]).filter((r) => r.collection === "behaviorReferrals");
+    const byLevel: Record<string, number> = {};
+    for (const r of mirrorReferrals) {
+      const k = String(r.payload?.severity ?? r.payload?.level ?? "(none)");
+      byLevel[k] = (byLevel[k] ?? 0) + 1;
+    }
+    const table = await ctx.db.query("referrals").take(5000);
+    const mailLog = await ctx.db.query("referralMailLog").take(5000);
+    const mailByState: Record<string, number> = {};
+    for (const r of mailLog as any[]) {
+      const k = String(r.state ?? "(none)");
+      mailByState[k] = (mailByState[k] ?? 0) + 1;
+    }
+    // Detentions are a DIFFERENT system and are reported only so the decision
+    // is explicit rather than accidental.
+    const detentions = (mirror as any[]).filter((r) => r.collection === "detentions");
+    const prevention = (mirror as any[]).filter((r) => r.collection === "preventionGroups");
+    return {
+      mirrorReferralRows: mirrorReferrals.length,
+      mirrorReferralsByLevel: byLevel,
+      convexReferralsTable: table.length,
+      referralMailLogRows: mailLog.length,
+      referralMailLogByState: mailByState,
+      sampleReferralKeys: mirrorReferrals.slice(0, 2).map((r) => Object.keys(r.payload ?? {})),
+      notReferralsButAdjacent: {
+        detentions: detentions.length,
+        preventionGroups: prevention.length,
+        detentionReasonsConfig: (mirror as any[]).filter((r) => r.collection === "detentionReasons").length,
+        detentionLocationsConfig: (mirror as any[]).filter((r) => r.collection === "detentionLocations").length,
+      },
+    };
+  },
+});
+
+/** The referral rows and their ages, so a re-insert's mail risk is knowable. Read-only. */
+export const referralAges = internalQuery({
+  args: { now: v.optional(v.string()) },
+  handler: async (ctx, { now }) => {
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const rows = (mirror as any[]).filter((r) => r.collection === "behaviorReferrals");
+    const t = Date.parse(now ?? "") || 0;
+    return {
+      rows: rows.length,
+      submitted: rows
+        .map((r) => ({
+          id: r.payload?.id ?? null,
+          submittedAt: r.payload?.submittedAt ?? r.payload?.dateTime ?? r.payload?.date ?? null,
+          status: r.payload?.status ?? null,
+          loopClosed: r.payload?.loopClosed ?? null,
+        }))
+        .sort((a, b) => String(a.submittedAt).localeCompare(String(b.submittedAt))),
+      newestOlderThan24hFrom: t ? rows.every((r) => {
+        const s = Date.parse(String(r.payload?.submittedAt ?? ""));
+        return !Number.isFinite(s) || t - s > 86400000;
+      }) : null,
+    };
+  },
+});
+
+/** The referral rows in full, for the backup file. Read-only. */
+export const exportReferrals = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    return {
+      takenFor: "legacyPurge:clearReferrals",
+      referrals: (mirror as any[])
+        .filter((r) => r.collection === "behaviorReferrals")
+        .map((r) => ({ doc: r.doc, key: r.key ?? null, payload: r.payload })),
+    };
+  },
+});
+
+/**
+ * Delete referral DATA. Launch day 2026-09-14, at the owner's request.
+ *
+ * SCOPE, stated because the adjacent things are a different system: only
+ * legacyMirror behaviorReferrals rows, the Convex referrals table and
+ * referralMailLog. NOT detentions, NOT detentionReasons or detentionLocations
+ * (those are configuration a school set up, not data), NOT prevention groups,
+ * NOT hall passes.
+ *
+ * referralIdCounter is deliberately LEFT ALONE. It only ever goes up, and
+ * leaving it means the next referral gets an id no deleted one ever had --
+ * which matters because nothing tombstones a referral, so a re-inserted old
+ * row and a new one must not collide.
+ *
+ * Addressed through by_doc, never a .take() prefix: legacyMirror is large and
+ * a prefix read is how an earlier clear of mine matched 2 of 660 and reported
+ * success.
+ */
+export const clearReferrals = internalMutation({
+  args: { apply: v.optional(v.boolean()) },
+  handler: async (ctx, { apply }) => {
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const doomed = (mirror as any[]).filter((r) => r.collection === "behaviorReferrals");
+    const table = await ctx.db.query("referrals").take(5000);
+    const mailLog = await ctx.db.query("referralMailLog").take(5000);
+    if (apply === true) {
+      for (const r of doomed) await ctx.db.delete(r._id);
+      for (const r of table as any[]) await ctx.db.delete(r._id);
+      for (const r of mailLog as any[]) await ctx.db.delete(r._id);
+    }
+    return {
+      applied: apply === true,
+      mirrorReferrals: doomed.length,
+      convexReferralsTable: table.length,
+      referralMailLog: mailLog.length,
+      note: apply === true ? "Deleted." : "Dry run. Pass apply: true.",
+    };
+  },
+});
