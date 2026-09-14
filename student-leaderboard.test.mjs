@@ -79,8 +79,28 @@ console.log("\n-- the student's own rank --");
   check("out-of-band says so instead of showing a rank", /not in this group/.test(fn));
   check("and points them at the board they ARE on", /Academy board/.test(fn));
   // Unknown is not zero, and a child must not read it as one.
-  check("no cash figure yet is stated as unranked, not as last",
-    /do not have a Wildcat Cash total yet/.test(fn) && /not a zero/.test(fn));
+  // THE COPY CHANGED ON LAUNCH EVE and the reason is worth keeping. This read
+  // "You do not have a Wildcat Cash total yet, so you are not ranked. That is
+  // not a zero." -- correct while a zero WAS ranked, so this branch only ever
+  // meant "no figure at all".
+  //
+  // Since 2026-09-13 a zero is deliberately NOT a rank
+  // (convex/leaderboardRules.ts), because the school reset every balance and
+  // every one of 619 students would otherwise have been told "You are #1 of
+  // 619 with $0.00 -- level with 618 others" above ten classmates on a gold
+  // podium at $0.00. So this branch is now mostly reached by a child who has
+  // simply earned nothing, and telling them their zero "is not a zero" is a
+  // riddle.
+  check("earning nothing yet is stated plainly, not as last place",
+    /have not earned any Wildcat Cash yet/.test(fn) && /not on the board/.test(fn));
+  check("and it points forward rather than just refusing", /Earn some and you will be/.test(fn));
+  // COMMENT-STRIPPED. The first version of this was !/not a zero/.test(fn) and
+  // failed against the comment ABOVE the changed line, which quotes the old
+  // copy to explain why it went. An absence assertion over raw source tests
+  // the prose as well as the code -- the same trap that was caught in the
+  // leaderboard CSS earlier today.
+  const fnCode = fn.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  check("the riddle is gone from the code", !/not a zero/.test(fnCode));
   check("their own row is marked so they can find it", /is-me/.test(fn));
 }
 

@@ -136,8 +136,62 @@ console.log("\n-- bad input --");
     cashLeaderboard({ students: [S("A", "A", "B", "9", -5)] }).total === 0);
   check("NaN is refused", cashLeaderboard({ students: [S("A", "A", "B", "9", NaN)] }).total === 0);
   check("Infinity is refused", cashLeaderboard({ students: [S("A", "A", "B", "9", Infinity)] }).total === 0);
-  check("a zero earner IS ranked -- zero is a real figure", 
-    cashLeaderboard({ students: [S("A", "A", "B", "9", 0)] }).total === 1);
+  // THIS ASSERTION USED TO READ "a zero earner IS ranked -- zero is a real
+  // figure", and it was defensible in isolation: zero IS a real figure, and
+  // distinguishing it from "no total yet" is a distinction this file is
+  // careful about everywhere else.
+  //
+  // It was still wrong, and launch eve is when it showed. The school reset
+  // every balance on 2026-09-13, so wildcatCashEarned was 0 for all 759
+  // students. Every one of them was therefore ranked, all tied at place 1, and
+  // the portal would have told all 619 "You are #1 of 619 with $0.00 -- level
+  // with 618 others" above ten named classmates on a gold podium at $0.00 --
+  // the same ten on every screen, chosen by surname, because the sort falls
+  // through to last name on a tie.
+  //
+  // Zero is not a rank. It is the absence of one. It is counted, so the panel
+  // can still say how big the group is.
+  const zeroOnly = cashLeaderboard({ students: [S("A", "A", "B", "9", 0)] });
+  check("a zero earner is NOT ranked -- zero is the absence of a rank",
+    zeroOnly.total === 0 && zeroOnly.top.length === 0);
+  check("but is counted, not discarded", zeroOnly.notYetEarned === 1);
+  check("and is kept apart from a student with no figure at all",
+    zeroOnly.unknownAmount === 0);
+
+  // THE LAUNCH-MORNING SHAPE: a whole school on zero produces a board with
+  // nobody on it, which is what the panel's empty state was written for.
+  const wholeSchoolZero = cashLeaderboard({
+    students: Array.from({ length: 20 }, (_, i) => S("s" + i, "F" + i, "L" + i, "9", 0)),
+    viewerId: "s7",
+  });
+  check("a school that has earned nothing has an EMPTY board",
+    wholeSchoolZero.total === 0 && wholeSchoolZero.top.length === 0);
+  check("and nobody is told they are number one",
+    wholeSchoolZero.viewer && wholeSchoolZero.viewer.rank === null);
+  check("and no child is named on a podium for having earned nothing",
+    wholeSchoolZero.top.every((r) => r.amount > 0));
+  check("the group size is still known", wholeSchoolZero.notYetEarned === 20);
+
+  // AND THE MOMENT ONE CHILD EARNS, the board appears with one name on it.
+  const firstEarner = cashLeaderboard({
+    students: [S("a", "Ada", "A", "9", 5), S("b", "Bo", "B", "9", 0), S("c", "Cy", "C", "9", 0)],
+    viewerId: "b",
+  });
+  check("one earner makes a board of one", firstEarner.total === 1);
+  check("and it is the earner", firstEarner.top[0].name === "Ada A" && firstEarner.top[0].rank === 1);
+  check("a zero-earning viewer is told they are not ranked, not that they are last",
+    firstEarner.viewer.rank === null);
+  // AND IS TOLD THE RIGHT REASON. inBand stays TRUE for a child who is in this
+  // group and has simply earned nothing -- it used to be false for both that
+  // and "you are in another band", so the panel sent them to the Academy board
+  // to be told the same thing. On launch morning that would have been all 619.
+  check("and is not told they are in the wrong group", firstEarner.viewer.inBand === true);
+  const otherBand = cashLeaderboard({
+    students: [S("a", "Ada", "A", "9", 5), S("m", "Mo", "M", "7", 3)],
+    band: "hs", viewerId: "m",
+  });
+  check("a viewer genuinely in another band still reads as out of band",
+    otherBand.viewer.rank === null && otherBand.viewer.inBand === false);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

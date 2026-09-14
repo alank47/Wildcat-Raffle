@@ -90,6 +90,7 @@ export type LeaderboardResult = {
   bandLabel: string;
   total: number;
   unknownAmount: number;
+  notYetEarned: number;
   top: Array<{ rank: number; studentId: string; name: string; grade: string | null; amount: number }>;
   viewer: { rank: number | null; of: number; amount: number | null; tiedWith: number; inBand: boolean } | null;
 };
@@ -110,9 +111,31 @@ export function cashLeaderboard(opts: {
 
   const ranked: Array<{ s: LeaderStudent; amount: number; rank: number }> = [];
   let unknownAmount = 0;
+  let notYetEarned = 0;
   for (const s of pool) {
     const amount = earnedOf(s);
     if (amount === null) { unknownAmount++; continue; }
+    // A CHILD WHO HAS EARNED NOTHING IS NOT ON THE BOARD.
+    //
+    // FOUND ON LAUNCH EVE, 2026-09-13, hours before 619 students opened this
+    // for the first time. The school had just reset every balance, so
+    // wildcatCashEarned was 0 for all 759 -- and earnedOf accepts 0, because
+    // `v >= 0`. Every student was therefore ranked, all tied at place 1, and
+    // the panel would have told all 619 of them "You are #1 of 619 with $0.00
+    // -- level with 618 others", above ten named classmates all showing
+    // $0.00, all painted gold-podium, one of them also painted as you.
+    //
+    // The ten were not even arbitrary in a harmless way: the sort falls
+    // through to last name, so the same ten children would have been on the
+    // podium of every student's screen, for having earned nothing, because of
+    // their surnames.
+    //
+    // Zero is not a rank. It is the absence of one. Counted separately so the
+    // panel can still say how many are in the group, and the existing
+    // "you are not ranked" copy -- which was written for exactly this shape --
+    // now carries it. The moment one child earns a dollar the board appears
+    // with one name on it, which is the right first state.
+    if (amount === 0) { notYetEarned++; continue; }
     ranked.push({ s, amount, rank: 0 });
   }
 
@@ -141,9 +164,20 @@ export function cashLeaderboard(opts: {
       const tied = ranked.filter((r) => r.amount === mine.amount).length - 1;
       viewer = { rank: mine.rank, of: ranked.length, amount: mine.amount, tiedWith: tied, inBand: true };
     } else {
-      // In another band, or no earned figure yet. Said plainly rather than
-      // rendered as last place.
-      viewer = { rank: null, of: ranked.length, amount: null, tiedWith: 0, inBand: false };
+      // NOT RANKED. Two different reasons, and they must not share a sentence.
+      //
+      // `inBand` used to be false for both, so a child who is in this group
+      // and has simply earned nothing was told "You are not in this group, try
+      // the Academy board" -- which sends them somewhere that will say the
+      // same thing. That became every student the moment zero stopped being a
+      // rank, so on launch morning it would have been all 619.
+      //
+      // The pool is already band-filtered, so presence in it IS the answer.
+      const inThisBand = pool.some((s) => studentIdOf(s) === viewerId);
+      viewer = {
+        rank: null, of: ranked.length, amount: null, tiedWith: 0,
+        inBand: inThisBand,
+      };
     }
   }
 
@@ -152,6 +186,9 @@ export function cashLeaderboard(opts: {
     bandLabel: band.label,
     total: ranked.length,
     unknownAmount,
+    // In the band, with a real figure, and it is zero. Not an error and not
+    // "unknown": they are simply not on the board yet.
+    notYetEarned,
     // ONLY THE TOP ARE NAMED. The full ordering is computed so one student can
     // be told their own place; publishing all of it to six hundred children
     // would tell every one of them who has the least.

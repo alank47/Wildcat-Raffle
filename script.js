@@ -17547,8 +17547,13 @@
                     you = '<p class="wp-board-you is-quiet">You are not in this group, so you are not ranked here. ' +
                           'Try the Academy board.</p>';
                 } else if (v.rank === null) {
-                    you = '<p class="wp-board-you is-quiet">You do not have a Wildcat Cash total yet, so you are not ranked. ' +
-                          'That is not a zero.</p>';
+                    // "That is not a zero" was right when a zero WAS ranked and
+                    // this branch meant "no figure at all". Since 2026-09-13 a
+                    // zero is deliberately not a rank, so this branch is mostly
+                    // reached by a child who has earned nothing yet -- and
+                    // telling them their zero "is not a zero" is a riddle.
+                    you = '<p class="wp-board-you is-quiet">You have not earned any Wildcat Cash yet, ' +
+                          'so you are not on the board. Earn some and you will be.</p>';
                 } else {
                     you = '<p class="wp-board-you">You are <strong>#' + v.rank + '</strong> of ' + v.of +
                           ' with ' + wpMoney(v.amount) +
