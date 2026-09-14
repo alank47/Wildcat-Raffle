@@ -33876,9 +33876,36 @@
                             ${action}
                         </div>`;
                     }).join('')
-                    : (log.length
-                        ? '<p class="wu-absent">Nothing was recorded on this day.</p>'
-                        : '<p class="wu-absent">The audit log has not loaded.</p>');
+                    : (function () {
+                        // "EMPTY" AND "DID NOT LOAD" ARE DIFFERENT FACTS, and
+                        // this used to tell them apart by array length. That
+                        // worked only while the log always had entries: an
+                        // empty array really did mean a failed read.
+                        //
+                        // On 2026-09-13 the school wiped its history to start
+                        // clean, so the log is now legitimately EMPTY -- and
+                        // every teacher's dashboard would have opened on
+                        // launch morning saying "The audit log has not
+                        // loaded." That is a false alarm on the first screen
+                        // 40+ staff see, and the kind that gets reported as a
+                        // broken app.
+                        //
+                        // The loader already records which it was.
+                        // _wcAuditTableRead is { ok: true, entries } on a
+                        // successful table read and { ok: false, why } when it
+                        // fell through to the documents (script.js:2291, 2294).
+                        // Absent means the load has not run yet, which on this
+                        // screen is still "loading" rather than "failed".
+                        const read = window._wcAuditTableRead;
+                        if (read && read.ok === false) {
+                            return '<p class="wu-absent">The audit log could not be read just now. ' +
+                                   'Everything else on this page is unaffected.</p>';
+                        }
+                        if (!read) return '<p class="wu-absent">Loading recent activity&hellip;</p>';
+                        return log.length
+                            ? '<p class="wu-absent">Nothing was recorded on this day.</p>'
+                            : '<p class="wu-absent">Nothing recorded yet. Awards and referrals will appear here.</p>';
+                    })();
             }
         }
 

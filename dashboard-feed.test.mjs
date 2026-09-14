@@ -224,5 +224,36 @@ console.log("\n7. Recent Activity, in English");
   check("nothing says 'Recently Activity' any more", !/>Recently</.test(html));
 }
 
+console.log("\n8. An empty log is not a broken one");
+{
+  // FOUND ON LAUNCH EVE, 2026-09-13. The feed's empty state chose between
+  // "nothing today" and "the audit log has not loaded" by ARRAY LENGTH. That
+  // was sound only while the log always had entries -- an empty array really
+  // did mean a failed read.
+  //
+  // Then the school wiped its history to start clean and the log became
+  // legitimately empty, so every teacher's dashboard would have opened on
+  // launch morning saying "The audit log has not loaded." A false alarm on the
+  // first screen 40+ staff see, and exactly the kind that gets reported as a
+  // broken app on the worst possible morning.
+  //
+  // The loader already knew which it was and the renderer was not asking:
+  // _wcAuditTableRead is { ok: true, entries } after a successful table read
+  // and { ok: false, why } when it fell back to documents.
+  const fn = script.slice(script.indexOf("const feed = document.getElementById('dashFeed');"));
+  const body = fn.slice(0, fn.indexOf("\n            }\n"));
+  check("the empty state asks whether the read SUCCEEDED", /_wcAuditTableRead/.test(body));
+  check("a failed read says so, and says the rest of the page is fine",
+    /could not be read just now/.test(body) && /unaffected/.test(body));
+  check("a genuinely empty log invites the first award instead of claiming a fault",
+    /Nothing recorded yet\. Awards and referrals will appear here\./.test(body));
+  check("and no longer claims a successful load failed",
+    !/The audit log has not loaded/.test(body));
+  check("a day with entries elsewhere still reads as an empty DAY",
+    /Nothing was recorded on this day\./.test(body));
+  // Before the load has run at all, "loading" is the truth -- not "failed".
+  check("an absent signal reads as still loading", /Loading recent activity/.test(body));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
