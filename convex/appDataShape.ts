@@ -260,13 +260,34 @@ export function refusedCashCounters(
   record: Record<string, any>,
   writable: readonly string[],
 ): string[] {
-  const delta = cashDeltaOf(record) ?? {};
+  // `stated` DISTINGUISHES "this client speaks deltas" FROM "this counter did
+  // not move". cashDeltaOf drops zero movements, so a current tab that moved
+  // only the balance and the deducted counter sends nothing for earned -- and
+  // the branch below would then judge earned by the ABSOLUTE the tab loaded
+  // with, against what the server holds now.
+  //
+  // That is a false refusal, and it was going to fire for most of 40 staff on
+  // launch morning. script.js clears the save fingerprints on every load and
+  // the first save ships every student with an all-zero cashDelta, so any
+  // award by any OTHER teacher since this tab loaded tripped it: the teacher
+  // got "This tab was out of date, so some money was not saved. Reloading to
+  // get current." and had the page reload under them mid-lesson. The money had
+  // saved. The warning was wrong.
+  //
+  // A record that states ANY delta is a client that speaks deltas, and its
+  // absolutes are not a claim about the server -- planPatch already ignores
+  // them. A record with NO cashDelta at all is an old build, and that is still
+  // reported, which is the case this function exists for.
+  const stated = cashDeltaOf(record);
+  const delta = stated ?? {};
   const fields = pick(record, writable);
   const refused: string[] = [];
   for (const f of CASH_COUNTERS) {
     const d = delta[f];
     if (d === undefined) {
-      // No movement stated. Named only if it would have changed the row.
+      if (stated) continue;
+      // No movement stated by a client that states none at all. Named only if
+      // it would have changed the row.
       //
       // COMPARED AS NUMBERS, and an absent stored value counts as zero. This
       // used to call same(), which is JSON.stringify equality -- and

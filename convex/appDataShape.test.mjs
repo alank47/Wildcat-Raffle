@@ -291,6 +291,50 @@ console.log("\nCash counters are incremented, so two tabs awarding the same chil
   check("planSave carries the delta rule end to end", plan.patches.length === 1 && plan.patches[0].patch.wildcatCashBalance === 110);
 }
 
+console.log("\n-- a current tab is not judged on absolutes it never claimed --");
+{
+  // THE FALSE REFUSAL that was going to fire for most of 40 staff on launch
+  // morning. cashDeltaOf drops ZERO movements, so a tab that moved only the
+  // balance and the deducted counter states nothing for earned -- and the
+  // no-delta branch then compared earned by the absolute the tab LOADED with
+  // against what the server holds now. Any award by any other teacher since
+  // that load tripped it, and the teacher was told "This tab was out of date,
+  // so some money was not saved. Reloading to get current." and had the page
+  // reload under them. The money had saved.
+  //
+  // A record that states ANY delta speaks deltas, and its absolutes are not a
+  // claim about the server. planPatch already ignores them.
+  const stored = { legacyId: "1", studentNumber: "1", wildcatCashBalance: 100, wildcatCashEarned: 100 };
+
+  // The first save after a load: every student, all-zero delta. Another
+  // teacher has since awarded, so the absolutes disagree.
+  check("an all-zero delta reports nothing, even when the absolutes disagree",
+    refusedCashCounters(stored, {
+      id: "1", wildcatCashBalance: 0, wildcatCashEarned: 0,
+      cashDelta: { wildcatCashBalance: 0, wildcatCashEarned: 0, wildcatCashSpent: 0, wildcatCashDeducted: 0 },
+    }, STUDENT_WRITABLE).length === 0);
+
+  // A real deduction after another tab's award: balance and deducted move,
+  // earned does not, and earned is the one that used to be reported.
+  check("a deduction after another teacher's award reports nothing",
+    refusedCashCounters(stored, {
+      id: "1", wildcatCashBalance: -100, wildcatCashEarned: 0, wildcatCashDeducted: 100,
+      cashDelta: { wildcatCashBalance: -100, wildcatCashDeducted: 100 },
+    }, STUDENT_WRITABLE).length === 0);
+
+  // THE CASE THIS FUNCTION EXISTS FOR is untouched: a build old enough to send
+  // no cashDelta at all is still reported, because its absolutes ARE a claim.
+  check("a record with NO cashDelta is still reported",
+    refusedCashCounters(stored, { id: "1", wildcatCashBalance: 0 }, STUDENT_WRITABLE)
+      .includes("wildcatCashBalance"));
+
+  // And an over-cap movement is still reported, whatever else the record says.
+  check("an over-cap delta is still reported",
+    refusedCashCounters(stored, {
+      id: "1", cashDelta: { wildcatCashBalance: -30500 },
+    }, STUDENT_WRITABLE).includes("wildcatCashBalance"));
+}
+
 console.log("\n-- a student row with no cash fields is not a refusal --");
 {
   // convex/sisSync.ts inserts a student without the four cash counters, so
