@@ -343,6 +343,20 @@ export const save = mutation({
     students: v.optional(v.array(v.any())),
     teachers: v.optional(v.array(v.any())),
     settings: v.optional(v.any()),
+    // WHICH BUILD IS ASKING. Added 2026-09-13 so the server can refuse a save
+    // from a client too old to state its cash deltas.
+    //
+    // AND DECLARED, which is the whole bug this comment exists for: the client
+    // began sending it and this validator did not list it. Convex rejects a
+    // mutation carrying an argument its validator does not declare, so for the
+    // life of that deploy EVERY save failed at the boundary -- cash awards,
+    // referrals, settings, all of it -- with the teacher seeing "NOT saved
+    // yet" and the queue retrying forever. Shipped at v=20260913i and caught
+    // hours later by a pre-launch review, not by the test suite.
+    //
+    // null is accepted because the client sends `APP_VERSION || null`, and a
+    // tab that cannot read its own version tag must still be able to save.
+    clientVersion: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, args) => {
     await requireStaff(ctx);

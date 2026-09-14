@@ -8,7 +8,7 @@
 
 import {
   toAppStudent, toAppTeacher, mergeIncoming, planSave, planPatch, cashDeltaOf,
-  refusedCashCounters, CASH_COUNTERS, STUDENT_WRITABLE,
+  refusedCashCounters, CASH_COUNTERS, MAX_CASH_DELTA, STUDENT_WRITABLE,
 } from "./appDataShape.ts";
 
 let pass = 0;
@@ -222,11 +222,42 @@ console.log("\nCash counters are incremented, so two tabs awarding the same chil
   const staleReset = planPatch(cleared,
     { id: "12217", wildcatCashBalance: 0, cashDelta: { wildcatCashBalance: -30500 } },
     STUDENT_WRITABLE);
-  check("a delta cannot drive a balance below zero", staleReset.wildcatCashBalance === 0);
-  check("and that clamp is reported too",
+  // CAPPED BY MAGNITUDE, NOT FLOORED AT ZERO -- and the first version of this
+  // rule was floored at zero, which broke the product.
+  //
+  // Every balance is $0 after tonight's reset, so a floor at zero would have
+  // refused the NEXT legitimate deduction any teacher made, reported it as a
+  // refusal, and force-reloaded their tab mid-lesson. Deductions are a launch
+  // feature and debt is a state this school uses deliberately: the deduct
+  // screen says "Deductions may take a balance negative -- the student owes it
+  // back", and six students were in debt before the reset.
+  //
+  // Magnitude is what separates a stale reset from a real deduction. A stale
+  // reset carries a whole remembered balance; the behaviour catalogue tops out
+  // at 100.
+  // ABSENT from the patch, not written as 0. The cap skips the movement
+  // entirely, so the stored value is left exactly as it was -- which is
+  // stronger than writing a zero over it, and is what "refused" should mean.
+  check("a stale reset's huge delta is refused outright",
+    !("wildcatCashBalance" in staleReset));
+  check("and the refusal is reported",
     refusedCashCounters(cleared,
       { id: "12217", cashDelta: { wildcatCashBalance: -30500 } }, STUDENT_WRITABLE)
       .includes("wildcatCashBalance"));
+
+  // THE CASE THE FLOOR BROKE: a real deduction against a zero balance, which
+  // is every student in the school tomorrow morning.
+  const deductFromZero = planPatch(cleared,
+    { id: "12217", cashDelta: { wildcatCashBalance: -100, wildcatCashDeducted: 100 } },
+    STUDENT_WRITABLE);
+  check("a real deduction against a $0 balance APPLIES, and goes negative",
+    deductFromZero.wildcatCashBalance === -100);
+  check("and its counter moves with it", deductFromZero.wildcatCashDeducted === 100);
+  check("and it is NOT reported as refused, so no tab is reloaded at a child",
+    refusedCashCounters(cleared,
+      { id: "12217", cashDelta: { wildcatCashBalance: -100 } }, STUDENT_WRITABLE).length === 0);
+  check("the largest behaviour in the catalogue is well inside the cap",
+    MAX_CASH_DELTA > 100);
   // A LEGITIMATE deduction still lands in full. The clamp only bites where the
   // movement exceeds what the server actually holds.
   const realDeduct = planPatch(stored,
@@ -258,6 +289,27 @@ console.log("\nCash counters are incremented, so two tabs awarding the same chil
 
   const plan = planSave([stored], [fromA], STUDENT_WRITABLE, (r) => [r.legacyId, r.studentNumber]);
   check("planSave carries the delta rule end to end", plan.patches.length === 1 && plan.patches[0].patch.wildcatCashBalance === 110);
+}
+
+console.log("\n-- a student row with no cash fields is not a refusal --");
+{
+  // convex/sisSync.ts inserts a student without the four cash counters, so
+  // row[field] is undefined while the client sends 0. refusedCashCounters used
+  // to compare with same(), which is JSON.stringify equality -- and
+  // JSON.stringify(undefined) is undefined, NOT a string, so undefined never
+  // equalled "0". ONE such student was therefore enough to make the first save
+  // from every tab report a refusal, warn the teacher their tab was out of
+  // date, and force a reload, with nothing actually wrong.
+  const bare = { legacyId: "9999", studentNumber: "9999" };   // no cash fields at all
+  check("a client sending 0 against an absent stored value is not refused",
+    refusedCashCounters(bare, { id: "9999", wildcatCashBalance: 0, wildcatCashEarned: 0 },
+      STUDENT_WRITABLE).length === 0);
+  check("but a client sending a real figure against it still is",
+    refusedCashCounters(bare, { id: "9999", wildcatCashBalance: 250 }, STUDENT_WRITABLE)
+      .includes("wildcatCashBalance"));
+  check("and a matching non-zero value is not",
+    refusedCashCounters({ ...bare, wildcatCashBalance: 250 },
+      { id: "9999", wildcatCashBalance: 250 }, STUDENT_WRITABLE).length === 0);
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

@@ -211,6 +211,17 @@ function pick(source: Record<string, any>, keys: readonly string[]): Record<stri
  * minus the balance it remembers, which is the same incident with the sign
  * flipped.
  */
+/**
+ * The most one save may move one counter for one student.
+ *
+ * The behaviour catalogue tops out at 100 either way and a bulk award applies
+ * one behaviour per student, so 5,000 is two orders of magnitude above any
+ * real single movement while still being far below a remembered balance -- the
+ * largest on record tonight was $78,000 and the total was $4.9M. Chosen to be
+ * obviously safe in both directions rather than tight.
+ */
+export const MAX_CASH_DELTA = 5000;
+
 export const CASH_COUNTERS = [
   "wildcatCashBalance",
   "wildcatCashEarned",
@@ -256,11 +267,21 @@ export function refusedCashCounters(
     const d = delta[f];
     if (d === undefined) {
       // No movement stated. Named only if it would have changed the row.
-      if (!isAbsent(fields[f]) && !same(row[f], fields[f])) refused.push(f);
+      //
+      // COMPARED AS NUMBERS, and an absent stored value counts as zero. This
+      // used to call same(), which is JSON.stringify equality -- and
+      // JSON.stringify(undefined) is undefined, not a string, so a student row
+      // with no cash fields never equalled the 0 the client sends. sisSync
+      // inserts rows without them, so ONE such student was enough to make the
+      // first save from every tab report a refusal, warn the teacher their tab
+      // was out of date, and force a reload -- with nothing actually wrong.
+      if (isAbsent(fields[f])) continue;
+      const incoming = Number(fields[f]);
+      if (Number.isFinite(incoming) && incoming !== (Number(row[f]) || 0)) refused.push(f);
       continue;
     }
-    // Movement stated, but it would have gone below zero and was clamped.
-    if ((Number(row[f]) || 0) + d < 0) refused.push(f);
+    // Movement stated, but implausibly large for one action. See the cap.
+    if (Math.abs(d) > MAX_CASH_DELTA) refused.push(f);
   }
   return refused;
 }
@@ -293,20 +314,31 @@ export function planPatch(
   for (const [key, value] of Object.entries(fields)) if (!counters.has(key)) rest[key] = value;
   const patch = mergeIncoming(row, rest);
   for (const [field, d] of Object.entries(delta)) {
-    const next = (Number(row[field]) || 0) + d;
-    // CLAMPED AT ZERO, and this is the inverted form of the same incident
-    // rather than a tidiness rule. After a server-side clear, a stale tab
-    // pressing "Reset ALL student balances" computes its delta against the
-    // balance IT remembers: 0 - 30500 = -30500. The server holds 0, so the
-    // student lands at -$30,500, and across the school that is the same
-    // $4.9M as debt instead of credit. A purchase against a balance the tab
-    // imagines does the same thing more quietly.
+    // A CAP ON ONE MOVEMENT, not a floor at zero. This is the second attempt
+    // and the first was wrong in a way that mattered.
     //
-    // A real over-deduction is rare, visible and re-appliable by the adult who
-    // made it. Phantom debt on hundreds of children's records is none of those.
-    // So the movement is refused rather than trusted, and refusedCashCounters
-    // names it so the refusal is never silent.
-    patch[field] = next < 0 ? 0 : next;
+    // The danger is a stale tab after a clear: its own reset button computes
+    // the delta against the balance IT remembers, sends 0 - 30500 = -30500
+    // against a server holding 0, and lands the child at -$30,500 -- $4.9M of
+    // phantom debt across the school, the 2026-09-13 incident with the sign
+    // flipped.
+    //
+    // I first stopped that by clamping the result at zero. That broke the
+    // product: every balance is $0 tonight, so the NEXT legitimate deduction
+    // any teacher made would have been clamped, reported as a refusal, and
+    // would have force-reloaded their tab mid-lesson. Deductions are a launch
+    // feature, and debt is a state this school uses deliberately -- the
+    // deduct screen says so, and six students were in debt before the reset.
+    //
+    // Magnitude is what actually separates the two. The behaviour catalogue
+    // tops out at 100 either way (script.js:1372), and a bulk award applies
+    // one behaviour per student, so no single student's counter legitimately
+    // moves by thousands in one save. A stale reset always does, because it
+    // carries a whole remembered balance. So one movement is capped, the
+    // balance is free to go negative as the school intends, and the cap is
+    // reported through the same channel rather than applied silently.
+    if (Math.abs(d) > MAX_CASH_DELTA) continue;
+    patch[field] = (Number(row[field]) || 0) + d;
   }
   return patch;
 }

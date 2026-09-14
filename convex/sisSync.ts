@@ -81,6 +81,22 @@ export const syncStudents = internalMutation({
           attendanceTickets: 0,
           academicTickets: 0,
           bigRaffleQualified: [],
+          // THE CASH COUNTERS, at a real zero rather than absent.
+          //
+          // A row without them is not merely untidy. The browser sends 0 for
+          // each on its first save, and refusedCashCounters compared the
+          // incoming 0 against an ABSENT stored value -- so one such student
+          // made the first save from every tab report a refusal, warn the
+          // teacher their tab was out of date, and force a reload, with
+          // nothing wrong. That comparison is fixed too, in appDataShape.ts;
+          // this is the other half, so the shape is right at the source.
+          //
+          // It also stops a new enrollee's portal rendering the word "null"
+          // where their balance should be.
+          wildcatCashBalance: 0,
+          wildcatCashEarned: 0,
+          wildcatCashSpent: 0,
+          wildcatCashDeducted: 0,
         });
         created++;
         continue;

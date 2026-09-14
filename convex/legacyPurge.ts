@@ -3074,3 +3074,32 @@ export const wipeRaffleHistory = internalMutation({
     };
   },
 });
+
+/** Ticket history on student records, which is not in legacyMirror. Read-only. */
+export const ticketHistoryFootprint = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const students = await ctx.db.query("students").collect();
+    const withHist = (students as any[]).filter((s) => Array.isArray(s.ticketHistory) && s.ticketHistory.length);
+    return {
+      students: students.length,
+      studentsWithTicketHistory: withHist.length,
+      totalTicketHistoryRows: withHist.reduce((n, s) => n + s.ticketHistory.length, 0),
+      biggest: withHist.reduce((m, s) => Math.max(m, s.ticketHistory.length), 0),
+    };
+  },
+});
+
+/** The ticketHistory TABLE (not the student field, not legacyMirror). Read-only. */
+export const ticketHistoryTable = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("ticketHistory").take(30000);
+    const byAction: Record<string, number> = {};
+    for (const r of rows as any[]) {
+      const k = String(r.category ?? r.reason ?? "(none)").slice(0, 40);
+      byAction[k] = (byAction[k] ?? 0) + 1;
+    }
+    return { rows: rows.length, top: Object.entries(byAction).sort((a, b) => b[1] - a[1]).slice(0, 6) };
+  },
+});

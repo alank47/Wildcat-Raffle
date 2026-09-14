@@ -45,14 +45,24 @@ console.log("\nOne card leads with what the student came to see");
   // one, so the figures moved into the card and the tiles were removed rather
   // than duplicated. What must still hold is what these checks were always
   // really about: the balance leads, and Earned is visible beside it.
+  // The `' + wpMoney(...)` adjacency these three pinned broke on 2026-09-13
+  // when each call was wrapped in a fallback. wpMoney returns NULL for an
+  // absent figure -- which is deliberate, "absent rather than $0.00" -- but
+  // string concatenation renders null as the four letters, so a student with
+  // no cash fields read "null" in 34px as their balance. The property under
+  // test is which FIGURE goes where, not whether it is wrapped.
   check("the balance still leads, now as the card's hero figure",
-    /wp-cash-balance">' \+ wpMoney\(cash\.balance\)/.test(portal));
+    /wp-cash-balance">' \+ \(wpMoney\(cash\.balance\)/.test(portal));
+  check("and an absent balance is words, not the literal null",
+    /wpMoney\(cash\.balance\) \|\| 'Not on file'/.test(portal));
   // A balance falls when they spend. A child who only sees it drop has no
   // record of ever having earned anything.
   check("earned sits with it, so spending does not read as loss",
-    /wp-cash-stat-v">' \+ wpMoney\(cash\.earned\)/.test(portal));
+    /wp-cash-stat-v">' \+ \(wpMoney\(cash\.earned\)/.test(portal));
   check("and spent, which is the other half of the balance",
-    /wp-cash-stat-v">' \+ wpMoney\(cash\.spent\)/.test(portal));
+    /wp-cash-stat-v">' \+ \(wpMoney\(cash\.spent\)/.test(portal));
+  check("and both degrade to a dash rather than to null",
+    (portal.match(/wpMoney\(cash\.(earned|spent)\) \|\| '&mdash;'/g) || []).length === 2);
   check("attendance is still there", /Absent this term/.test(portal));
 
   // The rule this file has held since 2026-09-08: a figure appears once.

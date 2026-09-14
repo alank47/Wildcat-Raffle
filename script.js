@@ -1165,6 +1165,29 @@
         function healAuditEntriesFromHistory() {
             if (!auditLog || !students) return;
 
+            // AN EMPTY LOG IS A DECISION, NOT A LOSS.
+            //
+            // This reconstructs "Awarded Tickets" entries for ticket history
+            // rows that have no matching audit entry. That is right when the
+            // log is merely INCOMPLETE -- the case it was written for.
+            //
+            // It is exactly wrong when the log is empty on purpose. The school
+            // wiped its ticket and raffle history on 2026-09-13 to start
+            // clean: 12,504 audit rows deleted, verified zero on the server.
+            // With no entries to match against, every history row looks
+            // unrecorded, and the first staff load tomorrow would have
+            // reconstructed thousands of awards and offered them back to the
+            // server -- undoing the wipe from the client, the same shape as
+            // the $4.9M cash resurrection earlier the same day.
+            //
+            // So: nothing to heal from nothing. A log with even one entry is
+            // the incomplete case this function is for and still heals.
+            if (auditLog.length === 0) {
+                console.log('[heal] audit log is empty; nothing reconstructed. ' +
+                            'An empty log is a deliberate state, not missing data.');
+                return;
+            }
+
             // Build an index: studentId -> Set of audit timestamps (ms)
             // for Awarded Tickets entries. Used to find history entries
             // with no matching audit entry.
@@ -17717,16 +17740,25 @@
             const money = wpPanel('Your money', 'Wildcat Cash', '',
                 '<div class="wp-cash">' +
                     '<div class="wp-cash-hero">' +
-                        '<span class="wp-cash-balance">' + wpMoney(cash.balance) + '</span>' +
+                        // NULL IS NOT ZERO, AND IT IS NOT THE WORD "null".
+                        // wpMoney returns null for an absent figure, which the
+                        // comment above correctly calls "absent rather than
+                        // $0.00" -- but string concatenation renders null as
+                        // the four letters, so a student whose row had no cash
+                        // fields read "null" in 34px type as their balance,
+                        // and again for Earned and Spent. The phone wallet
+                        // card already says "Balance unavailable", so the two
+                        // screens disagreed about the same field.
+                        '<span class="wp-cash-balance">' + (wpMoney(cash.balance) || 'Not on file') + '</span>' +
                         '<span class="wp-cash-balance-label">balance</span>' +
                     '</div>' +
                     '<div class="wp-cash-split">' +
                         '<span class="wp-cash-stat">' +
-                            '<span class="wp-cash-stat-v">' + wpMoney(cash.earned) + '</span>' +
+                            '<span class="wp-cash-stat-v">' + (wpMoney(cash.earned) || '&mdash;') + '</span>' +
                             '<span class="wp-cash-stat-k">Earned all year</span>' +
                         '</span>' +
                         '<span class="wp-cash-stat">' +
-                            '<span class="wp-cash-stat-v">' + wpMoney(cash.spent) + '</span>' +
+                            '<span class="wp-cash-stat-v">' + (wpMoney(cash.spent) || '&mdash;') + '</span>' +
                             '<span class="wp-cash-stat-k">Spent</span>' +
                         '</span>' +
                     '</div>' +
@@ -28033,7 +28065,18 @@
                 const balance = student.wildcatCashBalance || 0;
                 const totalDeducted = student.wildcatCashDeducted || 0;
                 
-                return negativeCount >= 5 || balance < 1000 || totalDeducted > 2000;
+                // INTERVENTION IS ABOUT BEHAVIOUR, NOT ABOUT BEING POOR.
+                //
+                // `balance < 1000` dates from when every student STARTED on a
+                // balance, so a low one meant they had spent or lost it. After
+                // tonight's reset every balance is 0, so this predicate put
+                // all 619 children in a red-tinted table under a heading
+                // saying they need intervention -- on the first morning staff
+                // use the screen.
+                //
+                // The two clauses that describe what a child actually did are
+                // kept. A balance is not a behaviour.
+                return negativeCount >= 5 || totalDeducted > 2000;
             }).sort((a, b) => {
                 // Sort by most concerning (lowest balance or most deductions)
                 const aScore = (a.wildcatCashBalance || 0) - (a.wildcatCashDeducted || 0);
