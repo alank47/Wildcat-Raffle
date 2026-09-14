@@ -2887,3 +2887,190 @@ export const clearCashRemnants = internalMutation({
     };
   },
 });
+
+/** What "wipe the tickets/raffle history" would actually cover. Read-only, counts only. */
+export const raffleFootprint = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const audit = (mirror as any[]).filter((r) => r.collection === "auditLog");
+    const byAction: Record<string, number> = {};
+    for (const r of audit) {
+      const a = String(r.payload?.action ?? "(none)");
+      byAction[a] = (byAction[a] ?? 0) + 1;
+    }
+    const other: Record<string, number> = {};
+    for (const r of mirror as any[]) {
+      if (r.collection === "auditLog") continue;
+      const k = `${r.doc} / ${r.collection}`;
+      other[k] = (other[k] ?? 0) + 1;
+    }
+    const students = await ctx.db.query("students").collect();
+    const n = (f: string) => (students as any[]).filter((s) => Number(s[f]) > 0).length;
+    const sum = (f: string) => (students as any[]).reduce((t, s) => t + (Number(s[f]) || 0), 0);
+    const tableAudit = await ctx.db.query("auditLog").take(20000);
+    return {
+      legacyMirrorAuditRows: audit.length,
+      auditByAction: Object.entries(byAction).sort((a, b) => b[1] - a[1]),
+      convexAuditLogTableRows: tableAudit.length,
+      otherMirrorCollections: Object.entries(other).sort((a, b) => b[1] - a[1]),
+      studentsWithTickets: {
+        pbis: n("pbisTickets"), attendance: n("attendanceTickets"), academic: n("academicTickets"),
+        weeksQualified: n("weeksQualified"),
+        // Array.isArray AND length: an empty array is truthy, so the first
+        // version of this counted all 759 students as qualified.
+        qualified: (students as any[])
+          .filter((s) => Array.isArray(s.bigRaffleQualified) && s.bigRaffleQualified.length).length,
+      },
+      ticketTotals: {
+        pbis: sum("pbisTickets"), attendance: sum("attendanceTickets"), academic: sum("academicTickets"),
+      },
+      teachersWithAwardCounts: (await ctx.db.query("teachers").collect())
+        .filter((t: any) => Number(t.ticketsAwarded) > 0).length,
+    };
+  },
+});
+
+/** Mirror collections that are the raffle's, and may be emptied wholesale. */
+const RAFFLE_MIRROR = [
+  { doc: "secondary", collection: "weeklyWinners" },
+  { doc: "secondary", collection: "bigRaffleWinners" },
+  { doc: "secondary", collection: "weeklyHistory" },
+];
+
+/** Student fields the raffle owns. Ticket counters plus the qualification state. */
+const RAFFLE_STUDENT_FIELDS = [
+  "pbisTickets", "attendanceTickets", "academicTickets",
+  "bigRaffleQualified", "weeksQualified",
+];
+
+/**
+ * Everything wipeRaffleHistory would delete, as data, for the backup file.
+ *
+ * TOMBSTONES ARE NOT IN HERE and are not deleted. A tombstone says "this entry
+ * was deleted"; remove it while a suppressed row survives in a browser's
+ * localStorage or its audit outbox and the deleted entry comes back. The
+ * owner chose to keep all 330 (and tombstones/entries, and
+ * main/entityTombstones) for that reason. They are invisible to every screen.
+ */
+export const exportRaffleHistory = internalQuery({
+  // PAGED, because Convex refuses a return array longer than 8,192 and there
+  // are 12,504 audit rows. The caller loops on `skip` until `done`.
+  args: { skip: v.optional(v.number()), take: v.optional(v.number()) },
+  handler: async (ctx, { skip, take }) => {
+    const from = Math.max(0, skip ?? 0);
+    const size = Math.max(1, Math.min(6000, take ?? 6000));
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const want = new Set(RAFFLE_MIRROR.map((m) => `${m.doc}/${m.collection}`));
+    const students = await ctx.db.query("students").collect();
+    const teachers = await ctx.db.query("teachers").collect();
+    const pick = (s: any) => {
+      const o: Record<string, unknown> = {
+        studentNumber: s.studentNumber ?? null,
+        name: `${s.firstName ?? ""} ${s.lastName ?? ""}`.trim(),
+        grade: s.grade ?? null,
+      };
+      for (const f of RAFFLE_STUDENT_FIELDS) o[f] = s[f] ?? null;
+      return o;
+    };
+    const allAudit = (mirror as any[]).filter((r) => r.collection === "auditLog");
+    const page = allAudit.slice(from, from + size);
+    return {
+      takenFor: "legacyPurge:wipeRaffleHistory",
+      auditTotal: allAudit.length,
+      skip: from,
+      returned: page.length,
+      done: from + page.length >= allAudit.length,
+      auditRows: page.map((r) => ({ doc: r.doc, key: r.key ?? null, payload: r.payload })),
+      winnersAndHistory: (mirror as any[])
+        .filter((r) => want.has(`${r.doc}/${r.collection}`))
+        .map((r) => ({ doc: r.doc, collection: r.collection, key: r.key ?? null, payload: r.payload })),
+      studentRaffleState: (students as any[])
+        .filter((s) => RAFFLE_STUDENT_FIELDS.some((f) => s[f]))
+        .map(pick),
+      teacherAwardCounts: (teachers as any[])
+        .filter((t) => Number(t.ticketsAwarded) > 0)
+        .map((t) => ({ name: t.name, email: t.email ?? null, ticketsAwarded: t.ticketsAwarded })),
+    };
+  },
+});
+
+/**
+ * Wipe the ticket and raffle history. The owner chose the full scope on
+ * 2026-09-13: history AND the qualification flags, tombstones KEPT.
+ *
+ * BATCHED, and the caller loops until `remaining` is 0. A delete is charged as
+ * a read against the 4,096-per-execution limit, and there are 12,504 audit
+ * rows alone.
+ *
+ * ADDRESSED BY INDEX, never by a prefix. legacyMirror has 14,165 rows and only
+ * by_doc / by_doc_collection, so `.take(N)` over the table reads a PREFIX --
+ * the first version of clearCashRemnants did exactly that, matched 2 of 660,
+ * deleted them and reported "remaining: 0". A clear that says it is finished
+ * and is not is the worst possible failure here.
+ *
+ * WHAT IS DELIBERATELY LEFT:
+ *   tombstones / tombstones          330  a tombstone says an entry was
+ *   tombstones / entries               3  deleted; remove it while a
+ *   main / entityTombstones           10  suppressed row survives in a
+ *                                         browser and the entry comes back
+ *   schedules / sections             327  the SIS timetable
+ *   referrals / behaviorReferrals     14  Discipline, a different system
+ *   secondary / hallPasses, detentions,   Claw Pass and Discipline
+ *     detentionReasons, detentionLocations
+ *   secondary / wildcatCashRewards     6  the store's configuration
+ *   secondary / cashReceipts           4  one is still unfulfilled
+ *   secondary + audit / loginHistory 227  who signed in, not raffle state
+ *   main / pbisSubcategories, academicSubcategories  configuration
+ */
+export const wipeRaffleHistory = internalMutation({
+  args: { apply: v.optional(v.boolean()), limit: v.optional(v.number()) },
+  handler: async (ctx, { apply, limit }) => {
+    const cap = Math.max(1, Math.min(1500, limit ?? 1000));
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const want = new Set(RAFFLE_MIRROR.map((m) => `${m.doc}/${m.collection}`));
+    const doomed = (mirror as any[]).filter((r) =>
+      r.collection === "auditLog" || want.has(`${r.doc}/${r.collection}`));
+    const batch = doomed.slice(0, cap);
+    if (apply === true) for (const r of batch) await ctx.db.delete(r._id);
+
+    // The student and teacher fields, once the rows are gone.
+    let studentsCleared = 0, teachersCleared = 0;
+    const rowsLeft = doomed.length - batch.length;
+    if (apply === true && rowsLeft === 0) {
+      const students = await ctx.db.query("students").collect();
+      for (const s of students as any[]) {
+        const patch: Record<string, unknown> = {};
+        for (const f of RAFFLE_STUDENT_FIELDS) {
+          // bigRaffleQualified IS AN ARRAY, not a flag: schema.ts:105 is
+          // v.array(v.union(v.string(), v.number())) and real data holds week
+          // NUMBERS. Writing `false` threw on the schema validator, which is
+          // the only reason this was caught -- and the earlier probe that
+          // reported "759 students qualified" was counting an empty array as
+          // truthy, so that figure was meaningless too.
+          if (f === "bigRaffleQualified") {
+            if (Array.isArray(s[f]) && s[f].length) patch[f] = [];
+          } else if (Number(s[f]) !== 0) patch[f] = 0;
+        }
+        if (Object.keys(patch).length) { await ctx.db.patch(s._id, patch); studentsCleared++; }
+      }
+      const teachers = await ctx.db.query("teachers").collect();
+      for (const t of teachers as any[]) {
+        if (Number(t.ticketsAwarded) !== 0) {
+          await ctx.db.patch(t._id, { ticketsAwarded: 0 });
+          teachersCleared++;
+        }
+      }
+    }
+    return {
+      applied: apply === true,
+      mirrorRowsMatched: doomed.length,
+      mirrorRowsDeleted: apply === true ? batch.length : 0,
+      remaining: rowsLeft,
+      studentsCleared, teachersCleared,
+      note: apply === true
+        ? (rowsLeft ? "Call again while remaining > 0." : "Rows done; student and teacher fields cleared.")
+        : "Dry run. Pass apply: true.",
+    };
+  },
+});
