@@ -3227,3 +3227,324 @@ export const clearReferrals = internalMutation({
     };
   },
 });
+
+/**
+ * Wildcat Cash, split at a cutoff, so today's real awards are never confused
+ * with anything left over. STRICTLY READ-ONLY -- an internalQuery cannot write.
+ *
+ * Written on launch morning 2026-09-14 with teachers already awarding. The
+ * question is not "what is there" but "which of it is from before the bell",
+ * and answering it by eye over live data is how somebody deletes a teacher's
+ * first award of the year.
+ */
+export const cashSinceCutoff = internalQuery({
+  args: { cutoffIso: v.string() },
+  handler: async (ctx, { cutoffIso }) => {
+    const cut = Date.parse(cutoffIso);
+    const when = (v: unknown) => Date.parse(String(v ?? ""));
+    const side = (t: number) => (Number.isFinite(t) ? (t >= cut ? "today" : "before") : "undated");
+
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+
+    // The ledger: cash_tx_* weekly documents.
+    const tx = (mirror as any[]).filter((r) => String(r.doc ?? "").startsWith("cash_tx_"));
+    const txSplit: Record<string, number> = { today: 0, before: 0, undated: 0 };
+    const txByDoc: Record<string, string> = {};
+    const behavioursToday: Record<string, number> = {};
+    const behavioursBefore: Record<string, number> = {};
+    for (const r of tx) {
+      const s = side(when(r.payload?.timestamp ?? r.payload?.date));
+      txSplit[s]++;
+      txByDoc[r.doc] = (txByDoc[r.doc] ?? "") ;
+      const b = String(r.payload?.behaviorName ?? "(none)");
+      if (s === "today") behavioursToday[b] = (behavioursToday[b] ?? 0) + 1;
+      else behavioursBefore[b] = (behavioursBefore[b] ?? 0) + 1;
+    }
+
+    // The audit trail: cash actions.
+    const want = new Set(CASH_AUDIT_ACTIONS);
+    const audit = (mirror as any[]).filter(
+      (r) => r.collection === "auditLog" && want.has(String(r.payload?.action ?? "")));
+    const auditSplit: Record<string, number> = { today: 0, before: 0, undated: 0 };
+    for (const r of audit) auditSplit[side(when(r.payload?.timestamp))]++;
+
+    // Balances now.
+    const students = await ctx.db.query("students").collect();
+    const withBal = (students as any[]).filter((s) => Number(s.wildcatCashBalance) !== 0);
+    const earned = (students as any[]).reduce((n, s) => n + (Number(s.wildcatCashEarned) || 0), 0);
+
+    return {
+      cutoffIso,
+      ledger: {
+        totalRows: tx.length,
+        split: txSplit,
+        documents: Object.keys(txByDoc).sort(),
+        behavioursToday: Object.entries(behavioursToday).sort((a, b) => b[1] - a[1]),
+        behavioursBefore: Object.entries(behavioursBefore).sort((a, b) => b[1] - a[1]).slice(0, 10),
+      },
+      cashAudit: { totalRows: audit.length, split: auditSplit },
+      balancesNow: {
+        studentsWithNonZero: withBal.length,
+        totalBalance: withBal.reduce((n, s) => n + (Number(s.wildcatCashBalance) || 0), 0),
+        lifetimeEarned: earned,
+        biggest: withBal.reduce((m, s) => Math.max(m, Number(s.wildcatCashBalance) || 0), 0),
+        mostNegative: withBal.reduce((m, s) => Math.min(m, Number(s.wildcatCashBalance) || 0), 0),
+      },
+      onStudentRecords: {
+        studentsWithTxArray: (students as any[]).filter(
+          (s) => Array.isArray(s.wildcatCashTransactions) && s.wildcatCashTransactions.length).length,
+        rows: (students as any[]).reduce(
+          (n, s) => n + (Array.isArray(s.wildcatCashTransactions) ? s.wildcatCashTransactions.length : 0), 0),
+      },
+    };
+  },
+});
+
+/** The pre-cutoff ledger rows in full, for the backup. Read-only. */
+export const exportLedgerBefore = internalQuery({
+  args: { cutoffIso: v.string() },
+  handler: async (ctx, { cutoffIso }) => {
+    const cut = Date.parse(cutoffIso);
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const rows = (mirror as any[])
+      .filter((r) => String(r.doc ?? "").startsWith("cash_tx_"))
+      .filter((r) => {
+        const t = Date.parse(String(r.payload?.timestamp ?? r.payload?.date ?? ""));
+        return Number.isFinite(t) && t < cut;
+      });
+    return { takenFor: "legacyPurge:clearLedgerBefore", cutoffIso, rows: rows.length,
+             ledger: rows.map((r) => ({ doc: r.doc, key: r.key ?? null, payload: r.payload })) };
+  },
+});
+
+/**
+ * Delete cash ledger rows dated STRICTLY BEFORE a cutoff.
+ *
+ * Launch morning, 2026-09-14, with teachers mid-award. The safety here is that
+ * the filter is arithmetic on a timestamp, not a judgement about which rows
+ * look old: a row is deleted only if Date.parse(timestamp) < cut. Today's
+ * awards are all after it and cannot be reached by this code.
+ *
+ * AN UNDATED ROW IS KEPT, deliberately. A row whose timestamp will not parse
+ * cannot be proved to be pre-cutoff, and on a morning when a teacher's first
+ * award of the year is in this table, "cannot prove it is old" must mean keep.
+ *
+ * WHY THESE EXIST AT ALL: they were deleted last night and came back. The
+ * ledger slice merges by id through legacyData:mergeSlice, so a tab open since
+ * before the clear re-inserted its copy. The cash COUNTERS are delta-protected
+ * and did not come back, which is why balances are correct and only the
+ * history is polluted.
+ */
+export const clearLedgerBefore = internalMutation({
+  args: { cutoffIso: v.string(), apply: v.optional(v.boolean()) },
+  handler: async (ctx, { cutoffIso, apply }) => {
+    const cut = Date.parse(cutoffIso);
+    if (!Number.isFinite(cut)) throw new Error("cutoffIso did not parse; refusing to guess");
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const all = (mirror as any[]).filter((r) => String(r.doc ?? "").startsWith("cash_tx_"));
+    const doomed: any[] = [];
+    let keptToday = 0, keptUndated = 0;
+    for (const r of all) {
+      const t = Date.parse(String(r.payload?.timestamp ?? r.payload?.date ?? ""));
+      if (!Number.isFinite(t)) { keptUndated++; continue; }
+      if (t >= cut) { keptToday++; continue; }
+      doomed.push(r);
+    }
+    if (apply === true) for (const r of doomed) await ctx.db.delete(r._id);
+    return {
+      applied: apply === true, cutoffIso,
+      wouldDelete: doomed.length,
+      keptOnOrAfterCutoff: keptToday,
+      keptUndated,
+      note: apply === true ? "Deleted." : "Dry run. Pass apply: true.",
+    };
+  },
+});
+
+/** Did the re-inserted referrals actually email anyone? Read-only. */
+export const referralMailStates = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("referralMailLog").take(2000);
+    const byState: Record<string, number> = {};
+    for (const r of rows as any[]) {
+      const k = String(r.state ?? "(none)");
+      byState[k] = (byState[k] ?? 0) + 1;
+    }
+    return {
+      total: rows.length,
+      byState,
+      sample: (rows as any[]).slice(0, 5).map((r) => ({
+        referralId: r.referralId, state: r.state,
+        reason: (r as any).reason ?? (r as any).why ?? null,
+        at: (r as any).decidedAt ?? (r as any).at ?? null,
+      })),
+    };
+  },
+});
+
+/**
+ * One student's cash, from every store, so a double-award can be diagnosed.
+ * STRICTLY READ-ONLY.
+ *
+ * THE DISTINCTION THAT MATTERS. A counter that moved twice for ONE ledger row
+ * is the retry bug: a save commits, its reply is lost, the queue retries the
+ * same delta and the server adds it again. TWO ledger rows is two real awards
+ * -- a double click, or two teachers -- and is not a bug in the code.
+ */
+export const studentCashDetail = internalQuery({
+  args: { q: v.string() },
+  handler: async (ctx, { q }) => {
+    const needle = q.trim().toLowerCase();
+    const students = await ctx.db.query("students").collect();
+    const hits = (students as any[]).filter((s) =>
+      `${s.firstName ?? ""} ${s.lastName ?? ""}`.toLowerCase().includes(needle) ||
+      String(s.studentNumber ?? "").includes(needle));
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    return hits.map((s) => {
+      const id = String(s.legacyId ?? s._id);
+      const num = String(s.studentNumber ?? "");
+      const ledger = (mirror as any[])
+        .filter((r) => String(r.doc ?? "").startsWith("cash_tx_"))
+        .filter((r) => String(r.payload?.studentId ?? "") === id ||
+                       String(r.payload?.studentNumber ?? "") === num)
+        .map((r) => ({
+          doc: r.doc, id: r.payload?.id ?? null,
+          amount: r.payload?.amount ?? null,
+          behavior: r.payload?.behaviorName ?? null,
+          kind: r.payload?.kind ?? null,
+          by: r.payload?.awardedByName ?? r.payload?.teacher ?? null,
+          at: r.payload?.timestamp ?? null,
+        }))
+        .sort((a, b) => String(a.at).localeCompare(String(b.at)));
+      const ledgerSum = ledger.reduce((n, r) => n + (Number(r.amount) || 0), 0);
+      return {
+        name: `${s.firstName ?? ""} ${s.lastName ?? ""}`.trim(),
+        studentNumber: num, grade: s.grade ?? null,
+        counters: {
+          balance: s.wildcatCashBalance ?? null,
+          earned: s.wildcatCashEarned ?? null,
+          spent: s.wildcatCashSpent ?? null,
+          deducted: s.wildcatCashDeducted ?? null,
+        },
+        ledgerRows: ledger.length,
+        ledgerSum,
+        // The tell: a balance that is a multiple of the ledger sum.
+        balanceMatchesLedger: Number(s.wildcatCashBalance ?? 0) === ledgerSum,
+        onRecordArray: Array.isArray(s.wildcatCashTransactions) ? s.wildcatCashTransactions.length : 0,
+        ledger,
+      };
+    });
+  },
+});
+
+/** The raw per-student transaction array, to tell a true duplicate from two rows. Read-only. */
+export const studentTxArray = internalQuery({
+  args: { studentNumber: v.string() },
+  handler: async (ctx, { studentNumber }) => {
+    const s = (await ctx.db.query("students").collect())
+      .find((x: any) => String(x.studentNumber ?? "") === studentNumber.trim());
+    if (!s) return { found: false };
+    const arr = Array.isArray((s as any).wildcatCashTransactions) ? (s as any).wildcatCashTransactions : [];
+    const ids = arr.map((t: any) => String(t?.id ?? "(no id)"));
+    return {
+      found: true,
+      name: `${(s as any).firstName ?? ""} ${(s as any).lastName ?? ""}`.trim(),
+      counters: {
+        balance: (s as any).wildcatCashBalance ?? null,
+        earned: (s as any).wildcatCashEarned ?? null,
+      },
+      rows: arr.length,
+      distinctIds: [...new Set(ids)].length,
+      entries: arr,
+    };
+  },
+});
+
+/** Where does an unrecognised address exist, if anywhere? Read-only. */
+export const traceAddress = internalQuery({
+  args: { email: v.optional(v.string()), studentNumber: v.optional(v.string()) },
+  handler: async (ctx, { email, studentNumber }) => {
+    const em = String(email ?? "").trim().toLowerCase();
+    const num = String(studentNumber ?? "").trim();
+    const students = await ctx.db.query("students").collect();
+    const inStudents = (students as any[]).filter(
+      (s) => (em && String(s.email ?? "").toLowerCase() === em) ||
+             (num && String(s.studentNumber ?? "").trim() === num));
+    const roster = await ctx.db.query("psRoster").take(8000);
+    const inRoster = (roster as any[]).filter(
+      (r) => (em && String(r.studentEmail ?? "").toLowerCase() === em) ||
+             (num && String(r.studentNumber ?? "").trim() === num));
+    const auth = await ctx.db.query("authEvents").take(5000);
+    const attempts = (auth as any[]).filter((a) => String(a.email ?? "").toLowerCase() === em);
+    return {
+      lookedFor: { email: em || null, studentNumber: num || null },
+      inStudentsTable: inStudents.length,
+      studentRows: inStudents.map((s) => ({
+        name: `${s.firstName ?? ""} ${s.lastName ?? ""}`.trim(),
+        studentNumber: s.studentNumber, grade: s.grade, email: s.email ?? null,
+      })),
+      inPowerSchoolRoster: inRoster.length,
+      rosterRows: [...new Set(inRoster.map((r) => JSON.stringify({
+        name: `${r.firstName ?? ""} ${r.lastName ?? ""}`.trim(),
+        studentNumber: r.studentNumber, grade: r.gradeLevel, email: r.studentEmail ?? null,
+      })))].map((s) => JSON.parse(s)),
+      signInAttempts: attempts.length,
+      attemptDetail: attempts.slice(0, 5).map((a) => ({ at: a.at, kind: a.kind, provider: a.provider })),
+    };
+  },
+});
+
+/**
+ * Delete referrals dated STRICTLY BEFORE a cutoff, and nothing else.
+ *
+ * Launch day, 2026-09-14. Two referrals were filed this morning and must
+ * survive; fourteen pre-launch ones keep returning because the referrals slice
+ * merges by id and a tab open since before last night's clear re-inserts its
+ * copy.
+ *
+ * The safety is that the filter is arithmetic on submittedAt, not a judgement
+ * about which look old. The same shape cleared 330 ledger rows an hour ago and
+ * kept all 65 of today's.
+ *
+ * AN UNDATED REFERRAL IS KEPT. A row whose date will not parse cannot be
+ * proved pre-cutoff, and on a day when a teacher's filing is in this table
+ * "cannot prove it is old" must mean keep.
+ *
+ * The mail log rows for deleted referrals are removed too, so that if a stale
+ * tab re-inserts one it is re-decided rather than silently treated as already
+ * handled. Today's two keep theirs.
+ */
+export const clearReferralsBefore = internalMutation({
+  args: { cutoffIso: v.string(), apply: v.optional(v.boolean()) },
+  handler: async (ctx, { cutoffIso, apply }) => {
+    const cut = Date.parse(cutoffIso);
+    if (!Number.isFinite(cut)) throw new Error("cutoffIso did not parse; refusing to guess");
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const all = (mirror as any[]).filter((r) => r.collection === "behaviorReferrals");
+    const doomed: any[] = [];
+    const keptIds: string[] = [];
+    let keptUndated = 0;
+    for (const r of all) {
+      const t = Date.parse(String(r.payload?.submittedAt ?? ""));
+      if (!Number.isFinite(t)) { keptUndated++; keptIds.push(String(r.payload?.id ?? "?")); continue; }
+      if (t >= cut) { keptIds.push(String(r.payload?.id ?? "?")); continue; }
+      doomed.push(r);
+    }
+    const doomedIds = new Set(doomed.map((r) => String(r.payload?.id ?? "")));
+    const mailLog = await ctx.db.query("referralMailLog").take(2000);
+    const doomedMail = (mailLog as any[]).filter((m) => doomedIds.has(String(m.referralId ?? "")));
+    if (apply === true) {
+      for (const r of doomed) await ctx.db.delete(r._id);
+      for (const m of doomedMail) await ctx.db.delete(m._id);
+    }
+    return {
+      applied: apply === true, cutoffIso,
+      wouldDeleteReferrals: doomed.length,
+      wouldDeleteMailLog: doomedMail.length,
+      keptOnOrAfterCutoff: keptIds.length,
+      keptIds, keptUndated,
+      note: apply === true ? "Deleted." : "Dry run. Pass apply: true.",
+    };
+  },
+});
