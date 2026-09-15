@@ -118,6 +118,8 @@
             // What the server holds is the base every cash delta is measured
             // from, until a save confirms a new one.
             data.students.forEach(rememberCashBase);
+            // Before anything merges: the merge below depends on it.
+            noteHistoryCutoff(data.historyCutoff);
             return {
                 students: data.students,
                 teachers: Array.isArray(data.teachers) ? data.teachers : [],
@@ -692,6 +694,138 @@
         function rememberCashBase(st) {
             if (st && st.id !== undefined && st.id !== null) _studentCashBase.set(String(st.id), cashCountersOf(st));
         }
+
+        // ============================================================
+        // THE HISTORY CUTOFF, ON THE CLIENT SIDE OF THE SAME RULE
+        // ============================================================
+        //
+        // WHAT WENT WRONG THREE TIMES ON 2026-09-14. Wildcat Cash from before
+        // that morning's history clear kept reappearing in analytics. Two
+        // server-side write paths were guarded and the database was measured
+        // clean and held flat -- and the owner saw the old figures again
+        // anyway, because the resurrection was no longer happening in the
+        // database. It was happening in the browser, on every boot:
+        //
+        //   1. loadData() runs before a session exists, the Convex query
+        //      refuses with "Not signed in to Convex", and the catch calls
+        //      loadDataLocal() -- which fills `students` from the localStorage
+        //      `raffleData` blob, transactions and all.
+        //   2. The session lands, loadData() re-runs and succeeds. Because
+        //      `students` is now non-empty it takes the MERGE branch, and that
+        //      merge spreads `...localStudent` over `...serverStudent`. The
+        //      cash COUNTERS are put back from the server on the next line.
+        //      `wildcatCashTransactions` was not, so the local array won.
+        //   3. reconcileCashLedger() unions those arrays into
+        //      `cashTransactions`, which is what the analytics count.
+        //
+        // So the tab fed itself last term's cash out of its own localStorage,
+        // forever, and a reload made no difference because the reload went
+        // through step 1 again. A stamp bump alone could never have fixed it.
+        //
+        // The server hands down the cutoff it enforces on writes, and this
+        // applies the same rule to what the local overlay is allowed to
+        // contribute. Same number, same hour of slack, both ends agreeing.
+
+        /** Where the last-seen cutoff is kept, so a boot has one before it loads. */
+        const HISTORY_CUTOFF_KEY = 'wcHistoryCutoff';
+
+        /**
+         * The server's history cutoff in ms, or null when none is set.
+         *
+         * SEEDED FROM THE LAST LOAD, and that is the difference between a fix
+         * and a fix that works at boot. loadData() runs before a session
+         * exists, so loadDataLocal() reads the localStorage copy while this is
+         * still whatever the page started with -- which, unseeded, is null, so
+         * nothing is filtered at exactly the moment step 1 above describes. The
+         * successful load a second later replaces the ledger outright and the
+         * screen corrects itself, so this was only ever a flicker WHEN THE
+         * SESSION COMES BACK. A tab whose session does not resume, or whose
+         * roster query throws, sits on the resurrected figures indefinitely --
+         * which is the whole symptom. So the number is cached: it is one small
+         * server-owned fact, and having it early costs nothing.
+         */
+        let _historyCutoffMs = (function () {
+            try {
+                const t = Date.parse(String(localStorage.getItem(HISTORY_CUTOFF_KEY) || ''));
+                return isFinite(t) ? t : null;
+            } catch (e) { return null; }   // private mode: no cutoff is safe, it only keeps more
+        })();
+
+        /**
+         * How far before the cutoff a row may be dated and still be kept.
+         * Matches HISTORY_SLACK_MS in convex/appDataShape.ts: a device with a
+         * slightly wrong clock must not lose a teacher's award.
+         */
+        const HISTORY_CUTOFF_SLACK_MS = 3600000;
+
+        /**
+         * Remember what the server said the cutoff is. Null and junk clear it.
+         *
+         * CLEARING MATTERS AS MUCH AS SETTING. If an admin removes the cutoff
+         * server-side (legacyPurge:setHistoryCutoff with iso: null) and the
+         * cached copy stayed behind, every tab would go on hiding history the
+         * server is perfectly happy to serve -- a filter nobody can see, on
+         * data nobody asked to hide. So the stored key is removed on the same
+         * line that clears the variable.
+         */
+        function noteHistoryCutoff(iso) {
+            const t = Date.parse(String(iso || ''));
+            _historyCutoffMs = isFinite(t) ? t : null;
+            try {
+                if (_historyCutoffMs === null) localStorage.removeItem(HISTORY_CUTOFF_KEY);
+                else localStorage.setItem(HISTORY_CUTOFF_KEY, new Date(_historyCutoffMs).toISOString());
+            } catch (e) { /* private mode: the in-memory value still applies this session */ }
+        }
+
+        /**
+         * Is this row provably older than the cutoff?
+         *
+         * AN UNDATED ROW IS NEVER STALE. It cannot be proved old, and dropping
+         * a teacher's award to look tidy is the worse error -- the same
+         * decision the server makes in pruneHistoryArray.
+         */
+        function cashRowIsPreCutoff(row) {
+            if (_historyCutoffMs === null) return false;
+            const t = Date.parse(String((row && row.timestamp) || ''));
+            if (!isFinite(t)) return false;
+            return t < _historyCutoffMs - HISTORY_CUTOFF_SLACK_MS;
+        }
+
+        /** The identity of one history row, matching historyRowKey on the server. */
+        function cashRowKey(row) {
+            const id = row && (row.id || row.entryId);
+            if (id) return 'id:' + String(id);
+            return 'at:' + String((row && row.timestamp) || '') + '|' +
+                   String((row && row.amount) || '') + '|' +
+                   String((row && (row.behaviorId || row.behaviorName)) || '');
+        }
+
+        /**
+         * One student's cash history: the server's rows, plus whatever this tab
+         * holds that the server would still accept.
+         *
+         * The server's rows are taken as they are -- they are already inside
+         * the cutoff by definition, since that is what the save enforces. The
+         * local ones are filtered, so a tab carrying a pre-clear localStorage
+         * copy contributes nothing from before the clear while keeping any
+         * award it made since that has not landed yet.
+         */
+        function mergeCashHistory(serverRows, localRows) {
+            const out = [];
+            const seen = new Set();
+            const add = (rows, dropPreCutoff) => {
+                (Array.isArray(rows) ? rows : []).forEach(row => {
+                    if (dropPreCutoff && cashRowIsPreCutoff(row)) return;
+                    const key = cashRowKey(row);
+                    if (seen.has(key)) return;
+                    seen.add(key);
+                    out.push(row);
+                });
+            };
+            add(serverRows, false);
+            add(localRows, true);
+            return out;
+        }
         /** The server's counters, for the load-time merge: only the ones it actually has. */
         function serverCashCounters(st) {
             const out = {};
@@ -932,6 +1066,11 @@
                     // An entry with no id cannot be deduped, and adding it would
                     // double on every load. Left where it is.
                     if (!t || !t.id || seen.has(t.id)) return;
+                    // BELT AND BRACES. This function is the one funnel from the
+                    // per-student arrays into the array every cash analytic
+                    // counts, so it is the right place to stop a pre-clear row
+                    // however it got onto a student record.
+                    if (cashRowIsPreCutoff(t)) return;
                     seen.add(t.id);
                     // studentId is on the weekly-document copies and not always
                     // on the per-student ones, where it was implied by which
@@ -2465,6 +2604,17 @@
                                     // movement is put back on top afterwards by
                                     // reloadPreservingUnsavedWork, as a delta.
                                     ...serverCashCounters(serverStudent),
+                                    // AND THE CASH HISTORY IS THE SERVER'S TOO,
+                                    // plus only what this tab holds that the
+                                    // server would still accept. Without this
+                                    // line `...localStudent` above kept a
+                                    // pre-clear localStorage copy of the
+                                    // array, reconcileCashLedger fed it into
+                                    // the ledger, and the analytics showed
+                                    // last term's cash on every boot.
+                                    wildcatCashTransactions: mergeCashHistory(
+                                        serverStudent.wildcatCashTransactions,
+                                        localStudent.wildcatCashTransactions),
                                     pbisTickets: pbisTotal,
                                     attendanceTickets: attendanceTotal,
                                     academicTickets: academicTotal,
@@ -2737,6 +2887,18 @@
             if (saved) {
                 const data = JSON.parse(saved);
                 students = data.students || [];
+                // THE SAME CUTOFF APPLIES TO THE FALLBACK COPY. This runs
+                // before every successful load (the first loadData() call has
+                // no session yet, so it lands in the catch), which is how the
+                // pre-clear rows got into memory in the first place. Null
+                // cutoff -- a tab that has never had a successful load -- drops
+                // nothing, as it must.
+                students.forEach(st => {
+                    if (st && Array.isArray(st.wildcatCashTransactions)) {
+                        st.wildcatCashTransactions =
+                            st.wildcatCashTransactions.filter(t => !cashRowIsPreCutoff(t));
+                    }
+                });
                 currentWeek = data.currentWeek || 1;
                 cycleDuration = data.cycleDuration || 5;
                 weeklyWinners = data.weeklyWinners || [];

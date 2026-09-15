@@ -141,12 +141,22 @@ console.log("\nCash counters travel as deltas, so two tabs awarding the same chi
   check("the server's counters are taken only where it has them",
     JSON.stringify(H.serverCashCounters({ wildcatCashBalance: 5, wildcatCashEarned: "x" })) === '{"wildcatCashBalance":5}');
 
+  // The gap is not pinned: loadRosterFromConvex also records the server's
+  // history cutoff between these two statements now. What matters is that the
+  // base is taken from what the SERVER returned, in the function that returns
+  // it -- not from the local array.
   check("the base is recorded from what the server returned at load",
-    /data\.students\.forEach\(rememberCashBase\);\s*return \{\s*students: data\.students,/.test(code));
+    /data\.students\.forEach\(rememberCashBase\);[\s\S]{0,400}return \{\s*students: data\.students,/.test(code));
   check("and again from what was sent, once the server answered",
     /_studentSaveFingerprint\.set\(String\(st\.id\), JSON\.stringify\(st\)\)\);[\s\S]{0,200}changedStudents\.forEach\(rememberCashBase\);/.test(save));
+  // ORDER IS THE WHOLE ASSERTION: the counters must be spread AFTER
+  // ...localStudent so the server's values win. What follows them is not
+  // pinned -- the cash history is taken from the server on the next line now
+  // (see cash-history-cutoff.test.mjs), which is the same fix applied to the
+  // one cash field this rule had missed.
   check("the load-time merge takes the server's counters over the local overlay",
-    /\.\.\.localStudent,[^\n]*\n[\s\S]{0,600}\.\.\.serverCashCounters\(serverStudent\),\s*pbisTickets: pbisTotal,/.test(code));
+    /\.\.\.localStudent,[^\n]*\n[\s\S]{0,600}\.\.\.serverCashCounters\(serverStudent\),/.test(code)
+    && code.indexOf("...localStudent,") < code.indexOf("...serverCashCounters(serverStudent),"));
   check("a rollback reload keeps this tab's own unconfirmed movement, as a delta",
     /const pendingDeltas = snapshotPendingCashDeltas\(\);\s*await loadData\(\);\s*reapplyPendingCashDeltas\(pendingDeltas\);/.test(code)
     && /function snapshotPendingCashDeltas\(\)/.test(code) && /function reapplyPendingCashDeltas\(pending\)/.test(code));

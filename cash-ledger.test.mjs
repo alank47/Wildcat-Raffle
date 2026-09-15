@@ -25,8 +25,14 @@ const code = raw.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
 // Run the real function against both stores.
 const src = code.slice(code.indexOf("function reconcileCashLedger()"),
                        code.indexOf("function applyTombstonesToLocalState()"));
+// reconcileCashLedger refuses rows from before the server's history cutoff, so
+// the real rule is lifted in with it rather than stubbed. ctx.cutoff is the ISO
+// string the server sent, or null for "no cutoff", which is the ordinary case.
+const cutoffSrc = code.slice(code.indexOf("function cashRowIsPreCutoff("),
+                             code.indexOf("function cashRowKey("));
+
 const make = () => {
-  const ctx = { cashTransactions: [], students: [], logs: [], window: {} };
+  const ctx = { cashTransactions: [], students: [], logs: [], window: {}, cutoff: null };
   const fn = new Function("state", `
     let cashTransactions = state.cashTransactions;
     let students = state.students;
@@ -34,6 +40,10 @@ const make = () => {
     // The function records what it did on window for the diagnostic. Stubbed
     // rather than stripped, so the test runs the shipped body unaltered.
     const window = state.window;
+    const HISTORY_CUTOFF_SLACK_MS = 3600000;
+    const _parsed = Date.parse(String(state.cutoff || ""));
+    let _historyCutoffMs = isFinite(_parsed) ? _parsed : null;
+    ${cutoffSrc}
     ${src}
     reconcileCashLedger();
     state.cashTransactions = cashTransactions;
@@ -161,6 +171,51 @@ console.log("\nIt reconciles again whenever the roster is replaced");
     afterFirst === 1 && ctx.cashTransactions.length === 2);
   run();
   check("and a third changes nothing", ctx.cashTransactions.length === 2);
+}
+
+console.log("\nA cleared history does not come back through the reconcile");
+{
+  // 2026-09-14. The per-student arrays were the last route by which pre-launch
+  // cash reached the ledger the analytics count: a tab whose localStorage
+  // predated the 8:30am clear put those rows back into `students` on every
+  // boot, and this function unioned them in. It is the one funnel, so it is
+  // where the cutoff is enforced on the way through.
+  const { ctx, run } = make();
+  ctx.cutoff = "2026-09-14T15:30:00Z";
+  ctx.cashTransactions = [];
+  ctx.students = [
+    { id: "s1", wildcatCashTransactions: [
+      { id: "txn_pre_1", timestamp: "2026-08-18T21:58:35.993Z", amount: -4000 },
+      { id: "txn_pre_2", timestamp: "2026-09-11T06:14:26.811Z", amount: 100 },
+      { id: "txn_today", timestamp: "2026-09-14T16:42:29.550Z", amount: 100 },
+      { id: "txn_undated", amount: 100 },
+    ] },
+  ];
+  run();
+  const ids = ctx.cashTransactions.map((t) => t.id).sort().join(",");
+  check("pre-cutoff rows on the student record are not recovered",
+    ids === "txn_today,txn_undated");
+
+  // An undated row is kept, here as everywhere: it cannot be proved old, and
+  // dropping a teacher's award to look tidy is the worse error.
+  check("an undated row is still recovered",
+    ctx.cashTransactions.some((t) => t.id === "txn_undated"));
+}
+
+{
+  // AND WITH NO CUTOFF NOTHING CHANGES. Every school-day reconcile runs this
+  // way, and the August recovery this file was written for depends on it.
+  const { ctx, run } = make();
+  ctx.cutoff = null;
+  ctx.cashTransactions = [];
+  ctx.students = [
+    { id: "s1", wildcatCashTransactions: [
+      { id: "txn_old", timestamp: "2026-08-18T21:58:35.993Z", amount: 100 },
+    ] },
+  ];
+  run();
+  check("with no cutoff, an old row is recovered as before",
+    ctx.cashTransactions.length === 1);
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

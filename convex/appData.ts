@@ -54,7 +54,7 @@ export const load = query({
   handler: async (ctx) => {
     await requireStaff(ctx);
 
-    const [studentRows, teacherRows, settingsRow, rosterRows] = await Promise.all([
+    const [studentRows, teacherRows, settingsRow, rosterRows, cutoffRow] = await Promise.all([
       ctx.db.query("students").collect(),
       ctx.db.query("teachers").collect(),
       ctx.db
@@ -62,6 +62,10 @@ export const load = query({
         .withIndex("by_key", (q) => q.eq("key", SETTINGS_KEY))
         .unique(),
       ctx.db.query("psRoster").collect(),
+      ctx.db
+        .query("appState")
+        .withIndex("by_key", (q) => q.eq("key", "historyCutoff"))
+        .unique(),
     ]);
 
     // WHO IS ACTUALLY ENROLLED RIGHT NOW.
@@ -93,6 +97,18 @@ export const load = query({
         archivedStudents: studentRows.filter((s) => s.archivedAt).length,
       },
       serverTime: new Date().toISOString(),
+      // THE SAME CUTOFF THE SAVE ENFORCES, HANDED TO THE CLIENT TO READ WITH.
+      //
+      // `save` refuses history rows dated before this, which keeps the database
+      // clean. It does not clean a BROWSER. The load-time merge in script.js
+      // overlays the local copy of `wildcatCashTransactions` on top of the
+      // server's, so a tab whose localStorage predates a history clear
+      // resurrects those rows into its own ledger on every boot and shows them
+      // in analytics -- indefinitely, because the reload that was supposed to
+      // fix it re-reads the same localStorage first. The client applies this
+      // number with the same rule and the same hour of slack, so both ends
+      // agree about what counts as history.
+      historyCutoff: (cutoffRow?.value as Record<string, unknown> | undefined)?.iso ?? null,
     };
   },
 });
