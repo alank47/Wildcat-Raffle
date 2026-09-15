@@ -3237,6 +3237,59 @@ export const clearReferrals = internalMutation({
  * and answering it by eye over live data is how somebody deletes a teacher's
  * first award of the year.
  */
+/**
+ * How the per-student history arrays sit around the cutoff. Read-only.
+ *
+ * THE ASYMMETRY THIS MEASURES. clearCashHistoryBefore deletes a row dated
+ * anywhere before the cutoff. The write guard in appDataShape only refuses
+ * what is provably older than the cutoff MINUS an hour of clock slack, the
+ * same slack the ledger guard uses -- so a row dated inside that hour can be
+ * deleted by the clear and then re-sent by a stale tab. Whether that matters
+ * is a question about this school's data, not about the code, so it gets
+ * counted rather than argued: `inSlack` is the exposure.
+ */
+export const arrayRowsAroundCutoff = internalQuery({
+  args: { cutoffIso: v.string(), slackMinutes: v.optional(v.number()) },
+  handler: async (ctx, { cutoffIso, slackMinutes }) => {
+    const cut = Date.parse(cutoffIso);
+    if (!Number.isFinite(cut)) throw new Error("cutoffIso did not parse; refusing to guess");
+    const slack = (slackMinutes ?? 60) * 60 * 1000;
+
+    const students = await ctx.db.query("students").collect();
+    const split: Record<string, number> = { provablyOld: 0, inSlack: 0, after: 0, undated: 0 };
+    const studentsWithRows = new Set<string>();
+    const oldest: Array<{ name: string; timestamp: string; amount: unknown }> = [];
+    let rows = 0;
+    for (const s of students as any[]) {
+      const arr = Array.isArray(s.wildcatCashTransactions) ? s.wildcatCashTransactions : [];
+      if (!arr.length) continue;
+      studentsWithRows.add(String(s._id));
+      for (const t of arr) {
+        rows++;
+        const ts = Date.parse(String(t?.timestamp ?? ""));
+        if (!Number.isFinite(ts)) { split.undated++; continue; }
+        if (ts >= cut) { split.after++; continue; }
+        if (ts < cut - slack) {
+          split.provablyOld++;
+          if (oldest.length < 8) oldest.push({
+            name: `${s.firstName ?? ""} ${s.lastName ?? ""}`.trim(),
+            timestamp: String(t?.timestamp), amount: t?.amount ?? null,
+          });
+        } else split.inSlack++;
+      }
+    }
+    return {
+      cutoffIso, slackMinutes: slackMinutes ?? 60,
+      rows, students: studentsWithRows.size, split,
+      exposure: split.inSlack,
+      note: split.provablyOld === 0
+        ? "No provably-old rows: the guard has nothing to refuse, so the arrays are clean."
+        : `${split.provablyOld} provably-old rows still stored; clear them with clearCashHistoryBefore.`,
+      sampleOldest: oldest,
+    };
+  },
+});
+
 export const cashSinceCutoff = internalQuery({
   args: { cutoffIso: v.string() },
   handler: async (ctx, { cutoffIso }) => {
@@ -4089,5 +4142,84 @@ export const supportListSize = internalQuery({
         namedUnderThreePlusDF: tot("namedUnderThreePlusDF"),
       },
     };
+  },
+});
+
+/** Everything one staff member's account actually got onto the server today. Read-only. */
+export const staffWorkLanded = internalQuery({
+  args: { email: v.string(), sinceIso: v.optional(v.string()) },
+  handler: async (ctx, { email, sinceIso }) => {
+    const em = email.trim().toLowerCase();
+    const since = Date.parse(sinceIso ?? "") || 0;
+    const staff = (await ctx.db.query("teachers").collect())
+      .find((t: any) => String(t.email ?? "").toLowerCase() === em);
+    const name = staff ? String((staff as any).name ?? "") : "";
+    const id = staff ? String((staff as any).legacyId ?? (staff as any).id ?? "") : "";
+
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const mine = (row: any) => {
+      const p = row.payload ?? {};
+      const hay = [p.teacherName, p.teacher, p.awardedByName, p.referredBy,
+                   p.filedByUsername, p.referredByUsername, p.teacherUsername,
+                   p.teacherId, p.cancelledBy, p.closedBy]
+        .map((v) => String(v ?? "").toLowerCase()).join(" ");
+      return (name && hay.includes(name.toLowerCase())) ||
+             (id && hay.includes(id.toLowerCase())) ||
+             hay.includes(em) || hay.includes(em.split("@")[0]);
+    };
+    const after = (t: unknown) => {
+      const ts = Date.parse(String(t ?? ""));
+      return !since || (Number.isFinite(ts) && ts >= since);
+    };
+
+    const ledger = (mirror as any[])
+      .filter((r) => String(r.doc ?? "").startsWith("cash_tx_") && mine(r))
+      .filter((r) => after(r.payload?.timestamp))
+      .map((r) => ({ at: r.payload?.timestamp, amount: r.payload?.amount,
+                     student: r.payload?.studentName, behavior: r.payload?.behaviorName,
+                     kind: r.payload?.kind, id: r.payload?.id }))
+      .sort((a, b) => String(a.at).localeCompare(String(b.at)));
+
+    const referrals = (mirror as any[])
+      .filter((r) => r.collection === "behaviorReferrals" && mine(r))
+      .map((r) => ({ id: r.payload?.id, at: r.payload?.submittedAt,
+                     student: r.payload?.studentName, status: r.payload?.status,
+                     referredBy: r.payload?.referredBy }));
+
+    const mailLog = await ctx.db.query("referralMailLog").take(2000);
+    return {
+      staffFound: Boolean(staff), name, role: staff ? (staff as any).role : null,
+      cashMovementsOnServer: ledger.length,
+      cashTotal: ledger.reduce((n, r) => n + (Number(r.amount) || 0), 0),
+      cashDetail: ledger,
+      referralsOnServer: referrals.length,
+      referralDetail: referrals,
+      mailForThoseReferrals: (mailLog as any[])
+        .filter((m) => referrals.some((r) => r.id === m.referralId))
+        .map((m) => ({ referralId: m.referralId, state: m.state,
+                       recipients: m.recipients ?? null, sent: m.sent ?? null,
+                       refused: m.refused ?? null, at: m.at })),
+    };
+  },
+});
+
+/** Any staff record carrying a field shape the schema would reject. Read-only. */
+export const staffShapeOutliers = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("teachers").collect();
+    const bad: any[] = [];
+    for (const t of rows as any[]) {
+      const problems: string[] = [];
+      if (Array.isArray(t.sections) && t.sections.some((s: any) => typeof s !== "string")) {
+        problems.push("sections holds objects, not strings");
+      }
+      if (t.ticketsAwarded !== undefined && typeof t.ticketsAwarded !== "number") {
+        problems.push("ticketsAwarded is " + typeof t.ticketsAwarded);
+      }
+      if (t.name !== undefined && typeof t.name !== "string") problems.push("name is " + typeof t.name);
+      if (problems.length) bad.push({ name: t.name, email: t.email, role: t.role, problems });
+    }
+    return { staff: rows.length, withBadShape: bad.length, detail: bad };
   },
 });
