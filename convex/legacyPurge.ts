@@ -836,6 +836,405 @@ export const referralAudit = internalQuery({
 });
 
 /** Recent sign-ins for one address. Read-only. */
+/**
+ * Everything that decides whether ONE named student can sign in. Read-only.
+ *
+ * WHY BY NAME. A report arrives as "she could not log in", not as a student
+ * number, and the answer is usually in the join between three places rather
+ * than in any one of them: the `students` row the app reads, the `psRoster`
+ * row PowerSchool syncs, and `authEvents`, which is the only record of whether
+ * a sign-in has ever actually succeeded. Checking one of the three is how you
+ * conclude "looks fine" about a child who cannot get in.
+ *
+ * DEMOGRAPHICS ARE NOT RETURNED. Nothing here needs them, and the owner's
+ * standing rule is that an individual child's race is never displayed.
+ */
+/**
+ * Did this student's CLASSMATES sign in? Read-only, counts per section.
+ *
+ * WHY IT IS THE DECIDING QUESTION. When one child cannot log in and their app
+ * record is provably correct, there are only two live explanations left and
+ * they call for completely different people: their Google account itself (IT),
+ * or the device and the moment (the teacher whose period it was). The app
+ * cannot see Google -- `entraDirectory` mirrors the staff domain only -- so it
+ * cannot answer the first directly. It can answer it by elimination: if 27 of
+ * this student's 30 section-mates signed in, the sitting and the Chromebooks
+ * worked and the account is the thing to check. If none of them did, the
+ * account is probably fine and nobody in that room got started.
+ *
+ * Names of classmates are NOT returned, only counts. The question is about one
+ * child's access, and it does not need a list of who else is in the room.
+ */
+/**
+ * Does a two-word surname predict a failed sign-in? Read-only, aggregate.
+ *
+ * THE HYPOTHESIS. Student addresses look like first-initial + last-initial +
+ * student number (av11785 for Ashley Viveros Moreno). A child with two
+ * surnames has two plausible initials -- av or avm -- and if Google Workspace
+ * was provisioned from one rule and PowerSchool records the other, that child
+ * has an address in this app that does not exist as an account. One student
+ * reporting it is anecdote; a gap between these two rates is a cause.
+ *
+ * AGGREGATE ONLY. Rates and counts, no names: the question is whether a naming
+ * rule is broken, and it does not need a list of children.
+ */
+/**
+ * Students whose address carries a DIFFERENT student's number. Read-only.
+ *
+ * FOUND WHILE CHECKING SOMETHING ELSE, 2026-09-15. Student addresses embed the
+ * student number (av11785 for #11785). Seven enrolled students have an address
+ * whose number is not their own -- jg11747 on record #11796, ig11210 on
+ * #12210. Two possibilities and they are not equally bad:
+ *
+ *   TYPO. The address exists in Google under that spelling and simply reads
+ *   oddly. Harmless, and the child signs in fine.
+ *   CROSSED WIRES. The number in the address belongs to a real other student.
+ *   Then either this child is holding that child's address -- and whoever signs
+ *   in with it lands on the wrong record, earning and spending the wrong
+ *   child's Wildcat Cash -- or the address does not exist and this child cannot
+ *   sign in at all.
+ *
+ * So the question is not "is the address odd" but "does the number in it
+ * belong to somebody real, and does that somebody hold it too". This answers
+ * that, with names, because resolving it means an adult correcting a specific
+ * record.
+ */
+/** Sign-in adoption by grade. Read-only, counts only -- no names. */
+export const signInsByGrade = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const auth = await ctx.db.query("authEvents").collect();
+    const signedIn = new Set((auth as any[])
+      .filter((a) => a.kind === "student")
+      .map((a) => String(a.email ?? "").trim().toLowerCase()));
+    const rosterNumbers = new Set((await ctx.db.query("psRoster").collect())
+      .map((r: any) => String(r.studentNumber ?? "")).filter(Boolean));
+
+    const byGrade: Record<string, { enrolled: number; withEmail: number; signedIn: number }> = {};
+    for (const s of (await ctx.db.query("students").collect()) as any[]) {
+      const sn = String(s.studentNumber ?? "");
+      if (!sn || !rosterNumbers.has(sn)) continue;
+      const g = String(s.grade ?? "?");
+      byGrade[g] = byGrade[g] ?? { enrolled: 0, withEmail: 0, signedIn: 0 };
+      byGrade[g].enrolled++;
+      // A student with no email is counted in `enrolled` only: the rate below
+      // is out of those who COULD sign in, so a missing address is not scored
+      // as a child who declined to.
+      const em = String(s.email ?? "").trim().toLowerCase();
+      if (!em) continue;
+      byGrade[g].withEmail++;
+      if (signedIn.has(em)) byGrade[g].signedIn++;
+    }
+    return Object.entries(byGrade)
+      .sort((a, b) => Number(a[0]) - Number(b[0]))
+      .map(([grade, v]) => ({
+        grade, ...v,
+        rate: v.withEmail ? Math.round((v.signedIn / v.withEmail) * 100) + "%" : "n/a",
+      }));
+  },
+});
+
+export const numberInAddressMismatch = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const auth = await ctx.db.query("authEvents").collect();
+    const signedIn = new Set((auth as any[])
+      .filter((a) => a.kind === "student")
+      .map((a) => String(a.email ?? "").trim().toLowerCase()));
+
+    const rosterNumbers = new Set((await ctx.db.query("psRoster").collect())
+      .map((r: any) => String(r.studentNumber ?? "")).filter(Boolean));
+
+    const students = await ctx.db.query("students").collect();
+    const byNumber = new Map<string, any>();
+    for (const s of students as any[]) {
+      const n = String(s.studentNumber ?? "");
+      if (n) byNumber.set(n, s);
+    }
+    const emailUsers = new Map<string, any[]>();
+    for (const s of students as any[]) {
+      const em = String(s.email ?? "").trim().toLowerCase();
+      if (!em) continue;
+      if (!emailUsers.has(em)) emailUsers.set(em, []);
+      emailUsers.get(em)!.push(s);
+    }
+
+    const rows: any[] = [];
+    for (const s of students as any[]) {
+      const sn = String(s.studentNumber ?? "");
+      const em = String(s.email ?? "").trim().toLowerCase();
+      if (!sn || !em) continue;
+      const digits = (em.split("@")[0].match(/\d+/) || [""])[0];
+      if (!digits || digits === sn) continue;
+
+      const other = byNumber.get(digits);
+      rows.push({
+        name: `${s.firstName ?? ""} ${s.lastName ?? ""}`.trim(),
+        studentNumber: sn,
+        grade: s.grade ?? null,
+        enrolled: rosterNumbers.has(sn),
+        email: em,
+        numberInAddress: digits,
+        hasEverSignedIn: signedIn.has(em),
+        numberBelongsTo: other
+          ? {
+              name: `${other.firstName ?? ""} ${other.lastName ?? ""}`.trim(),
+              grade: other.grade ?? null,
+              enrolled: rosterNumbers.has(digits),
+              theirEmail: String(other.email ?? "").trim().toLowerCase() || null,
+              theyHaveSignedIn: signedIn.has(String(other.email ?? "").trim().toLowerCase()),
+            }
+          : null,
+        alsoHeldBy: (emailUsers.get(em) || [])
+          .filter((o) => o._id !== s._id)
+          .map((o) => ({ name: `${o.firstName ?? ""} ${o.lastName ?? ""}`.trim(),
+                         studentNumber: o.studentNumber ?? null })),
+        severity: (emailUsers.get(em) || []).length > 1
+          ? "COLLISION: two records hold this address"
+          : other
+            ? (signedIn.has(em)
+                ? "signs in fine, but the address reads as another enrolled student's"
+                : "address names another real student AND this child has never signed in")
+            : "number in the address matches no student: most likely a typo in the address",
+      });
+    }
+    rows.sort((a, b) => String(a.severity).localeCompare(String(b.severity)));
+    return { found: rows.length, students: rows };
+  },
+});
+
+export const surnameSignInGap = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const auth = await ctx.db.query("authEvents").collect();
+    const signedIn = new Set((auth as any[])
+      .filter((a) => a.kind === "student")
+      .map((a) => String(a.email ?? "").trim().toLowerCase()));
+
+    const roster = new Set((await ctx.db.query("psRoster").collect())
+      .map((r: any) => String(r.studentNumber ?? "")).filter(Boolean));
+
+    const students = await ctx.db.query("students").collect();
+    const bucket = {
+      oneWord: { total: 0, in: 0 },
+      twoWords: { total: 0, in: 0 },
+      hyphenated: { total: 0, in: 0 },
+    };
+    // Does the stored address match the initials its name implies?
+    let patternMatches = 0, patternDiffers = 0;
+    const differingExamples: string[] = [];
+
+    for (const s of students as any[]) {
+      const sn = String(s.studentNumber ?? "");
+      const em = String(s.email ?? "").trim().toLowerCase();
+      if (!sn || !roster.has(sn) || !em) continue;
+      const last = String(s.lastName ?? "").trim();
+      const first = String(s.firstName ?? "").trim();
+      const key = last.includes("-") ? "hyphenated"
+        : last.split(/\s+/).filter(Boolean).length > 1 ? "twoWords" : "oneWord";
+      bucket[key as keyof typeof bucket].total++;
+      if (signedIn.has(em)) bucket[key as keyof typeof bucket].in++;
+
+      // The two candidate rules: every initial, or just the first surname's.
+      const local = em.split("@")[0];
+      const allInitials = (first.charAt(0) + last.split(/[\s-]+/).filter(Boolean)
+        .map((w) => w.charAt(0)).join("")).toLowerCase();
+      const firstOnly = (first.charAt(0) + last.charAt(0)).toLowerCase();
+      if (local === allInitials + sn || local === firstOnly + sn) patternMatches++;
+      else {
+        patternDiffers++;
+        if (differingExamples.length < 10) differingExamples.push(`${local} (expected ${firstOnly}${sn} or ${allInitials}${sn})`);
+      }
+    }
+
+    const rate = (b: { total: number; in: number }) =>
+      b.total ? Math.round((b.in / b.total) * 100) + "%" : "n/a";
+    return {
+      oneWordSurname: { ...bucket.oneWord, signedInRate: rate(bucket.oneWord) },
+      twoWordSurname: { ...bucket.twoWords, signedInRate: rate(bucket.twoWords) },
+      hyphenatedSurname: { ...bucket.hyphenated, signedInRate: rate(bucket.hyphenated) },
+      addressFollowsAnInitialRule: patternMatches,
+      addressFollowsNeitherRule: patternDiffers,
+      examplesFollowingNeither: differingExamples,
+      note: "If the two-word rate is close to the one-word rate, the surname rule is NOT the cause and the reported student is an individual account problem.",
+    };
+  },
+});
+
+export const classmateSignIns = internalQuery({
+  args: { studentNumber: v.string() },
+  handler: async (ctx, { studentNumber }) => {
+    const sn = studentNumber.trim();
+    const mine = await ctx.db.query("psRoster")
+      .withIndex("by_studentNumber", (q) => q.eq("studentNumber", sn)).collect();
+    if (mine.length === 0) return { studentNumber: sn, found: false, sections: [] };
+
+    // Who has ever signed in, by email, once.
+    const auth = await ctx.db.query("authEvents").collect();
+    const signedIn = new Set((auth as any[])
+      .filter((a) => a.kind === "student")
+      .map((a) => String(a.email ?? "").trim().toLowerCase()));
+
+    const students = await ctx.db.query("students").collect();
+    const emailByNumber = new Map((students as any[])
+      .map((s) => [String(s.studentNumber ?? ""), String(s.email ?? "").trim().toLowerCase()]));
+
+    // ONE PASS OVER psRoster, NOT ONE PER SECTION. The first version of this
+    // collected the table inside the loop -- nine times over 5,562 enrolment
+    // rows -- and died on Convex's 32,000-document read limit having read 15MB
+    // of the 16MB budget. There is no by_sectionId index, so the table is read
+    // once and grouped here.
+    const wantedSections = new Set((mine as any[])
+      .map((r) => String(r.sectionId ?? "")).filter(Boolean));
+    const bySection = new Map<string, Set<string>>();
+    for (const r of (await ctx.db.query("psRoster").collect()) as any[]) {
+      const sid = String(r.sectionId ?? "");
+      if (!sid || !wantedSections.has(sid)) continue;
+      const n = String(r.studentNumber ?? "");
+      if (!n) continue;
+      if (!bySection.has(sid)) bySection.set(sid, new Set());
+      bySection.get(sid)!.add(n);
+    }
+
+    const sections: any[] = [];
+    for (const row of mine as any[]) {
+      const sid = String(row.sectionId ?? "");
+      if (!sid) continue;
+      const numbers = [...(bySection.get(sid) ?? new Set<string>())];
+      let inCount = 0, withEmail = 0;
+      for (const n of numbers) {
+        if (n === sn) continue;
+        const em = emailByNumber.get(n) || "";
+        if (!em) continue;
+        withEmail++;
+        if (signedIn.has(em)) inCount++;
+      }
+      sections.push({
+        course: row.courseName ?? null,
+        period: row.period ?? null,
+        teacher: `${row.teacherFirstName ?? ""} ${row.teacherLastName ?? ""}`.trim() || null,
+        teacherEmail: row.teacherEmail ?? null,
+        classmatesWithEmail: withEmail,
+        classmatesSignedIn: inCount,
+        share: withEmail ? Math.round((inCount / withEmail) * 100) + "%" : "n/a",
+      });
+    }
+    const totalPeers = sections.reduce((n, s) => n + s.classmatesWithEmail, 0);
+    const totalIn = sections.reduce((n, s) => n + s.classmatesSignedIn, 0);
+    return {
+      studentNumber: sn,
+      found: true,
+      sections,
+      verdict: totalPeers === 0 ? "no comparison available"
+        : totalIn / totalPeers > 0.5
+          ? "Most of this student's classmates signed in, so the rooms and the Chromebooks worked. Check the Google account itself."
+          : "Few of this student's classmates signed in either, so this may not be about this student at all.",
+    };
+  },
+});
+
+export const studentSignInCase = internalQuery({
+  args: { name: v.optional(v.string()), studentNumber: v.optional(v.string()) },
+  handler: async (ctx, { name, studentNumber }) => {
+    const want = String(name ?? "").trim().toLowerCase();
+    const num = String(studentNumber ?? "").trim();
+    if (!want && !num) throw new Error("pass a name or a studentNumber");
+
+    const students = await ctx.db.query("students").collect();
+    const matches = (students as any[]).filter((s) => {
+      if (num) return String(s.studentNumber ?? "") === num;
+      const full = `${s.firstName ?? ""} ${s.lastName ?? ""}`.trim().toLowerCase();
+      // Every word of the query must appear, so "ashley viveros" finds
+      // "Ashley Viveros Moreno" without matching every Ashley in the school.
+      return want.split(/\s+/).every((w) => full.includes(w));
+    });
+
+    const out: any[] = [];
+    for (const s of matches) {
+      const sn = String(s.studentNumber ?? "");
+      const email = String(s.email ?? "").trim().toLowerCase();
+
+      const rosterRows = sn
+        ? await ctx.db.query("psRoster")
+            .withIndex("by_studentNumber", (q) => q.eq("studentNumber", sn)).collect()
+        : [];
+      const rosterEmails = [...new Set((rosterRows as any[])
+        .map((r) => String(r.studentEmail ?? "").trim().toLowerCase()).filter(Boolean))];
+
+      const signIns = email
+        ? await ctx.db.query("authEvents")
+            .withIndex("by_email", (q) => q.eq("email", email)).collect()
+        : [];
+      const sorted = (signIns as any[]).slice()
+        .sort((a, b) => String(a.at).localeCompare(String(b.at)));
+
+      // Is this address on anybody else's record? A collision means one of the
+      // two children signs in as the other, or neither can.
+      const sharing = email
+        ? (students as any[]).filter((o) =>
+            o._id !== s._id && String(o.email ?? "").trim().toLowerCase() === email)
+            .map((o) => ({ studentNumber: o.studentNumber ?? null,
+                           name: `${o.firstName ?? ""} ${o.lastName ?? ""}`.trim() }))
+        : [];
+
+      const domain = email ? (email.split("@")[1] || "(malformed)") : null;
+      const blockers: string[] = [];
+      if (!sn) blockers.push("no studentNumber, so the roster cannot be joined");
+      if (!email) blockers.push("no email on the app record: nothing to match a Google token against");
+      else if (domain !== "westbrookacademy.org") blockers.push(`email domain is ${domain}, not westbrookacademy.org`);
+      if (sn && rosterRows.length === 0) blockers.push("not in the current psRoster, so the app treats them as not enrolled");
+      if (sharing.length) blockers.push(`email is also on ${sharing.length} other student record(s)`);
+      if (email && rosterEmails.length && !rosterEmails.includes(email)) {
+        blockers.push(`app email disagrees with PowerSchool (${rosterEmails.join(", ")})`);
+      }
+      if (s.archivedAt) blockers.push("archived");
+
+      out.push({
+        name: `${s.firstName ?? ""} ${s.lastName ?? ""}`.trim(),
+        studentNumber: s.studentNumber ?? null,
+        grade: s.grade ?? null,
+        email: email || null,
+        emailDomain: domain,
+        enrolledInCurrentRoster: rosterRows.length > 0,
+        rosterSections: rosterRows.length,
+        powerSchoolEmail: rosterEmails,
+        archivedAt: s.archivedAt ?? null,
+        hasEverSignedIn: sorted.length > 0,
+        signInCount: sorted.length,
+        firstSignIn: sorted[0]?.at ?? null,
+        lastSignIn: sorted[sorted.length - 1]?.at ?? null,
+        recentSignIns: sorted.slice(-5).map((r: any) => ({ at: r.at, provider: r.provider, kind: r.kind })),
+        sharingEmailWith: sharing,
+        cash: {
+          balance: s.wildcatCashBalance ?? null,
+          earned: s.wildcatCashEarned ?? null,
+          historyRows: Array.isArray(s.wildcatCashTransactions) ? s.wildcatCashTransactions.length : 0,
+        },
+        blockers,
+        verdict: blockers.length === 0
+          ? (sorted.length ? "Can sign in, and has." : "Record looks correct, but has never signed in.")
+          : "Cannot sign in as things stand.",
+      });
+    }
+
+    return {
+      query: num ? { studentNumber: num } : { name },
+      matched: out.length,
+      // A near-miss list, because "no such student" is usually a spelling
+      // difference and the answer is one keystroke away.
+      nearMisses: out.length === 0 && want
+        ? (students as any[])
+            .filter((s) => want.split(/\s+/).some((w) =>
+              w.length > 2 && `${s.firstName ?? ""} ${s.lastName ?? ""}`.toLowerCase().includes(w)))
+            .slice(0, 12)
+            .map((s) => ({ name: `${s.firstName ?? ""} ${s.lastName ?? ""}`.trim(),
+                           studentNumber: s.studentNumber ?? null, grade: s.grade ?? null }))
+        : [],
+      students: out,
+    };
+  },
+});
+
 export const signInsFor = internalQuery({
   args: { email: v.string() },
   handler: async (ctx, { email }) => {
