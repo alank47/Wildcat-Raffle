@@ -3921,3 +3921,173 @@ export const historyCutoff = internalQuery({
     return { set: Boolean(row), value: row ? (row.value as any) : null };
   },
 });
+
+/**
+ * The read budget for a per-grade academics query, per grade level.
+ *
+ * Convex allows 4,096 document reads per execution. seniorAcademics.failingList
+ * reads psRoster by gradeLevel then psGrades per student, and it was sized for
+ * 41 seniors. Grade 8 has 146. This says whether the same shape holds before
+ * anyone writes it. Read-only, counts only.
+ */
+export const academicsReadBudget = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const roster = await ctx.db.query("psRoster").take(8000);
+    const grades = await ctx.db.query("psGrades").take(20000);
+    const gradeRowsByStudent: Record<string, number> = {};
+    for (const g of grades as any[]) {
+      const n = String(g.studentNumber ?? "").trim();
+      if (n) gradeRowsByStudent[n] = (gradeRowsByStudent[n] ?? 0) + 1;
+    }
+    const missing = await ctx.db.query("psMissingWork").take(30000);
+    const missingByStudent: Record<string, number> = {};
+    for (const m of missing as any[]) {
+      const n = String(m.studentNumber ?? "").trim();
+      if (n) missingByStudent[n] = (missingByStudent[n] ?? 0) + 1;
+    }
+    const out: Record<string, any> = {};
+    for (const lvl of ["6", "7", "8", "9", "10", "11", "12"]) {
+      const enrol = (roster as any[]).filter((r) => String(r.gradeLevel ?? "") === lvl);
+      const nums = [...new Set(enrol.map((r) => String(r.studentNumber ?? "").trim()).filter(Boolean))];
+      const gradeRows = nums.reduce((n, s) => n + (gradeRowsByStudent[s] ?? 0), 0);
+      // MISSING WORK COUNTS TOO, and the first version of this probe missed
+      // it. failingList reads psMissingWork per student inside the LIST query
+      // (seniorAcademics.ts:133), not only in the detail -- and unlike
+      // psGrades, which is one row per course enrolment and therefore fixed,
+      // psMissingWork is one row per missing or zero-scored assignment. It is
+      // the only part of this budget that grows as teachers mark work.
+      const missingRows = nums.reduce((n, s2) => n + (missingByStudent[s2] ?? 0), 0);
+      const total = enrol.length + gradeRows + missingRows;
+      out[lvl] = {
+        students: nums.length,
+        rosterRowsRead: enrol.length,
+        psGradesRowsRead: gradeRows,
+        psMissingWorkRowsRead: missingRows,
+        totalReads: total,
+        percentOfBudget: Math.round((total / 4096) * 100),
+        overBudget: total > 4096,
+        // How many more missing-work rows this grade could take before the
+        // query fails. The number that answers "what happens as teachers mark".
+        missingWorkHeadroom: 4096 - total,
+      };
+    }
+    const ms = ["6", "7", "8"].reduce((n, l) => n + out[l].totalReads, 0);
+    return {
+      perGrade: out,
+      middleSchoolAllThreeAtOnce: { totalReads: ms, overBudget: ms > 4096 },
+      psGradesTableRows: grades.length,
+      psRosterTableRows: roster.length,
+      psMissingWorkTableRows: missing.length,
+    };
+  },
+});
+
+/**
+ * Do psGrades and psMissingWork carry the same syncedAt?
+ *
+ * seniorAcademics.failingList reads psMissingWork per student partly to feed
+ * the staleness warning (bump(m.syncedAt), line 137). Dropping that read to
+ * stay inside the 4,096-read budget is only safe if psGrades alone still
+ * dates the gradebook honestly. Both are written by the same sync run, so
+ * they SHOULD agree -- this checks whether they do. Read-only.
+ */
+export const syncStampAgreement = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const grades = await ctx.db.query("psGrades").take(20000);
+    const missing = await ctx.db.query("psMissingWork").take(30000);
+    const stamps = (rows: any[]) => {
+      const set = new Set<string>();
+      for (const r of rows) if (r.syncedAt) set.add(String(r.syncedAt));
+      return [...set].sort();
+    };
+    const g = stamps(grades as any[]);
+    const m = stamps(missing as any[]);
+    // The question the warning actually asks: what is the NEWEST stamp each
+    // table can offer, and would dropping one change the answer?
+    return {
+      psGrades: { distinctStamps: g.length, oldest: g[0] ?? null, newest: g[g.length - 1] ?? null },
+      psMissingWork: { distinctStamps: m.length, oldest: m[0] ?? null, newest: m[m.length - 1] ?? null },
+      newestAgrees: (g[g.length - 1] ?? null) === (m[m.length - 1] ?? null),
+      // Students who have missing work but NO grade rows: for them psGrades
+      // offers no stamp at all, so dropping the missing-work read would leave
+      // them undateable.
+      studentsWithMissingButNoGrades: (() => {
+        const withGrades = new Set((grades as any[]).map((r) => String(r.studentNumber ?? "")));
+        const withMissing = new Set((missing as any[]).map((r) => String(r.studentNumber ?? "")));
+        return [...withMissing].filter((n) => n && !withGrades.has(n)).length;
+      })(),
+    };
+  },
+});
+
+/**
+ * How many students a per-grade "needs support" list would actually NAME.
+ *
+ * THE QUESTION THE DESIGN TURNS ON, and nobody had measured it. Attendance
+ * Watch learned this exact lesson: a flat 10% rule flagged 360 of 671 students
+ * and was replaced with tiers, because "a 360-name list is simply not a queue
+ * anyone can work" (script.js, the Attendance Watch header). A support list
+ * that names most of a grade is not triage.
+ *
+ * Reports both rules the codebase already has: any D or F (FAILING_THRESHOLD
+ * "DF", what seniors uses) and F only. Counts only, no names. Read-only.
+ */
+export const supportListSize = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const roster = await ctx.db.query("psRoster").take(8000);
+    const grades = await ctx.db.query("psGrades").take(20000);
+    const marks: Record<string, string[]> = {};
+    for (const g of grades as any[]) {
+      const n = String(g.studentNumber ?? "").trim();
+      if (!n) continue;
+      (marks[n] ??= []).push(String(g.currentGrade ?? "").trim().toUpperCase());
+    }
+    const level: Record<string, string> = {};
+    for (const r of roster as any[]) {
+      const n = String(r.studentNumber ?? "").trim();
+      const l = String(r.gradeLevel ?? "").trim();
+      if (n && l && !level[n]) level[n] = l;
+    }
+    const out: Record<string, any> = {};
+    for (const lvl of ["6", "7", "8", "9", "10", "11", "12"]) {
+      const nums = Object.keys(level).filter((n) => level[n] === lvl);
+      let anyDF = 0, fOnly = 0, worstIsD = 0, threePlusDF = 0, noMarks = 0, someUnposted = 0;
+      for (const n of nums) {
+        const m = marks[n] ?? [];
+        if (!m.length) { noMarks++; continue; }
+        if (m.some((x) => x === "")) someUnposted++;
+        const ds = m.filter((x) => x.startsWith("D")).length;
+        const fs = m.filter((x) => x.startsWith("F")).length;
+        if (ds + fs > 0) anyDF++;
+        if (fs > 0) fOnly++;
+        if (fs === 0 && ds > 0) worstIsD++;
+        if (ds + fs >= 3) threePlusDF++;
+      }
+      out[lvl] = {
+        cohort: nums.length,
+        namedUnderAnyDF: anyDF,
+        pctUnderAnyDF: nums.length ? Math.round((anyDF / nums.length) * 100) : 0,
+        namedUnderFOnly: fOnly,
+        pctUnderFOnly: nums.length ? Math.round((fOnly / nums.length) * 100) : 0,
+        onASingleDAlone: worstIsD,
+        namedUnderThreePlusDF: threePlusDF,
+        studentsWithNoMarksAtAll: noMarks,
+        studentsWithAnUnpostedClass: someUnposted,
+      };
+    }
+    const tot = (k: string) => ["6","7","8","9","10","11","12"].reduce((n, l) => n + out[l][k], 0);
+    return {
+      perGrade: out,
+      schoolWide: {
+        cohort: tot("cohort"),
+        namedUnderAnyDF: tot("namedUnderAnyDF"),
+        pctUnderAnyDF: Math.round((tot("namedUnderAnyDF") / tot("cohort")) * 100),
+        namedUnderFOnly: tot("namedUnderFOnly"),
+        namedUnderThreePlusDF: tot("namedUnderThreePlusDF"),
+      },
+    };
+  },
+});
