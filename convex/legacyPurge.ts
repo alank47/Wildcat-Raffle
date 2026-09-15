@@ -900,6 +900,160 @@ export const referralAudit = internalQuery({
  * record.
  */
 /** Sign-in adoption by grade. Read-only, counts only -- no names. */
+/**
+ * Reproduce the Analytics tab's "positive behaviors" number exactly. Read-only.
+ *
+ * WHY IT HAS TO BE REPRODUCED RATHER THAN RECOUNTED. updateTeacherInteractions
+ * (script.js ~28092) does not count behaviours. It counts rows on
+ * `students[].wildcatCashTransactions` -- NOT the cash_tx_* ledger -- that
+ * satisfy two conditions the name does not mention:
+ *
+ *   1. `txn.type === 'positive'`, a field written from the SIGN of the amount
+ *      and not from what the action was. A refund is +100 and therefore
+ *      "positive"; a redemption is negative and counts as neither.
+ *   2. `txn.teacherId || txn.addedBy || txn.removedBy` matches a teacher by id
+ *      OR username. A row that matches nobody hits `return` and is dropped
+ *      from the total in silence -- no "unattributed" line, nothing.
+ *
+ * So the displayed figure can move without a single behaviour being recorded or
+ * deleted: a staff record renamed, removed, or re-keyed silently subtracts
+ * every row attributed to them. This returns the same number the tab shows,
+ * plus the buckets it discards, so the two can be compared.
+ */
+/**
+ * Both cash stores, split by calendar day. Read-only.
+ *
+ * ANSWERS "IT SAID 423 YESTERDAY AND 405 TODAY". A figure that falls is either
+ * data lost or a screen lagging, and those need opposite responses. Counting
+ * per day separates them: if yesterday's count is still what it was, nothing
+ * was lost and the screen was behind. The two stores are reported side by side
+ * because the Analytics tab reads the per-student ARRAYS while most other cash
+ * screens read the cash_tx_* LEDGER, and the arrays legitimately lag -- a
+ * student's array is only rewritten when that student's record is next saved.
+ */
+export const cashByDay = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const day = (v: unknown) => {
+      const t = Date.parse(String(v ?? ""));
+      return Number.isFinite(t) ? new Date(t).toISOString().slice(0, 10) : "(undated)";
+    };
+
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const ledger: Record<string, number> = {};
+    for (const r of (mirror as any[]).filter((x) => String(x.doc ?? "").startsWith("cash_tx_"))) {
+      const d = day(r.payload?.timestamp ?? r.payload?.date);
+      ledger[d] = (ledger[d] ?? 0) + 1;
+    }
+
+    const arrays: Record<string, number> = {};
+    const arraysPositive: Record<string, number> = {};
+    const ids: Record<string, Set<string>> = {};
+    for (const s of (await ctx.db.query("students").collect()) as any[]) {
+      for (const t of (Array.isArray(s.wildcatCashTransactions) ? s.wildcatCashTransactions : [])) {
+        const d = day(t?.timestamp);
+        arrays[d] = (arrays[d] ?? 0) + 1;
+        if (t?.type === "positive") arraysPositive[d] = (arraysPositive[d] ?? 0) + 1;
+        (ids[d] = ids[d] ?? new Set()).add(String(t?.id ?? ""));
+      }
+    }
+
+    const days = [...new Set([...Object.keys(ledger), ...Object.keys(arrays)])].sort();
+    return {
+      serverTime: new Date().toISOString(),
+      byDay: days.map((d) => ({
+        day: d,
+        ledgerRows: ledger[d] ?? 0,
+        arrayRows: arrays[d] ?? 0,
+        arrayPositive: arraysPositive[d] ?? 0,
+        distinctIdsInArrays: ids[d]?.size ?? 0,
+      })),
+      totals: {
+        ledger: Object.values(ledger).reduce((a, b) => a + b, 0),
+        arrays: Object.values(arrays).reduce((a, b) => a + b, 0),
+        arraysPositive: Object.values(arraysPositive).reduce((a, b) => a + b, 0),
+      },
+    };
+  },
+});
+
+export const analyticsPositiveCount = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    // EXACTLY WHAT THE APP SEES. toAppTeacher (appDataShape.ts:97) sets
+    // id = legacyId ?? _id, so a teacher WITH a legacyId is "T016" to the
+    // browser and their Convex _id matches nothing. There is no `username`
+    // field on this table at all -- it was a Firestore-era key -- so the
+    // `teacher.username === teacherId` arm of the analytics match can never
+    // fire. Both facts matter for which rows get counted.
+    const teachers = await ctx.db.query("teachers").collect();
+    const ids = new Set<string>();
+    const appIdOf = new Map<string, string>();
+    const nameOf = new Map<string, string>();
+    for (const t of teachers as any[]) {
+      const appId = String(t.legacyId ?? t._id ?? "");
+      if (appId) { ids.add(appId); appIdOf.set(String(t._id), appId); nameOf.set(appId, t.name); }
+      nameOf.set(String(t._id), t.name);
+    }
+
+    const students = await ctx.db.query("students").collect();
+    let rows = 0, positiveMatched = 0, negativeMatched = 0;
+    let noAttribution = 0, unmatchedTeacher = 0, otherType = 0;
+    const unmatchedWho: Record<string, number> = {};
+    const typeSeen: Record<string, number> = {};
+    const byTeacher: Record<string, number> = {};
+
+    for (const s of students as any[]) {
+      const arr = Array.isArray(s.wildcatCashTransactions) ? s.wildcatCashTransactions : [];
+      for (const t of arr) {
+        rows++;
+        typeSeen[String(t?.type ?? "(none)")] = (typeSeen[String(t?.type ?? "(none)")] ?? 0) + 1;
+        const who = t?.teacherId ?? t?.addedBy ?? t?.removedBy;
+        if (who === undefined || who === null || String(who) === "") { noAttribution++; continue; }
+        if (!ids.has(String(who))) {
+          unmatchedTeacher++;
+          unmatchedWho[String(who)] = (unmatchedWho[String(who)] ?? 0) + 1;
+          continue;
+        }
+        if (t?.type === "positive") {
+          positiveMatched++;
+          byTeacher[String(who)] = (byTeacher[String(who)] ?? 0) + 1;
+        } else if (t?.type === "negative") negativeMatched++;
+        else otherType++;
+      }
+    }
+
+    return {
+      arrayRows: rows,
+      // THE NUMBER ON SCREEN:
+      analyticsShowsPositive: positiveMatched,
+      analyticsShowsNegative: negativeMatched,
+      discarded: {
+        noTeacherOnTheRow: noAttribution,
+        teacherNotInTheStaffList: unmatchedTeacher,
+        matchedButTypeIsNeither: otherType,
+      },
+      // An unmatched attribution that IS a real staff member's Convex _id is a
+      // different problem from one that is nobody: it means the row was
+      // written with the database key while the browser holds the legacy key,
+      // so the work is recorded and simply not counted.
+      unmatchedAttributions: Object.entries(unmatchedWho)
+        .sort((a, b) => b[1] - a[1])
+        .map(([who, n]) => ({
+          attributedTo: who,
+          rows: n,
+          isARealStaffConvexId: appIdOf.has(who),
+          staffName: nameOf.get(who) ?? null,
+          appSeesThemAs: appIdOf.get(who) ?? null,
+        })),
+      typesPresentOnRows: Object.entries(typeSeen).sort((a, b) => b[1] - a[1]),
+      topAttributedTeachers: Object.entries(byTeacher).sort((a, b) => b[1] - a[1]).slice(0, 10),
+      staffIdentifiersKnown: ids.size,
+      teacherRecords: teachers.length,
+    };
+  },
+});
+
 export const signInsByGrade = internalQuery({
   args: {},
   handler: async (ctx) => {
