@@ -356,5 +356,82 @@ console.log("\n-- a student row with no cash fields is not a refusal --");
       { id: "9999", wildcatCashBalance: 250 }, STUDENT_WRITABLE).length === 0);
 }
 
+console.log("\n-- the third write path: per-student history arrays --");
+{
+  // I GUARDED TWO OF THREE, AND TWO OF THREE IS NONE. On 2026-09-14 a history
+  // cutoff went into legacyData:mergeSlice so a stale tab could not re-insert
+  // last term's rows. It closed the cash_tx_* ledger and the referrals, and
+  // held. Within hours 330 pre-launch rows were back on 348 students, because
+  // students.wildcatCashTransactions arrives through appData:save instead --
+  // a different mutation the guard never touched. reconcileCashLedger then
+  // feeds those arrays into the ledger the analytics counts, so the pollution
+  // returns by a route the fix had closed at the other end.
+  const CUT = Date.parse("2026-09-14T15:30:00Z");
+  const stored = { legacyId: "1", studentNumber: "1" };
+  const rows = (...ts) => ts.map((t, i) => ({ id: "t" + i, amount: 100, timestamp: t }));
+
+  const mixed = planPatch(stored, {
+    id: "1",
+    wildcatCashTransactions: rows(
+      "2026-08-20T16:37:14.634Z",   // last term
+      "2026-09-14T15:42:29.550Z",   // today
+      "2026-09-14T20:26:48.163Z",   // today
+    ),
+  }, STUDENT_WRITABLE, CUT);
+  check("pre-cutoff rows are pruned from the array",
+    mixed.wildcatCashTransactions.length === 2);
+  check("and the ones kept are today's",
+    mixed.wildcatCashTransactions.every((r) => r.timestamp >= "2026-09-14T15:30"));
+
+  // AN UNDATED ROW IS KEPT. It cannot be proved old, and dropping a teacher's
+  // award to be tidy is the worse error.
+  const undated = planPatch(stored, {
+    id: "1", wildcatCashTransactions: [{ id: "x", amount: 100 }],
+  }, STUDENT_WRITABLE, CUT);
+  check("an undated row survives", undated.wildcatCashTransactions.length === 1);
+
+  // NO CUTOFF means no pruning: the behaviour before this existed, and what
+  // every three-argument call site still gets.
+  const noCutoff = planPatch(stored, {
+    id: "1", wildcatCashTransactions: rows("2026-08-20T16:37:14.634Z"),
+  }, STUDENT_WRITABLE);
+  check("with no cutoff, nothing is pruned", noCutoff.wildcatCashTransactions.length === 1);
+
+  // CLOCK SLACK, matching the ledger guard: a row half an hour early survives,
+  // one two hours early does not.
+  const slack = planPatch(stored, {
+    id: "1", wildcatCashTransactions: rows("2026-09-14T15:00:00Z"),
+  }, STUDENT_WRITABLE, CUT);
+  check("a row 30 minutes before the cutoff is kept", slack.wildcatCashTransactions.length === 1);
+  const wayOff = planPatch(stored, {
+    id: "1", wildcatCashTransactions: rows("2026-09-14T13:00:00Z"),
+  }, STUDENT_WRITABLE, CUT);
+  check("a row two hours before it is not", wayOff.wildcatCashTransactions.length === 0);
+
+  // A non-array value is not this rule's business.
+  const junk = planPatch(stored, {
+    id: "1", wildcatCashTransactions: "not an array",
+  }, STUDENT_WRITABLE, CUT);
+  check("a non-array value passes through untouched",
+    junk.wildcatCashTransactions === "not an array");
+
+  // AND THE COUNTERS ARE UNTOUCHED BY ANY OF THIS. Pruning history must not
+  // move money: the balance is delta-only and this rule never sees a delta.
+  const withDelta = planPatch({ ...stored, wildcatCashBalance: 100 }, {
+    id: "1",
+    wildcatCashTransactions: rows("2026-08-20T16:37:14.634Z"),
+    cashDelta: { wildcatCashBalance: 50 },
+  }, STUDENT_WRITABLE, CUT);
+  check("a delta still applies while its history row is pruned",
+    withDelta.wildcatCashBalance === 150 && withDelta.wildcatCashTransactions.length === 0);
+
+  // planSave threads it through, which is what appData:save actually calls.
+  const plan = planSave([stored], [{
+    id: "1", wildcatCashTransactions: rows("2026-08-20T16:37:14.634Z", "2026-09-14T16:00:00Z"),
+  }], STUDENT_WRITABLE, (r) => [r.legacyId, r.studentNumber], CUT);
+  check("planSave passes the cutoff to planPatch",
+    plan.patches[0].patch.wildcatCashTransactions.length === 1);
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

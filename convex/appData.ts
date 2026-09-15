@@ -370,10 +370,29 @@ export const save = mutation({
     let countersIgnored: string[] = [];
     if (args.students?.length) {
       const rows = await lookupStudents(ctx, args.students);
+      // THE SERVER'S HISTORY CUTOFF, read here and passed down.
+      //
+      // legacyData:mergeSlice enforces the same cutoff for the cash_tx_*
+      // ledger and the referrals. The per-student wildcatCashTransactions
+      // arrays arrive through THIS mutation instead, which the first version
+      // of the guard did not cover -- so 330 pre-launch rows were back on 348
+      // students within hours of it being armed, and reconcileCashLedger feeds
+      // them into the ledger the analytics counts.
+      //
+      // Owned by the server, never sent by the client: a stale client having
+      // no say is the whole point.
+      const cutoffRow = await ctx.db
+        .query("appState")
+        .withIndex("by_key", (q) => q.eq("key", "historyCutoff"))
+        .unique();
+      const cutoffIso = (cutoffRow?.value as Record<string, unknown> | undefined)?.iso;
+      const parsed = typeof cutoffIso === "string" ? Date.parse(cutoffIso) : NaN;
+      const historyCutoff = Number.isFinite(parsed) ? parsed : null;
+
       const plan = planSave(rows, args.students, STUDENT_WRITABLE, (r) => [
         r.legacyId,
         r.studentNumber,
-      ]);
+      ], historyCutoff);
       for (const { rowId, patch } of plan.patches) {
         await ctx.db.patch(rowId as any, patch);
         studentsChanged++;

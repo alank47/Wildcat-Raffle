@@ -222,6 +222,40 @@ function pick(source: Record<string, any>, keys: readonly string[]): Record<stri
  */
 export const MAX_CASH_DELTA = 5000;
 
+/**
+ * Per-student history arrays: written once per movement, never edited.
+ *
+ * THE THIRD WRITE PATH, and I missed it. On 2026-09-14 a history cutoff was
+ * added to legacyData:mergeSlice so a stale tab could not re-insert last
+ * term's rows, and it closed the cash_tx_* ledger and the referrals. These
+ * arrays reach the database through appData:save instead -- a different
+ * mutation the guard never touched -- so within hours 330 pre-launch rows were
+ * back on 348 students, and reconcileCashLedger feeds them straight into the
+ * ledger the analytics counts.
+ *
+ * Guarding two of three write paths is not guarding.
+ */
+const HISTORY_ARRAY_FIELDS = ["wildcatCashTransactions", "cashTransactions"] as const;
+
+/** How far before the cutoff a row may be dated and still be kept. */
+const HISTORY_SLACK_MS = 60 * 60 * 1000;
+
+/**
+ * Drop provably pre-cutoff rows from a history array.
+ *
+ * AN UNDATED ROW IS KEPT. A row whose timestamp will not parse cannot be
+ * proved old, and dropping a teacher's award to be tidy is the worse error.
+ * A non-array value is returned untouched: this decides nothing about shape.
+ */
+function pruneHistoryArray(value: unknown, cutoff: number | null): unknown {
+  if (cutoff === null || !Array.isArray(value)) return value;
+  return value.filter((row) => {
+    const t = Date.parse(String((row as any)?.timestamp ?? ""));
+    if (!Number.isFinite(t)) return true;
+    return t >= cutoff - HISTORY_SLACK_MS;
+  });
+}
+
 export const CASH_COUNTERS = [
   "wildcatCashBalance",
   "wildcatCashEarned",
@@ -317,8 +351,20 @@ export function planPatch(
   row: Record<string, any>,
   record: Record<string, any>,
   writable: readonly string[],
+  /**
+   * The server's history cutoff, or null for none. OPTIONAL so the existing
+   * three-argument call sites and the assertion that pins this signature keep
+   * working; absent means no pruning, which is the behaviour before this.
+   */
+  historyCutoff: number | null = null,
 ): Record<string, unknown> {
   const fields = pick(record, writable);
+  // THE THIRD WRITE PATH. See HISTORY_ARRAY_FIELDS: the ledger and the
+  // referrals are guarded in legacyData:mergeSlice, and these arrays arrive
+  // here instead.
+  for (const f of HISTORY_ARRAY_FIELDS) {
+    if (f in fields) fields[f] = pruneHistoryArray(fields[f], historyCutoff);
+  }
   // NO DELTA, NO COUNTERS. A record that cannot say how much IT moved a
   // counter is describing a balance it remembers, not a change it made. On
   // 2026-09-13 one such tab re-sent its pre-reset view over a server-side
@@ -385,6 +431,8 @@ export function planSave(
   incoming: Array<Record<string, any>>,
   writable: readonly string[],
   keysOf: (row: Record<string, any>) => string[],
+  /** The server's history cutoff, or null. Optional, as on planPatch. */
+  historyCutoff: number | null = null,
 ): SavePlan {
   const byKey = new Map<string, Record<string, any>>();
   for (const row of rows) {
@@ -401,7 +449,7 @@ export function planSave(
       if (key) skipped.push(key);
       continue;
     }
-    const patch = planPatch(row, record, writable);
+    const patch = planPatch(row, record, writable, historyCutoff);
     // BEFORE the emptiness guard below, deliberately. A record carrying
     // nothing but refused counters produces an EMPTY patch and would
     // otherwise vanish from the save's answer entirely -- which is the exact

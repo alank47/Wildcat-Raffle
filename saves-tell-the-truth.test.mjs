@@ -151,7 +151,11 @@ console.log("\nCash counters travel as deltas, so two tabs awarding the same chi
     /const pendingDeltas = snapshotPendingCashDeltas\(\);\s*await loadData\(\);\s*reapplyPendingCashDeltas\(pendingDeltas\);/.test(code)
     && /function snapshotPendingCashDeltas\(\)/.test(code) && /function reapplyPendingCashDeltas\(pending\)/.test(code));
   const shape = readFileSync(new URL("./convex/appDataShape.ts", import.meta.url), "utf8");
-  check("the server applies them (appDataShape.planPatch)", /export function planPatch\(/.test(shape) && /const patch = planPatch\(row, record, writable\);/.test(shape));
+  // Not pinned to the argument list: planPatch grew a fourth parameter (the
+  // history cutoff) and this assertion failed for a change that had nothing to
+  // do with what it is checking, which is that planSave routes every record
+  // through it rather than writing the record straight to the row.
+  check("the server applies them (appDataShape.planPatch)", /export function planPatch\(/.test(shape) && /const patch = planPatch\(row, record, writable\b/.test(shape));
 }
 
 console.log("\nThe audit log and the activity panels are live");
