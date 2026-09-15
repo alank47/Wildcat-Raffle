@@ -425,6 +425,68 @@ console.log("\n-- the third write path: per-student history arrays --");
   check("a delta still applies while its history row is pruned",
     withDelta.wildcatCashBalance === 150 && withDelta.wildcatCashTransactions.length === 0);
 
+  // PRUNING MUST NOT BECOME DELETING. mergeIncoming writes an array whole, so
+  // a stale tab's save replaces the field. Prune that tab's array and the
+  // write becomes "today's history, minus everything except my two recent
+  // rows" -- the resurrection bug turned into a deletion bug. A record that
+  // was carrying stale rows is therefore UNIONED with what the server holds.
+  const storedToday = {
+    legacyId: "1", studentNumber: "1",
+    wildcatCashTransactions: [
+      { id: "a", amount: 100, timestamp: "2026-09-14T16:00:00Z" },
+      { id: "b", amount: 100, timestamp: "2026-09-14T17:00:00Z" },
+    ],
+  };
+  const stale = planPatch(storedToday, {
+    id: "1",
+    wildcatCashTransactions: [
+      { id: "old", amount: 100, timestamp: "2026-08-20T16:37:14.634Z" },
+      { id: "c", amount: 100, timestamp: "2026-09-14T18:00:00Z" },
+    ],
+  }, STUDENT_WRITABLE, CUT);
+  check("a stale tab's save does not erase today's stored rows",
+    stale.wildcatCashTransactions.map((r) => r.id).join(",") === "a,b,c");
+
+  // A row the server already has is not duplicated by the union.
+  const resend = planPatch(storedToday, {
+    id: "1",
+    wildcatCashTransactions: [
+      { id: "old", amount: 100, timestamp: "2026-08-20T16:37:14.634Z" },
+      { id: "a", amount: 100, timestamp: "2026-09-14T16:00:00Z" },
+    ],
+  }, STUDENT_WRITABLE, CUT);
+  // The union came out identical to what is stored, so mergeIncoming writes
+  // nothing at all -- the field is absent from the patch, not set to a copy.
+  check("and re-sending a row the server has writes nothing",
+    !("wildcatCashTransactions" in resend));
+
+  // AND THE YEAR-END ROLL STILL EMPTIES THEM. script.js:27645 clears these
+  // arrays on purpose after archiving to a backup. Its array is already empty
+  // before pruning, so nothing is pruned, so the replace stands -- which is
+  // why the union is conditional on having actually removed something.
+  const roll = planPatch(storedToday, {
+    id: "1", wildcatCashTransactions: [],
+  }, STUDENT_WRITABLE, CUT);
+  check("an intentional clear is still a clear",
+    Array.isArray(roll.wildcatCashTransactions) && roll.wildcatCashTransactions.length === 0);
+
+  // Rows with no id are keyed by content, so the union neither duplicates a
+  // re-send nor collapses two different awards in the same second.
+  const noIds = planPatch({
+    legacyId: "1", studentNumber: "1",
+    wildcatCashTransactions: [{ amount: 100, timestamp: "2026-09-14T16:00:00Z" }],
+  }, {
+    id: "1",
+    wildcatCashTransactions: [
+      { amount: 100, timestamp: "2026-08-20T16:00:00Z" },
+      { amount: 100, timestamp: "2026-09-14T16:00:00Z" },
+      { amount: 250, timestamp: "2026-09-14T16:00:00Z" },
+    ],
+  }, STUDENT_WRITABLE, CUT);
+  check("id-less rows union by content rather than by position",
+    noIds.wildcatCashTransactions.length === 2
+    && noIds.wildcatCashTransactions.map((r) => r.amount).join(",") === "100,250");
+
   // planSave threads it through, which is what appData:save actually calls.
   const plan = planSave([stored], [{
     id: "1", wildcatCashTransactions: rows("2026-08-20T16:37:14.634Z", "2026-09-14T16:00:00Z"),

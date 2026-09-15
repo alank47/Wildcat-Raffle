@@ -256,6 +256,57 @@ function pruneHistoryArray(value: unknown, cutoff: number | null): unknown {
   });
 }
 
+/**
+ * The identity of one history row, for unioning two copies of an array.
+ *
+ * recordCashTransaction (script.js:29139) gives every row a unique id, so the
+ * composite below is only for legacy rows that predate it. It deliberately
+ * does NOT include the row's position: keying by index means the same row
+ * appears under two keys when the two copies order it differently, and a
+ * duplicated award on every save is a worse outcome than two identical
+ * id-less rows in the same second collapsing into one.
+ */
+function historyRowKey(row: unknown): string {
+  const r = row as Record<string, unknown> | null;
+  const id = r?.id ?? r?.entryId;
+  if (id !== undefined && id !== null && String(id) !== "") return "id:" + String(id);
+  return ["at:", String(r?.timestamp ?? ""), "|", String(r?.amount ?? ""),
+    "|", String(r?.behaviorId ?? r?.behaviorName ?? "")].join("");
+}
+
+/**
+ * Fold a stale tab's pruned array into the rows the server already holds,
+ * instead of letting it replace them.
+ *
+ * WHY THIS IS NOT A PLAIN REPLACE. mergeIncoming writes an array whole, so
+ * the last tab to save owns the field. That is fine between tabs that loaded
+ * today. It is not fine for a tab whose copy predates a history clear: prune
+ * its array and the write becomes "replace today's rows with the two of mine
+ * that are recent", or worse, with none at all -- pruning would have turned a
+ * resurrection bug into a deletion bug, on the day the owner most needs
+ * today's history intact.
+ *
+ * So the union is applied ONLY to a record that was actually carrying stale
+ * rows. Every other save keeps the replace it has always had, which is what
+ * the year-end roll-over at script.js:27645 depends on: it empties these
+ * arrays deliberately, and an unconditional union would quietly refill them.
+ */
+function unionHistoryRows(stored: unknown, pruned: unknown[]): unknown[] {
+  const out: unknown[] = [];
+  const seen = new Set<string>();
+  const add = (rows: unknown[]) => {
+    rows.forEach((row) => {
+      const key = historyRowKey(row);
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(row);
+    });
+  };
+  add(Array.isArray(stored) ? stored : []);
+  add(pruned);
+  return out;
+}
+
 export const CASH_COUNTERS = [
   "wildcatCashBalance",
   "wildcatCashEarned",
@@ -363,7 +414,11 @@ export function planPatch(
   // referrals are guarded in legacyData:mergeSlice, and these arrays arrive
   // here instead.
   for (const f of HISTORY_ARRAY_FIELDS) {
-    if (f in fields) fields[f] = pruneHistoryArray(fields[f], historyCutoff);
+    const incoming = fields[f];
+    if (!Array.isArray(incoming)) continue;
+    const pruned = pruneHistoryArray(incoming, historyCutoff) as unknown[];
+    if (pruned.length === incoming.length) continue; // nothing stale: replace, as before
+    fields[f] = unionHistoryRows(row[f], pruned);
   }
   // NO DELTA, NO COUNTERS. A record that cannot say how much IT moved a
   // counter is describing a balance it remembers, not a change it made. On
