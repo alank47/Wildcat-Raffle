@@ -931,6 +931,80 @@ export const referralAudit = internalQuery({
  * screens read the cash_tx_* LEDGER, and the arrays legitimately lag -- a
  * student's array is only rewritten when that student's record is next saved.
  */
+/**
+ * Is either cash store missing rows the other has? Read-only. By ROW ID.
+ *
+ * THE ONLY QUESTION THAT MATTERS when a count falls: is a teacher's award gone,
+ * or is one copy of it gone. The cash_tx_* ledger merges by id and cannot lose
+ * a row; the per-student arrays are written WHOLE by every save, so the last
+ * tab to save a student owns that student's list. With 40+ tabs open, a tab
+ * holding a partial list overwrites a fuller one -- and the Analytics tab reads
+ * the arrays.
+ *
+ * `onlyInArrays` is the number that would mean real loss if the arrays were
+ * ever cleaned up. `onlyInLedger` is the Analytics tab undercounting. They are
+ * completely different problems and the difference is invisible on screen.
+ */
+export const cashStoreDivergence = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const ledger = new Map<string, any>();
+    for (const r of (mirror as any[]).filter((x) => String(x.doc ?? "").startsWith("cash_tx_"))) {
+      const id = String((r.payload as any)?.id ?? "");
+      if (id) ledger.set(id, r.payload);
+    }
+
+    const arrays = new Map<string, { row: any; student: string }>();
+    const perStudent: Array<{ name: string; arrayRows: number; ledgerRows: number }> = [];
+    const students = await ctx.db.query("students").collect();
+    const ledgerByStudent: Record<string, number> = {};
+    for (const [, p] of ledger) {
+      const sid = String((p as any)?.studentId ?? "");
+      if (sid) ledgerByStudent[sid] = (ledgerByStudent[sid] ?? 0) + 1;
+    }
+    for (const s of students as any[]) {
+      const arr = Array.isArray(s.wildcatCashTransactions) ? s.wildcatCashTransactions : [];
+      for (const t of arr) {
+        const id = String(t?.id ?? "");
+        if (id) arrays.set(id, { row: t, student: String(s.id ?? s._id) });
+      }
+      const lr = ledgerByStudent[String(s.id ?? s._id)] ?? 0;
+      if (arr.length !== lr && (arr.length || lr)) {
+        perStudent.push({
+          name: `${s.firstName ?? ""} ${s.lastName ?? ""}`.trim(),
+          arrayRows: arr.length, ledgerRows: lr,
+        });
+      }
+    }
+
+    const onlyInLedger = [...ledger.keys()].filter((id) => !arrays.has(id));
+    const onlyInArrays = [...arrays.keys()].filter((id) => !ledger.has(id));
+
+    return {
+      serverTime: new Date().toISOString(),
+      ledgerRows: ledger.size,
+      arrayRows: arrays.size,
+      inBoth: [...ledger.keys()].filter((id) => arrays.has(id)).length,
+      // The Analytics tab undercounts by this much:
+      onlyInLedger: onlyInLedger.length,
+      // THIS is the number that would be real data loss. It should be 0 or tiny.
+      onlyInArrays: onlyInArrays.length,
+      onlyInArraysSample: onlyInArrays.slice(0, 5).map((id) => ({
+        id, timestamp: arrays.get(id)!.row?.timestamp ?? null,
+        amount: arrays.get(id)!.row?.amount ?? null,
+      })),
+      studentsWhereStoresDisagree: perStudent.length,
+      worstDisagreements: perStudent
+        .sort((a, b) => (b.ledgerRows - b.arrayRows) - (a.ledgerRows - a.arrayRows))
+        .slice(0, 8),
+      verdict: onlyInArrays.length === 0
+        ? "The ledger is a complete superset: every award exists there. Nothing is lost; the Analytics tab is reading the lossy copy."
+        : `${onlyInArrays.length} row(s) exist ONLY on student records and would be lost if those were rebuilt.`,
+    };
+  },
+});
+
 export const cashByDay = internalQuery({
   args: {},
   handler: async (ctx) => {
