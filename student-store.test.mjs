@@ -146,6 +146,22 @@ console.log("\n-- buying: one token per press, and no price from the browser --"
   const buy = code.slice(buyAt, buyAt + 4000);
   check("the buy button is delegated, so a re-render keeps working",
     /closest\('\[data-wp-buy\]'\)/.test(buy));
+
+  // CAPTURE PHASE. A bubble listener on document is last in line: anything
+  // calling stopPropagation on an ancestor wins, and the portal has tap and
+  // swipe handlers on the card shell. Reported as "clicking buy does nothing"
+  // with the button and its attribute rendering correctly.
+  check("the listener is registered on the capture phase",
+    /\}, true\);/.test(buy));
+
+  // AND IT CANNOT FAIL IN SILENCE. An async listener that throws produces an
+  // unhandled rejection: no error on screen, the button just sits there, and
+  // neither a child nor the owner can report anything more useful than
+  // "nothing happened".
+  check("every failure is surfaced to the student",
+    /catch \(e\) \{[\s\S]{0,400}console\.error\('\[store\] buy failed:'/.test(buy));
+  check("and it says nothing was charged, which is true at that point",
+    /Nothing was charged/.test(buy));
   check("a second press while one is in flight is refused",
     /if \(_wpBuyInFlight\) return;/.test(buy) && /_wpBuyInFlight = true;/.test(buy));
   check("and the flag is released on every path", /\} finally \{[\s\S]{0,200}_wpBuyInFlight = false;/.test(buy));

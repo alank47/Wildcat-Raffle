@@ -87,6 +87,12 @@ const moduleScopeTs = [
   liftDecl("function isHistorySlice("),
   liftDecl("function rowDate("),
   liftDecl("const HISTORY_CUTOFF_SLACK_MS"),
+  // Added 2026-09-16 with the rule it implements: an update keeps stored
+  // fields the incoming row does not carry. The mutation body calls it, so
+  // without it lifted the whole harness dies on "mergeRowFields is not
+  // defined" -- the same way cash-ledger.test.mjs died when
+  // reconcileCashLedger gained a dependency.
+  liftDecl("function mergeRowFields("),
 ].join("\n");
 const touchedJs = ts.transpileModule(moduleScopeTs, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
@@ -447,6 +453,46 @@ console.log("\n-- the history cutoff: a stale tab cannot re-insert last term --"
     r.result.inserted === 1);
   r = await refs([{ id: "r-way-off", submittedAt: "2026-09-14T13:00:00Z" }]);
   check("a row two hours before it is not", r.result.inserted === 0);
+}
+
+console.log("\n-- an update keeps fields the client never sent --");
+{
+  // THE RULE mergeIncoming ALREADY STATES for students: "never write an
+  // absence, in either direction." This path replaced the whole payload, so any
+  // field a browser did not know about was erased the next time somebody
+  // edited that row.
+  //
+  // It bit within the hour of shipping the student store. Rewards gained a
+  // server-owned `studentPurchasable` flag with no admin toggle yet; the owner
+  // repriced Front of Line Pass and switched it on; the Rewards editor
+  // round-tripped the object without that field and wiped it. Two rewards were
+  // on and only one appeared in the store, with nothing on screen to say why.
+  const src = readFileSync(new URL("./legacyData.ts", import.meta.url), "utf8");
+  const merge = new Function("stored", "incoming",
+    src.slice(src.indexOf("function mergeRowFields"),
+              src.indexOf("\n}", src.indexOf("function mergeRowFields")) + 2)
+       .replace(/: unknown/g, "").replace(/ as Record<string, unknown>/g, "")
+    + "\nreturn mergeRowFields(stored, incoming);");
+
+  const stored = { id: "r4", name: "Front of Line Pass", cost: 500,
+                   available: false, studentPurchasable: true };
+  const edited = { id: "r4", name: "Front of Line Pass", cost: 100, available: true };
+  const out = merge(stored, edited);
+  check("a field the client omitted survives the edit", out.studentPurchasable === true);
+  check("and every field it did send wins",
+    out.cost === 100 && out.available === true);
+
+  // ABSENT IS NOT NULL, which is what makes this safe: a client clearing a
+  // field sends null, and a present null still wins.
+  check("an explicit null still clears",
+    merge(stored, { id: "r4", studentPurchasable: null }).studentPurchasable === null);
+  check("and an explicit false still wins over a stored true",
+    merge(stored, { id: "r4", studentPurchasable: false }).studentPurchasable === false);
+
+  // A slice whose rows are not objects has no fields to merge.
+  check("a non-object row passes straight through", merge("a", "b") === "b");
+  check("and so does an array", Array.isArray(merge([1], [2])) && merge([1], [2])[0] === 2);
+  check("a null stored row does not crash", merge(null, { id: "x" }).id === "x");
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

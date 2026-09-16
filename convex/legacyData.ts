@@ -227,6 +227,36 @@ export function unionCashRows(
   return out;
 }
 
+/**
+ * An update keeps stored fields the incoming row does not carry.
+ *
+ * THE RULE mergeIncoming ALREADY STATES for students, applied here: "never
+ * write an absence, in either direction." This path replaced the whole payload
+ * with the client's copy, so ANY field a browser does not know about was erased
+ * the next time somebody edited that row.
+ *
+ * It bit on 2026-09-16, within the hour of shipping the student store. Rewards
+ * gained a server-owned `studentPurchasable` flag with no admin toggle yet; the
+ * owner repriced Front of Line Pass to $100 and switched it on, the Rewards
+ * editor round-tripped the reward object without that field, and the flag was
+ * wiped. Two rewards were on and only one appeared in the student store, with
+ * nothing on screen to explain why.
+ *
+ * ABSENT IS NOT THE SAME AS NULL, which is what makes this safe. A client that
+ * wants to clear a field sends it as null -- normalizeReward in
+ * wildcat-store.js writes every field explicitly, nulls included -- and a
+ * present null still wins. Only keys the incoming row does not mention at all
+ * are taken from the stored copy.
+ *
+ * Non-objects pass straight through: a slice whose rows are strings or numbers
+ * has no fields to merge.
+ */
+function mergeRowFields(stored: unknown, incoming: unknown): unknown {
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) return incoming;
+  if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) return incoming;
+  return { ...(stored as Record<string, unknown>), ...(incoming as Record<string, unknown>) };
+}
+
 export const mergeSlice = mutation({
   args: {
     doc: v.string(),
@@ -343,7 +373,7 @@ export const mergeSlice = mutation({
         // Stored wins, unless the incoming copy is the same row touched later.
         const stored = storedByToken.get(token);
         if (stored && touchedAt(r.payload) > touchedAt(stored.payload)) {
-          toUpdate.push({ id: stored._id, payload: r.payload });
+          toUpdate.push({ id: stored._id, payload: mergeRowFields(stored.payload, r.payload) });
         }
         continue;
       }

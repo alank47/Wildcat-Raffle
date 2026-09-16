@@ -18008,12 +18008,30 @@
         // nothing in a browser and keeps the listener next to the panel it
         // serves rather than exiled to the bottom of the file.
         if (typeof document !== 'undefined' && document.addEventListener) {
+        // CAPTURE PHASE, and a visible failure.
+        //
+        // Reported 2026-09-16: "clicking buy does nothing". The button and its
+        // data-wp-buy attribute render correctly -- verified by running
+        // wpStorePanel in Node -- so the click was either never reaching this
+        // listener or failing inside it without a word. Both are now closed:
+        //
+        //   CAPTURE, so nothing between the button and document can swallow the
+        //   event first. A bubble-phase listener on document is last in line;
+        //   anything calling stopPropagation on an ancestor wins, and the
+        //   portal has several tap and swipe handlers on the card shell.
+        //
+        //   AND A try/catch AROUND EVERYTHING. An async listener that throws
+        //   produces an unhandled rejection, which is silent -- there is no
+        //   error on screen and the button just sits there. A child cannot
+        //   report "nothing happened" usefully, and neither could the owner.
         document.addEventListener('click', async function (ev) {
             const btn = ev.target && ev.target.closest && ev.target.closest('[data-wp-buy]');
             if (!btn) return;
             ev.preventDefault();
+            ev.stopPropagation();
             if (_wpBuyInFlight) return;
             _wpBuyInFlight = true;
+            try {
             try {
                 const id = btn.getAttribute('data-wp-buy');
                 const name = btn.getAttribute('data-wp-buy-name') || 'this reward';
@@ -18062,10 +18080,20 @@
                 // skips the freshness short-circuit, which matters here because
                 // the thing that changed is the thing we just did.
                 if (typeof wpPollPassOnce === 'function') await wpPollPassOnce(true);
+            } catch (e) {
+                // SAID OUT LOUD. Whatever went wrong, the student is told
+                // something happened and the console carries the detail.
+                console.error('[store] buy failed:', e);
+                try {
+                    await showAlert('\u274C Something went wrong buying that. ' +
+                        'Nothing was charged. Please tell a teacher.\n' +
+                        ((e && e.message) ? e.message : String(e)));
+                } catch (e2) { /* even the dialog is gone: the console has it */ }
+            }
             } finally {
                 _wpBuyInFlight = false;
             }
-        });
+        }, true);
         }
 
         function wpDashboard(mine, sched, grades, pass) {
