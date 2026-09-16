@@ -105,7 +105,24 @@ console.log("\n-- it shows what a student cannot afford --");
     /is-afford/.test(fn) && /\.wp-store-row\.is-afford/.test(css));
   check("the styles it needs exist",
     [".wp-store", ".wp-store-row", ".wp-store-bar", ".wp-store-cost",
-     ".wp-buy-why", ".wp-stock"].every((c) => css.includes(c)));
+     ".wp-buy-why", ".wp-stock", ".wp-store-foot"].every((c) => css.includes(c)));
+
+  // THE ROW STACKS AT EVERY WIDTH, and this pins the reason. A .wp-dash panel
+  // is repeat(auto-fit, minmax(268px, 1fr)) -- narrow BECAUSE the viewport is
+  // wide -- so three columns beside each other left the reward name running
+  // down the card one word per line. My first version stacked them only under
+  // max-width: 999px, a query that never fires where the panel is narrowest.
+  const rowRule = css.slice(css.indexOf(".wp-store-row {"), css.indexOf(".wp-store-foot"));
+  check("the row is one column by default",
+    /grid-template-columns: 1fr;/.test(rowRule), rowRule.replace(/\s+/g, " "));
+  check("and nothing re-columns it in a viewport query",
+    !/\.wp-store-row \{ grid-template-columns: 1fr auto/.test(css));
+  check("the cost and the action share a line beneath the name",
+    /wp-store-foot/.test(fn));
+  // Six rewards with prices and bars are the widest thing on the page; one
+  // column of a five-column grid is what made the layout hard to begin with.
+  check("and the panel spans the whole dash row, as the tiles already do",
+    /\.wp-dash > \.wp-panel:has\(\.wp-store\) \{ grid-column: 1 \/ -1; \}/.test(css));
 }
 
 console.log("\n-- a child reads this, so everything is escaped --");

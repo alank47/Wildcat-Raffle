@@ -7288,10 +7288,26 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
    -- it is the difference between "you can't have this" and "you are most of
    the way there". */
 .wp-store { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+
+/* THE ROW STACKS BY DEFAULT, and that is not a mobile concession.
+   A .wp-dash panel is repeat(auto-fit, minmax(268px, 1fr)) wide -- about 270px
+   on a Chromebook, NOT the width of the window. My first version put three
+   columns (name | cost | action) in there and stacked them only under
+   `max-width: 999px`, a query that never fires on the desk view where the
+   panel is narrowest. Minus padding and gaps that left the name column about
+   forty pixels, so the reward name ran down the card one word per line. The
+   breakpoint was exactly backwards: the panel is narrow BECAUSE the viewport
+   is wide.
+   Name, then cost and action on one line beneath. Correct at 270px and still
+   correct at 900. */
 .wp-store-row {
-    display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 14px;
+    display: grid; grid-template-columns: 1fr; gap: 10px;
     padding: 12px 14px; border: 1px solid var(--wu-hair, #E7ECF2);
     border-radius: 10px; background: var(--wu-surface, #fff);
+}
+.wp-store-foot {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap;
 }
 /* A hairline, not a fill: the row a student CAN act on is marked, and the
    others are not dimmed. A greyed-out list of things you cannot have is a
@@ -7309,6 +7325,13 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     background: var(--wu-hair, #E7ECF2); overflow: hidden;
 }
 .wp-store-bar > span { display: block; height: 100%; background: #2E7D52; }
+
+/* FULL WIDTH IN THE DASH GRID, like .wp-tiles already is. A list of rewards
+   with prices and progress bars is the widest thing on this page; leaving it in
+   one 270px column of a five-column grid is what made the row layout hard in
+   the first place. Selected with :has rather than a new class, so wpPanel does
+   not need to learn about the store. */
+#studentPassView.wp-wide .wp-dash > .wp-panel:has(.wp-store) { grid-column: 1 / -1; }
 .wp-store-cost { font-size: 18px; font-weight: 700; white-space: nowrap; }
 .wp-store-act { display: flex; align-items: center; min-width: 0; }
 .wp-buy-why {
@@ -7318,11 +7341,9 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 .wp-buy[disabled] { opacity: .6; }
 
 @media (max-width: 999px) {
-    /* The dash is hidden below 1000px today, so this is for the day it is not:
-       the cost and the action go under the name rather than squeezing it into
-       a two-character column. */
-    .wp-store-row { grid-template-columns: 1fr; }
-    .wp-store-cost { margin-top: 8px; }
+    /* The dash is hidden below 1000px today, so this is for the day it is not.
+       The row already stacks at every width -- see the note on .wp-store-row --
+       so all that is left here is letting the refusal text use the full line. */
     .wp-buy-why { max-width: none; }
 }
 

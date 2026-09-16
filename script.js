@@ -17965,6 +17965,10 @@
                 const stock = (it.stock == null)
                     ? ''
                     : '<span class="wp-stock">' + wpEsc(String(it.stock)) + ' left</span>';
+                // The cost and the action share one line UNDER the name, not
+                // columns beside it: a .wp-dash panel is about 270px wide, and
+                // three columns in there left the reward name running down the
+                // card one word per line.
                 return '<li class="wp-store-row' + (it.canBuy ? ' is-afford' : '') + '">' +
                     '<div class="wp-store-main">' +
                         '<div class="wp-store-name">' + wpEsc(String(it.name)) + stock + '</div>' +
@@ -17973,8 +17977,10 @@
                             : '') +
                         '<div class="wp-store-bar"><span style="width:' + pct + '%"></span></div>' +
                     '</div>' +
-                    '<div class="wp-store-cost">$' + wpEsc(String(it.cost)) + '</div>' +
-                    '<div class="wp-store-act">' + action + '</div>' +
+                    '<div class="wp-store-foot">' +
+                        '<div class="wp-store-cost">$' + wpEsc(String(it.cost)) + '</div>' +
+                        '<div class="wp-store-act">' + action + '</div>' +
+                    '</div>' +
                 '</li>';
             }).join('');
 

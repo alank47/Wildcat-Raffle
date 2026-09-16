@@ -107,6 +107,34 @@ const MISSING = {
   },
 };
 
+// THE STORE, AS THE SERVER ACTUALLY ANSWERS IT. Shaped from
+// studentStore:storeFor against production on 2026-09-16 -- one reward nobody
+// can afford ($2,500 against a $900 top balance) and one that is affordable,
+// because BOTH states have to look right and the unaffordable one is the
+// common case. The refusal text is the server's own wording.
+const STORE = {
+  storeOpen: true,
+  closedReason: null,
+  balance: 600,
+  maxQuantity: 5,
+  items: [
+    {
+      id: 'reward4', name: 'Front of Line Pass',
+      description: 'Skip to the front of the lunch line for one day.',
+      category: 'General', cost: 500, stock: null, inStudentStore: true,
+      canBuy: true, why: null, code: 'ok', shortfall: null, progress: 1,
+    },
+    {
+      id: 'reward_custom_1789082168382', name: 'Extended Lunch (Power-Up)',
+      description: 'An extra fifteen minutes of lunch, once.',
+      category: 'Power-Up', cost: 2500, stock: 100, inStudentStore: true,
+      canBuy: false,
+      why: 'You have $600 and this costs $2500. You need $1900 more.',
+      code: 'cannot_afford', shortfall: 1900, progress: 0.24,
+    },
+  ],
+};
+
 const STATES = [
   {
     // THE SHORT CHROMEBOOK, and it is first because it is what the school
@@ -123,6 +151,7 @@ const STATES = [
          'below ~660px is off the bottom of the screen on every Chromebook in ' +
          'the building, and the store panel is one of them.',
     w: 1366, h: 768, wide: true,
+    store: STORE,
     mine: {
       points: { pbis: 12, attendance: 4, academic: 7, total: 23, weeksQualified: 5, bigRaffleEntries: 5 },
       wildcatCash: { balance: 500, earned: 600, spent: 100 },
@@ -360,6 +389,13 @@ STATES.forEach(function (s, i) {
     // Set the open row BEFORE rendering. wpGradeToggle cannot run inside the
     // iframe (it receives markup, not script), so the only way to see the open
     // state is to render it open.
+    // The store panel reads a module-level answer rather than an argument, so
+    // it is set here before rendering. Without this every frame showed
+    // "Loading the store..." and the row layout could not be seen at all --
+    // which is how a three-column row inside a 270px panel reached a real
+    // student portal before anybody noticed the name was running down the card.
+    _wpStore = s.store || null;
+    _wpStoreError = s.storeError || null;
     f.contentWindow.postMessage(wpDashboard(s.mine, s.sched, s.grades, s.pass), '*');
   });
 });
