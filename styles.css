@@ -7278,6 +7278,54 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
    =========================================================================== */
 .wp-dash { display: none; }
 
+/* ===========================================================================
+   THE REWARDS STORE
+   ===========================================================================
+   Every reward is listed, including the ones a student cannot afford: measured
+   on 2026-09-16, 29 of 620 could afford the cheapest and nobody could afford
+   five of the six, so hiding the rest would show most of the school an empty
+   room. The bar is therefore the main event for most readers, not a decoration
+   -- it is the difference between "you can't have this" and "you are most of
+   the way there". */
+.wp-store { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.wp-store-row {
+    display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 14px;
+    padding: 12px 14px; border: 1px solid var(--wu-hair, #E7ECF2);
+    border-radius: 10px; background: var(--wu-surface, #fff);
+}
+/* A hairline, not a fill: the row a student CAN act on is marked, and the
+   others are not dimmed. A greyed-out list of things you cannot have is a
+   worse screen than a plain one. */
+.wp-store-row.is-afford { border-color: #2E7D52; }
+.wp-store-main { min-width: 0; }
+.wp-store-name {
+    font-weight: 600; color: var(--wu-fg, #14171C);
+    display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; overflow-wrap: anywhere;
+}
+.wp-store-desc { color: #4A535F; font-size: 13px; margin-top: 3px; overflow-wrap: anywhere; }
+.wp-stock { font-size: 11.5px; font-weight: 600; color: #8A5E06; }
+.wp-store-bar {
+    margin-top: 8px; height: 5px; border-radius: 3px;
+    background: var(--wu-hair, #E7ECF2); overflow: hidden;
+}
+.wp-store-bar > span { display: block; height: 100%; background: #2E7D52; }
+.wp-store-cost { font-size: 18px; font-weight: 700; white-space: nowrap; }
+.wp-store-act { display: flex; align-items: center; min-width: 0; }
+.wp-buy-why {
+    display: block; max-width: 210px; color: #8892a0;
+    font-size: 12px; line-height: 1.35; overflow-wrap: anywhere;
+}
+.wp-buy[disabled] { opacity: .6; }
+
+@media (max-width: 999px) {
+    /* The dash is hidden below 1000px today, so this is for the day it is not:
+       the cost and the action go under the name rather than squeezing it into
+       a two-character column. */
+    .wp-store-row { grid-template-columns: 1fr; }
+    .wp-store-cost { margin-top: 8px; }
+    .wp-buy-why { max-width: none; }
+}
+
 #studentPassView.wp-wide .wp-dash {
     /* grid-area is declared with the rest of the wide shell, up where the
        template lives, so the layout is readable in one place. */

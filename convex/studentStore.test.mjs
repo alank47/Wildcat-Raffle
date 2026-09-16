@@ -254,11 +254,17 @@ console.log("\n8. What the mutation refuses to be told");
   check("it takes a reward id, a quantity and an attempt token",
     /rewardId: v\.string\(\)/.test(args) && /attemptId: v\.string\(\)/.test(args));
 
-  // NOTHING PUBLIC YET. The UI and the public wrappers ship together, after
-  // hours, with the store closed. convex-wiring.test.mjs refuses a public
-  // mutation with no caller, and it is right to.
-  check("no public mutation or query is exported yet",
-    !/export const \w+ = mutation\(/.test(code) && !/export const \w+ = query\(/.test(code));
+  // THE PUBLIC PAIR SHIPPED WITH THE UI, as planned. What has to stay true is
+  // what they refuse to be told: a student id (a child who could name the
+  // buyer could name somebody else) and a price.
+  const pub = code.slice(code.indexOf("export const purchase = mutation({"),
+                         code.indexOf("handler", code.indexOf("export const purchase = mutation({")));
+  check("purchase takes no student id", !/studentNumber|studentId/.test(pub), pub.replace(/\s+/g, " "));
+  check("and no price", !/cost|total|balance/i.test(pub));
+  check("both public entry points resolve the student from their own token",
+    (code.match(/requireStudentSelf\(ctx\)/g) || []).length >= 2);
+  check("and the store still defaults to CLOSED, so shipping changed nothing",
+    /open: val\.open === true/.test(code));
 }
 
 console.log("\n9. Two children tapping the last one");

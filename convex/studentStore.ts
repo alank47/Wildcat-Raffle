@@ -1,5 +1,6 @@
-import { internalMutation, internalQuery } from "./_generated/server";
+import { mutation, query, internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
+import { requireStudentSelf } from "./identity";
 import {
   buildPurchaseLedgerRow,
   buildStudentReceipt,
@@ -165,7 +166,44 @@ async function storeForStudent(ctx: any, studentNumber: string) {
   };
 }
 
-/** The catalogue for one student, by student number. Internal for now. */
+/**
+ * THE STUDENT'S OWN STORE. No argument for whose -- requireStudentSelf resolves
+ * it from their verified token, and if the caller could name a student they
+ * could name any of them. The same rule the leaderboard and hall passes follow.
+ */
+export const myStore = query({
+  args: {},
+  handler: async (ctx) => {
+    const me = await requireStudentSelf(ctx);
+    return await storeForStudent(ctx, String(me.studentNumber ?? ""));
+  },
+});
+
+/**
+ * Buy one reward, as the signed-in student.
+ *
+ * Takes a reward id, a quantity and an attempt token. NOT a cost, a total or a
+ * balance -- the server reads the price from the catalogue. And not a student
+ * id: a child who could name the buyer could name somebody else.
+ */
+export const purchase = mutation({
+  args: {
+    rewardId: v.string(),
+    quantity: v.optional(v.number()),
+    attemptId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const me = await requireStudentSelf(ctx);
+    return await doPurchase(ctx, {
+      studentNumber: String(me.studentNumber ?? ""),
+      rewardId: args.rewardId,
+      quantity: args.quantity,
+      attemptId: args.attemptId,
+    });
+  },
+});
+
+/** The catalogue for one student, by student number. Internal, for the CLI. */
 export const storeFor = internalQuery({
   args: { studentNumber: v.string() },
   handler: async (ctx, { studentNumber }) => await storeForStudent(ctx, studentNumber),

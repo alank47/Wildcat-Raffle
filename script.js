@@ -17904,14 +17904,162 @@
          * Static. No query, no state, no failure mode -- it cannot be the
          * reason a portal fails to load.
          */
-        function wpStoreSoonPanel() {
-            return wpPanel(
-                'Wildcat Cash',
-                'Student Rewards Store',
-                'Coming soon',
-                '<p class="wp-soon">You\u2019ll be able to use your Wildcat Cash to purchase ' +
-                'a variety of awesome rewards. Stay tuned!</p>'
-            );
+        /** The store's last answer, so a poll re-render does not blank it. */
+        let _wpStore = null;
+        let _wpStoreError = null;
+
+        /**
+         * The Rewards Store panel.
+         *
+         * SHOWS WHAT A STUDENT CANNOT AFFORD, ON PURPOSE. Measured against
+         * production on 2026-09-16: 29 of 620 students could afford the
+         * cheapest reward and nobody could afford five of the six. Hiding the
+         * rest would show most of the school an empty room, so every reward is
+         * listed with how much further there is to go. "You need $400 more" is
+         * a goal; a missing row is nothing at all.
+         *
+         * The owner sets prices from the school's balance distribution shortly
+         * before a release, so this has to read correctly at any price point
+         * and cannot assume anybody can afford anything.
+         *
+         * A FAILED LOAD SAYS SO. The portal loads its queries in a
+         * Promise.allSettled and the lesson from the leaderboard was that a
+         * panel which can fail must SAY it failed rather than render as empty
+         * -- an empty store reads as "there are no rewards", which is a
+         * different and wrong statement.
+         */
+        function wpStorePanel() {
+            if (_wpStoreError) {
+                return wpPanel('Wildcat Cash', 'Student Rewards Store', '',
+                    wpEmpty('The store could not be loaded just now. Your balance and ' +
+                            'cards above are unaffected. Reload the page to try again.'));
+            }
+            if (!_wpStore) {
+                return wpPanel('Wildcat Cash', 'Student Rewards Store', '',
+                    wpEmpty('Loading the store\u2026'));
+            }
+            if (!_wpStore.storeOpen) {
+                return wpPanel('Wildcat Cash', 'Student Rewards Store', 'Not open yet',
+                    '<p class="wp-soon">' + wpEsc(_wpStore.closedReason ||
+                        'You\u2019ll be able to use your Wildcat Cash to purchase rewards here soon.') +
+                    '</p>');
+            }
+
+            const items = Array.isArray(_wpStore.items) ? _wpStore.items : [];
+            const forSale = items.filter(function (it) { return it.inStudentStore; });
+            if (!forSale.length) {
+                return wpPanel('Wildcat Cash', 'Student Rewards Store', 'Nothing yet',
+                    wpEmpty('No rewards are in the student store yet. Your teachers can ' +
+                            'still buy things for you at the office.'));
+            }
+
+            const rows = forSale.map(function (it) {
+                // The bar is the honest part of this panel for most students.
+                const pct = Math.round(Math.max(0, Math.min(1, it.progress == null ? 0 : it.progress)) * 100);
+                const action = it.canBuy
+                    ? '<button type="button" class="wp-btn wp-buy"' +
+                      ' data-wp-buy="' + wpEsc(String(it.id)) + '"' +
+                      ' data-wp-buy-name="' + wpEsc(String(it.name)) + '"' +
+                      ' data-wp-buy-cost="' + wpEsc(String(it.cost)) + '">Buy</button>'
+                    : '<span class="wp-buy-why">' + wpEsc(String(it.why || '')) + '</span>';
+                const stock = (it.stock == null)
+                    ? ''
+                    : '<span class="wp-stock">' + wpEsc(String(it.stock)) + ' left</span>';
+                return '<li class="wp-store-row' + (it.canBuy ? ' is-afford' : '') + '">' +
+                    '<div class="wp-store-main">' +
+                        '<div class="wp-store-name">' + wpEsc(String(it.name)) + stock + '</div>' +
+                        (it.description
+                            ? '<div class="wp-store-desc">' + wpEsc(String(it.description)) + '</div>'
+                            : '') +
+                        '<div class="wp-store-bar"><span style="width:' + pct + '%"></span></div>' +
+                    '</div>' +
+                    '<div class="wp-store-cost">$' + wpEsc(String(it.cost)) + '</div>' +
+                    '<div class="wp-store-act">' + action + '</div>' +
+                '</li>';
+            }).join('');
+
+            return wpPanel('Wildcat Cash', 'Student Rewards Store',
+                '$' + wpEsc(String(_wpStore.balance == null ? 0 : _wpStore.balance)) + ' to spend',
+                '<ul class="wp-store">' + rows + '</ul>');
+        }
+
+        /**
+         * One delegated listener for every Buy button.
+         *
+         * THE TOKEN IS MINTED PER PRESS and resent on retry, which is what
+         * makes a double-tap harmless: the server keys idempotency on it, so
+         * the second arrival returns the first receipt instead of charging
+         * again. Keyed on the press rather than on (student, reward) because
+         * buying two of something is a thing a child is allowed to do.
+         */
+        let _wpBuyInFlight = false;
+
+        // GUARDED, because this region is EVALUATED BY A TEST.
+        // student-dashboard.test.mjs lifts the portal's rendering functions and
+        // runs them through new Function to check what they draw -- there is no
+        // document in there, so a bare addEventListener at this indent level
+        // throws and takes the whole suite down with it. The guard costs
+        // nothing in a browser and keeps the listener next to the panel it
+        // serves rather than exiled to the bottom of the file.
+        if (typeof document !== 'undefined' && document.addEventListener) {
+        document.addEventListener('click', async function (ev) {
+            const btn = ev.target && ev.target.closest && ev.target.closest('[data-wp-buy]');
+            if (!btn) return;
+            ev.preventDefault();
+            if (_wpBuyInFlight) return;
+            _wpBuyInFlight = true;
+            try {
+                const id = btn.getAttribute('data-wp-buy');
+                const name = btn.getAttribute('data-wp-buy-name') || 'this reward';
+                const cost = btn.getAttribute('data-wp-buy-cost') || '?';
+
+                const ok = await showConfirm('Buy ' + name + ' for $' + cost + '?');
+                if (!ok) return;
+
+                const auth = window.WildcatAuth;
+                const session = auth && auth.getSession();
+                if (!session) { await showAlert('\u274C You are not signed in.'); return; }
+
+                btn.disabled = true;
+                btn.textContent = 'Buying\u2026';
+                // One token per press. Crypto where available; the fallback is
+                // only ever a per-press value, not a secret.
+                const attemptId = (window.crypto && window.crypto.randomUUID)
+                    ? window.crypto.randomUUID()
+                    : 'a' + Date.now() + Math.random().toString(36).slice(2, 10);
+
+                let res;
+                try {
+                    res = await auth.convexMutation('studentStore:purchase',
+                        { rewardId: id, quantity: 1, attemptId: attemptId }, session.idToken);
+                } catch (e) {
+                    await showAlert('\u274C That did not go through: ' +
+                        ((e && e.message) ? e.message : e));
+                    return;
+                }
+
+                if (!res || res.ok !== true) {
+                    await showAlert('\u26A0\uFE0F ' + ((res && res.reason) || 'That could not be bought.'));
+                    return;
+                }
+                if (res.alreadyBought) {
+                    await showAlert('You already bought that. Your receipt is ' + res.receiptId + '.');
+                } else {
+                    await showAlert('\u2705 Bought ' + res.rewardName + ' for $' + res.totalCost +
+                        '.\nShow this at the office: ' + res.receiptId);
+                }
+                // Reload the portal so the balance, the history and the store
+                // all come from the server rather than being patched by hand.
+                // wpPollPassOnce is the ONE path the dashboard is drawn by --
+                // the watch timer calls it too -- so re-rendering through it
+                // cannot drift from what a poll would have shown. `force`
+                // skips the freshness short-circuit, which matters here because
+                // the thing that changed is the thing we just did.
+                if (typeof wpPollPassOnce === 'function') await wpPollPassOnce(true);
+            } finally {
+                _wpBuyInFlight = false;
+            }
+        });
         }
 
         function wpDashboard(mine, sched, grades, pass) {
@@ -18372,7 +18520,7 @@
             // The store sits with the other Wildcat Cash panels rather than at
             // the bottom: it answers "what is this money for", which is the
             // question the balance directly above it provokes.
-            return passPanel + money + wpStoreSoonPanel() +
+            return passPanel + money + wpStorePanel() +
                    wpBoardPanel() + gradePanel + schedule + attendance;
         }
         /**
@@ -20103,6 +20251,9 @@
                 // only in the DOM would snap back to Academy every few seconds
                 // while they were reading it.
                 auth.convexQuery('leaderboard:cash', { band: _wpBoardBand, topN: 10 }, token),
+                // The store, as THIS student sees it: what each reward costs,
+                // whether they can afford it, and how much further to go.
+                auth.convexQuery('studentStore:myStore', {}, token),
             ]);
             const pass = results[0].status === 'fulfilled' ? results[0].value : null;
             const mine = results[1].status === 'fulfilled' ? results[1].value : null;
@@ -20113,6 +20264,13 @@
             _wpBoardData = results[3].status === 'fulfilled' ? results[3].value : null;
             _wpBoardError = results[3].status === 'rejected'
                 ? ((results[3].reason && results[3].reason.message) || 'Could not load')
+                : null;
+            // A FAILED STORE SAYS SO. Same rule as the board above it: rendering
+            // an empty store would state "there are no rewards", which is a
+            // different claim from "this did not load".
+            _wpStore = results[4].status === 'fulfilled' ? results[4].value : null;
+            _wpStoreError = results[4].status === 'rejected'
+                ? ((results[4].reason && results[4].reason.message) || 'Could not load')
                 : null;
 
             if (!pass) {
