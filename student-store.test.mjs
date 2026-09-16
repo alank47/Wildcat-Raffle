@@ -159,6 +159,23 @@ console.log("\n-- buying: one token per press, and no price from the browser --"
   check("the buy button is delegated, so a re-render keeps working",
     /closest\('\[data-wp-buy\]'\)/.test(buy));
 
+  // REGISTERED FROM THE RENDER PATH, NOT AT LOAD. "Clicking buy does nothing"
+  // survived two fixes with the button proven present (the owner ran
+  // querySelectorAll('[data-wp-buy]').length and got 1), proven visible, and
+  // the handler proven to log any throw -- and nothing in the portal swallows
+  // the click. That leaves a listener that never registered: a bare
+  // document.addEventListener at the top level of a 34,000-line file runs only
+  // if evaluation reaches that line, and this file has a documented history of
+  // a load-time throw killing every statement below it.
+  check("the wiring is a function, not a bare top-level statement",
+    /function wpWireBuyButtons\(\)/.test(code));
+  check("called from the one path the portal is drawn by",
+    /_wpStoreError = results\[4\][\s\S]{0,200}wpWireBuyButtons\(\);/.test(code));
+  check("and it is idempotent, or the watch timer stacks a listener a minute",
+    /if \(_wpBuyWired\) return;/.test(code) && /_wpBuyWired = true;/.test(code));
+  check("it says so in the console, so the next report is conclusive",
+    /buy buttons wired/.test(code));
+
   // CAPTURE PHASE. A bubble listener on document is last in line: anything
   // calling stopPropagation on an ancestor wins, and the portal has tap and
   // swipe handlers on the card shell. Reported as "clicking buy does nothing"

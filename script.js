@@ -18007,7 +18007,35 @@
         // throws and takes the whole suite down with it. The guard costs
         // nothing in a browser and keeps the listener next to the panel it
         // serves rather than exiled to the bottom of the file.
-        if (typeof document !== 'undefined' && document.addEventListener) {
+        /** Registered from the portal's render path, not at load. See below. */
+        let _wpBuyWired = false;
+
+        /**
+         * Wire the Buy buttons.
+         *
+         * CALLED FROM THE RENDER PATH RATHER THAN RUN AT LOAD, after "clicking
+         * buy does nothing" survived two fixes. By then the button was proven
+         * present -- the owner ran
+         * `document.querySelectorAll('[data-wp-buy]').length` and got 1 -- and
+         * proven visible, and the handler proven to log any throw. Nothing in
+         * the portal calls stopPropagation and the stack's pointerdown
+         * explicitly skips controls, so no click was being swallowed either.
+         * That leaves a listener that was never registered: a bare
+         * `document.addEventListener` at the top level of a 34,000-line file
+         * runs only if evaluation reaches that line, and this file has a
+         * documented history of a load-time throw killing every statement
+         * below it.
+         *
+         * Hooked into wpPollPassOnce instead, which runs on every portal load
+         * AND on the watch timer, so the listener exists whenever there is a
+         * store on screen to click. Idempotent via the flag: re-registering on
+         * every poll would stack up a listener a minute.
+         */
+        function wpWireBuyButtons() {
+            if (_wpBuyWired) return;
+            if (typeof document === 'undefined' || !document.addEventListener) return;
+            _wpBuyWired = true;
+            console.log('[store] buy buttons wired');
         // CAPTURE PHASE, and a visible failure.
         //
         // Reported 2026-09-16: "clicking buy does nothing". The button and its
@@ -20306,6 +20334,9 @@
             _wpStoreError = results[4].status === 'rejected'
                 ? ((results[4].reason && results[4].reason.message) || 'Could not load')
                 : null;
+            // Wire the Buy buttons here rather than at load. Idempotent, and
+            // this is the one path the portal is ever drawn by.
+            wpWireBuyButtons();
 
             if (!pass) {
                 const stack = wpById('wpStack');
