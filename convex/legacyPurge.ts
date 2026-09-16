@@ -754,6 +754,41 @@ export const rosterTeacherSearch = internalQuery({
 });
 
 /** How complete is the mirrored Entra directory, and how old? Read-only. */
+/** Find a person in the Entra directory mirror by name or address. Read-only. */
+export const directoryFind = internalQuery({
+  args: { q: v.string() },
+  handler: async (ctx, { q }) => {
+    const want = String(q ?? "").trim().toLowerCase();
+    if (want.length < 3) throw new Error("give me at least three characters");
+    // THE FIELDS THIS TABLE ACTUALLY HAS: email, name, jobTitle, department,
+    // searchText. My first version read displayName / mail /
+    // userPrincipalName / givenName / surname -- Microsoft Graph's names, none
+    // of which are stored here -- so every search returned zero and "Jason
+    // Marin is in none of the four sources" was a false negative. The same
+    // mistake as keying teachers by `id` and `username` earlier today. The
+    // table already carries `searchText` for exactly this, lowercased
+    // "name email jobtitle".
+    const rows = await ctx.db.query("entraDirectory").collect();
+    const hit = (r: any) => {
+      const blob = String(r.searchText ?? "").toLowerCase() + " " +
+        [r.name, r.email, r.jobTitle, r.department]
+          .map((v) => String(v ?? "").toLowerCase()).join(" ");
+      return want.split(/\s+/).every((w) => blob.includes(w));
+    };
+    const found = (rows as any[]).filter(hit);
+    return {
+      directorySize: rows.length,
+      matched: found.length,
+      people: found.slice(0, 12).map((r) => ({
+        name: r.name ?? null,
+        email: r.email ?? null,
+        jobTitle: r.jobTitle ?? null,
+        department: r.department ?? null,
+      })),
+    };
+  },
+});
+
 export const directoryHealth = internalQuery({
   args: {},
   handler: async (ctx) => {

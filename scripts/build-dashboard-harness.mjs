@@ -272,6 +272,12 @@ const header = liftHeader();
 
 const stamp = `script.js ${(stat.size / 1024).toFixed(0)}KB, modified ${stat.mtime.toISOString()}`;
 
+// THE REAL STYLESHEETS, READ AT BUILD TIME. Inlined into every frame; see the
+// note on f.srcdoc for why linking them is not safe here.
+const sheets = ['styles.css', 'wildcat-motion.css', 'wildcat-ui.css']
+  .map((f) => '/* ===== ' + f + ' ===== */\n' + readFileSync(join(root, f), 'utf8'))
+  .join('\n');
+
 const page = `<!doctype html>
 <html lang="en">
 <head>
@@ -303,6 +309,7 @@ const page = `<!doctype html>
 const STATES = ${JSON.stringify(STATES)};
 ${PIECES}
 
+const SHEETS = ${JSON.stringify(sheets)};
 const grid = document.getElementById('grid');
 STATES.forEach(function (s, i) {
   const cell = document.createElement('div');
@@ -314,17 +321,30 @@ STATES.forEach(function (s, i) {
   grid.appendChild(cell);
 
   f.srcdoc = '<!doctype html><html><head><meta charset="utf-8">' +
-    // ALL THREE SHEETS, IN THE ORDER index.html LOADS THEM. The harness used
-    // to link styles.css alone, which is not what the app serves: index.html
-    // also loads wildcat-motion.css and wildcat-ui.css, and wildcat-ui.css is
-    // where every --wu-* token lives. A rule written as var(--wu-blue) with no
-    // fallback therefore resolved to NOTHING in here while rendering correctly
-    // in the app, so the harness showed unstyled panels and a white button on a
-    // white card for CSS that was fine. A harness that loads a different
-    // stylesheet than the page is testing a page that does not exist.
-    '<link rel="stylesheet" href="styles.css">' +
-    '<link rel="stylesheet" href="wildcat-motion.css">' +
-    '<link rel="stylesheet" href="wildcat-ui.css"></head>' +
+    // ALL THREE SHEETS, IN THE ORDER index.html LOADS THEM, AND INLINED.
+    //
+    // The harness used to link styles.css alone, which is not what the app
+    // serves: index.html also loads wildcat-motion.css and wildcat-ui.css, and
+    // wildcat-ui.css is where every --wu-* token lives. A rule written as
+    // var(--wu-blue) with no fallback therefore resolved to NOTHING in here
+    // while rendering correctly in the app, so the harness showed unstyled
+    // panels and a white button on a white card for CSS that was fine. A
+    // harness that loads a different stylesheet than the page is testing a
+    // page that does not exist.
+    //
+    // THEN IT HAPPENED AGAIN, DIFFERENTLY, ON 2026-09-16. These are srcdoc
+    // iframes, and srcdoc resolves a relative URL against the PARENT
+    // document's base -- so opened anywhere without a real base URL (a preview
+    // pane serving a snapshot, a data: URL, a copy mailed to somebody) all
+    // three links resolve to nothing and every frame renders with
+    // document.styleSheets.length of zero. It looks like a layout, so it gets
+    // measured: I read a panel's position off an unstyled page and nearly
+    // reported it as where the store sits on a Chromebook.
+    //
+    // Inlined at build time, so the frame carries its own styles and the file
+    // is correct from any origin. The cost is a fatter harness; the benefit is
+    // that it cannot quietly show you a page that is not the app.
+    '<style>' + SHEETS + '</style></head>' +
     '<body><div id="studentPassView" class="wp-root' + (s.wide ? ' wp-wide' : '') + '">' +
       '<div class="wp-shell">' +
         ${JSON.stringify(header)} +

@@ -417,7 +417,43 @@ export function planPatch(
     const incoming = fields[f];
     if (!Array.isArray(incoming)) continue;
     const pruned = pruneHistoryArray(incoming, historyCutoff) as unknown[];
-    if (pruned.length === incoming.length) continue; // nothing stale: replace, as before
+
+    // A NON-EMPTY HISTORY IS UNIONED, NEVER REPLACED. THE COUNTERS' RULE,
+    // APPLIED TO HISTORY: a browser may ADD to a student's history and may not
+    // decide what it consists of.
+    //
+    // I scoped this to "only when something stale was pruned" on 2026-09-15 and
+    // wrote that every other save "keeps the plain replace it has always had".
+    // That was wrong, and it was measured wrong within the day.
+    // distributeCashTransactions (script.js:29765) rebuilds every student's
+    // array from whatever `cashTransactions` the saving tab holds -- on load and
+    // after every save -- so one tab with a short ledger rewrites all 620
+    // records. On 2026-09-16 the arrays were repaired to 1,094 rows at 17:48 and
+    // were down to SIX by 18:14: not "can be undone by a stale tab" but undone
+    // continuously, while a teacher watched the dashboard fall.
+    //
+    // NOTHING SHRINKS A STORED HISTORY. NOT EVEN TO EMPTY.
+    //
+    // I exempted the empty array this afternoon, reasoning that the year-end
+    // roll-over (script.js:27645) clears these deliberately and sends an empty
+    // array to say so -- "emptiness is a decision, brevity is an accident".
+    // That sentence was wrong within three hours. A FAILED LOAD PRODUCES
+    // EMPTINESS: a tab that could not read cash_tx_* at all has an empty
+    // `cashTransactions`, distributeCashTransactions writes `[]` onto all 620
+    // students from it, and my exception honoured that as a decision. The
+    // arrays went from 1,096 rows to SEVEN while the ledger grew normally to
+    // 1,469. The one shape I exempted is the exact shape the bug takes.
+    //
+    // So a browser may only ever ADD. Clearing a history is an administrative
+    // act with a backup step, and it belongs in a server mutation that says so
+    // -- legacyPurge:zeroAllStudentCash already does exactly this, counters and
+    // arrays together, and the year-end roll should call it rather than asking
+    // a save to infer intent from an absence.
+    if (!Array.isArray(row[f]) || (row[f] as unknown[]).length === 0) {
+      // Nothing stored yet: the incoming rows are all there is.
+      fields[f] = pruned;
+      continue;
+    }
     fields[f] = unionHistoryRows(row[f], pruned);
   }
   // NO DELTA, NO COUNTERS. A record that cannot say how much IT moved a

@@ -460,15 +460,28 @@ console.log("\n-- the third write path: per-student history arrays --");
   check("and re-sending a row the server has writes nothing",
     !("wildcatCashTransactions" in resend));
 
-  // AND THE YEAR-END ROLL STILL EMPTIES THEM. script.js:27645 clears these
-  // arrays on purpose after archiving to a backup. Its array is already empty
-  // before pruning, so nothing is pruned, so the replace stands -- which is
-  // why the union is conditional on having actually removed something.
+  // A SAVE CANNOT CLEAR A HISTORY AT ALL, and the empty array is the case that
+  // proves it. I exempted emptiness on 2026-09-16 for the year-end roll --
+  // "emptiness is a decision, brevity is an accident" -- and a tab that failed
+  // to read the ledger wrote `[]` onto all 620 students through the exemption
+  // within three hours, taking 1,096 rows to seven. A FAILED LOAD PRODUCES
+  // EMPTINESS. Clearing is an administrative act with a backup step and
+  // belongs in legacyPurge:zeroAllStudentCash, which does counters and arrays
+  // together and cannot be reached by a browser.
   const roll = planPatch(storedToday, {
     id: "1", wildcatCashTransactions: [],
   }, STUDENT_WRITABLE, CUT);
-  check("an intentional clear is still a clear",
-    Array.isArray(roll.wildcatCashTransactions) && roll.wildcatCashTransactions.length === 0);
+  check("an empty array cannot erase a stored history",
+    !("wildcatCashTransactions" in roll)
+    || roll.wildcatCashTransactions.length === storedToday.wildcatCashTransactions.length);
+
+  // A student with NOTHING stored still gets their first rows; the rule is
+  // about shrinking, not about writing.
+  const firstEver = planPatch({ legacyId: "1", studentNumber: "1" }, {
+    id: "1", wildcatCashTransactions: rows("2026-09-14T16:00:00Z"),
+  }, STUDENT_WRITABLE, CUT);
+  check("a first row still lands on an empty record",
+    firstEver.wildcatCashTransactions.length === 1);
 
   // Rows with no id are keyed by content, so the union neither duplicates a
   // re-send nor collapses two different awards in the same second.
@@ -486,6 +499,40 @@ console.log("\n-- the third write path: per-student history arrays --");
   check("id-less rows union by content rather than by position",
     noIds.wildcatCashTransactions.length === 2
     && noIds.wildcatCashTransactions.map((r) => r.amount).join(",") === "100,250");
+
+  // A SHORT TAB CANNOT SHRINK A HISTORY, which is the rule the 2026-09-16
+  // collapse needed. The arrays were repaired to 1,094 rows at 17:48 and were
+  // down to SIX by 18:14, because distributeCashTransactions rebuilds every
+  // student's array from whatever the saving tab holds and one tab held almost
+  // nothing.
+  const fat = {
+    legacyId: "1", studentNumber: "1",
+    wildcatCashTransactions: rows(
+      "2026-09-16T16:00:00Z", "2026-09-16T16:01:00Z", "2026-09-16T16:02:00Z"),
+  };
+  const shortTab = planPatch(fat, {
+    id: "1", wildcatCashTransactions: [{ id: "t0", amount: 100, timestamp: "2026-09-16T16:00:00Z" }],
+  }, STUDENT_WRITABLE, CUT);
+  check("a tab sending one row does not erase the other two",
+    !("wildcatCashTransactions" in shortTab)
+    || shortTab.wildcatCashTransactions.length === 3);
+
+  // And it can still ADD. Append is the whole point; only shrinking is refused.
+  const adds = planPatch(fat, {
+    id: "1",
+    wildcatCashTransactions: [{ id: "new", amount: 100, timestamp: "2026-09-16T17:00:00Z" }],
+  }, STUDENT_WRITABLE, CUT);
+  check("but a new row is still added", adds.wildcatCashTransactions.length === 4);
+
+  // NOT EVEN TO EMPTY. See the note above: a tab that could not read the ledger
+  // sends empty arrays for every student, which is indistinguishable from a
+  // deliberate clear and was honoured as one.
+  const rollNow = planPatch(fat, {
+    id: "1", wildcatCashTransactions: [],
+  }, STUDENT_WRITABLE, CUT);
+  check("an empty array does not erase three stored rows",
+    !("wildcatCashTransactions" in rollNow)
+    || rollNow.wildcatCashTransactions.length === 3);
 
   // planSave threads it through, which is what appData:save actually calls.
   const plan = planSave([stored], [{
