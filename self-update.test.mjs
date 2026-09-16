@@ -23,6 +23,7 @@
 // Run: npm test
 
 import { readFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 
 const src = readFileSync(new URL("./wildcat-update.js", import.meta.url), "utf8");
 new Function(src)();
@@ -326,6 +327,41 @@ console.log("\nThe module is served, on the same version as the app");
   );
   // The service worker is the one that gets missed, because it is registered
   // from inline script rather than sitting in a <script src>.
+  // THE STAMP MUST MOVE WHEN THE CODE DOES, and nothing checked that until
+  // 2026-09-16, when a deploy was one pre-flight check away from being served
+  // to tabs that already held the stamp. Each would have fetched
+  // script.js?v=20260915a from its cache, compared it to its own APP_VERSION,
+  // found them equal, logged "up to date" and never armed again -- so a whole
+  // day's fixes would have reached nobody, silently, after a green push.
+  //
+  // Asked of git rather than of a hardcoded date: the question is not "is this
+  // stamp today's" but "has script.js changed since the stamp last did".
+  // Skipped where git is unavailable, because a check that cannot run must not
+  // fail a build for it.
+  {
+    let stampAt = null, scriptAt = null;
+    try {
+      const run = (cmd) => execSync(cmd, { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+      // -G, NOT -S. The pickaxe -S reports commits where the NUMBER OF
+      // OCCURRENCES of a string changed, and a stamp bump leaves the count of
+      // "script.js?v=" exactly as it was -- so -S skipped every bump ever made
+      // and pointed at the day the line was first written. -G matches a commit
+      // whose diff contains the pattern, which is what "the stamp moved" means.
+      stampAt = run(`git log -1 --format=%ct -G'script\\.js\\?v=' -- index.html`);
+      scriptAt = run(`git log -1 --format=%ct -- script.js`);
+    } catch (e) { /* no git, or a shallow clone: skipped below */ }
+
+    if (stampAt && scriptAt) {
+      check("the ?v= stamp moved no earlier than script.js last changed",
+        Number(stampAt) >= Number(scriptAt),
+        `stamp last moved ${new Date(Number(stampAt) * 1000).toISOString()}, ` +
+        `script.js last changed ${new Date(Number(scriptAt) * 1000).toISOString()} ` +
+        `-- bump all 26 stamps in index.html or open tabs will never fetch this`);
+    } else {
+      console.log("  SKIP  stamp freshness (git not available here)");
+    }
+  }
+
   const sw = html.match(/sw\.js\?v=([0-9a-z]+)/);
   check("the service worker is stamped", !!sw);
   check("and on the same version as everything else", sw && sw[1] === distinct[0]);
