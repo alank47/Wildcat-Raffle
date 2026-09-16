@@ -41,7 +41,13 @@ const KINDS = "query|mutation|action|internalQuery|internalMutation|internalActi
 const server = new Map(); // "module:name" -> kind
 for (const f of readdirSync("convex")) {
   if (!f.endsWith(".ts") || f.endsWith(".d.ts") || f.includes(".test.")) continue;
-  const src = readFileSync(`convex/${f}`, "utf8");
+  // COMMENTS STRIPPED FIRST. Without this, prose that spells out a function
+  // signature registers as a real export: a doc comment describing the wrapper
+  // a future deploy will add was reported below as "no caller for
+  // cashReversal:reverse", which is a phantom. A commented-out export is not
+  // exported, and a call written inside a comment is not a call.
+  const src = readFileSync(`convex/${f}`, "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   const mod = f.replace(/\.ts$/, "");
   for (const m of src.matchAll(new RegExp(`export const (\\w+)\\s*=\\s*(${KINDS})\\s*\\(`, "g"))) {
     server.set(`${mod}:${m[1]}`, m[2]);
@@ -68,7 +74,9 @@ const clientFiles = readdirSync(".")
   .concat(walk("hub/src"));
 const clientSrc = clientFiles.map((f) => readFileSync(f, "utf8")).join("\n");
 const serverSrc = readdirSync("convex").filter((f) => f.endsWith(".ts"))
-  .map((f) => readFileSync(`convex/${f}`, "utf8")).join("\n");
+  .map((f) => readFileSync(`convex/${f}`, "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, ""))
+  .join("\n");
 
 // A call site as the no-build app writes it: convexQuery('module:fn', ...).
 const stringCalls = new Map(); // "module:fn" -> how it was called

@@ -196,6 +196,39 @@ export default defineSchema({
     // Load a window, newest first, without reading the whole table.
     .index("by_timestamp", ["timestamp"]),
 
+  /**
+   * One row per reversed cash transaction. THE register, and the only thing
+   * that decides whether a transaction has been reversed already.
+   *
+   * WHY NOT `tombstones`, which an adversarial review recommended reusing.
+   * applyTombstonesToLocalState (script.js:1099) builds a Set of every
+   * tombstoned entryId IGNORING `type`, and filters both ticketHistory and
+   * auditLog against it. Putting transaction ids in that table would teach the
+   * client to ERASE the original row -- and a tombstone means "this is gone",
+   * while a reversal means the exact opposite: the original stands, and here is
+   * the entry that cancels it. On a school discipline record those are not
+   * interchangeable. A separate table also needs no client loader or applier at
+   * all, because "is this reversed" is derived from the reversal row's
+   * `reversesTxnId` in the ledger the client already holds.
+   *
+   * WHY IT IS INDEXED ON originalTxnId. The index is the idempotency key: read
+   * it and write it inside one mutation and a double-tap cannot produce two
+   * refunds. legacyPurge:reverseRefund, the CLI tool that predates this, has no
+   * such key and would happily reverse the same row twice.
+   */
+  cashReversals: defineTable({
+    originalTxnId: v.string(),
+    reversalTxnId: v.string(),
+    studentId: v.string(),
+    weekKey: v.string(),
+    amount: v.number(),          // the reversal's amount, i.e. -original
+    counterDelta: v.any(),
+    reversedBy: v.string(),
+    reversedByEmail: v.string(),
+    reason: v.string(),
+    reversedAt: v.string(),
+  }).index("by_originalTxnId", ["originalTxnId"]),
+
   // Deletions are recorded, not erased, so a restored backup cannot silently
   // resurrect a removed entry. Carried across from the Firestore design.
   tombstones: defineTable({
