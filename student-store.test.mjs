@@ -144,6 +144,18 @@ console.log("\n-- buying: one token per press, and no price from the browser --"
   // against nothing. A slice whose end precedes its start is not a test.
   const buyAt = code.indexOf("let _wpBuyInFlight");
   const buy = code.slice(buyAt, buyAt + 4000);
+  // THE BUTTON MUST LOOK PRESSABLE ON A WHITE CARD. .wp-btn is the wallet's
+  // button -- rgba(255,255,255,0.16) with color:inherit -- which on the light
+  // desk view is dark text on white with no chrome at all: the word "Buy",
+  // indistinguishable from the text beside it. A control nobody can see is a
+  // control nobody clicks, which is how "clicking buy does nothing" starts.
+  check("the buy button does not wear the dark wallet's button class",
+    !/class="wp-btn wp-buy"/.test(code));
+  check("and .wp-buy carries its own visible chrome",
+    /\.wp-buy \{[^}]*background: #2E7D52/.test(css) && /\.wp-buy \{[^}]*color: #fff/.test(css));
+  check("with a focus ring, since it is reachable by keyboard",
+    /\.wp-buy:focus-visible/.test(css));
+
   check("the buy button is delegated, so a re-render keeps working",
     /closest\('\[data-wp-buy\]'\)/.test(buy));
 

@@ -17957,7 +17957,7 @@
                 // The bar is the honest part of this panel for most students.
                 const pct = Math.round(Math.max(0, Math.min(1, it.progress == null ? 0 : it.progress)) * 100);
                 const action = it.canBuy
-                    ? '<button type="button" class="wp-btn wp-buy"' +
+                    ? '<button type="button" class="wp-buy"' +
                       ' data-wp-buy="' + wpEsc(String(it.id)) + '"' +
                       ' data-wp-buy-name="' + wpEsc(String(it.name)) + '"' +
                       ' data-wp-buy-cost="' + wpEsc(String(it.cost)) + '">Buy</button>'

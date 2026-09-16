@@ -7338,6 +7338,29 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     display: block; max-width: 210px; color: #8892a0;
     font-size: 12px; line-height: 1.35; overflow-wrap: anywhere;
 }
+/* THE BUY BUTTON HAS TO LOOK LIKE A BUTTON ON A WHITE CARD.
+   .wp-btn is the wallet's button: `background: rgba(255,255,255,0.16)` with
+   `color: inherit`, which is right on the dark phone view and renders as dark
+   text on a white desk card with NO button chrome at all -- the word "Buy",
+   indistinguishable from the text beside it. Reported as "clicking buy does
+   nothing", and a control nobody can see is a control nobody clicks.
+   The desk view's own convention for a real button is .wp-btn-solid; this
+   gives .wp-buy that treatment directly so it reads as pressable in both
+   views without depending on which classes a call site remembered. */
+.wp-buy {
+    flex: 0 0 auto;
+    min-height: 38px;
+    padding: 9px 18px;
+    border: 0; border-radius: 9px;
+    font: 700 14px/1 inherit;
+    cursor: pointer;
+    color: #fff;
+    background: #2E7D52;
+    -webkit-tap-highlight-color: transparent;
+}
+.wp-buy:hover { background: #256641; }
+.wp-buy:active { transform: scale(.98); }
+.wp-buy:focus-visible { outline: 2px solid #2E7D52; outline-offset: 2px; }
 .wp-buy[disabled] { opacity: .6; }
 
 @media (max-width: 999px) {
