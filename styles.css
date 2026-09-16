@@ -2983,7 +2983,7 @@ body {
 /* Award and deduct, on the Accounts cards. Same geometry as .btn-sm-blue so
    the three read as one set of controls; the colours are the app's cash green
    and the referral red already used for a negative amount elsewhere. */
-.btn-sm-green, .btn-sm-red {
+.btn-sm-green, .btn-sm-red, .btn-sm-grey {
     padding: 10px 13px !important; font-size: 13px !important;
     border-radius: 7px; font-weight: 700; background-image: none !important;
     border: none; color: #fff !important; cursor: pointer; width: 100%;
@@ -2991,6 +2991,11 @@ body {
 .btn-sm-green { background: #2E7D52 !important; }
 .btn-sm-green:hover { background: #26694a !important; }
 .btn-sm-red   { background: #B3392F !important; }
+/* THE CORRECTION BUTTON, admin-only. Deliberately grey rather than red: it sits
+   directly under Add Cash and Remove Cash, and a third coloured button reads as
+   a third way to move money. Correcting a mistake is not an award. */
+.btn-sm-grey  { background: #6E7885 !important; }
+.btn-sm-grey:hover { background: #5b6470 !important; }
 .btn-sm-red:hover { background: #97302a !important; }
 
 /* The Accounts card is a control now: the whole card opens that student's
@@ -3040,6 +3045,21 @@ body {
     color: #4A535F; font-size: 13px; overflow-wrap: anywhere;
 }
 .chr-amount { font-size: 19px; font-weight: 700; white-space: nowrap; text-align: right; }
+
+/* THE REVERSAL PANEL. Same row as the history dialog with one more column for
+   the action, so the two lists read as the same thing with a button added
+   rather than as two different screens. */
+.cash-history-row--act { grid-template-columns: 1fr auto auto; }
+.chr-action { display: flex; align-items: center; min-width: 0; }
+.chr-why {
+    display: block; max-width: 220px; color: #8892a0; font-size: 12px;
+    line-height: 1.35; overflow-wrap: anywhere;
+}
+.chr-reversed {
+    margin-top: 6px; padding: 6px 8px; border-radius: 6px;
+    background: #F2F6FB; border-left: 2px solid #2F67A7;
+    color: #40566F; font-size: 12.5px; overflow-wrap: anywhere;
+}
 .chr-up   { color: #2E7D52; }
 .chr-down { color: #B3392F; }
 .chr-flat { color: #8892a0; }
@@ -3291,6 +3311,11 @@ body {
 @media (max-width: 620px) {
     .cash-history-totals { grid-template-columns: repeat(2, 1fr); }
     .cash-history-row { grid-template-columns: 1fr; }
+    /* The action column goes under the text too, or the Reverse button squeezes
+       the behaviour name into a two-character column. */
+    .cash-history-row--act { grid-template-columns: 1fr; }
+    .chr-action { margin-top: 10px; }
+    .chr-why { max-width: none; }
     /* On a phone the amount moves under the text and sits left, rather than
        being stranded alone on its own line at the right. The row gap is meant
        for the two-column layout, so it is closed up here. */

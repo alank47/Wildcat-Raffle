@@ -29,7 +29,9 @@
     'reward_redemption',
     'reward_fulfilled',
     'reward_cancelled',
-    'reset_all_student_cash'
+    'reset_all_student_cash',
+    'cash_reversal_credit',
+    'cash_reversal_debit'
   ];
 
   var LABELS = {
@@ -38,7 +40,16 @@
     reward_redemption:      { label: 'Reward Redeemed', icon: '🎁', cls: 'act-redeem', sign: -1 },
     reward_fulfilled:       { label: 'Reward Given',    icon: '✅', cls: 'act-redeem', sign: 0 },
     reward_cancelled:       { label: 'Reward Cancelled',icon: '↩️', cls: 'act-other',  sign: 1 },
-    reset_all_student_cash: { label: 'System Reset',    icon: '🔄', cls: 'act-reset',  sign: 0 }
+    reset_all_student_cash: { label: 'System Reset',    icon: '🔄', cls: 'act-reset',  sign: 0 },
+    // A REVERSAL, IN TWO ACTIONS, and the split is what makes the money render.
+    // `describe()` computes `signed = meta.sign * Math.abs(amount)` off this
+    // static map, so one action would need sign 0 and every reversal would read
+    // "+$0" -- the same trap the `null, never 0` note above warns about.
+    // Which one is written is decided from the ORIGINAL's sign, server-side:
+    // reversing a deduction hands money back (credit), reversing an award takes
+    // it back (debit).
+    cash_reversal_credit:   { label: 'Reversed (refunded)', icon: '↩️', cls: 'act-award',  sign: 1 },
+    cash_reversal_debit:    { label: 'Reversed (taken back)', icon: '↩️', cls: 'act-deduct', sign: -1 }
   };
 
   function str(v) { return String(v == null ? '' : v).trim(); }

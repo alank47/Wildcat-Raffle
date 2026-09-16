@@ -1361,6 +1361,80 @@ export const classmateSignIns = internalQuery({
   },
 });
 
+/**
+ * Find a name anywhere it appears: students, staff, and the cash ledger's own
+ * copies of both. Read-only.
+ *
+ * WHY THE LEDGER IS SEARCHED SEPARATELY. A cash row carries `studentName` and
+ * `teacherName` as text, stamped when it was written. A name that matches
+ * there but not in `students` means either a spelling difference or a record
+ * that has since changed -- and a name reported by a human ("chamberlain",
+ * "breonny vasquez") will not always be spelled the way the roster spells it.
+ * Reporting "no such student" from one table is how you tell somebody their
+ * child does not exist.
+ */
+export const findName = internalQuery({
+  args: { q: v.string() },
+  handler: async (ctx, { q }) => {
+    const want = String(q ?? "").trim().toLowerCase();
+    if (want.length < 3) throw new Error("give me at least three characters");
+    const words = want.split(/\s+/).filter(Boolean);
+    const hit = (full: string) => {
+      const f = full.toLowerCase();
+      return words.every((w) => f.includes(w)) || words.some((w) => w.length > 3 && f.includes(w));
+    };
+
+    const students = await ctx.db.query("students").collect();
+    const studentHits = (students as any[])
+      .filter((s) => hit(`${s.firstName ?? ""} ${s.lastName ?? ""}`))
+      .map((s) => ({
+        name: `${s.firstName ?? ""} ${s.lastName ?? ""}`.trim(),
+        studentNumber: s.studentNumber ?? null,
+        appId: String(s.legacyId ?? s._id),
+        grade: s.grade ?? null,
+        balance: s.wildcatCashBalance ?? null,
+        arrayRows: Array.isArray(s.wildcatCashTransactions) ? s.wildcatCashTransactions.length : 0,
+      }));
+
+    const teachers = await ctx.db.query("teachers").collect();
+    const staffHits = (teachers as any[])
+      .filter((t) => hit(String(t.name ?? "")))
+      .map((t) => ({
+        name: t.name, email: t.email, role: t.role,
+        appId: String(t.legacyId ?? t._id),
+      }));
+
+    // The ledger's own text copies.
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const tx = (mirror as any[]).filter((r) => String(r.doc ?? "").startsWith("cash_tx_"));
+    const asStudent = tx.filter((r) => hit(String(r.payload?.studentName ?? "")));
+    const asTeacher = tx.filter((r) => hit(String(r.payload?.teacherName ?? "")));
+
+    const row = (r: any) => ({
+      txnId: r.payload?.id ?? null,
+      at: r.payload?.timestamp ?? null,
+      student: r.payload?.studentName ?? null,
+      studentId: r.payload?.studentId ?? null,
+      teacher: r.payload?.teacherName ?? null,
+      amount: r.payload?.amount ?? null,
+      kind: r.payload?.kind ?? null,
+      behavior: r.payload?.behaviorName ?? null,
+      notes: r.payload?.notes ?? null,
+    });
+
+    return {
+      query: q,
+      students: studentHits,
+      staff: staffHits,
+      ledgerRowsNamingThemAsStudent: asStudent.length,
+      ledgerRowsNamingThemAsTeacher: asTeacher.length,
+      distinctStudentNamesInLedger: [...new Set(asStudent.map((r: any) => String(r.payload?.studentName ?? "")))],
+      distinctTeacherNamesInLedger: [...new Set(asTeacher.map((r: any) => String(r.payload?.teacherName ?? "")))],
+      sampleAsStudent: asStudent.slice(0, 12).map(row),
+    };
+  },
+});
+
 export const studentSignInCase = internalQuery({
   args: { name: v.optional(v.string()), studentNumber: v.optional(v.string()) },
   handler: async (ctx, { name, studentNumber }) => {

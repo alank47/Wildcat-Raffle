@@ -451,8 +451,28 @@
                 attemptedVersion: sessionStorage.getItem('wcUpdateAttempt'),
                 attemptedAt: Number(sessionStorage.getItem('wcUpdateAttemptAt')),
                 now: Date.now(),
-                savePending: (typeof _saveQueue !== 'undefined' && _saveQueue)
-                    ? _saveQueue.isPending() : false,
+                // BOTH KINDS OF SAVE IN FLIGHT, not just the queued one.
+                //
+                // This read `_saveQueue.isPending()` alone, and roughly 84 call
+                // sites call saveData() DIRECTLY rather than through the queue
+                // (flushSaves' own note below says so). During one of those the
+                // queue is clean, so savePending was false, screenHasUnfinishedWork
+                // is false too once the form has cleared, and a tab going into
+                // the background reloaded straight through an in-flight
+                // appData:save and the legacy slice writes that follow it.
+                //
+                // The loss is silent and the record is gone: `detentions.push(d);
+                // saveData();` at ~31990 is un-awaited, the form clears
+                // immediately, and the localStorage backup inside saveData is
+                // written near the END of the sequence, so there is no second
+                // copy either. No error, no toast, no unsaved-work bar --
+                // just a detention that never happened.
+                //
+                // `isSyncing` is the flag that actually tracks a direct save,
+                // maintained at 3405 and cleared in saveData's finally.
+                savePending: ((typeof _saveQueue !== 'undefined' && _saveQueue)
+                    ? _saveQueue.isPending() : false)
+                    || (typeof isSyncing !== 'undefined' && isSyncing === true),
                 busy: screenHasUnfinishedWork(),
                 hidden: document.visibilityState === 'hidden',
                 // How long this tab has known it is out of date. After the
@@ -798,6 +818,64 @@
             return 'at:' + String((row && row.timestamp) || '') + '|' +
                    String((row && row.amount) || '') + '|' +
                    String((row && (row.behaviorId || row.behaviorName)) || '');
+        }
+
+        // ============================================================
+        // REVERSALS, ON THE READ SIDE
+        // ============================================================
+        //
+        // A reversal is a NEW ledger row carrying `kind: 'reversal'` and
+        // `reversesTxnId` naming the row it cancels. Nothing is deleted and the
+        // original is never annotated -- distributeCashTransactions rebuilds
+        // every student's array from the ledger on each load, so a mark written
+        // onto the original would not survive a single reload.
+        //
+        // WHICH MEANS EVERY READER HAS TO DERIVE IT, and a reader that does not
+        // counts one mistake as two behaviours. That is the failure this pair of
+        // helpers exists to make cheap:
+        //
+        //   isCashBehaviourRow(t)  -> should this row count as a BEHAVIOUR?
+        //   reversedCashIds()      -> the set of originals that were reversed
+        //
+        // MONEY AND BEHAVIOUR ANSWER DIFFERENTLY, deliberately. A balance is
+        // the sum of every row INCLUDING both halves of a reversal -- that is
+        // what makes the arithmetic come out. A behaviour count must exclude
+        // both halves, because the award was withdrawn and the withdrawal is
+        // not itself a thing a child did. Anything summing dollars uses every
+        // row; anything counting events uses isCashBehaviourRow.
+
+        /** Ids of transactions a reversal row cancels. Derived, never stored. */
+        function reversedCashIds() {
+            // COMPUTED ON READ, not cached at load. pullCashWeek and
+            // recordCashTransaction both mutate `cashTransactions` after any
+            // load-time pass would have run, so a cached Set goes stale within
+            // seconds of somebody awarding cash.
+            const out = new Set();
+            const rows = (typeof cashTransactions !== 'undefined' && Array.isArray(cashTransactions))
+                ? cashTransactions : [];
+            for (const t of rows) {
+                const id = t && t.reversesTxnId;
+                if (id) out.add(String(id));
+            }
+            return out;
+        }
+
+        /**
+         * Is this row one of a child's behaviours, or is it bookkeeping?
+         *
+         * Excluded: a reversal row, a row that has been reversed, the
+         * `system_reset` rows a balance reset writes, and store refunds. Each is
+         * a correction or an administrative act rather than something a student
+         * did, and counting any of them is how a report starts disagreeing with
+         * what the adults in the building remember.
+         */
+        function isCashBehaviourRow(t, reversedIds) {
+            if (!t) return false;
+            if (t.kind === 'reversal' || t.reversesTxnId) return false;
+            if (t.behaviorId === 'system_reset') return false;
+            if (String(t.behaviorId || '').startsWith('reward-refund:')) return false;
+            const ids = reversedIds || reversedCashIds();
+            return !ids.has(String(t.id || ''));
         }
 
         /**
@@ -19008,8 +19086,13 @@
             };
             // What a movement was for, when nobody typed a reason. The kind is
             // always known, so the row is never blank.
+            // 'reversal' IS HERE BECAUSE A CHILD READS THIS. Without it a
+            // reversal fell through to the literal string 'Wildcat Cash' on
+            // their own phone -- a line that moved their balance and did not
+            // say why. views_app.ts:444 passes `kind` straight through.
             const KIND = { award: 'Wildcat Cash awarded', deduct: 'Wildcat Cash deducted',
-                           redeem: 'Reward purchase' };
+                           redeem: 'Reward purchase',
+                           reversal: 'Correction by a teacher' };
 
             const hist = (cash && Array.isArray(cash.recent)) ? cash.recent : [];
             const txRows = hist.map(function (t) {
@@ -26484,10 +26567,14 @@
                 card.innerHTML = `
                     <div style="display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: 15px;">
                         <div style="flex: 1;">
-                            <div style="font-weight: 600; color: #333; margin-bottom: 5px;">${studentName}</div>
-                            <div style="color: #666; font-size: 14px; margin-bottom: 5px;">${txn.behaviorName}</div>
-                            <div style="color: #999; font-size: 13px;">${date}</div>
-                            ${txn.notes ? `<div style="color: #666; font-size: 13px; margin-top: 10px; font-style: italic;">Note: ${txn.notes}</div>` : ''}
+                            <!-- ESCAPED. A student's name comes from the SIS, a
+                                 behaviour name from an admin-editable list, and
+                                 a note is free text an adult typed in a hurry.
+                                 All three land in innerHTML. -->
+                            <div style="font-weight: 600; color: #333; margin-bottom: 5px;">${escapeHtml(String(studentName))}</div>
+                            <div style="color: #666; font-size: 14px; margin-bottom: 5px;">${escapeHtml(String(txn.behaviorName || ''))}</div>
+                            <div style="color: #999; font-size: 13px;">${escapeHtml(String(date))}</div>
+                            ${txn.notes ? `<div style="color: #666; font-size: 13px; margin-top: 10px; font-style: italic;">Note: ${escapeHtml(String(txn.notes))}</div>` : ''}
                         </div>
                         <div style="text-align: right;">
                             <div style="font-size: 24px; font-weight: 700; color: ${amountColor};">${txn.amount > 0 ? '+' : ''}$${txn.amount}</div>
@@ -26766,6 +26853,11 @@
                     <button class="btn btn-sm-blue" style="width:100%;" onclick="showStudentCashHistory('${escapeHtml(String(student.id))}')">
                         View full history
                     </button>
+                    ${cashReversalIsAdmin() ? `
+                    <button class="btn btn-sm-grey" style="width:100%;margin-top:8px;"
+                            onclick="event.stopPropagation();showStudentCashReversal('${escapeHtml(String(student.id))}')">
+                        Correct a mistake
+                    </button>` : ''}
                     ${recentHTML}
                 `;
 
@@ -26873,6 +26965,251 @@
         }
         window.showStudentCashHistory = showStudentCashHistory;
 
+        // ============================================================
+        // REVERSING A CASH TRANSACTION
+        // ============================================================
+        //
+        // WHY THIS IS ITS OWN PANEL and not a button inside the history dialog
+        // above. That dialog is built from AUDIT entries, and an audit entry
+        // carries no transaction id -- addToAuditLog keeps only `behavior` and
+        // `notes` from its `extra` and drops everything else (~7757). So there
+        // is nothing there for a Reverse button to point AT. This panel reads
+        // the ledger instead, where every row has its id.
+        //
+        // It also reads the LEDGER rather than the student's own
+        // wildcatCashTransactions array, because that array is a cache
+        // distributeCashTransactions rebuilds from whatever the saving tab
+        // held: measured on 2026-09-15 it was 249 rows short of the ledger. A
+        // Reverse button driven by the lagging copy would silently fail to
+        // offer the rows it had lost.
+
+        function cashReversalIsAdmin() {
+            return Boolean(currentUser &&
+                (currentUser.role === 'admin' || currentUser.role === 'superadmin'));
+        }
+
+        /** Newest-first list of a student's cash, each row reversible or not. */
+        async function showStudentCashReversal(studentId) {
+            if (!cashReversalIsAdmin()) {
+                showAlert('⚠️ Reversing a transaction is an admin action.');
+                return;
+            }
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+            if (!session) { showAlert('❌ Not signed in.'); return; }
+
+            let data;
+            try {
+                data = await auth.convexQuery('cashReversal:reversibleForStudent',
+                    { studentId: String(studentId) }, session.idToken);
+            } catch (e) {
+                showAlert('❌ Could not read the cash ledger: ' + (e && e.message ? e.message : e));
+                return;
+            }
+            const rows = (data && Array.isArray(data.transactions)) ? data.transactions : [];
+
+            const body = rows.length ? `
+                <ul class="cash-history">
+                    ${rows.map(r => {
+                        const d = r.timestamp ? new Date(r.timestamp) : null;
+                        const when = d && !isNaN(d)
+                            ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
+                              ', ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                            : '—';
+                        const amt = (typeof r.amount === 'number')
+                            ? (r.amount < 0 ? '−' : '+') + '$' + Math.abs(r.amount) : '—';
+                        const dir = (typeof r.amount !== 'number') ? 'flat' : (r.amount < 0 ? 'down' : 'up');
+                        // EVERY INTERPOLATION ESCAPED. A behaviour name, a
+                        // teacher's note and a reversal reason are all free
+                        // text typed by an adult and stored verbatim.
+                        // The row reuses the history dialog's classes -- chr-*
+                        // -- rather than inventing a parallel set, so a phone
+                        // collapses this list exactly as it collapses that one.
+                        const action = r.canReverse
+                            ? `<button type="button" class="btn btn-sm-red wc-reverse-btn"
+                                       data-wc-reverse="${escapeHtml(String(r.txnId))}"
+                                       data-wc-student="${escapeHtml(String(studentId))}"
+                                       data-wc-reverse-label="${escapeHtml(
+                                           (r.behaviorName || r.kind || 'cash') + '  ' + amt)}"
+                                >Reverse</button>`
+                            : `<span class="chr-why">${escapeHtml(String(r.why || ''))}</span>`;
+                        const already = r.reversal
+                            ? `<div class="chr-reversed">Reversed ${
+                                   escapeHtml(String(r.reversal.at || '').slice(0, 16))
+                               } by ${escapeHtml(String(r.reversal.by || ''))} &mdash; ${
+                                   escapeHtml(String(r.reversal.reason || ''))}</div>`
+                            : '';
+                        const stripe = r.kind === 'reversal' ? 'act-other'
+                            : (typeof r.amount === 'number' && r.amount < 0) ? 'act-deduct' : 'act-award';
+                        return `
+                            <li class="cash-history-row cash-history-row--act ${stripe}">
+                                <div class="chr-main">
+                                    <div class="chr-behavior">${
+                                        escapeHtml(String(r.behaviorName || r.kind || 'Wildcat Cash'))}</div>
+                                    <div class="chr-meta">${escapeHtml(when)}${
+                                        r.teacherName ? ' &middot; ' + escapeHtml(String(r.teacherName)) : ''}</div>
+                                    ${r.notes ? `<div class="chr-notes">${
+                                        escapeHtml(String(r.notes))}</div>` : ''}
+                                    ${already}
+                                </div>
+                                <div class="chr-amount chr-${dir}">${amt}</div>
+                                <div class="chr-action">${action}</div>
+                            </li>`;
+                    }).join('')}
+                </ul>`
+                : '<p style="color:#8892a0;text-align:center;padding:18px;">No cash movements on the ledger for this student.</p>';
+
+            _wcDialog({
+                kind: 'info',
+                title: escapeHtml(String(data.studentName || 'Student')),
+                body:
+                    `<p style="margin:0 0 10px;color:#8892a0;font-size:13px;">Balance $${
+                        escapeHtml(String(data.balance == null ? '—' : data.balance))}` +
+                    // THE TRUE TOTAL, not the page size. listReversible caps at
+                    // 50 rows; printing rows.length labelled the cap as the
+                    // student's whole ledger, so a child with 80 movements
+                    // appeared to have 50 and nobody could tell the list was
+                    // cut off.
+                    ` &middot; ${data.ledgerRows} ledger row${data.ledgerRows === 1 ? '' : 's'}` +
+                    (data.ledgerRows > rows.length
+                        ? ` &middot; showing the newest ${rows.length}` : '') +
+                    ` &middot; reversing never deletes anything</p>` + body,
+                buttons: [{ label: 'Close', value: true, cls: 'btn-primary' }],
+                wide: true
+            });
+        }
+        window.showStudentCashReversal = showStudentCashReversal;
+
+        /**
+         * One delegated listener for every Reverse button, on document.
+         *
+         * _wcDialog owns its own buttons and resolves on any `.wc-dialog-btn`
+         * click, so the row buttons deliberately carry a different class and
+         * are handled here instead. Delegation also survives the dialog being
+         * rebuilt after a successful reversal.
+         */
+        /**
+         * True while a reversal is being asked about or performed.
+         *
+         * NOT `btn.disabled`, which is what this used before the panel started
+         * closing itself ahead of the prompt: the button is detached from the
+         * document by then, so disabling it guards nothing. A fast double-click
+         * dispatches two events, and the second still matches via closest() on
+         * a detached node -- so without this flag it opens a second prompt over
+         * the first. The server is idempotent and would answer the second with
+         * alreadyReversed, so the cost is confusion rather than money; this
+         * makes it not happen at all.
+         */
+        let _cashReversalInFlight = false;
+
+        document.addEventListener('click', async function (ev) {
+            const btn = ev.target && ev.target.closest && ev.target.closest('[data-wc-reverse]');
+            if (!btn) return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            if (_cashReversalInFlight) return;
+            _cashReversalInFlight = true;
+            try {
+
+            const txnId = btn.getAttribute('data-wc-reverse');
+            const sid = btn.getAttribute('data-wc-student') || null;
+            const label = btn.getAttribute('data-wc-reverse-label') || 'this transaction';
+
+            // CLOSE THE PANEL BEFORE ASKING ANYTHING.
+            //
+            // _wcDialog has ONE host (#wcDialogRoot) and assigns innerHTML, so
+            // opening a second dialog over the first destroys the first's DOM
+            // while its promise is still pending: its keydown listener stays on
+            // document forever, its pushed history entry is never consumed, and
+            // _wcDialogDismiss still points at a dialog that no longer exists.
+            // Worse for the person using it, every path that is not a straight
+            // success -- cancel, an empty reason, a refusal, a network error --
+            // used to end on a blank screen with the panel gone.
+            //
+            // Dismissed properly instead, so the panel resolves and cleans up,
+            // and reopened afterwards on whichever path needs it.
+            if (_wcDialogDismiss) _wcDialogDismiss();
+
+            // A REASON, NOT A CONFIRMATION. "Are you sure?" buys nothing -- the
+            // answer is always yes and nothing is recorded. The reason is what
+            // a parent asking in March needs, and the server refuses without
+            // one, so asking here means that refusal is never shown.
+            const reason = await showPrompt(
+                'Why is this being reversed?\n' + label,
+                { placeholder: 'e.g. added to the wrong student', kind: 'question' });
+
+            const cleaned = (reason === false || reason == null) ? '' : String(reason).trim();
+            if (!cleaned) {
+                // Cancelled. Back to where they were rather than nowhere.
+                if (sid) showStudentCashReversal(sid);
+                return;
+            }
+            if (cleaned.length < 3) {
+                // SAID OUT LOUD. This returned silently, which reads as the
+                // button being broken. cashNoteVerdict makes the same argument
+                // about deduction notes: a rejected note has to say why.
+                await showAlert('⚠️ Give a real reason — it goes on the child\'s record.');
+                if (sid) showStudentCashReversal(sid);
+                return;
+            }
+
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+            if (!session) { await showAlert('❌ Not signed in.'); return; }
+
+            let res;
+            try {
+                res = await auth.convexMutation('cashReversal:reverse',
+                    { originalTxnId: txnId, reason: cleaned }, session.idToken);
+            } catch (e) {
+                await showAlert('❌ The reversal failed: ' + (e && e.message ? e.message : e));
+                if (sid) showStudentCashReversal(sid);
+                return;
+            }
+
+            if (!res || res.ok !== true) {
+                await showAlert('⚠️ ' + ((res && res.reason) || 'That transaction could not be reversed.'));
+                if (sid) showStudentCashReversal(sid);
+                return;
+            }
+
+            // THE SERVER MOVED THE MONEY, SO THIS TAB IS NOW BEHIND. Reloaded
+            // through reloadPreservingUnsavedWork rather than bare loadData():
+            // loadData() overwrites `students` with the server's counters, and
+            // a bare call discards any cash movement this tab has made but not
+            // yet confirmed. That existing helper snapshots the pending deltas
+            // and reapplies them on top -- it is the same sequence the stale-tab
+            // reload uses, for the same reason.
+            try {
+                if (typeof reloadPreservingUnsavedWork === 'function') {
+                    await reloadPreservingUnsavedWork();
+                } else if (typeof loadData === 'function') {
+                    await loadData();
+                }
+            } catch (e) { /* the message below still tells them what happened */ }
+            try { if (typeof updateAllDisplays === 'function') updateAllDisplays(); } catch (e) {}
+
+            // AWAITED, so the panel does not reopen over it. _wcDialog shares
+            // one host: reopening in the same tick destroyed this message
+            // before anyone could read it, which on the already-reversed path
+            // meant a second press reported nothing at all.
+            if (res.alreadyReversed) {
+                await showAlert('This was already reversed on ' +
+                    String(res.reversedAt || '').slice(0, 16) +
+                    ' by ' + (res.reversedBy || 'someone') + '.');
+            } else {
+                showSuccessToast('Reversed. Balance is now $' + res.balanceAfter);
+            }
+            // Reopened on the fresh data, so the row now reads as reversed.
+            if (sid) showStudentCashReversal(sid);
+            } finally {
+                // Released on EVERY path, including the early returns above and
+                // an exception from any of the awaits. A flag left set would
+                // make the button silently dead for the rest of the session.
+                _cashReversalInFlight = false;
+            }
+        });
+
         function filterStudentAccounts() {
             updateStudentAccounts();
         }
@@ -26889,8 +27226,16 @@
             
             // Behavior frequency
             // Same fix as My Activity: the ledger, not the dead global.
+            // "MOST COMMON BEHAVIORS" COUNTS BEHAVIOURS, so the bookkeeping is
+            // dropped: both halves of a reversal, the system_reset rows a
+            // balance reset writes, and store refunds. Without this the top of
+            // this chart fills up with "Reversed: Be Present" and every
+            // corrected mistake is counted twice -- once as the thing that did
+            // not happen and once as the correction.
+            const _behaviourReversedIds = reversedCashIds();
             const behaviorFreq = {};
             cashTransactions.forEach(txn => {
+                if (!isCashBehaviourRow(txn, _behaviourReversedIds)) return;
                 if (!behaviorFreq[txn.behaviorName]) {
                     behaviorFreq[txn.behaviorName] = { count: 0, total: 0 };
                 }
@@ -28046,17 +28391,32 @@
             let totalAwarded = 0;
             let totalDeducted = 0;
             
+            // A REVERSAL IS NOT A BEHAVIOUR ON EITHER OF THESE TILES.
+            //
+            // The gate below is `type === 'positive' || 'negative'`, and `type`
+            // is the SIGN of the row's own amount by design -- so a reversal row
+            // always passed it. Breonny Vazquez, reversed on 2026-09-15, then
+            // read as one positive behaviour AND one negative behaviour, and
+            // "Total Cash Deducted" reported $100 against a child whose
+            // wildcatCashDeducted counter is zero. Two panels further down this
+            // same tab -- Most Common Behaviors and the intervention table --
+            // already exclude those rows, so the tab disagreed with itself.
+            const _dashReversedIds = reversedCashIds();
             filteredStudents.forEach(student => {
                 if (!student.wildcatCashTransactions) return;
                 
                 student.wildcatCashTransactions.forEach(txn => {
                     // Check for positive or negative type (behavior transactions)
                     if (txn.type === 'positive' || txn.type === 'negative') {
+                        // The money still counts both halves: a reversal pair
+                        // nets to zero, so the dollar tiles keep reconciling
+                        // with the balances. Only the EVENT counts drop it.
+                        const isBehaviour = isCashBehaviourRow(txn, _dashReversedIds);
                         if (txn.amount > 0) {
-                            totalPositiveBehaviors++;
+                            if (isBehaviour) totalPositiveBehaviors++;
                             totalAwarded += txn.amount;
                         } else if (txn.amount < 0) {
-                            totalNegativeBehaviors++;
+                            if (isBehaviour) totalNegativeBehaviors++;
                             totalDeducted += Math.abs(txn.amount);
                         }
                     }
@@ -28108,36 +28468,56 @@
                 };
             });
             
-            // Aggregate data from all student transactions
-            students.forEach(student => {
-                if (student.wildcatCashTransactions && student.wildcatCashTransactions.length > 0) {
-                    student.wildcatCashTransactions.forEach(txn => {
-                        // Check for teacherId field (from Award Cash) OR addedBy/removedBy (from Add/Remove Cash)
-                        const teacherId = txn.teacherId || txn.addedBy || txn.removedBy;
-                        
-                        // Find teacher by ID or username (Add/Remove Cash uses username)
-                        let matchedTeacher = null;
-                        for (const teacher of teachers) {
-                            if (teacher.id === teacherId || teacher.username === teacherId) {
-                                matchedTeacher = teacher;
-                                break;
-                            }
-                        }
-                        
-                        if (!matchedTeacher || !teacherStats[matchedTeacher.id]) return;
-                        
-                        const stats = teacherStats[matchedTeacher.id];
-                        stats.totalInteractions++;
-                        stats.studentsImpacted.add(student.id);
-                        
-                        if (txn.type === 'positive') {
-                            stats.positiveCount++;
-                            stats.totalAwarded += Math.abs(txn.amount);
-                        } else if (txn.type === 'negative') {
-                            stats.negativeCount++;
-                            stats.totalDeducted += Math.abs(txn.amount);
-                        }
-                    });
+            // AGGREGATED FROM THE LEDGER, NOT FROM THE STUDENT RECORDS.
+            //
+            // This walked `students[].wildcatCashTransactions`, and that array
+            // is a CACHE: distributeCashTransactions (~29346) rebuilds it from
+            // whatever `cashTransactions` the saving tab happened to hold, so
+            // it tracks the least-informed tab rather than the database.
+            // Measured against production on 2026-09-15 it held 461 rows
+            // against the ledger's 710 -- this panel was silently 249 awards
+            // short, and the owner reported it as "it showed 423 yesterday and
+            // 405 today". The cash_tx_* ledger merges by id and cannot lose a
+            // row, so it is the only honest source for a count.
+            //
+            // AND REVERSALS ARE EXCLUDED, both halves. See isCashBehaviourRow:
+            // an award that was withdrawn is not a behaviour, and the
+            // withdrawal is not a second one. Without this a single mistake
+            // reads as two interactions and the admin who fixed it appears in
+            // the teacher table.
+            const reversedIds = reversedCashIds();
+            const ledgerRows = (typeof cashTransactions !== 'undefined' && Array.isArray(cashTransactions))
+                ? cashTransactions : [];
+
+            ledgerRows.forEach(txn => {
+                if (!isCashBehaviourRow(txn, reversedIds)) return;
+
+                // Check for teacherId field (from Award Cash) OR addedBy/removedBy (from Add/Remove Cash)
+                const teacherId = txn.teacherId || txn.addedBy || txn.removedBy;
+
+                // Matched on the app-facing id only. `teacher.username` is
+                // tested here in every version of this code and the column does
+                // not exist -- it was a Firestore-era key -- so that arm has
+                // never once matched. Left readable rather than pretending it
+                // works: toAppTeacher sets id = legacyId ?? _id, which is what
+                // a transaction records.
+                let matchedTeacher = null;
+                for (const teacher of teachers) {
+                    if (teacher.id === teacherId) { matchedTeacher = teacher; break; }
+                }
+
+                if (!matchedTeacher || !teacherStats[matchedTeacher.id]) return;
+
+                const stats = teacherStats[matchedTeacher.id];
+                stats.totalInteractions++;
+                if (txn.studentId) stats.studentsImpacted.add(txn.studentId);
+
+                if (txn.type === 'positive') {
+                    stats.positiveCount++;
+                    stats.totalAwarded += Math.abs(txn.amount);
+                } else if (txn.type === 'negative') {
+                    stats.negativeCount++;
+                    stats.totalDeducted += Math.abs(txn.amount);
                 }
             });
             
@@ -28215,7 +28595,18 @@
             }).join('');
         }
 
+        /**
+         * The reversed-id set for one intervention render.
+         *
+         * Derived ONCE per pass and shared by the predicate and the row
+         * renderer below, because the whole lesson of this panel is that those
+         * two must agree: they disagreed about `type` versus `kind` and put a
+         * child in a red table for spending her own money.
+         */
+        let _interventionReversedIds = null;
+
         function updateInterventionStudents() {
+            _interventionReversedIds = reversedCashIds();
             const tbody = document.getElementById('interventionStudentsTableBody');
             
             // Identify students needing intervention
@@ -28249,8 +28640,14 @@
                 // (script.js:27746), so a reset would otherwise read as a
                 // deduction of thousands against a child who did nothing.
                 // Administrative housekeeping is not a behaviour either.
+                // AND A WITHDRAWN DEDUCTION IS NOT ONE EITHER. isCashBehaviourRow
+                // drops both halves of a reversal: a child named in a red
+                // "needs intervention" table for money an adult already gave
+                // back is the same harm as Maria Agaton Colin being named for
+                // spending her own, and it is worse for being fixable.
                 const deductions = student.wildcatCashTransactions.filter(t =>
-                    t && t.kind === 'deduct' && t.behaviorId !== 'system_reset');
+                    t && t.kind === 'deduct' && t.behaviorId !== 'system_reset'
+                    && isCashBehaviourRow(t, _interventionReversedIds));
                 const negativeCount = deductions.length;
                 const balance = student.wildcatCashBalance || 0;
                 // SUMMED FROM THE SAME ROWS THE FLAG COUNTED. This printed
@@ -28288,9 +28685,11 @@
             tbody.innerHTML = flaggedStudents.map(student => {
                 // The same two figures as the predicate, from the same rows.
                 // See the comment on the filter above: `type` is the sign of
-                // the amount; `kind` is what actually happened.
+                // the amount; `kind` is what actually happened, and a reversed
+                // deduction is not counted at either site.
                 const deductions = student.wildcatCashTransactions.filter(t =>
-                    t && t.kind === 'deduct' && t.behaviorId !== 'system_reset');
+                    t && t.kind === 'deduct' && t.behaviorId !== 'system_reset'
+                    && isCashBehaviourRow(t, _interventionReversedIds));
                 const negativeCount = deductions.length;
                 const balance = student.wildcatCashBalance || 0;
                 const totalDeducted = deductions.reduce((n, t) => n + Math.abs(Number(t.amount) || 0), 0);
@@ -28337,26 +28736,25 @@
             const selectedType = document.getElementById('teacherInteractionFilterType').value;
             const searchText = document.getElementById('teacherInteractionFilterStudent').value.toLowerCase();
             
-            // Collect all transactions
-            const allTransactions = [];
-            students.forEach(student => {
-                if (student.wildcatCashTransactions) {
-                    student.wildcatCashTransactions.forEach(txn => {
-                        allTransactions.push({
-                            ...txn,
-                            studentId: student.id,
-                            studentName: `${student.firstName} ${student.lastName}`,
-                            grade: student.grade
-                        });
-                    });
-                }
-            });
-            
-            console.log('=== TEACHER INTERACTIONS DEBUG ===');
-            console.log('Total transactions:', allTransactions.length);
-            console.log('Sample transaction:', allTransactions[0]);
-            console.log('Teachers array:', teachers);
-            console.log('Current user:', currentUser);
+            // FROM THE LEDGER, matching the summary tiles above this table.
+            //
+            // This walked students[].wildcatCashTransactions while
+            // updateTeacherInteractions -- whose numbers sit directly above it
+            // -- now reads `cashTransactions`. Those two disagreed by 249 rows
+            // on 2026-09-15, so the table under a figure of 710 listed 461
+            // rows, with nothing to explain the gap.
+            const _detailReversedIds = reversedCashIds();
+            const _studentById = new Map((students || []).map(st => [String(st.id), st]));
+            const allTransactions = ((typeof cashTransactions !== 'undefined' && Array.isArray(cashTransactions))
+                ? cashTransactions : []).map(txn => {
+                    const st = _studentById.get(String(txn.studentId));
+                    return {
+                        ...txn,
+                        studentName: txn.studentName
+                            || (st ? `${st.firstName} ${st.lastName}` : 'Unknown'),
+                        grade: st ? st.grade : (txn.studentGrade || '—')
+                    };
+                });
             
             // Filter transactions
             let filteredTransactions = allTransactions.filter(txn => {
@@ -28370,9 +28768,15 @@
                     if (!matches) return false;
                 }
                 
-                // Filter by type
-                if (selectedType === 'positive' && txn.type !== 'positive') return false;
-                if (selectedType === 'negative' && txn.type !== 'negative') return false;
+                // Filter by type. A REVERSAL IS NEITHER: it carries `type` by
+                // sign like everything else, so filtering "Positive" used to
+                // pull in a reversal that handed money back and present it as
+                // an award. The dropdown has no reversal option, so it is
+                // simply excluded from both -- visible in the unfiltered list,
+                // never miscounted in a filtered one.
+                const isReversalRow = txn.kind === 'reversal';
+                if (selectedType === 'positive' && (isReversalRow || txn.type !== 'positive')) return false;
+                if (selectedType === 'negative' && (isReversalRow || txn.type !== 'negative')) return false;
                 
                 // Filter by student name
                 if (searchText && !txn.studentName.toLowerCase().includes(searchText)) return false;
@@ -28404,17 +28808,32 @@
                 const date = new Date(txn.timestamp);
                 const formattedDate = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
                 
-                const typeColor = txn.type === 'positive' ? '#2E7D52' : '#B3392F';
-                const typeBadge = txn.type === 'positive' ? 'Positive' : 'Negative';
-                const amountDisplay = txn.type === 'positive' ? `+$${Math.abs(txn.amount)}` : `-$${Math.abs(txn.amount)}`;
+                // THE BADGE SAYS WHAT THE ROW IS. `type` is the sign, so a
+                // reversal that handed $500 back read "Positive" in green --
+                // indistinguishable from an award for good behaviour. A
+                // reversal gets its own badge, and an original that has been
+                // reversed is marked so nobody acts on a withdrawn deduction.
+                const isReversalRow = txn.kind === 'reversal';
+                const wasReversed = !isReversalRow
+                    && _detailReversedIds.has(String(txn.id || ''));
+                const typeColor = isReversalRow ? '#2F67A7'
+                    : wasReversed ? '#6E7885'
+                    : txn.type === 'positive' ? '#2E7D52' : '#B3392F';
+                const typeBadge = isReversalRow ? 'Reversal'
+                    : wasReversed ? 'Reversed'
+                    : txn.type === 'positive' ? 'Positive' : 'Negative';
+                const amountDisplay = txn.amount >= 0 ? `+$${Math.abs(txn.amount)}` : `-$${Math.abs(txn.amount)}`;
                 
+                // EVERY CELL ESCAPED. A behaviour name and a student's name are
+                // free text, and a reversal reason is typed by an adult under
+                // pressure; all three reach innerHTML.
                 return `
-                    <tr>
-                        <td style="font-size: 13px; color: #666;">${formattedDate}</td>
-                        <td>${teacherName}</td>
-                        <td style="font-weight: 600;">${txn.studentName}</td>
-                        <td style="text-align: center;">${txn.grade}</td>
-                        <td>${txn.behaviorName || '-'}</td>
+                    <tr${wasReversed ? ' style="opacity:.62;"' : ''}>
+                        <td style="font-size: 13px; color: #666;">${escapeHtml(formattedDate)}</td>
+                        <td>${escapeHtml(String(teacherName))}</td>
+                        <td style="font-weight: 600;">${escapeHtml(String(txn.studentName))}</td>
+                        <td style="text-align: center;">${escapeHtml(String(txn.grade))}</td>
+                        <td>${escapeHtml(String(txn.behaviorName || '-'))}</td>
                         <td style="text-align: center;">
                             <span style="padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; background: ${typeColor}; color: white;">
                                 ${typeBadge}
@@ -28423,7 +28842,7 @@
                         <td style="text-align: center; color: ${typeColor}; font-weight: 700; font-size: 16px;">
                             ${amountDisplay}
                         </td>
-                        <td style="font-size: 13px;">${txn.notes || '-'}</td>
+                        <td style="font-size: 13px;">${escapeHtml(String(txn.notes || '-'))}</td>
                     </tr>
                 `;
             }).join('');
@@ -30006,8 +30425,30 @@
         /** Write everything outstanding NOW. For a closing tab, and for the
          *  actions that must not be deferred: a reset, a year rollover, a role
          *  change. Those keep calling saveData() directly. */
-        function flushSaves() {
-            return _saveQueue ? _saveQueue.flush() : Promise.resolve(null);
+        /** How long flushSaves will wait for a direct save. saveData's own ceiling. */
+        const DIRECT_SAVE_WAIT_MS = 20000;
+
+        async function flushSaves() {
+            const queued = _saveQueue ? await _saveQueue.flush() : null;
+
+            // AND THEN WAIT FOR A DIRECT SAVE, which the queue knows nothing
+            // about. wildcat-savequeue's flush() returns `Promise.resolve(null)`
+            // the moment nothing is dirty, so before this it resolved
+            // INSTANTLY in the middle of a running saveData() -- and the one
+            // caller that matters, the self-update path, took that as "all
+            // saved" and called location.replace() through the write.
+            //
+            // Polled rather than awaited on a promise because saveData is
+            // called un-awaited from ~84 sites; `isSyncing` is the state they
+            // all share, and saveData polls it exactly this way at 3395.
+            for (let waited = 0; isSyncing && waited < DIRECT_SAVE_WAIT_MS; waited += 100) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            if (isSyncing) {
+                console.warn('[save] flushSaves gave up waiting for an in-flight save after ' +
+                    (DIRECT_SAVE_WAIT_MS / 1000) + 's.');
+            }
+            return queued;
         }
 
         // Deferring a write opens a window where work exists only in memory,
@@ -32827,9 +33268,25 @@
             if (!R || typeof R.quietStudents !== 'function') { panel.hidden = true; return; }
 
             const since = Date.now() - QUIET_WINDOW_DAYS * 86400000;
+            // EVERY FIGURE BELOW COMES OFF `moves`, so the reversal filter
+            // belongs here rather than at four call sites: who counts as never
+            // noticed, the school average that sets the quiet threshold, the
+            // per-staff counts behind the median and the daily goal, and
+            // myToday.
+            //
+            // WHY IT MATTERS MORE HERE THAN ANYWHERE ELSE. wildcat-roster.js
+            // classifies "never noticed" as total === 0. A child whose only
+            // cash movement was an award added by mistake and then reversed had
+            // a total of 2 -- so the panel built to surface children nobody has
+            // recognised was hiding one BECAUSE a mistake was made about her and
+            // then corrected. And the admin who pressed Reverse picked up an
+            // award in awardsByActor, entering the median every teacher is
+            // measured against and their own daily goal.
+            const _quietReversedIds = reversedCashIds();
             const moves = (Array.isArray(cashTransactions) ? cashTransactions : []).filter(t =>
                 t && t.studentId && t.timestamp &&
-                new Date(t.timestamp).getTime() >= since && (Number(t.amount) || 0) !== 0);
+                new Date(t.timestamp).getTime() >= since && (Number(t.amount) || 0) !== 0 &&
+                isCashBehaviourRow(t, _quietReversedIds));
 
             // Interactions per student, from EVERY adult. This is the threshold
             // a student is measured against: how much attention that child has
@@ -33304,6 +33761,11 @@
             'undid award':                   'undo',
             'deleted ticket entry':          'undo',
             'reward_cancelled':              'undo',
+            // Two actions, not one: wildcat-cashaudit.js keys a static SIGN off
+            // the action, so a single 'cash_reversal' would have to carry
+            // sign 0 and would render every reversal as "+$0".
+            'cash_reversal_credit':          'undo',
+            'cash_reversal_debit':           'undo',
             'admin correction':              'fix',
             'backup exported':               'system',
             'backup restored':               'system',

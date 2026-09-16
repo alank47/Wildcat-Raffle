@@ -1,5 +1,6 @@
-import { internalMutation, internalQuery } from "./_generated/server";
+import { mutation, query, internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
+import { requireAdmin, requireStaff } from "./identity";
 import { MAX_CASH_DELTA } from "./appDataShape";
 import {
   buildReversalRow,
@@ -221,17 +222,35 @@ async function doReverse(
     mirroredAt: nowIso,
   });
 
-  // 3. The counters, by delta. Read-modify-write inside this transaction, so
+  // 3. THE STUDENT'S OWN COPY OF THE ROW, because a child reads that one.
+  //
+  // views_app.ts `myStudentView` builds the wallet's recent-activity card from
+  // `student.wildcatCashTransactions` -- the stored array, server-side. The
+  // client rebuilds that array from the ledger on every load
+  // (distributeCashTransactions, script.js:29346), but the SERVER never does,
+  // so without this the reversal would not reach a child's phone until some
+  // staff tab happened to load and save. Until then their wallet would show
+  // the cancelled award, with a balance that no longer matched it.
+  //
+  // Appended, not replaced: the array is whole-value and this is inside the
+  // same transaction as everything else.
+  const storedHistory = Array.isArray(student.wildcatCashTransactions)
+    ? student.wildcatCashTransactions
+    : [];
+  const alreadyThere = storedHistory.some((r: any) => String(r?.id ?? "") === reversalId);
+
+  // 4. The counters, by delta. Read-modify-write inside this transaction, so
   //    it composes with appData:save's delta protocol rather than fighting it:
   //    a concurrent save states its own movement and the two add up.
-  const patch: Record<string, number> = {};
+  const patch: Record<string, any> = {};
   for (const [field, d] of Object.entries(delta)) {
     const base = Number(student[field]);
     patch[field] = (Number.isFinite(base) ? base : 0) + d;
   }
+  if (!alreadyThere) patch.wildcatCashTransactions = [...storedHistory, reversalRow];
   await ctx.db.patch(student._id, patch);
 
-  // 4. The audit entry, in the live table. Two actions exist so that
+  // 5. The audit entry, in the live table. Two actions exist so that
   //    wildcat-cashaudit.js's static per-action sign map renders the money with
   //    the right sign; see reversalAuditAction.
   const action = reversalAuditAction(original);
@@ -247,7 +266,26 @@ async function doReverse(
       studentName: reversalRow.studentName,
       teacher: actor.name,
       teacherId: actor.id,
+      // `ticketCount`, NOT `amount`, AND THAT IS NOT A TYPO.
+      //
+      // WildcatCashAudit.describe() reads the money off `e.ticketCount`
+      // (wildcat-cashaudit.js:105) because that is the field addToAuditLog
+      // writes (script.js:7816) -- the name is a fossil from the raffle, where
+      // every audit entry counted tickets. Writing `amount` instead left
+      // describe() with null, `signed` null, and an em dash on all four cash
+      // audit surfaces: the Cash Audit Log's Amount column, the per-student
+      // history dialog, the Accounts card's Recent Activity, and the dashboard
+      // feed. A row reading "Reversed (taken back)" that declines to say by how
+      // much, directly under a totals strip that does say -- which is exactly
+      // the parent question this feature exists to be able to answer.
+      //
+      // Both are written: `amount` because it is the honest name and new
+      // readers will reach for it, `ticketCount` because eleven existing ones
+      // already do.
+      ticketCount: Math.abs(Number(original.amount)),
       amount: Math.abs(Number(original.amount)),
+      // Without this the Audit Log's Category cell renders "n/a".
+      category: "Wildcat Cash",
       reason: `Reversed ${original.behaviorName || original.kind || "cash"}: ${reason}`,
       behavior: "Reversed: " + String(original.behaviorName || original.kind || "cash"),
       notes: reason,
@@ -269,7 +307,45 @@ async function doReverse(
 }
 
 /**
- * NO PUBLIC ENTRY POINT YET, DELIBERATELY.
+ * Reverse a transaction. ADMINS ONLY.
+ *
+ * Not the teacher who made the movement, in this first increment. A teacher who
+ * taps the wrong name needs it gone in seconds and that case is real -- but a
+ * teacher quietly withdrawing a deduction after a parent complains is also
+ * real, and the owner should see how reversals get used before 59 people have
+ * the button. Widening it later is a rule in cashReversalRules.ts plus a
+ * duration, not a rewrite.
+ */
+export const reverse = mutation({
+  args: {
+    originalTxnId: v.string(),
+    reason: v.string(),
+    weekHint: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: async (ctx, args) => {
+    const admin = await requireAdmin(ctx);
+    return await doReverse(ctx, args, {
+      name: String(admin.name ?? "Unknown"),
+      id: String(admin.legacyId ?? admin._id ?? ""),
+      email: String(admin.email ?? ""),
+    });
+  },
+});
+
+/** One student's reversible cash, for the panel. Staff-gated, read-only. */
+export const reversibleForStudent = query({
+  args: { studentId: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    await requireStaff(ctx);
+    return await listReversible(ctx, args.studentId, args.limit);
+  },
+});
+
+/**
+ * THE CLI VARIANTS BELOW STAY. They were the only way in before the button
+ * existed and they are how a reversal gets done from the dashboard when the
+ * front end is broken -- which, on a launch week, is a state worth being able
+ * to work from.
  *
  * The admin-gated `reverse` mutation the button will call is not exported here
  * because nothing calls it yet, and convex-wiring.test.mjs is right to refuse
@@ -327,7 +403,12 @@ export const reverseAsAdmin = internalMutation({
  */
 export const reversibleFor = internalQuery({
   args: { studentId: v.string(), limit: v.optional(v.number()) },
-  handler: async (ctx, { studentId, limit }) => {
+  handler: async (ctx, { studentId, limit }) => await listReversible(ctx, studentId, limit),
+});
+
+/** The shared listing body, so the public and internal views cannot drift. */
+async function listReversible(ctx: any, studentId: string, limit?: number) {
+  {
     const nowMs = Date.now();
     const cutoff = await historyCutoffMs(ctx);
     const student = await findStudent(ctx, studentId);
@@ -393,6 +474,102 @@ export const reversibleFor = internalQuery({
       ledgerRows: rows.length,
       returned: out.length,
       transactions: out,
+    };
+  }
+}
+
+/**
+ * Repair reversal audit entries written before the ticketCount fix.
+ *
+ * Tonight's first real reversal went out with the money in `amount` only, so
+ * every cash audit surface rendered an em dash for it. This copies it into
+ * `ticketCount` and adds the missing `category`. Idempotent: an entry that
+ * already has a finite ticketCount is left alone.
+ */
+export const repairReversalAuditAmounts = internalMutation({
+  args: { apply: v.optional(v.boolean()) },
+  handler: async (ctx, { apply }) => {
+    const rows = await ctx.db.query("appAuditLog").collect();
+    const doomed = (rows as any[]).filter((r) => {
+      const a = String(r.payload?.action ?? "");
+      if (a !== "cash_reversal_credit" && a !== "cash_reversal_debit") return false;
+      return !Number.isFinite(Number(r.payload?.ticketCount));
+    });
+    if (apply === true) {
+      for (const r of doomed) {
+        await ctx.db.patch(r._id, {
+          payload: {
+            ...r.payload,
+            ticketCount: Math.abs(Number(r.payload?.amount) || 0),
+            category: r.payload?.category ?? "Wildcat Cash",
+          },
+        });
+      }
+    }
+    return {
+      applied: apply === true,
+      repaired: doomed.length,
+      entries: doomed.map((r) => ({
+        entryId: r.entryId,
+        action: r.payload?.action,
+        amount: r.payload?.amount ?? null,
+        student: r.payload?.studentName ?? null,
+      })),
+      note: apply === true ? "Patched." : "Dry run. Pass apply: true.",
+    };
+  },
+});
+
+/**
+ * Put reversal rows onto the student records that predate the fix.
+ *
+ * The first real reversal (2026-09-15) wrote the ledger, the register, the
+ * counters and the audit entry, but not `student.wildcatCashTransactions` --
+ * and views_app.ts builds a CHILD'S wallet from that stored array. So their
+ * phone showed the cancelled award with a balance that no longer matched it.
+ * Idempotent: a row already present by id is left alone.
+ */
+export const repairStudentReversalRows = internalMutation({
+  args: { apply: v.optional(v.boolean()) },
+  handler: async (ctx, { apply }) => {
+    const registers = await ctx.db.query("cashReversals").collect();
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const ledgerById = new Map<string, any>();
+    for (const r of (mirror as any[]).filter((x) => String(x.doc ?? "").startsWith("cash_tx_"))) {
+      const id = String((r.payload as any)?.id ?? "");
+      if (id) ledgerById.set(id, r.payload);
+    }
+
+    const students = await ctx.db.query("students").collect();
+    const fixes: any[] = [];
+    for (const reg of registers as any[]) {
+      const row = ledgerById.get(String(reg.reversalTxnId));
+      if (!row) continue;
+      const student = (students as any[]).find(
+        (st) => String(st.legacyId ?? st._id) === String(reg.studentId));
+      if (!student) continue;
+      const arr = Array.isArray(student.wildcatCashTransactions)
+        ? student.wildcatCashTransactions : [];
+      if (arr.some((t: any) => String(t?.id ?? "") === String(reg.reversalTxnId))) continue;
+      fixes.push({
+        id: student._id,
+        name: `${student.firstName ?? ""} ${student.lastName ?? ""}`.trim(),
+        reversalTxnId: reg.reversalTxnId,
+        next: [...arr, row],
+      });
+    }
+
+    if (apply === true) {
+      for (const f of fixes) {
+        await ctx.db.patch(f.id, { wildcatCashTransactions: f.next });
+      }
+    }
+    return {
+      applied: apply === true,
+      reversalsOnRecord: registers.length,
+      studentsMissingTheRow: fixes.length,
+      students: fixes.map((f) => ({ name: f.name, reversalTxnId: f.reversalTxnId, rowsAfter: f.next.length })),
+      note: apply === true ? "Patched." : "Dry run. Pass apply: true.",
     };
   },
 });

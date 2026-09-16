@@ -313,13 +313,23 @@ console.log("\n-- the mutation takes no amount, and the register is the key --")
   check("the entry point accepts no amount", !/amount/.test(args), args.replace(/\s+/g, " "));
   check("and no counter delta", !/[Dd]elta/.test(args));
 
-  // NOTHING IS PUBLIC YET, and convex-wiring.test.mjs is why: a public
-  // mutation that moves money with no caller is attack surface with no
-  // purpose. The admin-gated wrapper lands in the same deploy as the button.
-  check("no public mutation or query is exported yet",
-    !/export const \w+ = mutation\(/.test(code) && !/export const \w+ = query\(/.test(code));
-  check("and the file says how the admin gate will be added",
-    /requireAdmin\(ctx\)/.test(src) && /ADMINS ONLY in that first increment/.test(src));
+  // THE PUBLIC MUTATION, which the button calls. Guarded on three things:
+  // admins only, no amount in its arguments, and the same shared body as the
+  // CLI path so the two cannot drift into different rules.
+  const pub = code.slice(code.indexOf("export const reverse = mutation({"),
+                         code.indexOf("});", code.indexOf("export const reverse = mutation({")));
+  check("the public mutation is admin-gated", /requireAdmin\(ctx\)/.test(pub));
+  check("it accepts no amount either", !/amount/.test(pub));
+  check("and it goes through the same body as the CLI path", /doReverse\(ctx, args/.test(pub));
+
+  // The listing query is staff-gated rather than admin-gated on purpose: a
+  // teacher may read a child's cash history, and the panel greys out what they
+  // cannot act on. Only the money movement is admin-only.
+  const list = code.slice(code.indexOf("export const reversibleForStudent = query({"),
+                          code.indexOf("});", code.indexOf("export const reversibleForStudent = query({")));
+  check("the listing query is staff-gated", /requireStaff\(ctx\)/.test(list));
+  check("and shares one body with the internal listing",
+    /listReversible\(ctx/.test(list) && (code.match(/async function listReversible/g) || []).length === 1);
   check("an actor name is required, so the record names a human",
     /actorName: v\.string\(\)/.test(src));
 
@@ -350,9 +360,32 @@ console.log("\n-- the mutation takes no amount, and the register is the key --")
   // about deductions.
   check("a reason is required", /reason_required/.test(src));
 
-  // The listing reads the authoritative store, not the lagging cache.
-  check("reversibleFor reads the ledger, not the student's array",
-    !/wildcatCashTransactions/.test(src));
+  // THE LISTING reads the authoritative store, not the lagging cache. Scoped to
+  // listReversible: the file as a whole DOES touch wildcatCashTransactions now,
+  // because the mutation writes the reversal into the student's own copy --
+  // views_app builds a child's wallet from that stored array, and the server is
+  // the only thing that can put it there.
+  // Bounded to the function itself. Slicing to the next `export` swept in the
+  // two repair mutations that sit after it, both of which legitimately touch
+  // the student array -- an assertion that reads past its subject fails for
+  // reasons that have nothing to do with what it is checking.
+  const lrAt = code.indexOf("async function listReversible");
+  const listing = code.slice(lrAt, code.indexOf("\nexport const", lrAt));
+  check("the listing reads the ledger, not the student's array",
+    !/wildcatCashTransactions/.test(listing));
+  check("and the mutation writes the student's own copy, for the child's wallet",
+    /patch\.wildcatCashTransactions = \[\.\.\.storedHistory, reversalRow\]/.test(code));
+  check("appended only when it is not already there, so a retry cannot duplicate it",
+    /const alreadyThere = storedHistory\.some/.test(code)
+    && /if \(!alreadyThere\) patch\.wildcatCashTransactions/.test(code));
+
+  // The audit payload's money field. describe() reads ticketCount, which is a
+  // fossil from the raffle; writing only `amount` rendered an em dash on all
+  // four cash audit surfaces, including a real reversal in production.
+  check("the audit entry carries ticketCount, which is what describe() reads",
+    /ticketCount: Math\.abs\(Number\(original\.amount\)\)/.test(code));
+  check("and a category, or the Audit Log cell reads n/a",
+    /category: "Wildcat Cash"/.test(code));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
