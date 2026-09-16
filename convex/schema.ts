@@ -216,6 +216,33 @@ export default defineSchema({
    * refunds. legacyPurge:reverseRefund, the CLI tool that predates this, has no
    * such key and would happily reverse the same row twice.
    */
+  /**
+   * One row per completed student purchase. THE idempotency key.
+   *
+   * KEYED ON attemptId, NOT on (student, reward). Buying two Homework Passes
+   * is something a child is allowed to do, so the key has to identify the
+   * BUTTON PRESS rather than the intent: the client mints one token per press
+   * and resends the same one on retry, so a double-tap, a flaky Chromebook
+   * connection and an impatient second tap all collapse into one purchase.
+   *
+   * A token a child could vary by hand only lets them buy again with money
+   * they actually have, which is the feature rather than an exploit.
+   */
+  studentPurchases: defineTable({
+    attemptId: v.string(),
+    receiptId: v.string(),
+    studentId: v.string(),
+    studentNumber: v.string(),
+    rewardId: v.string(),
+    rewardName: v.string(),
+    quantity: v.number(),
+    totalCost: v.number(),
+    txnId: v.string(),
+    purchasedAt: v.string(),
+  })
+    .index("by_attemptId", ["attemptId"])
+    .index("by_studentNumber", ["studentNumber"]),
+
   cashReversals: defineTable({
     originalTxnId: v.string(),
     reversalTxnId: v.string(),

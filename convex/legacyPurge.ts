@@ -1435,6 +1435,77 @@ export const findName = internalQuery({
   },
 });
 
+/** The reward catalogue and every receipt, as stored. Read-only. */
+/**
+ * Who could actually buy something today. Read-only, counts and bands only.
+ *
+ * MEASURED BEFORE THE STORE IS BUILT, because the lesson from the per-grade
+ * academics lists is that a feature which is a list of people needs its output
+ * size measured first. A store whose cheapest item nobody can afford is a
+ * screen full of grey buttons, and that is a different design from a shop.
+ */
+export const storeAffordability = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rewardRows = await ctx.db
+      .query("legacyMirror")
+      .withIndex("by_doc_collection", (q) => q.eq("doc", "secondary").eq("collection", "wildcatCashRewards"))
+      .collect();
+    const rewards = (rewardRows as any[])
+      .map((r) => r.payload)
+      .filter((r) => r && !r.retiredAt && r.available !== false)
+      .sort((a, b) => Number(a.cost) - Number(b.cost));
+    const cheapest = rewards.length ? Number(rewards[0].cost) : null;
+
+    const roster = new Set((await ctx.db.query("psRoster").collect())
+      .map((r: any) => String(r.studentNumber ?? "")).filter(Boolean));
+    const students = (await ctx.db.query("students").collect())
+      .filter((s: any) => s.studentNumber && roster.has(String(s.studentNumber)));
+
+    const balances = (students as any[])
+      .map((s) => Number(s.wildcatCashBalance) || 0)
+      .sort((a, b) => a - b);
+    const at = (p: number) => balances.length
+      ? balances[Math.min(balances.length - 1, Math.floor(balances.length * p))] : 0;
+
+    const canAfford: Record<string, number> = {};
+    for (const r of rewards) {
+      canAfford[`${r.name} ($${r.cost})`] =
+        balances.filter((b) => b >= Number(r.cost)).length;
+    }
+
+    return {
+      enrolled: students.length,
+      cheapestReward: cheapest,
+      couldBuyTheCheapest: cheapest === null ? 0 : balances.filter((b) => b >= cheapest).length,
+      balance: {
+        zeroOrLess: balances.filter((b) => b <= 0).length,
+        median: at(0.5), p75: at(0.75), p90: at(0.9), p99: at(0.99),
+        highest: balances[balances.length - 1] ?? 0,
+      },
+      canAffordEachReward: canAfford,
+    };
+  },
+});
+
+export const storeFootprint = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db
+      .query("legacyMirror")
+      .withIndex("by_doc_collection", (q) => q.eq("doc", "secondary").eq("collection", "wildcatCashRewards"))
+      .collect();
+    const receipts = await ctx.db
+      .query("legacyMirror")
+      .withIndex("by_doc_collection", (q) => q.eq("doc", "secondary").eq("collection", "cashReceipts"))
+      .collect();
+    return {
+      rewards: (rows as any[]).map((r) => ({ key: r.key ?? null, payload: r.payload })),
+      receipts: (receipts as any[]).map((r) => ({ key: r.key ?? null, payload: r.payload })),
+    };
+  },
+});
+
 export const studentSignInCase = internalQuery({
   args: { name: v.optional(v.string()), studentNumber: v.optional(v.string()) },
   handler: async (ctx, { name, studentNumber }) => {
