@@ -18064,9 +18064,31 @@
                 const id = btn.getAttribute('data-wp-buy');
                 const name = btn.getAttribute('data-wp-buy-name') || 'this reward';
                 const cost = btn.getAttribute('data-wp-buy-cost') || '?';
+                // TRACED AT EVERY STEP. Four rounds of "clicking buy does
+                // nothing" came down to not knowing WHERE it stopped, and the
+                // one silent exit in this handler is a falsy confirm -- a
+                // dialog that resolves without ever being seen returns the same
+                // thing as a student pressing Cancel. Logged rather than
+                // guessed at again.
+                console.log('[store] buy clicked:', name, '$' + cost, 'id=' + id);
 
                 const ok = await showConfirm('Buy ' + name + ' for $' + cost + '?');
-                if (!ok) return;
+                console.log('[store] confirm returned:', ok);
+                if (!ok) {
+                    // SAID OUT LOUD WHEN IT IS NOT A REAL CANCEL. A confirm
+                    // that resolves undefined never asked anybody anything;
+                    // treating that as "they said no" is how this looked like
+                    // a dead button.
+                    if (ok === undefined || ok === null) {
+                        console.warn('[store] the confirm dialog resolved without asking. ' +
+                            'Falling back to a direct purchase prompt.');
+                        const forced = await showConfirm('Buy ' + name + ' for $' + cost + '?');
+                        console.log('[store] second confirm returned:', forced);
+                        if (!forced) return;
+                    } else {
+                        return;
+                    }
+                }
 
                 const auth = window.WildcatAuth;
                 const session = auth && auth.getSession();
