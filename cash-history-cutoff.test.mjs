@@ -200,8 +200,17 @@ console.log("\nAnd it is wired into the paths that actually run");
 
   // THE FUNNEL. reconcileCashLedger is the single path from the per-student
   // arrays into the array the analytics count.
+  // The window widened: the same funnel now also rejects a row with no usable
+  // amount, which is what reached a teacher's screen as
+  // "Alan Kent | Unknown | Negative | -$NaN" on 2026-09-16. An undated row is
+  // kept on purpose and can therefore never age out, so junk out of a
+  // localStorage fallback copy needed a different test -- an amount is the one
+  // field a cash movement cannot be missing.
   check("reconcileCashLedger refuses a pre-cutoff row",
-    /function reconcileCashLedger\(\)[\s\S]{0,1200}if \(cashRowIsPreCutoff\(t\)\) return;/
+    /function reconcileCashLedger\(\)[\s\S]{0,2400}if \(cashRowIsPreCutoff\(t\)\) return;/
+      .test(code));
+  check("and a row carrying no money at all",
+    /function reconcileCashLedger\(\)[\s\S]{0,2400}if \(!isFinite\(Number\(t\.amount\)\)\) return;/
       .test(code));
 
   // THE FALLBACK COPY. loadDataLocal runs before EVERY successful load, because

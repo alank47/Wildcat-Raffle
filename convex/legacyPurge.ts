@@ -1444,6 +1444,139 @@ export const findName = internalQuery({
  * size measured first. A store whose cheapest item nobody can afford is a
  * screen full of grey buttons, and that is a different design from a shop.
  */
+/**
+ * Rebuild every student's cash history array FROM THE LEDGER. Read-only unless
+ * apply is passed.
+ *
+ * WHY THIS IS NEEDED AT ALL. `students[].wildcatCashTransactions` is a derived
+ * cache: distributeCashTransactions (script.js:29765) regenerates it from the
+ * tab's own `cashTransactions` on every load AND after every save
+ * (script.js:2785 and 3735). So a tab whose ledger is short rewrites every
+ * student's array from its short view, and the next save persists that.
+ *
+ * `unreadLegacyDocs` guards saveLegacySlice and mergeLegacySlice against
+ * exactly this -- "a document this tab could not read is not a document it may
+ * write" -- but the arrays are not a legacy doc, they go out through
+ * appData:save, so the rule never fires for them.
+ *
+ * Measured 2026-09-16 17:39Z: ledger 1094 rows, arrays 306, with 2026-09-15 at
+ * ZERO. Nothing was lost -- the cash_tx_* ledger merges by id and cannot lose a
+ * row -- but two screens read the cache: the dashboard tiles and, worse, a
+ * child's own wallet in views_app.ts.
+ *
+ * This is RELIEF, NOT A FIX. The next save from a short tab undoes it. The fix
+ * is in the client: the readers move to the ledger, and
+ * distributeCashTransactions must refuse to run when the ledger did not load.
+ */
+/** Ledger rows that would render badly: no date, no amount, no student. Read-only. */
+export const malformedCashRows = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const tx = (mirror as any[]).filter((r) => String(r.doc ?? "").startsWith("cash_tx_"));
+    const bad: any[] = [];
+    for (const r of tx) {
+      const p = r.payload as any;
+      const problems: string[] = [];
+      if (!Number.isFinite(Date.parse(String(p?.timestamp ?? "")))) problems.push("timestamp");
+      if (!Number.isFinite(Number(p?.amount))) problems.push("amount");
+      if (!p?.studentId) problems.push("studentId");
+      if (!p?.id) problems.push("id");
+      if (problems.length) {
+        bad.push({
+          doc: r.doc, key: r.key ?? null, problems,
+          id: p?.id ?? null, timestamp: p?.timestamp ?? null, amount: p?.amount ?? null,
+          kind: p?.kind ?? null, teacherName: p?.teacherName ?? null,
+          studentName: p?.studentName ?? null, behaviorName: p?.behaviorName ?? null,
+        });
+      }
+    }
+    // Every row naming the owner, since the report was "something about me".
+    const mine = tx.filter((r) => /alan kent/i.test(String((r.payload as any)?.teacherName ?? "")))
+      .map((r) => r.payload as any)
+      .map((p) => ({ id: p.id, at: p.timestamp, amount: p.amount, kind: p.kind,
+                     behaviour: p.behaviorName, student: p.studentName,
+                     reverses: p.reversesTxnId ?? null }));
+    return {
+      ledgerRows: tx.length,
+      malformed: bad.length,
+      rows: bad.slice(0, 12),
+      rowsNamingTheOwner: mine.length,
+      ownerRows: mine.slice(-6),
+    };
+  },
+});
+
+export const rebuildStudentCashArrays = internalMutation({
+  args: { apply: v.optional(v.boolean()) },
+  handler: async (ctx, { apply }) => {
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const byStudent = new Map<string, any[]>();
+    for (const r of (mirror as any[]).filter((x) => String(x.doc ?? "").startsWith("cash_tx_"))) {
+      const p = r.payload as any;
+      const sid = String(p?.studentId ?? "");
+      if (!sid) continue;
+      if (!byStudent.has(sid)) byStudent.set(sid, []);
+      byStudent.get(sid)!.push(p);
+    }
+    for (const rows of byStudent.values()) {
+      rows.sort((a, b) => String(a.timestamp ?? "").localeCompare(String(b.timestamp ?? "")));
+    }
+
+    const students = await ctx.db.query("students").collect();
+    let changed = 0, rowsBefore = 0, rowsAfter = 0, wouldLose = 0;
+    const losers: any[] = [];
+    const patches: Array<{ id: any; rows: any[] }> = [];
+
+    for (const s of students as any[]) {
+      const sid = String(s.legacyId ?? s._id);
+      const have = Array.isArray(s.wildcatCashTransactions) ? s.wildcatCashTransactions : [];
+      const want = byStudent.get(sid) ?? [];
+      rowsBefore += have.length;
+      rowsAfter += want.length;
+
+      // A ROW ONLY ON THE STUDENT RECORD WOULD BE LOST BY THIS, so it is
+      // counted and kept rather than overwritten. Measured at zero on
+      // 2026-09-15, but rebuilding from a superset that turned out not to be
+      // one is how a repair becomes an incident.
+      const wantIds = new Set(want.map((r: any) => String(r?.id ?? "")));
+      const orphans = have.filter((r: any) => r?.id && !wantIds.has(String(r.id)));
+      if (orphans.length) {
+        wouldLose += orphans.length;
+        if (losers.length < 8) {
+          losers.push({
+            name: `${s.firstName ?? ""} ${s.lastName ?? ""}`.trim(),
+            orphanIds: orphans.slice(0, 3).map((r: any) => r.id),
+          });
+        }
+      }
+      const next = orphans.length ? [...want, ...orphans] : want;
+      if (next.length !== have.length) {
+        changed++;
+        patches.push({ id: s._id, rows: next });
+      }
+    }
+
+    if (apply === true) {
+      for (const p of patches) {
+        await ctx.db.patch(p.id, { wildcatCashTransactions: p.rows });
+      }
+    }
+    return {
+      applied: apply === true,
+      ledgerRowsByStudent: [...byStudent.values()].reduce((n, r) => n + r.length, 0),
+      arrayRowsBefore: rowsBefore,
+      arrayRowsAfter: rowsAfter,
+      studentsChanged: changed,
+      rowsOnlyOnStudentRecords: wouldLose,
+      sampleOrphans: losers,
+      note: apply === true
+        ? "Rebuilt. This is relief, not a fix: the next save from a short tab undoes it."
+        : "Dry run. Pass apply: true.",
+    };
+  },
+});
+
 export const storeAffordability = internalQuery({
   args: {},
   handler: async (ctx) => {

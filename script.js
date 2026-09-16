@@ -1144,6 +1144,23 @@
                     // An entry with no id cannot be deduped, and adding it would
                     // double on every load. Left where it is.
                     if (!t || !t.id || seen.has(t.id)) return;
+                    // A ROW WITH NO MONEY IN IT IS NOT A TRANSACTION.
+                    //
+                    // Reported 2026-09-16 as a line in Teacher Interactions
+                    // reading "Alan Kent | Unknown | — | - | Negative | -$NaN"
+                    // with an Invalid Date. That is one object carrying a
+                    // teacherName and nothing else, and it reached the ledger
+                    // through here.
+                    //
+                    // MY OWN DOING, from the history cutoff: cashRowIsPreCutoff
+                    // deliberately keeps an UNDATED row, because a row that
+                    // cannot be proved old must not be deleted on a day when a
+                    // teacher's award is in these tables. Correct for a real
+                    // award; it also preserved junk out of a localStorage
+                    // fallback copy forever, since an undated row can never
+                    // age out. An amount is the one field a cash movement
+                    // cannot be missing, so that is the test -- not the date.
+                    if (!isFinite(Number(t.amount))) return;
                     // BELT AND BRACES. This function is the one funnel from the
                     // per-student arrays into the array every cash analytic
                     // counts, so it is the right place to stop a pre-clear row
@@ -28401,28 +28418,42 @@
             // wildcatCashDeducted counter is zero. Two panels further down this
             // same tab -- Most Common Behaviors and the intervention table --
             // already exclude those rows, so the tab disagreed with itself.
+            // FROM THE LEDGER, FINALLY. On 2026-09-15 I moved
+            // updateTeacherInteractions onto `cashTransactions` and left these
+            // tiles reading the per-student arrays, adding only a reversal
+            // filter -- half a fix. The arrays are a cache
+            // distributeCashTransactions rebuilds from whatever tab saved last,
+            // and on 2026-09-16 they collapsed to 306 rows against a ledger of
+            // 1,094: this panel read 306 while Teacher Interactions, six inches
+            // away, read the truth.
+            //
+            // The balance total still comes off the student records, because a
+            // BALANCE is a counter and delta-protected, not a sum of history.
             const _dashReversedIds = reversedCashIds();
+            const _dashStudentIds = new Set(filteredStudents.map(s => String(s.id)));
+            const _dashLedger = (typeof cashTransactions !== 'undefined' && Array.isArray(cashTransactions))
+                ? cashTransactions.filter(t => t && _dashStudentIds.has(String(t.studentId)))
+                : [];
+
+            // A balance is a COUNTER, not a sum of history: delta-protected on
+            // the student record and correct even when this cache is not.
             filteredStudents.forEach(student => {
-                if (!student.wildcatCashTransactions) return;
-                
-                student.wildcatCashTransactions.forEach(txn => {
-                    // Check for positive or negative type (behavior transactions)
-                    if (txn.type === 'positive' || txn.type === 'negative') {
-                        // The money still counts both halves: a reversal pair
-                        // nets to zero, so the dollar tiles keep reconciling
-                        // with the balances. Only the EVENT counts drop it.
-                        const isBehaviour = isCashBehaviourRow(txn, _dashReversedIds);
-                        if (txn.amount > 0) {
-                            if (isBehaviour) totalPositiveBehaviors++;
-                            totalAwarded += txn.amount;
-                        } else if (txn.amount < 0) {
-                            if (isBehaviour) totalNegativeBehaviors++;
-                            totalDeducted += Math.abs(txn.amount);
-                        }
-                    }
-                });
-                
                 totalBalance += (student.wildcatCashBalance || 0);
+            });
+
+            _dashLedger.forEach(txn => {
+                if (txn.type !== 'positive' && txn.type !== 'negative') return;
+                // The MONEY counts both halves of a reversal -- the pair nets to
+                // zero, so the dollar tiles keep reconciling with the balances.
+                // Only the EVENT counts drop it.
+                const isBehaviour = isCashBehaviourRow(txn, _dashReversedIds);
+                if (txn.amount > 0) {
+                    if (isBehaviour) totalPositiveBehaviors++;
+                    totalAwarded += txn.amount;
+                } else if (txn.amount < 0) {
+                    if (isBehaviour) totalNegativeBehaviors++;
+                    totalDeducted += Math.abs(txn.amount);
+                }
             });
             
             const totalBehaviors = totalPositiveBehaviors + totalNegativeBehaviors;
@@ -28805,8 +28836,18 @@
                     teacherName = teacher ? teacher.name : `Unknown (${teacherId})`;
                 }
                 
+                // A DASH, NOT "Invalid Date Invalid Date". toLocaleDateString on
+                // an unparseable stamp prints that literal string twice, and
+                // Math.abs(undefined) below prints "-$NaN" beside it -- which
+                // is what a teacher saw on 2026-09-16. A renderer handed a bad
+                // row should say it has nothing, not show its own arithmetic
+                // failing.
                 const date = new Date(txn.timestamp);
-                const formattedDate = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+                const dateOk = !isNaN(date.getTime());
+                const formattedDate = dateOk
+                    ? date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})
+                    : '—';
+                const amountOk = isFinite(Number(txn.amount));
                 
                 // THE BADGE SAYS WHAT THE ROW IS. `type` is the sign, so a
                 // reversal that handed $500 back read "Positive" in green --
@@ -28819,10 +28860,12 @@
                 const typeColor = isReversalRow ? '#2F67A7'
                     : wasReversed ? '#6E7885'
                     : txn.type === 'positive' ? '#2E7D52' : '#B3392F';
-                const typeBadge = isReversalRow ? 'Reversal'
+                const typeBadge = !amountOk ? 'Incomplete'
+                    : isReversalRow ? 'Reversal'
                     : wasReversed ? 'Reversed'
                     : txn.type === 'positive' ? 'Positive' : 'Negative';
-                const amountDisplay = txn.amount >= 0 ? `+$${Math.abs(txn.amount)}` : `-$${Math.abs(txn.amount)}`;
+                const amountDisplay = !amountOk ? '—'
+                    : txn.amount >= 0 ? `+$${Math.abs(txn.amount)}` : `-$${Math.abs(txn.amount)}`;
                 
                 // EVERY CELL ESCAPED. A behaviour name and a student's name are
                 // free text, and a reversal reason is typed by an adult under
@@ -29762,7 +29805,41 @@
 
 
         // Rebuild the per-student view from the single source of truth.
+        /**
+         * Rebuild each student's cash history from `cashTransactions`.
+         *
+         * REFUSES TO RUN WHEN THE LEDGER DID NOT LOAD, and that guard is the
+         * whole reason this comment exists. This function overwrites the array
+         * on EVERY student from whatever this tab happens to hold, on load
+         * (2785) and again after every save (3735). So one tab with a short
+         * ledger rewrites all 620 records, and the next save makes it
+         * permanent.
+         *
+         * On 2026-09-16 that produced a dashboard reading 306 behaviours
+         * against a ledger of 1,094, with 15 September at ZERO rows. Nothing
+         * was lost -- the cash_tx_* documents merge by id and cannot lose a
+         * row -- but two screens read this cache: the dashboard tiles and a
+         * child's own wallet in views_app.ts.
+         *
+         * `unreadLegacyDocs` already states the rule this was missing: "a
+         * document this tab could not read is not a document it may write." It
+         * guards saveLegacySlice and mergeLegacySlice. It could not guard this,
+         * because the arrays are not a legacy document -- they leave through
+         * appData:save -- so the rule has to be applied by hand here.
+         */
         function distributeCashTransactions() {
+            // A cash week this tab failed to read means `cashTransactions` is
+            // missing rows that exist on the server. Rebuilding from it would
+            // erase them from every student record.
+            const unreadWeek = (typeof unreadLegacyDocs !== 'undefined' && unreadLegacyDocs)
+                ? [...unreadLegacyDocs].find(d => String(d).startsWith('cash_tx_'))
+                : null;
+            if (unreadWeek) {
+                console.warn('[cash] not rebuilding student histories: ' + unreadWeek +
+                    ' did not load, so this tab cannot see the whole ledger. ' +
+                    'The stored records are left as they are.');
+                return;
+            }
             const byStudent = {};
             (cashTransactions || []).forEach(t => {
                 (byStudent[t.studentId] = byStudent[t.studentId] || []).push(t);

@@ -51,17 +51,24 @@ const make = () => {
   return { ctx, run: () => fn(ctx) };
 };
 
+// EVERY FIXTURE CARRIES AN amount, because every real row does:
+// recordCashTransaction writes `amount: Number(opts.amount) || 0`, so the field
+// is always a finite number and may be zero. These fixtures omitted it for
+// brevity and that made them unrealistic -- reconcileCashLedger now rejects a
+// row with no usable amount, after one reached a teacher's screen as
+// "Alan Kent | Unknown | Negative | -$NaN", and the shortcut was what made
+// that guard look like a regression.
 console.log("\nThe two stores become one");
 {
   const { ctx, run } = make();
   ctx.cashTransactions = [
-    { id: "txn_sep_1", teacherId: "T001", timestamp: "2026-09-01T10:00:00Z", studentId: "s1" },
+    { id: "txn_sep_1", teacherId: "T001", timestamp: "2026-09-01T10:00:00Z", studentId: "s1", amount: 100 },
   ];
   ctx.students = [
     { id: "s1", wildcatCashTransactions: [
-      { id: "txn_sep_1", teacherId: "T001", timestamp: "2026-09-01T10:00:00Z" },
-      { id: "txn_aug_1", teacherId: "T001", timestamp: "2026-08-14T10:00:00Z" },
-      { id: "txn_aug_2", teacherId: "T001", timestamp: "2026-08-15T10:00:00Z" },
+      { id: "txn_sep_1", teacherId: "T001", timestamp: "2026-09-01T10:00:00Z", amount: 100 },
+      { id: "txn_aug_1", teacherId: "T001", timestamp: "2026-08-14T10:00:00Z", amount: 100 },
+      { id: "txn_aug_2", teacherId: "T001", timestamp: "2026-08-15T10:00:00Z", amount: 100 },
     ] },
   ];
   run();
@@ -158,13 +165,13 @@ console.log("\nIt reconciles again whenever the roster is replaced");
   const { ctx, run } = make();
   ctx.cashTransactions = [];
   ctx.students = [{ id: "s1", wildcatCashTransactions: [
-    { id: "t1", teacherId: "T001", timestamp: "2026-08-01T00:00:00Z" },
+    { id: "t1", teacherId: "T001", timestamp: "2026-08-01T00:00:00Z", amount: 100 },
   ] }];
   run();
   const afterFirst = ctx.cashTransactions.length;
   // A later roster refresh brings a student that was not there before.
   ctx.students.push({ id: "s2", wildcatCashTransactions: [
-    { id: "t2", teacherId: "T001", timestamp: "2026-08-02T00:00:00Z" },
+    { id: "t2", teacherId: "T001", timestamp: "2026-08-02T00:00:00Z", amount: 100 },
   ] });
   run();
   check("a second pass picks up what a later load brought",
@@ -216,6 +223,33 @@ console.log("\nA cleared history does not come back through the reconcile");
   run();
   check("with no cutoff, an old row is recovered as before",
     ctx.cashTransactions.length === 1);
+}
+
+console.log("\nA row with no money in it is not a transaction");
+{
+  // 2026-09-16: a single object carrying a teacherName and nothing else reached
+  // Teacher Interactions and rendered as "Invalid Date Invalid Date ... -$NaN".
+  // It came in through this funnel, out of a localStorage fallback copy -- and
+  // it could never age out, because cashRowIsPreCutoff deliberately KEEPS an
+  // undated row. An amount is the one field a cash movement cannot be missing,
+  // so that is the test rather than the date.
+  const { ctx, run } = make();
+  ctx.cashTransactions = [];
+  ctx.students = [
+    { id: "s1", wildcatCashTransactions: [
+      { id: "junk", teacherName: "Alan Kent" },
+      { id: "no_amount", timestamp: "2026-09-16T16:00:00Z", teacherName: "Alan Kent" },
+      { id: "nan", timestamp: "2026-09-16T16:00:00Z", amount: "lots" },
+      { id: "real", timestamp: "2026-09-16T16:00:00Z", amount: 100 },
+      { id: "zero", timestamp: "2026-09-16T16:05:00Z", amount: 0 },
+    ] },
+  ];
+  run();
+  const ids = ctx.cashTransactions.map((t) => t.id).sort().join(",");
+  check("rows with no usable amount are refused", ids === "real,zero", ids);
+  // A ZERO IS A NUMBER. recordCashTransaction can write one, and a $0 movement
+  // is a real if odd record -- refusing it would lose data to tidy a display.
+  check("but a zero amount is kept", ctx.cashTransactions.some((t) => t.id === "zero"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

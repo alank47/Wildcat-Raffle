@@ -109,6 +109,29 @@ const MISSING = {
 
 const STATES = [
   {
+    // THE SHORT CHROMEBOOK, and it is first because it is what the school
+    // actually issues. Every other desk frame in this file is 1440x940 and
+    // labelled "Chromebook", which is a 15-inch laptop: the common school
+    // 11.6-inch panel is 1366x768, and 768 minus browser chrome leaves about
+    // 660px of page. The desk grid spends a ~120px identity header and a
+    // 430px min-height stack row before the dashboard starts, so the panels a
+    // student came for -- including the store -- begin around y=590 on a
+    // viewport that ends at 660. Rendered here so that is a picture rather
+    // than an argument.
+    title: 'Chromebook 11.6in (1366x768) — what the school issues',
+    why: 'The real device. Check where the dashboard panels begin: anything ' +
+         'below ~660px is off the bottom of the screen on every Chromebook in ' +
+         'the building, and the store panel is one of them.',
+    w: 1366, h: 768, wide: true,
+    mine: {
+      points: { pbis: 12, attendance: 4, academic: 7, total: 23, weeksQualified: 5, bigRaffleEntries: 5 },
+      wildcatCash: { balance: 500, earned: 600, spent: 100 },
+      attendance: { available: true, daysAbsentTerm: 2, daysAbsentYtd: 6, daysTardyTerm: 1 },
+    },
+    sched: { rows: SCHEDULE, available: true },
+    grades: { rows: GRADES, available: true, missingWork: MISSING },
+  },
+  {
     title: 'Chromebook, complete',
     why: 'What most students see. Every figure present.',
     w: 1440, h: 940, wide: true,
