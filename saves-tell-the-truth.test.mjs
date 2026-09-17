@@ -365,5 +365,23 @@ console.log("\nA refused save renews its own token before telling anyone");
     /if \(sawUnauthorized\) \{\s*renewSessionAfterRefusal\(/.test(save));
 }
 
+console.log("\nBoth cache blobs carry the cash, not just the happy one");
+{
+  // saveData writes two different localStorage blobs: one when the try
+  // completes, one in the outer catch. The catch blob -- the copy written when
+  // a save has ALREADY gone wrong, and the only one loadDataLocal reads back --
+  // omitted cashTransactions and cashReceipts. The file already carries this
+  // exact lesson for wildcatCashRewards.
+  const blobs = save.split("cacheLocally({").slice(1);
+  check("there are exactly two cache blobs", blobs.length === 2);
+  for (const [i, label] of [[0, "primary"], [1, "fallback"]]) {
+    const body = blobs[i].slice(0, blobs[i].indexOf("}, 'localStorage"));
+    check(`the ${label} blob carries cashTransactions`, /\bcashTransactions\b/.test(body));
+    check(`the ${label} blob carries cashReceipts`, /\bcashReceipts\b/.test(body));
+    check(`the ${label} blob carries the rewards catalogue`, /\bwildcatCashRewards\b/.test(body));
+    check(`the ${label} blob carries the audit log`, /\bauditLog\b/.test(body));
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);

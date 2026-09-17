@@ -4912,6 +4912,20 @@
                             // school back to the five hardcoded defaults at the
                             // exact moment it was relying on the cache.
                             wildcatCashRewards,
+                            // AND SO DOES THE MONEY, for exactly the same
+                            // reason and at exactly the same cost. The primary
+                            // blob above carries cashTransactions and
+                            // cashReceipts; this one did not. On the 401 path
+                            // every write has its own catch, so the try
+                            // completes and the primary blob runs -- which is
+                            // the only reason 2026-09-17's refused awards were
+                            // still on the teachers' own machines to recover.
+                            // Anything that throws OUT of the try instead lands
+                            // here, and cached everything about a failed save
+                            // except the cash it failed to write.
+                            cashTransactions,
+                            cashReceipts,
+                            cashYearArchives,
                             loginHistory,
                             autoWeekEnabled,
                             lastAutoResetDate,
