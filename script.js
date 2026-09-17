@@ -3458,6 +3458,59 @@
         }
 
 
+        /**
+         * How many audit entries the LOCAL CACHE keeps. Not a limit on the log
+         * itself: `auditLog` in memory and appAuditLog on the server both keep
+         * everything. Measured 2026-09-17: 10,261 entries were 4.43 MB, which
+         * on its own overruns the ~5 MB localStorage quota.
+         */
+        const LOCAL_CACHE_AUDIT_MAX = 1000;
+
+        /**
+         * Write the local cache. NEVER THROWS.
+         *
+         * localStorage is a cache, not a destination, and by the time this runs
+         * every Convex write in saveData has already committed. On 2026-09-17 a
+         * full raffleData blob threw QuotaExceededError on this line, the outer
+         * catch in saveData attributed it to 'convex', saveSucceeded went false,
+         * and an award that HAD reached the server was reported to staff as
+         * failed and then retried four times. A quota error here is a stale
+         * cache; it is not a lost award, and it must not be able to say so.
+         *
+         * On overflow it retries with the audit log's tail only. That is safe
+         * against a mass re-send: what gets offered to the server is gated on
+         * auditIdsOnServer, and when the table could not be read at load
+         * saveData offers only entries this tab minted.
+         */
+        function cacheLocally(blob, label) {
+            const name = label || 'localStorage';
+            try {
+                localStorage.setItem('raffleData', JSON.stringify(blob));
+                return true;
+            } catch (err) {
+                try {
+                    const full = (blob && blob.auditLog) || [];
+                    const trimmed = Object.assign({}, blob, {
+                        auditLog: full.slice(-LOCAL_CACHE_AUDIT_MAX)
+                    });
+                    localStorage.setItem('raffleData', JSON.stringify(trimmed));
+                    console.warn(
+                        `🟡 ${name}: audit log trimmed to the newest ` +
+                        `${Math.min(LOCAL_CACHE_AUDIT_MAX, full.length)} of ` +
+                        `${full.length} entries to fit the storage quota. ` +
+                        `The server keeps the whole log.`);
+                    return true;
+                } catch (err2) {
+                    // Deliberately not rethrown and deliberately not pushed to
+                    // writesFailed. See the note above.
+                    console.warn(
+                        `🟡 ${name}: local cache not written (${err2 && err2.name}). ` +
+                        `Server writes are unaffected; only offline recovery is stale.`);
+                    return false;
+                }
+            }
+        }
+
         async function saveData() {
             // TEACHER VIEW IS READ-ONLY, ENFORCED HERE.
             //
@@ -4497,7 +4550,7 @@
                         lastSaveTimestamp = timestamp;
                         
                         // Also save to localStorage (with ticket histories restored)
-                        localStorage.setItem('raffleData', JSON.stringify({
+                        const cachedOk = cacheLocally({
                             students: students, // Already has merged ticket histories
                             currentWeek,
                             cycleDuration,
@@ -4541,8 +4594,8 @@
                             localTombstones,
                             entityTombstones,
                             lastSaveTimestamp: timestamp
-                        }));
-                        console.log('✅ Saved to localStorage');
+                        }, 'localStorage');
+                        if (cachedOk) console.log('✅ Saved to localStorage');
                         // localStorage is a cache, not a destination. If the
                         // server writes above were refused for want of a
                         // session, saying "saved" is the lie that lets a
@@ -4557,7 +4610,7 @@
                         console.error('❌ Firebase save error:', error);
                         console.error('Error details:', error.message, error.code);
                         // Fall back to localStorage only
-                        localStorage.setItem('raffleData', JSON.stringify({
+                        const cachedFallbackOk = cacheLocally({
                             students,
                             currentWeek,
                             cycleDuration,
@@ -4601,8 +4654,8 @@
                             cycleStartTimestamp,
                             localTombstones,
                             entityTombstones
-                        }));
-                        console.log('✅ Saved to localStorage (fallback)');
+                        }, 'localStorage fallback');
+                        if (cachedFallbackOk) console.log('✅ Saved to localStorage (fallback)');
                     }
                 }
                 // TRUE ONLY IF EVERYTHING REACHED THE SERVER. Partial is

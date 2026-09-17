@@ -195,5 +195,39 @@ console.log("\nA hidden tab stops polling the hall-pass boards");
   check("the dashboard board", /setInterval\(function \(\) \{ if \(!document\.hidden\) loadHallPassBoard\(\); \}, 20000\)/.test(code));
 }
 
+console.log("\nA full localStorage cache cannot report a server write as lost");
+{
+  // 2026-09-17, 8:11am. Awarding 100 to a student wrote every Convex store --
+  // main, students, cash_tx_2026_W38, audit, secondary, all logged OK -- and
+  // then localStorage.setItem threw QuotaExceededError, because the blob
+  // carried the whole audit log (10,261 entries, 4.43MB, over the ~5MB quota
+  // on its own). The outer catch attributed that to 'convex', saveSucceeded
+  // went false, the teacher was told the award had not gone through, and the
+  // coalesced queue replayed the save four times. The award was on the server
+  // from the first attempt. A cache is not a destination and its overflow is
+  // not a lost award.
+  const helper = code.slice(code.indexOf("function cacheLocally("),
+                            code.indexOf("async function saveData()"));
+  check("the cache write is its own helper, outside the save's try", helper.length > 0);
+  check("the setItem is wrapped", /try \{\s*localStorage\.setItem\('raffleData'/.test(helper));
+  check("an overflow retries with only the audit log's tail",
+    /auditLog: full\.slice\(-LOCAL_CACHE_AUDIT_MAX\)/.test(helper));
+  check("a second failure warns and returns false",
+    /catch \(err2\) \{[\s\S]{0,500}console\.warn\([\s\S]{0,400}return false;/.test(helper));
+  check("the helper cannot propagate an error", !/\bthrow\b/.test(helper));
+  check("the cache cap is a named constant", /const LOCAL_CACHE_AUDIT_MAX = \d+;/.test(code));
+
+  check("saveData never calls setItem('raffleData') itself",
+    !/localStorage\.setItem\('raffleData'/.test(save));
+  check("both cache writes go through the helper",
+    (save.match(/cacheLocally\(\{/g) || []).length === 2);
+  check("the primary write claims success only when it happened",
+    /if \(cachedOk\) console\.log\('✅ Saved to localStorage'\)/.test(save));
+  check("the fallback write likewise",
+    /if \(cachedFallbackOk\) console\.log\('✅ Saved to localStorage \(fallback\)'\)/.test(save));
+  check("and no cache result ever reaches writesFailed",
+    !/cached(Ok|FallbackOk)[\s\S]{0,200}writesFailed\.push/.test(save));
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);
