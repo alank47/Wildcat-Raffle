@@ -215,6 +215,41 @@ console.log("\n-- buying: one token per press, and no price from the browser --"
     /wpPollPassOnce\(true\)/.test(buy));
 }
 
+console.log("\n-- the dialog has to out-rank every view --");
+{
+  // THE ACTUAL CAUSE of "clicking buy does nothing", found after four rounds of
+  // looking elsewhere. .wc-dialog-backdrop was z-index 5000; .wp-root -- the
+  // student portal -- is 9000. So the confirm opened BEHIND the page:
+  // invisible, unclickable, and since _wcDialog only resolves when one of its
+  // own buttons is pressed, its promise never settled. The handler awaited a
+  // confirm forever. The console showed "[store] buy clicked" and then
+  // nothing, which is exactly what an unresolved await looks like.
+  //
+  // A modal that a view can cover is not a modal.
+  const zOf = (sel) => {
+    const at = css.indexOf(sel + " {");
+    if (at < 0) return null;
+    const block = css.slice(at, css.indexOf("}", at));
+    const m = block.match(/z-index:\s*(\d+)/);
+    return m ? Number(m[1]) : null;
+  };
+  const dialog = zOf(".wc-dialog-backdrop");
+  check("the dialog backdrop has a z-index at all", dialog !== null);
+
+  // Every fixed VIEW in the app, by the values they actually hold.
+  const views = [...css.matchAll(/z-index:\s*(\d+)/g)].map((m) => Number(m[1]))
+    // 2147483000 is wildcat-ui.css's own nuclear overlay and is not a view.
+    .filter((n) => n < 2000000 && n !== dialog);
+  const highestView = Math.max(...views);
+  check("and it sits above every other stacked thing in the sheet",
+    dialog > highestView, `dialog ${dialog} vs highest other ${highestView}`);
+
+  // Named explicitly, because these are the ones that bit.
+  check("above the student portal", dialog > 9000);
+  check("above the tap result view", dialog > 9500);
+  check("above the pass takeover and the toast row", dialog > 10000);
+}
+
 console.log("\n-- the server side a student can reach --");
 {
   check("myStore resolves the student from their own token",

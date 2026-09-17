@@ -3445,7 +3445,17 @@ body {
 .wc-dialog-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 5000;
+    /* ABOVE EVERY VIEW, because a modal that a view can cover is not a modal.
+       This was 5000 and the student portal (.wp-root) is 9000, so on that
+       screen the dialog opened BEHIND the page: invisible, unclickable, and --
+       because _wcDialog only resolves when one of its buttons is pressed --
+       its promise never settled. The Buy button therefore awaited a confirm
+       forever and did nothing at all, through four rounds of looking somewhere
+       else. #tapResultView is 9500, the pass takeover 9999, the toast row
+       10000; 10050 clears the lot without reaching for the nuclear
+       2147483000 that wildcat-ui.css keeps for its own overlay.
+       A modal outranks a view. That is the rule, and 5000 was simply wrong. */
+    z-index: 10050;
     background: rgba(14, 14, 14, 0.55);
     display: flex;
     align-items: center;
