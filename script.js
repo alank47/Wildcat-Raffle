@@ -18074,25 +18074,16 @@
 
                 const ok = await showConfirm('Buy ' + name + ' for $' + cost + '?');
                 console.log('[store] confirm returned:', ok);
-                if (!ok) {
-                    // SAID OUT LOUD WHEN IT IS NOT A REAL CANCEL. A confirm
-                    // that resolves undefined never asked anybody anything;
-                    // treating that as "they said no" is how this looked like
-                    // a dead button.
-                    if (ok === undefined || ok === null) {
-                        console.warn('[store] the confirm dialog resolved without asking. ' +
-                            'Falling back to a direct purchase prompt.');
-                        const forced = await showConfirm('Buy ' + name + ' for $' + cost + '?');
-                        console.log('[store] second confirm returned:', forced);
-                        if (!forced) return;
-                    } else {
-                        return;
-                    }
-                }
+                // A plain cancel. The double-ask that briefly lived here was a
+                // workaround for a confirm resolving without being seen -- the
+                // dialog was opening behind the portal, z-index 5000 against
+                // the portal's 9000. Fixed at the source, so asking a child the
+                // same question twice would just be rude.
+                if (!ok) return;
 
                 const auth = window.WildcatAuth;
                 const session = auth && auth.getSession();
-                if (!session) { await showAlert('\u274C You are not signed in.'); return; }
+                if (!session) { showAlert('\u274C You are not signed in.'); return; }
 
                 btn.disabled = true;
                 btn.textContent = 'Buying\u2026';
@@ -18107,41 +18098,52 @@
                     res = await auth.convexMutation('studentStore:purchase',
                         { rewardId: id, quantity: 1, attemptId: attemptId }, session.idToken);
                 } catch (e) {
-                    await showAlert('\u274C That did not go through: ' +
+                    // NOT AWAITED. A dialog that fails to resolve must never be
+                    // able to hold this handler open again.
+                    console.error('[store] purchase call failed:', e);
+                    showAlert('\u274C That did not go through: ' +
                         ((e && e.message) ? e.message : e));
                     return;
                 }
 
                 if (!res || res.ok !== true) {
-                    await showAlert('\u26A0\uFE0F ' + ((res && res.reason) || 'That could not be bought.'));
+                    console.warn('[store] refused:', res && res.code, res && res.reason);
+                    showAlert('\u26A0\uFE0F ' + ((res && res.reason) || 'That could not be bought.'));
                     return;
                 }
                 if (res.alreadyBought) {
-                    await showAlert('You already bought that. Your receipt is ' + res.receiptId + '.');
+                    showSuccessToast('Already bought \u2014 receipt ' + res.receiptId);
                 } else {
-                    await showAlert('\u2705 Bought ' + res.rewardName + ' for $' + res.totalCost +
-                        '.\nShow this at the office: ' + res.receiptId);
+                    showSuccessToast('Bought ' + res.rewardName + ' for $' + res.totalCost +
+                        ' \u2014 show ' + res.receiptId + ' at the office');
                 }
-                // Reload the portal so the balance, the history and the store
-                // all come from the server rather than being patched by hand.
-                // wpPollPassOnce is the ONE path the dashboard is drawn by --
-                // the watch timer calls it too -- so re-rendering through it
-                // cannot drift from what a poll would have shown. `force`
-                // skips the freshness short-circuit, which matters here because
-                // the thing that changed is the thing we just did.
-                if (typeof wpPollPassOnce === 'function') await wpPollPassOnce(true);
+                console.log('[store] purchased:', res.receiptId, res.rewardName,
+                    '$' + res.totalCost, 'balance now $' + res.balanceAfter);
             } catch (e) {
                 // SAID OUT LOUD. Whatever went wrong, the student is told
                 // something happened and the console carries the detail.
                 console.error('[store] buy failed:', e);
                 try {
-                    await showAlert('\u274C Something went wrong buying that. ' +
+                    showAlert('\u274C Something went wrong buying that. ' +
                         'Nothing was charged. Please tell a teacher.\n' +
                         ((e && e.message) ? e.message : String(e)));
                 } catch (e2) { /* even the dialog is gone: the console has it */ }
             }
             } finally {
                 _wpBuyInFlight = false;
+                // RE-RENDERED HERE, NOT ON THE SUCCESS PATH. The purchase of
+                // WC-A68031 landed correctly -- $100 off the balance, receipt
+                // issued -- and the student was never told, because the handler
+                // then sat on `await showAlert(...)` and the button stayed on
+                // "Buying...". A modal that failed to resolve froze the screen
+                // on a transaction that had already succeeded: the money moved
+                // and the child had no idea.
+                //
+                // In the finally, so it runs on success, on refusal, on a
+                // network error and on a throw.
+                try {
+                    if (typeof wpPollPassOnce === 'function') await wpPollPassOnce(true);
+                } catch (e) { console.warn('[store] refresh after buy failed:', e); }
             }
         }, true);
         }
