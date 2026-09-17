@@ -509,7 +509,19 @@
    * that move matters more than anything else in this file.
    */
   async function resumeSession(opts) {
-    if (session) return session;
+    // { force: true } RENEWS A SESSION THAT ALREADY EXISTS.
+    //
+    // A Google or Entra id token lasts about an hour. When it expires, the
+    // `session` object it arrived in is still sitting right here, so the line
+    // below used to hand it straight back and every Convex call kept returning
+    // 401. On 2026-09-17 that cost the school two days of one teacher's awards.
+    //
+    // acquireTokenSilent reads MSAL's own per-tab cache and needs no FedCM,
+    // which is precisely what is blocked in the browsers where the Google
+    // refresh cannot work. So a forced resume is the one renewal path that can
+    // run without involving the person at all.
+    const force = opts && opts.force === true;
+    if (session && !force) return session;
     if (!configured.entra()) return null;
 
     // The shared Chromebook guard. Both conditions are documented above; the
@@ -524,7 +536,9 @@
     // acquireTokenSilent below simply returns null. Without this, a staff member
     // keeps their dashboard across a reload (currentUser survives) but loses the
     // Microsoft token, so every Convex write says "sign in" — the reported bug.
-    const knownStaff = opts && opts.knownStaff === true;
+    // A forced renewal is self-evidently a known staff tab: we are only here
+    // because this tab already held a staff session and the server rejected it.
+    const knownStaff = (opts && opts.knownStaff === true) || force;
     if (!knownStaff) {
       if (!staffSignInRequested) {
         console.debug('[wildcat-auth] not resuming: no staff sign-in was requested');

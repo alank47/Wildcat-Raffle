@@ -266,7 +266,8 @@ console.log("\nThe money has the same durable outbox the audit log has");
   check("it runs on the server load path, BEFORE the ledger is reconciled",
     /drainCashOutboxIntoLedger\(\);\s*reconcileCashLedger\(\);/.test(code));
   check("and on the localStorage fallback path too",
-    (code.match(/drainCashOutboxIntoLedger\(\);\s*reconcileCashLedger\(\);/g) || []).length === 2);
+    (code.match(/drainCashOutboxIntoLedger\(\);/g) || []).length === 2 &&
+    /drainCashOutboxIntoLedger\(\);\s*reconcileCashLedger\(\);/.test(code));
 }
 
 console.log("\nA 401 is a lost sign-in, not a red console");
@@ -279,7 +280,12 @@ console.log("\nA 401 is a lost sign-in, not a red console");
   check("the save tracks whether it saw one", /let sawUnauthorized = false;/.test(save));
   check("every refusal path sets it",
     (save.match(/if \(isUnauthorized\([^)]*\)\) sawUnauthorized = true;/g) || []).length >= 5);
-  check("and a 401 raises the bar", /if \(sawUnauthorized\) reportSessionLost\([^)]*true\);/.test(save));
+  // Was a direct reportSessionLost. A 401 now goes to renewal first, and the
+  // bar is what renewal falls back to -- see the renewal block below.
+  check("and a 401 is acted on rather than only logged",
+    /if \(sawUnauthorized\) \{\s*renewSessionAfterRefusal\(/.test(save));
+  check("which ends at the bar when renewal cannot help",
+    /function renewSessionAfterRefusal[\s\S]{0,1400}reportSessionLost\(reason, true\);/.test(code));
   check("reportSessionLost takes the override", /function reportSessionLost\(reason, serverRefused\)/.test(code));
   check("which bypasses the has-a-session guard",
     /if \(!serverRefused && auth && auth\.getSession && auth\.getSession\(\)\) return;/.test(code));
@@ -304,6 +310,59 @@ console.log("\nA green tick for cash requires confirmation, not a non-false valu
     /Partly saved/.test(code));
   check("saveData clears cash markers only when the outbox is empty",
     /if \(readCashOutbox\(\)\.length === 0\) \{\s*unsavedAtStart\.cash\.forEach/.test(save));
+}
+
+console.log("\nCash the server never received is recovered from the device");
+{
+  // The outbox only holds rows created since it shipped. Every earlier build
+  // wrote its cash into the `raffleData` blob on every save attempt, and that
+  // blob is read back by exactly ONE function -- loadDataLocal() -- which runs
+  // only when the server load FAILS. So a tab whose writes were refused for a
+  // day, and which then reloads successfully, has its unsaved awards replaced
+  // by the server's copy and silently dropped.
+  //
+  // Not hypothetical: on 2026-09-17 the school's heaviest awarder recorded 281
+  // movements on 15 September and then nothing for two days while her screen
+  // kept showing the work. None of it is in the 100 orphans either, because
+  // when a token dies BOTH writes fail and no server-side trace survives.
+  check("there is a recovery pass over the local cache",
+    /function recoverCashFromLocalCache\(\)/.test(code));
+  check("it reads the legacy raffleData blob",
+    /function recoverCashFromLocalCache[\s\S]{0,500}localStorage\.getItem\('raffleData'\)/.test(code));
+  check("an unreadable cache is skipped, not thrown",
+    /function recoverCashFromLocalCache[\s\S]{0,700}catch \(e\) \{[\s\S]{0,160}return;/.test(code));
+  check("it never re-adds a row the server already has",
+    /have\.has\(t\.id\) \|\| cashIdsOnServer\.has\(t\.id\)/.test(code));
+  check("it never resurrects cash from before a reset",
+    /function lastCashResetAt\(\)/.test(code) &&
+    /if \(cutoff && String\(t\.timestamp \|\| ''\) <= cutoff\) return;/.test(code));
+  check("the reset boundary comes from the audit log",
+    /reset_all_student_cash\|Reset all \.\* Wildcat Cash/.test(code));
+  check("recovered rows go into the outbox, so they cannot be lost twice",
+    /cashTransactions\.push\(t\);\s*\/\/[^\n]*\n\s*enqueueCashOutbox\(t\);/.test(code) ||
+    /function recoverCashFromLocalCache[\s\S]{0,1200}enqueueCashOutbox\(t\);/.test(code));
+  check("it runs on the SERVER load path, where the cache was being ignored",
+    /drainCashOutboxIntoLedger\(\);\s*recoverCashFromLocalCache\(\);\s*reconcileCashLedger\(\);/.test(code));
+  check("and before tombstones, so a deleted row is filtered back out",
+    code.indexOf("recoverCashFromLocalCache();") < code.indexOf("applyTombstonesToLocalState();"));
+}
+
+console.log("\nA refused save renews its own token before telling anyone");
+{
+  check("there is a renewal path", /function renewSessionAfterRefusal\(reason\)/.test(code));
+  check("it asks for a FORCED resume, which is the only kind that replaces a live-but-dead session",
+    /auth\.resumeSession\(\{ force: true \}\)/.test(code));
+  check("only one renewal runs at a time", /if \(_renewAfterRefusalInFlight\) return;/.test(code));
+  check("a successful renewal re-sends rather than waiting on the queue",
+    /requestSave\('after token renewal'\)/.test(code));
+  check("and clears the bar it may have already raised",
+    /bar\.remove\(\);\s*_sessionLostShown = false;/.test(code));
+  check("the bar is the FALLBACK, shown only when renewal fails",
+    /\.then\(fresh => \{\s*if \(!fresh\) \{\s*reportSessionLost\(reason, true\);/.test(code));
+  check("a thrown renewal also falls back to the bar",
+    /\.catch\(err => \{[\s\S]{0,240}reportSessionLost\(reason, true\);/.test(code));
+  check("the save calls renewal, not the bar, on a 401",
+    /if \(sawUnauthorized\) \{\s*renewSessionAfterRefusal\(/.test(save));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

@@ -1505,6 +1505,125 @@
             return readCashOutbox().length === 0;
         }
 
+
+        /**
+         * The boundary a recovered row must be newer than: the most recent
+         * reset_all_student_cash. A tab open across a reset still holds
+         * pre-reset rows in its localStorage copy, and putting those back would
+         * re-credit money the school deliberately wiped.
+         */
+        function lastCashResetAt() {
+            let newest = '';
+            (auditLog || []).forEach(e => {
+                const a = String((e && e.action) || '');
+                if (!/reset_all_student_cash|Reset all .* Wildcat Cash/i.test(a)) return;
+                const ts = String((e && e.timestamp) || '');
+                if (ts > newest) newest = ts;
+            });
+            return newest;
+        }
+
+        /**
+         * Recover cash the server never received, from this tab's OWN
+         * localStorage copy.
+         *
+         * WHY THIS IS NOT THE OUTBOX. The outbox only holds rows created since
+         * it shipped. Every build before it wrote its cash into the `raffleData`
+         * blob on every save attempt -- and that blob is read back by exactly
+         * one function, loadDataLocal(), which runs ONLY when the server load
+         * fails. So a tab whose writes were refused for a day, and which then
+         * reloads successfully, has its unsaved awards replaced by the server's
+         * copy and silently discarded.
+         *
+         * That is not hypothetical. On 2026-09-17 the school's heaviest awarder
+         * recorded 281 movements on 15 September and then nothing at all for two
+         * days, while her screen kept showing her work. Nothing of it reached
+         * the server, so it is not in the 100 orphans either -- when a token
+         * dies both writes fail and there is no server-side trace to count.
+         *
+         * Bounded three ways, because resurrecting cash is worse than losing it:
+         *   - never a row the server already has, by id
+         *   - never a row older than the last cash reset
+         *   - runs BEFORE applyTombstonesToLocalState, so anything deliberately
+         *     deleted is filtered straight back out
+         */
+        function recoverCashFromLocalCache() {
+            let cached = null;
+            try {
+                const raw = localStorage.getItem('raffleData');
+                if (!raw) return;
+                cached = JSON.parse(raw);
+            } catch (e) {
+                console.warn('Local cash recovery: cache unreadable, skipping.', e);
+                return;
+            }
+            const rows = (cached && Array.isArray(cached.cashTransactions))
+                ? cached.cashTransactions : [];
+            if (!rows.length) return;
+            const cutoff = lastCashResetAt();
+            const have = new Set((cashTransactions || []).map(t => t && t.id).filter(Boolean));
+            let recovered = 0;
+            rows.forEach(t => {
+                if (!t || !t.id) return;
+                if (have.has(t.id) || cashIdsOnServer.has(t.id)) return;
+                if (cutoff && String(t.timestamp || '') <= cutoff) return;
+                have.add(t.id);
+                cashTransactions.push(t);
+                // Durable from here on, so this tab cannot lose it again.
+                enqueueCashOutbox(t);
+                recovered++;
+            });
+            if (recovered) {
+                cashTransactions.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                console.warn('\u{1F4B0} Recovered ' + recovered + ' cash movement' +
+                    (recovered === 1 ? '' : 's') + ' from this device that the server ' +
+                    'never received. Queued; the next save sends ' +
+                    (recovered === 1 ? 'it.' : 'them.'));
+            }
+        }
+
+
+        /** One renewal at a time, however many writes came back 401. */
+        let _renewAfterRefusalInFlight = null;
+
+        /**
+         * A 401 should cost nobody a keystroke.
+         *
+         * MSAL keeps a cached account in this tab and acquireTokenSilent needs
+         * no FedCM -- which is exactly what is switched off in the browsers
+         * where the Google refresh cannot work. So the first thing a refused
+         * save does is renew its own token and let the queue's existing retry
+         * land the write. Only if that fails does anyone get told anything, and
+         * then it is the bar with its one button, never a console.
+         */
+        function renewSessionAfterRefusal(reason) {
+            const auth = window.WildcatAuth;
+            if (!auth || typeof auth.resumeSession !== 'function') {
+                reportSessionLost(reason, true);
+                return;
+            }
+            if (_renewAfterRefusalInFlight) return;
+            _renewAfterRefusalInFlight = Promise.resolve()
+                .then(() => auth.resumeSession({ force: true }))
+                .then(fresh => {
+                    if (!fresh) {
+                        reportSessionLost(reason, true);
+                        return;
+                    }
+                    console.log('[session] token renewed silently after a 401; re-sending.');
+                    const bar = document.getElementById('wcSessionLost');
+                    if (bar) bar.remove();
+                    _sessionLostShown = false;
+                    // Do not rely on the queue still having a retry left.
+                    if (typeof requestSave === 'function') requestSave('after token renewal');
+                })
+                .catch(err => {
+                    console.error('[session] silent renewal failed:', err && err.message);
+                    reportSessionLost(reason, true);
+                })
+                .finally(() => { _renewAfterRefusalInFlight = null; });
+        }
+
         /** A write refused for want of a valid token, rather than a real error. */
         function isUnauthorized(err) {
             const msg = String((err && (err.message || err.code)) || err || '');
@@ -3050,6 +3169,7 @@
                         // one ledger, before anything renders from it. After
                         // the roster, because it reads the student records.
                         drainCashOutboxIntoLedger();
+                        recoverCashFromLocalCache();
                         reconcileCashLedger();
 
                         // NEW: Apply tombstone filter as a display layer.
@@ -4817,7 +4937,12 @@
                     // THE ONE SIGNAL THAT MATTERS. Without this the bar never
                     // appeared for a dead token, because its only other caller
                     // is gated on holding no session at all.
-                    if (sawUnauthorized) reportSessionLost('the server refused this save: 401', true);
+                    // RENEW FIRST, TELL SOMEBODY SECOND. The bar is the
+                    // fallback, not the plan: nobody should have to act on a
+                    // token that this tab can replace by itself.
+                    if (sawUnauthorized) {
+                        renewSessionAfterRefusal('the server refused this save: 401');
+                    }
                 } else {
                     // Everything that was unsaved when this pass began is now
                     // on the server. Work marked during the pass waits for the

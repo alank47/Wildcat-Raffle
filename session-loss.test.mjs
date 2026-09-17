@@ -65,8 +65,17 @@ console.log("\nA save that reached only this browser does not report success");
   // been lost the same way since 13 September.
   check("but a 401 from the server gets through it",
     /function reportSessionLost\(reason, serverRefused\)/.test(code));
-  check("and the save raises it on a 401",
-    /if \(sawUnauthorized\) reportSessionLost\([^)]*true\);/.test(code));
+  // The save no longer calls the bar directly. A 401 goes to a silent token
+  // renewal first -- MSAL's cached account needs no FedCM, which is the thing
+  // switched off in the browsers where the Google refresh cannot work -- and
+  // the bar is what that falls back to. Nobody should have to act on a token
+  // the tab can replace by itself.
+  check("the save acts on a 401 rather than only logging it",
+    /if \(sawUnauthorized\) \{\s*renewSessionAfterRefusal\(/.test(code));
+  check("renewal is forced, the only kind that replaces a live-but-dead session",
+    /auth\.resumeSession\(\{ force: true \}\)/.test(code));
+  check("and the bar is still reached when renewal cannot help",
+    /function renewSessionAfterRefusal[\s\S]{0,1400}reportSessionLost\(reason, true\);/.test(code));
   check("it shows once, not on every save", /if \(_sessionLostShown\) return;/.test(fn));
   check("it offers the one action that fixes it",
     /signInWithMicrosoft\(\)/.test(fn));
