@@ -295,6 +295,20 @@ console.log("\n-- the ledger search is bounded by the cutoff --");
       === weekKeysBetween(CUT, CUT + 3 * 86400000).length);
 }
 
+console.log("\n-- the ledger insert carries no mirror key --");
+{
+  // See the note in studentStore.test.mjs: one keyed row in an unkeyed
+  // collection makes loadDoc return a map built from keyed rows only, and
+  // every other row disappears from what the client loads. The reversal row
+  // shipped with a key on 2026-09-15 and took the whole cash ledger with it.
+  const src2 = readFileSync(new URL("./cashReversal.ts", import.meta.url), "utf8");
+  const inserts = [...src2.matchAll(/ctx\.db\.insert\("legacyMirror",\s*\{([\s\S]*?)\}\)/g)]
+    .map((m) => m[1]);
+  check("the reversal's mirror insert sets no key",
+    inserts.length > 0 && inserts.every((b) => !/(^|\s)key:/.test(b)),
+    inserts.map((k) => k.replace(/\s+/g, " ").slice(0, 60)).join(" | "));
+}
+
 console.log("\n-- the mutation takes no amount, and the register is the key --");
 {
   const src = readFileSync(new URL("./cashReversal.ts", import.meta.url), "utf8");

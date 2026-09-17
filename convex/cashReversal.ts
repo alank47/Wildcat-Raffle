@@ -214,10 +214,21 @@ async function doReverse(
   //    original's week. A reversal is an event today; filing it under last
   //    week's document would make "what happened this week" wrong in both.
   const reversalWeek = cashWeekKey(nowIso);
+    // NO `key`. loadDoc decides a collection's shape with
+  // `slice.some(r => typeof r.key === "string")` and builds the map from keyed
+  // rows ONLY -- so one keyed row in an unkeyed collection makes every other
+  // row vanish from what the client loads. mergeSlice's own comment says it:
+  // "Mixing the two loses rows silently."
+  //
+  // Inserting with a key here put 1,485 cash rows and 4 receipts behind a
+  // two-entry map on 2026-09-16. Staff tabs loaded a near-empty ledger,
+  // distributeCashTransactions rebuilt all 620 student histories from it, and
+  // the arrays fell to single digits -- which I diagnosed twice and guarded
+  // twice without ever asking why the ledger was short. The Receipts screen
+  // then threw outright: an array had become an object.
   await ctx.db.insert("legacyMirror", {
     doc: "cash_tx_" + reversalWeek,
     collection: "transactions",
-    key: reversalId,
     payload: reversalRow,
     mirroredAt: nowIso,
   });

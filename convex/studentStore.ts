@@ -321,15 +321,27 @@ async function doPurchase(
 
   // 2. The receipt, into the slice the staff store's fulfil and cancel paths
   //    already read. Merge-by-id, so it cannot be clobbered by a stale tab.
+  // NO `key` ON EITHER OF THESE. loadDoc decides a collection's shape with
+  // `slice.some(r => typeof r.key === "string")` and builds the map from keyed
+  // rows ONLY -- so one keyed row in an unkeyed collection makes every other
+  // row vanish from what the client loads. mergeSlice's own comment says it:
+  // "Mixing the two loses rows silently."
+  //
+  // Inserting with keys here put 1,485 cash rows and 4 receipts behind a
+  // two-entry map on 2026-09-16. Staff tabs loaded a near-empty ledger,
+  // distributeCashTransactions rebuilt all 620 student histories from it, and
+  // the arrays fell to single digits -- which I diagnosed twice and guarded
+  // twice without ever asking why the ledger was short. Then Receipts threw
+  // outright: an array had become an object.
   await ctx.db.insert("legacyMirror", {
     doc: REWARDS_DOC, collection: RECEIPTS_COLLECTION,
-    key: receiptId, payload: receipt, mirroredAt: nowIso,
+    payload: receipt, mirroredAt: nowIso,
   });
 
   // 3. The cash ledger row, in this week's document.
   await ctx.db.insert("legacyMirror", {
     doc: "cash_tx_" + cashWeekKey(nowIso), collection: "transactions",
-    key: txnId, payload: ledgerRow, mirroredAt: nowIso,
+    payload: ledgerRow, mirroredAt: nowIso,
   });
 
   // 4. The counters, and the student's own copy of the row -- views_app builds

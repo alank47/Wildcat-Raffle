@@ -302,6 +302,28 @@ console.log("\n9. Two children tapping the last one");
     /wildcatCashTransactions: \[\.\.\.storedHistory, ledgerRow\]/.test(code));
 }
 
+console.log("\n9b. No mirror insert carries a key");
+{
+  // THE WORST BUG OF THE DAY, and it was three characters. loadDoc decides a
+  // collection's shape with `slice.some(r => typeof r.key === "string")` and
+  // builds the map from keyed rows ONLY, so ONE keyed row in an unkeyed
+  // collection makes every other row vanish from what the client loads.
+  // mergeSlice's own comment warns about it: "Mixing the two loses rows
+  // silently."
+  //
+  // A keyed receipt and a keyed ledger row put 1,485 cash rows and 4 receipts
+  // behind a two-entry map. Staff tabs loaded a near-empty ledger,
+  // distributeCashTransactions rebuilt all 620 student histories from it, and
+  // the arrays fell to single digits -- diagnosed twice, guarded twice, cause
+  // never asked about. Then Receipts threw: an array had become an object.
+  const inserts = [...code.matchAll(/ctx\.db\.insert\("legacyMirror",\s*\{([\s\S]*?)\}\)/g)]
+    .map((m) => m[1]);
+  check("there are mirror inserts to check", inserts.length >= 2, String(inserts.length));
+  const keyed = inserts.filter((b) => /(^|\s)key:/.test(b));
+  check("and not one of them sets a key", keyed.length === 0,
+    keyed.map((k) => k.replace(/\s+/g, " ").slice(0, 70)).join(" | "));
+}
+
 console.log("\n10. The purchase log has what an export needs");
 {
   const log = code.slice(code.indexOf("export const purchaseLog = internalQuery({"), code.length);

@@ -1656,6 +1656,111 @@ export const storeAffordability = internalQuery({
   },
 });
 
+/**
+ * Which mirror collections have a MIX of keyed and unkeyed rows. Read-only.
+ *
+ * legacyData:loadDoc decides the shape of a whole collection from
+ * `slice.some(r => typeof r.key === "string")`: one keyed row makes it a MAP,
+ * and the map is built only from rows that HAVE a key -- so every unkeyed row
+ * in that collection vanishes from what the client loads. mergeSlice's own
+ * comment says it: "Mixing the two loses rows silently."
+ *
+ * On 2026-09-17 the student store inserted a receipt and a cash ledger row
+ * WITH keys into collections whose existing rows had none. The staff Receipts
+ * screen began throwing "(cashReceipts || []).slice is not a function",
+ * because an array had become an object.
+ */
+/**
+ * Strip the key from rows that made their collection load as a map.
+ *
+ * THE ACTUAL ROOT CAUSE of the 2026-09-16 array collapses. loadDoc decides a
+ * collection's shape with `slice.some(r => typeof r.key === "string")` and
+ * builds the map from keyed rows only, so ONE keyed row in an unkeyed
+ * collection means every other row disappears from what the client loads.
+ *
+ * cashReversal and studentStore both inserted with `key:` into collections
+ * whose 1,485 existing rows had none. From then on every staff tab loaded
+ * `cashTransactions` as a two-entry object, distributeCashTransactions rebuilt
+ * all 620 student histories from it, and the arrays fell to single digits. I
+ * diagnosed that twice and shipped two guards against the symptom without ever
+ * asking why the ledger was short.
+ *
+ * Only rows in a MIXED collection are touched: a collection that is keyed
+ * throughout is keyed on purpose (histories are keyed by student) and is left
+ * exactly alone.
+ */
+export const unkeyMixedRows = internalMutation({
+  args: { apply: v.optional(v.boolean()) },
+  handler: async (ctx, { apply }) => {
+    const rows = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const groups = new Map<string, { keyed: any[]; unkeyed: number }>();
+    for (const r of rows as any[]) {
+      const k = `${r.doc}\u0000${r.collection}`;
+      const g = groups.get(k) ?? { keyed: [], unkeyed: 0 };
+      if (typeof r.key === "string") g.keyed.push(r); else g.unkeyed++;
+      groups.set(k, g);
+    }
+
+    const doomed: any[] = [];
+    for (const [k, g] of groups) {
+      // MIXED ONLY. An all-keyed collection is keyed by design.
+      if (!g.keyed.length || !g.unkeyed) continue;
+      const [doc, collection] = k.split("\u0000");
+      for (const r of g.keyed) {
+        doomed.push({ id: r._id, doc, collection, key: r.key,
+                      rowId: (r.payload as any)?.id ?? null });
+      }
+    }
+
+    if (apply === true) {
+      for (const d of doomed) {
+        // The key is REMOVED, not blanked: loadDoc tests `typeof r.key ===
+        // "string"`, and an empty string is still a string.
+        await ctx.db.patch(d.id, { key: undefined });
+      }
+    }
+    return {
+      applied: apply === true,
+      rowsUnkeyed: doomed.length,
+      rows: doomed.map((d) => ({ slice: `${d.doc} / ${d.collection}`, key: d.key, id: d.rowId })),
+      note: apply === true
+        ? "Keys removed. Those collections load as arrays again."
+        : "Dry run. Pass apply: true.",
+    };
+  },
+});
+
+export const keyedRowMixes = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const groups = new Map<string, { keyed: number; unkeyed: number }>();
+    for (const r of rows as any[]) {
+      const k = `${r.doc} / ${r.collection}`;
+      const g = groups.get(k) ?? { keyed: 0, unkeyed: 0 };
+      if (typeof r.key === "string") g.keyed++; else g.unkeyed++;
+      groups.set(k, g);
+    }
+    const mixed: any[] = [];
+    const allKeyed: any[] = [];
+    const allUnkeyed: any[] = [];
+    for (const [k, g] of groups) {
+      const row = { slice: k, ...g, loadsAs: g.keyed > 0 ? "map" : "array",
+                    rowsLostOnLoad: g.keyed > 0 ? g.unkeyed : 0 };
+      if (g.keyed && g.unkeyed) mixed.push(row);
+      else if (g.keyed) allKeyed.push(row);
+      else allUnkeyed.push(row);
+    }
+    mixed.sort((a, b) => b.rowsLostOnLoad - a.rowsLostOnLoad);
+    return {
+      MIXED_AND_LOSING_ROWS: mixed,
+      totalRowsLost: mixed.reduce((n, m) => n + m.rowsLostOnLoad, 0),
+      cleanKeyed: allKeyed.length,
+      cleanUnkeyed: allUnkeyed.length,
+    };
+  },
+});
+
 export const storeFootprint = internalQuery({
   args: {},
   handler: async (ctx) => {
