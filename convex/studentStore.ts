@@ -295,14 +295,18 @@ async function doPurchase(
   const delta = purchaseCounterDelta(total);
   const balanceAfter = (Number(student.wildcatCashBalance) || 0) + delta.wildcatCashBalance;
 
+  // The app-facing id, the way toAppStudent computes it. Passed explicitly
+  // because the raw row has no `id` field and reading one wrote "".
+  const studentAppId = String(student.legacyId ?? student._id);
   const receipt = buildStudentReceipt({
-    receiptId, student: withEnrolment as any, reward: reward!, quantity, nowIso,
+    receiptId, student: withEnrolment as any, studentAppId,
+    reward: reward!, quantity, nowIso,
   });
   (receipt as any).txId = txnId;
 
   const ledgerRow = buildPurchaseLedgerRow({
-    txnId, receiptId, student: withEnrolment as any, reward: reward!,
-    quantity, total, nowIso, balanceAfter,
+    txnId, receiptId, student: withEnrolment as any, studentAppId,
+    reward: reward!, quantity, total, nowIso, balanceAfter,
   });
 
   // 1. The register, first, so nothing below can be repeated.

@@ -233,18 +233,40 @@ export function purchaseCounterDelta(total: number): Record<string, number> {
 export function buildStudentReceipt(opts: {
   receiptId: string;
   student: StoreStudent;
+  /**
+   * THE APP-FACING STUDENT ID, PASSED EXPLICITLY AND NEVER GUESSED.
+   *
+   * This read `student.id`, and the mutation hands it a RAW Convex row, which
+   * has `_id` and `legacyId` and no `id` at all -- so it wrote an empty string.
+   * toAppStudent is the thing that maps `legacyId ?? _id` to `id`, and the
+   * server never goes through it.
+   *
+   * The damage was silent and two steps away: the staff cancel path does
+   * `students.find(s => s.id === receipt.studentId)`, found nobody for "",
+   * handed buildCancel `student: undefined`, and buildCancel only builds a
+   * refund `if (refund && o.student)` -- so the receipt cancelled, the toast
+   * said "cancelled and refunded", and $100 never went back. A required
+   * argument cannot be forgotten the way an optional field can be misread.
+   */
+  studentAppId: string;
   reward: StoreReward;
   quantity: number;
   nowIso: string;
 }): Record<string, unknown> {
-  const { receiptId, student, reward, quantity, nowIso } = opts;
+  const { receiptId, student, studentAppId, reward, quantity, nowIso } = opts;
+  const appId = String(studentAppId ?? "").trim();
+  if (!appId) {
+    // LOUD. An empty student id produces a receipt nothing can refund, and the
+    // failure only shows up when somebody tries to cancel it.
+    throw new Error("buildStudentReceipt: studentAppId is required and was empty.");
+  }
   const total = Number(reward.cost) * quantity;
   const grade = String(student.grade ?? "").trim();
   const gradeNum = parseInt(grade, 10);
 
   return {
     id: receiptId,
-    studentId: String(student.id ?? ""),
+    studentId: appId,
     studentName: `${student.firstName ?? ""} ${student.lastName ?? ""}`.trim(),
     studentGrade: grade,
     school: gradeNum >= 9 ? "High School" : "Middle School",
@@ -261,7 +283,7 @@ export function buildStudentReceipt(opts: {
     // member of staff who was not there. `role: 'student'` is what the
     // purchase log filters on to tell self-serve from over-the-counter.
     purchasedBy: {
-      id: String(student.id ?? ""),
+      id: appId,
       name: `${student.firstName ?? ""} ${student.lastName ?? ""}`.trim(),
       username: "",
       role: "student",
@@ -292,6 +314,8 @@ export function buildPurchaseLedgerRow(opts: {
   txnId: string;
   receiptId: string;
   student: StoreStudent;
+  /** The app-facing id, explicit. See buildStudentReceipt. */
+  studentAppId: string;
   reward: StoreReward;
   quantity: number;
   total: number;
@@ -299,13 +323,19 @@ export function buildPurchaseLedgerRow(opts: {
   balanceAfter: number;
 }): Record<string, unknown> {
   const { txnId, receiptId, student, reward, quantity, total, nowIso, balanceAfter } = opts;
+  const appId = String(opts.studentAppId ?? "").trim();
+  if (!appId) {
+    // A ledger row with no studentId belongs to nobody:
+    // distributeCashTransactions would file it under no student at all.
+    throw new Error("buildPurchaseLedgerRow: studentAppId is required and was empty.");
+  }
   const grade = String(student.grade ?? "").trim();
   const gradeNum = parseInt(grade, 10);
 
   return {
     id: txnId,
     timestamp: nowIso,
-    studentId: String(student.id ?? ""),
+    studentId: appId,
     studentName: `${student.firstName ?? ""} ${student.lastName ?? ""}`.trim(),
     studentGrade: grade,
     school: gradeNum >= 9 ? "High School" : "Middle School",

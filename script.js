@@ -27819,7 +27819,22 @@
                 `Cancelled ${receipt.rewardName}, receipt ${receiptId}. ${res.receipt.cancelReason}`);
             saveData();
             updateReceiptsTable();
-            showToast(`${receiptId} cancelled and refunded`, 'success');
+            // THE TOAST SAID "refunded" WHETHER OR NOT IT WAS. buildCancel only
+            // builds a refund `if (refund && o.student)`, and the student lookup
+            // above returns undefined whenever receipt.studentId does not match
+            // a loaded student -- which is exactly what happened to WC-A68031,
+            // written by the student store with an empty studentId. The receipt
+            // cancelled, the message claimed a refund, and $100 never moved.
+            // A success message that cannot see whether it succeeded is worse
+            // than no message.
+            if (res.refunded && res.receipt.refundTxId) {
+                showToast(`${receiptId} cancelled and $${receipt.totalCost} refunded`, 'success');
+            } else {
+                showToast(`${receiptId} cancelled, but NOT refunded — ` +
+                          `no student record matched. Tell an admin.`, 'warn', 9000);
+                console.warn('[receipts] cancelled without a refund:', receiptId,
+                    'studentId on receipt:', JSON.stringify(receipt.studentId));
+            }
         }
 
 

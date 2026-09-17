@@ -1689,6 +1689,133 @@ export const storeAffordability = internalQuery({
  * throughout is keyed on purpose (histories are keyed by student) and is left
  * exactly alone.
  */
+/**
+ * Repair a student-store receipt written with an empty studentId, and honour
+ * the refund its cancellation promised.
+ *
+ * buildStudentReceipt read `student.id` off a RAW Convex row -- which has
+ * `_id` and `legacyId` and no `id` -- so it wrote "". The staff cancel path
+ * then did `students.find(s => s.id === receipt.studentId)`, found nobody,
+ * handed buildCancel `student: undefined`, and buildCancel only builds a
+ * refund `if (refund && o.student)`. So WC-A68031 cancelled, the toast said
+ * "cancelled and refunded", and the $100 never went back.
+ *
+ * THE COUNTERS ARE UN-COUNTED, NOT COUNTER-AWARDED: balance up, `spent` back
+ * down, `earned` untouched. buildCancel's own refund uses kind 'award', which
+ * would inflate a child's earnings with money they never earned -- the same
+ * mistake the cash reversal was built to avoid. The row still carries
+ * behaviorId `reward-refund:` so isCashBehaviourRow keeps it out of every
+ * behaviour count, and it is a FORWARD row rather than an edit of the original
+ * charge, so the ledger shows the purchase AND the refund.
+ */
+export const repairEmptyStudentIdReceipts = internalMutation({
+  args: { apply: v.optional(v.boolean()) },
+  handler: async (ctx, { apply }) => {
+    const students = await ctx.db.query("students").collect();
+    const byName = new Map((students as any[]).map(
+      (s) => [`${s.firstName ?? ""} ${s.lastName ?? ""}`.trim(), s]));
+
+    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
+    const receipts = (mirror as any[]).filter(
+      (r) => r.doc === "secondary" && r.collection === "cashReceipts");
+
+    const nowIso = new Date().toISOString();
+    const week = cashWeekKeyForRepair(nowIso);
+    const out: any[] = [];
+
+    for (const row of receipts) {
+      const p = row.payload as any;
+      if (String(p?.studentId ?? "") !== "") continue;
+
+      const student = byName.get(String(p?.studentName ?? ""));
+      if (!student) {
+        out.push({ receipt: p?.id, action: "SKIPPED", why: "no student matches that name" });
+        continue;
+      }
+      const appId = String(student.legacyId ?? student._id);
+      const owed = (p?.status === "cancelled" && !p?.refundTxId)
+        ? Math.abs(Number(p?.totalCost) || 0) : 0;
+      const ledger = (mirror as any[]).find(
+        (r) => String(r.doc ?? "").startsWith("cash_tx_")
+            && String((r.payload as any)?.id ?? "") === String(p?.txId ?? ""));
+
+      const refundTxId = owed > 0 ? `txn_refund_${Date.now()}_${String(p.id).slice(-6)}` : null;
+
+      if (apply === true) {
+        // 1. The receipt belongs to a student again, and records its refund.
+        await ctx.db.patch(row._id, {
+          payload: { ...p, studentId: appId, refundTxId: refundTxId ?? p.refundTxId ?? null,
+                     updatedAt: nowIso },
+          mirroredAt: nowIso,
+        });
+        // 2. So does the original purchase row.
+        if (ledger) {
+          await ctx.db.patch(ledger._id, {
+            payload: { ...(ledger.payload as any), studentId: appId },
+            mirroredAt: nowIso,
+          });
+        }
+        if (owed > 0) {
+          // 3. The refund, as a forward row. UNKEYED: a keyed row would make
+          //    this weekly document load as a map and hide every other row.
+          await ctx.db.insert("legacyMirror", {
+            doc: "cash_tx_" + week,
+            collection: "transactions",
+            payload: {
+              id: refundTxId,
+              timestamp: nowIso,
+              studentId: appId,
+              studentName: p.studentName ?? "",
+              studentGrade: p.studentGrade ?? "",
+              school: p.school ?? "",
+              teacherId: "", teacherUsername: "",
+              teacherName: p.cancelledBy || "Office",
+              kind: "award",
+              type: "positive",
+              behaviorId: "reward-refund:" + String(p.rewardId ?? ""),
+              behaviorName: "Refund: " + String(p.rewardName ?? ""),
+              amount: owed,
+              notes: `Cancelled receipt ${p.id}. ${p.cancelReason || ""}`.trim(),
+              balanceAfter: (Number(student.wildcatCashBalance) || 0) + owed,
+            },
+            mirroredAt: nowIso,
+          });
+          // 4. The counters: un-count the purchase rather than award it back.
+          const bal = Number(student.wildcatCashBalance) || 0;
+          const spent = Number(student.wildcatCashSpent) || 0;
+          await ctx.db.patch(student._id, {
+            wildcatCashBalance: bal + owed,
+            wildcatCashSpent: Math.max(0, spent - owed),
+          });
+        }
+      }
+
+      out.push({
+        receipt: p?.id, student: p?.studentName, appId,
+        purchaseRowFound: Boolean(ledger),
+        refund: owed, refundTxId,
+        balanceBefore: Number(student.wildcatCashBalance) || 0,
+        balanceAfter: (Number(student.wildcatCashBalance) || 0) + owed,
+        action: apply === true ? "REPAIRED" : "would repair",
+      });
+    }
+    return { applied: apply === true, receipts: out.length, details: out,
+             note: apply === true ? "Done." : "Dry run. Pass apply: true." };
+  },
+});
+
+/** The ISO-week key, matching cashReversalRules.cashWeekKey. */
+function cashWeekKeyForRepair(ts: string): string {
+  const m = String(ts).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return "unknown";
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  const day = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+  return `${d.getUTCFullYear()}_W${String(week).padStart(2, "0")}`;
+}
+
 export const unkeyMixedRows = internalMutation({
   args: { apply: v.optional(v.boolean()) },
   handler: async (ctx, { apply }) => {

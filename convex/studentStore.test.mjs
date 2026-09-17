@@ -152,8 +152,9 @@ console.log("\n5. It is a purchase, not a punishment");
     !("wildcatCashDeducted" in d));
 
   const row = buildPurchaseLedgerRow({
-    txnId: "txn_buy_1", receiptId: "WC-ABC123", student: KID, reward: ITEM,
-    quantity: 1, total: 500, nowIso: "2026-09-16T18:00:00Z", balanceAfter: 500,
+    txnId: "txn_buy_1", receiptId: "WC-ABC123", student: KID, studentAppId: "S1",
+    reward: ITEM, quantity: 1, total: 500,
+    nowIso: "2026-09-16T18:00:00Z", balanceAfter: 500,
   });
   check("the ledger row is a redemption", row.kind === "redeem");
   check("its amount is negative", row.amount === -500);
@@ -170,8 +171,8 @@ console.log("\n6. The receipt is the same shape the staff store already fulfils"
   // A differently-shaped receipt would be un-fulfillable and un-refundable by
   // every screen that exists.
   const r = buildStudentReceipt({
-    receiptId: "WC-ABC123", student: KID, reward: ITEM, quantity: 2,
-    nowIso: "2026-09-16T18:00:00Z",
+    receiptId: "WC-ABC123", student: KID, studentAppId: "S1", reward: ITEM,
+    quantity: 2, nowIso: "2026-09-16T18:00:00Z",
   });
   const storeSrc = readFileSync(new URL("../wildcat-store.js", import.meta.url), "utf8");
   const staffShape = storeSrc.slice(storeSrc.indexOf("var receipt = {"),
@@ -188,8 +189,28 @@ console.log("\n6. The receipt is the same shape the staff store already fulfils"
   check("it starts issued, not fulfilled", r.status === "issued" && r.fulfilledAt === null);
   check("middle school is derived from the grade", r.school === "Middle School");
   check("and high school for a ninth grader",
-    buildStudentReceipt({ receiptId: "x", student: { ...KID, grade: "9" }, reward: ITEM,
-      quantity: 1, nowIso: "2026-09-16T18:00:00Z" }).school === "High School");
+    buildStudentReceipt({ receiptId: "x", student: { ...KID, grade: "9" }, studentAppId: "S1",
+      reward: ITEM, quantity: 1, nowIso: "2026-09-16T18:00:00Z" }).school === "High School");
+
+  // AN EMPTY STUDENT ID THROWS, LOUDLY. It used to be read off `student.id`,
+  // and the mutation hands these a RAW Convex row -- `_id` and `legacyId`, no
+  // `id` -- so it silently wrote "". WC-A68031 then cancelled without a refund,
+  // because the staff path looks the student up by that field, found nobody,
+  // and buildCancel only refunds `if (refund && o.student)`. The toast still
+  // said "cancelled and refunded". $100 never moved.
+  const threw = (fn) => { try { fn(); return false; } catch (e) { return /studentAppId/.test(e.message); } };
+  check("a receipt refuses to be built with no student id",
+    threw(() => buildStudentReceipt({ receiptId: "x", student: KID, studentAppId: "",
+      reward: ITEM, quantity: 1, nowIso: "2026-09-16T18:00:00Z" })));
+  check("and so does a ledger row, which would otherwise belong to nobody",
+    threw(() => buildPurchaseLedgerRow({ txnId: "t", receiptId: "x", student: KID,
+      studentAppId: "  ", reward: ITEM, quantity: 1, total: 500,
+      nowIso: "2026-09-16T18:00:00Z", balanceAfter: 0 })));
+  check("the receipt carries the id it was given, not one it guessed",
+    buildStudentReceipt({ receiptId: "x", student: KID, studentAppId: "11225",
+      reward: ITEM, quantity: 1, nowIso: "2026-09-16T18:00:00Z" }).studentId === "11225");
+  check("and the mutation computes it as toAppStudent does",
+    /const studentAppId = String\(student\.legacyId \?\? student\._id\);/.test(code));
 }
 
 console.log("\n7. These rules agree with the staff store's, which is in production");
