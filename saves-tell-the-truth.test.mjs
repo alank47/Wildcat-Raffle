@@ -43,7 +43,7 @@ console.log("\nThe return value is true only when everything reached the server"
   check("the audit log too", /auditSaveSucceeded = false;\s*writesFailed\.push\('audit'\)/.test(save));
   check("each cash and schedule write too", /writesFailed\.push\(writeNames\[i\]\)/.test(save));
   check("and the localStorage fallback path is a failure, not a success",
-    /writesFailed\.push\('convex'\);\s*console\.error\('❌ Firebase save error:'/.test(save));
+    /writesFailed\.push\('convex'\);[\s\S]{0,120}console\.error\('❌ Firebase save error:'/.test(save));
   check("success is the absence of failures", /saveSucceeded = writesFailed\.length === 0;/.test(save));
   check("the old unconditional true is gone", !/^\s*saveSucceeded = true;/m.test(save));
   check("a preview-mode save is still refused with false",
@@ -89,7 +89,9 @@ console.log("\nOnly what changed goes on the wire");
   check("cash goes through the union, by id, never the replace",
     /mergeLegacySlice\(`cash_tx_\$\{wk\}`, 'transactions', txs, 'id'\)/.test(save) && !/saveLegacySlice\(`cash_tx_/.test(save));
   check("and rows are confirmed only after the write resolves",
-    /\.then\(r => \{ txs\.forEach\(t => cashIdsOnServer\.add\(t\.id\)\); return r; \}\)/.test(save));
+    /\.then\(r => \{\s*txs\.forEach\(t => cashIdsOnServer\.add\(t\.id\)\);/.test(save));
+  check("and the outbox is pruned in the same callback, never before it",
+    /\.then\(r => \{\s*txs\.forEach\(t => cashIdsOnServer\.add\(t\.id\)\);\s*pruneCashOutbox\(cashIdsOnServer\);\s*return r;/.test(save));
   check("a failed audit table read offers only entries minted here, not the whole log",
     /if \(tableUnread && !auditIdsMintedHere\.has\(id\)\) return false;/.test(save));
   check("the outbox is pruned to what the server confirmed, not wiped",
@@ -104,15 +106,25 @@ console.log("\nThe toast follows the save, on every award path");
     const okAt = body.indexOf("showToast(`✅");
     check(`${name} awaits the queue`, saveAt > 0);
     check(`${name} claims success only after it`, okAt > saveAt);
-    check(`${name} says NOT saved on false`, /if \(ok === false\) \{[\s\S]{0,200}NOT saved yet/.test(body));
+    // Was `if (ok === false)`. That treated null (nothing dirty) and
+    // undefined (coalesced) as success and ticked an unsaved award.
+    check(`${name} says NOT saved unless the outbox is empty`,
+      /if \(!allCashOnServer\(ok\)\) \{[\s\S]{0,200}NOT saved yet/.test(body));
+    check(`${name} no longer accepts a merely non-false result`,
+      !/if \(ok === false\) \{[\s\S]{0,200}NOT saved yet/.test(body));
     check(`${name} marks the work unsaved until confirmed`, /markCashUnsaved\(unsavedKey/.test(body));
     check(`${name} no longer calls saveData() directly`, !/await saveData\(\)/.test(body));
   }
   const tickets = fn("awardTicketsToSelected");
   check("tickets keep the result", /const ticketSaveOk = await requestSave\('Ticket award'\)/.test(tickets));
   check("and the confetti toast is conditional on it", /if \(ticketSaveOk !== false\) showSuccessToast/.test(tickets));
-  check("a successful save clears the work that was unsaved when it began",
-    /unsavedAtStart\.referrals\.forEach\(id => _unsavedReferrals\.delete\(id\)\);\s*unsavedAtStart\.cash\.forEach\(id => _unsavedCash\.delete\(id\)\);/.test(save));
+  check("a successful save clears the referrals that were unsaved when it began",
+    /unsavedAtStart\.referrals\.forEach\(id => _unsavedReferrals\.delete\(id\)\);/.test(save));
+  // Cash is NOT cleared on "no write threw": a pass with nothing dirty throws
+  // nothing and sends nothing, and that cleared the bar on 2026-09-17 while an
+  // award was still only in the tab.
+  check("but clears cash only when the outbox confirms it",
+    /if \(readCashOutbox\(\)\.length === 0\) \{\s*unsavedAtStart\.cash\.forEach\(id => _unsavedCash\.delete\(id\)\);/.test(save));
   check("the retry button always makes a real save, since a quiet queue used to read as saved",
     /ok === null \|\| ok === undefined\) ok = await requestSave/.test(code) &&
     /\[\.\.\._unsavedCash\.keys\(\)\]\.forEach\(id => _unsavedCash\.delete\(id\)\);/.test(code));
@@ -227,6 +239,71 @@ console.log("\nA full localStorage cache cannot report a server write as lost");
     /if \(cachedFallbackOk\) console\.log\('✅ Saved to localStorage \(fallback\)'\)/.test(save));
   check("and no cache result ever reaches writesFailed",
     !/cached(Ok|FallbackOk)[\s\S]{0,200}writesFailed\.push/.test(save));
+}
+
+console.log("\nThe money has the same durable outbox the audit log has");
+{
+  // 2026-09-17. Measured on production: since the 13 September reset, 100 cash
+  // movements sat in appAuditLog with NO row in cash_tx_2026_W38 -- 97 awards
+  // and 3 deductions, 12 staff, about $9,700 of awards students never got.
+  // Cause: an audit entry that cannot be written is queued to localStorage and
+  // replayed; a cash row was held in memory only, and a reload that reached the
+  // server replaced memory. The record of the award survived, the award did not.
+  check("there is a cash outbox key", /const CASH_OUTBOX_KEY = 'cashOutbox_v1';/.test(code));
+  check("it reads defensively, like the audit one",
+    /function readCashOutbox\(\)[\s\S]{0,400}Array\.isArray\(parsed\) \? parsed : \[\]/.test(code));
+  check("its write never throws", /function writeCashOutbox\([\s\S]{0,300}catch \(e\) \{[\s\S]{0,200}console\.warn/.test(code));
+  check("rows are enqueued AT CREATION, in recordCashTransaction",
+    /cashTransactions\.push\(tx\);\s*student\.wildcatCashTransactions\.push\(tx\);[\s\S]{0,160}enqueueCashOutbox\(tx\);/.test(code));
+  check("enqueue dedupes by id", /function enqueueCashOutbox[\s\S]{0,300}outbox\.some\(t => t && t\.id === tx\.id\)/.test(code));
+  check("pruning drops ONLY confirmed ids",
+    /function pruneCashOutbox\(confirmedIds\)[\s\S]{0,400}filter\(t => !\(t && confirmedIds\.has\(t\.id\)\)\)/.test(code));
+  check("a confirmed cash write prunes", /cashIdsOnServer\.add\(t\.id\)\);\s*pruneCashOutbox\(cashIdsOnServer\);/.test(code));
+  check("a live pull also prunes, because a pull is confirmation",
+    /pruneCashOutbox\(cashIdsOnServer\);\s*return added;/.test(code));
+  check("the drain skips anything already confirmed",
+    /function drainCashOutboxIntoLedger[\s\S]{0,600}have\.has\(t\.id\) \|\| cashIdsOnServer\.has\(t\.id\)/.test(code));
+  check("it runs on the server load path, BEFORE the ledger is reconciled",
+    /drainCashOutboxIntoLedger\(\);\s*reconcileCashLedger\(\);/.test(code));
+  check("and on the localStorage fallback path too",
+    (code.match(/drainCashOutboxIntoLedger\(\);\s*reconcileCashLedger\(\);/g) || []).length === 2);
+}
+
+console.log("\nA 401 is a lost sign-in, not a red console");
+{
+  // The bar with "You have been signed out ... do not close this tab" existed
+  // and never appeared: a token expires while the session object it arrived in
+  // is still in memory, so getSession() answers yes and every write still 401s.
+  // Its only caller was gated on the same condition, so it was never reached.
+  check("a 401 is recognised", /function isUnauthorized\(err\)[\s\S]{0,240}\\b401\\b\|unauthor/i.test(code));
+  check("the save tracks whether it saw one", /let sawUnauthorized = false;/.test(save));
+  check("every refusal path sets it",
+    (save.match(/if \(isUnauthorized\([^)]*\)\) sawUnauthorized = true;/g) || []).length >= 5);
+  check("and a 401 raises the bar", /if \(sawUnauthorized\) reportSessionLost\([^)]*true\);/.test(save));
+  check("reportSessionLost takes the override", /function reportSessionLost\(reason, serverRefused\)/.test(code));
+  check("which bypasses the has-a-session guard",
+    /if \(!serverRefused && auth && auth\.getSession && auth\.getSession\(\)\) return;/.test(code));
+}
+
+console.log("\nA green tick for cash requires confirmation, not a non-false value");
+{
+  // requestSave resolves with whatever the queue hands back. Only a literal
+  // false counted as failure, so null (nothing dirty) and undefined (coalesced)
+  // both read as success -- clearing the unsaved bar and ticking an award that
+  // never left the tab.
+  check("the honest test is the outbox", /function allCashOnServer\(ok\)[\s\S]{0,200}readCashOutbox\(\)\.length === 0/.test(code));
+  check("ok === false is still a failure", /function allCashOnServer\(ok\) \{\s*if \(ok === false\) return false;/.test(code));
+  check("no cash site still tests ok === false directly",
+    !/requestSave\('Cash [^']*'\);\s*if \(ok === false\)/.test(code));
+  check("all three cash sites use it",
+    (code.match(/if \(!allCashOnServer\(ok\)\) \{/g) || []).length === 3);
+  check("the Retry button judges cash separately from referrals",
+    /const cashOk = allCashOnServer\(ok\);/.test(code) &&
+    /if \(cashOk\) \[\.\.\._unsavedCash\.keys\(\)\]\.forEach/.test(code));
+  check("and says 'partly saved' rather than 'everything is on the server'",
+    /Partly saved/.test(code));
+  check("saveData clears cash markers only when the outbox is empty",
+    /if \(readCashOutbox\(\)\.length === 0\) \{\s*unsavedAtStart\.cash\.forEach/.test(save));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

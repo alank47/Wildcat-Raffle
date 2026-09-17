@@ -1387,6 +1387,132 @@
         }
 
         // ============================================================
+        // CASH OUTBOX
+        //
+        // The audit log above has had a durable outbox since a save's third
+        // transaction started failing. The MONEY never did, and that single
+        // asymmetry is the most expensive bug in this file.
+        //
+        // A cash award creates two things: an audit entry and a cash row. When
+        // the save fails, the audit entry is written to localStorage and
+        // replayed on the next load; the cash row lives only in the
+        // `cashTransactions` array, and a reload that reaches the server
+        // replaces that array with the server's copy. So the record of the
+        // award survives and the award itself does not.
+        //
+        // Measured on production 2026-09-17: since the 13 September reset, 100
+        // cash movements existed in appAuditLog with NO row in
+        // cash_tx_2026_W38 -- 97 awards and 3 deductions, across 12 staff.
+        // Verified by lookup rather than timestamp formatting: Makayla
+        // Chamberlin's batch of 31 at 2026-09-15T17:33:19 had audit entries for
+        // all 31 and ledger rows for none, while those same students had rows
+        // at 15:41, 16:24 and 17:18 the same day. That is about $9,700 of
+        // awards teachers recorded and students never received.
+        //
+        // Enqueued at CREATION, not on failure, exactly like the audit outbox:
+        // a tab that dies mid-save still holds the row. Pruned only against
+        // ids the server has confirmed.
+        // ============================================================
+        const CASH_OUTBOX_KEY = 'cashOutbox_v1';
+
+        function readCashOutbox() {
+            try {
+                const raw = localStorage.getItem(CASH_OUTBOX_KEY);
+                if (!raw) return [];
+                const parsed = JSON.parse(raw);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (e) {
+                console.warn('Cash outbox read failed, returning empty:', e);
+                return [];
+            }
+        }
+
+        function writeCashOutbox(rows) {
+            try {
+                localStorage.setItem(CASH_OUTBOX_KEY, JSON.stringify(rows));
+            } catch (e) {
+                // Never throws: this runs inside the save, and a storage error
+                // here must not be reported as a lost server write.
+                console.warn('Cash outbox write failed:', e);
+            }
+        }
+
+        function enqueueCashOutbox(tx) {
+            if (!tx || !tx.id) return;
+            const outbox = readCashOutbox();
+            if (outbox.some(t => t && t.id === tx.id)) return;
+            outbox.push(tx);
+            writeCashOutbox(outbox);
+        }
+
+        /**
+         * Drop only what the server has confirmed. Same reasoning as
+         * pruneAuditOutbox: clearing the whole key after a save would also
+         * drop a row a teacher created WHILE that save was in flight.
+         */
+        function pruneCashOutbox(confirmedIds) {
+            const outbox = readCashOutbox();
+            if (!outbox.length) return;
+            const keep = outbox.filter(t => !(t && confirmedIds.has(t.id)));
+            if (keep.length === outbox.length) return;
+            if (keep.length) writeCashOutbox(keep);
+            else { try { localStorage.removeItem(CASH_OUTBOX_KEY); } catch (e) {} }
+        }
+
+        /**
+         * Put unconfirmed rows back into the ledger on load, so the next save
+         * sends them. Runs BEFORE reconcileCashLedger so nothing renders from a
+         * ledger missing them, and so the counters derived from
+         * `cashTransactions` -- recalculateCashBalance,
+         * distributeCashTransactions -- see them too.
+         */
+        function drainCashOutboxIntoLedger() {
+            const outbox = readCashOutbox();
+            if (!outbox.length) return;
+            const have = new Set((cashTransactions || []).map(t => t && t.id).filter(Boolean));
+            let restored = 0;
+            outbox.forEach(t => {
+                if (!t || !t.id || have.has(t.id) || cashIdsOnServer.has(t.id)) return;
+                have.add(t.id);
+                cashTransactions.push(t);
+                restored++;
+            });
+            if (restored) {
+                cashTransactions.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                console.log('\u{1F4EE} Recovered ' + restored + ' unsaved cash movement' +
+                    (restored === 1 ? '' : 's') + ' from the outbox. The next save will send ' +
+                    (restored === 1 ? 'it.' : 'them.'));
+            }
+        }
+
+        /**
+         * Is every cash movement this tab has made actually on the server?
+         *
+         * `requestSave` resolves with whatever the save queue hands back, and
+         * only a literal `false` counted as failure -- so `null` (nothing was
+         * dirty) and `undefined` (coalesced into another pass) both read as
+         * success. On 2026-09-17 that cleared the unsaved-work bar and put a
+         * green tick on an award that never left the tab.
+         *
+         * The outbox is the honest answer, because a row leaves it only when
+         * the server has confirmed its id. Deliberately conservative: if ANY
+         * of this tab's cash is unconfirmed this returns false, because in that
+         * state a teacher needs to know before they shut the laptop, not a tick
+         * about one row.
+         */
+        function allCashOnServer(ok) {
+            if (ok === false) return false;
+            return readCashOutbox().length === 0;
+        }
+
+        /** A write refused for want of a valid token, rather than a real error. */
+        function isUnauthorized(err) {
+            const msg = String((err && (err.message || err.code)) || err || '');
+            return /\b401\b|unauthor/i.test(msg);
+        }
+
+
+        // ============================================================
         // AUDIT ENTRY HEALER — reconstructs missing audit entries from
         // ticket history. Catches historical damage and any case where
         // the outbox also failed. Runs on every load after the
@@ -1823,11 +1949,19 @@
         let _sessionLostShown = false;
         /** Set once a session has actually been established in this page load. */
         let _hadSessionThisLoad = false;
-        function reportSessionLost(reason) {
+        function reportSessionLost(reason, serverRefused) {
             const auth = window.WildcatAuth;
             // A real session means this was something else -- a network blip,
             // one bad document -- and must not be reported as a lost sign-in.
-            if (auth && auth.getSession && auth.getSession()) return;
+            //
+            // UNLESS THE SERVER SAID 401. A token expires while the session
+            // object it arrived in is still sitting in memory: getSession()
+            // answers "yes" and every single write still fails. That is
+            // precisely what this bar is for, and this guard was hiding it.
+            // On 2026-09-17 a member of staff awarded cash for an hour against
+            // a dead token with no warning of any kind -- the only caller was
+            // gated on the same condition, so it was never even reached.
+            if (!serverRefused && auth && auth.getSession && auth.getSession()) return;
 
             // NOTHING IS LOST IF NOTHING WAS EVER HELD.
             //
@@ -2912,9 +3046,10 @@
                             emailjs.init(emailJSConfig.publicKey);
                         }
                         
-                        // Both cash stores into one ledger, before anything
-                        // renders from it. After the roster, because it reads
-                        // the student records.
+                        // Unsaved movements first, then both cash stores into
+                        // one ledger, before anything renders from it. After
+                        // the roster, because it reads the student records.
+                        drainCashOutboxIntoLedger();
                         reconcileCashLedger();
 
                         // NEW: Apply tombstone filter as a display layer.
@@ -3058,6 +3193,7 @@
                 // Same reconciliation on the fallback path: a tab running on
                 // the localStorage copy must not show a different ledger from
                 // one that reached the server.
+                drainCashOutboxIntoLedger();
                 reconcileCashLedger();
 
                 // NEW: Apply tombstone filter (localStorage-fallback path)
@@ -3562,6 +3698,10 @@
             // including the path where every Convex write threw and only
             // localStorage was written.
             const writesFailed = [];
+            // A 401 is not a transient error, it is a dead token, and it must
+            // surface to the person as "you have been signed out" rather than
+            // as a red console. See reportSessionLost.
+            let sawUnauthorized = false;
             // Unsaved work that existed BEFORE this save started. A fully
             // successful save proves it is on the server; anything marked
             // during the save belongs to the next one.
@@ -3989,6 +4129,7 @@
                                 }
                             } catch (err) {
                                 writesFailed.push('students');
+                                if (isUnauthorized(err)) sawUnauthorized = true;
                                 console.error('[save] Convex shadow write failed:', err.message);
                             }
                         }
@@ -4035,6 +4176,7 @@
                             console.log(`✅ Referrals saved (${(behaviorReferrals || []).length} records, merged)`);
                         } catch (refErr) {
                             writesFailed.push('referrals');
+                            if (isUnauthorized(refErr)) sawUnauthorized = true;
                             console.error('❌ referrals save failed:', refErr?.code, refErr?.message);
                         }
                         
@@ -4322,6 +4464,7 @@
                             // is exactly what went unnoticed before.
                             auditSaveSucceeded = false;
                             writesFailed.push('audit');
+                            if (isUnauthorized(auditErr)) sawUnauthorized = true;
                             console.error('⚠️ AUDIT LOG SAVE FAILED:', auditErr?.message || auditErr);
                         }
 
@@ -4367,7 +4510,11 @@
                         });
                         const cashWrites = Object.entries(cashByWeek).map(([wk, txs]) =>
                             mergeLegacySlice(`cash_tx_${wk}`, 'transactions', txs, 'id')
-                                .then(r => { txs.forEach(t => cashIdsOnServer.add(t.id)); return r; }));
+                                .then(r => {
+                                    txs.forEach(t => cashIdsOnServer.add(t.id));
+                                    pruneCashOutbox(cashIdsOnServer);
+                                    return r;
+                                }));
 
                         // Schedules change when the SIS syncs, which is twice a
                         // day, not on every award. Skipping an unchanged one
@@ -4388,6 +4535,7 @@
                             if (res.status === 'fulfilled') console.log(`✅ ${writeNames[i]} saved`);
                             else {
                                 writesFailed.push(writeNames[i]);
+                                if (isUnauthorized(res.reason)) sawUnauthorized = true;
                                 console.error(`❌ ${writeNames[i]} save failed:`, res.reason?.code, res.reason?.message);
                             }
                         });
@@ -4607,6 +4755,7 @@
                         
                     } catch (error) {
                         writesFailed.push('convex');
+                        if (isUnauthorized(error)) sawUnauthorized = true;
                         console.error('❌ Firebase save error:', error);
                         console.error('Error details:', error.message, error.code);
                         // Fall back to localStorage only
@@ -4665,12 +4814,22 @@
                 saveSucceeded = writesFailed.length === 0;
                 if (!saveSucceeded) {
                     console.error('[save] did not reach the server:', writesFailed.join(', '));
+                    // THE ONE SIGNAL THAT MATTERS. Without this the bar never
+                    // appeared for a dead token, because its only other caller
+                    // is gated on holding no session at all.
+                    if (sawUnauthorized) reportSessionLost('the server refused this save: 401', true);
                 } else {
                     // Everything that was unsaved when this pass began is now
                     // on the server. Work marked during the pass waits for the
                     // next one.
                     unsavedAtStart.referrals.forEach(id => _unsavedReferrals.delete(id));
-                    unsavedAtStart.cash.forEach(id => _unsavedCash.delete(id));
+                    // Cash only when the outbox agrees. "No write threw" is not
+                    // the same claim as "the rows I was holding are on the
+                    // server": a pass with nothing dirty throws nothing and
+                    // sends nothing.
+                    if (readCashOutbox().length === 0) {
+                        unsavedAtStart.cash.forEach(id => _unsavedCash.delete(id));
+                    }
                     if (typeof renderUnsavedReferralBar === 'function') renderUnsavedReferralBar();
                 }
             } catch (error) {
@@ -8898,7 +9057,7 @@
                 // Through the queue, not saveData() directly: a direct call
                 // during a save in flight used to be dropped.
                 const ok = await requestSave('Cash award');
-                if (ok === false) {
+                if (!allCashOnServer(ok)) {
                     showToast(`⚠️ NOT saved yet: ${summary}\nIt will retry. Do not close this tab.`, 'warn', 12000);
                 } else {
                     _unsavedCash.delete(unsavedKey);
@@ -9001,7 +9160,7 @@
                 markCashUnsaved(unsavedKey, `-$${Math.abs(amount)} from ${selectedStudentForCash.firstName} ${selectedStudentForCash.lastName}`);
                 showToast(`Saving ${summary}`, 'info', 8000);
                 const ok = await requestSave('Cash adjustment');
-                if (ok === false) {
+                if (!allCashOnServer(ok)) {
                     showToast(`⚠️ NOT saved yet: ${summary}\nIt will retry. Do not close this tab.`, 'warn', 12000);
                 } else {
                     _unsavedCash.delete(unsavedKey);
@@ -16123,6 +16282,9 @@
                 added++;
             });
             if (added) cashTransactions.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+            // A pull is also confirmation: anything it handed us is on the
+            // server by definition.
+            pruneCashOutbox(cashIdsOnServer);
             return added;
         }
 
@@ -26397,7 +26559,7 @@
             markCashUnsaved(unsavedKey, `${sign}$${Math.abs(behavior.points)} to ${awarded.length} student${awarded.length === 1 ? '' : 's'}`);
             showToast(`Saving ${summary}`, 'info', 8000);
             const ok = await requestSave('Cash award');
-            if (ok === false) {
+            if (!allCashOnServer(ok)) {
                 showToast(`⚠️ NOT saved yet: ${summary}\nIt will retry. Do not close this tab.`, 'warn', 12000);
             } else {
                 _unsavedCash.delete(unsavedKey);
@@ -30098,6 +30260,8 @@
 
             cashTransactions.push(tx);
             student.wildcatCashTransactions.push(tx);
+            // Durable from the moment it exists. See CASH OUTBOX above.
+            enqueueCashOutbox(tx);
             return tx;
         }
 
@@ -31373,11 +31537,19 @@
                 // real save and believe its answer instead.
                 let ok = await flushSaves();
                 if (ok === null || ok === undefined) ok = await requestSave('Retry unsaved referrals');
+                // JUDGED SEPARATELY. `ok !== false` cleared BOTH maps and said
+                // "Everything is on the server", which for cash was a claim the
+                // queue's return value cannot support. Referrals keep the old
+                // test; cash has to be confirmed in the outbox.
+                const cashOk = allCashOnServer(ok);
                 if (ok !== false) {
                     [..._unsavedReferrals.keys()].forEach(id => _unsavedReferrals.delete(id));
-                    [..._unsavedCash.keys()].forEach(id => _unsavedCash.delete(id));
+                    if (cashOk) [..._unsavedCash.keys()].forEach(id => _unsavedCash.delete(id));
                     renderUnsavedReferralBar();
-                    showReferralToast('\u2705 <strong>Saved.</strong> Everything is on the server.', 'ok');
+                    showReferralToast(cashOk
+                        ? '\u2705 <strong>Saved.</strong> Everything is on the server.'
+                        : '<strong>Partly saved.</strong> Some cash has still not reached the server.',
+                        cashOk ? 'ok' : 'warn');
                 } else {
                     showReferralToast('<strong>Still not saved.</strong> Check your connection and try again.', 'warn');
                 }

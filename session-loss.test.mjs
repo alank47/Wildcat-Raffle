@@ -55,8 +55,18 @@ console.log("\nA save that reached only this browser does not report success");
   const i = code.indexOf("function reportSessionLost(");
   const fn = code.slice(i, code.indexOf("\n        }", i));
   // The commonest false alarm: a network blip while a session is perfectly fine.
-  check("it says nothing when a session actually exists",
-    /if \(auth && auth\.getSession && auth\.getSession\(\)\) return;/.test(fn));
+  check("it says nothing when a session actually exists and the server did not refuse",
+    /if \(!serverRefused && auth && auth\.getSession && auth\.getSession\(\)\) return;/.test(fn));
+  // 2026-09-17: the guard above, without the serverRefused escape, hid the one
+  // case the bar is for. A Google token expires after about an hour while the
+  // session object it arrived in stays in memory, so getSession() answers yes
+  // and every write comes back 401. A member of staff awarded cash for an hour
+  // with no warning of any kind, and 100 movements across 12 staff had already
+  // been lost the same way since 13 September.
+  check("but a 401 from the server gets through it",
+    /function reportSessionLost\(reason, serverRefused\)/.test(code));
+  check("and the save raises it on a 401",
+    /if \(sawUnauthorized\) reportSessionLost\([^)]*true\);/.test(code));
   check("it shows once, not on every save", /if \(_sessionLostShown\) return;/.test(fn));
   check("it offers the one action that fixes it",
     /signInWithMicrosoft\(\)/.test(fn));
