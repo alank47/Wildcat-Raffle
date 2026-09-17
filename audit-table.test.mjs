@@ -109,8 +109,16 @@ console.log("\nOnly what changed is sent");
     /return !auditIdsOnServer\.has\(id\);/.test(code));
   check("the set is filled from the load",
     /auditIdsOnServer\.add\(id\);/.test(code));
+  // "Confirmed" used to mean "the call resolved", and it marked the whole
+  // batch -- including entries the server had reported under `skipped`. Those
+  // were then pruned from the outbox and never retried. Confirmation is now by
+  // id: only what the server names in storedIds is marked off.
   check("and only after a CONFIRMED write, never optimistically",
-    /batch\.forEach\(r => auditIdsOnServer\.add\(r\.entryId\)\);/.test(code));
+    /stored\.forEach\(id => auditIdsOnServer\.add\(id\)\);/.test(code));
+  check("the old batch-wide mark is gone",
+    !/batch\.forEach\(r => auditIdsOnServer\.add\(r\.entryId\)\);/.test(code));
+  check("a refused entry is not marked, and fails the save",
+    /if \(auditRefused\) \{\s*auditSaveSucceeded = false;/.test(code));
   check("a failed append leaves entries pending rather than dropping them",
     /auditSaveSucceeded = false;[\s\S]{0,200}AUDIT LOG SAVE FAILED/.test(code));
   check("the outbox is still only cleared on success",
@@ -126,9 +134,15 @@ console.log("\nThe server append is idempotent, which is what makes retries safe
   check("an entry already stored is left alone", /if \(existing\) \{ alreadyStored\+\+; continue; \}/.test(convex));
   check("duplicates within one batch are dropped too", /seenInBatch/.test(convex));
   check("an entry with no id is refused, not inserted unmatched",
-    /if \(!id\) \{ skipped\+\+; continue; \}/.test(convex));
+    /if \(!id\) \{ skipped\+\+; skippedIds\.push/.test(convex));
   check("it reports what it actually did",
-    /return \{ inserted, alreadyStored, skipped, received: entries\.length \};/.test(convex));
+    /return \{\s*inserted, alreadyStored, skipped, received: entries\.length,/.test(convex));
+  // Counts alone let the client mark refused entries as saved. The ids are
+  // what make that impossible.
+  check("and names the ids it stored, so a caller cannot guess",
+    /storedIds, skippedIds,/.test(convex));
+  check("an already-stored entry counts as stored, because it IS on the server",
+    /if \(existing\) \{ alreadyStored\+\+; storedIds\.push\(id\); continue; \}/.test(convex));
   check("and it is gated on requireStaff", /await requireStaff\(ctx\);/.test(convex));
 }
 

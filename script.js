@@ -4517,6 +4517,8 @@
 
                         let auditSaveSucceeded = true;
                         let auditInserted = 0;
+                        /** Entries the server actively refused. Never silent. */
+                        let auditRefused = 0;
                         try {
                             // DECLARED HERE, not borrowed from an outer block.
                             //
@@ -4567,16 +4569,59 @@
                                 const res = await auth.convexMutation(
                                     'auditLog:append', { entries: batch }, session.idToken);
                                 auditInserted += (res && res.inserted) || 0;
-                                // Marked only once the server has them. Doing
-                                // this optimistically would drop entries on a
-                                // failed batch, which is the whole thing this
-                                // is here to prevent.
-                                batch.forEach(r => auditIdsOnServer.add(r.entryId));
+
+                                // CONFIRM BY ID, NEVER BY BATCH.
+                                //
+                                // This marked every entry in the batch the
+                                // moment the call resolved. The server has
+                                // always refused some entries -- an empty
+                                // entryId, a duplicate within one payload --
+                                // and reported them separately under `skipped`,
+                                // which this ignored. So a refused entry was
+                                // recorded as stored, pruned from the durable
+                                // outbox by pruneAuditOutbox below, never
+                                // retried for the life of the tab, and printed
+                                // on screen as written. Silent, permanent loss.
+                                //
+                                // It also explains the shape: auditIdsOnServer
+                                // accumulates, so once entries are wrongly
+                                // marked, every later batch in that session is
+                                // treated the same way. 259 of one teacher's
+                                // entries went this way in a single afternoon
+                                // on 2026-09-15 while her cash saved fine.
+                                const stored = (res && Array.isArray(res.storedIds))
+                                    ? res.storedIds : null;
+                                if (stored) {
+                                    stored.forEach(id => auditIdsOnServer.add(id));
+                                    const refused = (res && Array.isArray(res.skippedIds))
+                                        ? res.skippedIds : [];
+                                    if (refused.length) {
+                                        auditRefused += refused.length;
+                                        console.error(
+                                            `\u274C Audit log: the server REFUSED ${refused.length} ` +
+                                            `entr${refused.length === 1 ? 'y' : 'ies'}. ` +
+                                            `Kept pending, not marked as saved.`, refused.slice(0, 5));
+                                    }
+                                } else {
+                                    // A server that does not report ids cannot
+                                    // be taken at its word. Leaving them
+                                    // pending re-sends them next save, which is
+                                    // idempotent by entryId and therefore safe;
+                                    // marking them would risk losing them.
+                                    console.warn('[audit] this deployment does not report stored ids; ' +
+                                        'entries stay pending and will be re-sent.');
+                                }
                             }
 
                             console.log(pending.length
-                                ? `✅ Audit log: ${auditInserted} new entr${auditInserted === 1 ? 'y' : 'ies'} written (${pending.length} sent, ${auditLog.length} held locally)`
+                                ? `✅ Audit log: ${auditInserted} new entr${auditInserted === 1 ? 'y' : 'ies'} written (${pending.length} sent, ${auditRefused} refused, ${auditLog.length} held locally)`
                                 : `✅ Audit log: nothing new to write (${auditLog.length} entries)`);
+                            // A refusal is a failed save, not a footnote: it
+                            // keeps the entries pending AND tells the queue.
+                            if (auditRefused) {
+                                auditSaveSucceeded = false;
+                                writesFailed.push('audit');
+                            }
                         } catch (auditErr) {
                             // Not rethrown. The outbox keeps the entries and
                             // they replay; the rest of the save is still worth

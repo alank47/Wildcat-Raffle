@@ -383,5 +383,31 @@ console.log("\nBoth cache blobs carry the cash, not just the happy one");
   }
 }
 
+console.log("\nAn audit entry is confirmed by id, never by batch");
+{
+  // The server has always refused some entries -- an empty entryId, a duplicate
+  // within one payload -- and reported them separately under `skipped`. The
+  // client marked the WHOLE batch the moment the call resolved, so a refused
+  // entry was recorded as stored, pruned from the durable outbox, never retried
+  // for the life of the tab, and printed on screen as written.
+  //
+  // auditIdsOnServer accumulates, so once entries were wrongly marked every
+  // later batch in that session went the same way. 259 of one teacher's entries
+  // on 2026-09-15 while her cash writes all succeeded.
+  check("the batch-wide mark is gone",
+    !/batch\.forEach\(r => auditIdsOnServer\.add\(r\.entryId\)\);/.test(save));
+  check("only ids the server reported as stored are marked",
+    /const stored = \(res && Array\.isArray\(res\.storedIds\)\)[\s\S]{0,300}stored\.forEach\(id => auditIdsOnServer\.add\(id\)\);/.test(save));
+  check("a refusal is counted", /let auditRefused = 0;/.test(save));
+  check("a refusal is reported loudly, not as a footnote",
+    /console\.error\([\s\S]{0,200}REFUSED/.test(save));
+  check("a refusal makes the save fail, so the queue retries",
+    /if \(auditRefused\) \{\s*auditSaveSucceeded = false;\s*writesFailed\.push\('audit'\);/.test(save));
+  check("the success line names the refused count too",
+    /\$\{auditRefused\} refused/.test(save));
+  check("a server that reports no ids leaves entries pending rather than marking them",
+    /does not report stored ids[\s\S]{0,80}re-sent/.test(save));
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);

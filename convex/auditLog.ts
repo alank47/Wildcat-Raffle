@@ -45,6 +45,15 @@ const PAGE = 1000;
  *
  * Returns what it actually did rather than a bare success, so the client can
  * report honestly and so a replay that writes nothing is visible as such.
+ *
+ * AND IT RETURNS THE IDS, not only the counts. Counts are not enough to be
+ * safe. The client marked an ENTIRE BATCH as confirmed and pruned it from its
+ * durable outbox whenever this call resolved, so anything counted under
+ * `skipped` was recorded as stored, deleted from the browser's backup, never
+ * retried, and reported on screen as written -- silent, permanent loss of an
+ * audit record. `storedIds` is the only set a caller may mark off;
+ * `skippedIds` must stay pending. Measured on production 2026-09-17: 287 cash
+ * movements had no audit entry, 259 of them one teacher's in one afternoon.
  */
 export const append = mutation({
   args: {
@@ -67,6 +76,9 @@ export const append = mutation({
     let inserted = 0;
     let alreadyStored = 0;
     let skipped = 0;
+    // What the caller is allowed to consider done, and what it must not.
+    const storedIds: string[] = [];
+    const skippedIds: string[] = [];
 
     // Within-batch duplicates are dropped here rather than costing a second
     // lookup. Two tabs sending the same entry is normal; the same entry twice
@@ -79,15 +91,17 @@ export const append = mutation({
       // An entry with no id cannot be deduped, and inserting it would create a
       // row nothing can ever match again -- so every replay would insert
       // another. Refusing one entry is better than an unbounded duplicate.
-      if (!id) { skipped++; continue; }
-      if (seenInBatch.has(id)) { skipped++; continue; }
+      if (!id) { skipped++; skippedIds.push(String(e.entryId ?? "")); continue; }
+      if (seenInBatch.has(id)) { skipped++; skippedIds.push(id); continue; }
       seenInBatch.add(id);
 
       const existing = await ctx.db
         .query("appAuditLog")
         .withIndex("by_entryId", (q) => q.eq("entryId", id))
         .first();
-      if (existing) { alreadyStored++; continue; }
+      // Already present counts as stored: the record IS on the server, which
+      // is the only question the caller is asking.
+      if (existing) { alreadyStored++; storedIds.push(id); continue; }
 
       await ctx.db.insert("appAuditLog", {
         entryId: id,
@@ -95,9 +109,13 @@ export const append = mutation({
         payload: e.payload,
       });
       inserted++;
+      storedIds.push(id);
     }
 
-    return { inserted, alreadyStored, skipped, received: entries.length };
+    return {
+      inserted, alreadyStored, skipped, received: entries.length,
+      storedIds, skippedIds,
+    };
   },
 });
 
