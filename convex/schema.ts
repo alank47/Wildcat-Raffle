@@ -962,4 +962,91 @@ export default defineSchema({
     studentId: v.optional(v.id("students")),
     payload: v.any(), // same caveat
   }),
+
+  /**
+   * One uniform violation. Logged by a Behavior Interventionist at a door,
+   * every school day.
+   *
+   * ITS OWN TABLE, NOT A `referrals` ROW, and that is a deliberate refusal
+   * rather than a preference. Four measured reasons:
+   *
+   *   1. legacyData.ts fires notifyNewReferrals on ANY insert into the
+   *      referrals slice, and the recipient list is a code constant of six
+   *      named school leaders. The trigger keys on the slice, not on a payload
+   *      field, so there is no way to opt out: a uniform log on that path
+   *      mails six people twenty to sixty times a morning.
+   *   2. Every discipline screen reads one array through visibleReferrals --
+   *      the open queue, the weekly trend, the per-student history, the XLSX
+   *      export, and the by-race disproportionality index. A dress-code note
+   *      would enter all of them with no code change, and a dress-code
+   *      violation inside a disproportionality index is a wrong number about
+   *      children.
+   *   3. mergeSlice reads the whole stored slice on every call and the client
+   *      re-sends the entire array on every save, so the per-log cost grows
+   *      with history. auditLog.ts records this exact wall being hit and the
+   *      resolution: own table, indexed columns, paged reads.
+   *   4. The repeat-offender count is otherwise impossible to ask for.
+   *      disciplineAggregates has to be HANDED student numbers by the browser
+   *      because mirror payloads are opaque; `by_student` is what makes a
+   *      bounded server-side count exist at all.
+   *
+   * The owner's decision, 2026-09-18: uniform violations are a SEPARATE log.
+   * They do not appear in discipline analytics, do not trigger parent email,
+   * and are not part of a child's formal discipline record.
+   *
+   * SNAPSHOT FIELDS (studentName, studentGrade, studentNumber) are stored on
+   * the row on purpose, the way a purchase receipt snapshots its reward: a
+   * student who withdraws must still read correctly on a list of who was out
+   * of uniform in October, and a grade that changes in August must not rewrite
+   * last year's record.
+   *
+   * `day` IS THE LOCAL SCHOOL DAY, not a server date. A server-side
+   * toISOString().slice(0,10) rolls over at 5pm Pacific, so an after-school
+   * entry would land on tomorrow's list. The client sends the day it is
+   * actually standing in and the mutation validates and clamps it.
+   *
+   * `loanerOutstanding` is maintained rather than derived so that "which
+   * loaners are still out" is one indexed read instead of a scan.
+   *
+   * NOTHING IS EVER DELETED. An Undo sets voidedAt, which is what lets a
+   * one-tap write be safe: the mistake costs one tap to reverse and the
+   * correction is still on the record.
+   */
+  uniformViolations: defineTable({
+    studentId: v.optional(v.id("students")),
+    studentNumber: v.string(),
+    studentName: v.string(),
+    studentGrade: v.string(),
+
+    day: v.string(),          // local school day, "YYYY-MM-DD"
+    at: v.string(),           // server-minted ISO instant
+
+    loanerProvided: v.boolean(),
+    loanerOutstanding: v.boolean(),
+    loanerReturnedAt: v.optional(v.union(v.string(), v.null())),
+    loanerReturnedByEmail: v.optional(v.union(v.string(), v.null())),
+
+    note: v.optional(v.string()),
+
+    // From requireStaff, never from arguments. referrals stores payload:
+    // v.any(), which means every field on an incoming row -- filedByEmail
+    // included -- is caller-chosen. This table does not repeat that.
+    loggedByEmail: v.string(),
+    loggedByName: v.string(),
+    loggedByRole: v.string(),
+
+    // The BUTTON PRESS, not the intent: a double-tap, a flaky Chromebook and
+    // an impatient second tap all collapse into one row. Same rule as
+    // studentPurchases.attemptId.
+    attemptId: v.string(),
+
+    voidedAt: v.optional(v.union(v.string(), v.null())),
+    voidedByEmail: v.optional(v.union(v.string(), v.null())),
+    voidReason: v.optional(v.union(v.string(), v.null())),
+  })
+    .index("by_attemptId", ["attemptId"])
+    .index("by_student_day", ["studentNumber", "day"])
+    .index("by_student", ["studentNumber"])
+    .index("by_day", ["day"])
+    .index("by_loanerOutstanding", ["loanerOutstanding"]),
 });

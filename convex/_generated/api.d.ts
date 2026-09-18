@@ -22,6 +22,7 @@ import type * as authEvents from "../authEvents.js";
 import type * as bellSchedules from "../bellSchedules.js";
 import type * as cashRecount from "../cashRecount.js";
 import type * as cashRecountRules from "../cashRecountRules.js";
+import type * as cashRestore from "../cashRestore.js";
 import type * as cashReversal from "../cashReversal.js";
 import type * as cashReversalRules from "../cashReversalRules.js";
 import type * as courseSubject from "../courseSubject.js";
@@ -79,6 +80,8 @@ import type * as syncLog from "../syncLog.js";
 import type * as tapLocations from "../tapLocations.js";
 import type * as tapSlug from "../tapSlug.js";
 import type * as tombstones from "../tombstones.js";
+import type * as uniformRules from "../uniformRules.js";
+import type * as uniformViolations from "../uniformViolations.js";
 import type * as views from "../views.js";
 import type * as views_app from "../views_app.js";
 
@@ -103,6 +106,7 @@ declare const fullApi: ApiFromModules<{
   bellSchedules: typeof bellSchedules;
   cashRecount: typeof cashRecount;
   cashRecountRules: typeof cashRecountRules;
+  cashRestore: typeof cashRestore;
   cashReversal: typeof cashReversal;
   cashReversalRules: typeof cashReversalRules;
   courseSubject: typeof courseSubject;
@@ -160,6 +164,8 @@ declare const fullApi: ApiFromModules<{
   tapLocations: typeof tapLocations;
   tapSlug: typeof tapSlug;
   tombstones: typeof tombstones;
+  uniformRules: typeof uniformRules;
+  uniformViolations: typeof uniformViolations;
   views: typeof views;
   views_app: typeof views_app;
 }>;

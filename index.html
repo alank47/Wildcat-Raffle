@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20260917i">
-    <link rel="icon" href="favicon.ico?v=20260917i" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260917i" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260917i" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20260918a">
+    <link rel="icon" href="favicon.ico?v=20260918a" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260918a" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260918a" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260917i">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260918a">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20260917i">
+    <link rel="stylesheet" href="styles.css?v=20260918a">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260917i">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260918a">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20260917i">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260918a">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20260917i" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20260918a" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -184,7 +184,7 @@
                      asset, so there is one logo to replace when the school
                      changes it. -->
                 <div class="wp-brand">
-                    <img src="assets/westbrook-logo.png?v=20260917i"
+                    <img src="assets/westbrook-logo.png?v=20260918a"
                          alt="Westbrook Academy" class="wp-brandlogo" id="wpBrandLogo">
                     <!-- The product's name, which appeared nowhere on the
                          student's screen while the teacher's topbar has said
@@ -412,7 +412,7 @@
         <header class="app-topbar">
             <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-menu"></use></svg></button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20260917i" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20260918a" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -3551,6 +3551,106 @@
                     </div>
                 </div>
 
+                <!-- Uniform Violations Subtab
+                     ===============================================
+                     A DAILY TASK AT A DOOR, and the whole layout follows from
+                     that. The owner: "I want this to be as easy as possible
+                     for the interventionists as this is a daily task, so
+                     efficiency is a must in order to maintain fidelity."
+
+                     So the search box is the only thing above the fold, it is
+                     focused on arrival, and Enter commits the write. The next
+                     student costs zero taps because the box clears and
+                     refocuses itself. Everything else on this pane is a
+                     read-out that can be scrolled to, never something standing
+                     between an adult and the next child.
+
+                     NO MODAL ANYWHERE. A modal nested inside a .hidden subtab
+                     pane can never be shown -- index.html already records that
+                     costing the referral screens a fix.
+
+                     The filter row uses .analytics-tab, NOT .subtab-button:
+                     styles.css hides .subtab-button unconditionally inside
+                     #disciplineContent, which has already cost one screen. -->
+                <div id="behaviorUniform" class="discipline-subtab hidden">
+                    <div class="wc-card panel-card">
+                        <h3 style="color: #2F67A7; margin-bottom: 6px;">Uniform Violations</h3>
+                        <p class="wc-att-basis-note" id="uvDayNote"></p>
+
+                        <div class="wc-uv-entry">
+                            <div class="student-picker" id="uvPicker">
+                                <input type="search" id="uvPickerInput" class="wc-att-search"
+                                       placeholder="Type a name, student number or ID card"
+                                       autocomplete="off" spellcheck="false"
+                                       oninput="filterUniformPicker()"
+                                       onkeydown="uniformPickerKeys(event)">
+                                <div class="student-picker-results" id="uvPickerResults" hidden></div>
+                            </div>
+                            <div class="wc-uv-actions">
+                                <button type="button" class="btn-primary wc-uv-log" id="uvLogBtn"
+                                        onclick="commitUniformViolation(false)">Log</button>
+                                <button type="button" class="btn-secondary wc-uv-log" id="uvLogLoanerBtn"
+                                        onclick="commitUniformViolation(true)">Log + loaner</button>
+                            </div>
+                        </div>
+                        <p class="wc-uv-hint" id="uvHint">
+                            Type a name or ID, then <strong>Enter</strong>.
+                            <strong>Shift+Enter</strong> if you gave a loaner.
+                        </p>
+                        <p class="wc-uv-picked" id="uvPicked" hidden></p>
+                    </div>
+
+                    <div class="wc-att-tiers" id="uvTierCards"></div>
+
+                    <div class="wc-card panel-card">
+                        <div class="wc-att-controls">
+                            <div class="subtab-bar analytics-tabs" id="uvViewFilter">
+                                <button type="button" class="analytics-tab active" data-uvview="today"
+                                        onclick="setUniformView('today')">Today</button>
+                                <button type="button" class="analytics-tab" data-uvview="repeat"
+                                        onclick="setUniformView('repeat')">Repeat list</button>
+                                <button type="button" class="analytics-tab" data-uvview="loaners"
+                                        onclick="setUniformView('loaners')">Loaners out</button>
+                            </div>
+                            <div class="wc-att-controls-end">
+                                <input type="search" id="uvSearch" class="wc-att-search"
+                                       placeholder="Search this list"
+                                       oninput="renderUniformViolations()">
+                            </div>
+                        </div>
+                        <div id="uniformList" class="wc-att-list"></div>
+                        <p class="wc-att-foot" id="uvFoot"></p>
+                    </div>
+
+                    <!-- ADMIN-ONLY, and not because interventionists are not
+                         trusted with a number. Saving a setting writes the
+                         whole liveSettings blob through saveData(), which also
+                         pushes that tab's in-memory student and teacher
+                         deltas. That is not something to fire from a doorway
+                         mid-log. The number is read by everyone and written by
+                         an admin. -->
+                    <div class="wc-card panel-card admin-only">
+                        <h4 style="margin:0 0 4px;">Repeat-list thresholds</h4>
+                        <p class="wc-uv-hint" id="uvSettingsNote">
+                            The flag counts violations in a rolling window ending today, so it
+                            never resets on a Monday and it clears on its own as a student
+                            improves. The term total on each row is never reset.
+                        </p>
+                        <div class="wc-uv-settings">
+                            <label for="uvWindowDays">Rolling window (days)
+                                <input type="number" id="uvWindowDays" min="1" max="400" step="1">
+                            </label>
+                            <label for="uvConcerningAt">Concerning at
+                                <input type="number" id="uvConcerningAt" min="1" max="99" step="1">
+                            </label>
+                            <label for="uvHabitAt">Habit at
+                                <input type="number" id="uvHabitAt" min="1" max="99" step="1">
+                            </label>
+                            <button type="button" class="btn-secondary" onclick="saveUniformSettings()">Save thresholds</button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Student History Subtab -->
                 <div id="behaviorHistory" class="discipline-subtab hidden">
                     <div class="wc-card panel-card">
@@ -5633,24 +5733,24 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260917i"></script>
+    <script src="wildcat-auth.js?v=20260918a"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
     <!-- The icon sprite. Injected at load, before anything renders, so an
          icon is never a blank square for a frame. -->
-    <script src="wildcat-icons.js?v=20260917i"></script>
-    <script src="wildcat-motion.js?v=20260917i"></script>
-    <script src="wildcat-discipline.js?v=20260917i"></script>
-    <script src="wildcat-audit.js?v=20260917i"></script>
-    <script src="wildcat-cashaudit.js?v=20260917i"></script>
-    <script src="wildcat-dirty.js?v=20260917i"></script>
-    <script src="wildcat-update.js?v=20260917i"></script>
-    <script src="wildcat-modes.js?v=20260917i"></script>
-    <script src="wildcat-merge.js?v=20260917i"></script>
-    <script src="wildcat-savequeue.js?v=20260917i"></script>
-    <script src="wildcat-roster.js?v=20260917i"></script>
-    <script src="wildcat-store.js?v=20260917i"></script>
-    <script src="script.js?v=20260917i"></script>
+    <script src="wildcat-icons.js?v=20260918a"></script>
+    <script src="wildcat-motion.js?v=20260918a"></script>
+    <script src="wildcat-discipline.js?v=20260918a"></script>
+    <script src="wildcat-audit.js?v=20260918a"></script>
+    <script src="wildcat-cashaudit.js?v=20260918a"></script>
+    <script src="wildcat-dirty.js?v=20260918a"></script>
+    <script src="wildcat-update.js?v=20260918a"></script>
+    <script src="wildcat-modes.js?v=20260918a"></script>
+    <script src="wildcat-merge.js?v=20260918a"></script>
+    <script src="wildcat-savequeue.js?v=20260918a"></script>
+    <script src="wildcat-roster.js?v=20260918a"></script>
+    <script src="wildcat-store.js?v=20260918a"></script>
+    <script src="script.js?v=20260918a"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -5660,7 +5760,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20260917i').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20260918a').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {

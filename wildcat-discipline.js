@@ -222,7 +222,7 @@
    */
   function disciplineTabsFor(role) {
     return seesAllReferrals(role)
-      ? ['submit', 'review', 'closed', 'detention', 'attendance', 'history', 'analytics']
+      ? ['submit', 'review', 'closed', 'detention', 'attendance', 'uniform', 'history', 'analytics']
       : ['submit', 'review', 'closed'];
   }
 
@@ -690,8 +690,147 @@
     return { referrals: out, added: added, updated: updated, changed: added + updated > 0 };
   }
 
+  // =====================================================================
+  // UNIFORM VIOLATIONS — the repeat rule
+  //
+  // TWO NUMBERS, NOT ONE, and this is the owner's correction rather than the
+  // first design. The obvious rule was "three in a school week", and he asked
+  // the question that killed it: "if it resets weekly, does that mean the
+  // previous week isn't getting considered when punishment is taken into
+  // account?" No, it does not — and worse, a resetting week is blind to the
+  // pattern that matters most. A student out of uniform twice every week,
+  // forever, never reaches three-in-a-week and never flags, while running up
+  // sixty violations a year.
+  //
+  // So the flag runs off a ROLLING window counted backwards from today, which
+  // never resets on a Monday and decays on its own as clean days pass; and the
+  // TERM TOTAL is carried beside it, never reset, so nobody decides a
+  // consequence without seeing every prior week. A student at four last month
+  // and clean for two weeks reads rolling 0, total 4: no flag, full history.
+  //
+  // THE TIERS ARE HIS LADDER, in his words: "1's an accident, 2 is concerning,
+  // 3 is a habit."
+  //
+  // THE TIERS ARE NOT DECORATION, and the reason is measured. A single flat
+  // line put 54% of this school on one attendance list on 2026-09-08. A flat
+  // "two or more violations" line on a daily dress-code log would do the same
+  // by week two. Tiers plus a default filter to the top one make the screen a
+  // queue rather than a roll call.
+  //
+  // WHY THE WORD "severe" IS NOT USED HERE even though the request says
+  // "severe offenders": `severeBypass` already means one incident too serious
+  // for the intervention ladder, with its own test and its own export column.
+  // Two different severes in one mode is how an analytics screen ends up
+  // counting the wrong thing. The UI says "Repeat list".
+  // =====================================================================
+
+  var UNIFORM_TIERS = [
+    { key: 'habit',      label: 'Habit',      min: 3 },
+    { key: 'concerning', label: 'Concerning', min: 2 },
+    { key: 'accident',   label: 'One-off',    min: 1 },
+    { key: 'clean',      label: 'Clear',      min: 0 }
+  ];
+
+  /**
+   * Defaults, and the justification, next to each other on purpose.
+   *
+   * `windowDays` 14 rather than 7: a fortnight spans two of a student's weekly
+   * cycles, so "twice a week every week" reaches the habit tier instead of
+   * hiding under a weekly reset. Both numbers are owner-editable settings —
+   * these are only what it ships with.
+   */
+  var DEFAULT_UNIFORM_SETTINGS = { windowDays: 14, concerningAt: 2, habitAt: 3 };
+
+  /**
+   * Coerce a stored settings blob. Absent falls back; 0 is a real value; a
+   * string, a negative or a non-number is refused rather than trusted.
+   *
+   * The rule takes its settings as an ARGUMENT and never reads a global, so a
+   * test can vary the thresholds without touching the app's state.
+   */
+  function uniformSettingsOrDefault(raw) {
+    var d = DEFAULT_UNIFORM_SETTINGS;
+    var s = (raw && typeof raw === 'object') ? raw : {};
+    function n(v, fallback, min) {
+      if (typeof v !== 'number' || !isFinite(v)) return fallback;
+      if (v < min) return fallback;
+      return Math.round(v);
+    }
+    var windowDays = n(s.windowDays, d.windowDays, 1);
+    var concerningAt = n(s.concerningAt, d.concerningAt, 1);
+    var habitAt = n(s.habitAt, d.habitAt, 1);
+    // A habit cannot be easier to reach than a concern. If someone inverts
+    // them, the stricter one wins rather than the tiers silently overlapping.
+    if (habitAt < concerningAt) habitAt = concerningAt;
+    return { windowDays: windowDays, concerningAt: concerningAt, habitAt: habitAt };
+  }
+
+  /** The tier for a rolling count, under these thresholds. */
+  function uniformTier(count, settings) {
+    if (typeof count !== 'number' || !isFinite(count)) return null;
+    var s = uniformSettingsOrDefault(settings);
+    if (count >= s.habitAt) return UNIFORM_TIERS[0];
+    if (count >= s.concerningAt) return UNIFORM_TIERS[1];
+    if (count >= 1) return UNIFORM_TIERS[2];
+    return UNIFORM_TIERS[3];
+  }
+
+  /**
+   * Rank the counted rows worst-first, and count each tier.
+   *
+   * `rows` are what convex/uniformViolations.ts:counts returns —
+   * { studentNumber, studentName, studentGrade, count, days, loaners,
+   *   loanersOutstanding, lastDay }. `count` is the rolling window; `total`
+   *   is optional and only decorates the row.
+   *
+   * A row whose count cannot be read is reported in `noData` rather than
+   * sorted in as though it were clean — the same refusal attendanceRanking
+   * makes, for the same reason: absent data must never render as a good
+   * result.
+   */
+  function uniformRanking(rows, settings) {
+    var s = uniformSettingsOrDefault(settings);
+    var ranked = [];
+    var noData = [];
+    (rows || []).forEach(function (r) {
+      var c = (r && typeof r.count === 'number' && isFinite(r.count)) ? r.count : null;
+      if (c === null) { noData.push({ row: r, count: null, tier: null }); return; }
+      ranked.push({
+        studentNumber: (r && r.studentNumber) || '',
+        studentName: (r && r.studentName) || '',
+        studentGrade: (r && r.studentGrade) || '',
+        count: c,
+        total: (r && typeof r.total === 'number' && isFinite(r.total)) ? r.total : null,
+        days: (r && typeof r.days === 'number') ? r.days : null,
+        loaners: (r && typeof r.loaners === 'number') ? r.loaners : 0,
+        loanersOutstanding: (r && typeof r.loanersOutstanding === 'number') ? r.loanersOutstanding : 0,
+        lastDay: (r && r.lastDay) || null,
+        tier: uniformTier(c, s)
+      });
+    });
+
+    ranked.sort(function (a, b) {
+      if (b.count !== a.count) return b.count - a.count;
+      // Then the more recent, because a habit that is still going matters
+      // more than one that has stopped.
+      var d = String(b.lastDay || '').localeCompare(String(a.lastDay || ''));
+      if (d) return d;
+      return String(a.studentName).localeCompare(String(b.studentName));
+    });
+
+    var counts = { habit: 0, concerning: 0, accident: 0, clean: 0 };
+    ranked.forEach(function (r) { if (r.tier) counts[r.tier.key] += 1; });
+
+    return { ranked: ranked, noData: noData, counts: counts, settings: s, tiers: UNIFORM_TIERS };
+  }
+
   root.WildcatDiscipline = {
     mergeReferrals: mergeReferrals,
+    UNIFORM_TIERS: UNIFORM_TIERS,
+    DEFAULT_UNIFORM_SETTINGS: DEFAULT_UNIFORM_SETTINGS,
+    uniformSettingsOrDefault: uniformSettingsOrDefault,
+    uniformTier: uniformTier,
+    uniformRanking: uniformRanking,
     newReferralId: newReferralId,
     duplicateReferralIds: duplicateReferralIds,
     SMALL_GROUP: SMALL_GROUP,

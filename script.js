@@ -2020,6 +2020,18 @@
             emailSubject: 'Your Weekly Raffle Ticket Summary'
         };
         
+        /**
+         * Uniform Violations repeat-list thresholds. Owner-editable, so they
+         * live in settings rather than as a constant.
+         *
+         * DECLARED, READ, SENT, CACHED AND EXPORTED IN ONE COMMIT, because
+         * appData:save replaces the whole settings blob: a key that is read but
+         * not sent is destroyed by the next save from any tab. The five other
+         * sites are marked `uniformSettings` and there is a test that counts
+         * them.
+         */
+        let uniformSettings = { windowDays: 14, concerningAt: 2, habitAt: 3 };
+
         // EmailJS Configuration
         let emailJSConfig = {
             serviceId: '',      // Will be set in Settings
@@ -3049,6 +3061,7 @@
                         academicSubcategories = mainData.academicSubcategories || ['No Missing Assignments', 'Improvement on quiz/assessment or successful retakes', 'Participation in tutoring'];
                         lastPowerSchoolSync = mainData.lastPowerSchoolSync || null;
                         kickboardSettings = mainData.kickboardSettings || kickboardSettings;
+                        uniformSettings = mainData.uniformSettings || uniformSettings;
                         emailJSConfig = mainData.emailJSConfig || emailJSConfig;
                         passSettings = mainData.passSettings || passSettings;
                         schoolBranding = mainData.schoolBranding || schoolBranding;
@@ -3289,6 +3302,7 @@
                 academicSubcategories = data.academicSubcategories || ['No Missing Assignments', 'Improvement on quiz/assessment or successful retakes', 'Participation in tutoring'];
                 lastPowerSchoolSync = data.lastPowerSchoolSync || null;
                 kickboardSettings = data.kickboardSettings || kickboardSettings;
+                uniformSettings = data.uniformSettings || uniformSettings;
                 emailJSConfig = data.emailJSConfig || emailJSConfig;
                 hallPasses = data.hallPasses || [];
                 passSettings = data.passSettings || passSettings;
@@ -4211,6 +4225,7 @@
                                         // ships in the browser by design. Included for
                                         // fidelity; it is not a credential.
                                         kickboardSettings, emailJSConfig, passSettings, schoolBranding,
+                                        uniformSettings,
                                         // Both counters take the max against the
                                         // server's own value, peeked at the top of
                                         // this save. They only ever go up, or a
@@ -4905,6 +4920,7 @@
                             academicSubcategories,
                             lastPowerSchoolSync,
                             kickboardSettings,
+                            uniformSettings,
                             emailJSConfig,
                             hallPasses,
                             passSettings,
@@ -4966,6 +4982,7 @@
                             academicSubcategories,
                             lastPowerSchoolSync,
                             kickboardSettings,
+                            uniformSettings,
                             emailJSConfig,
                             hallPasses,
                             passSettings,
@@ -5079,6 +5096,7 @@
                 academicSubcategories,
                 lastPowerSchoolSync,
                 kickboardSettings,
+                uniformSettings,
                 emailJSConfig,
                 hallPasses,
                 passSettings,
@@ -25397,6 +25415,7 @@
                 { id: 'closed',    fn: 'switchDisciplineTab', label: wcIcon('audit') + ' Closed Referrals' },
                 { id: 'detention', fn: 'switchDisciplineTab', label: wcIcon('stopwatch') + ' Detention Tracker' },
                 { id: 'attendance', fn: 'switchDisciplineTab', label: wcIcon('calendar') + ' Attendance Watch' },
+                { id: 'uniform',   fn: 'switchDisciplineTab', label: wcIcon('identity') + ' Uniform Violations' },
                 { id: 'history',   fn: 'switchDisciplineTab', label: wcIcon('book') + ' Student History' },
                 { id: 'analytics', fn: 'switchDisciplineTab', label: wcIcon('analytics') + ' Analytics' }
             ]
@@ -29670,6 +29689,7 @@
                 closed:    { pane: 'behaviorClosed',    btn: null },
                 detention: { pane: 'behaviorDetention', btn: 'detentionTabBtn' },
                 attendance:{ pane: 'behaviorAttendance', btn: null },
+                uniform:   { pane: 'behaviorUniform',   btn: null },
                 history:   { pane: 'behaviorHistory',   btn: 'historyDisciplineTabBtn' },
                 analytics: { pane: 'behaviorAnalytics', btn: 'analyticsDisciplineTabBtn' }
             };
@@ -29727,6 +29747,8 @@
                 if (typeof updateDetentionLists === 'function') updateDetentionLists();
             } else if (subtab === 'attendance') {
                 renderAttendanceWatch();
+            } else if (subtab === 'uniform') {
+                openUniformViolations();
             } else if (subtab === 'history') {
                 populateHistoryStudentDropdown();
             } else if (subtab === 'analytics') {
@@ -30046,6 +30068,596 @@
                 // textContent, so nothing here can be escaped twice or not at all.
                 foot.textContent = bits.join(' ');
             }
+        }
+
+        // ========================================
+        // UNIFORM VIOLATIONS
+        //
+        // A Behavior Interventionist at a door, every school day. The owner's
+        // requirement, verbatim: "I want this to be as easy as possible for
+        // the interventionists as this is a daily task, so efficiency is a
+        // must in order to maintain fidelity."
+        //
+        // WHICH IS WHY THE WHOLE SCREEN IS ONE SEARCH BOX. Type two letters,
+        // press Enter, logged. Shift+Enter if a loaner was handed over. The
+        // box clears and refocuses itself, so the NEXT student costs zero
+        // taps -- and if the school buys a USB barcode scanner, the student ID
+        // card types its own number and fires Enter, so a student costs zero
+        // keystrokes too. Both number spaces are matched (see
+        // uniformPickerMatches), so whichever card they scan resolves.
+        //
+        // WHY NOT THE TICK-BOX ROLL CALL, which is the app's only existing
+        // bulk pattern: it cannot hold a scattered selection. Every keystroke
+        // in its search box rebuilds the table with every row unticked. It is
+        // fast for alphabetically adjacent students on one page -- a class
+        // list read in order -- and a door is twenty to sixty children from
+        // seven grades in arrival order, which is the case it is worst at.
+        //
+        // NOT THROUGH saveData(). A browser save here writes students,
+        // teachers, settings, referrals, ticket histories, the audit log and
+        // every cash week, and waits up to twenty seconds on an in-flight one.
+        // Sixty times a morning that is a queue, not a log. Every mutation
+        // below is direct, and each returns the updated numbers so the screen
+        // redraws from the answer rather than re-reading the table.
+        // ========================================
+
+        let _uvView = 'today';
+        let _uvPick = null;          // the student the box has resolved to
+        let _uvMatches = [];         // what the box is currently offering
+        let _uvHighlight = -1;
+        let _uvToday = [];           // today's rows, newest first
+        let _uvCounts = [];          // per-student counts across the window
+        let _uvLoaners = [];         // loaners handed out and not back
+        let _uvTruncated = false;
+        let _uvBusy = false;
+        /** The picked student's own numbers, including the term total. */
+        let _uvPickSummary = null;
+        /** Ids this tab has logged and not yet had confirmed, for the retry register. */
+        const _uvUnsaved = new Map();
+
+        function uniformSettingsNow() {
+            return window.WildcatDiscipline.uniformSettingsOrDefault(
+                typeof uniformSettings !== 'undefined' ? uniformSettings : null);
+        }
+
+        /** The first day the rolling window covers, counted back from today. */
+        function uniformWindowStart() {
+            const s = uniformSettingsNow();
+            const d = new Date();
+            d.setDate(d.getDate() - (s.windowDays - 1));
+            return wcIsoDay(d);
+        }
+
+        async function openUniformViolations() {
+            const s = uniformSettingsNow();
+            const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+            set('uvWindowDays', s.windowDays);
+            set('uvConcerningAt', s.concerningAt);
+            set('uvHabitAt', s.habitAt);
+
+            const note = document.getElementById('uvDayNote');
+            if (note) {
+                note.textContent = 'Logging for ' + wcIsoDay(new Date()) +
+                    '. Flagged on ' + s.habitAt + '+ in the last ' + s.windowDays + ' days.';
+            }
+            // Drawn from whatever is already in memory first: a tab that shows
+            // nothing until the network answers reads as broken.
+            renderUniformViolations();
+            await refreshUniformData();
+            // Focused LAST, so a redraw cannot steal it back. A full-width
+            // pane has nothing below the box for an open list to cover, which
+            // is the one reason the redeem picker declines to autofocus.
+            const box = document.getElementById('uvPickerInput');
+            if (box) { box.value = ''; box.focus(); }
+        }
+
+        async function refreshUniformData() {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+            if (!session) { renderUniformViolations(); return; }
+            const today = wcIsoDay(new Date());
+            const sinceDay = uniformWindowStart();
+            try {
+                const [day, counts, loaners] = await Promise.all([
+                    auth.convexQuery('uniformViolations:forDay', { day }, session.idToken),
+                    auth.convexQuery('uniformViolations:counts', { sinceDay, today }, session.idToken),
+                    auth.convexQuery('uniformViolations:outstandingLoaners', {}, session.idToken)
+                ]);
+                if (day && day.allowed === false) {
+                    _uvToday = []; _uvCounts = []; _uvLoaners = [];
+                    const list = document.getElementById('uniformList');
+                    if (list) list.innerHTML = '<p class="wc-att-foot">' + escapeHtml(day.reason || '') + '</p>';
+                    return;
+                }
+                _uvToday = (day && day.rows) || [];
+                _uvCounts = (counts && counts.rows) || [];
+                _uvLoaners = (loaners && loaners.rows) || [];
+                _uvTruncated = Boolean((day && day.truncated) || (counts && counts.truncated));
+            } catch (e) {
+                console.error('[uniform] could not read the log:', e && e.message);
+            }
+            renderUniformViolations();
+        }
+
+        /**
+         * Does this student match what has been typed?
+         *
+         * THREE NUMBER SPACES, deliberately. A name is what a person types; the
+         * 5-digit studentNumber is what the app's own printed ID card encodes
+         * as its barcode; the 4-digit mealPin is what the cafeteria card
+         * encodes. Matching all three means a USB scanner works whichever card
+         * the student is holding, and costs nothing because the roster is
+         * already in memory -- no index, no round trip. 514 of 763 students
+         * have a meal number on file, so the meal card alone would miss one in
+         * three; the name search is the floor under both.
+         */
+        function uniformPickerMatches(q) {
+            const needle = String(q || '').trim().toLowerCase();
+            if (needle.length < 2) return [];
+            const digits = /^\d+$/.test(needle);
+            const out = [];
+            enrolledStudents().forEach(s => {
+                if (!s) return;
+                if (digits) {
+                    if (String(s.studentNumber || '') === needle) { out.push(s); return; }
+                    if (String(s.mealPin || '') === needle) { out.push(s); return; }
+                    if (String(s.id || '') === needle) { out.push(s); return; }
+                    // A partial number still offers candidates while typing.
+                    if (String(s.studentNumber || '').startsWith(needle)) out.push(s);
+                    return;
+                }
+                const name = ((s.firstName || '') + ' ' + (s.lastName || '')).toLowerCase();
+                const flipped = ((s.lastName || '') + ' ' + (s.firstName || '')).toLowerCase();
+                if (name.includes(needle) || flipped.includes(needle)) out.push(s);
+            });
+            out.sort((a, b) => String(a.lastName || '').localeCompare(String(b.lastName || '')) ||
+                               String(a.firstName || '').localeCompare(String(b.firstName || '')));
+            return out.slice(0, 40);
+        }
+
+        /** How many times this student has been logged in the window, for the badge. */
+        function uniformCountFor(studentNumber) {
+            const hit = _uvCounts.find(r => String(r.studentNumber) === String(studentNumber));
+            return hit ? hit.count : 0;
+        }
+
+        function filterUniformPicker() {
+            const box = document.getElementById('uvPickerInput');
+            const results = document.getElementById('uvPickerResults');
+            if (!box || !results) return;
+            _uvMatches = uniformPickerMatches(box.value);
+            _uvHighlight = -1;
+            _uvPick = null;
+            _uvPickSummary = null;
+            updateUniformPicked();
+
+            // An EXACT number match resolves immediately and offers no list:
+            // that is the scanner case, and a list would only be something to
+            // dismiss. Never an exact NAME match -- "ro" must not silently
+            // resolve to whichever Rodriguez sorts first when Enter is the
+            // write.
+            if (/^\d+$/.test(box.value.trim()) && _uvMatches.length === 1) {
+                _uvPick = _uvMatches[0];
+                results.hidden = true;
+                results.innerHTML = '';
+                updateUniformPicked();
+                fetchUniformPickSummary(_uvPick);
+                return;
+            }
+            if (!_uvMatches.length) {
+                results.hidden = box.value.trim().length < 2;
+                results.innerHTML = '<div class="student-picker-empty">No enrolled student matches that.</div>';
+                return;
+            }
+            const s = uniformSettingsNow();
+            results.hidden = false;
+            results.innerHTML = _uvMatches.map((st, i) => {
+                const n = uniformCountFor(st.studentNumber);
+                const tier = window.WildcatDiscipline.uniformTier(n, s);
+                const pill = n > 0
+                    ? '<span class="wc-uv-pill wc-uv-' + tier.key + '">' + n + ' in ' + s.windowDays + 'd</span>'
+                    : '';
+                return '<div class="student-picker-option' + (i === _uvHighlight ? ' is-active' : '') + '"' +
+                    ' data-uvi="' + i + '" onclick="pickUniformStudent(' + i + ')">' +
+                    '<span class="sp-name">' + escapeHtml((st.firstName || '') + ' ' + (st.lastName || '')) + '</span>' +
+                    '<span class="sp-meta">Grade ' + escapeHtml(String(st.grade || '?')) +
+                        ' &middot; ' + escapeHtml(String(st.studentNumber || '')) + '</span>' +
+                    pill +
+                '</div>';
+            }).join('');
+        }
+
+        /**
+         * That student's own numbers, read the moment they are picked.
+         *
+         * WHY A ROUND TRIP RATHER THAN THE COUNTS ALREADY IN MEMORY: the
+         * window count is in `_uvCounts`, but the TERM TOTAL is not, and the
+         * owner asked for it specifically -- "if it resets weekly, does that
+         * mean the previous week isn't getting considered when punishment is
+         * taken into account?" A rolling flag with no running total answers
+         * that question wrongly. This is one indexed read of one child's rows,
+         * and it lands while the adult is still reading the name.
+         *
+         * It never blocks the write. Enter works before this returns; the line
+         * simply gains the total when it arrives.
+         */
+        async function fetchUniformPickSummary(st) {
+            _uvPickSummary = null;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+            if (!session || !st) return;
+            const want = String(st.studentNumber || '');
+            try {
+                const res = await auth.convexQuery('uniformViolations:studentSummary',
+                    { studentNumber: want, sinceDay: uniformWindowStart() }, session.idToken);
+                // Ignored if the box has moved on, so a slow answer cannot
+                // relabel the student now on screen.
+                if (!_uvPick || String(_uvPick.studentNumber || '') !== want) return;
+                _uvPickSummary = (res && res.summary) || null;
+                updateUniformPicked();
+            } catch (e) {
+                console.warn('[uniform] could not read that student\'s totals:', e && e.message);
+            }
+        }
+
+        function pickUniformStudent(i) {
+            const st = _uvMatches[i];
+            if (!st) return;
+            _uvPick = st;
+            fetchUniformPickSummary(st);
+            const box = document.getElementById('uvPickerInput');
+            const results = document.getElementById('uvPickerResults');
+            if (box) box.value = ((st.firstName || '') + ' ' + (st.lastName || '')).trim();
+            if (results) { results.hidden = true; results.innerHTML = ''; }
+            updateUniformPicked();
+            if (box) box.focus();
+        }
+
+        /** Says who Enter will log, and their count, before it is pressed. */
+        function updateUniformPicked() {
+            const el = document.getElementById('uvPicked');
+            if (!el) return;
+            if (!_uvPick) { el.hidden = true; el.textContent = ''; return; }
+            const s = uniformSettingsNow();
+            const n = uniformCountFor(_uvPick.studentNumber);
+            const tier = window.WildcatDiscipline.uniformTier(n, s);
+            el.hidden = false;
+            el.className = 'wc-uv-picked wc-uv-' + (n > 0 ? tier.key : 'clean');
+            // THE TERM TOTAL SITS BESIDE THE ROLLING COUNT, always. The flag
+            // is deliberately current -- it clears as a student improves --
+            // and a number that clears must never be the only number an adult
+            // sees before deciding a consequence. That is the owner's own
+            // objection to a resetting week, answered on the row.
+            const sum = _uvPickSummary;
+            const total = (sum && typeof sum.countTotal === 'number') ? sum.countTotal : null;
+            const bits = [];
+            if (n > 0) bits.push((n + 1) + wcOrdinalSuffix(n + 1) + ' in ' + s.windowDays + ' days, ' + tier.label.toLowerCase());
+            if (total !== null) bits.push((total + 1) + ' this term');
+            if (sum && sum.loanersOutstanding > 0) {
+                bits.push(sum.loanersOutstanding + ' loaner' + (sum.loanersOutstanding === 1 ? '' : 's') + ' still out');
+            }
+            el.textContent = 'Enter logs ' + ((_uvPick.firstName || '') + ' ' + (_uvPick.lastName || '')).trim() +
+                ' (grade ' + (_uvPick.grade || '?') + ')' +
+                (bits.length ? ' — ' + bits.join(' · ') : '');
+        }
+
+        function wcOrdinalSuffix(n) {
+            const v = Number(n) % 100;
+            if (v >= 11 && v <= 13) return 'th';
+            return ['th', 'st', 'nd', 'rd'][Math.min(v % 10, 4)] || 'th';
+        }
+
+        /**
+         * Enter commits the write, so it may only fire on something
+         * unambiguous.
+         *
+         * A UNIQUE MATCH OR AN ARROW-KEY HIGHLIGHT, never the first row of a
+         * list. The redeem picker's first-match fallback is safe because it
+         * fills a form somebody then reads; here Enter IS the write, and "ro"
+         * must not log a violation against whichever Rodriguez sorts first.
+         */
+        function uniformPickerKeys(e) {
+            const results = document.getElementById('uvPickerResults');
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                if (!_uvMatches.length) return;
+                e.preventDefault();
+                const step = e.key === 'ArrowDown' ? 1 : -1;
+                _uvHighlight = Math.max(0, Math.min(_uvMatches.length - 1, _uvHighlight + step));
+                _uvPick = _uvMatches[_uvHighlight];
+                fetchUniformPickSummary(_uvPick);
+                if (results) {
+                    [...results.querySelectorAll('.student-picker-option')].forEach(el => {
+                        el.classList.toggle('is-active', Number(el.dataset.uvi) === _uvHighlight);
+                    });
+                }
+                updateUniformPicked();
+                return;
+            }
+            if (e.key === 'Escape') {
+                _uvPick = null; _uvMatches = []; _uvHighlight = -1;
+                if (results) { results.hidden = true; results.innerHTML = ''; }
+                const box = document.getElementById('uvPickerInput');
+                if (box) box.value = '';
+                updateUniformPicked();
+                return;
+            }
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            if (!_uvPick && _uvMatches.length === 1) _uvPick = _uvMatches[0];
+            if (!_uvPick) {
+                showToast(_uvMatches.length
+                    ? 'More than one student matches. Use the arrow keys to choose one.'
+                    : 'No student chosen yet.', 'warn', 4000);
+                return;
+            }
+            commitUniformViolation(e.shiftKey === true);
+        }
+
+        /**
+         * Log the violation.
+         *
+         * Optimistic, then truthful: the row appears at once, the toast says
+         * "Saving" and only then says what happened. The comment on
+         * awardCashToSelected records the version of this code that showed a
+         * green tick without reading the answer.
+         *
+         * NO CONFIRMATION DIALOG, and Undo on the row is what earns that. A
+         * one-keystroke write is only safe when the mistake costs one tap to
+         * reverse.
+         */
+        async function commitUniformViolation(withLoaner) {
+            if (_uvBusy) return;
+            const st = _uvPick;
+            if (!st) { showToast('Choose a student first.', 'warn', 3000); return; }
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+            if (!session) { showToast('You are signed out. Sign in again before logging.', 'warn', 6000); return; }
+
+            const name = ((st.firstName || '') + ' ' + (st.lastName || '')).trim();
+            // One per BUTTON PRESS. A dropped response and an impatient second
+            // tap resolve to the same row rather than two.
+            const attemptId = 'uv_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+            const day = wcIsoDay(new Date());
+            _uvBusy = true;
+            _uvUnsaved.set(attemptId, { name: name, at: Date.now() });
+            showToast('Saving ' + name + (withLoaner ? ' + loaner' : ''), 'info', 6000);
+
+            // The box is cleared and refocused NOW, not after the network
+            // answers, so the next student can be typed while this one saves.
+            const box = document.getElementById('uvPickerInput');
+            const results = document.getElementById('uvPickerResults');
+            if (box) box.value = '';
+            if (results) { results.hidden = true; results.innerHTML = ''; }
+            _uvPick = null; _uvMatches = []; _uvHighlight = -1;
+            _uvPickSummary = null;
+            updateUniformPicked();
+            if (box) box.focus();
+
+            try {
+                const res = await auth.convexMutation('uniformViolations:log', {
+                    studentNumber: String(st.studentNumber || ''),
+                    day: day,
+                    loanerProvided: withLoaner === true,
+                    attemptId: attemptId,
+                    sinceDay: uniformWindowStart()
+                }, session.idToken);
+                _uvUnsaved.delete(attemptId);
+
+                if (res && res.duplicate) {
+                    // Not an error, and not a second row. Offer the correction
+                    // the person standing there actually wants.
+                    const when = String((res.row && res.row.at) || '').slice(11, 16);
+                    if (withLoaner && res.canAddLoaner && res.row) {
+                        await auth.convexMutation('uniformViolations:setLoaner', {
+                            id: res.row.id, loanerProvided: true, sinceDay: uniformWindowStart()
+                        }, session.idToken);
+                        showToast(name + ' was already logged today. Loaner added to that entry.', 'success', 6000);
+                    } else {
+                        showToast(name + ' was already logged today at ' + when +
+                                  ((res.row && res.row.loggedByName) ? ' by ' + res.row.loggedByName : '') + '.',
+                                  'warn', 7000);
+                    }
+                } else if (res && res.deduped) {
+                    showToast(name + ' was already saved.', 'success', 3000);
+                } else {
+                    const n = (res && res.summary && res.summary.countInWindow) || 1;
+                    const s = uniformSettingsNow();
+                    const tier = window.WildcatDiscipline.uniformTier(n, s);
+                    showToast(name + ' logged' + (withLoaner ? ' with a loaner' : '') +
+                        (n > 1 ? ' — ' + n + wcOrdinalSuffix(n) + ' in ' + s.windowDays + ' days (' + tier.label.toLowerCase() + ')' : ''),
+                        n >= s.habitAt ? 'warn' : 'success', n >= s.habitAt ? 7000 : 3500);
+                }
+                await refreshUniformData();
+            } catch (err) {
+                // KEPT, not discarded. The register is what the footer reads,
+                // so an interventionist can see a failure without being asked
+                // to refresh anything.
+                console.error('[uniform] log failed for', name, err);
+                showToast('NOT logged: ' + name + '. ' + ((err && err.message) || 'The save failed.') +
+                          ' It is still listed as unsaved below.', 'error', 12000);
+                renderUniformViolations();
+            } finally {
+                _uvBusy = false;
+            }
+        }
+
+        async function undoUniformViolation(id) {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+            if (!session) { showToast('You are signed out.', 'warn', 5000); return; }
+            try {
+                await auth.convexMutation('uniformViolations:voidEntry',
+                    { id: id, sinceDay: uniformWindowStart() }, session.idToken);
+                showToast('Entry undone.', 'success', 3000);
+                await refreshUniformData();
+            } catch (e) {
+                showToast('Could not undo that: ' + ((e && e.message) || ''), 'error', 8000);
+            }
+        }
+
+        async function returnUniformLoaner(id) {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+            if (!session) { showToast('You are signed out.', 'warn', 5000); return; }
+            try {
+                await auth.convexMutation('uniformViolations:returnLoaner', { id: id }, session.idToken);
+                showToast('Loaner marked returned.', 'success', 3000);
+                await refreshUniformData();
+            } catch (e) {
+                showToast('Could not mark that returned: ' + ((e && e.message) || ''), 'error', 8000);
+            }
+        }
+
+        function setUniformView(view) {
+            _uvView = view;
+            document.querySelectorAll('#uvViewFilter .analytics-tab').forEach(b => {
+                b.classList.toggle('active', b.dataset.uvview === view);
+            });
+            renderUniformViolations();
+        }
+
+        function renderUniformViolations() {
+            const list = document.getElementById('uniformList');
+            const cards = document.getElementById('uvTierCards');
+            const foot = document.getElementById('uvFoot');
+            if (!list) return;
+            const s = uniformSettingsNow();
+            const ranked = window.WildcatDiscipline.uniformRanking(_uvCounts, s);
+            const c = ranked.counts;
+
+            if (cards) {
+                cards.innerHTML = [
+                    ['habit',      'Habit',      s.habitAt + '+ in ' + s.windowDays + ' days', c.habit],
+                    ['concerning', 'Concerning', s.concerningAt + ' in ' + s.windowDays + ' days', c.concerning],
+                    ['accident',   'One-off',    'Logged once', c.accident],
+                    ['loaner',     'Loaners out', 'Not yet returned', _uvLoaners.length]
+                ].map(t =>
+                    '<div class="wc-att-tier wc-uv-' + t[0] + '">' +
+                        '<div class="wc-att-tier-n">' + t[3] + '</div>' +
+                        '<div class="wc-att-tier-l">' + t[1] + '</div>' +
+                        '<div class="wc-att-tier-s">' + t[2] + '</div>' +
+                    '</div>').join('');
+            }
+
+            const q = ((document.getElementById('uvSearch') || {}).value || '').trim().toLowerCase();
+            const hit = (name, num) => !q ||
+                String(name || '').toLowerCase().includes(q) || String(num || '').includes(q);
+
+            let html = '';
+            if (_uvView === 'today') {
+                const rows = _uvToday.filter(r => hit(r.studentName, r.studentNumber));
+                html = rows.length ? rows.map(r => {
+                    const n = uniformCountFor(r.studentNumber);
+                    const tier = window.WildcatDiscipline.uniformTier(n, s);
+                    return '<div class="wc-att-row wc-uv-' + (n > 0 ? tier.key : 'clean') + '">' +
+                        '<span class="wc-att-name">' + escapeHtml(r.studentName) +
+                            '<span class="wc-att-meta">Grade ' + escapeHtml(String(r.studentGrade || '?')) +
+                            ' &middot; ' + escapeHtml(String(r.studentNumber)) +
+                            ' &middot; ' + escapeHtml(String(r.at || '').slice(11, 16)) +
+                            (r.loggedByName ? ' &middot; ' + escapeHtml(r.loggedByName) : '') + '</span></span>' +
+                        '<span class="wc-att-figs">' +
+                            (r.loanerProvided
+                                ? '<span class="wc-uv-pill wc-uv-loaner">Loaner' +
+                                  (r.loanerOutstanding ? ' out' : ' back') + '</span>'
+                                : '') +
+                            '<span class="wc-att-days">' + n + ' in ' + s.windowDays + 'd</span>' +
+                        '</span>' +
+                        '<span class="wc-uv-row-actions">' +
+                            (r.loanerOutstanding
+                                ? '<button type="button" class="wc-uv-mini" onclick="returnUniformLoaner(\'' + r.id + '\')">Returned</button>'
+                                : '') +
+                            '<button type="button" class="wc-uv-mini" onclick="undoUniformViolation(\'' + r.id + '\')">Undo</button>' +
+                        '</span>' +
+                    '</div>';
+                }).join('') : '<p class="wc-att-foot">Nothing logged today yet.</p>';
+            } else if (_uvView === 'repeat') {
+                // Default-filtered to the top tier: a flat line would name most
+                // of the school, which is the measured lesson from the
+                // attendance list.
+                const rows = ranked.ranked
+                    .filter(r => r.tier && (r.tier.key === 'habit' || r.tier.key === 'concerning'))
+                    .filter(r => hit(r.studentName, r.studentNumber));
+                html = rows.length ? rows.map(r =>
+                    '<div class="wc-att-row wc-uv-' + r.tier.key + '">' +
+                        '<span class="wc-att-name">' + escapeHtml(r.studentName) +
+                            '<span class="wc-att-meta">Grade ' + escapeHtml(String(r.studentGrade || '?')) +
+                            ' &middot; ' + escapeHtml(String(r.studentNumber)) +
+                            (r.lastDay ? ' &middot; last ' + escapeHtml(r.lastDay) : '') + '</span></span>' +
+                        '<span class="wc-att-figs">' +
+                            '<span class="wc-att-pct">' + r.count + '</span>' +
+                            '<span class="wc-att-days">in ' + s.windowDays + ' days' +
+                                (r.loanersOutstanding ? ' &middot; ' + r.loanersOutstanding + ' loaner out' : '') +
+                            '</span>' +
+                        '</span>' +
+                        '<span class="wc-att-badge">' + escapeHtml(r.tier.label) + '</span>' +
+                    '</div>').join('')
+                    : '<p class="wc-att-foot">Nobody has reached ' + s.concerningAt +
+                      ' violations in the last ' + s.windowDays + ' days.</p>';
+            } else {
+                const rows = _uvLoaners.filter(r => hit(r.studentName, r.studentNumber));
+                html = rows.length ? rows.map(r =>
+                    '<div class="wc-att-row wc-uv-loaner">' +
+                        '<span class="wc-att-name">' + escapeHtml(r.studentName) +
+                            '<span class="wc-att-meta">Grade ' + escapeHtml(String(r.studentGrade || '?')) +
+                            ' &middot; given ' + escapeHtml(String(r.day)) + '</span></span>' +
+                        '<span class="wc-att-figs"><span class="wc-att-days">' +
+                            wcDaysAgoLabel(r.day) + '</span></span>' +
+                        '<span class="wc-uv-row-actions">' +
+                            '<button type="button" class="wc-uv-mini" onclick="returnUniformLoaner(\'' + r.id + '\')">Returned</button>' +
+                        '</span>' +
+                    '</div>').join('')
+                    : '<p class="wc-att-foot">No loaners are out.</p>';
+            }
+            list.innerHTML = html;
+
+            if (foot) {
+                const bits = [];
+                if (_uvUnsaved.size) {
+                    bits.push(_uvUnsaved.size + ' entr' + (_uvUnsaved.size === 1 ? 'y has' : 'ies have') +
+                              ' NOT saved: ' + [..._uvUnsaved.values()].map(u => u.name).join(', ') +
+                              '. Log them again.');
+                }
+                bits.push(_uvToday.length + ' logged today.');
+                if (ranked.noData.length) {
+                    bits.push(ranked.noData.length + ' row(s) could not be counted and are not ranked.');
+                }
+                if (_uvTruncated) bits.push('The log is larger than this screen reads. Tell an administrator.');
+                foot.textContent = bits.join(' ');
+            }
+        }
+
+        /** "today" / "yesterday" / "4 days ago", for a loaner that is still out. */
+        function wcDaysAgoLabel(day) {
+            const t = Date.parse(String(day) + 'T00:00:00');
+            if (!isFinite(t)) return '';
+            const today = new Date(); today.setHours(0, 0, 0, 0);
+            const n = Math.round((today.getTime() - t) / 86400000);
+            if (n <= 0) return 'today';
+            if (n === 1) return 'yesterday';
+            return n + ' days ago';
+        }
+
+        async function saveUniformSettings() {
+            const read = (id, fallback) => {
+                const el = document.getElementById(id);
+                const v = el ? Number(el.value) : NaN;
+                return (isFinite(v) && v > 0) ? Math.round(v) : fallback;
+            };
+            const d = window.WildcatDiscipline.DEFAULT_UNIFORM_SETTINGS;
+            const next = window.WildcatDiscipline.uniformSettingsOrDefault({
+                windowDays: read('uvWindowDays', d.windowDays),
+                concerningAt: read('uvConcerningAt', d.concerningAt),
+                habitAt: read('uvHabitAt', d.habitAt)
+            });
+            uniformSettings = next;
+            const ok = await requestSave('Uniform thresholds');
+            if (ok === false) {
+                showToast('The thresholds were NOT saved. They will retry.', 'warn', 8000);
+                return;
+            }
+            showToast('Thresholds saved: flagged at ' + next.habitAt +
+                      '+ in ' + next.windowDays + ' days.', 'success', 5000);
+            await openUniformViolations();
         }
 
         // At most one roster fetch per visit to the referral form, so a

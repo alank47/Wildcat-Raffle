@@ -71,11 +71,11 @@ console.log("\nA broken match shows too little, never everything");
     D.ownsReferral({ filedByEmail: "" }, { role: "teacher", email: "" }) === false);
 }
 
-console.log("\nTabs: a teacher gets three, admin and PBIS get six");
+console.log("\nTabs: a teacher gets three, admin and PBIS get the rest");
 {
   check("teacher tabs are exactly submit, review, closed",
     D.disciplineTabsFor("teacher").join(",") === "submit,review,closed");
-  ["detention", "history", "analytics"].forEach((t) => {
+  ["detention", "attendance", "uniform", "history", "analytics"].forEach((t) => {
     check(`a teacher cannot open ${t}`, D.canOpenDisciplineTab("teacher", t) === false);
     check(`PBIS can open ${t}`, D.canOpenDisciplineTab("pbis", t) === true);
     check(`an admin can open ${t}`, D.canOpenDisciplineTab("admin", t) === true);

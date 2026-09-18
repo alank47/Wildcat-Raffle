@@ -9446,3 +9446,82 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     .wc-acad-row { flex-wrap: wrap; }
     .wc-acad-withheld { text-align: left; max-width: none; }
 }
+
+/* =====================================================================
+   UNIFORM VIOLATIONS
+   Tier accents get their OWN class names rather than reusing
+   .wc-att-severe: those colours belong to the attendance rule, and
+   `severe` already means something different in this mode. The row and
+   list furniture (.wc-att-row, .wc-att-figs, .wc-att-badge) is reused
+   as-is, because it carries no attendance-specific meaning.
+   ===================================================================== */
+
+/* The search box and its two commit buttons on one line. The box takes
+   the space because it is the only control that is used every time; the
+   buttons are the touch equivalents of Enter and Shift+Enter, not extra
+   steps, so they sit beside it rather than below. */
+.wc-uv-entry {
+    display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px;
+}
+.wc-uv-entry .student-picker { flex: 1 1 260px; min-width: 0; position: relative; }
+.wc-uv-entry .wc-att-search { width: 100%; font-size: 16px; padding: 12px 14px; }
+.wc-uv-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+/* Big enough to hit at a door without looking. */
+.wc-uv-log { min-height: 46px; padding: 0 18px; font-size: 15px; font-weight: 600; }
+
+.wc-uv-hint { font-size: 12px; color: var(--wc-gray-text, #8892a0); margin: 8px 0 0; }
+
+/* Says who Enter will log, and their count, BEFORE it is pressed. */
+.wc-uv-picked {
+    margin: 10px 0 0; padding: 8px 12px; border-radius: 10px; font-size: 13.5px;
+    font-weight: 600; border-left: 4px solid var(--wc-line, #E7ECF2);
+    background: var(--wc-surface-2, #f7f9fc); color: var(--wc-ink, #14171C);
+}
+
+.wc-uv-pill {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 700; white-space: nowrap;
+    background: var(--wc-line, #E7ECF2); color: var(--wc-ink, #14171C);
+}
+
+/* One ladder, in the owner's words: an accident, then concerning, then a
+   habit. Amber and red are the same two the attendance tiers use, so a
+   red left edge means the same thing everywhere in this mode. */
+.wc-uv-habit       { border-left-color: #dc2626 !important; }
+.wc-uv-concerning  { border-left-color: #f59e0b !important; }
+.wc-uv-accident    { border-left-color: #64748b !important; }
+.wc-uv-clean       { border-left-color: var(--wc-line, #E7ECF2) !important; }
+.wc-uv-loaner      { border-left-color: #2F67A7 !important; }
+
+.wc-uv-pill.wc-uv-habit      { background: #fee2e2; color: #991b1b; }
+.wc-uv-pill.wc-uv-concerning { background: #fef3c7; color: #92400e; }
+.wc-uv-pill.wc-uv-accident   { background: #eef2f7; color: #475569; }
+.wc-uv-pill.wc-uv-loaner     { background: #dbeafe; color: #1e40af; }
+
+.wc-uv-habit .wc-att-badge      { background: #fee2e2; color: #991b1b; }
+.wc-uv-concerning .wc-att-badge { background: #fef3c7; color: #92400e; }
+
+.wc-uv-row-actions { display: flex; gap: 6px; flex: 0 0 auto; margin-left: 10px; }
+.wc-uv-mini {
+    border: 1px solid var(--wc-line, #E7ECF2); background: var(--wc-surface, #fff);
+    color: var(--wc-ink, #14171C); border-radius: 8px; padding: 6px 10px;
+    font-size: 12px; font-weight: 600; cursor: pointer; min-height: 32px;
+}
+.wc-uv-mini:hover { background: var(--wc-surface-2, #f7f9fc); }
+
+.wc-uv-settings {
+    display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px;
+}
+.wc-uv-settings label {
+    display: flex; flex-direction: column; gap: 4px;
+    font-size: 12px; font-weight: 600; color: var(--wc-gray-text, #8892a0);
+}
+.wc-uv-settings input {
+    width: 96px; padding: 8px 10px; font-size: 14px;
+    border: 1px solid var(--wc-line, #E7ECF2); border-radius: 8px;
+}
+
+/* The row is a div here, not a button: it carries its own Undo and
+   Returned buttons, and a button inside a button is invalid markup that
+   swallows the inner click. */
+.wc-att-list .wc-att-row:not(button) { cursor: default; }
