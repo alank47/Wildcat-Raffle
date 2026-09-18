@@ -19,7 +19,43 @@
  *     node scripts/mirror-refresh.mjs
  *
  * Idempotent. Students upsert on studentNumber; each mirrored slice is
- * replaced rather than appended. Safe to run as often as you like.
+ * replaced rather than appended.
+ *
+ * ============================================================
+ * ITS PREMISE IS GONE, AND IT NOW DESTROYS DATA. REFUSES TO RUN.
+ * ============================================================
+ * Everything above was written while the app still wrote to Firestore, so
+ * Firestore was ahead and Convex was the copy. Both halves of that are now
+ * false: `grep -c firestore.googleapis.com script.js` is 0, Convex is the
+ * system of record, and the Firestore documents are a stale snapshot from
+ * whenever the dual-write stopped.
+ *
+ * Run today it would not refresh a mirror, it would overwrite production with
+ * August:
+ *
+ *   - `migrate:importStudents` (convex/migrate.ts:76) is a `ctx.db.patch` of a
+ *     doc carrying all four cash counters AND `wildcatCashTransactions`
+ *     verbatim. It is the ONLY write path that can SET a counter rather than
+ *     move it by a delta -- everything appDataShape enforces (delta-only,
+ *     MAX_CASH_DELTA, "nothing shrinks a stored history") applies to
+ *     `appData:save` and not to this. On 2026-09-17 a repair recomputed 223
+ *     students' counters from their history; this would put the old numbers
+ *     back, silently, for every student in the Firestore snapshot.
+ *
+ *   - the slice loop below mirrors `cash_tx_*` weeks, and an empty Firestore
+ *     array takes the `rows.length === 0` branch: `putSlice` with `rows: []`
+ *     and `replace: true`, which deletes every stored row for that document
+ *     and inserts nothing (convex/mirror.ts:19-27). That is the cash LEDGER --
+ *     2,065 rows, and the thing every counter is derived from.
+ *
+ * So the two writes together would undo the repair and then delete the
+ * evidence needed to redo it. "Nobody will run it" is not a control on a repo
+ * two people work in, with a header that used to say "safe to run as often as
+ * you like".
+ *
+ * If you genuinely need it -- restoring a fresh Convex deployment from the
+ * Firestore archive, and nothing else -- pass --overwrite-live-data, and read
+ * the ledger count first.
  */
 import { execFileSync } from "node:child_process";
 
@@ -100,6 +136,33 @@ function run(fn, args) {
 
 if (!process.env.CONVEX_DEPLOY_KEY) {
   console.error("CONVEX_DEPLOY_KEY is not set. See the header of this file.");
+  process.exit(1);
+}
+
+// REFUSES BY DEFAULT. See the header: Convex is the system of record now, so
+// this no longer refreshes a mirror -- it overwrites live cash counters from a
+// stale Firestore snapshot and can delete the cash ledger outright.
+if (!process.argv.includes("--overwrite-live-data")) {
+  console.error(`
+REFUSING TO RUN. This script's premise is gone.
+
+It was written while the app wrote to Firestore and Convex was the copy.
+Convex is now the system of record and the Firestore documents are stale.
+Running this would:
+
+  1. overwrite every student's four cash counters and their transaction
+     array with the Firestore values, through the one write path that can
+     SET a counter instead of moving it by a delta, and
+  2. delete whole legacyMirror slices -- including cash_tx_* weekly ledger
+     documents -- wherever the Firestore array is empty.
+
+On 2026-09-17 a repair recomputed 223 students' counters from their
+transaction history. This would undo that and then delete the history it
+was derived from.
+
+If you are restoring a FRESH deployment from the Firestore archive and
+nothing else, re-run with --overwrite-live-data.
+`);
   process.exit(1);
 }
 
