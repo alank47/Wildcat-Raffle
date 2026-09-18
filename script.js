@@ -30158,23 +30158,37 @@
             const today = wcIsoDay(new Date());
             const sinceDay = uniformWindowStart();
             try {
-                const [day, counts, loaners] = await Promise.all([
-                    auth.convexQuery('uniformViolations:forDay', { day }, session.idToken),
-                    auth.convexQuery('uniformViolations:counts', { sinceDay, today }, session.idToken),
+                // NAMED dayRes, NOT day, and the argument is spelled out.
+                //
+                // This read `const [day, ...] = await Promise.all([ ...
+                // { day } ... ])`, so the argument `{ day }` referred to the
+                // const being declared by that very statement and threw
+                // "Cannot access 'day' before initialization" every time. The
+                // violation SAVED -- the mutation is a separate call that had
+                // already returned -- and then this refresh died, so the log
+                // stayed empty and the entry looked lost. A shorthand `{ day }`
+                // that silently resolves to the wrong binding is worth one
+                // extra word to avoid.
+                const [dayRes, counts, loaners] = await Promise.all([
+                    auth.convexQuery('uniformViolations:forDay', { day: today }, session.idToken),
+                    auth.convexQuery('uniformViolations:counts', { sinceDay: sinceDay, today: today }, session.idToken),
                     auth.convexQuery('uniformViolations:outstandingLoaners', {}, session.idToken)
                 ]);
-                if (day && day.allowed === false) {
+                if (dayRes && dayRes.allowed === false) {
                     _uvToday = []; _uvCounts = []; _uvLoaners = [];
                     const list = document.getElementById('uniformList');
-                    if (list) list.innerHTML = '<p class="wc-att-foot">' + escapeHtml(day.reason || '') + '</p>';
+                    if (list) list.innerHTML = '<p class="wc-att-foot">' + escapeHtml(dayRes.reason || '') + '</p>';
                     return;
                 }
-                _uvToday = (day && day.rows) || [];
+                _uvToday = (dayRes && dayRes.rows) || [];
                 _uvCounts = (counts && counts.rows) || [];
                 _uvLoaners = (loaners && loaners.rows) || [];
-                _uvTruncated = Boolean((day && day.truncated) || (counts && counts.truncated));
+                _uvTruncated = Boolean((dayRes && dayRes.truncated) || (counts && counts.truncated));
             } catch (e) {
-                console.error('[uniform] could not read the log:', e && e.message);
+                // The message AND the stack: "could not read the log" with no
+                // location is what made a one-word bug take a bug report to
+                // find.
+                console.error('[uniform] could not read the log:', (e && e.message) || e, e);
             }
             renderUniformViolations();
         }

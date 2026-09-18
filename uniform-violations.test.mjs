@@ -313,5 +313,204 @@ console.log("\nThe search matches all three number spaces, so any ID card scans"
     /\/\^\\d\+\$\/\.test\(box\.value\.trim\(\)\) && _uvMatches\.length === 1/.test(js2));
 }
 
+// ---------------------------------------------------------------------------
+// THE CLIENT FUNCTIONS, ACTUALLY EXECUTED.
+//
+// Everything above this point reads script.js as text, and that is how a
+// one-word bug reached production on the day this shipped:
+//
+//     const [day, counts, loaners] = await Promise.all([
+//         auth.convexQuery('uniformViolations:forDay', { day }, ...)
+//
+// The shorthand `{ day }` refers to the const being declared by that very
+// statement, so every refresh threw "Cannot access 'day' before
+// initialization". Every regex assertion passed: the call was there, the
+// function existed, the id existed, the name was right. The violation SAVED
+// and then the screen stayed empty, which is the worst shape a bug can take
+// here -- it looks like lost data.
+//
+// A regex cannot catch that. Running the function can. So the functions are
+// lifted out of the shipped source and executed against stubs that RECORD
+// what they were called with, and the arguments are asserted, not just the
+// call.
+// ---------------------------------------------------------------------------
+function liftFn(name) {
+  const re = new RegExp(`^        (?:async )?function ${name}\\(`, "m");
+  const m = js2.match(re);
+  if (!m) throw new Error(`${name} is not a top-level function in script.js`);
+  const start = m.index;
+  const end = js2.indexOf("\n        }\n", start) + "\n        }\n".length;
+  return js2.slice(start, end);
+}
+
+/** Run the lifted client functions in a scope of stubs, and report the calls. */
+function harness(opts) {
+  const o = opts || {};
+  const calls = [];
+  const els = new Map();
+  const el = (id) => {
+    if (!els.has(id)) els.set(id, { id, value: "", textContent: "", innerHTML: "", hidden: false, className: "", focus() {}, dataset: {}, classList: { toggle() {}, add() {}, remove() {} } });
+    return els.get(id);
+  };
+  const stubs = {
+    calls, els, el,
+    document: {
+      getElementById: el,
+      querySelectorAll: () => [],
+    },
+    windowStub: {
+      WildcatAuth: {
+        getSession: () => (o.signedOut ? null : { idToken: "t" }),
+        convexQuery: async (path, args) => {
+          calls.push({ path, args });
+          if (o.answers && o.answers[path] !== undefined) {
+            if (o.answers[path] instanceof Error) throw o.answers[path];
+            return o.answers[path];
+          }
+          return { allowed: true, rows: [], truncated: false };
+        },
+      },
+      WildcatDiscipline: D,
+    },
+    enrolled: o.students || [],
+    now: o.now || "2026-09-18",
+  };
+  const body = `
+    const window = stubs.windowStub;
+    const document = stubs.document;
+    const console = { warn() {}, error() {}, log() {} };
+    const escapeHtml = (s) => String(s == null ? "" : s);
+    const enrolledStudents = () => stubs.enrolled;
+    let uniformSettings = ${JSON.stringify(o.settings || null)};
+    let _uvToday = [], _uvCounts = ${JSON.stringify(o.counts || [])}, _uvLoaners = [];
+    let _uvTruncated = false, _uvBusy = false, _uvPick = null, _uvMatches = [], _uvHighlight = -1;
+    let _uvPickSummary = null;
+    const _uvUnsaved = new Map();
+    let renderCalls = 0;
+    function renderUniformViolations() { renderCalls++; }
+    ${["wcIsoDay", "uniformSettingsNow", "uniformWindowStart", "refreshUniformData",
+       "uniformPickerMatches", "uniformCountFor", "wcOrdinalSuffix", "wcDaysAgoLabel"].map(liftFn).join("\n")}
+    return {
+      refreshUniformData, uniformWindowStart, uniformSettingsNow,
+      uniformPickerMatches, uniformCountFor, wcOrdinalSuffix, wcDaysAgoLabel, wcIsoDay,
+      state: () => ({ today: _uvToday, counts: _uvCounts, loaners: _uvLoaners, truncated: _uvTruncated, renderCalls }),
+    };
+  `;
+  return { api: new Function("stubs", "D", body)(stubs, D), calls, el };
+}
+
+/** The day, formatted as the app formats it, from the real clock. */
+const dayOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const TODAY = dayOf(new Date());
+const daysBack = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return dayOf(d); };
+
+console.log("\nThe refresh actually runs, and asks for the right day");
+{
+  const { api, calls } = harness({});
+  let threw = null;
+  await api.refreshUniformData().catch((e) => { threw = e; });
+  // THE ASSERTION THAT WAS MISSING. It fails on the shipped bug with
+  // "Cannot access 'day' before initialization".
+  check("it does not throw", threw === null, threw && threw.message);
+  check("it asked all three queries", calls.length === 3);
+
+  const forDay = calls.find((c) => c.path === "uniformViolations:forDay");
+  check("forDay was called", Boolean(forDay));
+  check("and it was given a REAL day, not undefined",
+    Boolean(forDay) && forDay.args.day === TODAY,
+    forDay ? JSON.stringify(forDay.args) : "no call");
+
+  const counts = calls.find((c) => c.path === "uniformViolations:counts");
+  check("counts was given today", Boolean(counts) && counts.args.today === TODAY);
+  check("and a window start 13 days earlier, so today is the 14th day",
+    Boolean(counts) && counts.args.sinceDay === daysBack(13),
+    counts ? String(counts.args.sinceDay) + " wanted " + daysBack(13) : "no call");
+  check("every argument is defined",
+    calls.every((c) => Object.values(c.args).every((v) => v !== undefined)),
+    JSON.stringify(calls.map((c) => c.args)));
+}
+
+console.log("\nThe refresh degrades rather than throwing");
+{
+  const refused = harness({
+    answers: { "uniformViolations:forDay": { allowed: false, reason: "Ask an administrator." } },
+  });
+  let threw = null;
+  await refused.api.refreshUniformData().catch((e) => { threw = e; });
+  check("a refusal does not throw", threw === null);
+  check("and the reason is put on screen",
+    /Ask an administrator/.test(refused.el("uniformList").innerHTML));
+
+  const broken = harness({ answers: { "uniformViolations:counts": new Error("network down") } });
+  let threw2 = null;
+  await broken.api.refreshUniformData().catch((e) => { threw2 = e; });
+  check("a failed query is caught, not thrown at the caller", threw2 === null);
+  check("and the screen is still redrawn", broken.api.state().renderCalls >= 1);
+
+  const out = harness({ signedOut: true });
+  let threw3 = null;
+  await out.api.refreshUniformData().catch((e) => { threw3 = e; });
+  check("signed out asks for nothing and does not throw", threw3 === null && out.calls.length === 0);
+}
+
+console.log("\nThe window is the settings window, counted back from today");
+{
+  const wide = harness({ settings: { windowDays: 30, concerningAt: 2, habitAt: 3 } });
+  check("a 30-day window starts 29 days ago", wide.api.uniformWindowStart() === daysBack(29));
+  const one = harness({ settings: { windowDays: 1, concerningAt: 1, habitAt: 1 } });
+  check("a one-day window is today itself", one.api.uniformWindowStart() === TODAY);
+  const junk = harness({ settings: { windowDays: "lots" } });
+  check("a junk window falls back to the 14-day default", junk.api.uniformWindowStart() === daysBack(13));
+  check("the lifted formatter is the shipped one", wide.api.wcIsoDay(new Date()) === TODAY);
+}
+
+console.log("\nThe search runs, and a scanner's digits resolve to one student");
+{
+  const roster = [
+    { id: "1", studentNumber: "11890", mealPin: "4021", firstName: "Owen", lastName: "Velasquez", grade: "11" },
+    { id: "2", studentNumber: "11654", mealPin: "", firstName: "Leo-Andrew", lastName: "Avelar", grade: "10" },
+    { id: "3", studentNumber: "12001", mealPin: "4022", firstName: "Rosa", lastName: "Rodriguez", grade: "9" },
+    { id: "4", studentNumber: "12002", mealPin: "4023", firstName: "Rosa", lastName: "Romero", grade: "9" },
+  ];
+  const { api } = harness({ students: roster });
+  check("a full student number finds exactly one",
+    api.uniformPickerMatches("11890").length === 1);
+  check("and it is the right child",
+    api.uniformPickerMatches("11890")[0].lastName === "Velasquez");
+  check("a cafeteria number also finds exactly one",
+    api.uniformPickerMatches("4021").length === 1 &&
+    api.uniformPickerMatches("4021")[0].studentNumber === "11890");
+  check("a name finds by first or last", api.uniformPickerMatches("avelar").length === 1);
+  check("lastname-firstname order also matches", api.uniformPickerMatches("velasquez owen").length === 1);
+  check("an ambiguous name returns BOTH, so Enter cannot guess",
+    api.uniformPickerMatches("rosa").length === 2);
+  check("one character finds nothing", api.uniformPickerMatches("r").length === 0);
+  check("a partial number still offers candidates while typing",
+    api.uniformPickerMatches("120").length === 2);
+  check("nothing matching is an empty list, not a throw",
+    api.uniformPickerMatches("zzzz").length === 0);
+  check("a student with no meal number on file is still findable by name",
+    api.uniformPickerMatches("leo").length === 1);
+}
+
+console.log("\nThe small display helpers run");
+{
+  const { api } = harness({ counts: [{ studentNumber: "11890", count: 3 }] });
+  check("a count is read off the loaded window", api.uniformCountFor("11890") === 3);
+  check("an unlogged student is 0, not undefined", api.uniformCountFor("99999") === 0);
+  check("1st", api.wcOrdinalSuffix(1) === "st");
+  check("2nd", api.wcOrdinalSuffix(2) === "nd");
+  check("3rd", api.wcOrdinalSuffix(3) === "rd");
+  check("4th", api.wcOrdinalSuffix(4) === "th");
+  check("11th, not 11st", api.wcOrdinalSuffix(11) === "th");
+  check("12th, not 12nd", api.wcOrdinalSuffix(12) === "th");
+  check("13th, not 13rd", api.wcOrdinalSuffix(13) === "th");
+  check("21st", api.wcOrdinalSuffix(21) === "st");
+  check("a loaner given today reads 'today'", api.wcDaysAgoLabel(TODAY) === "today");
+  check("yesterday reads 'yesterday'", api.wcDaysAgoLabel(daysBack(1)) === "yesterday");
+  check("older reads in days", api.wcDaysAgoLabel(daysBack(4)) === "4 days ago");
+  check("junk reads empty, not NaN", api.wcDaysAgoLabel("nope") === "");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
