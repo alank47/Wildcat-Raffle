@@ -31,6 +31,7 @@
     'reward_cancelled',
     'reset_all_student_cash',
     'cash_recount',
+    'cash_refund_withdrawn',
     'cash_reversal_credit',
     'cash_reversal_debit'
   ];
@@ -46,6 +47,11 @@
     // counters from transactions that were already there. sign 0 because no
     // money changed hands -- a signed amount here would read as an award.
     cash_recount:           { label: 'Balances Recounted', icon: '🧮', cls: 'act-reset', sign: 0 },
+    // A refund that minted money and has been taken back out of the ledger.
+    // sign 0: the student's balance does NOT move, because the refund never
+    // reached their counter in the first place -- which is the whole reason
+    // withdrawing it is safe. See legacyPurge:reverseRefund.
+    cash_refund_withdrawn:  { label: 'Refund Withdrawn', icon: '🚫', cls: 'act-other', sign: 0 },
     // A REVERSAL, IN TWO ACTIONS, and the split is what makes the money render.
     // `describe()` computes `signed = meta.sign * Math.abs(amount)` off this
     // static map, so one action would need sign 0 and every reversal would read

@@ -28202,15 +28202,25 @@
             const verdict = window.WildcatStore.canCancel(receipt);
             if (!verdict.allowed) { alert('⚠️ ' + verdict.reason); return; }
 
+            // ASKED BEFORE THE PROMPT, so the prompt cannot promise a refund
+            // the boundary will refuse. This screen told the owner "$1,000 will
+            // be refunded to Nadia Almendares-Castaneda" for a purchase made
+            // three days before every balance in the school was cleared, and
+            // then did it. WildcatStore.cancelRefundVerdict holds the rule.
+            const refundVerdict = window.WildcatStore.cancelRefundVerdict(receipt, _historyCutoffMs);
+            const moneyLine = refundVerdict.allowed
+                ? `$${receipt.totalCost} will be refunded to ${receipt.studentName}.`
+                : `\u26A0\uFE0F ${receipt.studentName} will NOT be refunded.\n${refundVerdict.reason}`;
             const reason = await showPrompt(
                 `Cancel receipt ${receiptId} for ${receipt.rewardName}?\n\n` +
-                `$${receipt.totalCost} will be refunded to ${receipt.studentName}.\n\n` +
+                `${moneyLine}\n\n` +
                 `Reason:`);
             if (reason === null) return;
 
             const student = students.find(s => s.id === receipt.studentId);
             const res = window.WildcatStore.buildCancel({
                 receipt, student, reason, refund: true,
+                historyCutoffMs: _historyCutoffMs,
                 actor: currentUser || {}, now: Date.now()
             });
             if (!res.ok) { alert('⚠️ ' + res.reason); return; }
@@ -28238,6 +28248,15 @@
             // than no message.
             if (res.refunded && res.receipt.refundTxId) {
                 showToast(`${receiptId} cancelled and $${receipt.totalCost} refunded`, 'success');
+            } else if (res.refundRefused) {
+                // REFUSED ON PURPOSE, which is a different message from the
+                // accident below it. The receipt is cancelled either way; only
+                // the money did not move, and the reason is the rule's own
+                // words rather than a guess at what went wrong.
+                showToast(`${receiptId} cancelled. NOT refunded — ` +
+                          res.refundRefused.reason, 'warn', 12000);
+                console.warn('[receipts] refund refused for', receiptId,
+                    res.refundRefused.code, res.refundRefused.reason);
             } else {
                 showToast(`${receiptId} cancelled, but NOT refunded — ` +
                           `no student record matched. Tell an admin.`, 'warn', 9000);
@@ -34530,6 +34549,7 @@
             'reset wildcat jackpot cycle':   'system',
             'reset_all_student_cash':        'system',
             'cash_recount':                  'system',
+            'cash_refund_withdrawn':         'undo',
             'school_year_rollover':          'system'
         };
 

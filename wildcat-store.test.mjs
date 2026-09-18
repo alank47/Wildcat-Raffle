@@ -195,6 +195,81 @@ console.log("\nCancelling refunds forward, never by editing history");
   check("a cancelled receipt cannot be fulfilled", S.canFulfill(res.receipt).allowed === false);
 }
 
+console.log("\nA refund across a balance reset is refused, and the cancellation is not");
+{
+  // THE INCIDENT, in the owner's words: "I made that refund by cancelling a
+  // receipt from a test. The refund should not have been processed to her."
+  // WC-XPSGVE was a $1,000 Homework Pass bought 2026-09-10. Every balance in
+  // the school was cleared on 2026-09-13, so the $1,000 was no longer deducted
+  // from anybody, and cancelling on 2026-09-14 refunded it anyway. Nothing
+  // here looked at the date. cashReversalRules had this rule all along; it had
+  // only ever been applied to the reversal path, not to this one.
+  const CUTOFF = Date.parse("2026-09-14T15:30:00Z");
+  const st = student();
+  const receiptAt = (iso) => Object.assign(
+    S.buildPurchase({ student: st, reward: reward(), actor: ACTOR, now: NOW, rand: seq }).receipt,
+    { purchasedAt: iso });
+
+  const before = receiptAt("2026-09-10T17:59:09.984Z");
+  const v = S.cancelRefundVerdict(before, CUTOFF);
+  check("a purchase from before the reset may not be refunded", v.allowed === false);
+  check("and the refusal is coded, not just prose", v.code === "before_reset");
+  check("the reason explains it would invent money", /never taken/.test(v.reason));
+
+  const res = S.buildCancel({
+    receipt: before, student: st, reason: "Test only",
+    actor: ACTOR, now: NOW, historyCutoffMs: CUTOFF,
+  });
+  check("the receipt is STILL cancelled", res.ok === true && res.receipt.status === "cancelled");
+  check("but no refund transaction is built", res.transactionRequest === null);
+  check("and refunded is false, so no screen can claim otherwise", res.refunded === false);
+  check("the caller is told why, for the toast", res.refundRefused && res.refundRefused.code === "before_reset");
+
+  // Without the guard this is exactly what used to happen.
+  const unguarded = S.buildCancel({
+    receipt: before, student: st, reason: "Test only", actor: ACTOR, now: NOW,
+  });
+  check("with no cutoff passed it still refunds, so this test has teeth",
+    unguarded.transactionRequest !== null && unguarded.transactionRequest.amount === 1000);
+  check("and no cutoff is treated as permission, matching cashReversalRules",
+    S.cancelRefundVerdict(before, null).allowed === true);
+
+  const after = receiptAt("2026-09-16T18:00:00.000Z");
+  check("a purchase from after the reset refunds normally",
+    S.cancelRefundVerdict(after, CUTOFF).allowed === true);
+  const okRes = S.buildCancel({
+    receipt: after, student: st, reason: "Out of stock",
+    actor: ACTOR, now: NOW, historyCutoffMs: CUTOFF,
+  });
+  check("and its refund is built", okRes.transactionRequest.amount === 1000);
+  check("with nothing refused", okRes.refundRefused === null);
+
+  // The slack exists because a Chromebook with a slightly wrong clock must not
+  // cost a student a refund they are actually owed.
+  check("a purchase inside the one-hour slack still refunds",
+    S.cancelRefundVerdict(receiptAt(new Date(CUTOFF - 1800000).toISOString()), CUTOFF).allowed === true);
+  check("and one outside it does not",
+    S.cancelRefundVerdict(receiptAt(new Date(CUTOFF - 7200000).toISOString()), CUTOFF).allowed === false);
+
+  // An undated receipt cannot be PROVED to be on the safe side. Refunding
+  // wrongly invents money, so the cautious answer here is no.
+  const undated = receiptAt(null);
+  check("an undated receipt may not be refunded",
+    S.cancelRefundVerdict(undated, CUTOFF).allowed === false);
+  check("and says so as 'undated' rather than guessing a reason",
+    S.cancelRefundVerdict(undated, CUTOFF).code === "undated");
+
+  const free = Object.assign(receiptAt("2026-09-16T18:00:00.000Z"), { totalCost: 0 });
+  check("a receipt recording no cost has nothing to refund",
+    S.cancelRefundVerdict(free, CUTOFF).code === "nothing_to_refund");
+
+  const notAsked = S.buildCancel({
+    receipt: after, student: st, refund: false, actor: ACTOR, now: NOW, historyCutoffMs: CUTOFF,
+  });
+  check("asking for no refund is not reported as a refusal", notAsked.refundRefused === null);
+  check("and still produces no transaction", notAsked.transactionRequest === null);
+}
+
 console.log("\nPopularity reporting");
 {
   const mk = (rewardId, rewardName, qty, cost, status, studentId) => ({

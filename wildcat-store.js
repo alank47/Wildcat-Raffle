@@ -342,9 +342,83 @@
   }
 
   /**
+   * How far before the cutoff a purchase may be dated and still be refunded.
+   * Matches CUTOFF_SLACK_MS in convex/cashReversalRules.ts and
+   * HISTORY_CUTOFF_SLACK_MS in script.js: a device with a slightly wrong clock
+   * must not cost a student a refund they are actually owed.
+   */
+  var REFUND_CUTOFF_SLACK_MS = 3600000;
+
+  /**
+   * May cancelling this receipt hand the money back?
+   *
+   * THE INCIDENT, and it is the reason this function exists. Receipt
+   * WC-XPSGVE was a $1,000 Homework Pass bought 2026-09-10. Every balance in
+   * the school was cleared on 2026-09-13, so that $1,000 was no longer
+   * deducted from anybody. Cancelling the receipt on 2026-09-14 refunded the
+   * full $1,000 regardless -- money that had never been taken. The owner's
+   * account of it is the plainest statement of the bug: "I made that refund by
+   * cancelling a receipt from a test. The refund should not have been
+   * processed to her."
+   *
+   * convex/cashReversalRules.ts ALREADY refuses to reverse a row from before
+   * the cutoff, in almost these words and for exactly this reason. The rule
+   * was not missing -- it had only ever been applied to ONE of the two paths
+   * that hand money back. This is the other one.
+   *
+   * THE CANCELLATION IS STILL ALLOWED. A receipt that should not stand must
+   * not be forced to stay open just because its refund is refused, and the
+   * item genuinely was not collected. The caller is told instead, so a screen
+   * can say "cancelled, not refunded, and here is why" rather than claiming a
+   * refund that never happened -- which is the mistake the toast below this
+   * one was already written to avoid.
+   */
+  function cancelRefundVerdict(receipt, historyCutoffMs) {
+    if (!receipt) return { allowed: false, code: 'no_receipt', reason: 'Receipt not found.' };
+    var total = Number(receipt.totalCost);
+    if (!isFiniteNumber(total) || total === 0) {
+      return {
+        allowed: false, code: 'nothing_to_refund',
+        reason: 'That receipt records no cost, so there is nothing to refund.'
+      };
+    }
+    // An UNKNOWN cutoff permits the refund, which is the same call
+    // cashReversalRules makes: with no boundary there is nothing to compare a
+    // date against, and refusing every refund in the school because one
+    // setting is absent would be a worse fault than the one being guarded.
+    if (!isFiniteNumber(historyCutoffMs)) return { allowed: true };
+    var t = Date.parse(String(receipt.purchasedAt || ''));
+    // An UNDATED receipt cannot be proved to be on the safe side of the
+    // boundary. Unlike pruning -- where keeping an undated row is the cautious
+    // choice -- here the cautious choice is to refuse: pruning wrongly loses a
+    // record, refunding wrongly invents money.
+    if (!isFinite(t)) {
+      return {
+        allowed: false, code: 'undated',
+        reason: 'That receipt has no usable purchase date, so it cannot be shown to be ' +
+                'from after the last balance reset. Refunding it might hand back money ' +
+                'that was never taken.'
+      };
+    }
+    if (t < historyCutoffMs - REFUND_CUTOFF_SLACK_MS) {
+      return {
+        allowed: false, code: 'before_reset',
+        reason: 'That purchase is from before the last balance reset, so its cost is no ' +
+                'longer deducted from any balance. Refunding it would add money that was ' +
+                'never taken.'
+      };
+    }
+    return { allowed: true };
+  }
+
+  /**
    * Cancelling optionally refunds. The refund is a NEW transaction request,
    * never an edit of the original: the ledger reads forward, and "this was
    * bought then refunded" stays visible instead of becoming "never happened".
+   *
+   * `opts.historyCutoffMs` is the last balance reset. Pass it: without it the
+   * refund cannot be checked against the boundary, and cancelRefundVerdict
+   * says why that matters.
    */
   function buildCancel(opts) {
     var o = opts || {};
@@ -354,7 +428,14 @@
 
     var now = isFiniteNumber(o.now) ? o.now : Date.now();
     var actor = o.actor || {};
-    var refund = o.refund !== false;
+    // Wanted, then allowed. The two are different: a caller asking for a
+    // refund that the reset boundary forbids must be told, not quietly obeyed
+    // and not quietly ignored.
+    var refundWanted = o.refund !== false;
+    var refundVerdict = refundWanted
+      ? cancelRefundVerdict(receipt, o.historyCutoffMs)
+      : { allowed: false, code: 'not_requested', reason: 'No refund was requested.' };
+    var refund = refundWanted && refundVerdict.allowed;
 
     var next = {};
     for (var k in receipt) if (Object.prototype.hasOwnProperty.call(receipt, k)) next[k] = receipt[k];
@@ -379,7 +460,14 @@
         kind: 'award'
       };
     }
-    return { ok: true, receipt: next, transactionRequest: transactionRequest, refunded: !!transactionRequest };
+    return {
+      ok: true, receipt: next, transactionRequest: transactionRequest,
+      refunded: !!transactionRequest,
+      // Non-null ONLY when a refund was asked for and refused, so a caller can
+      // tell "refused, and here is why" from "nobody asked" and from "asked,
+      // allowed, but no student record matched".
+      refundRefused: (refundWanted && !refundVerdict.allowed) ? refundVerdict : null
+    };
   }
 
   // ---------------------------------------------------------------------
@@ -603,6 +691,7 @@
     applyFulfill: applyFulfill,
     canCancel: canCancel,
     buildCancel: buildCancel,
+    cancelRefundVerdict: cancelRefundVerdict,
     rewardPopularity: rewardPopularity,
     receiptSummary: receiptSummary,
     findReceipt: findReceipt

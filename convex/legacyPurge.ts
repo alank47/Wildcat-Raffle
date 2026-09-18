@@ -2,6 +2,9 @@ import { internalQuery, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 // Static, because Convex refuses a dynamic import at runtime.
 import { isUnratedCohort, isSupportBlock } from "./courseSubject";
+// reverseRefund DERIVES the counters from remaining history rather than
+// decrementing them. See the note on it for why that distinction cost $1,000.
+import { deriveCounters } from "./cashRecountRules";
 import { courseCell } from "./academicsRules";
 
 /**
@@ -4808,70 +4811,164 @@ export const receiptAndRefunds = internalQuery({
 });
 
 /**
- * Reverse ONE refund that minted money, by transaction id.
+ * Withdraw ONE refund that minted money, by transaction id.
  *
- * WHY THIS HAPPENS. buildCancel refunds the receipt's totalCost, which is
- * right when the student actually paid it. It is wrong when the purchase
- * predates a balance reset: the deduction was wiped, so the refund is money
- * from nothing. WC-XPSGVE was bought 2026-09-10, the balances were cleared on
+ * WHY THIS HAPPENS. buildCancel refunded the receipt's totalCost, which is
+ * right when the student actually paid it and wrong when the purchase predates
+ * a balance reset: the deduction was wiped, so the refund is money from
+ * nothing. WC-XPSGVE was bought 2026-09-10, the balances were cleared on
  * 2026-09-13, and cancelling it on launch day credited $1,000 that had never
- * been taken.
+ * been taken. The owner's account of it: "I made that refund by cancelling a
+ * receipt from a test. The refund should not have been processed to her."
  *
- * Reverses all four places the refund reached: the balance, the earned
- * counter, the shared ledger row and the copy on the student's own record.
- * The RECEIPT stays cancelled -- that part was correct and intended.
+ * That hole is now closed at source -- WildcatStore.cancelRefundVerdict
+ * refuses a refund across the boundary, which is the rule cashReversalRules
+ * has always applied to the reversal path -- so this exists to clean up rows
+ * written BEFORE the guard, not as a routine tool.
  *
- * Targeted by transaction id, never by amount or by name, and it refuses to
- * act if the id is not found or the counters would go negative.
+ * IT DERIVES THE COUNTERS, IT DOES NOT DECREMENT THEM, and that is the whole
+ * change from the version this replaces. The old one did
+ * `balAfter = balBefore - amount`, refusing only if the result went negative.
+ * That ASSUMED the refund had reached the counters. For WC-XPSGVE it never
+ * had: the student's stored balance was $1,000 against an 11-row ledger
+ * summing $2,000, so the phantom sat in the ledger and was absent from the
+ * counter in all three snapshots taken on 2026-09-17. Running the old version
+ * would have set her to $0 and taken $1,000 of real awards off a child -- and
+ * its negative guard would NOT have fired, because 1000 - 1000 is not
+ * negative. So the counters are recomputed from the history that REMAINS,
+ * through the same cashRecountRules the school-wide recount uses.
+ *
+ * THAT ALSO MAKES IT IDEMPOTENT, which schema.ts notes the old one was not
+ * ("would happily reverse the same row twice"). A derived value cannot be
+ * applied twice, and once the row is gone a second run reports it missing.
+ *
+ * TWO WITNESSES BEFORE ANYTHING IS DELETED: the row must be present BOTH on
+ * the student's own record and in the shared weekly ledger. Present in only
+ * one of them means those two stores disagree, and it refuses rather than
+ * deleting half of a pair.
+ *
+ * The RECEIPT stays cancelled -- that part was correct and intended -- but its
+ * `refundTxId` is cleared, because a receipt must not point at a ledger row
+ * that no longer exists.
+ *
+ * Bounded, indexed reads throughout: one student, one weekly cash document,
+ * one receipts slice. No table scan, so it does not decay as the ledger grows,
+ * the way the `.collect()` in the version it replaces did.
  */
 export const reverseRefund = internalMutation({
-  args: { txId: v.string(), apply: v.optional(v.boolean()) },
-  handler: async (ctx, { txId, apply }) => {
+  args: {
+    txId: v.string(),
+    // REQUIRED, and not read off the ledger row. Naming the student is what
+    // lets every read be indexed, and it means a mistyped transaction id
+    // refuses instead of finding some other child's row.
+    studentId: v.string(),
+    apply: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { txId, studentId, apply }) => {
     const id = txId.trim();
     if (!id) throw new Error("txId required");
+    const sid = String(studentId).trim();
+    if (!sid) throw new Error("studentId required");
 
-    const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
-    const ledgerRow = (mirror as any[]).find(
-      (r) => String(r.doc ?? "").startsWith("cash_tx_") && String(r.payload?.id ?? "") === id);
-    if (!ledgerRow) return { found: false, note: "No ledger row with that transaction id." };
+    const student =
+      (await ctx.db.query("students")
+        .withIndex("by_legacyId", (q) => q.eq("legacyId", sid)).first()) ??
+      (await ctx.db.query("students")
+        .withIndex("by_studentNumber", (q) => q.eq("studentNumber", sid)).first());
+    if (!student) return { ok: false, note: `No student record for id ${sid}.` };
 
-    const amount = Number(ledgerRow.payload?.amount) || 0;
-    const studentId = String(ledgerRow.payload?.studentId ?? "");
-    const students = await ctx.db.query("students").collect();
-    const student = (students as any[]).find(
-      (s) => String(s.legacyId ?? "") === studentId || String(s.studentNumber ?? "") === studentId);
-    if (!student) return { found: false, note: "Ledger row found but no matching student." };
-
-    const balBefore = Number(student.wildcatCashBalance) || 0;
-    const earnBefore = Number(student.wildcatCashEarned) || 0;
-    const balAfter = balBefore - amount;
-    const earnAfter = earnBefore - amount;
-    if (balAfter < 0 || earnAfter < 0) {
-      return { found: true, refused: true,
-               note: `Reversing ${amount} would take a counter negative (${balAfter}/${earnAfter}); refusing.` };
+    const arr = Array.isArray((student as any).wildcatCashTransactions)
+      ? ((student as any).wildcatCashTransactions as any[]) : [];
+    const onRecord = arr.find((t: any) => String(t?.id ?? "") === id);
+    if (!onRecord) {
+      return { ok: false, note: `Transaction ${id} is not on that student's record.` };
+    }
+    if (!String(onRecord.behaviorId ?? "").startsWith("reward-refund:")) {
+      return {
+        ok: false, refused: true,
+        note: `${id} is not a store refund (behaviorId ` +
+              `${JSON.stringify(onRecord.behaviorId ?? null)}). This withdraws refunds only; ` +
+              `an ordinary award goes through the cash reversal path, which registers itself.`,
+      };
     }
 
-    const arr = Array.isArray(student.wildcatCashTransactions) ? student.wildcatCashTransactions : [];
-    const arrAfter = arr.filter((t: any) => String(t?.id ?? "") !== id);
+    const week = cashWeekKeyForRepair(String(onRecord.timestamp ?? ""));
+    const doc = `cash_tx_${week}`;
+    const weekRows = await ctx.db.query("legacyMirror")
+      .withIndex("by_doc_collection", (q) => q.eq("doc", doc).eq("collection", "transactions"))
+      .take(4000);
+    const ledgerRow = (weekRows as any[]).find(
+      (r) => String((r.payload as any)?.id ?? "") === id);
+    if (!ledgerRow) {
+      return {
+        ok: false, refused: true,
+        note: `${id} is on the student's record but NOT in ${doc}. Those two stores ` +
+              `disagree, so nothing was deleted. Look before forcing this.`,
+      };
+    }
+
+    // The counters as the REMAINING history says they should be.
+    const remaining = arr.filter((t: any) => String(t?.id ?? "") !== id);
+    const revRows = await ctx.db.query("cashReversals").take(2000);
+    const deltas: Record<string, any> = {};
+    for (const r of revRows as any[]) {
+      const rid = String(r.reversalTxnId ?? "");
+      if (rid) deltas[rid] = r.counterDelta ?? null;
+    }
+    const derived = deriveCounters(remaining, deltas).counters;
+
+    const FIELDS = ["wildcatCashBalance", "wildcatCashEarned",
+                    "wildcatCashSpent", "wildcatCashDeducted"];
+    const counterChanges = FIELDS
+      .filter((f) => Math.abs((Number((student as any)[f]) || 0) - derived[f]) >= 0.005)
+      .map((f) => ({ field: f, was: Number((student as any)[f]) || 0, now: derived[f] }));
+
+    const receiptRows = await ctx.db.query("legacyMirror")
+      .withIndex("by_doc_collection",
+        (q) => q.eq("doc", "secondary").eq("collection", "cashReceipts"))
+      .take(2000);
+    const receiptRow = (receiptRows as any[]).find(
+      (r) => String((r.payload as any)?.refundTxId ?? "") === id);
 
     if (apply === true) {
       await ctx.db.delete(ledgerRow._id);
-      await ctx.db.patch(student._id, {
-        wildcatCashBalance: balAfter,
-        wildcatCashEarned: earnAfter,
-        wildcatCashTransactions: arrAfter,
-      });
+      const patch: Record<string, unknown> = { wildcatCashTransactions: remaining };
+      counterChanges.forEach((c) => { patch[c.field] = c.now; });
+      await ctx.db.patch((student as any)._id, patch);
+      if (receiptRow) {
+        const rp = receiptRow.payload as any;
+        const nowIso = new Date().toISOString();
+        await ctx.db.patch(receiptRow._id, {
+          payload: {
+            ...rp,
+            refundTxId: null,
+            refundWithdrawnAt: nowIso,
+            refundWithdrawnReason:
+              "Refund withdrawn: the purchase predates the last balance reset, so its cost " +
+              "was no longer deducted from any balance and the refund created money.",
+            updatedAt: nowIso,
+          },
+          mirroredAt: nowIso,
+        });
+      }
     }
+
     return {
-      found: true, applied: apply === true,
-      student: `${student.firstName ?? ""} ${student.lastName ?? ""}`.trim(),
-      studentNumber: student.studentNumber,
-      txId: id, amountReversed: amount,
-      behavior: ledgerRow.payload?.behaviorName ?? null,
-      balance: { before: balBefore, after: balAfter },
-      earned: { before: earnBefore, after: earnAfter },
-      recordRows: { before: arr.length, after: arrAfter.length },
-      note: apply === true ? "Reversed." : "Dry run. Pass apply: true.",
+      ok: true, applied: apply === true,
+      student: `${(student as any).firstName ?? ""} ${(student as any).lastName ?? ""}`.trim(),
+      studentNumber: (student as any).studentNumber,
+      txId: id,
+      amount: Number(onRecord.amount) || 0,
+      behavior: onRecord.behaviorName ?? null,
+      ledgerDoc: doc,
+      receipt: receiptRow ? (receiptRow.payload as any)?.id ?? null : null,
+      recordRows: { before: arr.length, after: remaining.length },
+      counterChanges: counterChanges.length
+        ? counterChanges
+        : "none: the stored counters already excluded this row",
+      note: apply === true
+        ? `Withdrawn. Confirm with: node scripts/recount-cash-counters.mjs --prod --only ${sid}`
+        : "Dry run. Nothing was written. Pass apply: true.",
     };
   },
 });
