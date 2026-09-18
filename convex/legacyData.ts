@@ -203,6 +203,39 @@ function touchedAt(payload: unknown): number {
  * that loaded the week an hour ago sending back its snapshot after a
  * colleague's award landed.
  */
+/**
+ * The same movement, whatever id it arrives under: this amount, to this
+ * student, at this instant.
+ *
+ * WHY AN ID IS NOT ENOUGH. Deduping on `id` alone assumes every copy of a
+ * movement carries the id it was born with. Two things break that. An audit
+ * entry records a cash movement but carries NO transaction id -- only student
+ * and timestamp -- so a row reconstructed from one necessarily takes a fresh
+ * `txn_...` id. And recoverCashFromLocalCache sends a teacher's own original
+ * off their device, under its original id, possibly days later. Land both and
+ * the ledger holds two rows for one award and the child is paid twice.
+ *
+ * A batch award writes one row per student at a single shared timestamp, and
+ * timestamps carry milliseconds, so this triple is an identity for a movement
+ * and not a collision risk between two genuine awards.
+ *
+ * Null when any part is absent: a row that cannot be identified this way is
+ * left to the id check alone rather than being guessed at.
+ */
+export function cashMovementKey(p: unknown): string | null {
+  if (!p || typeof p !== "object") return null;
+  const r = p as Record<string, unknown>;
+  const sid = r.studentId;
+  const ts = r.timestamp;
+  const amt = r.amount;
+  if (sid === undefined || sid === null || sid === "") return null;
+  if (ts === undefined || ts === null || ts === "") return null;
+  if (amt === undefined || amt === null) return null;
+  const n = Number(amt);
+  if (!Number.isFinite(n)) return null;
+  return `${String(sid)}|${String(ts)}|${n}`;
+}
+
 export function unionCashRows(
   existing: Array<{ payload: unknown }>,
   rows: Array<{ key?: string; payload: unknown }>,
@@ -210,9 +243,12 @@ export function unionCashRows(
   const idOf = (p: unknown) =>
     p && typeof p === "object" ? (p as Record<string, unknown>).id : undefined;
   const seen = new Set<string>();
+  const seenMovement = new Set<string>();
   for (const r of existing) {
     const id = idOf(r.payload);
     if (id !== undefined && id !== null) seen.add(String(id));
+    const mk = cashMovementKey(r.payload);
+    if (mk) seenMovement.add(mk);
   }
   const out: Array<{ key?: string; payload: unknown }> = [];
   for (const r of rows) {
@@ -221,6 +257,15 @@ export function unionCashRows(
       const token = String(id);
       if (seen.has(token)) continue;
       seen.add(token);
+    }
+    // THE SAME MOVEMENT UNDER A SECOND ID IS REFUSED. See cashMovementKey.
+    // This is what makes it safe to reconstruct a lost cash row from its audit
+    // entry while teachers' devices are still sending their own originals:
+    // whichever arrives second is dropped, so a student cannot be paid twice.
+    const mk = cashMovementKey(r.payload);
+    if (mk) {
+      if (seenMovement.has(mk)) continue;
+      seenMovement.add(mk);
     }
     out.push(r);
   }
