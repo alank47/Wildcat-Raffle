@@ -30,6 +30,7 @@
     'reward_fulfilled',
     'reward_cancelled',
     'reset_all_student_cash',
+    'cash_recount',
     'cash_reversal_credit',
     'cash_reversal_debit'
   ];
@@ -41,6 +42,10 @@
     reward_fulfilled:       { label: 'Reward Given',    icon: '✅', cls: 'act-redeem', sign: 0 },
     reward_cancelled:       { label: 'Reward Cancelled',icon: '↩️', cls: 'act-other',  sign: 1 },
     reset_all_student_cash: { label: 'System Reset',    icon: '🔄', cls: 'act-reset',  sign: 0 },
+    // A counter correction, not a movement: the recount derives the four cash
+    // counters from transactions that were already there. sign 0 because no
+    // money changed hands -- a signed amount here would read as an award.
+    cash_recount:           { label: 'Balances Recounted', icon: '🧮', cls: 'act-reset', sign: 0 },
     // A REVERSAL, IN TWO ACTIONS, and the split is what makes the money render.
     // `describe()` computes `signed = meta.sign * Math.abs(amount)` off this
     // static map, so one action would need sign 0 and every reversal would read

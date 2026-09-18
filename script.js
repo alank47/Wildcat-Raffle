@@ -34529,6 +34529,7 @@
             'backup restored':               'system',
             'reset wildcat jackpot cycle':   'system',
             'reset_all_student_cash':        'system',
+            'cash_recount':                  'system',
             'school_year_rollover':          'system'
         };
 
