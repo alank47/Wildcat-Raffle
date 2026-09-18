@@ -409,5 +409,20 @@ console.log("\nAn audit entry is confirmed by id, never by batch");
     /does not report stored ids[\s\S]{0,80}re-sent/.test(save));
 }
 
+console.log("\nAn entry recovered from the outbox counts as minted here");
+{
+  // saveData drops entries this tab did not mint when the audit table could not
+  // be read: `if (tableUnread && !auditIdsMintedHere.has(id)) return false;`.
+  // The outbox holds only entries this installation wrote, but the drain pushed
+  // them into auditLog without registering the id -- so the load that RECOVERED
+  // an entry was also the load that could not send it, under a green tick.
+  const fn = code.slice(code.indexOf("function drainAuditOutboxIntoLocalLog"));
+  const body = fn.slice(0, fn.indexOf("\n        }"));
+  check("the drain registers each recovered id as minted here",
+    /auditLog\.push\(entry\);[\s\S]{0,120}auditIdsMintedHere\.add\(id\);/.test(body));
+  check("the gate it has to satisfy is still the one in saveData",
+    /if \(tableUnread && !auditIdsMintedHere\.has\(id\)\) return false;/.test(save));
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);

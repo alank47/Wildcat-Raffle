@@ -1377,6 +1377,16 @@
                 const id = ensureEntryId(entry);
                 if (!existingIds.has(id)) {
                     auditLog.push(entry);
+                    // MINTED HERE TOO. The outbox only ever holds entries this
+                    // installation wrote; recovering one does not make it
+                    // somebody else's. Without this line the tableUnread gate
+                    // in saveData -- `if (tableUnread && !auditIdsMintedHere
+                    // .has(id)) return false;` -- drops every entry carried
+                    // over from a previous tab session and prints the "nothing
+                    // new to write" tick over the top of it. An entry that
+                    // survived a failed save then cannot be sent by the very
+                    // load that recovered it.
+                    auditIdsMintedHere.add(id);
                     restored++;
                 }
             });
