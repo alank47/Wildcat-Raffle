@@ -1472,9 +1472,28 @@
         /**
          * Put unconfirmed rows back into the ledger on load, so the next save
          * sends them. Runs BEFORE reconcileCashLedger so nothing renders from a
-         * ledger missing them, and so the counters derived from
+         * ledger missing them.
+         *
+         * IT RESTORES THE ROW AND NOT THE COUNTER MOVEMENT, and this comment
+         * used to claim otherwise -- "so the counters derived from
          * `cashTransactions` -- recalculateCashBalance,
-         * distributeCashTransactions -- see them too.
+         * distributeCashTransactions -- see them too." That was false when it
+         * was written. recalculateCashBalance has exactly one caller, inside
+         * the test-data seeder gated on CASH_TEST_PREFIX, so it never runs for
+         * a real student; distributeCashTransactions rebuilds
+         * `wildcatCashTransactions` and never touches the four counters. No
+         * live path derives a counter from `cashTransactions`.
+         *
+         * So on a reload with a non-empty outbox the row comes back, the
+         * counter movement does not, `_studentCashBase` is a fresh Map seeded
+         * from the server's numbers, and cashDeltaBetween therefore reports 0 --
+         * which convex/appDataShape.ts drops, leaving the stored counter where
+         * it was. The row lands in cash_tx_* and the money never appears. That
+         * is one of the shapes behind the 223 students the 2026-09-17 recount
+         * had to correct, and it is not fixed here: the fix is to re-apply each
+         * restored row's movement on top of the freshly loaded counters, which
+         * is a change to the save/load path and wants its own pass. Until then
+         * the recount is what heals it.
          */
         function drainCashOutboxIntoLedger() {
             const outbox = readCashOutbox();

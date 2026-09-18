@@ -109,6 +109,62 @@ export function deriveCounters(
   let deducted = 0;
   let used = 0;
 
+  // THE RESET IS A ZERO POINT, NOT A DEDUCTION.
+  //
+  // `_resetAllStudentCash` writes a real ledger row per student -- behaviorId
+  // 'system_reset', kind 'deduct', amount -balanceBefore -- and then pins all
+  // four counters to a genuine zero. Without a rule for it this function fell
+  // through to the default bucket and produced two wrong answers at once:
+  // `deducted` gained the child's whole former balance as though it had been
+  // taken off them for behaviour, and `earned` was restored to the pre-reset
+  // award sum the reset had deliberately zeroed. Measured against the worst
+  // reset this repo has recorded, $46,250: derived {earned 46250, deducted
+  // 46250} against a stored {0,0,0,0} that was correct.
+  //
+  // Worse, neither safety rail could see it. After a reset the derived balance
+  // EQUALS the stored balance -- both zero -- so recountVerdict's balance-
+  // decrease guard never fires, and a student who earned again after the reset
+  // had a CORRECT record rewritten with the balance untouched.
+  //
+  // NOT SKIPPED THE WAY isCashBehaviourRow SKIPS IT. That excludes the row
+  // from behaviour counts, which is right there and catastrophic here: drop
+  // the row alone and the pre-reset AWARD rows still sum, handing a child back
+  // the entire balance the school wiped. So the row is a boundary: nothing at
+  // or before the latest reset contributes anything, and accumulation starts
+  // from zero after it.
+  //
+  // COMPUTED FROM TIMESTAMPS, not by zeroing the accumulators when the row is
+  // met. The driver pushes rows in `paginate` order off the by_doc index, not
+  // in timestamp order, so an accumulator-zeroing version would give a
+  // different answer depending on where the page boundaries fell.
+  let resetAt = -Infinity;
+  let resetUndated = false;
+  (rows || []).forEach((r) => {
+    if (String(r && r.behaviorId ? r.behaviorId : "") !== "system_reset") return;
+    const t = Date.parse(String(r && r.timestamp ? r.timestamp : ""));
+    if (Number.isFinite(t)) { if (t > resetAt) resetAt = t; }
+    else resetUndated = true;
+  });
+  // A reset we cannot date gives no boundary to measure against, and guessing
+  // one either re-credits a wiped balance or reports a deduction that never
+  // happened. Everything is excluded and reported instead, which leaves the
+  // stored counters alone rather than overwriting them from a derivation that
+  // cannot be trusted.
+  if (resetUndated && resetAt === -Infinity) {
+    return {
+      counters: {
+        wildcatCashBalance: 0, wildcatCashEarned: 0,
+        wildcatCashSpent: 0, wildcatCashDeducted: 0,
+      },
+      excluded: [{
+        id: "", amount: null,
+        why: "this history contains a balance reset with no usable date, so the point " +
+             "the counters restart from cannot be established; nothing was derived",
+      }],
+      rowsUsed: 0,
+    };
+  }
+
   (rows || []).forEach((r) => {
     const id = String(r && r.id ? r.id : "");
     // NOT Number(raw): Number(null) and Number("") are both 0, so an amount
@@ -122,6 +178,23 @@ export function deriveCounters(
     }
     const kind = String(r && r.kind ? r.kind : "");
     const behaviorId = String(r && r.behaviorId ? r.behaviorId : "");
+
+    // At or before the latest reset: counted as seen, contributes nothing.
+    // `<=` rather than `<` takes in the reset row itself, and errs toward not
+    // re-crediting on a tie -- the reset writes every student's row inside one
+    // tight loop, so ties are its own rows and not a teacher's award.
+    if (resetAt > -Infinity) {
+      const ts = Date.parse(String(r && r.timestamp ? r.timestamp : ""));
+      if (!Number.isFinite(ts)) {
+        excluded.push({
+          id, amount,
+          why: "undated, so it cannot be placed before or after the balance reset; " +
+               "counting it might hand back money the reset wiped",
+        });
+        return;
+      }
+      if (ts <= resetAt) { used++; return; }
+    }
 
     // A reversal un-counts the original. Never bucketed by its own sign.
     if (kind === "reversal") {

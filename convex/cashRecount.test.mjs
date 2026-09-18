@@ -237,6 +237,91 @@ console.log("\nA derivation gone wrong is held back, not written");
   check("the largest real correction measured passes the cap", real.action === "repair");
 }
 
+console.log("\nA balance reset is a zero point, not a deduction");
+{
+  // _resetAllStudentCash writes a REAL ledger row per student -- behaviorId
+  // 'system_reset', kind 'deduct', amount -balanceBefore -- and then pins all
+  // four counters to zero. Without a rule for it the row fell through to the
+  // default bucket, so `deducted` gained the child's whole former balance as
+  // though it had been taken off them for behaviour, AND `earned` was restored
+  // to the pre-reset sum the reset had deliberately zeroed. $46,250 is the
+  // largest reset this repo has recorded.
+  const at = (ts, o) => row({ timestamp: ts, ...o });
+  const reset = (ts, amt) => at(ts, { id: "reset", amount: -amt, kind: "deduct", behaviorId: "system_reset" });
+
+  const wiped = [
+    at("2026-09-01T10:00:00Z", { id: "a1", amount: 500 }),
+    at("2026-09-02T10:00:00Z", { id: "a2", amount: 45750 }),
+    reset("2026-09-03T10:00:00Z", 46250),
+  ];
+  const d = deriveCounters(wiped);
+  check("a wiped student derives all zeros, matching what the reset pinned",
+    C(d).wildcatCashBalance === 0 && C(d).wildcatCashEarned === 0 && C(d).wildcatCashDeducted === 0);
+  check("the reset is NOT reported as money deducted for behaviour", C(d).wildcatCashDeducted !== 46250);
+  check("and earned is NOT restored to the pre-reset sum", C(d).wildcatCashEarned !== 46250);
+  check("so the verdict leaves the record alone",
+    recountVerdict({ wildcatCashBalance: 0, wildcatCashEarned: 0, wildcatCashSpent: 0, wildcatCashDeducted: 0 },
+      C(d)).action === "already correct");
+
+  // The case the balance rail cannot catch: the balance is already right, so
+  // recountVerdict sees a zero balance delta and would have written the two
+  // wrong counters unguarded.
+  const earnedAgain = [
+    at("2026-09-01T10:00:00Z", { id: "a1", amount: 500 }),
+    reset("2026-09-03T10:00:00Z", 500),
+    at("2026-09-04T10:00:00Z", { id: "a2", amount: 300 }),
+  ];
+  const e = deriveCounters(earnedAgain);
+  check("only post-reset awards count", C(e).wildcatCashBalance === 300 && C(e).wildcatCashEarned === 300);
+  check("nothing lands in deducted", C(e).wildcatCashDeducted === 0);
+  check("a record that was already correct is left alone",
+    recountVerdict({ wildcatCashBalance: 300, wildcatCashEarned: 300, wildcatCashSpent: 0, wildcatCashDeducted: 0 },
+      C(e)).action === "already correct");
+
+  // Dropping the reset row ALONE would be strictly worse than the old bug: the
+  // pre-reset awards would still sum and hand the balance back.
+  const skippedInstead = deriveCounters(wiped.filter((r) => r.behaviorId !== "system_reset"));
+  check("merely ignoring the reset row would re-credit the wiped balance, so the boundary matters",
+    C(skippedInstead).wildcatCashBalance === 46250);
+
+  // Only the LATEST reset is the boundary.
+  const twice = [
+    at("2026-09-01T10:00:00Z", { id: "a1", amount: 500 }),
+    at("2026-09-03T11:00:00Z", { id: "r1", amount: -500, kind: "deduct", behaviorId: "system_reset" }),
+    at("2026-09-04T10:00:00Z", { id: "a2", amount: 700 }),
+    at("2026-09-05T11:00:00Z", { id: "r2", amount: -700, kind: "deduct", behaviorId: "system_reset" }),
+    at("2026-09-06T10:00:00Z", { id: "a3", amount: 200 }),
+  ];
+  check("two resets: only the later one is the boundary",
+    C(deriveCounters(twice)).wildcatCashBalance === 200);
+
+  // Order independence: the driver pushes rows in pagination order off the
+  // by_doc index, NOT in timestamp order, so zeroing accumulators on meeting
+  // the row would give a different answer per page boundary.
+  const shuffled = [wiped[2], wiped[0], wiped[1]];
+  check("the answer does not depend on the order rows arrive in",
+    JSON.stringify(C(deriveCounters(shuffled))) === JSON.stringify(C(deriveCounters(wiped))));
+
+  // An undated row cannot be placed either side of the boundary.
+  const undatedRow = deriveCounters([reset("2026-09-03T10:00:00Z", 100), at(null, { id: "u", amount: 900 })]);
+  check("a row that cannot be dated is excluded, not counted", undatedRow.excluded.length === 1);
+  check("and the exclusion says why, naming the reset", /balance reset/.test(undatedRow.excluded[0].why));
+  check("so it cannot hand back wiped money", C(undatedRow).wildcatCashBalance === 0);
+
+  // An undated RESET leaves no boundary at all, so nothing is derived.
+  const undatedReset = deriveCounters([
+    at(null, { id: "reset", amount: -500, kind: "deduct", behaviorId: "system_reset" }),
+    at("2026-09-04T10:00:00Z", { id: "a1", amount: 300 }),
+  ]);
+  check("an undated reset derives nothing rather than guessing",
+    C(undatedReset).wildcatCashBalance === 0 && undatedReset.rowsUsed === 0);
+  check("and reports that the restart point is unknown",
+    undatedReset.excluded.length === 1 && /cannot be established/.test(undatedReset.excluded[0].why));
+  check("which leaves a real post-reset balance held back rather than overwritten",
+    recountVerdict({ wildcatCashBalance: 300, wildcatCashEarned: 300, wildcatCashSpent: 0, wildcatCashDeducted: 0 },
+      C(undatedReset)).action === "held back");
+}
+
 console.log("\nNo history at all is not a reason to write zeros");
 {
   const d = deriveCounters([]);
