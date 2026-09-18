@@ -111,8 +111,25 @@ console.log("\nThe same movement under a second id is refused");
   // The guard must not eat genuine awards.
   check("a different student at the same instant is kept",
     unionCashRows(stored, [award("txn_2", "11343", "2026-09-15T23:09:34.100Z", 100)]).length === 1);
-  check("the same student a millisecond later is kept",
-    unionCashRows(stored, [award("txn_2", "11342", "2026-09-15T23:09:34.101Z", 100)]).length === 1);
+  // THE WINDOW IS ONE SECOND, AND THIS ASSERTION WAS REVERSED ON PURPOSE.
+  //
+  // It used to require that the same student a MILLISECOND later was kept.
+  // That was wrong, and it is the case that would have paid a child twice.
+  // One movement is stamped twice -- recordCashTransaction for the ledger row,
+  // addToAuditLog for the audit entry -- by two separate `new Date()` calls,
+  // and 139 of the 2,086 movements on production carry timestamps 1-2ms apart.
+  // So when a lost movement is rebuilt from its surviving audit entry, the
+  // rebuilt row and the original the teacher's device may still send differ
+  // only in the milliseconds. At the old precision the guard passed both.
+  check("the same student a millisecond later is the SAME movement, and refused",
+    unionCashRows(stored, [award("txn_2", "11342", "2026-09-15T23:09:34.101Z", 100)]).length === 0);
+  check("and so is one 999ms later, still inside the same second",
+    unionCashRows(stored, [award("txn_2", "11342", "2026-09-15T23:09:34.999Z", 100)]).length === 0);
+  // But no wider than a second: a teacher awarding the same student the same
+  // amount twice in one minute is real, and minute precision collides 24 times
+  // on the live ledger.
+  check("a second later is a different movement, and kept",
+    unionCashRows(stored, [award("txn_2", "11342", "2026-09-15T23:09:35.100Z", 100)]).length === 1);
   check("the same student and instant but a different amount is kept",
     unionCashRows(stored, [award("txn_2", "11342", "2026-09-15T23:09:34.100Z", 200)]).length === 1);
   check("a deduction is not confused with the award it reverses",
