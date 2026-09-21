@@ -1,0 +1,142 @@
+"use node";
+import { internalAction } from "./_generated/server";
+import { v } from "convex/values";
+
+/**
+ * CAN PERIOD-LEVEL ABSENCE BE BUILT AT ALL? One read-only question, asked
+ * before anybody designs a rule that depends on the answer.
+ *
+ * WHY THIS EXISTS. attendance_summary returns COUNT(DISTINCT ATT_DATE), so the
+ * app holds days and not periods, and a request to count "two periods missed"
+ * or "came back for period 3" cannot be answered from anything already stored
+ * -- the detail was aggregated away in SQL before it ever left PowerSchool.
+ * Whether it CAN be answered turns on two columns this instance may or may not
+ * populate: ATTENDANCE.PERIODID and ATTENDANCE.CCID. Both are granted in
+ * plugin.xml and, as expansion.named_queries.xml says out loud, "nobody has
+ * ever checked whether this instance populates it. If it is null, every count
+ * in attendance_by_section is a correct zero for the wrong reason."
+ *
+ * GET ONLY, ONE ROW, NO STUDENT DATA. attendance_join_health was written to be
+ * safe to run: it returns counts for one school and one year and carries no
+ * identifiers, no names and no dates tied to a person. It is the check that
+ * file asks callers to run first, and nothing had.
+ *
+ * It also tells us whether the EXPANSION PACK is installed at all. A 404 here
+ * is a real answer -- it means the queries exist in this repo and not in
+ * PowerSchool, so period-level work needs Lawrence to install a plugin build
+ * before any of it is possible.
+ *
+ * internalAction, CLI only, and it writes nothing anywhere.
+ */
+const PREFIX = "com.lapromisefund.wildcathub";
+
+function base64(input: string): string {
+  return Buffer.from(input, "utf8").toString("base64");
+}
+
+async function token(host: string, id: string, secret: string): Promise<string> {
+  const res = await fetch(`https://${host}/oauth/access_token`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${base64(`${id}:${secret}`)}`,
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+    },
+    body: "grant_type=client_credentials",
+  });
+  if (!res.ok) throw new Error(`PowerSchool auth failed: HTTP ${res.status}`);
+  return (await res.json()).access_token;
+}
+
+export const joinHealth = internalAction({
+  args: { yearid: v.optional(v.string()) },
+  handler: async (_ctx, { yearid }) => {
+    const host = process.env.PS_HOST;
+    const id = process.env.PS_CLIENT_ID;
+    const secret = process.env.PS_CLIENT_SECRET;
+    const schoolid = process.env.PS_SCHOOL_ID;
+    const year = yearid || process.env.PS_YEAR_ID;
+    if (!host || !id || !secret || !schoolid || !year) {
+      return { ok: false as const, reason: "PowerSchool settings are not all present in this deployment." };
+    }
+
+    const tok = await token(host, id, secret);
+    const attempts: Array<Record<string, any>> = [];
+
+    // Every query that would be needed for a period-level rule, asked one at a
+    // time so a 404 names WHICH piece is missing rather than failing as a lump.
+    for (const name of ["attendance_join_health", "period_structure", "attendance_by_section"]) {
+      // EACH QUERY'S OWN ARG CONTRACT. attendance_join_health takes yearid;
+      // the other two take termid and NOT yearid. Passing both is what made
+      // them answer HTTP 400, which reads like a refusal and is really a
+      // mismatched signature.
+      const args: Record<string, string> = name === "attendance_join_health"
+        ? { schoolid, yearid: String(year) }
+        : { schoolid, termid: String(process.env.PS_TERM_ID || "") };
+      try {
+        // PAGESIZE 200, NOT 5. A pagesize of 5 truncated period_structure to
+        // five rows and made a ten-period school day look like a five-period
+        // one -- a wrong answer that arrived looking exactly like a right one.
+        // Every query here returns well under 200 rows for one school.
+        const res = await fetch(`https://${host}/ws/schema/query/${PREFIX}.${name}?pagesize=200&page=1`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${tok}`,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify(args),
+        });
+        if (!res.ok) {
+          attempts.push({
+            query: name, http: res.status,
+            verdict: res.status === 404
+              ? "NOT INSTALLED in PowerSchool -- exists in this repo only"
+              : `refused: HTTP ${res.status}`,
+          });
+          continue;
+        }
+        const body = await res.json();
+        const rows = body.record ?? body.records ?? [];
+        // attendance_join_health returns one row of counts and no identifiers,
+        // so it is safe to echo. The other two are per student, so only their
+        // SHAPE is reported -- column names and a row count, never values.
+        if (name === "attendance_join_health") {
+          attempts.push({ query: name, http: 200, verdict: "installed", row: rows[0] ?? null });
+        } else if (name === "period_structure") {
+          // Section expressions and how many students sit in each. No names.
+          attempts.push({
+            query: name, http: 200, verdict: "installed", rowsReturned: rows.length,
+            periods: rows.map((r: any) => ({
+              expression: r.section_expression, sections: r.section_count, students: r.student_count,
+              example: r.example_course_name,
+            })),
+          });
+        } else {
+          // AGGREGATED HERE, deliberately. This query returns student_number
+          // per section, and a diagnostic has no business echoing a roster.
+          const cols = rows.length && rows[0] && typeof rows[0] === "object" ? Object.keys(rows[0]).sort() : [];
+          let futureLastAbsence = 0;
+          const today = new Date().toISOString().slice(0, 10);
+          for (const r of rows) {
+            const d = String((r as any).last_absence_date || "").slice(0, 10);
+            if (d && d > today) futureLastAbsence++;
+          }
+          attempts.push({
+            query: name, http: 200, verdict: "installed", rowsReturned: rows.length, columns: cols,
+            sampleRowsWithFutureLastAbsence: futureLastAbsence,
+          });
+        }
+      } catch (e) {
+        attempts.push({ query: name, verdict: `error: ${e instanceof Error ? e.message : String(e)}` });
+      }
+    }
+
+    return {
+      ok: true as const,
+      host, schoolid, yearid: String(year),
+      attempts,
+      note: "GET only. attendance_join_health carries no student data; the other two are "
+        + "reported by column name and row count only.",
+    };
+  },
+});

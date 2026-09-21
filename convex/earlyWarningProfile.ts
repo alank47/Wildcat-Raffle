@@ -832,3 +832,49 @@ export const oneDayShape = internalQuery({
     };
   },
 });
+
+/**
+ * WHY psRoster SAYS 9 PERIODS AND period_structure SAYS 5.
+ *
+ * period_structure, asked for the current termid, returns exactly five section
+ * expressions -- 1(A-E) through 5(A-E) -- each with ~25 sections and all 618
+ * students. psRoster, counted distinct per student, said nine. Both cannot
+ * describe the same day, and the difference decides how to read every
+ * periods-per-absence figure: five periods means a flagged day covering three
+ * records is a PARTIAL day, nine means it could be a whole one.
+ *
+ * The likely answer is that psRoster spans more than one term -- a
+ * semester-long course and its successor are two enrolments in the same
+ * period slot -- so this groups psRoster by termId to show it rather than
+ * assume it. Counts only.
+ */
+export const rosterTerms = internalQuery({
+  args: { after: v.optional(v.string()), pageSize: v.optional(v.number()) },
+  handler: async (ctx, { after, pageSize }) => {
+    const take = Math.min(Math.max(1, Number(pageSize) || 2500), 3000);
+    const rows = await ctx.db
+      .query("psRoster")
+      .withIndex("by_studentNumber", (q) => q.gt("studentNumber", after || ""))
+      .take(take + 1);
+    const done = rows.length <= take;
+    const page = done ? rows : rows.slice(0, take);
+
+    const byTerm: Record<string, number> = {};
+    const periodsByTerm: Record<string, Record<string, number>> = {};
+    for (const r of page) {
+      const t = String(r.termId || "(none)");
+      byTerm[t] = (byTerm[t] || 0) + 1;
+      const p = String(r.period || "(none)").trim();
+      if (!periodsByTerm[t]) periodsByTerm[t] = {};
+      periodsByTerm[t][p] = (periodsByTerm[t][p] || 0) + 1;
+    }
+    return {
+      enrolmentRows: page.length, done,
+      last: page.length ? String(page[page.length - 1].studentNumber || "") : (after || ""),
+      enrolmentsByTerm: byTerm,
+      periodsWithinEachTerm: Object.fromEntries(
+        Object.entries(periodsByTerm).map(([t, ps]) => [t, Object.keys(ps).sort().join(", ")]),
+      ),
+    };
+  },
+});
