@@ -606,3 +606,109 @@ export const calibrationRows = internalQuery({
     };
   },
 });
+
+/**
+ * IS "ONE DAY ABSENT" A FULL DAY, OR ONE PERIOD?
+ *
+ * The PowerQuery that feeds psAttendance counts COUNT(DISTINCT ATT_DATE), so
+ * every figure on Attendance Watch and Early Warning is a count of DAYS rather
+ * than of periods -- deliberately, because Westbrook records attendance in
+ * meeting mode (ATT_ModeMeeting) where a single absence writes one row per
+ * period, and summing rows would multiply one absence by the length of the
+ * timetable.
+ *
+ * But the query's own comment states the consequence and asks for exactly this
+ * check: "a student who misses a single period reads as one day absent.
+ * Reconcile against the SIS attendance report before trusting any number."
+ *
+ * `attendanceRowsYtd` is the raw row count the same query returns, so the ratio
+ * of rows to absent-days says how many periods an average flagged day carries.
+ * A ratio near the number of periods in the timetable means most flagged days
+ * are whole-day absences. A ratio near 1 means most are single periods, and
+ * every rate on both screens is measuring something closer to "days with any
+ * lesson missed".
+ *
+ * Counts and ratios only; no student is named.
+ */
+export const attendanceShape = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("psAttendance").take(2000);
+    const n = (x: unknown) => (typeof x === "number" && isFinite(x) && x >= 0 ? x : null);
+
+    let students = 0, withRows = 0, rowsNull = 0;
+    let sumRows = 0, sumAbsent = 0, sumTardy = 0;
+    let ytdEqualsTerm = 0, ytdAboveTerm = 0, ytdBelowTerm = 0;
+    let cleanStudents = 0, cleanStudentsWithRows = 0, cleanRowsMax = 0, cleanRowsTotal = 0;
+    let absOnlyStudents = 0, absOnlyRows = 0, absOnlyDays = 0;
+    let tardyOnlyStudents = 0, tardyOnlyRows = 0, tardyOnlyDays = 0;
+    const ratioHist: Record<string, number> = {};
+    let ratioSamples = 0;
+
+    for (const r of rows) {
+      students++;
+      const abs = n(r.daysAbsentYtd), term = n(r.daysAbsentTerm), tardy = n(r.daysTardyTerm);
+      const raw = n(r.attendanceRowsYtd);
+      if (raw === null) rowsNull++; else { withRows++; sumRows += raw; }
+      if (abs !== null) sumAbsent += abs;
+      if (tardy !== null) sumTardy += tardy;
+      if (abs !== null && term !== null) {
+        if (abs === term) ytdEqualsTerm++;
+        else if (abs > term) ytdAboveTerm++;
+        else ytdBelowTerm++;
+      }
+      const flaggedDays = (abs || 0) + (tardy || 0);
+      if (flaggedDays === 0) {
+        cleanStudents++;
+        if (raw !== null && raw > 0) { cleanStudentsWithRows++; cleanRowsTotal += raw; }
+        if (raw !== null && raw > cleanRowsMax) cleanRowsMax = raw;
+      }
+      if (raw !== null && (abs || 0) > 0 && (tardy || 0) === 0) {
+        absOnlyStudents++; absOnlyRows += raw; absOnlyDays += (abs || 0);
+      }
+      if (raw !== null && (tardy || 0) > 0 && (abs || 0) === 0) {
+        tardyOnlyStudents++; tardyOnlyRows += raw; tardyOnlyDays += (tardy || 0);
+      }
+      // Rows per flagged DAY, for students who have at least one flagged day.
+      if (raw !== null && flaggedDays > 0) {
+        const ratio = raw / flaggedDays;
+        const b = ratio < 1.5 ? "~1 (single period)" : ratio < 2.5 ? "~2"
+          : ratio < 3.5 ? "~3" : ratio < 4.5 ? "~4" : ratio < 5.5 ? "~5"
+          : ratio < 6.5 ? "~6" : ratio < 8.5 ? "7-8" : "9+";
+        ratioHist[b] = (ratioHist[b] || 0) + 1;
+        ratioSamples++;
+      }
+    }
+
+    return {
+      students, withAttendanceRowCount: withRows, attendanceRowCountMissing: rowsNull,
+      totalRawRows: sumRows, totalAbsentDays: sumAbsent, totalTardyDays: sumTardy,
+      // The headline: raw attendance rows per flagged day, school-wide.
+      rowsPerFlaggedDay: sumAbsent + sumTardy > 0
+        ? Math.round((sumRows / (sumAbsent + sumTardy)) * 100) / 100 : null,
+      rowsPerFlaggedDayDistribution: ratioHist, ratioSamples,
+      // YTD vs TERM. Equal for everyone means one term has elapsed, so the
+      // "year to date" figure and "this term" figure are the same number.
+      ytdEqualsTerm, ytdAboveTerm, ytdBelowTerm,
+      // THE DECISIVE CHECK for reading the ratio above. The SQL's LEFT JOIN
+      // filters on ATT_MODE_CODE but NOT on the attendance code, so it counts
+      // every ATTENDANCE row. If this school writes a row only for exceptions
+      // then a student with no absences and no tardies has ~0 rows, and the
+      // ratio really is periods-per-flagged-day. If it writes a row per period
+      // per day for everyone, a clean student carries hundreds and the ratio
+      // above is meaningless.
+      cleanStudents, cleanStudentsWithRows, cleanRowsMax, cleanRowsTotal,
+      // TARDIES DILUTE THE RATIO. A tardy is one period by construction -- you
+      // are late to a lesson -- and 48% of flagged days are tardy days, so the
+      // school-wide figure understates how many periods a genuine ABSENCE
+      // carries. These two isolate it: students with absences and no tardies,
+      // and students with tardies and no absences.
+      absOnlyStudents, absOnlyRows, absOnlyDays,
+      rowsPerAbsentDayAbsOnly: absOnlyDays > 0 ? Math.round((absOnlyRows / absOnlyDays) * 100) / 100 : null,
+      tardyOnlyStudents, tardyOnlyRows, tardyOnlyDays,
+      rowsPerTardyDayTardyOnly: tardyOnlyDays > 0 ? Math.round((tardyOnlyRows / tardyOnlyDays) * 100) / 100 : null,
+      note: "daysAbsent* are COUNT(DISTINCT ATT_DATE): days, never periods. "
+        + "A student who misses one period reads as one day absent.",
+    };
+  },
+});
