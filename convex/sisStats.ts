@@ -564,6 +564,38 @@ export const replaceAttendanceDays = internalMutation({
   },
 });
 
+/**
+ * Per-student full/partial absence totals. Replaced wholesale with the per-date
+ * rows they are derived from, so the two can never disagree.
+ */
+export const replaceAbsenceTotals = internalMutation({
+  args: {
+    syncedAt: v.string(),
+    clearFirst: v.optional(v.boolean()),
+    rows: v.array(
+      v.object({
+        studentNumber: v.string(),
+        absentDays: v.number(),
+        fullDaysStrict: v.number(),
+        misrecordDaysByGap: v.array(v.number()),
+        partialDays: v.number(),
+        assumedPresentDays: v.number(),
+      }),
+    ),
+  },
+  handler: async (ctx, { rows, syncedAt, clearFirst }) => {
+    let deleted = 0;
+    if (clearFirst) {
+      const old = await ctx.db.query("psAbsenceTotals").take(2000);
+      for (const r of old) { await ctx.db.delete(r._id); deleted++; }
+      const more = await ctx.db.query("psAbsenceTotals").take(1);
+      if (more.length) return { deleted, written: 0, moreToClear: true };
+    }
+    for (const r of rows) await ctx.db.insert("psAbsenceTotals", { ...r, syncedAt });
+    return { deleted, written: rows.length, moreToClear: false };
+  },
+});
+
 export const replaceRestricted = internalMutation({
   args: {
     syncedAt: v.string(),

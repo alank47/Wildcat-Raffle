@@ -160,10 +160,24 @@ console.log("\n-- no names cross the wire --");
   // The browser already holds the roster, so the server sends numbers only.
   // This is what keeps the query from ever being the thing that leaks a
   // student record: it never builds one.
-  const handler = conv.slice(conv.indexOf("const raw ="), conv.indexOf("return { allowed: true"));
-  check("the response carries studentNumber, absences and tardies -- nothing else",
-    /studentNumber: String/.test(handler) &&
-    !/firstName|lastName|studentEmail|grade:/.test(handler));
+  // Sliced to the end of THIS handler. The previous anchor was the literal
+  // "return { allowed: true", which vanished when the return became a
+  // multi-line object -- and indexOf returning -1 made the slice cover most of
+  // the file, so the assertion silently stopped testing what it named.
+  const start = conv.indexOf("const raw =");
+  const stop = conv.indexOf("export const studentPeriods");
+  const handler = conv.slice(start, stop > start ? stop : conv.length);
+  check("the handler slice was actually found", start > 0 && stop > start);
+  check("the student number is stringified, never passed through raw",
+    /String\(r\.studentNumber \|\| ""\)/.test(handler));
+  // THE RULE IS NO NAME, GRADE OR DEMOGRAPHIC -- not a fixed field count. The
+  // full/partial split was added on 2026-09-21 and is counts, which is exactly
+  // what this query is for.
+  check("no name, grade or demographic crosses the wire",
+    !/firstName|lastName|studentEmail|gradeLevel|raceCodes|fedEthnicity|grade:/.test(handler));
+  check("the full/partial split is counts only",
+    /fullDaysStrict/.test(handler) && /partialDays/.test(handler)
+    && !/absentSlots|studentName/.test(handler));
   check("counts go through dayCount, never ?? 0",
     /dayCount\(r\.daysAbsentYtd\)/.test(conv) && !/daysAbsentYtd \?\? 0/.test(conv));
   check("the row cap is announced rather than silently truncating",

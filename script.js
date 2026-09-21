@@ -30158,11 +30158,36 @@
 
             const basis = attendanceSchoolDays();
             if (note) {
-                note.textContent = basis.days > 0
+                // SCHOOL-WIDE SPLIT, stated on the screen that drives the
+                // intervention list, because it changes how every number below
+                // it reads. Measured 2026-09-21: 46% of absent days are full
+                // days and 54% partial.
+                //
+                // COMPUTED FROM res.rows, NOT from splitByNumber, and that is
+                // deliberate: splitByNumber is built further down, so reading
+                // it here would be a temporal dead zone -- the exact crash
+                // class that shipped from this repo once already.
+                let splitNote = '';
+                if (res.splitCoverage) {
+                    let f = 0, p = 0, only = 0;
+                    (res.rows || []).forEach(row => {
+                        const sp = (R && typeof R.absenceSplit === 'function') ? R.absenceSplit(row.split, {}) : null;
+                        if (!sp) return;
+                        f += sp.fullDays; p += sp.partialDays;
+                        if (sp.absentDays > 0 && sp.fullDays === 0) only += 1;
+                    });
+                    if (f + p > 0) {
+                        splitNote = ' Of ' + (f + p) + ' absent days, ' + f + ' were whole days out of school and '
+                            + p + ' were partial. ' + only + ' student' + (only === 1 ? ' has' : 's have')
+                            + ' never missed a whole day.';
+                    }
+                }
+                note.textContent = (basis.days > 0
                     ? basis.days + ' school days so far (' + basis.weekdays + ' weekdays'
                       + (basis.off ? ', less ' + basis.off + ' non-school' : '') + '). '
                       + 'Chronic starts at ' + (basis.days * 0.10).toFixed(1) + ' days absent.'
-                    : 'No school days counted yet, so no rate can be worked out. Check the start date.';
+                    : 'No school days counted yet, so no rate can be worked out. Check the start date.')
+                    + splitNote;
             }
 
             // studentNumber -> the app's own student record, for the name. The
@@ -30178,6 +30203,15 @@
                 daysAbsent: r.daysAbsent,
                 daysTardy: r.daysTardy
             }));
+            // THE FULL/PARTIAL SPLIT, looked up beside the ranking rather than
+            // threaded through it. attendanceRanking returns its own row shape
+            // and is pinned by two test files; widening it to carry a field
+            // only this screen reads would be the more invasive change.
+            const splitByNumber = {};
+            (res.rows || []).forEach(r => {
+                const sp = (R && typeof R.absenceSplit === 'function') ? R.absenceSplit(r.split, {}) : null;
+                if (sp) splitByNumber[String(r.studentNumber)] = sp;
+            });
 
             // THE GRADE OPTIONS COME FROM THE DATA, and their counts come from
             // allRows rather than from what is currently shown. Counting the
@@ -30247,6 +30281,26 @@
                 shown = shown.filter(r => r.tier && (r.tier.key === 'chronic' || r.tier.key === 'severe'));
             } else if (_attTierFilter === 'severe' || _attTierFilter === 'at-risk') {
                 shown = shown.filter(r => r.tier && r.tier.key === _attTierFilter);
+            } else if (_attTierFilter === 'fullDays') {
+                // RANKED BY WHOLE DAYS OUT OF SCHOOL, which the absence rate
+                // cannot show: a student who misses Promise Time every morning
+                // and one who never comes in reach the same rate.
+                shown = shown.filter(r => {
+                    const sp = splitByNumber[String((r.student || {}).studentNumber || '')];
+                    return sp && sp.fullDays > 0;
+                }).slice().sort((a, b) => {
+                    const A = splitByNumber[String((a.student || {}).studentNumber || '')] || { fullDays: 0 };
+                    const B = splitByNumber[String((b.student || {}).studentNumber || '')] || { fullDays: 0 };
+                    return B.fullDays - A.fullDays;
+                });
+            } else if (_attTierFilter === 'partialOnly') {
+                // THE 139. On this list, with a real absence rate, and not one
+                // whole day missed. A different conversation entirely, and
+                // until now indistinguishable from truancy.
+                shown = shown.filter(r => {
+                    const sp = splitByNumber[String((r.student || {}).studentNumber || '')];
+                    return sp && sp.absentDays > 0 && sp.fullDays === 0;
+                }).slice().sort((a, b) => (b.daysAbsent || 0) - (a.daysAbsent || 0));
             } else if (_attTierFilter === 'tardy') {
                 // Tardies are their own axis. A student can be punctual-but-absent
                 // or present-but-always-late, and the second never appears on an
@@ -30280,6 +30334,7 @@
                     const meta = [st.grade ? 'Grade ' + st.grade : '', st.studentNumber || '']
                         .filter(Boolean).map(escapeHtml).join('  &middot;  ');
                     const pct = Math.round(r.rate * 100);
+                    const sp = splitByNumber[String(st.studentNumber || '')] || null;
                     const tierKey = r.tier ? r.tier.key : 'satisfactory';
                     // OPENS THE ABSENCE BREAKDOWN, NOT THE PROFILE. The profile
                     // opened on its Points tab, where the only attendance
@@ -30299,7 +30354,15 @@
                             (meta ? '<span class="wc-att-meta">' + meta + '</span>' : '') + '</span>' +
                         '<span class="wc-att-figs">' +
                             '<span class="wc-att-pct">' + pct + '%</span>' +
+                            // FULL DAYS BESIDE THE TOTAL, because the total counts a
+                            // date as absent if any period is missed. Measured
+                            // school-wide: 46% of absent days are full and 54%
+                            // partial, and 139 students have never missed a whole
+                            // day while still appearing on this list. "0 full" is
+                            // the most informative thing this row can say about
+                            // such a student, so it is said rather than omitted.
                             '<span class="wc-att-days">' + r.daysAbsent + ' absent' +
+                                (sp ? '  &middot;  ' + sp.fullDays + ' full' : '') +
                                 (r.daysTardy ? '  &middot;  ' + r.daysTardy + ' tardy' : '') + '</span>' +
                         '</span>' +
                         '<span class="wc-att-badge">' + escapeHtml(r.tier ? r.tier.label : '') + '</span>' +
@@ -30324,6 +30387,18 @@
                     bits.push(ranked.noData.length + ' student' + (ranked.noData.length === 1 ? '' : 's') +
                               ' have no attendance on file and are not ranked.');
                 }
+                if (_attTierFilter === 'fullDays') {
+                    bits.push('Ranked by whole days out of school, worst first, not by absence rate.');
+                } else if (_attTierFilter === 'partialOnly') {
+                    bits.push('Every student here has a real absence rate and has never missed a whole day. '
+                        + 'That is usually an arrival problem rather than truancy.');
+                }
+                // Null is not zero: a student the per-date rebuild has not
+                // reached must not read as having no full days.
+                if (res.splitCoverage === 0) {
+                    bits.push('Full and partial days are not worked out yet; they appear after the next rebuild.');
+                }
+                if (res.splitTruncated) bits.push('The full-day totals were larger than this screen reads. Tell an administrator.');
                 if (res.truncated) bits.push('The attendance table was larger than this screen reads. Tell an administrator.');
                 if (res.lastSyncedAt) bits.push('Last synced ' + String(res.lastSyncedAt).slice(0, 16).replace('T', ' ') + '.');
                 // textContent, so nothing here can be escaped twice or not at all.

@@ -836,6 +836,58 @@
   }
 
   /**
+   * Turn the stored per-student components into full and partial day counts.
+   *
+   * WHY THE SERVER DOES NOT DO THIS. `fullDaysStrict` needs no interpretation
+   * -- every block that ran was missed. The misrecord days do: they are days
+   * whose only non-absent blocks were explicitly marked present, and whether
+   * that reads as a full day is the owner's threshold, which belongs somewhere
+   * it can be changed and unit-tested without a deploy. So the server buckets
+   * them by gap size and this adds whichever buckets the threshold admits.
+   *
+   * At the shipped threshold of one, measured across the school on 2026-09-21,
+   * that is 5 days of 2,577 -- so the setting matters far less than the
+   * distinction it protects.
+   *
+   * NULL IN, NULL OUT. A student the per-date rebuild has not covered has no
+   * split, and reporting zero full days for them would be the good news read
+   * off missing data.
+   */
+  function absenceSplit(split, settings) {
+    var s = daySettingsOrDefault(settings);
+    if (!split || typeof split !== 'object') return null;
+    var n = function (v) {
+      return (typeof v === 'number' && isFinite(v) && v >= 0) ? Math.round(v) : null;
+    };
+    var strict = n(split.fullDaysStrict);
+    var partial = n(split.partialDays);
+    var absent = n(split.absentDays);
+    if (strict === null || partial === null || absent === null) return null;
+
+    var gaps = Array.isArray(split.misrecordDaysByGap) ? split.misrecordDaysByGap : [];
+    var counted = 0, uncounted = 0;
+    for (var i = 0; i < gaps.length; i++) {
+      var c = n(gaps[i]) || 0;
+      // Bucket i holds days with a gap of i+1, and the last bucket is "or
+      // more" -- so it can only be admitted by a threshold at least that big.
+      if ((i + 1) <= s.misrecordAt) counted += c; else uncounted += c;
+    }
+    var full = strict + counted;
+    return {
+      absentDays: absent,
+      fullDays: full,
+      partialDays: Math.max(0, absent - full),
+      flaggedDays: counted,
+      assumedPresentDays: n(split.assumedPresentDays) || 0,
+      misrecordDaysNotCounted: uncounted,
+      // The share of this student's absence that was a whole day out of
+      // school. Not a percentage OF THE YEAR -- that is the attendance rate,
+      // which is a different figure and lives on the tier.
+      fullShare: absent > 0 ? full / absent : null
+    };
+  }
+
+  /**
    * Rank students by attendance, worst first.
    *
    * `rows` are { student, daysAbsent, daysTardy }. A student with no
@@ -942,6 +994,7 @@
     daySettingsOrDefault: daySettingsOrDefault,
     classifyAbsenceDay: classifyAbsenceDay,
     absenceDayTally: absenceDayTally,
+    absenceSplit: absenceSplit,
     median: median,
     dailyGoal: dailyGoal,
     quietStudents: quietStudents,

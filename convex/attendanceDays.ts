@@ -268,6 +268,54 @@ export const rebuild = internalAction({
         syncedAt, rows: out.slice(i, i + 200), clearFirst: false,
       });
     }
+
+    // PER-STUDENT TOTALS, derived here from the same rows rather than
+    // aggregated at read time. Attendance Watch lists the whole school in one
+    // query, and re-summing 2,577 per-date rows beside psAttendance would put
+    // that list near Convex's 4,096 reads and past it by spring.
+    //
+    // COMPONENTS, NOT A VERDICT: fullDaysStrict needs no interpretation, and
+    // the misrecord days are bucketed by gap size so the browser can apply
+    // whatever threshold the school settles on without a deploy.
+    type Tot = {
+      studentNumber: string; absentDays: number; fullDaysStrict: number;
+      misrecordDaysByGap: number[]; partialDays: number; assumedPresentDays: number;
+    };
+    const totals = new Map<string, Tot>();
+    for (const r of out) {
+      let t = totals.get(r.studentNumber);
+      if (!t) {
+        t = { studentNumber: r.studentNumber, absentDays: 0, fullDaysStrict: 0,
+              misrecordDaysByGap: [0, 0, 0], partialDays: 0, assumedPresentDays: 0 };
+        totals.set(r.studentNumber, t);
+      }
+      t.absentDays++;
+      const gap = r.blocksThatDay - r.absentBlocks;
+      if (gap <= 0) { t.fullDaysStrict++; continue; }
+      // A day is only a candidate misrecord when EVERY non-absent block was
+      // explicitly marked present. A gap made of unrecorded blocks is a
+      // partial day, because unrecorded reads as present by decision.
+      if (r.presentBlocks >= gap) {
+        const i = gap <= 1 ? 0 : gap === 2 ? 1 : 2;
+        t.misrecordDaysByGap[i]++;
+      } else {
+        t.partialDays++;
+        if (r.presentBlocks === 0 && r.unrecordedBlocks > 0) t.assumedPresentDays++;
+      }
+    }
+    const totalRows = [...totals.values()];
+    for (let pass = 0; pass < 20; pass++) {
+      const r: { moreToClear?: boolean } = await ctx.runMutation(
+        internal.sisStats.replaceAbsenceTotals, { syncedAt, rows: [], clearFirst: true },
+      );
+      if (!r.moreToClear) break;
+    }
+    for (let i = 0; i < totalRows.length; i += 200) {
+      await ctx.runMutation(internal.sisStats.replaceAbsenceTotals, {
+        syncedAt, rows: totalRows.slice(i, i + 200), clearFirst: false,
+      });
+    }
+    summary.totalRows = totalRows.length;
     return summary;
   },
 });

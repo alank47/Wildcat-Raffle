@@ -631,6 +631,45 @@ export default defineSchema({
     .index("by_student_date", ["studentNumber", "date"])
     .index("by_date", ["date"]),
 
+  /**
+   * ONE ROW PER STUDENT: how their absent days split into full and partial.
+   *
+   * WHY A SEPARATE TOTALS TABLE. Attendance Watch lists the whole school in one
+   * query, and psAttendanceDays is ~2,577 rows -- aggregating it per student at
+   * read time alongside psAttendance would put the list near Convex's 4,096
+   * reads and grow past it by spring. These 618 rows are written once per
+   * rebuild instead, so the main list stays one cheap read.
+   *
+   * IT STORES COMPONENTS, NOT A VERDICT, which keeps this codebase's standing
+   * split intact: the misrecord threshold is a display rule the school will
+   * argue about and belongs in the browser. `fullDaysStrict` is days where
+   * EVERY block that ran was missed, with nothing to interpret.
+   * `misrecordDaysByGap` counts days whose only non-absent blocks were
+   * explicitly marked present, bucketed by how many -- index 0 is a gap of
+   * one, index 1 a gap of two, index 2 a gap of three or more. The browser adds
+   * whichever buckets its threshold admits. At the shipped threshold of one,
+   * measured 2026-09-21, that is 5 days in the whole school.
+   *
+   * `assumedPresentDays` is the honesty column: partial days that are partial
+   * only because a block nobody recorded is being read as present, which is the
+   * owner's decision of 2026-09-21. 686 of 1,390 partial days rest on it, and a
+   * screen that did not say so would be overstating what is known.
+   */
+  psAbsenceTotals: defineTable({
+    studentNumber: v.string(),
+    /** Dates with at least one absent block. Matches psAttendanceDays row count. */
+    absentDays: v.number(),
+    /** Every block that ran was missed. No interpretation involved. */
+    fullDaysStrict: v.number(),
+    /** Days whose only non-absent blocks were explicitly marked present, by gap size. */
+    misrecordDaysByGap: v.array(v.number()),
+    /** Everything else: genuinely part of the day in school. */
+    partialDays: v.number(),
+    /** Of those partial days, how many rest on unrecorded blocks reading as present. */
+    assumedPresentDays: v.number(),
+    syncedAt: v.string(),
+  }).index("by_studentNumber", ["studentNumber"]),
+
   psMissingWork: defineTable({
     studentNumber: v.string(),
     assignmentSectionId: v.string(),

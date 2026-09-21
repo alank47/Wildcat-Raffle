@@ -521,5 +521,94 @@ console.log("\nthe per-date server side");
     /daysTruncated: dayRows\.length > DAY_CAP/.test(js("./convex/attendanceList.ts")));
 }
 
+
+console.log("\nthe main tab now carries full days");
+
+{
+  const script2 = js("./script.js");
+  const html2 = js("./index.html");
+  const conv = js("./convex/attendanceList.ts");
+  const schema2 = js("./convex/schema.ts");
+  const stats2 = js("./convex/sisStats.ts");
+  const days2 = js("./convex/attendanceDays.ts");
+
+  // The pure rule, which is where the misrecord threshold is applied.
+  const sp = (o) => ({ absentDays: 10, fullDaysStrict: 4, misrecordDaysByGap: [1, 2, 0],
+                       partialDays: 3, assumedPresentDays: 2, ...o });
+  check("absenceSplit is exported", typeof R.absenceSplit === "function");
+  const d1 = R.absenceSplit(sp(), {});
+  check("at the shipped threshold, a gap of one counts as a full day",
+    d1.fullDays === 5 && d1.flaggedDays === 1, JSON.stringify(d1));
+  check("and the rest stay partial", d1.partialDays === 5);
+  check("a threshold of two admits the gap-of-two days too",
+    R.absenceSplit(sp(), { misrecordAt: 2 }).fullDays === 7);
+  check("a threshold of zero admits none of them",
+    R.absenceSplit(sp(), { misrecordAt: 0 }).fullDays === 4);
+  check("days the threshold rejects are reported, not dropped",
+    R.absenceSplit(sp(), { misrecordAt: 0 }).misrecordDaysNotCounted === 3);
+  // NULL IN, NULL OUT. Reporting zero full days for a student the rebuild has
+  // not covered would be the good news read off missing data.
+  check("no split gives null, never a zero", R.absenceSplit(null, {}) === null);
+  check("an unreadable split gives null",
+    R.absenceSplit({ fullDaysStrict: "4", partialDays: 3, absentDays: 10 }, {}) === null);
+  check("a student with absences and no full days reports zero, honestly",
+    R.absenceSplit(sp({ fullDaysStrict: 0, misrecordDaysByGap: [0, 0, 0], partialDays: 10 }), {}).fullDays === 0);
+  check("fullShare is a share of ABSENT days, not of the year",
+    R.absenceSplit(sp({ fullDaysStrict: 5, misrecordDaysByGap: [0, 0, 0], partialDays: 5 }), {}).fullShare === 0.5);
+
+  // The screen.
+  check("the row prints the full-day count beside the total",
+    /sp\.fullDays \+ ' full'/.test(script2));
+  check("the split is looked up beside the ranking, not threaded through it",
+    /splitByNumber\[String\(st\.studentNumber/.test(script2),
+    "attendanceRanking is pinned by two test files; widening its row shape is the invasive change");
+  check("a Full days view exists and ranks by whole days",
+    /_attTierFilter === 'fullDays'/.test(script2) && /B\.fullDays - A\.fullDays/.test(script2));
+  check("a Never-a-full-day view exists, for the students the rate cannot separate",
+    /_attTierFilter === 'partialOnly'/.test(script2) && /sp\.fullDays === 0/.test(script2));
+  check("both buttons are in the markup and wired",
+    /data-atier="fullDays"/.test(html2) && /data-atier="partialOnly"/.test(html2)
+    && /setAttendanceTierFilter\('fullDays'\)/.test(html2)
+    && /setAttendanceTierFilter\('partialOnly'\)/.test(html2));
+  check("the basis note states the school-wide split",
+    /were whole days out of school and/.test(script2));
+  // THE ORDERING TRAP: the note is built before splitByNumber exists, so it
+  // must read res.rows. Getting this wrong is a temporal dead zone, which is
+  // the crash class that shipped from this repo once already.
+  check("the note reads res.rows, NOT the later splitByNumber",
+    script2.indexOf("splitNote = ' Of '") < script2.indexOf("const splitByNumber = {}"),
+    "the note runs first; reading splitByNumber there would be a dead-zone crash");
+  // The comment sits ABOVE the declaration, so look at the window around it
+  // rather than after it.
+  check("and it says so in a comment, so the next edit does not undo it",
+    /temporal dead zone/.test(
+      script2.slice(Math.max(0, script2.indexOf("let splitNote") - 900),
+                    script2.indexOf("let splitNote") + 200)));
+  check("a missing rebuild is announced rather than shown as zero full days",
+    /not worked out yet; they appear after the next rebuild/.test(script2));
+
+  // The server side.
+  check("psAbsenceTotals is declared, one row per student",
+    /psAbsenceTotals: defineTable\(/.test(schema2)
+    && /\.index\("by_studentNumber", \["studentNumber"\]\)/.test(
+        schema2.slice(schema2.indexOf("psAbsenceTotals"))));
+  check("it stores components, not a verdict",
+    /misrecordDaysByGap: v\.array\(v\.number\(\)\)/.test(schema2)
+    && !/fullDays: v\.number/.test(schema2.slice(schema2.indexOf("psAbsenceTotals"),
+        schema2.indexOf("psAbsenceTotals") + 1400)));
+  check("the writer exists and replaces wholesale",
+    /export const replaceAbsenceTotals = internalMutation\(/.test(stats2));
+  check("the rebuild derives the totals from the same rows as the dates",
+    /replaceAbsenceTotals/.test(days2) && /misrecordDaysByGap\[i\]\+\+/.test(days2));
+  check("a gap made of UNRECORDED blocks is a partial day, not a misrecord",
+    /r\.presentBlocks >= gap/.test(days2),
+    "unrecorded reads as present by decision, so it cannot also be a misrecord");
+  check("the school list reads the totals in one go, capped and flagged",
+    /psAbsenceTotals"\)\.take\(MAX_ROWS \+ 1\)/.test(conv)
+    && /splitTruncated: totalRows\.length > MAX_ROWS/.test(conv));
+  check("and reports coverage so null is distinguishable from zero",
+    /splitCoverage: totalRows\.length/.test(conv));
+}
+
 console.log(`\nper-period attendance: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

@@ -61,15 +61,45 @@ export const schoolAttendance = query({
     const truncated = raw.length > MAX_ROWS;
     const rows = truncated ? raw.slice(0, MAX_ROWS) : raw;
 
+    // THE FULL/PARTIAL SPLIT, per student, precomputed by the per-date
+    // rebuild. 618 rows, so the whole-school list stays one cheap read:
+    // re-summing the 2,577 per-date rows here would put this query near
+    // Convex's 4,096 document limit and past it by spring. take() only costs
+    // the rows that exist, so the generous cap is free.
+    //
+    // COMPONENTS ONLY. The browser decides what counts as a full day, because
+    // the misrecord threshold is a display rule the school will argue about.
+    const totalRows = await ctx.db.query("psAbsenceTotals").take(MAX_ROWS + 1);
+    const totalsBy: Record<string, any> = {};
+    for (const t of totalRows) {
+      const n = String(t.studentNumber || "");
+      if (!n) continue;
+      totalsBy[n] = t;
+    }
+
     // dayCount, not `?? 0`. views.ts spends thirty lines on why, and the short
     // version is that "0 days absent" and "we were never told" are opposite
     // facts about a child that render identically. A null here keeps the
     // student off the ranking and onto the "no attendance on file" line.
-    const out = rows.map((r) => ({
-      studentNumber: String(r.studentNumber || ""),
-      daysAbsent: dayCount(r.daysAbsentYtd),
-      daysTardy: dayCount(r.daysTardyTerm),
-    })).filter((r) => r.studentNumber !== "");
+    const out = rows.map((r) => {
+      const n = String(r.studentNumber || "");
+      const t = totalsBy[n];
+      return {
+        studentNumber: n,
+        daysAbsent: dayCount(r.daysAbsentYtd),
+        daysTardy: dayCount(r.daysTardyTerm),
+        // THE SPLIT, or null when the rebuild has not covered this student.
+        // Null is not zero: "no full days" and "not worked out yet" are
+        // different facts, and a zero would read as the good news.
+        split: t
+          ? {
+              absentDays: t.absentDays, fullDaysStrict: t.fullDaysStrict,
+              misrecordDaysByGap: t.misrecordDaysByGap,
+              partialDays: t.partialDays, assumedPresentDays: t.assumedPresentDays,
+            }
+          : null,
+      };
+    }).filter((r) => r.studentNumber !== "");
 
     // The term's own first day, if the SIS sent one. The browser prefers this
     // over the hardcoded start date, so that when the term rolls over in
@@ -84,7 +114,13 @@ export const schoolAttendance = query({
       if (s && (!lastSyncedAt || s > lastSyncedAt)) lastSyncedAt = s;
     }
 
-    return { allowed: true, rows: out, truncated, termFirstDay, lastSyncedAt };
+    return {
+      allowed: true, rows: out, truncated, termFirstDay, lastSyncedAt,
+      // So the screen can tell "nobody has full days" from "the per-date
+      // rebuild has not run", which is the same null-versus-zero rule.
+      splitCoverage: totalRows.length,
+      splitTruncated: totalRows.length > MAX_ROWS,
+    };
   },
 });
 
