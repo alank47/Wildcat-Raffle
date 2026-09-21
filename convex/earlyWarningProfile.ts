@@ -712,3 +712,123 @@ export const attendanceShape = internalQuery({
     };
   },
 });
+
+/**
+ * HOW MANY ATTENDANCE-TAKING PERIODS A STUDENT'S DAY HAS.
+ *
+ * Needed to read attendanceShape honestly. That query says a flagged absence
+ * day carries about 5.9 period records, but "5.9 out of how many" is the whole
+ * question: out of 6 it means nearly every flagged day is a whole day out of
+ * school, and out of 8 it means a large minority are partial days being
+ * counted as full ones.
+ *
+ * Counted from psRoster's `period` column, distinct per student, because that
+ * is the timetable the SIS actually holds rather than a number anybody
+ * remembers. Sections with no period are reported separately instead of being
+ * guessed at -- an unscheduled section takes no attendance and must not
+ * inflate the denominator.
+ *
+ * Counts only; no student is named.
+ */
+export const timetableShape = internalQuery({
+  args: { after: v.optional(v.string()), pageSize: v.optional(v.number()) },
+  handler: async (ctx, { after, pageSize }) => {
+    // PAGED BY STUDENT NUMBER, because a single take() of psRoster is ~5,000
+    // enrolment rows against Convex's 4,096 -- and a truncated read here does
+    // not fail, it silently UNDERCOUNTS the timetable of every student past
+    // the cap, which is worse than an error because the answer still looks
+    // like an answer. Walking the by_studentNumber index means a student is
+    // never split across pages.
+    const take = Math.min(Math.max(1, Number(pageSize) || 2500), 3000);
+    const rows = await ctx.db
+      .query("psRoster")
+      .withIndex("by_studentNumber", (q) => q.gt("studentNumber", after || ""))
+      .take(take + 1);
+    const done = rows.length <= take;
+    let page = done ? rows : rows.slice(0, take);
+    // Drop a trailing partial student so their period set is never counted
+    // short; the next page picks them up whole.
+    if (!done && page.length) {
+      const lastSn = String(page[page.length - 1].studentNumber || "");
+      page = page.filter((r) => String(r.studentNumber || "") !== lastSn);
+      if (!page.length) throw new Error("one student has more enrolments than a page holds");
+    }
+
+    const byStudent: Record<string, string[]> = {};
+    const periodValues: Record<string, number> = {};
+    let noPeriod = 0;
+    for (const r of page) {
+      const sn = String(r.studentNumber || "");
+      if (!sn) continue;
+      const p = String(r.period || "").trim();
+      if (!p) { noPeriod++; continue; }
+      periodValues[p] = (periodValues[p] || 0) + 1;
+      if (!byStudent[sn]) byStudent[sn] = [];
+      if (byStudent[sn].indexOf(p) === -1) byStudent[sn].push(p);
+    }
+    const perStudent: Record<string, number> = {};
+    for (const set of Object.values(byStudent)) {
+      perStudent[String(set.length)] = (perStudent[String(set.length)] || 0) + 1;
+    }
+    return {
+      enrolmentRows: page.length, done,
+      last: page.length ? String(page[page.length - 1].studentNumber || "") : (after || ""),
+      studentsCounted: Object.keys(byStudent).length,
+      enrolmentsWithNoPeriod: noPeriod,
+      distinctPeriodsPerStudent: perStudent,
+      periodValuesInUse: periodValues,
+    };
+  },
+});
+
+/**
+ * HOW MANY PERIODS DOES ONE ABSENCE ACTUALLY COVER?
+ *
+ * The assumption-free version of the question, and the one that matters: a
+ * student whose whole year holds EXACTLY ONE absent day and NO tardies has an
+ * attendanceRowsYtd that is, to within a row or two of other codes, the number
+ * of period records that single absence produced. So their distribution
+ * answers directly whether a flagged day is a whole day out of school or one
+ * missed lesson -- with no need to know or guess how many periods take
+ * attendance.
+ *
+ * WHY THE EARLIER ESTIMATE WAS WRONG. attendanceShape said ~5.9 rows per
+ * absent day, which looked like a full timetable when psRoster was read
+ * truncated and appeared to show 6 periods per student. Paged properly it is
+ * 9. The same 5.9 against 9 periods means something quite different, so the
+ * ratio was never the right instrument -- this is.
+ *
+ * The 1-tardy-0-absence mirror is included as a control: a tardy is one period
+ * by construction, so if that distribution does not cluster at 1 then
+ * attendanceRowsYtd is carrying more unrelated codes than assumed and neither
+ * figure should be trusted.
+ */
+export const oneDayShape = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("psAttendance").take(2000);
+    const n = (x: unknown) => (typeof x === "number" && isFinite(x) && x >= 0 ? x : null);
+    const oneAbsence: Record<string, number> = {};
+    const oneTardy: Record<string, number> = {};
+    const twoAbsences: Record<string, number> = {};
+    let oneAbsenceStudents = 0, oneTardyStudents = 0, twoAbsenceStudents = 0;
+
+    for (const r of rows) {
+      const abs = n(r.daysAbsentYtd) || 0;
+      const tardy = n(r.daysTardyTerm) || 0;
+      const raw = n(r.attendanceRowsYtd);
+      if (raw === null) continue;
+      if (abs === 1 && tardy === 0) { oneAbsenceStudents++; oneAbsence[String(raw)] = (oneAbsence[String(raw)] || 0) + 1; }
+      if (abs === 0 && tardy === 1) { oneTardyStudents++; oneTardy[String(raw)] = (oneTardy[String(raw)] || 0) + 1; }
+      // Two absent days, no tardies: rows/2 should land near the same place.
+      if (abs === 2 && tardy === 0) { twoAbsenceStudents++; twoAbsences[String(raw)] = (twoAbsences[String(raw)] || 0) + 1; }
+    }
+    return {
+      note: "rows for a student whose entire year is one absent day and no tardies; "
+        + "that row count IS the periods that one absence covered",
+      oneAbsenceStudents, periodsForThatOneAbsence: oneAbsence,
+      twoAbsenceStudents, rowsForTwoAbsentDays: twoAbsences,
+      oneTardyStudents, rowsForThatOneTardy: oneTardy,
+    };
+  },
+});
