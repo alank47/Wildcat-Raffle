@@ -137,6 +137,167 @@ export const sectionShape = internalAction({
   },
 });
 
+/**
+ * IS ANYTHING DAY-LEVEL BEING RECORDED AT ALL?
+ *
+ * The owner asked whether the actual day is calculated when an absence is
+ * marked. attendance_join_health says distinct_mode_codes = 1, which means one
+ * mode -- but not WHICH. That distinction is the whole answer: ATT_ModeDaily
+ * rows would be PowerSchool writing a day-level record, and ATT_ModeMeeting
+ * rows are period records only, from which a day figure has to be derived.
+ *
+ * Also reads the attendance CODE vocabulary, because a half-day or
+ * portion-of-day code would be the authoritative answer sitting unused. The
+ * plugin grants Att_Code, Description and Presence_Status_CD on
+ * Attendance_Code, so this asks for exactly those and nothing else.
+ *
+ * GET ONLY, via the table endpoint rather than a named query, because no named
+ * query returns the mode value. Codes and counts only -- no student is read.
+ */
+/**
+ * HOW MUCH EACH ATTENDANCE CODE IS ACTUALLY USED.
+ *
+ * The code vocabulary turned up three things that matter more than the
+ * question that led to it, and all three turn on volume:
+ *
+ *   K "Ditching" carries PRESENCE_STATUS_CD = 'Present', so a student recorded
+ *   as ditching is counted as present by attendance_summary and appears in NO
+ *   absence figure this app shows. Class-cutting is being recorded and then
+ *   filtered out.
+ *
+ *   S "Suspended" carries 'Absent', so suspensions are inside every absence
+ *   rate on Attendance Watch and Early Warning. A suspended child is a
+ *   discipline case, not a truancy case, and calling home about attendance
+ *   would be the wrong conversation.
+ *
+ *   H "Partial Attendance (for Distance Learning)" carries 'Present', and
+ *   there is NO half-day or portion-of-day code anywhere in the 16. So no
+ *   authoritative day fraction exists to read, which is why the app derives
+ *   bounds instead.
+ *
+ * Counted through the table endpoint's /count, one call per code, so nothing
+ * per student is read and no page limit is involved.
+ */
+export const codeUsage = internalAction({
+  args: {},
+  handler: async () => {
+    const host = process.env.PS_HOST, id = process.env.PS_CLIENT_ID;
+    const secret = process.env.PS_CLIENT_SECRET, schoolid = process.env.PS_SCHOOL_ID;
+    const yearid = process.env.PS_YEAR_ID;
+    if (!host || !id || !secret || !schoolid || !yearid) {
+      return { ok: false as const, reason: "PowerSchool settings are not all present." };
+    }
+    const tok = await token(host, id, secret);
+    const get = async (url: string) => {
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${tok}`, Accept: "application/json" } });
+      if (!res.ok) return { error: `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`, body: null as any };
+      return { error: null as string | null, body: await res.json() };
+    };
+
+    const codesRes = await get(`https://${host}/ws/schema/table/attendance_code`
+      + `?q=${encodeURIComponent(`schoolid==${schoolid};yearid==${yearid}`)}`
+      + `&projection=id,att_code,description,presence_status_cd&pagesize=100`);
+    if (codesRes.error) return { ok: false as const, reason: codesRes.error };
+    const codes = (codesRes.body?.record ?? []).map((r: any) => r.tables?.attendance_code ?? r);
+
+    const out: Array<Record<string, any>> = [];
+    let total = 0;
+    for (const c of codes) {
+      const r = await get(`https://${host}/ws/schema/table/attendance/count`
+        + `?q=${encodeURIComponent(`schoolid==${schoolid};yearid==${yearid};attendance_codeid==${c.id}`)}`);
+      const n = r.error ? null : Number(r.body?.count ?? 0);
+      if (typeof n === "number") total += n;
+      out.push({
+        code: c.att_code, presence: c.presence_status_cd, description: c.description,
+        rows: n, error: r.error,
+      });
+    }
+    out.sort((a, b) => (Number(b.rows) || 0) - (Number(a.rows) || 0));
+    const absentRows = out.filter((r) => r.presence === "Absent").reduce((n, r) => n + (Number(r.rows) || 0), 0);
+    const presentRows = out.filter((r) => r.presence === "Present").reduce((n, r) => n + (Number(r.rows) || 0), 0);
+    return {
+      ok: true as const,
+      totalRowsCounted: total, absentCodedRows: absentRows, presentCodedRows: presentRows,
+      byCode: out,
+    };
+  },
+});
+
+export const dayLevelCheck = internalAction({
+  args: {},
+  handler: async () => {
+    const host = process.env.PS_HOST, id = process.env.PS_CLIENT_ID;
+    const secret = process.env.PS_CLIENT_SECRET, schoolid = process.env.PS_SCHOOL_ID;
+    const yearid = process.env.PS_YEAR_ID;
+    if (!host || !id || !secret || !schoolid || !yearid) {
+      return { ok: false as const, reason: "PowerSchool settings are not all present." };
+    }
+    const tok = await token(host, id, secret);
+
+    // MAX PAGESIZE IS 100 on the table endpoint, and exceeding it answers
+    // HTTP 400 -- which reads exactly like a permissions refusal and is not
+    // one. Clamped here so a future caller cannot make that mistake again.
+    const table = async (name: string, q: string, projection: string, pagesize = 100) => {
+      pagesize = Math.min(Math.max(1, pagesize), 100);
+      const url = `https://${host}/ws/schema/table/${name}`
+        + `?q=${encodeURIComponent(q)}&projection=${encodeURIComponent(projection)}&pagesize=${pagesize}`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${tok}`, Accept: "application/json" } });
+      if (!res.ok) {
+        // THE BODY IS THE DIAGNOSTIC, not the status. plugin.xml records that
+        // this endpoint distinguishes its failures in the message -- a 400
+        // saying "not a valid column for table X" means the column does not
+        // exist, while a 400 about access means it exists and is not granted.
+        // Those are opposite answers to the owner's question.
+        let body = "";
+        try { body = (await res.text()).slice(0, 400); } catch { body = "(unreadable)"; }
+        return { error: `HTTP ${res.status}: ${body}`, rows: [] as any[] };
+      }
+      const body = await res.json();
+      const recs = body?.record ?? body?.records ?? [];
+      return { error: null as string | null, rows: recs.map((r: any) => r.tables?.[name] ?? r) };
+    };
+
+    // The MODE, which is the question. A sample is enough: if any
+    // ATT_ModeDaily row existed, distinct_mode_codes would be 2.
+    const attempts: Array<Record<string, any>> = [];
+    let att = { error: "not tried" as string | null, rows: [] as any[] };
+    for (const t of [
+      { label: "schoolid+yearid", q: `schoolid==${schoolid};yearid==${yearid}`, proj: "att_mode_code,att_date,periodid" },
+      { label: "schoolid only", q: `schoolid==${schoolid}`, proj: "att_mode_code" },
+      { label: "mode projection alone", q: `yearid==${yearid}`, proj: "att_mode_code" },
+      { label: "id projection, sanity", q: `schoolid==${schoolid}`, proj: "id" },
+    ]) {
+      const r = await table("attendance", t.q, t.proj, 100);
+      attempts.push({ attempt: t.label, projection: t.proj, error: r.error, rows: r.rows.length });
+      if (!r.error && r.rows.length) { att = r; break; }
+    }
+    const modes: Record<string, number> = {};
+    for (const r of att.rows) {
+      const m = String(r.att_mode_code ?? "(null)");
+      modes[m] = (modes[m] || 0) + 1;
+    }
+
+    // The CODE vocabulary. A half-day or portion code would be the
+    // authoritative day figure we are deriving instead of reading.
+    const codes = await table("attendance_code", `schoolid==${schoolid};yearid==${yearid}`,
+      "att_code,description,presence_status_cd", 100);
+
+    return {
+      ok: true as const,
+      attendanceSample: { rows: att.rows.length, error: att.error, modeCodesSeen: modes, attempts },
+      codes: {
+        error: codes.error, count: codes.rows.length,
+        vocabulary: codes.rows.map((r: any) => ({
+          code: r.att_code, presence: r.presence_status_cd, description: r.description,
+        })),
+      },
+      note: "Mode ATT_ModeMeeting means period records only, so no day-level record is written "
+        + "and the day figure must be derived. A half-day or portion code in the vocabulary "
+        + "would mean an authoritative day fraction exists.",
+    };
+  },
+});
+
 export const joinHealth = internalAction({
   args: { yearid: v.optional(v.string()) },
   handler: async (_ctx, { yearid }) => {
