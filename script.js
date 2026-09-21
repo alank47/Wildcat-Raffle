@@ -35082,6 +35082,33 @@
             return all.filter(s => ids.has(String(s.id)));
         }
 
+        /**
+         * The last nightly cash-drift check, for the dashboard tile.
+         *
+         * Fetched once per page rather than on every dashboard redraw: the
+         * figure changes once a night, and updateDashboard runs on every tab
+         * switch. The re-render on arrival is what puts it on screen without
+         * making the first paint wait for a network answer.
+         */
+        let _cashDrift = null;
+        let _cashDriftAsked = false;
+        async function fetchCashDrift() {
+            if (_cashDriftAsked) return;
+            _cashDriftAsked = true;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+            if (!session) return;
+            try {
+                const res = await auth.convexQuery('cashDriftCheck:latest', {}, session.idToken);
+                _cashDrift = (res && res.value) || null;
+                if (_cashDrift && typeof updateDashboard === 'function') updateDashboard();
+            } catch (e) {
+                // A dashboard tile is not worth a visible error. The nightly
+                // check's own audit entry is the durable record.
+                console.warn('[dash] could not read the nightly cash check:', e && e.message);
+            }
+        }
+
         function wcTile(label, value, opts) {
             const o = opts || {};
             const arrow = o.onclick
@@ -35231,6 +35258,7 @@
             'reset wildcat jackpot cycle':   'system',
             'reset_all_student_cash':        'system',
             'cash_recount':                  'system',
+            'cash_drift_detected':           'system',
             'cash_refund_withdrawn':         'undo',
             'school_year_rollover':          'system'
         };
@@ -35645,6 +35673,10 @@
                 ? visibleReferrals().filter(r => r && r.status !== 'closed').length
                 : null;
 
+            // Fire and forget, guarded against a second ask. Never awaited:
+            // the dashboard must paint from what is already in memory.
+            fetchCashDrift();
+
             const tiles = document.getElementById('dashTiles');
             if (tiles) {
                 tiles.innerHTML = [
@@ -35674,7 +35706,23 @@
                         { absent: 'discipline not loaded',
                           tone: openReferrals ? 'warn' : null,
                           onclick: "switchSystemMode('discipline')",
-                          arrowLabel: 'Open Discipline' })
+                          arrowLabel: 'Open Discipline' }),
+                    // SILENT WHEN THERE IS NOTHING TO SAY, and only for the
+                    // people who can act on it. A fourth tile reading zero
+                    // every day is furniture; a fourth tile that appears only
+                    // when the balances have drifted is a thing you notice.
+                    // The nightly check writes the figure; this only shows it.
+                    (seesAll && _cashDrift && (_cashDrift.ok === false ||
+                        ((Number(_cashDrift.diverged) || 0) + (Number(_cashDrift.heldBack) || 0)) > 0))
+                        ? wcTile('Balances needing a look',
+                            _cashDrift.ok === false
+                                ? null
+                                : (Number(_cashDrift.diverged) || 0) + (Number(_cashDrift.heldBack) || 0),
+                            { absent: 'the nightly check could not run',
+                              tone: 'warn',
+                              onclick: "switchTab('auditLog')",
+                              arrowLabel: 'Open the audit log' })
+                        : ''
                 ].join('');
             }
 

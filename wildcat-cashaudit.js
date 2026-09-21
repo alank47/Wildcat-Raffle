@@ -31,6 +31,7 @@
     'reward_cancelled',
     'reset_all_student_cash',
     'cash_recount',
+    'cash_drift_detected',
     'cash_refund_withdrawn',
     'cash_reversal_credit',
     'cash_reversal_debit'
@@ -47,6 +48,10 @@
     // counters from transactions that were already there. sign 0 because no
     // money changed hands -- a signed amount here would read as an award.
     cash_recount:           { label: 'Balances Recounted', icon: '🧮', cls: 'act-reset', sign: 0 },
+    // The nightly check found counters disagreeing with the ledger. It only
+    // REPORTS -- no money moved -- so sign 0, and the figure in `details` is a
+    // count of students rather than an amount.
+    cash_drift_detected:    { label: 'Balances Drifted', icon: '⚠️', cls: 'act-reset', sign: 0 },
     // A refund that minted money and has been taken back out of the ledger.
     // sign 0: the student's balance does NOT move, because the refund never
     // reached their counter in the first place -- which is the whole reason

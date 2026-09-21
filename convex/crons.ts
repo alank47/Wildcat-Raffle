@@ -74,4 +74,32 @@ crons.cron(
   { reason: "Closed automatically: never returned." },
 );
 
+/**
+ * Are the cash counters still telling the truth?
+ *
+ * WHY NIGHTLY, AND WHY AT ALL. A repair on 2026-09-17 brought 223 students'
+ * counters back into agreement with their transaction history. One school day
+ * later, 28 had drifted again -- and the owner found out on the Sunday because
+ * somebody happened to look. A daily check makes the worst case one school day
+ * of drift, noticed the next morning.
+ *
+ * IT ONLY REPORTS. It must not be turned into an auto-repair until
+ * `_startNewSchoolYear` is fixed: the year roll writes no ledger row, so on the
+ * night after a rollover the derivation would find every student short by their
+ * whole closed year, both witnesses would agree, and the change would be an
+ * INCREASE -- so neither the two-witness check nor the decrease guard would
+ * stop it. It would resurrect the previous school year in one unattended run.
+ * The refusal is written down on cashDriftCheck.nightly as well.
+ *
+ * 10:10 UTC is roughly 03:10 in Los Angeles: after the day's last awards, well
+ * before the 13:00 sync, and on a minute none of the other jobs use (:00, :20,
+ * :40).
+ */
+crons.cron(
+  "cash counter drift check",
+  "10 10 * * *",
+  internal.cashDriftCheck.nightly,
+  { reason: "nightly" },
+);
+
 export default crons;
