@@ -9572,3 +9572,62 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
   font-size: 13px;
   line-height: 1.5;
 }
+
+/* PER-PERIOD ATTENDANCE, inside the shared wc-dialog. Only the content is new;
+   the dialog, its backdrop, Escape and Back handling are wc-dialog's. */
+.wc-ad-figs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.wc-ad-fig {
+  border: 1px solid var(--wc-line, #e5e7eb);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--wc-surface-2, #f9fafb);
+  text-align: center;
+}
+/* Deliberately NOT animated. This screen is read standing over a desk with the
+   student watching, often out loud, and counting a child's absences upward is
+   a sentence nobody should have to hear. */
+.wc-ad-n { display: block; font-size: 22px; font-weight: 700; color: var(--wc-ink, #111827); }
+.wc-ad-l { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--wc-gray-text, #6b7280); }
+.wc-ad-read {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-left: 4px solid var(--wc-blue, #2563eb);
+  border-radius: 6px;
+  background: var(--wc-blue-mist, #eff6ff);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--wc-ink, #111827);
+}
+.wc-ad-list { list-style: none; margin: 0; padding: 0; }
+.wc-ad-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "per abs" "sub abs";
+  gap: 2px 12px;
+  align-items: center;
+  padding: 9px 4px;
+  border-bottom: 1px solid var(--wc-line, #e5e7eb);
+}
+.wc-ad-row:last-child { border-bottom: 0; }
+.wc-ad-per { grid-area: per; font-weight: 600; color: var(--wc-ink, #111827); }
+/* The raw PowerSchool slot, kept beside the label on purpose: a wrong period
+   mapping is then visible to the first teacher who opens this, rather than
+   silently wrong forever. */
+.wc-ad-slot {
+  margin-left: 8px;
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--wc-gray-text, #9ca3af);
+}
+.wc-ad-abs { grid-area: abs; font-size: 20px; font-weight: 700; color: var(--wc-ink, #111827); }
+.wc-ad-sub { grid-area: sub; font-size: 12px; color: var(--wc-gray-text, #6b7280); }
+/* A section nobody ever took attendance in is greyed and says so. It must not
+   read as a clean record: 1,631 of 5,563 rows are in this state. */
+.wc-ad-unknown .wc-ad-abs { font-size: 13px; font-weight: 600; color: var(--wc-gray-text, #9ca3af); }
+.wc-ad-unknown .wc-ad-per { color: var(--wc-gray-text, #6b7280); }
+.wc-ad-note { margin: 12px 0 0; font-size: 12px; line-height: 1.5; color: var(--wc-gray-text, #6b7280); }

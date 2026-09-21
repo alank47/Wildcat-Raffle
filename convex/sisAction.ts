@@ -395,6 +395,82 @@ export const syncFromPowerSchool = internalAction({
         });
       }
     }
+    // ---- ABSENCE BY PERIOD --------------------------------------------------
+    //
+    // WHY IT IS WORTH A SECOND ATTENDANCE PULL. attendance_summary returns
+    // COUNT(DISTINCT ATT_DATE), so the app can say a child missed six days and
+    // cannot say WHICH periods -- and at this school that is the difference
+    // between truancy and a late bus. Measured 2026-09-21: of 10,719 absent
+    // period-days, 3,753 (35%) are Promise Time, the advisory block at each end
+    // of the day, and the average flagged day covers 3.89 of about 6 blocks.
+    //
+    // ITS OWN try/catch AND ITS OWN ERROR FIELD, like section points above. A
+    // 404 or a refusal here must not take the roster, grades and attendance
+    // down with it; the screen says it cannot break absence down by period yet.
+    //
+    // termid AND NOT yearid. The query declares schoolid and termid only, and
+    // passing yearid alongside answers HTTP 400 -- which reads exactly like a
+    // refusal and is really a mismatched signature.
+    let attendanceSectionRows: Array<{
+      studentNumber: string; sectionId?: string; sectionNumber?: string;
+      sectionExpression?: string; courseNumber?: string; courseName?: string;
+      teacherId?: string; daysAbsent?: number; daysTardy?: number;
+      attendanceRows?: number; lastAbsenceDate?: string;
+      termFirstDay?: string; termLastDay?: string;
+    }> = [];
+    let attendanceBySectionError: string | null = null;
+    let attendanceBySectionPages = 0;
+    try {
+      const abs = await namedQuery(host, tok, `${prefix}.attendance_by_section`, {
+        schoolid,
+        termid,
+      });
+      attendanceBySectionPages = abs.pages;
+      attendanceSectionRows = abs.rows
+        .map((r) => ({
+          studentNumber: s(r.student_number) ?? "",
+          sectionId: s(r.section_id),
+          sectionNumber: s(r.section_number),
+          sectionExpression: s(r.section_expression),
+          courseNumber: s(r.course_number),
+          courseName: s(r.course_name),
+          teacherId: s(r.teacher_id),
+          // ABSENT STAYS UNDEFINED, never 0. "not synced yet" and "never
+          // absent in this class" are different facts about a child.
+          daysAbsent: n(r.days_absent_section_term),
+          daysTardy: n(r.days_tardy_section_term),
+          // 0 HERE IS LOAD-BEARING: nobody ever took attendance in this
+          // section. 1,631 of 5,563 measured rows are in that state and must
+          // not render as a clean record.
+          attendanceRows: n(r.attendance_rows_section_term),
+          // A date from the SIS stays a string. Parsing it into a JS Date in
+          // one timezone and re-serializing in another is how a Friday
+          // absence becomes a Thursday one.
+          lastAbsenceDate: s(r.last_absence_date),
+          termFirstDay: s(r.term_first_day),
+          termLastDay: s(r.term_last_day),
+        }))
+        // NEVER an unkeyed row: it would join to every other unkeyed student.
+        .filter((r) => r.studentNumber);
+    } catch (e: unknown) {
+      attendanceBySectionError = e instanceof Error ? e.message : String(e);
+    }
+
+    if (attendanceBySectionError === null) {
+      for (let pass = 0; pass < 20; pass++) {
+        const r: { moreToClear?: boolean } = await ctx.runMutation(
+          internal.sisStats.replaceAttendanceBySection,
+          { syncedAt, rows: [], clearFirst: true },
+        );
+        if (!r.moreToClear) break;
+      }
+      for (let i = 0; i < attendanceSectionRows.length; i += 200) {
+        await ctx.runMutation(internal.sisStats.replaceAttendanceBySection, {
+          syncedAt, rows: attendanceSectionRows.slice(i, i + 200), clearFirst: false,
+        });
+      }
+    }
+
 
     // ---- restricted demographics ----
     //
@@ -498,6 +574,14 @@ export const syncFromPowerSchool = internalAction({
       missingWorkError: missingError,
       sectionPointRows: sectionPointRows.length,
       sectionPointsError,
+      attendanceBySectionRows: attendanceSectionRows.length,
+      attendanceBySectionError,
+      // NAMED, NOT SILENT. namedQuery stops at MAX_PAGES without throwing and
+      // without saying so, so a table that outgrows 200 pages would sync short
+      // and look complete. This reports the pages used and says out loud when
+      // it hit the wall. 5,563 rows is 56 pages today.
+      attendanceBySectionPages,
+      attendanceBySectionPagedOut: attendanceBySectionPages >= 200,
       studentEmailRows: emailRows.length,
       restrictedStudents: restrictedRows.length,
       restrictedRaceCodes: raceCodeCount,

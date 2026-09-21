@@ -878,3 +878,49 @@ export const rosterTerms = internalQuery({
     };
   },
 });
+
+/**
+ * PROVE THE PER-PERIOD JOIN ACTUALLY LANDS, on the real record that matters
+ * most: the student with the most absent days in the school.
+ *
+ * A per-student query cannot be called from the CLI -- it is staff-gated by
+ * design -- so this reads the same two tables the same way and returns the
+ * breakdown WITHOUT the student number, so the shape and the arithmetic can be
+ * checked without pulling a child's record onto a terminal.
+ */
+export const worstStudentPeriods = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("psAttendance").take(2000);
+    let worst: any = null;
+    for (const r of all) {
+      const a = typeof r.daysAbsentYtd === "number" ? r.daysAbsentYtd : -1;
+      if (!worst || a > (worst.daysAbsentYtd ?? -1)) worst = r;
+    }
+    if (!worst) return { found: false as const };
+    const sections = await ctx.db
+      .query("psAttendanceBySection")
+      .withIndex("by_studentNumber", (q) => q.eq("studentNumber", String(worst.studentNumber)))
+      .take(40);
+    const absentPeriodDays = sections.reduce((n, r) => n + (Number(r.daysAbsent) || 0), 0);
+    return {
+      found: true as const,
+      // NO STUDENT NUMBER, NO NAME. Only the figures.
+      daysAbsentYtd: worst.daysAbsentYtd ?? null,
+      daysTardyTerm: worst.daysTardyTerm ?? null,
+      sectionCount: sections.length,
+      absentPeriodDays,
+      periodsPerAbsentDay: worst.daysAbsentYtd
+        ? Math.round((absentPeriodDays / worst.daysAbsentYtd) * 100) / 100 : null,
+      sectionsWithNoAttendanceEverTaken: sections.filter((r) => Number(r.attendanceRows) === 0).length,
+      breakdown: sections
+        .slice()
+        .sort((a, b) => (Number(b.daysAbsent) || 0) - (Number(a.daysAbsent) || 0))
+        .map((r) => ({
+          slot: r.sectionExpression, course: r.courseName,
+          absent: r.daysAbsent ?? null, tardy: r.daysTardy ?? null,
+          attRows: r.attendanceRows ?? null, last: r.lastAbsenceDate ?? null,
+        })),
+    };
+  },
+});

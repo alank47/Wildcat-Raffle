@@ -47,6 +47,96 @@ async function token(host: string, id: string, secret: string): Promise<string> 
   return (await res.json()).access_token;
 }
 
+/**
+ * WHAT attendance_by_section ACTUALLY RETURNS, sized and shaped before a table
+ * is designed around it.
+ *
+ * Two questions only this can answer. How many rows, so the chunking matches
+ * the existing psMissingWork pattern rather than guessing. And which COURSE
+ * NAMES sit in which period expression, because the school's spoken period
+ * names are not PowerSchool's period numbers -- "Promise Time 1 (am)" is
+ * PowerSchool period 1 and "Power Up" is period 8 -- and a view that asserted
+ * a mapping nobody verified would put the wrong period name beside a child's
+ * absences.
+ *
+ * AGGREGATE ONLY. This query returns student_number per section, and a
+ * diagnostic has no business echoing a roster, so nothing per student leaves
+ * here: row counts, distinct counts, and the expression-to-course-name map.
+ */
+export const sectionShape = internalAction({
+  args: {},
+  handler: async () => {
+    const host = process.env.PS_HOST, id = process.env.PS_CLIENT_ID;
+    const secret = process.env.PS_CLIENT_SECRET, schoolid = process.env.PS_SCHOOL_ID;
+    const termid = process.env.PS_TERM_ID;
+    if (!host || !id || !secret || !schoolid || !termid) {
+      return { ok: false as const, reason: "PowerSchool settings are not all present." };
+    }
+    const tok = await token(host, id, secret);
+    const rows: any[] = [];
+    // Paged, because one school-term of per-section attendance is thousands of
+    // rows and a single page would silently truncate -- the mistake that made
+    // a ten-period day look like a five-period one earlier today.
+    for (let page = 1; page <= 40; page++) {
+      const res = await fetch(`https://${host}/ws/schema/query/${PREFIX}.attendance_by_section?pagesize=500&page=${page}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ schoolid, termid }),
+      });
+      if (!res.ok) return { ok: false as const, reason: `HTTP ${res.status} on page ${page}` };
+      const body = await res.json();
+      const batch = body.record ?? body.records ?? [];
+      rows.push(...batch);
+      if (batch.length < 500) break;
+    }
+
+    const byExpression: Record<string, { rows: number; courses: Record<string, number>; absentDays: number; students: Set<string> }> = {};
+    const students = new Set<string>();
+    let withAbsence = 0, totalAbsentDays = 0, totalTardyDays = 0, noRows = 0;
+    const today = new Date().toISOString().slice(0, 10);
+    let futureLast = 0;
+
+    for (const r of rows) {
+      const ex = String(r.section_expression || "(none)");
+      const course = String(r.course_name || "(none)");
+      const abs = Number(r.days_absent_section_term) || 0;
+      const tardy = Number(r.days_tardy_section_term) || 0;
+      const attRows = Number(r.attendance_rows_section_term) || 0;
+      const sn = String(r.student_number || "");
+      if (sn) students.add(sn);
+      if (!byExpression[ex]) byExpression[ex] = { rows: 0, courses: {}, absentDays: 0, students: new Set() };
+      byExpression[ex].rows++;
+      byExpression[ex].courses[course] = (byExpression[ex].courses[course] || 0) + 1;
+      byExpression[ex].absentDays += abs;
+      if (sn) byExpression[ex].students.add(sn);
+      if (abs > 0) withAbsence++;
+      totalAbsentDays += abs; totalTardyDays += tardy;
+      // "never absent in this class" must never render the same as "no
+      // attendance rows joined to this class at all", per the query's own note.
+      if (attRows === 0) noRows++;
+      const d = String(r.last_absence_date || "").slice(0, 10);
+      if (d && d > today) futureLast++;
+    }
+
+    return {
+      ok: true as const,
+      totalRows: rows.length, distinctStudents: students.size,
+      rowsWithAnAbsence: withAbsence, rowsWithNoAttendanceAtAll: noRows,
+      totalAbsentDays, totalTardyDays,
+      rowsWithFutureLastAbsence: futureLast,
+      // The empirical period-to-course map, which is what lets a label come
+      // from the data instead of from a hardcoded bell schedule.
+      periods: Object.entries(byExpression)
+        .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+        .map(([expression, v]) => ({
+          expression, rows: v.rows, students: v.students.size, absentDays: v.absentDays,
+          topCourses: Object.entries(v.courses).sort((x, y) => y[1] - x[1]).slice(0, 4)
+            .map(([name, n]) => `${name} (${n})`),
+        })),
+    };
+  },
+});
+
 export const joinHealth = internalAction({
   args: { yearid: v.optional(v.string()) },
   handler: async (_ctx, { yearid }) => {

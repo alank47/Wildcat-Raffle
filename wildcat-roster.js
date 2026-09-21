@@ -65,20 +65,29 @@
    *     3(A-E)   Multimedia Production 3A    <- Period 2
    *    10(A-E)   Promise Time 12A
    *
-   * Slots 6 and 7 carry Periods 5 and 6. No section was observed in either,
-   * because they are that teacher's prep, but they are not a guess: slots 2 to
-   * 5 are confirmed as Periods 1 to 4, slot 8 is confirmed as Power Up and is
-   * not a period, and the school has exactly six core periods. That leaves two
-   * periods and exactly two slots between the last confirmed class and Power
-   * Up, in an order that cannot flip.
+   * Slots 6 and 7 carry Periods 5 and 6. This began as a deduction and is now
+   * CONFIRMED TWICE OVER, so the hedge that used to sit here is gone.
    *
-   * The one way that deduction fails is if a non-class block sits at 6 or 7 and
-   * pushes a period out to slot 9. Slot 9 has never been observed, so it is
-   * deliberately NOT mapped: anything landing there shows its course name with
-   * no period attached, which is visible and correctable rather than silently
-   * wrong. A teacher who does teach Periods 5 or 6 confirms or refutes all of
-   * this the moment they open the tab, which is why it is worth leaving the raw
-   * slot on every section.
+   * Measured 2026-09-21 against every section in the term: slots 2 to 7 each
+   * hold academic courses for all 618 students -- slot 6 e.g. Enrichment,
+   * Spanish 1, Art 1; slot 7 e.g. World History & Geography, Integrated
+   * Science -- while slot 8 (Power Up, 280 students) and slot 9 (Power Up for
+   * the lower grades plus Designated ELD and RSP, 338 students) are not core
+   * periods and do not cover the whole school. That rules out the one way the
+   * deduction could have failed: no non-class block sits at 6 or 7, so no
+   * period is pushed out to slot 9.
+   *
+   * The owner's own timetable confirms it independently: Monday and Thursday
+   * run Periods 1, 3 and 5, which are slots 2, 4 and 6; Tuesday and Friday run
+   * Periods 2, 4 and 6, which are slots 3, 5 and 7. Odd periods on odd slots
+   * and even on even is only consistent with this mapping.
+   *
+   * SLOT 9 IS STILL DELIBERATELY NOT MAPPED, for a different reason than
+   * before: it is observed, and what it holds is not a period. Anything
+   * landing there shows its course name with no period attached, which the
+   * NAMED_BLOCKS fallback handles correctly for Power Up and honestly for ELD
+   * and RSP. The raw slot stays on every section regardless, so a mapping that
+   * ever does go wrong is visible to the first teacher who opens the tab.
    *
    * AM VERSUS PM PROMISE TIME IS ONLY KNOWABLE FROM THE SLOT. Both rows above
    * carry the identical course name "Promise Time 12A", so a name-based rule

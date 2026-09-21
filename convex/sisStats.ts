@@ -471,6 +471,60 @@ export const duplicateAudit = internalQuery({
  * multi-race student is multi-race; flattening them to "Two or more" is a
  * reporting decision this school has not made.
  */
+/**
+ * ABSENCE BY PERIOD. One row per student per section for the term.
+ *
+ * Replaced wholesale, like psGrades and psSectionPoints: a student who drops a
+ * section must LOSE that section's row, and a merge cannot express a deletion.
+ *
+ * The validator lists every field the table declares. A field in the schema
+ * and missing here is rejected at the boundary with an ArgumentValidationError
+ * and the WHOLE sync fails, which is how a grades change once took the roster
+ * down with it.
+ *
+ * NUMBERS STAY UNDEFINED WHEN ABSENT, never coerced to 0. `attendanceRows` of
+ * 0 is a real and important value -- it means nobody ever took attendance in
+ * that section, which 1,631 of 5,563 measured rows are -- and it must not be
+ * confused with the field being missing.
+ */
+export const replaceAttendanceBySection = internalMutation({
+  args: {
+    syncedAt: v.string(),
+    clearFirst: v.optional(v.boolean()),
+    rows: v.array(
+      v.object({
+        studentNumber: v.string(),
+        sectionId: v.optional(v.string()),
+        sectionNumber: v.optional(v.string()),
+        sectionExpression: v.optional(v.string()),
+        courseNumber: v.optional(v.string()),
+        courseName: v.optional(v.string()),
+        teacherId: v.optional(v.string()),
+        daysAbsent: v.optional(v.number()),
+        daysTardy: v.optional(v.number()),
+        attendanceRows: v.optional(v.number()),
+        lastAbsenceDate: v.optional(v.string()),
+        termFirstDay: v.optional(v.string()),
+        termLastDay: v.optional(v.string()),
+      }),
+    ),
+  },
+  handler: async (ctx, { rows, syncedAt, clearFirst }) => {
+    let deleted = 0;
+    if (clearFirst) {
+      // take(), not collect(): a collect() over a table past the 4,096-read
+      // limit throws, and a sync that throws records nothing. The measured
+      // table is ~5,563 rows, so this needs three passes.
+      const old = await ctx.db.query("psAttendanceBySection").take(2000);
+      for (const r of old) { await ctx.db.delete(r._id); deleted++; }
+      const more = await ctx.db.query("psAttendanceBySection").take(1);
+      if (more.length) return { deleted, written: 0, moreToClear: true };
+    }
+    for (const r of rows) await ctx.db.insert("psAttendanceBySection", { ...r, syncedAt });
+    return { deleted, written: rows.length, moreToClear: false };
+  },
+});
+
 export const replaceRestricted = internalMutation({
   args: {
     syncedAt: v.string(),

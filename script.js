@@ -30281,7 +30281,19 @@
                         .filter(Boolean).map(escapeHtml).join('  &middot;  ');
                     const pct = Math.round(r.rate * 100);
                     const tierKey = r.tier ? r.tier.key : 'satisfactory';
-                    const openable = st.id ? ' onclick="openStudentProfile(\'' + escapeHtml(String(st.id)) + '\')"' : '';
+                    // OPENS THE ABSENCE BREAKDOWN, NOT THE PROFILE. The profile
+                    // opened on its Points tab, where the only attendance
+                    // content was a badge awarded at five attendance RAFFLE
+                    // TICKETS, and the real figures were a further click away
+                    // and restated this very row. The profile is still one
+                    // button away inside the new view.
+                    //
+                    // AND IT PASSES studentNumber, NOT st.id, which is a fix:
+                    // st.id is absent for any student whose PowerSchool number
+                    // does not match a local record, and their row still looked
+                    // clickable, took keyboard focus and did nothing at all.
+                    const openable = ' onclick="openAttendanceDetail(\'' +
+                        escapeHtml(String(st.studentNumber || '')) + '\')"';
                     return '<button type="button" class="wc-att-row wc-att-' + tierKey + '"' + openable + '>' +
                         '<span class="wc-att-name">' + name +
                             (meta ? '<span class="wc-att-meta">' + meta + '</span>' : '') + '</span>' +
@@ -30317,6 +30329,215 @@
                 // textContent, so nothing here can be escaped twice or not at all.
                 foot.textContent = bits.join(' ');
             }
+        }
+
+        // ========================================
+        // PER-PERIOD ATTENDANCE
+        //
+        // WHAT THE DAY COUNT CANNOT SAY. Attendance Watch's row says a child
+        // missed six days. It cannot say whether that is six days out of
+        // school or six mornings they arrived after Promise Time, and at this
+        // school that is most of the signal: measured 2026-09-21, of 10,719
+        // absent period-days, 3,753 (35%) are Promise Time -- the advisory
+        // block at each end of the day -- against 5,519 for all six academic
+        // periods put together. The school's highest-absence student misses
+        // Promise Time AM on all 23 of their absent days and their academic
+        // classes on 7 to 14, so even the worst record in the building is
+        // partly an arrival problem rather than truancy.
+        //
+        // WHY IT REPLACED THE PROFILE ON THE ROW CLICK. The profile opened on
+        // its Points tab, whose only attendance content was a "Perfect
+        // Attendance" badge awarded at five attendance RAFFLE TICKETS -- not a
+        // measure of attendance at all -- and the real figures were another
+        // click away and restated the two numbers the row already showed. The
+        // profile is still one button away from here, so nothing is lost.
+        //
+        // NO RATES ANYWHERE ON THIS SCREEN, on purpose. There is no
+        // denominator: the section expression carries no weekday, the source
+        // query returns no meetings-scheduled count, and the timetable is a
+        // block one -- Monday and Thursday take one set of periods, Tuesday
+        // and Friday another, Wednesday all of them. Counts are honest; a
+        // percentage would be invented.
+        // ========================================
+
+        /**
+         * Open one student's absence, period by period.
+         *
+         * Takes the SIS student number, not the app's roster id, and that is a
+         * fix rather than a preference: the old row passed st.id, which is
+         * absent for any student whose PowerSchool number does not match a
+         * local record -- their row still looked clickable, took keyboard
+         * focus, and did nothing at all.
+         */
+        async function openAttendanceDetail(studentNumber) {
+            const num = String(studentNumber || '').trim();
+            const R = window.WildcatRoster;
+            // The name comes from the roster the browser already holds, the
+            // same way the row gets it. The server sends no names.
+            const st = (students || []).find(s => s && String(s.studentNumber || '') === num) || {};
+            const name = ((st.firstName || '') + ' ' + (st.lastName || '')).trim()
+                || (num ? 'Student ' + num : 'Student');
+            const who = escapeHtml(name) + (st.grade ? ' &middot; Grade ' + escapeHtml(String(st.grade)) : '');
+
+            if (!num) {
+                await _wcDialog({
+                    kind: 'info', title: 'No PowerSchool number',
+                    body: '<p class="wc-ad-note">' + escapeHtml(name) + ' has no PowerSchool student number on '
+                        + 'file, so their attendance cannot be looked up. That is a roster question rather than '
+                        + 'an attendance one.</p>',
+                    buttons: [{ label: 'Close', cls: 'btn-secondary' }],
+                });
+                return;
+            }
+
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!session) {
+                await _wcDialog({
+                    kind: 'warn', title: who,
+                    body: '<p class="wc-ad-note">Per-period attendance comes from the SIS, which needs a '
+                        + 'Microsoft sign-in.</p>',
+                    buttons: [{ label: 'Close', cls: 'btn-secondary' }],
+                });
+                return;
+            }
+
+            let res;
+            try {
+                res = await auth.convexQuery('attendanceList:studentPeriods', { studentNumber: num }, session.idToken);
+            } catch (e) {
+                const msg = (e && e.message) || String(e);
+                await _wcDialog({
+                    kind: 'error', title: who,
+                    body: '<p class="wc-ad-note">Attendance could not be loaded: ' + escapeHtml(msg) + '</p>',
+                    buttons: [{ label: 'Close', cls: 'btn-secondary' }],
+                });
+                return;
+            }
+
+            const pick = await _wcDialog({
+                kind: 'info', title: who, wide: true,
+                body: renderAttendanceDetail(res, R),
+                buttons: st.id
+                    ? [{ label: 'Full profile', cls: 'btn-secondary' }, { label: 'Close', cls: 'btn-primary' }]
+                    : [{ label: 'Close', cls: 'btn-primary' }],
+            });
+            // The profile is still reachable, so replacing the click target
+            // took nothing away.
+            if (st.id && pick === 0 && typeof openStudentProfile === 'function') openStudentProfile(st.id);
+        }
+
+        /**
+         * The body of the per-period view. Pure: it takes the server's answer
+         * and the rules module and returns markup, so a test can run it
+         * without a DOM or a network.
+         */
+        function renderAttendanceDetail(res, R) {
+            if (!res || res.allowed === false) {
+                return '<p class="wc-ad-note">' + escapeHtml((res && res.reason) || 'Not available to your access level.') + '</p>';
+            }
+            if (res.reason) return '<p class="wc-ad-note">' + escapeHtml(res.reason) + '</p>';
+
+            const rows = (res.rows || []).slice();
+            const day = res.day || {};
+            const absentDays = (typeof day.daysAbsentYtd === 'number') ? day.daysAbsentYtd : null;
+
+            // THE RECONCILIATION, which is the whole reason for the screen: the
+            // day count beside the period count, so "six days" and "six missed
+            // Promise Times" stop looking the same.
+            let periodDays = 0, known = 0;
+            rows.forEach(r => {
+                if (typeof r.daysAbsent === 'number') { periodDays += r.daysAbsent; known++; }
+            });
+            const perDay = (absentDays && absentDays > 0 && known)
+                ? Math.round((periodDays / absentDays) * 10) / 10 : null;
+
+            const head = [
+                '<div class="wc-ad-figs">',
+                '<div class="wc-ad-fig"><span class="wc-ad-n">' +
+                    (absentDays === null ? '&mdash;' : absentDays) + '</span><span class="wc-ad-l">days absent</span></div>',
+                '<div class="wc-ad-fig"><span class="wc-ad-n">' +
+                    (typeof day.daysTardyTerm === 'number' ? day.daysTardyTerm : '&mdash;') +
+                    '</span><span class="wc-ad-l">days tardy</span></div>',
+                '<div class="wc-ad-fig"><span class="wc-ad-n">' + periodDays +
+                    '</span><span class="wc-ad-l">periods missed</span></div>',
+                perDay === null ? ''
+                    : '<div class="wc-ad-fig"><span class="wc-ad-n">' + perDay +
+                      '</span><span class="wc-ad-l">periods per absent day</span></div>',
+                '</div>',
+            ].join('');
+
+            // WHAT THE NUMBERS MEAN, said rather than left to be inferred. A
+            // typical day is about six blocks, so a figure near one is a child
+            // missing a single period and being counted for a whole day.
+            let reading = '';
+            if (perDay !== null) {
+                reading = perDay <= 1.6
+                    ? 'Almost all of these absences are a SINGLE PERIOD. A day counts as absent if any period '
+                      + 'is missed, so this reads as ' + absentDays + ' days absent while the student was in '
+                      + 'school for most of them.'
+                    : perDay >= 4.5
+                        ? 'These are mostly WHOLE DAYS out of school, across about six blocks a day.'
+                        : 'A mix of whole days and partial ones: about ' + perDay + ' periods of roughly six '
+                          + 'blocks on a typical absent day.';
+            }
+
+            if (!rows.length) {
+                return head + '<p class="wc-ad-note">No per-period attendance has been synced for this student yet. '
+                    + 'The breakdown appears after the next SIS sync.</p>';
+            }
+
+            // Worst first, and labelled by the rules module rather than by a
+            // second mapping written here.
+            const labelled = rows.map(r => {
+                const cls = (R && typeof R.classifySection === 'function')
+                    ? R.classifySection({ courseName: r.courseName, period: r.sectionExpression })
+                    : { label: r.courseName || '', order: 99, slot: null, kind: 'other' };
+                return { r: r, cls: cls };
+            }).sort((a, b) => {
+                const av = (typeof a.r.daysAbsent === 'number') ? a.r.daysAbsent : -1;
+                const bv = (typeof b.r.daysAbsent === 'number') ? b.r.daysAbsent : -1;
+                if (bv !== av) return bv - av;
+                return (a.cls.order || 0) - (b.cls.order || 0);
+            });
+
+            const list = labelled.map(x => {
+                const r = x.r, cls = x.cls;
+                // NEVER TAKEN IS NOT ZERO. 1,631 of 5,563 rows have no
+                // attendance joined at all, and calling that "0 absences"
+                // would tell a family their child attended a class nobody
+                // ever registered.
+                const neverTaken = r.attendanceRows === 0;
+                const abs = neverTaken ? 'not taken'
+                    : (typeof r.daysAbsent === 'number' ? r.daysAbsent : '&mdash;');
+                const bits = [];
+                if (!neverTaken && r.daysTardy) bits.push(r.daysTardy + ' tardy');
+                if (!neverTaken && r.lastAbsenceDate) bits.push('last ' + escapeHtml(String(r.lastAbsenceDate)));
+                if (neverTaken) bits.push('attendance was never taken in this class');
+                // THE RAW SLOT STAYS ON THE ROW, so a wrong period mapping is
+                // visible to the first teacher who opens this and correctable,
+                // rather than silently wrong forever.
+                const slot = r.sectionExpression ? escapeHtml(String(r.sectionExpression)) : '';
+                return '<li class="wc-ad-row' + (neverTaken ? ' wc-ad-unknown' : '') + '">'
+                    + '<span class="wc-ad-per">' + escapeHtml(cls.label || '')
+                        + (slot ? '<span class="wc-ad-slot">' + slot + '</span>' : '') + '</span>'
+                    + '<span class="wc-ad-abs">' + abs + '</span>'
+                    + '<span class="wc-ad-sub">' + bits.join('  &middot;  ') + '</span>'
+                    + '</li>';
+            }).join('');
+
+            const foot = [
+                res.day && res.day.syncedAt
+                    ? 'From PowerSchool, synced ' + escapeHtml(String(res.day.syncedAt).slice(0, 16).replace('T', ' ')) + '. '
+                    : '',
+                'Counts only: there is no per-period percentage, because the timetable is a block one and '
+                + 'nothing records how many times each period actually met.',
+            ].join('');
+
+            return head
+                + (reading ? '<p class="wc-ad-read">' + escapeHtml(reading) + '</p>' : '')
+                + '<ul class="wc-ad-list">' + list + '</ul>'
+                + '<p class="wc-ad-note">' + foot + '</p>';
         }
 
         // ========================================
@@ -30737,7 +30958,10 @@
                     else if (r.course.missingRecent) why.push(r.course.missingRecent + ' owed recently');
                     else if ((r.course.missingOlder || 0) >= 3) why.push('owed work all older');
                     if (r.course.missingTruncated || r.course.gradesTruncated) why.push('score is a floor');
-                    const openable = st.id ? ' onclick="openStudentProfile(\'' + escapeHtml(String(st.id)) + '\')"' : '';
+                    // The same destination as Attendance Watch, so one child
+                    // does not open two different screens from two lists.
+                    const openable = ' onclick="openAttendanceDetail(\'' +
+                        escapeHtml(String(r.studentNumber || '')) + '\')"';
                     const tierKey = r.tier ? r.tier.key : 'clear';
                     return '<button type="button" class="wc-att-row wc-ew-' + tierKey + '"' + openable + '>' +
                         '<span class="wc-att-name">' + name +

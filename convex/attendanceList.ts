@@ -1,4 +1,5 @@
 import { query } from "./_generated/server";
+import { v } from "convex/values";
 import { requireStaff } from "./identity";
 import { dayCount } from "./views";
 
@@ -84,5 +85,105 @@ export const schoolAttendance = query({
     }
 
     return { allowed: true, rows: out, truncated, termFirstDay, lastSyncedAt };
+  },
+});
+
+/**
+ * ONE STUDENT'S ABSENCE, BROKEN DOWN BY PERIOD.
+ *
+ * WHY THIS SCREEN EXISTS. The row on Attendance Watch says a child missed six
+ * days. It cannot say whether that is six days out of school or six mornings
+ * they arrived after Promise Time, and at this school that distinction is most
+ * of the signal: measured 2026-09-21, of 10,719 absent period-days, 3,753
+ * (35%) are Promise Time -- the advisory block at each end of the day --
+ * against 5,519 for all six academic periods put together. The average flagged
+ * day covers 3.89 of about 6 blocks. A student who misses Promise Time AM and
+ * sits in every lesson is, today, indistinguishable from a student who never
+ * came in.
+ *
+ * NO NAME CROSSES THE WIRE, same as schoolAttendance. The browser already
+ * holds the roster and puts the name on; this returns figures for a student
+ * number and nothing else, so it can never be the thing that leaks a record.
+ *
+ * NO RATE, NO PERCENTAGE, NO "N OF M MEETINGS" -- deliberately, because no
+ * denominator exists. The section expression carries no weekday, the source
+ * query returns no meetings-scheduled count, and the school runs a block
+ * timetable where Monday and Thursday take one set of periods and Tuesday and
+ * Friday another. Counts are honest; a rate would be invented.
+ *
+ * THE PERIOD LABEL IS THE BROWSER'S JOB. WildcatRoster.classifySection already
+ * translates a PowerSchool slot into the school's spoken period name, is
+ * pinned by two test files, and is already on screen in two dropdowns. A
+ * second mapping here would be the copy that drifts. This returns the raw
+ * expression and the course name and lets that function decide.
+ */
+export const studentPeriods = query({
+  args: { studentNumber: v.string() },
+  handler: async (ctx, { studentNumber }) => {
+    const staff = await requireStaff(ctx);
+    if (!ATTENDANCE_ROLES.includes(staff.role)) {
+      return {
+        allowed: false as const,
+        reason:
+          "Per-period attendance is available to administrators and the PBIS team. " +
+          "Ask an administrator to set your access level to PBIS Team.",
+        rows: [], day: null, studentNumber: "",
+      };
+    }
+
+    // NEVER QUERY AN EMPTY KEY. q.eq("studentNumber", "") is not a no-op: it
+    // matches every unkeyed row, so an unkeyed student would be shown another
+    // child's absences under their own name and nothing would error.
+    const key = String(studentNumber || "").trim();
+    if (!key) {
+      return {
+        allowed: true as const,
+        reason: "This student has no PowerSchool number on file, so their attendance cannot be looked up.",
+        rows: [], day: null, studentNumber: "",
+      };
+    }
+
+    const sections = await ctx.db
+      .query("psAttendanceBySection")
+      .withIndex("by_studentNumber", (q) => q.eq("studentNumber", key))
+      .take(40);
+
+    // The day-level figures the row already showed, so the breakdown can be
+    // reconciled against them on screen rather than in somebody's head.
+    const dayRow = await ctx.db
+      .query("psAttendance")
+      .withIndex("by_studentNumber", (q) => q.eq("studentNumber", key))
+      .first();
+
+    return {
+      allowed: true as const,
+      reason: null,
+      studentNumber: key,
+      day: dayRow
+        ? {
+            daysAbsentYtd: dayCount(dayRow.daysAbsentYtd),
+            daysAbsentTerm: dayCount(dayRow.daysAbsentTerm),
+            daysTardyTerm: dayCount(dayRow.daysTardyTerm),
+            syncedAt: dayRow.syncedAt ?? null,
+          }
+        : null,
+      rows: sections.map((r) => ({
+        sectionExpression: r.sectionExpression ?? null,
+        courseName: r.courseName ?? null,
+        sectionNumber: r.sectionNumber ?? null,
+        // dayCount's rule: a missing figure is null, never 0.
+        daysAbsent: dayCount(r.daysAbsent),
+        daysTardy: dayCount(r.daysTardy),
+        // 0 MEANS NOBODY EVER TOOK ATTENDANCE IN THIS CLASS. 1,631 of 5,563
+        // measured rows are in that state, and rendering it as a clean record
+        // would tell a family their child attended a class nobody registered.
+        attendanceRows: typeof r.attendanceRows === "number" ? r.attendanceRows : null,
+        lastAbsenceDate: r.lastAbsenceDate ?? null,
+      })),
+      syncedAt: sections.length ? (sections[0].syncedAt ?? null) : null,
+      // So a caller can tell "this student has no section rows" from "the feed
+      // has not run", which are different facts.
+      sectionRows: sections.length,
+    };
   },
 });

@@ -519,6 +519,64 @@ export default defineSchema({
     .index("by_studentNumber", ["studentNumber"])
     .index("by_section", ["sectionId"]),
 
+  /**
+   * ABSENCE BROKEN DOWN BY PERIOD. One row per student per section per term.
+   *
+   * WHY IT EXISTS. psAttendance holds COUNT(DISTINCT ATT_DATE), so the app can
+   * say a child missed six days and cannot say WHICH periods -- and at this
+   * school that is the difference between truancy and a late bus. Measured
+   * 2026-09-21 across all 618 students: of 10,719 absent period-days, 3,753
+   * (35%) are Promise Time, the advisory block at each end of the day, against
+   * 5,519 (51%) for all six academic periods combined. And the average flagged
+   * day covers 3.89 of about 6 blocks -- roughly two thirds of a day, not a
+   * whole one. A student who misses Promise Time AM and attends every lesson
+   * reads on Attendance Watch exactly like a student who never came in.
+   *
+   * REPLACED WHOLESALE ON EVERY SYNC, like psGrades and psMissingWork: a
+   * student who drops a section must lose that section's row, and a merge
+   * cannot express a deletion.
+   *
+   * `attendanceRows` IS LOAD-BEARING AND MUST NOT BE DROPPED. It is the raw
+   * count of attendance records that joined to this section, and 1,631 of the
+   * 5,563 rows have ZERO. For those, "0 days absent" means NOBODY EVER TOOK
+   * ATTENDANCE IN THIS CLASS, which is a different fact from a child with
+   * perfect attendance in it, and the two must never render the same way. The
+   * source query carries the same warning for the same reason.
+   *
+   * `sectionExpression` IS POWERSCHOOL'S PERIOD SLOT, NOT THE SCHOOL'S PERIOD
+   * NAME. Measured: slot 1 and slot 10 are both Promise Time, slots 8 and 9
+   * are Power Up and ELD, slots 2 to 7 are the academic periods the school
+   * calls 1 to 6. The school also runs a block timetable -- Monday and
+   * Thursday take one set of periods, Tuesday and Friday another, Wednesday
+   * all of them -- so a slot number asserts nothing about which day a period
+   * met. `courseName` is what a screen should show a human, because it comes
+   * from the data and cannot be wrong; a period NAME would be an assertion
+   * this table cannot support.
+   *
+   * NOTHING HERE TOUCHES EARNED VALUE. Its own table, read only, no reference
+   * to students or any balance.
+   */
+  psAttendanceBySection: defineTable({
+    studentNumber: v.string(),
+    sectionId: v.optional(v.string()),
+    sectionNumber: v.optional(v.string()),
+    sectionExpression: v.optional(v.string()),
+    courseNumber: v.optional(v.string()),
+    courseName: v.optional(v.string()),
+    teacherId: v.optional(v.string()),
+    daysAbsent: v.optional(v.number()),
+    daysTardy: v.optional(v.number()),
+    /** Zero means no attendance ever joined to this section: unknown, not clean. */
+    attendanceRows: v.optional(v.number()),
+    /** A date string, kept as a string. Never parsed and re-serialized. */
+    lastAbsenceDate: v.optional(v.string()),
+    termFirstDay: v.optional(v.string()),
+    termLastDay: v.optional(v.string()),
+    syncedAt: v.string(),
+  })
+    .index("by_studentNumber", ["studentNumber"])
+    .index("by_section", ["sectionId"]),
+
   psMissingWork: defineTable({
     studentNumber: v.string(),
     assignmentSectionId: v.string(),
