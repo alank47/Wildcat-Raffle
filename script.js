@@ -4205,8 +4205,33 @@
                                 // server adds that to what it holds. A student
                                 // this tab never confirmed (no base) goes as
                                 // before, absolute values and all.
+                                // WHAT WAS SENT, CAPTURED BEFORE THE AWAIT.
+                                //
+                                // THE BUG THIS FIXES, measured on production
+                                // 2026-09-20. `rememberCashBase` runs after the
+                                // await and reads the student object as it is
+                                // THEN, not as it was when the delta was
+                                // computed. So an award made while a save is in
+                                // flight -- which at this school is a normal
+                                // Friday, forty staff and a save every few
+                                // seconds -- had its movement swallowed: the
+                                // delta sent was +100, the counter in memory
+                                // was +200 by the time the answer came back,
+                                // the base was pinned to +200, and the next
+                                // delta was therefore 0. The second award
+                                // existed as a ROW forever and never reached a
+                                // counter. 21 students on one school day,
+                                // $2,300.
+                                //
+                                // Pinning the base to the numbers that were
+                                // actually SENT leaves the difference intact,
+                                // so the next save carries it.
+                                const sentCounters = new Map();
                                 const studentsToSend = changedStudents.map(st => {
                                     const base = _studentCashBase.get(String(st.id));
+                                    // Snapshotted here, from primitives, so a
+                                    // later mutation of `st` cannot reach it.
+                                    sentCounters.set(String(st.id), cashCountersOf(st));
                                     return base ? Object.assign({}, st, { cashDelta: cashDeltaBetween(st, base) }) : st;
                                 });
                                 const result = await auth.convexMutation('appData:save', {
@@ -4260,9 +4285,21 @@
                                 // Recorded only once the server has answered.
                                 changedStudents.forEach(st =>
                                     _studentSaveFingerprint.set(String(st.id), JSON.stringify(st)));
-                                // The counters just sent are the new base: the
-                                // next delta is measured from here.
-                                changedStudents.forEach(rememberCashBase);
+                                // THE COUNTERS JUST SENT are the new base --
+                                // not the counters the student object holds
+                                // now, which is what this used to read.
+                                //
+                                // The difference is every award made during the
+                                // round trip. rememberCashBase(st) would pin
+                                // the base to the CURRENT values and erase that
+                                // movement from the next delta; taking the
+                                // snapshot captured before the await leaves it
+                                // to be sent.
+                                changedStudents.forEach(st => {
+                                    const sent = sentCounters.get(String(st.id));
+                                    if (sent) _studentCashBase.set(String(st.id), sent);
+                                    else rememberCashBase(st);
+                                });
                                 console.log(
                                     `✅ Convex: ${result.studentsChanged} student(s) of ${changedStudents.length} sent, ` +
                                     `${result.teachersChanged} staff changed` +

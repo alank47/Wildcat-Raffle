@@ -71,8 +71,14 @@ console.log("\nOnly what changed goes on the wire");
   // The second half was /convexMutation\('appData:save', \{\s*students: …/ and
   // broke on 2026-09-13 when a `clientVersion` field was added ahead of
   // `students`. The property is which LIST is sent, not which key is first.
+  // RE-POINTED 2026-09-20, not relaxed. studentsToSend now also snapshots the
+  // counters it is sending, so the base can be pinned to those rather than to
+  // whatever the student object holds after the await. The property asserted is
+  // unchanged: each changed student goes with its delta attached.
   check("and that, with each one's cash delta attached, is what appData:save receives",
-    /const studentsToSend = changedStudents\.map\(st => \{\s*const base = _studentCashBase\.get\(String\(st\.id\)\);\s*return base \? Object\.assign\(\{\}, st, \{ cashDelta: cashDeltaBetween\(st, base\) \}\) : st;/.test(save)
+    /const studentsToSend = changedStudents\.map\(st => \{/.test(save)
+    && /const base = _studentCashBase\.get\(String\(st\.id\)\);/.test(save)
+    && /return base \? Object\.assign\(\{\}, st, \{ cashDelta: cashDeltaBetween\(st, base\) \}\) : st;/.test(save)
     && /students: studentsToSend,/.test(save));
   // AND THE BUILD IS NAMED. A save that cannot say which build sent it is a
   // save the server cannot refuse, which is how a four-day-stale tab put
@@ -159,8 +165,13 @@ console.log("\nCash counters travel as deltas, so two tabs awarding the same chi
   // it -- not from the local array.
   check("the base is recorded from what the server returned at load",
     /data\.students\.forEach\(rememberCashBase\);[\s\S]{0,400}return \{\s*students: data\.students,/.test(code));
+  // RE-POINTED 2026-09-20. This pinned `changedStudents.forEach(rememberCashBase)`,
+  // which read the student object AFTER the await and so erased any award made
+  // during the round trip -- 21 students and $2,300 on 2026-09-18. The base is
+  // now pinned from the snapshot taken before the await. The property asserted
+  // is still the one that matters: it happens only once the server has answered.
   check("and again from what was sent, once the server answered",
-    /_studentSaveFingerprint\.set\(String\(st\.id\), JSON\.stringify\(st\)\)\);[\s\S]{0,200}changedStudents\.forEach\(rememberCashBase\);/.test(save));
+    /_studentSaveFingerprint\.set\(String\(st\.id\), JSON\.stringify\(st\)\)\);[\s\S]{0,600}const sent = sentCounters\.get\(String\(st\.id\)\);/.test(save));
   // ORDER IS THE WHOLE ASSERTION: the counters must be spread AFTER
   // ...localStudent so the server's values win. What follows them is not
   // pinned -- the cash history is taken from the server on the next line now
@@ -422,6 +433,63 @@ console.log("\nAn entry recovered from the outbox counts as minted here");
     /auditLog\.push\(entry\);[\s\S]{0,120}auditIdsMintedHere\.add\(id\);/.test(body));
   check("the gate it has to satisfy is still the one in saveData",
     /if \(tableUnread && !auditIdsMintedHere\.has\(id\)\) return false;/.test(save));
+}
+
+console.log("\nAn award made WHILE a save is in flight still reaches a counter");
+{
+  // MEASURED ON PRODUCTION 2026-09-20. 21 students, $2,300, in one school day.
+  //
+  // The counters move by a DELTA -- how much this tab has changed them since
+  // the value it last confirmed -- and the base for that delta was re-pinned
+  // after the await by reading the student object as it was THEN:
+  //
+  //     changedStudents.forEach(rememberCashBase);
+  //
+  // With forty staff and a save every few seconds, an award landing during
+  // the round trip is ordinary. Its movement was erased: the delta sent was
+  // +100, the counter in memory was +200 by the time the answer arrived, the
+  // base was pinned to +200, and the next delta was therefore 0. The award
+  // existed as a ROW forever and never reached a counter.
+  //
+  // The same structural fact failed the other way too, for 7 students on the
+  // same day: a save that lands while its response is lost leaves the base
+  // un-pinned, and the identical delta is sent again. A row is idempotent --
+  // keyed by id and unioned, so sending it twice is harmless. A delta is not.
+  // That half is NOT fixed here and is deliberately still open.
+  const FIELDS = ["wildcatCashBalance", "wildcatCashEarned", "wildcatCashSpent", "wildcatCashDeducted"];
+  const countersOf = (st) => { const o = {}; FIELDS.forEach((f) => { o[f] = Number(st && st[f]) || 0; }); return o; };
+  const deltaBetween = (now, base) => { const d = {}; FIELDS.forEach((f) => { d[f] = (Number(now && now[f]) || 0) - (Number(base && base[f]) || 0); }); return d; };
+
+  // One student, base confirmed at 0, one award of $100 pending.
+  const run = (pinFromSent) => {
+    const st = { id: "1", wildcatCashBalance: 100, wildcatCashEarned: 100, wildcatCashSpent: 0, wildcatCashDeducted: 0 };
+    let base = countersOf({ wildcatCashBalance: 0, wildcatCashEarned: 0, wildcatCashSpent: 0, wildcatCashDeducted: 0 });
+    const sent = [];
+    // --- save 1 begins: delta computed, snapshot taken
+    sent.push(deltaBetween(st, base));
+    const snapshot = countersOf(st);
+    // --- DURING the await, a teacher awards another $100
+    st.wildcatCashBalance += 100; st.wildcatCashEarned += 100;
+    // --- save 1 answers, and the base is re-pinned
+    base = pinFromSent ? snapshot : countersOf(st);
+    // --- save 2
+    sent.push(deltaBetween(st, base));
+    return sent.reduce((n, d) => n + d.wildcatCashBalance, 0);
+  };
+
+  check("pinning from the LIVE object loses the second award (the shipped bug)", run(false) === 100);
+  check("pinning from what was SENT carries both", run(true) === 200);
+
+  // And the shipped code must do the second one.
+  check("the counters sent are snapshotted before the await",
+    /const sentCounters = new Map\(\);/.test(code) &&
+    /sentCounters\.set\(String\(st\.id\), cashCountersOf\(st\)\);/.test(code));
+  check("and the base is pinned from that snapshot, not from the live object",
+    /const sent = sentCounters\.get\(String\(st\.id\)\);\s*\n\s*if \(sent\) _studentCashBase\.set\(String\(st\.id\), sent\);/.test(code));
+  check("the old unconditional rebase is gone",
+    !/changedStudents\.forEach\(rememberCashBase\);/.test(code));
+  check("a student with no snapshot still gets a base, rather than none",
+    /else rememberCashBase\(st\);/.test(code));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
