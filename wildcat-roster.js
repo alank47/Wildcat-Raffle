@@ -553,6 +553,132 @@
   }
 
   /**
+   * HOW MANY FULL DAYS HAS A STUDENT MISSED? Bounds, never a count, and the
+   * reason that is the honest answer rather than a cop-out.
+   *
+   * The per-section figures are MARGINALS: each says how many distinct dates a
+   * student was absent from that one section. Marginals cannot be intersected,
+   * so "how many days did they miss everything" has no exact answer from them.
+   * A student absent five times in Period 1 and five times in Period 3 might
+   * have missed both on five days or one of them on ten.
+   *
+   * TWO THINGS ARE RIGOROUS, though, and together they are most of what a
+   * person needs.
+   *
+   * FIRST, PROMISE TIME MEETS EVERY DAY. Both blocks are (A-E), both carry all
+   * 618 students, and both appear in all three of the school's day patterns --
+   * Monday and Thursday, Tuesday and Friday, and Wednesday. A full day absence
+   * must therefore include both, so the smaller of the two Promise Time counts
+   * is a HARD CEILING on full days. Its complement is just as solid: on
+   * absentDays minus that ceiling, the student sat through a block that meets
+   * every day, so those days were partial. Measured across the school on
+   * 2026-09-21: of 2,421 absent days, at most 1,275 can be full and at least
+   * 1,146 are provably partial.
+   *
+   * SECOND, THE TOTALS GIVE AN INDEPENDENT CEILING. A full day costs b
+   * period-absences and a partial day costs at least one, so with P
+   * period-absences over D absent days, P >= f*b + (D - f), which rearranges
+   * to f <= (P - D) / (b - 1). b is 6 on the four block days and more on
+   * Wednesday, and the SMALLEST b gives the largest and therefore safest
+   * ceiling, so 6 is the default. Neither bound dominates: over 431 students
+   * Promise Time was tighter 119 times, the totals 91 times, and they agreed
+   * 221 times, so both are computed and the tighter wins.
+   *
+   * SILENCE IS NOT PRESENCE. If attendance was never taken in a Promise Time
+   * block -- attendanceRows of 0, which 1,631 of 5,563 rows are -- its zero
+   * says nothing about the child, and using it would claim they attended a
+   * class nobody registered. Then there is no anchor and `anchored` is false:
+   * no bound is offered at all rather than a wrong one. 137 of 679 students
+   * are in that position.
+   *
+   * `sections` are what convex/attendanceList.ts studentPeriods returns:
+   * { sectionExpression, courseName, daysAbsent, daysTardy, attendanceRows }.
+   */
+  function absenceDayBounds(absentDays, sections, opts) {
+    var o = (opts && typeof opts === 'object') ? opts : {};
+    var blocks = (typeof o.blocksPerDay === 'number' && isFinite(o.blocksPerDay) && o.blocksPerDay > 1)
+      ? Math.round(o.blocksPerDay) : 6;
+    var D = (typeof absentDays === 'number' && isFinite(absentDays) && absentDays >= 0) ? absentDays : null;
+    var rows = sections || [];
+
+    var out = {
+      absentDays: D, blocksPerDay: blocks,
+      anchored: false, reason: null,
+      fullDayCeiling: null, partialDayFloor: null,
+      promiseCeiling: null, totalsCeiling: null, tighter: null,
+      periodDaysMissed: 0
+    };
+    if (D === null) { out.reason = 'No absence figure on file'; return out; }
+
+    var periodDays = 0;
+    rows.forEach(function (r) {
+      var v = r && typeof r.daysAbsent === 'number' && isFinite(r.daysAbsent) ? r.daysAbsent : 0;
+      if (v > 0) periodDays += v;
+    });
+    out.periodDaysMissed = periodDays;
+
+    if (D === 0) {
+      out.anchored = true;
+      out.fullDayCeiling = 0; out.partialDayFloor = 0;
+      return out;
+    }
+
+    // The two every-day anchors, identified through the rules module that
+    // already owns the slot-to-block mapping rather than by a second one here.
+    var am = null, pm = null;
+    rows.forEach(function (r) {
+      var cls = classifySection({ courseName: r && r.courseName, period: r && r.sectionExpression });
+      // attendanceRows of 0 is silence, not presence.
+      if (r && Number(r.attendanceRows) === 0) return;
+      var v = (r && typeof r.daysAbsent === 'number' && isFinite(r.daysAbsent) && r.daysAbsent >= 0)
+        ? r.daysAbsent : null;
+      if (v === null) return;
+      if (cls.kind === 'promise' && (am === null || v < am)) am = v;
+      if (cls.kind === 'promise-pm' && (pm === null || v < pm)) pm = v;
+    });
+
+    if (am === null || pm === null) {
+      out.reason = 'Attendance was not taken in Promise Time, which is the only block that meets every '
+        + 'day, so full days cannot be bounded for this student.';
+      return out;
+    }
+
+    out.anchored = true;
+    out.promiseCeiling = Math.min(am, pm);
+    out.totalsCeiling = Math.max(0, Math.floor((periodDays - D) / (blocks - 1)));
+    var ceiling = Math.min(out.promiseCeiling, out.totalsCeiling, D);
+    out.fullDayCeiling = ceiling;
+    out.partialDayFloor = Math.max(0, D - ceiling);
+    out.tighter = out.promiseCeiling < out.totalsCeiling ? 'promise'
+      : (out.totalsCeiling < out.promiseCeiling ? 'totals' : 'equal');
+    return out;
+  }
+
+  /**
+   * The sentence a person should read, built from the bounds above.
+   *
+   * It says AT MOST and AT LEAST, never a bare number, because a bare number
+   * would be a claim the data cannot support -- and this sentence is read out
+   * loud with the student in the room.
+   */
+  function absenceDaySentence(b) {
+    if (!b || b.anchored !== true) {
+      return (b && b.reason) || 'Full days cannot be worked out for this student.';
+    }
+    if (b.absentDays === 0) return 'No absences on record this term.';
+    if (b.fullDayCeiling === 0) {
+      return 'NONE of these ' + b.absentDays + ' absent days can be a full day: on every one of them '
+        + 'the student attended a block that meets every day.';
+    }
+    if (b.partialDayFloor === 0) {
+      return 'Up to all ' + b.absentDays + ' of these days could be full days out of school.';
+    }
+    return 'At most ' + b.fullDayCeiling + ' of these ' + b.absentDays + ' days were full days out of '
+      + 'school, and at least ' + b.partialDayFloor + ' were partial -- the student was in school for '
+      + 'part of the day.';
+  }
+
+  /**
    * Rank students by attendance, worst first.
    *
    * `rows` are { student, daysAbsent, daysTardy }. A student with no
@@ -652,6 +778,8 @@
     attendanceTier: attendanceTier,
     schoolDaysElapsed: schoolDaysElapsed,
     attendanceRanking: attendanceRanking,
+    absenceDayBounds: absenceDayBounds,
+    absenceDaySentence: absenceDaySentence,
     median: median,
     dailyGoal: dailyGoal,
     quietStudents: quietStudents,

@@ -118,17 +118,26 @@ const answer = (over) => ({
   // A single missed period per absent day is the case the whole feature is for.
   const out = renderDetail(answer({
     day: { daysAbsentYtd: 8, daysAbsentTerm: 8, daysTardyTerm: 0, syncedAt: "x" },
-    rows: [sec("1(A-E)", "Promise Time 6A", 8), sec("2(A-E)", "Math", 0)],
+    // BOTH Promise Times are needed to bound anything -- they are the only
+    // blocks that meet every day. Absent from AM on all 8, present for PM on
+    // all 8, so no day can be a full day.
+    rows: [sec("1(A-E)", "Promise Time 6A", 8), sec("10(A-E)", "Promise Time 6A", 0),
+           sec("2(A-E)", "Math", 0)],
   }), R);
-  check("a one-period-a-day pattern is called out as such", /SINGLE PERIOD/.test(out), out.slice(0, 300));
-  check("and it says the student was in school for most of them", /in\s*school for most of them/.test(out));
+  // The bound replaced a heuristic sentence that guessed from the
+  // periods-per-day average. NONE-can-be-a-full-day is provable; "almost all
+  // are a single period" was not.
+  check("a one-period-a-day pattern is stated as a PROOF, not an impression",
+    /NONE of these 8 absent days can be a full day/.test(out), out.slice(0, 400));
+  check("and the ceiling figure reads zero", /&le;0<\/span><span class="wc-ad-l">full days at most/.test(out));
 }
 {
   const out = renderDetail(answer({
     day: { daysAbsentYtd: 10, daysAbsentTerm: 10, daysTardyTerm: 0, syncedAt: "x" },
-    rows: [1, 2, 3, 4, 5, 6].map((i) => sec(`${i}(A-E)`, "C" + i, 10)),
+    rows: [1, 2, 3, 4, 5, 6, 10].map((i) => sec(`${i}(A-E)`, "C" + i, 10)),
   }), R);
-  check("a whole-day pattern is called out as whole days", /WHOLE DAYS/.test(out));
+  check("a whole-day pattern says all of them could be full days",
+    /Up to all 10 of these days could be full days/.test(out), out.slice(0, 400));
 }
 {
   // NEVER TAKEN IS NOT ZERO. 1,631 of 5,563 measured rows are in this state.
@@ -138,6 +147,19 @@ const answer = (over) => ({
   check("a section nobody took attendance in does NOT read as 0 absences",
     /not taken/.test(out) && /never taken in this class/.test(out));
   check("and it is marked so it cannot be skimmed as clean", /wc-ad-unknown/.test(out));
+}
+{
+  // SILENCE IS NOT PRESENCE. With no Promise Time attendance taken there is no
+  // every-day anchor, so no bound is offered at all rather than a wrong one.
+  // 137 of 679 students are in this position.
+  const out = renderDetail(answer({
+    rows: [sec("1(A-E)", "Promise Time", 0, { attendanceRows: 0 }),
+           sec("2(A-E)", "Math", 6)],
+  }), R);
+  check("no Promise Time attendance means NO full-day bound is offered",
+    !/full days at most/.test(out), "a bound without an anchor would be invented");
+  check("and it says why instead of going quiet",
+    /Attendance was not taken in Promise Time/.test(out), out.slice(0, 500));
 }
 {
   const out = renderDetail({ allowed: false, reason: "Not your access level." });
@@ -255,6 +277,71 @@ check("the writer exists and replaces wholesale",
   // sync short and look complete. 5,563 rows is 56 pages today.
   check("page exhaustion is reported rather than silent",
     /attendanceBySectionPagedOut: attendanceBySectionPages >= 200/.test(actionSrc));
+}
+
+
+console.log("\nthe full-day bound, which is a bound and not a count");
+
+// The per-section figures are MARGINALS and cannot be intersected, so an exact
+// full-day count does not exist. What does exist: Promise Time meets every day
+// (both blocks (A-E), both 618 students, both in all three day patterns), so a
+// full day must include both -- the smaller count is a hard ceiling. And the
+// totals give an independent one: P >= f*b + (D-f) gives f <= (P-D)/(b-1).
+{
+  const s2 = (e, a, rows) => ({ sectionExpression: e, courseName: e.startsWith("1(") || e.startsWith("10(") ? "Promise Time 6A" : "Class",
+                                daysAbsent: a, daysTardy: 0, attendanceRows: rows === undefined ? a + 3 : rows });
+  const B = R.absenceDayBounds, S = R.absenceDaySentence;
+  check("the rule is exported", typeof B === "function" && typeof S === "function");
+
+  // The school's real highest-absence student.
+  const worst = [["1(A-E)", 23], ["2(A-E)", 14], ["9(A-E)", 14], ["10(A-E)", 14], ["3(A-E)", 13],
+                 ["5(A-E)", 9], ["7(A-E)", 9], ["4(A-E)", 8], ["6(A-E)", 7]].map(([e, a]) => s2(e, a));
+  const b = B(23, worst, {});
+  check("Promise Time anchors the ceiling for the real worst student", b.promiseCeiling === 14);
+  check("the totals give an independent, looser ceiling here", b.totalsCeiling === 17);
+  check("the TIGHTER of the two wins", b.fullDayCeiling === 14 && b.tighter === "promise");
+  check("so at least 9 of their 23 absent days are provably partial", b.partialDayFloor === 9);
+  check("and the sentence says at most and at least, never a bare number",
+    /At most 14 .* at least 9 were partial/.test(S(b)) && !/^14/.test(S(b)));
+
+  // A pure late arriver: the case the whole feature exists for.
+  const late = B(8, [s2("1(A-E)", 8), s2("10(A-E)", 0), s2("2(A-E)", 0)], {});
+  check("missing only the block that meets every day gives a ceiling of ZERO", late.fullDayCeiling === 0);
+  check("every one of those days is provably partial", late.partialDayFloor === 8);
+  check("and the sentence says NONE can be a full day", /NONE of these 8/.test(S(late)));
+
+  // Genuinely out all day.
+  const gone = B(5, [1, 2, 3, 4, 6, 10].map((i) => s2(i + "(A-E)", 5)), {});
+  check("missing everything on the same days leaves the ceiling at the day count", gone.fullDayCeiling === 5);
+  check("and nothing is provably partial", gone.partialDayFloor === 0);
+  check("the sentence does not overclaim: 'could be', not 'were'", /could be full days/.test(S(gone)));
+
+  // SILENCE IS NOT PRESENCE.
+  const blind = B(6, [s2("1(A-E)", 0, 0), s2("2(A-E)", 6)], {});
+  check("a Promise Time with no attendance taken cannot anchor a bound", blind.anchored === false);
+  check("no ceiling is invented", blind.fullDayCeiling === null && blind.partialDayFloor === null);
+  check("and the refusal names the reason", /only block that meets every day/.test(S(blind)));
+
+  // Degenerate inputs must refuse rather than produce a number.
+  check("no absence figure at all refuses", B(null, worst, {}).anchored === false);
+  check("a negative absence figure refuses", B(-3, worst, {}).anchored === false);
+  check("zero absences is a real, bounded answer", (() => {
+    const z = B(0, [s2("1(A-E)", 0), s2("10(A-E)", 0)], {});
+    return z.anchored === true && z.fullDayCeiling === 0 && z.partialDayFloor === 0;
+  })());
+  check("no sections at all refuses rather than guessing", B(4, [], {}).anchored === false);
+  // The ceiling can never exceed the number of absent days.
+  check("the ceiling is capped by the absent-day count",
+    B(3, [s2("1(A-E)", 9), s2("10(A-E)", 9), s2("2(A-E)", 9)], {}).fullDayCeiling === 3);
+  check("blocksPerDay is an argument, not a hidden constant",
+    B(10, [s2("1(A-E)", 10), s2("10(A-E)", 10), s2("2(A-E)", 10)], { blocksPerDay: 3 }).totalsCeiling
+      !== B(10, [s2("1(A-E)", 10), s2("10(A-E)", 10), s2("2(A-E)", 10)], { blocksPerDay: 6 }).totalsCeiling);
+  check("a nonsense blocksPerDay falls back rather than dividing by zero",
+    Number.isFinite(B(5, [s2("1(A-E)", 5), s2("10(A-E)", 5)], { blocksPerDay: 1 }).totalsCeiling));
+  check("the rule reads no global state",
+    !/\briskSettings\b|\bstudents\b/.test(
+      js("./wildcat-roster.js").slice(js("./wildcat-roster.js").indexOf("function absenceDayBounds"),
+        js("./wildcat-roster.js").indexOf("function absenceDaySentence"))));
 }
 
 console.log(`\nper-period attendance: ${pass} passed, ${fail} failed`);

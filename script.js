@@ -30452,6 +30452,16 @@
             const perDay = (absentDays && absentDays > 0 && known)
                 ? Math.round((periodDays / absentDays) * 10) / 10 : null;
 
+            // HOW MANY WERE FULL DAYS -- as a bound, because the per-section
+            // figures are marginals and cannot be intersected. Promise Time
+            // meets every day, so it anchors a hard ceiling; the totals give a
+            // second, independent one. WildcatRoster owns the derivation.
+            const bounds = (R && typeof R.absenceDayBounds === 'function')
+                ? R.absenceDayBounds(
+                    (typeof day.daysAbsentTerm === 'number') ? day.daysAbsentTerm : absentDays,
+                    rows, {})
+                : null;
+
             const head = [
                 '<div class="wc-ad-figs">',
                 '<div class="wc-ad-fig"><span class="wc-ad-n">' +
@@ -30464,23 +30474,23 @@
                 perDay === null ? ''
                     : '<div class="wc-ad-fig"><span class="wc-ad-n">' + perDay +
                       '</span><span class="wc-ad-l">periods per absent day</span></div>',
+                // AT MOST, never a bare number. A bare count here would be a
+                // claim the data cannot support, on a screen read out loud
+                // with the student in the room.
+                (bounds && bounds.anchored && bounds.fullDayCeiling !== null)
+                    ? '<div class="wc-ad-fig wc-ad-full"><span class="wc-ad-n">&le;' + bounds.fullDayCeiling +
+                      '</span><span class="wc-ad-l">full days at most</span></div>'
+                    : '',
                 '</div>',
             ].join('');
 
-            // WHAT THE NUMBERS MEAN, said rather than left to be inferred. A
-            // typical day is about six blocks, so a figure near one is a child
-            // missing a single period and being counted for a whole day.
-            let reading = '';
-            if (perDay !== null) {
-                reading = perDay <= 1.6
-                    ? 'Almost all of these absences are a SINGLE PERIOD. A day counts as absent if any period '
-                      + 'is missed, so this reads as ' + absentDays + ' days absent while the student was in '
-                      + 'school for most of them.'
-                    : perDay >= 4.5
-                        ? 'These are mostly WHOLE DAYS out of school, across about six blocks a day.'
-                        : 'A mix of whole days and partial ones: about ' + perDay + ' periods of roughly six '
-                          + 'blocks on a typical absent day.';
-            }
+            // WHAT THE NUMBERS MEAN, said rather than left to be inferred --
+            // and said as a bound. This replaced a heuristic sentence that
+            // guessed from the periods-per-day average; the bound is both
+            // stronger and provable, which matters on a screen read aloud with
+            // the student present.
+            const reading = (bounds && typeof R.absenceDaySentence === 'function')
+                ? R.absenceDaySentence(bounds) : '';
 
             if (!rows.length) {
                 return head + '<p class="wc-ad-note">No per-period attendance has been synced for this student yet. '

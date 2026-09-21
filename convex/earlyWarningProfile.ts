@@ -924,3 +924,119 @@ export const worstStudentPeriods = internalQuery({
     };
   },
 });
+
+/**
+ * HOW MANY FULL DAYS HAS A STUDENT MISSED? Measured school-wide, as BOUNDS,
+ * because an exact count is not derivable and saying so is the point.
+ *
+ * WHAT IS DERIVABLE, AND WHY. psAttendanceBySection gives, per section, the
+ * number of distinct dates a student was absent from THAT section. Those are
+ * marginals: they cannot be intersected, so "how many days did they miss
+ * everything" has no exact answer from them. But two blocks meet EVERY day --
+ * Promise Time AM (slot 1) and Promise Time PM (slot 10), both (A-E), both
+ * carrying all 618 students, and both present in all three of the school's day
+ * patterns. A full day absence must include both. Therefore:
+ *
+ *   fullDays <= min(absencesInPromiseAM, absencesInPromisePM)
+ *
+ * and that is a hard ceiling, not an estimate. The complement is just as
+ * useful and just as rigorous: on at least
+ *
+ *   absentDays - min(absencesInPromiseAM, absencesInPromisePM)
+ *
+ * of their absent days the student was in school for part of the day, because
+ * they sat through a block that meets every day.
+ *
+ * A SECOND, INDEPENDENT CEILING from the totals. If a day is full it costs b
+ * period-absences and a partial day costs at least one, so with P total
+ * period-absences over D absent days, P >= f*b + (D-f), giving
+ * f <= (P-D)/(b-1). b is 6 on the school's four block days and more on
+ * Wednesday, and the SMALLEST b gives the largest and therefore safest
+ * ceiling, so b=6 is used. Reported so the two can be compared; the tighter
+ * one wins.
+ *
+ * A SECTION WHERE ATTENDANCE WAS NEVER TAKEN CANNOT ANCHOR ANYTHING. If
+ * attendanceRows is 0 for a Promise Time block, its zero is silence rather
+ * than presence, and using it would claim a child attended a class nobody
+ * registered. Those students are counted separately and given no bound.
+ *
+ * Histograms only; no student is named.
+ */
+const PROMISE_AM = "1(A-E)";
+const PROMISE_PM = "10(A-E)";
+const BLOCKS_PER_DAY = 6;
+
+export const fullDayBounds = internalQuery({
+  args: { after: v.optional(v.string()), pageSize: v.optional(v.number()) },
+  handler: async (ctx, { after, pageSize }) => {
+    const take = Math.min(Math.max(1, Number(pageSize) || 150), 200);
+    const anchors = await ctx.db
+      .query("psAttendance")
+      .withIndex("by_studentNumber", (q) => q.gt("studentNumber", after || ""))
+      .take(take + 1);
+    const done = anchors.length <= take;
+    const page = done ? anchors : anchors.slice(0, take);
+
+    const ceilHist: Record<string, number> = {};
+    const partialHist: Record<string, number> = {};
+    const shareHist: Record<string, number> = {};
+    let students = 0, withAbsence = 0, noAnchor = 0, agreed = 0, totalsTighter = 0, promiseTighter = 0;
+    let sumAbsentDays = 0, sumCeiling = 0, sumPartialFloor = 0;
+
+    for (const a of page) {
+      students++;
+      const sn = String(a.studentNumber || "");
+      if (!sn) continue;
+      const D = typeof a.daysAbsentTerm === "number" && a.daysAbsentTerm >= 0 ? a.daysAbsentTerm : null;
+      if (D === null || D === 0) continue;
+      withAbsence++;
+
+      const sections = await ctx.db
+        .query("psAttendanceBySection")
+        .withIndex("by_studentNumber", (q) => q.eq("studentNumber", sn))
+        .take(40);
+
+      const anchorOf = (expr: string) => {
+        const r = sections.find((x) => String(x.sectionExpression || "") === expr);
+        if (!r) return null;
+        // Silence is not presence.
+        if (Number(r.attendanceRows) === 0) return null;
+        const v = Number(r.daysAbsent);
+        return Number.isFinite(v) && v >= 0 ? v : null;
+      };
+      const am = anchorOf(PROMISE_AM), pm = anchorOf(PROMISE_PM);
+      if (am === null || pm === null) { noAnchor++; continue; }
+
+      const promiseCeiling = Math.min(am, pm);
+      const P = sections.reduce((n, r) => {
+        const v = Number(r.daysAbsent);
+        return n + (Number.isFinite(v) && v > 0 ? v : 0);
+      }, 0);
+      const totalsCeiling = Math.max(0, Math.floor((P - D) / (BLOCKS_PER_DAY - 1)));
+      const ceiling = Math.min(promiseCeiling, totalsCeiling, D);
+      if (totalsCeiling < promiseCeiling) totalsTighter++;
+      else if (promiseCeiling < totalsCeiling) promiseTighter++;
+      else agreed++;
+
+      const partialFloor = Math.max(0, D - ceiling);
+      sumAbsentDays += D; sumCeiling += ceiling; sumPartialFloor += partialFloor;
+
+      const b = (x: number) => (x >= 20 ? "20+" : x >= 10 ? "10-19" : String(x));
+      ceilHist[b(ceiling)] = (ceilHist[b(ceiling)] || 0) + 1;
+      partialHist[b(partialFloor)] = (partialHist[b(partialFloor)] || 0) + 1;
+      // What share of a student's absent days are provably partial.
+      const share = Math.round((partialFloor / D) * 4) / 4;
+      shareHist[String(share)] = (shareHist[String(share)] || 0) + 1;
+    }
+
+    return {
+      students, withAbsence, noPromiseAnchor: noAnchor, done,
+      last: page.length ? String(page[page.length - 1].studentNumber || "") : (after || ""),
+      sumAbsentDays, sumFullDayCeiling: sumCeiling, sumPartialDayFloor: sumPartialFloor,
+      fullDayCeilingHistogram: ceilHist,
+      partialDayFloorHistogram: partialHist,
+      provablyPartialShareHistogram: shareHist,
+      whichCeilingWasTighter: { promiseTime: promiseTighter, totals: totalsTighter, equal: agreed },
+    };
+  },
+});

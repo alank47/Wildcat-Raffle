@@ -9631,3 +9631,7 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 .wc-ad-unknown .wc-ad-abs { font-size: 13px; font-weight: 600; color: var(--wc-gray-text, #9ca3af); }
 .wc-ad-unknown .wc-ad-per { color: var(--wc-gray-text, #6b7280); }
 .wc-ad-note { margin: 12px 0 0; font-size: 12px; line-height: 1.5; color: var(--wc-gray-text, #6b7280); }
+/* The full-day ceiling reads as the headline it is: it is the number a person
+   acts on, and it is the one that used to be invisible. */
+.wc-ad-fig.wc-ad-full { border-color: var(--wc-blue, #2563eb); background: var(--wc-blue-mist, #eff6ff); }
+.wc-ad-fig.wc-ad-full .wc-ad-n { color: var(--wc-blue, #2563eb); }
