@@ -577,6 +577,60 @@ export default defineSchema({
     .index("by_studentNumber", ["studentNumber"])
     .index("by_section", ["sectionId"]),
 
+  /**
+   * ONE ROW PER STUDENT PER ABSENT DATE, with the day broken into blocks.
+   *
+   * WHY IT EXISTS. attendance_summary counts a date as absent if ANY period is
+   * missed, so "6 days absent" cannot be told from "6 mornings they arrived
+   * late". Measured: roughly 47% of absent days at this school are provably
+   * partial, and 35% of all absent period-records are Promise Time. This table
+   * holds the COUNTS that let a date be classified, and
+   * WildcatRoster.classifyAbsenceDay turns them into full / partial / not an
+   * absence -- the threshold living in the browser, per the standing split.
+   *
+   * ONLY DATES WITH AT LEAST ONE ABSENT BLOCK ARE STORED. A day nobody missed
+   * anything on is not a fact worth 618 rows a day; the absent set is about
+   * 2,400 rows a term and is what every question here is about.
+   *
+   * `blocksThatDay` IS PER STUDENT, not per school. Read from the data rather
+   * than a transcribed timetable: the blocks that carried any attendance
+   * school-wide on that date, intersected with the blocks this student is
+   * enrolled in. Verified 2026-09-21 -- Mon 9/14 and Thu 9/17 carried period
+   * slots 1, 2, 4, 6, 8, 9, 10; Tue 9/15 and Fri 9/18 carried 1, 3, 5, 7, 8,
+   * 9, 10; Wed 9/16 carried all ten. That is the owner's block timetable
+   * exactly, derived rather than assumed.
+   *
+   * `unrecordedBlocks` COUNTS AS PRESENT, by the owner's decision of
+   * 2026-09-21, taken knowing the alternative: PowerSchool writes a row only
+   * for exceptions, so no record means either present or nobody took it.
+   * Assuming present UNDERSTATES absence, which is the safe direction for a
+   * claim about a child. The count is stored anyway so the gap stays visible
+   * and classes where attendance is not being taken can still be found.
+   *
+   * `presentBlocks` COUNTS EXPLICIT PRESENT-CODED RECORDS ONLY. It is what
+   * separates a genuine partial day from the misrecord case the owner
+   * described -- absent for everything except one period marked present --
+   * which reads as a full day and carries a flag.
+   */
+  psAttendanceDays: defineTable({
+    studentNumber: v.string(),
+    /** "YYYY-MM-DD", exactly as ATTENDANCE.ATT_DATE returns it. A string, never parsed. */
+    date: v.string(),
+    /** This student's blocks that actually ran on this date. */
+    blocksThatDay: v.number(),
+    absentBlocks: v.number(),
+    /** Explicit present-coded records only, not the absence of a record. */
+    presentBlocks: v.number(),
+    /** No record at all. Counted as present for the verdict; kept so the gap shows. */
+    unrecordedBlocks: v.number(),
+    /** The period slots missed, e.g. ["1(A-E)","10(A-E)"], so a screen can name them. */
+    absentSlots: v.optional(v.array(v.string())),
+    syncedAt: v.string(),
+  })
+    .index("by_studentNumber", ["studentNumber"])
+    .index("by_student_date", ["studentNumber", "date"])
+    .index("by_date", ["date"]),
+
   psMissingWork: defineTable({
     studentNumber: v.string(),
     assignmentSectionId: v.string(),

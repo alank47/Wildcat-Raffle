@@ -1040,3 +1040,70 @@ export const fullDayBounds = internalQuery({
     };
   },
 });
+
+/**
+ * THE ANSWER TO THE OWNER'S QUESTION, tallied school-wide: how many absent
+ * days were FULL days, how many PARTIAL, and how much of that rests on the
+ * decision to read an unrecorded block as present.
+ *
+ * Applies the same rule the browser applies -- full when every block that ran
+ * was missed; a flagged full day when the only exception is one explicit
+ * present mark, per the owner's reasoning that one present among a day of
+ * absences is more likely a misrecord; partial otherwise.
+ *
+ * Histograms and counts only; no student is named.
+ */
+export const dayKindTally = internalQuery({
+  args: { misrecordAt: v.optional(v.number()) },
+  handler: async (ctx, { misrecordAt }) => {
+    const bar = Math.max(0, Math.round(Number(misrecordAt) || 1));
+    const rows = await ctx.db.query("psAttendanceDays").take(4000);
+    let full = 0, flagged = 0, partial = 0, noBlocks = 0, restingOnAssumption = 0;
+    const perStudentFull: Record<string, number> = {};
+    const fullByStudent = new Map<string, number>();
+    const partialByStudent = new Map<string, number>();
+    const byDate: Record<string, { full: number; partial: number }> = {};
+    const slotTally: Record<string, number> = {};
+
+    for (const r of rows) {
+      const blocks = Number(r.blocksThatDay) || 0;
+      const absent = Number(r.absentBlocks) || 0;
+      const present = Number(r.presentBlocks) || 0;
+      const unrec = Number(r.unrecordedBlocks) || 0;
+      const sn = String(r.studentNumber || "");
+      const date = String(r.date || "");
+      if (!byDate[date]) byDate[date] = { full: 0, partial: 0 };
+      for (const s of (r.absentSlots || [])) slotTally[String(s)] = (slotTally[String(s)] || 0) + 1;
+
+      if (blocks === 0) { noBlocks++; continue; }
+      const notAbsent = blocks - absent;
+      let isFull = absent >= blocks;
+      if (!isFull && present > 0 && present <= bar && notAbsent <= bar) { isFull = true; flagged++; }
+      if (isFull) {
+        full++; byDate[date].full++;
+        fullByStudent.set(sn, (fullByStudent.get(sn) || 0) + 1);
+      } else {
+        partial++; byDate[date].partial++;
+        partialByStudent.set(sn, (partialByStudent.get(sn) || 0) + 1);
+        if (present === 0 && unrec > 0) restingOnAssumption++;
+      }
+    }
+    for (const [, n] of fullByStudent) {
+      const b = n >= 10 ? "10+" : String(n);
+      perStudentFull[b] = (perStudentFull[b] || 0) + 1;
+    }
+    let onlyPartial = 0;
+    for (const [sn, n] of partialByStudent) if (n > 0 && !fullByStudent.has(sn)) onlyPartial++;
+
+    return {
+      absentDayRows: rows.length, misrecordAt: bar,
+      fullDays: full, flaggedAsMisrecord: flagged, partialDays: partial, daysWithNoBlocks: noBlocks,
+      partialDaysRestingOnAssumedPresent: restingOnAssumption,
+      studentsWithAnyFullDay: fullByStudent.size,
+      studentsWithPartialDaysOnly: onlyPartial,
+      fullDaysPerStudent: perStudentFull,
+      absentBlocksBySlot: slotTally,
+      byDate,
+    };
+  },
+});

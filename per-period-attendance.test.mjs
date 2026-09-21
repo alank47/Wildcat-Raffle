@@ -344,5 +344,182 @@ console.log("\nthe full-day bound, which is a bound and not a count");
         js("./wildcat-roster.js").indexOf("function absenceDaySentence"))));
 }
 
+
+console.log("\nthe per-date verdict: full, partial, or not an absence");
+
+// The owner's rule, 2026-09-21: look at a date, count the blocks that ran, and
+// say what kind of day it was. Two decisions of theirs are encoded and both
+// are pinned here, because a fix with no test is a fix that comes back.
+//   1. One stray present mark among a day of absences reads as a FULL day and
+//      is FLAGGED -- more likely a misrecord than a child attending one class.
+//   2. A block nobody recorded counts as PRESENT, which understates absence.
+{
+  const C = (o, s) => R.classifyAbsenceDay(o, s || {});
+  const day = (o) => ({ date: "2026-09-14", blocksThatDay: 7, absentBlocks: 0,
+                        presentBlocks: 0, unrecordedBlocks: 0, ...o });
+  check("the rule and the tally are exported",
+    typeof R.classifyAbsenceDay === "function" && typeof R.absenceDayTally === "function");
+
+  check("every block missed is a FULL day",
+    C(day({ absentBlocks: 7 })).kind.key === "full");
+  check("and it is not flagged, because nothing was overridden",
+    C(day({ absentBlocks: 7 })).flagged === false);
+  check("nothing missed is NOT AN ABSENCE",
+    C(day({ absentBlocks: 0, unrecordedBlocks: 7 })).kind.key === "none");
+  check("some missed is a PARTIAL day",
+    C(day({ absentBlocks: 3, presentBlocks: 4 })).kind.key === "partial");
+
+  // DECISION 1, the owner's misrecord case, in their own words: "marked
+  // present for Period 5 but absent for the rest of the periods".
+  const mis = C(day({ absentBlocks: 6, presentBlocks: 1 }));
+  check("absent for all but one PRESENT-MARKED block is a FULL day", mis.kind.key === "full");
+  check("and it is FLAGGED rather than silently overridden", mis.flagged === true);
+  check("and the reason names the judgement", /more likely a misrecord/.test(mis.reason));
+  check("two present marks is a genuine PARTIAL, not a misrecord",
+    C(day({ absentBlocks: 5, presentBlocks: 2 })).kind.key === "partial");
+  check("the misrecord threshold is a setting, not a constant",
+    C(day({ absentBlocks: 5, presentBlocks: 2 }), { misrecordAt: 2 }).kind.key === "full"
+    && C(day({ absentBlocks: 6, presentBlocks: 1 }), { misrecordAt: 0 }).kind.key === "partial");
+
+  // DECISION 2: unrecorded reads as present, and the day says so.
+  const un = C(day({ absentBlocks: 6, unrecordedBlocks: 1 }));
+  check("absent for all but one UNRECORDED block is a PARTIAL day", un.kind.key === "partial");
+  check("and it is NOT flagged, because nothing was marked present", un.flagged === false);
+  check("and it says the unrecorded block is being counted as present",
+    /no attendance recorded and are counted as present/.test(un.reason), un.reason);
+
+  // A date on which none of this student's blocks ran is not a school day for
+  // them and must not be ranked either way.
+  const nb = C(day({ blocksThatDay: 0, absentBlocks: 0 }));
+  check("a date with no blocks for this student is neither full nor partial", nb.kind.key === "unknown");
+  check("unreadable counts refuse rather than guessing",
+    C(day({ blocksThatDay: null, absentBlocks: null })).kind === null);
+  check("a negative count refuses", C(day({ absentBlocks: -2 })).kind === null);
+  check("more absent than blocks is still just a full day, never over 100%",
+    C(day({ blocksThatDay: 5, absentBlocks: 9 })).kind.key === "full");
+
+  // The tally, which is what the screen shows.
+  const t = R.absenceDayTally([
+    day({ date: "2026-09-14", absentBlocks: 7 }),
+    day({ date: "2026-09-15", absentBlocks: 6, presentBlocks: 1 }),
+    day({ date: "2026-09-16", blocksThatDay: 10, absentBlocks: 1, unrecordedBlocks: 9 }),
+    day({ date: "2026-09-17", absentBlocks: 0, unrecordedBlocks: 7 }),
+  ], {});
+  check("the tally counts full, partial and not-an-absence separately",
+    t.full === 2 && t.partial === 1 && t.none === 1, `${t.full}/${t.partial}/${t.none}`);
+  check("absentDays is full plus partial, excluding non-absences", t.absentDays === 3);
+  check("the flagged day is counted", t.flagged === 1);
+  check("and so is how much rests on the assumed-present decision",
+    t.restingOnAssumedPresent === 1, String(t.restingOnAssumedPresent));
+  check("full days sort before partial ones", t.dates[0].kind.key === "full" && t.dates[2].kind.key === "partial");
+  check("ties break on date, so the list is stable between renders",
+    t.dates[0].date === "2026-09-15" && t.dates[1].date === "2026-09-14");
+  check("an empty list tallies to zero rather than throwing",
+    R.absenceDayTally([], {}).absentDays === 0);
+  check("the rule reads no global state",
+    !/\bstudents\b|\briskSettings\b/.test(
+      js("./wildcat-roster.js").slice(js("./wildcat-roster.js").indexOf("function classifyAbsenceDay"),
+        js("./wildcat-roster.js").indexOf("function absenceDayTally"))));
+}
+
+console.log("\nthe per-date picture, end to end through the real renderer");
+
+// renderAttendanceDetail is a pure function of (server answer, rules module),
+// so these run it directly rather than through the DOM harness above.
+{
+  const secRow = (e, a) => ({ sectionExpression: e, courseName: /^(1|10)\(/.test(e) ? "Promise Time 6A" : "Class",
+                              sectionNumber: "1", daysAbsent: a, daysTardy: 0,
+                              attendanceRows: a + 3, lastAbsenceDate: "2026-09-18" });
+  const withDays = {
+    allowed: true, reason: null, studentNumber: "1001",
+    day: { daysAbsentYtd: 3, daysAbsentTerm: 3, daysTardyTerm: 0, syncedAt: "2026-09-21T13:00:00.000Z" },
+    rows: [secRow("1(A-E)", 3), secRow("10(A-E)", 2), secRow("2(A-E)", 1)],
+    sectionRows: 3, daysTruncated: false,
+    days: [
+      { date: "2026-09-14", blocksThatDay: 7, absentBlocks: 7, presentBlocks: 0, unrecordedBlocks: 0,
+        absentSlots: ["1(A-E)", "2(A-E)", "4(A-E)", "6(A-E)", "8(A-E)", "9(A-E)", "10(A-E)"] },
+      { date: "2026-09-15", blocksThatDay: 7, absentBlocks: 6, presentBlocks: 1, unrecordedBlocks: 0,
+        absentSlots: ["1(A-E)", "3(A-E)", "5(A-E)", "7(A-E)", "8(A-E)", "10(A-E)"] },
+      { date: "2026-09-16", blocksThatDay: 10, absentBlocks: 1, presentBlocks: 0, unrecordedBlocks: 9,
+        absentSlots: ["1(A-E)"] },
+    ],
+  };
+  let threw = null, out = "";
+  try { out = renderDetail(withDays, R); } catch (e) { threw = e; }
+  check("the view renders per-date rows without throwing", threw === null, threw && (threw.message || String(threw)));
+  if (!threw) {
+    // Plain string matches: a closing tag inside a regex literal needs every
+    // slash escaped, and missing one silently terminates the pattern.
+    check("the EXACT full-day count replaces the bound",
+      out.includes('>2</span><span class="wc-ad-l">full days<'), out.slice(0, 600));
+    check("and the partial count sits beside it",
+      out.includes('>1</span><span class="wc-ad-l">partial days<'));
+    check("no 'at most' bound survives once the dates are known",
+      !out.includes("full days at most") && !out.includes("&le;"));
+    check("a Day by day section is rendered", out.includes("Day by day"));
+    check("each date is named", out.includes("2026-09-14") && out.includes("2026-09-16"));
+    check("the verdict is written on the date, in words",
+      out.includes("Full day absent") && out.includes("Partial day"));
+    check("the flagged misrecord day carries its marker", out.includes("wc-ad-flagged"));
+    check("the missed periods are named by their spoken names, not raw slots",
+      out.includes("Promise Time (AM)"));
+    check("the sentence states both counts",
+      /2 of these 3 absent days were full days/.test(out), out.slice(0, 900));
+    check("and names the flagged day and the assumption it rests on",
+      /reads as a misrecord/.test(out) && /counted as present/.test(out));
+    check("a date nobody missed anything on is not listed as a day",
+      !out.includes("Not an absence"));
+  }
+  // No per-date rows yet: the bound must still be there as the fallback.
+  const noDays = { ...withDays, days: [] };
+  let t2 = null, out2 = "";
+  try { out2 = renderDetail(noDays, R); } catch (e) { t2 = e; }
+  check("with no per-date rows it falls back to the bound",
+    t2 === null && out2.includes("full days at most"), t2 ? String(t2) : out2.slice(0, 300));
+  check("and the bound's sentence returns with it",
+    out2.includes("At most") || out2.includes("NONE of these"));
+}
+
+console.log("\nthe per-date server side");
+
+{
+  const schema = js("./convex/schema.ts");
+  const stats = js("./convex/sisStats.ts");
+  const days = js("./convex/attendanceDays.ts");
+  const crons = js("./convex/crons.ts");
+  check("psAttendanceDays is declared with a per-student index",
+    /psAttendanceDays: defineTable\(/.test(schema)
+    && /\.index\("by_student_date", \["studentNumber", "date"\]\)/.test(schema));
+  check("the writer replaces wholesale and pages its clear",
+    /export const replaceAttendanceDays = internalMutation\(/.test(stats)
+    && /\.take\(2000\)/.test(stats.slice(stats.indexOf("replaceAttendanceDays"))));
+  check("the build reads which codes mean absent rather than assuming",
+    /presence_status_cd\) === "Absent"/.test(days),
+    "Ditching is coded Present and Suspended Absent, so a code letter cannot be guessed");
+  check("which blocks ran is DERIVED from the data, not transcribed",
+    /slotsRan/.test(days) && !/Monday|Tuesday|weekday/i.test(
+      days.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")));
+  check("cc is scoped to the year's terms, after an unscoped read hit 40,000 rows",
+    /termid=ge=\$\{termBase\}/.test(days));
+  // The refusal message is built across a template concatenation, so match the
+  // behaviour rather than one contiguous sentence.
+  check("it REFUSES to write when the slot map is incomplete",
+    /unmappedShare > 0\.15/.test(days)
+    && /could not be mapped to a/.test(days)
+    && /nothing was written/.test(days),
+    "a table of confident wrong verdicts is worse than no table");
+  check("page exhaustion is reported, never silent", /pagedOut/.test(days));
+  check("the pagesize cap of 100 is respected", /pagesize=\$\{PAGE\}/.test(days) && /const PAGE = 100/.test(days));
+  check("only dates with an absent block are stored",
+    /if \(absentBlocks === 0\) continue;/.test(days));
+  check("it writes in 200-row chunks like every other sync block", /i \+= 200/.test(days));
+  check("it runs on its own cron, after the SIS sync rather than inside it",
+    /absence day rebuild \(morning\)/.test(crons) && /minuteUTC: 30/.test(crons));
+  check("the per-student query serves the dates",
+    /psAttendanceDays/.test(js("./convex/attendanceList.ts")));
+  check("and caps them with a reported flag",
+    /daysTruncated: dayRows\.length > DAY_CAP/.test(js("./convex/attendanceList.ts")));
+}
+
 console.log(`\nper-period attendance: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

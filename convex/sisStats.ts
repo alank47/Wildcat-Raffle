@@ -525,6 +525,45 @@ export const replaceAttendanceBySection = internalMutation({
   },
 });
 
+/**
+ * Per-student per-date block counts. Replaced wholesale, like every other SIS
+ * table: a date whose attendance was corrected must lose its old row, and a
+ * merge cannot express that.
+ *
+ * The validator lists every field the table declares -- a field in the schema
+ * and missing here is rejected at the boundary and fails the WHOLE sync.
+ */
+export const replaceAttendanceDays = internalMutation({
+  args: {
+    syncedAt: v.string(),
+    clearFirst: v.optional(v.boolean()),
+    rows: v.array(
+      v.object({
+        studentNumber: v.string(),
+        date: v.string(),
+        blocksThatDay: v.number(),
+        absentBlocks: v.number(),
+        presentBlocks: v.number(),
+        unrecordedBlocks: v.number(),
+        absentSlots: v.optional(v.array(v.string())),
+      }),
+    ),
+  },
+  handler: async (ctx, { rows, syncedAt, clearFirst }) => {
+    let deleted = 0;
+    if (clearFirst) {
+      // take(), not collect(): past 4,096 reads a collect() throws, and a sync
+      // that throws records nothing.
+      const old = await ctx.db.query("psAttendanceDays").take(2000);
+      for (const r of old) { await ctx.db.delete(r._id); deleted++; }
+      const more = await ctx.db.query("psAttendanceDays").take(1);
+      if (more.length) return { deleted, written: 0, moreToClear: true };
+    }
+    for (const r of rows) await ctx.db.insert("psAttendanceDays", { ...r, syncedAt });
+    return { deleted, written: rows.length, moreToClear: false };
+  },
+});
+
 export const replaceRestricted = internalMutation({
   args: {
     syncedAt: v.string(),

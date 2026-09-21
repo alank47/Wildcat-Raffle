@@ -29,6 +29,27 @@ crons.daily(
   { reason: "scheduled: midday" },
 );
 
+// Rebuild the per-date absence picture, half an hour after each SIS sync.
+//
+// SEPARATE FROM THE SYNC, on purpose. It reads the ATTENDANCE table directly
+// -- 155 pages plus 56 for the enrolment slot map -- and a slow read must not
+// be able to delay or fail the roster, grades and attendance pull that the
+// whole app depends on. It also depends on psAttendanceBySection, which that
+// sync writes, so it has to run after it rather than beside it.
+crons.daily(
+  "absence day rebuild (morning)",
+  { hourUTC: 13, minuteUTC: 30 },
+  internal.attendanceDays.rebuild,
+  {},
+);
+
+crons.daily(
+  "absence day rebuild (midday)",
+  { hourUTC: 19, minuteUTC: 30 },
+  internal.attendanceDays.rebuild,
+  {},
+);
+
 // Refresh the Entra directory mirror nightly.
 //
 // Nightly rather than hourly because the thing it tracks, who works here,

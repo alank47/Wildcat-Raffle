@@ -155,6 +155,16 @@ export const studentPeriods = query({
       .withIndex("by_studentNumber", (q) => q.eq("studentNumber", key))
       .first();
 
+    // THE PER-DATE PICTURE, which is what turns "6 days absent" into "2 full
+    // days and 4 partial". Counts only: the browser decides what counts as a
+    // full day, because the misrecord threshold is a rule the school will
+    // argue about. Capped, and the cap is reported.
+    const DAY_CAP = 200;
+    const dayRows = await ctx.db
+      .query("psAttendanceDays")
+      .withIndex("by_studentNumber", (q) => q.eq("studentNumber", key))
+      .take(DAY_CAP + 1);
+
     return {
       allowed: true as const,
       reason: null,
@@ -180,6 +190,21 @@ export const studentPeriods = query({
         attendanceRows: typeof r.attendanceRows === "number" ? r.attendanceRows : null,
         lastAbsenceDate: r.lastAbsenceDate ?? null,
       })),
+      // One row per date this student missed at least one block. Sorted by
+      // the browser, which also decides full versus partial.
+      days: dayRows.slice(0, DAY_CAP).map((d) => ({
+        date: d.date,
+        blocksThatDay: d.blocksThatDay,
+        absentBlocks: d.absentBlocks,
+        // EXPLICIT present-coded records only, never the absence of a record.
+        presentBlocks: d.presentBlocks,
+        // No record at all. Read as present by the owner's decision of
+        // 2026-09-21; carried so the gap stays visible.
+        unrecordedBlocks: d.unrecordedBlocks,
+        absentSlots: d.absentSlots ?? [],
+      })),
+      daysTruncated: dayRows.length > DAY_CAP,
+      daysSyncedAt: dayRows.length ? (dayRows[0].syncedAt ?? null) : null,
       syncedAt: sections.length ? (sections[0].syncedAt ?? null) : null,
       // So a caller can tell "this student has no section rows" from "the feed
       // has not run", which are different facts.

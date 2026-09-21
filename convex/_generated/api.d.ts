@@ -14,6 +14,8 @@ import type * as academicsRules from "../academicsRules.js";
 import type * as accessRules from "../accessRules.js";
 import type * as appData from "../appData.js";
 import type * as appDataShape from "../appDataShape.js";
+import type * as attendanceDays from "../attendanceDays.js";
+import type * as attendanceDaysRead from "../attendanceDaysRead.js";
 import type * as attendanceList from "../attendanceList.js";
 import type * as attendanceProbe from "../attendanceProbe.js";
 import type * as auditLog from "../auditLog.js";
@@ -102,6 +104,8 @@ declare const fullApi: ApiFromModules<{
   accessRules: typeof accessRules;
   appData: typeof appData;
   appDataShape: typeof appDataShape;
+  attendanceDays: typeof attendanceDays;
+  attendanceDaysRead: typeof attendanceDaysRead;
   attendanceList: typeof attendanceList;
   attendanceProbe: typeof attendanceProbe;
   auditLog: typeof auditLog;

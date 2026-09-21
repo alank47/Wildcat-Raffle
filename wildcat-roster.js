@@ -679,6 +679,163 @@
   }
 
   /**
+   * WAS THIS DATE A FULL DAY ABSENCE, A PARTIAL ONE, OR NOT AN ABSENCE?
+   *
+   * The owner's rule, 2026-09-21: look at one date, look at every block
+   * recorded on it, and tabulate what kind of day it was -- because
+   * attendance_summary counts a date as absent if ANY period is missed, and
+   * measured across the school roughly 47% of absent days are provably
+   * partial.
+   *
+   * THE COUNTS COME FROM THE SERVER, THE VERDICT IS DECIDED HERE, which is
+   * this codebase's standing split: a threshold the school will argue about
+   * belongs somewhere it can be changed and unit-tested without a deploy.
+   * The server stores, per student per date, how many of their blocks ran,
+   * how many carried an ABSENT code, how many carried an explicit PRESENT
+   * code, and how many carried no record at all.
+   *
+   * UNRECORDED BLOCKS COUNT AS PRESENT. That is the owner's decision, taken
+   * knowing the alternative: PowerSchool stores a row only for exceptions --
+   * 606 rows covering 224 of 618 students on 2026-09-14 -- so no record means
+   * either present or nobody took it, and those are opposite facts. Assuming
+   * present UNDERSTATES absence, which is the safe direction for a claim about
+   * a child. The count is still carried on every day so the gap stays visible
+   * and so classes where attendance is not being taken can be found, even
+   * though it does not move the verdict.
+   *
+   * ONE STRAY PRESENT AMONG A DAY OF ABSENCES IS A FULL DAY, FLAGGED. Also the
+   * owner's decision, and their reasoning: a student marked present for one
+   * period and absent for every other is more likely a misrecord than a child
+   * who attended exactly one class. So it reads as a full day AND carries
+   * `flagged`, so the single present mark is visible and checkable rather than
+   * silently overridden. `misrecordAt` is how many explicit present blocks
+   * still allow that reading; at 2 or more the day is a genuine partial.
+   */
+  var DAY_KINDS = {
+    full:    { key: 'full',    label: 'Full day absent' },
+    partial: { key: 'partial', label: 'Partial day' },
+    none:    { key: 'none',    label: 'Not an absence' },
+    unknown: { key: 'unknown', label: 'No blocks ran' }
+  };
+
+  var DEFAULT_DAY_SETTINGS = { misrecordAt: 1 };
+
+  function daySettingsOrDefault(raw) {
+    var d = DEFAULT_DAY_SETTINGS;
+    var s = (raw && typeof raw === 'object') ? raw : {};
+    var n = s.misrecordAt;
+    if (typeof n !== 'number' || !isFinite(n) || n < 0) return { misrecordAt: d.misrecordAt };
+    return { misrecordAt: Math.round(n) };
+  }
+
+  /**
+   * `day` is what the server stores for one student on one date:
+   * { date, blocksThatDay, absentBlocks, presentBlocks, unrecordedBlocks }
+   * where presentBlocks counts EXPLICIT present-coded records only and
+   * blocksThatDay is how many of this student's blocks actually ran.
+   */
+  function classifyAbsenceDay(day, settings) {
+    var s = daySettingsOrDefault(settings);
+    var d = day || {};
+    var num = function (v) {
+      return (typeof v === 'number' && isFinite(v) && v >= 0) ? Math.round(v) : null;
+    };
+    var blocks = num(d.blocksThatDay);
+    var absent = num(d.absentBlocks);
+    var present = num(d.presentBlocks);
+    var unrecorded = num(d.unrecordedBlocks);
+
+    var out = {
+      date: (d.date === 0 || d.date) ? String(d.date) : null,
+      blocksThatDay: blocks, absentBlocks: absent,
+      presentBlocks: present, unrecordedBlocks: unrecorded,
+      kind: null, flagged: false, reason: null
+    };
+    if (blocks === null || absent === null) {
+      out.reason = 'No block record for this date';
+      return out;
+    }
+    // A date on which none of this student's blocks ran is not an absence and
+    // not a school day for them; it must not be ranked either way.
+    if (blocks === 0) {
+      out.kind = DAY_KINDS.unknown;
+      out.reason = 'None of the blocks this student is enrolled in ran on this date';
+      return out;
+    }
+    if (absent === 0) { out.kind = DAY_KINDS.none; return out; }
+
+    if (absent >= blocks) { out.kind = DAY_KINDS.full; return out; }
+
+    // Everything they did not miss is accounted for. Unrecorded blocks read as
+    // present, so the only thing that can make this a PARTIAL rather than a
+    // flagged full day is an explicit present mark.
+    var notAbsent = blocks - absent;
+    var explicit = present === null ? 0 : present;
+    if (explicit > 0 && explicit <= s.misrecordAt && notAbsent <= s.misrecordAt) {
+      out.kind = DAY_KINDS.full;
+      out.flagged = true;
+      out.reason = 'Absent for every block except ' + explicit + ', which was marked present. '
+        + 'Counted as a full day and flagged, because one present mark among a day of absences '
+        + 'is more likely a misrecord than a student attending one class.';
+      return out;
+    }
+    // Absent for everything except blocks nobody recorded. Those read as
+    // present by decision, so this is a partial day -- but say which it is,
+    // because it rests on an assumption rather than an observation.
+    if (explicit === 0 && (unrecorded === null ? 0 : unrecorded) >= notAbsent) {
+      out.kind = DAY_KINDS.partial;
+      out.reason = 'Absent for ' + absent + ' of ' + blocks + ' blocks. The other ' + notAbsent
+        + ' had no attendance recorded and are counted as present.';
+      return out;
+    }
+    out.kind = DAY_KINDS.partial;
+    return out;
+  }
+
+  /**
+   * Tabulate a student's dates into the three counts the owner asked for.
+   *
+   * `days` are the server's per-date rows. Returns the totals plus the flagged
+   * and assumed-present subsets, because both rest on a judgement and a person
+   * should be able to see how much of the answer depends on it.
+   */
+  function absenceDayTally(days, settings) {
+    var s = daySettingsOrDefault(settings);
+    var out = {
+      settings: s, kinds: DAY_KINDS,
+      full: 0, partial: 0, none: 0, noBlocks: 0, unreadable: 0,
+      flagged: 0, restingOnAssumedPresent: 0,
+      blocksMissed: 0, blocksUnrecorded: 0,
+      dates: []
+    };
+    (days || []).forEach(function (d) {
+      var c = classifyAbsenceDay(d, s);
+      out.dates.push(c);
+      if (!c.kind) { out.unreadable += 1; return; }
+      if (c.kind.key === 'full') out.full += 1;
+      else if (c.kind.key === 'partial') out.partial += 1;
+      else if (c.kind.key === 'none') out.none += 1;
+      else out.noBlocks += 1;
+      if (c.flagged) out.flagged += 1;
+      if (c.absentBlocks) out.blocksMissed += c.absentBlocks;
+      if (c.unrecordedBlocks) out.blocksUnrecorded += c.unrecordedBlocks;
+      // How much of the tally depends on reading "no record" as present.
+      if (c.kind.key === 'partial' && (c.presentBlocks || 0) === 0 && (c.unrecordedBlocks || 0) > 0) {
+        out.restingOnAssumedPresent += 1;
+      }
+    });
+    // Worst first, then by date, so the list is stable between renders.
+    var rank = { full: 0, partial: 1, none: 2, unknown: 3 };
+    out.dates.sort(function (a, b) {
+      var ka = a.kind ? rank[a.kind.key] : 4, kb = b.kind ? rank[b.kind.key] : 4;
+      if (ka !== kb) return ka - kb;
+      return String(b.date || '').localeCompare(String(a.date || ''));
+    });
+    out.absentDays = out.full + out.partial;
+    return out;
+  }
+
+  /**
    * Rank students by attendance, worst first.
    *
    * `rows` are { student, daysAbsent, daysTardy }. A student with no
@@ -780,6 +937,11 @@
     attendanceRanking: attendanceRanking,
     absenceDayBounds: absenceDayBounds,
     absenceDaySentence: absenceDaySentence,
+    DAY_KINDS: DAY_KINDS,
+    DEFAULT_DAY_SETTINGS: DEFAULT_DAY_SETTINGS,
+    daySettingsOrDefault: daySettingsOrDefault,
+    classifyAbsenceDay: classifyAbsenceDay,
+    absenceDayTally: absenceDayTally,
     median: median,
     dailyGoal: dailyGoal,
     quietStudents: quietStudents,

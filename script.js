@@ -30456,6 +30456,16 @@
             // figures are marginals and cannot be intersected. Promise Time
             // meets every day, so it anchors a hard ceiling; the totals give a
             // second, independent one. WildcatRoster owns the derivation.
+            // PER-DATE TABULATION, the owner's rule of 2026-09-21: look at each
+            // date, count the blocks that ran, and say whether it was a full
+            // day, a partial one, or not an absence. Measured school-wide:
+            // 1,187 full and 1,390 partial of 2,577 absent days, and 139
+            // students have never missed a whole day while still appearing on
+            // the absence list.
+            const tally = (res.days && res.days.length && R && typeof R.absenceDayTally === 'function')
+                ? R.absenceDayTally(res.days, {})
+                : null;
+
             const bounds = (R && typeof R.absenceDayBounds === 'function')
                 ? R.absenceDayBounds(
                     (typeof day.daysAbsentTerm === 'number') ? day.daysAbsentTerm : absentDays,
@@ -30477,10 +30487,19 @@
                 // AT MOST, never a bare number. A bare count here would be a
                 // claim the data cannot support, on a screen read out loud
                 // with the student in the room.
-                (bounds && bounds.anchored && bounds.fullDayCeiling !== null)
-                    ? '<div class="wc-ad-fig wc-ad-full"><span class="wc-ad-n">&le;' + bounds.fullDayCeiling +
-                      '</span><span class="wc-ad-l">full days at most</span></div>'
-                    : '',
+                // THE EXACT FIGURE WHEN WE HAVE IT, the bound when we do not.
+                // Per-date rows make full and partial countable rather than
+                // merely bounded, and a "<=" beside a number we actually know
+                // would understate what the screen can say.
+                tally
+                    ? '<div class="wc-ad-fig wc-ad-full"><span class="wc-ad-n">' + tally.full +
+                      '</span><span class="wc-ad-l">full days</span></div>'
+                      + '<div class="wc-ad-fig"><span class="wc-ad-n">' + tally.partial +
+                      '</span><span class="wc-ad-l">partial days</span></div>'
+                    : (bounds && bounds.anchored && bounds.fullDayCeiling !== null)
+                        ? '<div class="wc-ad-fig wc-ad-full"><span class="wc-ad-n">&le;' + bounds.fullDayCeiling +
+                          '</span><span class="wc-ad-l">full days at most</span></div>'
+                        : '',
                 '</div>',
             ].join('');
 
@@ -30489,8 +30508,23 @@
             // guessed from the periods-per-day average; the bound is both
             // stronger and provable, which matters on a screen read aloud with
             // the student present.
-            const reading = (bounds && typeof R.absenceDaySentence === 'function')
-                ? R.absenceDaySentence(bounds) : '';
+            // The exact sentence when the dates are in hand; otherwise the
+            // bound's. Saying "at most" about a number we have counted would
+            // be a smaller claim than the data supports.
+            const reading = tally
+                ? (tally.full === 0
+                    ? 'NONE of these ' + tally.absentDays + ' absent days was a full day out of school: on '
+                      + 'every one of them this student attended at least one block.'
+                    : tally.full + ' of these ' + tally.absentDays + ' absent days '
+                      + (tally.full === 1 ? 'was a full day' : 'were full days') + ' out of school, and '
+                      + tally.partial + ' ' + (tally.partial === 1 ? 'was partial' : 'were partial') + '.'
+                      + (tally.flagged
+                          ? ' ' + tally.flagged + ' of the full days had a single period marked present, '
+                            + 'which reads as a misrecord and is flagged below.' : '')
+                      + (tally.restingOnAssumedPresent
+                          ? ' ' + tally.restingOnAssumedPresent + ' of the partial days rests on blocks '
+                            + 'nobody recorded, which are counted as present.' : ''))
+                : ((bounds && typeof R.absenceDaySentence === 'function') ? R.absenceDaySentence(bounds) : '');
 
             if (!rows.length) {
                 return head + '<p class="wc-ad-note">No per-period attendance has been synced for this student yet. '
@@ -30537,6 +30571,7 @@
             }).join('');
 
             const foot = [
+                res.daysTruncated ? 'More dates exist than this screen shows. ' : '',
                 res.day && res.day.syncedAt
                     ? 'From PowerSchool, synced ' + escapeHtml(String(res.day.syncedAt).slice(0, 16).replace('T', ' ')) + '. '
                     : '',
@@ -30544,9 +30579,42 @@
                 + 'nothing records how many times each period actually met.',
             ].join('');
 
+            // DATE BY DATE, which is the owner's own framing: look at a date,
+            // see what kind of day it was. Worst first, capped, and each date
+            // names the blocks missed so a verdict can be checked rather than
+            // taken on trust.
+            let dayList = '';
+            if (tally && tally.dates.length) {
+                const DCAP = 40;
+                const shown = tally.dates.filter(d => d.kind && d.kind.key !== 'none').slice(0, DCAP);
+                dayList = '<h4 class="wc-ad-h">Day by day</h4><ul class="wc-ad-list wc-ad-days">'
+                    + shown.map(d => {
+                        const slots = (d.absentSlots || []).map(sl => {
+                            const c = (R && R.classifySection) ? R.classifySection({ period: sl, courseName: '' }) : null;
+                            return c && c.label ? c.label : sl;
+                        });
+                        const bits = [d.absentBlocks + ' of ' + d.blocksThatDay + ' blocks'];
+                        if (d.presentBlocks) bits.push(d.presentBlocks + ' marked present');
+                        if (d.unrecordedBlocks) bits.push(d.unrecordedBlocks + ' not recorded');
+                        return '<li class="wc-ad-row wc-ad-day-' + d.kind.key + (d.flagged ? ' wc-ad-flagged' : '') + '">'
+                            + '<span class="wc-ad-per">' + escapeHtml(String(d.date))
+                                + '<span class="wc-ad-slot">' + escapeHtml(slots.join(', ').slice(0, 90)) + '</span></span>'
+                            + '<span class="wc-ad-abs">' + escapeHtml(d.kind.label)
+                                + (d.flagged ? ' &#9873;' : '') + '</span>'
+                            + '<span class="wc-ad-sub">' + escapeHtml(bits.join('  \u00b7  ')) + '</span>'
+                            + '</li>';
+                    }).join('')
+                    + '</ul>'
+                    + (tally.dates.length > DCAP
+                        ? '<p class="wc-ad-note">Showing the first ' + DCAP + ' of ' + tally.dates.length + ' dates.</p>'
+                        : '');
+            }
+
             return head
                 + (reading ? '<p class="wc-ad-read">' + escapeHtml(reading) + '</p>' : '')
+                + '<h4 class="wc-ad-h">By period</h4>'
                 + '<ul class="wc-ad-list">' + list + '</ul>'
+                + dayList
                 + '<p class="wc-ad-note">' + foot + '</p>';
         }
 

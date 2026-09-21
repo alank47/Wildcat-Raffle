@@ -9635,3 +9635,12 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
    acts on, and it is the one that used to be invisible. */
 .wc-ad-fig.wc-ad-full { border-color: var(--wc-blue, #2563eb); background: var(--wc-blue-mist, #eff6ff); }
 .wc-ad-fig.wc-ad-full .wc-ad-n { color: var(--wc-blue, #2563eb); }
+/* Day by day. A full day reads as the serious one; a flagged day carries the
+   marker so the single present mark behind the verdict is visible. */
+.wc-ad-h { margin: 16px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--wc-gray-text, #6b7280); }
+.wc-ad-days .wc-ad-abs { font-size: 13px; font-weight: 600; }
+.wc-ad-row.wc-ad-day-full { border-left: 4px solid #dc2626; padding-left: 8px; }
+.wc-ad-row.wc-ad-day-partial { border-left: 4px solid #ca8a04; padding-left: 8px; }
+.wc-ad-row.wc-ad-day-unknown { border-left: 4px solid var(--wc-line, #e5e7eb); padding-left: 8px; }
+.wc-ad-row.wc-ad-day-full .wc-ad-abs { color: #b91c1c; }
+.wc-ad-row.wc-ad-flagged .wc-ad-abs { color: #b45309; }
