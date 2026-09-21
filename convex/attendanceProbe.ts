@@ -178,6 +178,289 @@ export const sectionShape = internalAction({
  * Counted through the table endpoint's /count, one call per code, so nothing
  * per student is read and no page limit is involved.
  */
+/**
+ * CAN WE READ ONE DATE'S ATTENDANCE, PERIOD BY PERIOD, WITHOUT A PLUGIN CHANGE?
+ *
+ * This reverses an earlier answer and is worth being exact about. The named
+ * queries all aggregate -- attendance_summary to a distinct-date count,
+ * attendance_by_section to a per-section term total -- so neither can say what
+ * happened on one specific DATE, and the conclusion drawn from that was that a
+ * per-date rule needs a new named query, a plugin build and an install.
+ *
+ * But the TABLE endpoint answers. /ws/schema/table/attendance took a
+ * projection of att_mode_code, att_date and periodid and returned rows, which
+ * means the nine granted Attendance fields are readable directly -- including
+ * ATT_DATE, PERIODID, STUDENTID and ATTENDANCE_CODEID. That is everything a
+ * per-date tabulation needs, with no plugin work at all.
+ *
+ * This checks it precisely: the exact date FORMAT the API hands back, whether
+ * every needed field comes through together, and how one date's rows look.
+ *
+ * GET only. Reports the shape, the format and counts. Student ids are read
+ * because the endpoint returns them, and are NOT echoed -- only how many
+ * distinct ones appeared.
+ */
+/**
+ * THE TWO THINGS A PER-DATE RULE TURNS ON, tested before anything is built.
+ *
+ * ONE: CAN WE TELL "PRESENT" FROM "NOBODY TOOK ATTENDANCE"? This is the
+ * owner's own caveat and it is the whole difficulty. The school has ~618
+ * students across ~6 blocks over 29 days, which is roughly 107,000
+ * period-slots, and ATTENDANCE holds only 15,417 rows. So a row exists for
+ * EXCEPTIONS, not for every child in every lesson: the absence of a row means
+ * either "present" or "the teacher never took it", and those are opposite
+ * facts about a child.
+ *
+ * The resolution, if it holds: a SECTION with at least one attendance row on a
+ * date proves attendance was taken in that section that day. Then a student
+ * enrolled in it with no row was present. A section with no rows at all that
+ * day is unknown and must be reported as unknown rather than counted either
+ * way. This measures how much of the school each case covers.
+ *
+ * TWO: CAN WE FETCH INCREMENTALLY? 15,417 rows is 155 pages today and grows
+ * all year. If the date supports a range operator, each sync reads only new
+ * dates instead of the whole year, which is the difference between a feature
+ * that works in May and one that times out.
+ *
+ * GET only, counts only, no student identifier echoed.
+ */
+/**
+ * WHICH BLOCKS ACTUALLY RAN ON A GIVEN DAY, read from the attendance itself.
+ *
+ * The owner's timetable is Mon/Thu = Promise Time, Periods 1, 3, 5, Power Up,
+ * Promise Time; Tue/Fri = Promise Time, Periods 2, 4, 6, Power Up, Promise
+ * Time; Wednesday all periods. A per-date rule needs to know which blocks met,
+ * and the honest source is the data rather than a transcription: the distinct
+ * PERIODIDs carrying any attendance row that day.
+ *
+ * ALSO CHECKS THE cc TABLE, which is what turns "this period ran somewhere in
+ * the school" into "this student's own teacher took it". ATTENDANCE carries
+ * CCID -- the student-section enrolment -- and CC.SectionID is granted, so a
+ * per-section activity check is possible if the table reads. Without it the
+ * owner's misrecord caveat can only be approximated.
+ *
+ * GET only. Period ids, counts and dates. No student identifier is echoed.
+ */
+export const blocksByDate = internalAction({
+  args: { dates: v.optional(v.array(v.string())) },
+  handler: async (_ctx, { dates }) => {
+    const host = process.env.PS_HOST, id = process.env.PS_CLIENT_ID;
+    const secret = process.env.PS_CLIENT_SECRET, schoolid = process.env.PS_SCHOOL_ID;
+    if (!host || !id || !secret || !schoolid) {
+      return { ok: false as const, reason: "PowerSchool settings are not all present." };
+    }
+    const tok = await token(host, id, secret);
+    const want = (dates && dates.length ? dates : ["2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18"])
+      .map((d) => String(d).slice(0, 10));
+
+    const pageAll = async (table: string, q: string, projection: string, cap = 40) => {
+      const rows: any[] = [];
+      for (let p = 1; p <= cap; p++) {
+        const url = `https://${host}/ws/schema/table/${table}`
+          + `?q=${encodeURIComponent(q)}&projection=${encodeURIComponent(projection)}&pagesize=100&page=${p}`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${tok}`, Accept: "application/json" } });
+        if (!res.ok) return { error: `HTTP ${res.status}: ${(await res.text()).slice(0, 160)}`, rows };
+        const b = await res.json();
+        const batch = (b?.record ?? []).map((r: any) => r.tables?.[table] ?? r);
+        rows.push(...batch);
+        if (batch.length < 100) break;
+      }
+      return { error: null as string | null, rows };
+    };
+
+    const perDate: Array<Record<string, any>> = [];
+    for (const day of want) {
+      const r = await pageAll("attendance", `schoolid==${schoolid};att_date==${day}`,
+        "studentid,periodid,attendance_codeid,ccid");
+      const periods: Record<string, number> = {};
+      const students = new Set<string>();
+      for (const x of r.rows) {
+        const p = String(x.periodid ?? "(none)");
+        periods[p] = (periods[p] || 0) + 1;
+        const sid = String(x.studentid ?? ""); if (sid) students.add(sid);
+      }
+      perDate.push({
+        date: day, error: r.error, rows: r.rows.length,
+        studentsWithAnyRow: students.size,
+        distinctPeriodIds: Object.keys(periods).length,
+        rowsPerPeriodId: periods,
+      });
+    }
+
+    // Can we reach the student-section enrolment, for the per-section check?
+    const cc = await pageAll("cc", `schoolid==${schoolid}`, "id,sectionid,expression", 2);
+    return {
+      ok: true as const,
+      perDate,
+      ccTable: {
+        readable: cc.error === null, error: cc.error, sampleRows: cc.rows.length,
+        columns: cc.rows.length ? Object.keys(cc.rows[0]).sort() : [],
+        exampleExpressions: [...new Set(cc.rows.map((r: any) => String(r.expression ?? "")))].slice(0, 6),
+      },
+    };
+  },
+});
+
+export const perDateFeasibility = internalAction({
+  args: { date: v.optional(v.string()) },
+  handler: async (_ctx, { date }) => {
+    const host = process.env.PS_HOST, id = process.env.PS_CLIENT_ID;
+    const secret = process.env.PS_CLIENT_SECRET, schoolid = process.env.PS_SCHOOL_ID;
+    if (!host || !id || !secret || !schoolid) {
+      return { ok: false as const, reason: "PowerSchool settings are not all present." };
+    }
+    const tok = await token(host, id, secret);
+    const day = String(date || "2026-09-14").slice(0, 10);
+
+    const page = async (q: string, projection: string, p: number) => {
+      const url = `https://${host}/ws/schema/table/attendance`
+        + `?q=${encodeURIComponent(q)}&projection=${encodeURIComponent(projection)}&pagesize=100&page=${p}`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${tok}`, Accept: "application/json" } });
+      if (!res.ok) return { error: `HTTP ${res.status}: ${(await res.text()).slice(0, 160)}`, rows: [] as any[] };
+      const b = await res.json();
+      return { error: null as string | null, rows: (b?.record ?? []).map((r: any) => r.tables?.attendance ?? r) };
+    };
+
+    // ---- ONE DATE, EVERY ROW ------------------------------------------------
+    const rows: any[] = [];
+    let pageError: string | null = null;
+    for (let p = 1; p <= 40; p++) {
+      const r = await page(`schoolid==${schoolid};att_date==${day}`, "studentid,periodid,attendance_codeid,ccid", p);
+      if (r.error) { pageError = r.error; break; }
+      rows.push(...r.rows);
+      if (r.rows.length < 100) break;
+    }
+
+    // Which codes mean absent. Read, not assumed.
+    const cRes = await fetch(`https://${host}/ws/schema/table/attendance_code`
+      + `?q=${encodeURIComponent(`schoolid==${schoolid}`)}&projection=id,att_code,presence_status_cd&pagesize=100`,
+      { headers: { Authorization: `Bearer ${tok}`, Accept: "application/json" } });
+    const absentIds = new Set<string>(); const presentIds = new Set<string>();
+    const codeOf = new Map<string, string>();
+    if (cRes.ok) {
+      const cb = await cRes.json();
+      for (const r of (cb?.record ?? [])) {
+        const c = r.tables?.attendance_code ?? r;
+        codeOf.set(String(c.id), String(c.att_code ?? ""));
+        if (String(c.presence_status_cd) === "Absent") absentIds.add(String(c.id));
+        else presentIds.add(String(c.id));
+      }
+    }
+
+    const byStudent = new Map<string, { abs: number; pres: number; sections: Set<string> }>();
+    const sectionsWithActivity = new Set<string>();
+    const codeTally: Record<string, number> = {};
+    for (const r of rows) {
+      const sid = String(r.studentid ?? ""); if (!sid) continue;
+      const cid = String(r.attendance_codeid ?? "");
+      const cc = String(r.ccid ?? "");
+      if (cc) sectionsWithActivity.add(cc);
+      const label = codeOf.get(cid) || "(" + cid + ")";
+      codeTally[label || "(blank)"] = (codeTally[label || "(blank)"] || 0) + 1;
+      if (!byStudent.has(sid)) byStudent.set(sid, { abs: 0, pres: 0, sections: new Set() });
+      const e = byStudent.get(sid)!;
+      if (cc) e.sections.add(cc);
+      if (absentIds.has(cid)) e.abs++; else e.pres++;
+    }
+    // How many periods each flagged student has a row for that day.
+    const rowsPerStudent: Record<string, number> = {};
+    for (const e of byStudent.values()) {
+      const n = e.abs + e.pres;
+      const b = n >= 6 ? "6+" : String(n);
+      rowsPerStudent[b] = (rowsPerStudent[b] || 0) + 1;
+    }
+
+    // ---- DOES A DATE RANGE WORK? -------------------------------------------
+    const ge = await page(`schoolid==${schoolid};att_date=ge=${day}`, "att_date", 1);
+    const geSeen: Record<string, true> = {};
+    for (const r of ge.rows) geSeen[String((r as any).att_date ?? "")] = true;
+    const geDates: string[] = Object.keys(geSeen).sort().slice(0, 6);
+
+    return {
+      ok: true as const,
+      date: day,
+      onThatDate: {
+        error: pageError, rows: rows.length,
+        studentsWithAnyRow: byStudent.size,
+        sectionsWithAnyActivity: sectionsWithActivity.size,
+        codeTally,
+        rowsPerFlaggedStudent: rowsPerStudent,
+      },
+      codeVocabulary: { absentCodeIds: absentIds.size, presentCodeIds: presentIds.size },
+      dateRange: {
+        works: ge.error === null, error: ge.error,
+        sampleDatesReturned: geDates,
+        allOnOrAfterAsked: geDates.every((x) => String(x) >= day),
+      },
+      note: "studentsWithAnyRow is how many children have ANY attendance record that day. The "
+        + "rest of the school has no row at all, which is what makes 'present' and 'never "
+        + "taken' indistinguishable without the section-activity check.",
+    };
+  },
+});
+
+export const oneDateShape = internalAction({
+  args: { date: v.optional(v.string()) },
+  handler: async (_ctx, { date }) => {
+    const host = process.env.PS_HOST, id = process.env.PS_CLIENT_ID;
+    const secret = process.env.PS_CLIENT_SECRET, schoolid = process.env.PS_SCHOOL_ID;
+    const yearid = process.env.PS_YEAR_ID;
+    if (!host || !id || !secret || !schoolid || !yearid) {
+      return { ok: false as const, reason: "PowerSchool settings are not all present." };
+    }
+    const tok = await token(host, id, secret);
+    const day = String(date || "2026-09-14").slice(0, 10);
+
+    const call = async (q: string, projection: string) => {
+      const url = `https://${host}/ws/schema/table/attendance`
+        + `?q=${encodeURIComponent(q)}&projection=${encodeURIComponent(projection)}&pagesize=100`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${tok}`, Accept: "application/json" } });
+      if (!res.ok) return { error: `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`, rows: [] as any[] };
+      const b = await res.json();
+      return { error: null as string | null, rows: (b?.record ?? []).map((r: any) => r.tables?.attendance ?? r) };
+    };
+
+    // 1. Everything a per-date rule needs, in one projection.
+    const all = await call(`schoolid==${schoolid};yearid==${yearid}`,
+      "id,studentid,att_date,periodid,attendance_codeid,att_mode_code,ccid");
+    // 2. Can the date itself be FILTERED on? That is what makes a per-date
+    //    read cheap rather than a full-table scan.
+    const filtered = await call(`schoolid==${schoolid};att_date==${day}`,
+      "studentid,att_date,periodid,attendance_codeid");
+
+    const sample = all.rows.slice(0, 3);
+    const dates = [...new Set(all.rows.map((r: any) => String(r.att_date ?? "")))].slice(0, 5);
+    const students = new Set(filtered.rows.map((r: any) => String(r.studentid ?? "")));
+    const periodsOnDay: Record<string, number> = {};
+    for (const r of filtered.rows) {
+      const p = String(r.periodid ?? "(none)");
+      periodsOnDay[p] = (periodsOnDay[p] || 0) + 1;
+    }
+
+    return {
+      ok: true as const,
+      askedFor: day,
+      allFields: {
+        error: all.error, rows: all.rows.length,
+        columnsReturned: sample.length ? Object.keys(sample[0]).sort() : [],
+        // The FORMAT, which is the owner's question. Reported verbatim.
+        dateValuesSeen: dates,
+        // One row's worth of shape, with the student id blanked.
+        exampleRow: sample.length ? { ...sample[0], studentid: "(withheld)" } : null,
+      },
+      filteredByDate: {
+        error: filtered.error, rows: filtered.rows.length,
+        distinctStudents: students.size,
+        distinctPeriods: Object.keys(periodsOnDay).length,
+        rowsPerPeriod: periodsOnDay,
+        dateFilterWorks: filtered.error === null,
+      },
+      note: "If dateFilterWorks is true, one date's attendance is readable directly with no "
+        + "plugin change, and a per-date rule becomes buildable.",
+    };
+  },
+});
+
 export const codeUsage = internalAction({
   args: {},
   handler: async () => {
