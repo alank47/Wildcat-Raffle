@@ -674,12 +674,50 @@
          * 2026-09-09; the server side is planPatch in appDataShape.ts.
          */
         const _studentCashBase = new Map();
+        /**
+         * Movements this tab has made and the server has not yet confirmed,
+         * per student: [{ id, at, amount, kind }].
+         *
+         * THE KEY THAT MAKES A COUNTER IDEMPOTENT. A cash ROW is keyed by its
+         * own id and unioned by the server, so sending it twice is harmless. A
+         * counter moved by a DELTA is not -- and on 2026-09-18 one bulk award
+         * of seven students was applied twice, leaving all seven $100 above
+         * their own ledger against seven ledger rows.
+         *
+         * WHY NOT AN ID PER SAVE ATTEMPT, which is the obvious answer and is
+         * wrong: a retry re-enters saveData(), which RECOMPUTES the payload
+         * from in-memory state, so a fresh attempt id would be minted and sail
+         * past the check. A movement id is born with the movement, lives in
+         * this map and in the durable outbox, and therefore comes back with
+         * the recomputation.
+         *
+         * An entry leaves only when the server says it applied or absorbed it.
+         */
+        const _pendingCashMovements = new Map();
         const CASH_COUNTER_FIELDS = ['wildcatCashBalance', 'wildcatCashEarned', 'wildcatCashSpent', 'wildcatCashDeducted'];
         function cashCountersOf(st) {
             const out = {};
             CASH_COUNTER_FIELDS.forEach(f => { out[f] = Number(st && st[f]) || 0; });
             return out;
         }
+        /**
+         * Which counters one movement moves, and by how much. Pure.
+         *
+         * IDENTICAL TO convex/cashMovementRules.ts cashMovementEffect, on
+         * purpose. Reading the SIGN alone is not enough: a redemption and a
+         * deduction are both negative and bucket differently.
+         */
+        function cashMovementEffect(amount, kind) {
+            const a = Number(amount) || 0;
+            const k = String(kind == null ? '' : kind);
+            return {
+                wildcatCashBalance:  a,
+                wildcatCashEarned:   (k !== 'redeem' && a > 0) ? a : 0,
+                wildcatCashSpent:    (k === 'redeem') ? Math.abs(a) : 0,
+                wildcatCashDeducted: (k !== 'redeem' && a <= 0) ? Math.abs(a) : 0
+            };
+        }
+
         /** How much this tab has moved each counter since `base`. Pure. */
         function cashDeltaBetween(now, base) {
             const d = {};
@@ -4227,12 +4265,28 @@
                                 // actually SENT leaves the difference intact,
                                 // so the next save carries it.
                                 const sentCounters = new Map();
+                                const sentMovements = new Map();
                                 const studentsToSend = changedStudents.map(st => {
                                     const base = _studentCashBase.get(String(st.id));
                                     // Snapshotted here, from primitives, so a
                                     // later mutation of `st` cannot reach it.
                                     sentCounters.set(String(st.id), cashCountersOf(st));
-                                    return base ? Object.assign({}, st, { cashDelta: cashDeltaBetween(st, base) }) : st;
+                                    // THE MOVEMENTS THIS DELTA IS MADE OF, so
+                                    // the server can apply each one once. Added
+                                    // HERE and not in studentsToSave, so like
+                                    // cashDelta it never enters the save
+                                    // fingerprint and cannot churn the
+                                    // changed-rows filter. STUDENT_WRITABLE is
+                                    // an allowlist, so neither key can reach a
+                                    // stored row.
+                                    const pend = _pendingCashMovements.get(String(st.id)) || [];
+                                    sentMovements.set(String(st.id), pend.slice());
+                                    return base
+                                        ? Object.assign({}, st, {
+                                              cashDelta: cashDeltaBetween(st, base),
+                                              cashMovements: pend
+                                          })
+                                        : st;
                                 });
                                 const result = await auth.convexMutation('appData:save', {
                                     // WHICH BUILD IS ASKING. The server refuses a
@@ -4295,11 +4349,40 @@
                                 // movement from the next delta; taking the
                                 // snapshot captured before the await leaves it
                                 // to be sent.
+                                // WHAT THE SERVER WOULD NOT ACCOUNT FOR STAYS
+                                // PENDING. A held movement (its ring entry
+                                // evicted, undated, before the cutoff, or
+                                // capped) is named by the server and kept here,
+                                // so it is re-sent rather than silently
+                                // forgotten. Read with `|| []` and never
+                                // destructured: a response field an older
+                                // backend does not send must not throw.
+                                const heldMovements = new Set(
+                                    (result && result.cashMovementsHeld ? result.cashMovementsHeld : [])
+                                        .map(String));
                                 changedStudents.forEach(st => {
-                                    const sent = sentCounters.get(String(st.id));
-                                    if (sent) _studentCashBase.set(String(st.id), sent);
+                                    const key = String(st.id);
+                                    const sent = sentCounters.get(key);
+                                    if (sent) _studentCashBase.set(key, sent);
                                     else rememberCashBase(st);
+                                    // Everything sent is accounted for -- applied
+                                    // or absorbed -- unless the server named it
+                                    // held.
+                                    const wasSent = sentMovements.get(key) || [];
+                                    if (!wasSent.length) return;
+                                    const keep = (_pendingCashMovements.get(key) || []).filter(m => {
+                                        if (!m || !m.id) return false;
+                                        const sentThis = wasSent.some(x => x && x.id === m.id);
+                                        return !sentThis || heldMovements.has(String(m.id));
+                                    });
+                                    if (keep.length) _pendingCashMovements.set(key, keep);
+                                    else _pendingCashMovements.delete(key);
                                 });
+                                if (heldMovements.size) {
+                                    console.warn('[save] the server held ' + heldMovements.size +
+                                        ' cash movement(s) and they are still pending:',
+                                        [...heldMovements].slice(0, 8).join(', '));
+                                }
                                 console.log(
                                     `✅ Convex: ${result.studentsChanged} student(s) of ${changedStudents.length} sent, ` +
                                     `${result.teachersChanged} staff changed` +
@@ -31228,10 +31311,15 @@
             const actor = currentUser || {};
             const now = new Date().toISOString();
 
-            student.wildcatCashBalance += amount;
-            if (opts.kind === 'redeem')      student.wildcatCashSpent += Math.abs(amount);
-            else if (amount > 0)             student.wildcatCashEarned += amount;
-            else                             student.wildcatCashDeducted += Math.abs(amount);
+            // THROUGH cashMovementEffect, so this and the server compute one
+            // movement's effect from ONE expression. convex/cashMovementRules.ts
+            // has the same function under the same name and a test compares the
+            // two: a divergence between them is money.
+            const _eff = cashMovementEffect(amount, opts.kind);
+            student.wildcatCashBalance  += _eff.wildcatCashBalance;
+            student.wildcatCashEarned   += _eff.wildcatCashEarned;
+            student.wildcatCashSpent    += _eff.wildcatCashSpent;
+            student.wildcatCashDeducted += _eff.wildcatCashDeducted;
 
             const tx = {
                 id: 'txn_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9),
@@ -31256,6 +31344,15 @@
 
             cashTransactions.push(tx);
             student.wildcatCashTransactions.push(tx);
+            // PENDING UNTIL THE SERVER CONFIRMS IT. The id travels with the
+            // next save so the server can apply this movement's effect once
+            // and only once, however many times the save is sent.
+            {
+                const _sid = String(student.id);
+                const _list = _pendingCashMovements.get(_sid) || [];
+                _list.push({ id: tx.id, at: tx.timestamp, amount: amount, kind: tx.kind });
+                _pendingCashMovements.set(_sid, _list);
+            }
             // Durable from the moment it exists. See CASH OUTBOX above.
             enqueueCashOutbox(tx);
             return tx;

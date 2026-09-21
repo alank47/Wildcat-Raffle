@@ -75,11 +75,16 @@ console.log("\nOnly what changed goes on the wire");
   // counters it is sending, so the base can be pinned to those rather than to
   // whatever the student object holds after the await. The property asserted is
   // unchanged: each changed student goes with its delta attached.
+  // RE-POINTED 2026-09-21. Each changed student now goes with its delta AND
+  // the movements that delta is made of, so the server can apply each movement
+  // once. The property asserted is the same one.
   check("and that, with each one's cash delta attached, is what appData:save receives",
     /const studentsToSend = changedStudents\.map\(st => \{/.test(save)
     && /const base = _studentCashBase\.get\(String\(st\.id\)\);/.test(save)
-    && /return base \? Object\.assign\(\{\}, st, \{ cashDelta: cashDeltaBetween\(st, base\) \}\) : st;/.test(save)
+    && /cashDelta: cashDeltaBetween\(st, base\)/.test(save)
     && /students: studentsToSend,/.test(save));
+  check("and the movements that delta is made of travel with it",
+    /cashMovements: pend/.test(save) && /_pendingCashMovements\.get\(String\(st\.id\)\)/.test(save));
   // AND THE BUILD IS NAMED. A save that cannot say which build sent it is a
   // save the server cannot refuse, which is how a four-day-stale tab put
   // $4,901,850 back on 2026-09-13.
@@ -171,7 +176,7 @@ console.log("\nCash counters travel as deltas, so two tabs awarding the same chi
   // now pinned from the snapshot taken before the await. The property asserted
   // is still the one that matters: it happens only once the server has answered.
   check("and again from what was sent, once the server answered",
-    /_studentSaveFingerprint\.set\(String\(st\.id\), JSON\.stringify\(st\)\)\);[\s\S]{0,600}const sent = sentCounters\.get\(String\(st\.id\)\);/.test(save));
+    /_studentSaveFingerprint\.set\(String\(st\.id\), JSON\.stringify\(st\)\)\);[\s\S]{0,1400}const sent = sentCounters\.get\(key\);/.test(save));
   // ORDER IS THE WHOLE ASSERTION: the counters must be spread AFTER
   // ...localStudent so the server's values win. What follows them is not
   // pinned -- the cash history is taken from the server on the next line now
@@ -264,8 +269,14 @@ console.log("\nThe money has the same durable outbox the audit log has");
   check("it reads defensively, like the audit one",
     /function readCashOutbox\(\)[\s\S]{0,400}Array\.isArray\(parsed\) \? parsed : \[\]/.test(code));
   check("its write never throws", /function writeCashOutbox\([\s\S]{0,300}catch \(e\) \{[\s\S]{0,200}console\.warn/.test(code));
+  // The window widened on 2026-09-21: the movement is also recorded as
+  // PENDING between these two statements, so its id can travel with the next
+  // save and the counter cannot be moved twice. The property is unchanged --
+  // the row is enqueued at creation, before any save exists.
   check("rows are enqueued AT CREATION, in recordCashTransaction",
-    /cashTransactions\.push\(tx\);\s*student\.wildcatCashTransactions\.push\(tx\);[\s\S]{0,160}enqueueCashOutbox\(tx\);/.test(code));
+    /cashTransactions\.push\(tx\);\s*student\.wildcatCashTransactions\.push\(tx\);[\s\S]{0,700}enqueueCashOutbox\(tx\);/.test(code));
+  check("and the movement is recorded as pending in the same breath",
+    /cashTransactions\.push\(tx\);[\s\S]{0,400}_pendingCashMovements\.set\(_sid, _list\);/.test(code));
   check("enqueue dedupes by id", /function enqueueCashOutbox[\s\S]{0,300}outbox\.some\(t => t && t\.id === tx\.id\)/.test(code));
   check("pruning drops ONLY confirmed ids",
     /function pruneCashOutbox\(confirmedIds\)[\s\S]{0,400}filter\(t => !\(t && confirmedIds\.has\(t\.id\)\)\)/.test(code));
@@ -485,7 +496,10 @@ console.log("\nAn award made WHILE a save is in flight still reaches a counter")
     /const sentCounters = new Map\(\);/.test(code) &&
     /sentCounters\.set\(String\(st\.id\), cashCountersOf\(st\)\);/.test(code));
   check("and the base is pinned from that snapshot, not from the live object",
-    /const sent = sentCounters\.get\(String\(st\.id\)\);\s*\n\s*if \(sent\) _studentCashBase\.set\(String\(st\.id\), sent\);/.test(code));
+    /const sent = sentCounters\.get\(key\);\s*\n\s*if \(sent\) _studentCashBase\.set\(key, sent\);/.test(code));
+  // A movement the server would not account for must NOT be forgotten.
+  check("a held movement stays pending and is re-sent",
+    /heldMovements\.has\(String\(m\.id\)\)/.test(code));
   check("the old unconditional rebase is gone",
     !/changedStudents\.forEach\(rememberCashBase\);/.test(code));
   check("a student with no snapshot still gets a base, rather than none",

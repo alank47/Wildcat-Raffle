@@ -5,6 +5,12 @@
  * Split from appData.ts for the same reason identityRules.ts is split from
  * identity.ts: a test that reimplements the logic it is testing can drift from
  * the real thing and still pass, which is worse than no test.
+ *
+ * NO IMPORTS, and that is load-bearing rather than tidy: convex/appDataShape.test.mjs
+ * imports this file directly under Node, which cannot resolve an extensionless
+ * `.ts` specifier. That is why the movement-keying rules below live HERE rather
+ * than in a module of their own -- they are pure save-shape rules and this is
+ * the pure save-shape module.
  */
 
 /**
@@ -392,6 +398,223 @@ export function refusedCashCounters(
   return refused;
 }
 
+
+// =========================================================================
+// MOVEMENT-KEYED COUNTERS
+//
+// Everything below exists because a cash ROW is idempotent and a cash
+// COUNTER was not. Full account on planCashMovements.
+// =========================================================================
+
+/**
+ * How many applied movement ids are remembered per student.
+ *
+ * O(1) per student forever, independent of the ledger's size: ~60 bytes an
+ * entry, ~1.5KB worst case, on the row it guards.
+ *
+ * WHY 24 IS ENOUGH, and what would make it wrong. A movement leaves the
+ * client's pending list the moment ANY save confirms it, so the window a
+ * retry has to survive is one save, not 24 movements. 24 is therefore many
+ * multiples of the real exposure. It is reasoned rather than measured, and the
+ * measurement is now available: `cashMovementsAbsorbed` counts real
+ * absorptions and a `coverage_lost` refusal counts an eviction that went too
+ * far. If evictions ever appear, raise this -- the cost is linear and small.
+ */
+export const CASH_APPLIED_MAX = 24;
+
+
+export type CashMovement = { id: string; at: string; amount: number; kind: string };
+export type CashApplied = { ids: Array<{ i: string; at: string }>; since?: string };
+
+/**
+ * Which counters one movement moves, and by how much.
+ *
+ * THIS MUST STAY IDENTICAL TO recordCashTransaction, which is the only place a
+ * movement's local effect is computed. They are two expressions of one rule and
+ * a divergence between them is money. The client has the same function under
+ * the same name for exactly that reason, and a test compares the two.
+ *
+ * Reading the SIGN is not enough -- a redemption and a deduction are both
+ * negative and must bucket differently.
+ */
+export function cashMovementEffect(amount: unknown, kind: unknown): Record<string, number> {
+  const a = Number(amount) || 0;
+  const k = String(kind ?? "");
+  return {
+    wildcatCashBalance: a,
+    wildcatCashEarned: (k !== "redeem" && a > 0) ? a : 0,
+    wildcatCashSpent: (k === "redeem") ? Math.abs(a) : 0,
+    wildcatCashDeducted: (k !== "redeem" && a <= 0) ? Math.abs(a) : 0,
+  };
+}
+
+/**
+ * Append to the register, evicting the oldest past the cap.
+ *
+ * THE WATERMARK IS THE WHOLE POINT. Every eviction moves `since` forward to
+ * the evicted entry's timestamp, and it never moves back. So the register's
+ * invariant holds by induction: every movement this student's counters have
+ * had applied whose `at` is strictly after `since` is in `ids`. A movement
+ * older than the watermark cannot be proved unseen, so it is refused rather
+ * than guessed at -- which is the direction that loses a movement rather than
+ * paying twice.
+ */
+export function ringPush(cur: CashApplied | null | undefined, add: readonly CashMovement[]): CashApplied {
+  const ids = ((cur && Array.isArray(cur.ids)) ? cur.ids.slice() : [])
+    .filter((e) => e && typeof e.i === "string");
+  let since = (cur && typeof cur.since === "string") ? cur.since : undefined;
+  const have = new Set(ids.map((e) => e.i));
+  // Appended in `at` order so eviction is oldest-first regardless of the order
+  // a payload happened to list them in.
+  [...add].sort((x, y) => String(x.at).localeCompare(String(y.at))).forEach((m) => {
+    if (have.has(m.id)) return;
+    have.add(m.id);
+    ids.push({ i: m.id, at: String(m.at) });
+  });
+  while (ids.length > CASH_APPLIED_MAX) {
+    const dropped = ids.shift();
+    if (!dropped) break;
+    if (!since || String(dropped.at) > since) since = String(dropped.at);
+  }
+  return since === undefined ? { ids } : { ids, since };
+}
+
+export type MovementPlan = {
+  /** Per counter, what to add to the stored value. Already cap-filtered. */
+  net: Record<string, number>;
+  /** Counters refused for magnitude. */
+  capped: string[];
+  /** Movements applied on this call, to be registered. */
+  applied: CashMovement[];
+  /** Ids this student's counters had already had applied. */
+  absorbed: string[];
+  /** Movements not applied, with the reason. */
+  refused: Array<{ id: string; why: string }>;
+  /** The register to write, or null when nothing was applied. */
+  nextApplied: CashApplied | null;
+  /** True when any counter moved without a movement id behind it. */
+  hasResidual: boolean;
+};
+
+/**
+ * What one record's counters should become.
+ *
+ * `cutoffMs` is the history cutoff, or null when none is set. The counters have
+ * never had a cutoff guard -- the rows and the per-student arrays both do --
+ * which is the "guarding a subset guards nothing" rule finally applied to the
+ * fourth store.
+ */
+export function planCashMovements(
+  row: Record<string, any>,
+  record: Record<string, any>,
+  stated: Record<string, number>,
+  opts: { cutoffMs: number | null; maxDelta: number },
+): MovementPlan {
+  const cutoffMs = opts ? opts.cutoffMs : null;
+  const maxDelta = (opts && Number.isFinite(opts.maxDelta)) ? opts.maxDelta : 5000;
+  const refused: Array<{ id: string; why: string }> = [];
+  const absorbed: string[] = [];
+
+  // --- accept the list -------------------------------------------------
+  const raw = Array.isArray(record?.cashMovements) ? record.cashMovements : [];
+  const accepted: CashMovement[] = [];
+  const seenInRecord = new Set<string>();
+  for (const m of raw) {
+    const id = String((m && m.id) || "");
+    const amount = Number(m && m.amount);
+    if (!id || !Number.isFinite(amount) || typeof (m && m.kind) !== "string") {
+      refused.push({ id: id || "(no id)", why: "bad_shape" });
+      continue;
+    }
+    // A distributeCashTransactions rebuild, or a client bug, could list one
+    // movement twice in the same record. First occurrence wins.
+    if (seenInRecord.has(id)) { refused.push({ id, why: "duplicate_in_record" }); continue; }
+    seenInRecord.add(id);
+    accepted.push({ id, at: String((m && m.at) || ""), amount, kind: String(m.kind) });
+  }
+
+  // --- claimed and residual -------------------------------------------
+  // `claimed` covers the WHOLE accepted list, seen or not: that is what makes
+  // the residual independent of server history, and therefore order-safe.
+  const claimed: Record<string, number> = {};
+  CASH_COUNTERS.forEach((f) => { claimed[f] = 0; });
+  accepted.forEach((m) => {
+    const e = cashMovementEffect(m.amount, m.kind);
+    CASH_COUNTERS.forEach((f) => { claimed[f] += e[f] || 0; });
+  });
+
+  const residual: Record<string, number> = {};
+  let hasResidual = false;
+  CASH_COUNTERS.forEach((f) => {
+    // READ WITH A DEFAULT, never by iterating the delta's keys: cashDeltaOf
+    // drops zero-valued fields, so a delta that nets a counter to zero would
+    // otherwise skip its own correction or compute `undefined - 100` = NaN.
+    const r = (Number(stated[f]) || 0) - claimed[f];
+    residual[f] = r;
+    if (r !== 0) hasResidual = true;
+  });
+
+  // --- classify each movement -----------------------------------------
+  const cur: CashApplied | null = (row && row.cashApplied) || null;
+  const known = new Set(((cur && Array.isArray(cur.ids)) ? cur.ids : []).map((e: any) => String(e && e.i)));
+  const sinceMs = (cur && typeof cur.since === "string") ? Date.parse(cur.since) : NaN;
+  const fresh: CashMovement[] = [];
+  for (const m of accepted) {
+    if (known.has(m.id)) { absorbed.push(m.id); continue; }
+    const at = Date.parse(m.at);
+    if (!Number.isFinite(at)) { refused.push({ id: m.id, why: "undated" }); continue; }
+    if (cutoffMs !== null && Number.isFinite(cutoffMs) && at < cutoffMs - HISTORY_SLACK_MS) {
+      refused.push({ id: m.id, why: "before_cutoff" });
+      continue;
+    }
+    // Past the watermark the register can no longer prove this is unseen.
+    // `at === since` refuses too: conservative, and reported.
+    if (Number.isFinite(sinceMs) && at <= sinceMs) {
+      refused.push({ id: m.id, why: "coverage_lost" });
+      continue;
+    }
+    fresh.push(m);
+  }
+
+  const keyed: Record<string, number> = {};
+  CASH_COUNTERS.forEach((f) => { keyed[f] = 0; });
+  fresh.forEach((m) => {
+    const e = cashMovementEffect(m.amount, m.kind);
+    CASH_COUNTERS.forEach((f) => { keyed[f] += e[f] || 0; });
+  });
+
+  // --- the cap, per field, exactly as before ---------------------------
+  const net: Record<string, number> = {};
+  const capped: string[] = [];
+  CASH_COUNTERS.forEach((f) => {
+    const n = keyed[f] + residual[f];
+    if (Math.abs(n) > maxDelta) { net[f] = 0; capped.push(f); return; }
+    net[f] = n;
+  });
+
+  // --- registration is CONTINGENT on the movement actually landing -----
+  // Without this a capped field swallows a movement permanently: registered,
+  // so never re-sent, but never applied either.
+  const cappedSet = new Set(capped);
+  const applied = fresh.filter((m) => {
+    const e = cashMovementEffect(m.amount, m.kind);
+    return !CASH_COUNTERS.some((f) => (e[f] || 0) !== 0 && cappedSet.has(f));
+  });
+  fresh.forEach((m) => {
+    if (!applied.includes(m)) refused.push({ id: m.id, why: "capped" });
+  });
+
+  return {
+    net, capped, applied, absorbed, refused,
+    // NOT WRITTEN WHEN NOTHING WAS APPLIED. The first save after every load
+    // ships every student with an all-zero delta and no movements; a version
+    // that touched the register unconditionally would turn that into ~700 row
+    // writes.
+    nextApplied: applied.length ? ringPush(cur, applied) : null,
+    hasResidual,
+  };
+}
+
 /**
  * The patch for one record. Counters go by delta when the record carries one
  * (their absolute values are then ignored, because they describe the tab's
@@ -471,7 +694,25 @@ export function planPatch(
   const rest: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(fields)) if (!counters.has(key)) rest[key] = value;
   const patch = mergeIncoming(row, rest);
-  for (const [field, d] of Object.entries(delta)) {
+
+  // MOVEMENT-KEYED FROM 2026-09-21, so the same award cannot move a counter
+  // twice. On 2026-09-18 a bulk award of seven students was applied twice and
+  // every one ended $100 above their own ledger, against seven ledger rows --
+  // the rows deduped and the counters did not. See cashMovementRules.ts for
+  // the key, and for why an idempotency key per save ATTEMPT fails here.
+  //
+  // `stated` is read WITH A DEFAULT per counter rather than by iterating the
+  // delta's keys, because cashDeltaOf drops zero-valued fields: a delta that
+  // nets a counter to zero would otherwise skip its own correction, or compute
+  // `undefined - 100` and write NaN into a balance.
+  const stated: Record<string, number> = {};
+  for (const f of CASH_COUNTERS) stated[f] = Number(delta[f]) || 0;
+  const mv = planCashMovements(row, record, stated, {
+    cutoffMs: historyCutoff,
+    maxDelta: MAX_CASH_DELTA,
+  });
+  for (const field of CASH_COUNTERS) {
+    const d = mv.net[field] || 0;
     // A CAP ON ONE MOVEMENT, not a floor at zero. This is the second attempt
     // and the first was wrong in a way that mattered.
     //
@@ -495,14 +736,44 @@ export function planPatch(
     // carries a whole remembered balance. So one movement is capped, the
     // balance is free to go negative as the school intends, and the cap is
     // reported through the same channel rather than applied silently.
-    if (Math.abs(d) > MAX_CASH_DELTA) continue;
+    // The cap still applies, per field and at the same value -- it now lives in
+    // planCashMovements, which hands a capped field back as 0. That is what
+    // still stops the stale-reset shape, because such a delta arrives as a
+    // RESIDUAL with no movement id behind it, and the residual is what the cap
+    // sees.
+    if (d === 0) continue;
     patch[field] = (Number(row[field]) || 0) + d;
   }
+  // THE REGISTER TRAVELS INSIDE THE WRITE IT GUARDS. One ctx.db.patch, one
+  // transaction. A register in its own table would be a second store under a
+  // second guarantee, which is the exact shape of the bug it exists to close.
+  // Absent when nothing was applied, so the first save after every load -- all
+  // zero deltas and no movements -- does not become ~700 row writes.
+  if (mv.nextApplied) patch.cashApplied = mv.nextApplied;
   return patch;
 }
 
 export type PlannedPatch = { key: string; rowId: unknown; patch: Record<string, unknown> };
-export type SavePlan = { patches: PlannedPatch[]; skipped: string[]; countersIgnored: string[] };
+export type SavePlan = {
+  patches: PlannedPatch[];
+  skipped: string[];
+  countersIgnored: string[];
+  /** Movements whose effect this save applied for the first time. */
+  movementsApplied: number;
+  /** Movement ids already registered -- a re-send, correctly absorbed. */
+  movementsAbsorbed: string[];
+  /**
+   * Movements NOT applied, with the student and the reason. The client keeps
+   * these pending and re-sends them, so a held movement is never lost quietly.
+   */
+  movementsRefused: Array<{ key: string; id: string; why: string }>;
+  /**
+   * Students whose counters moved with no movement id behind the change: an
+   * old client, or the reset / rollover / starting-balance paths. The measure
+   * of how much of the fleet is still unkeyed.
+   */
+  unkeyedResidual: string[];
+};
 
 /**
  * Decide what a save WOULD write, without writing anything.
@@ -533,6 +804,10 @@ export function planSave(
   const patches: PlannedPatch[] = [];
   const skipped: string[] = [];
   const countersIgnored: string[] = [];
+  let movementsApplied = 0;
+  const movementsAbsorbed: string[] = [];
+  const movementsRefused: Array<{ key: string; id: string; why: string }> = [];
+  const unkeyedResidual: string[] = [];
   for (const record of incoming ?? []) {
     const key = String(record?.id ?? record?.studentNumber ?? "");
     const row = key ? byKey.get(key) : undefined;
@@ -546,7 +821,30 @@ export function planSave(
     // otherwise vanish from the save's answer entirely -- which is the exact
     // shape of failure the `skipped` report above exists to prevent.
     if (refusedCashCounters(row, record, writable).length) countersIgnored.push(key);
+
+    // ASKED A SECOND TIME, purely for the report -- the same shape
+    // refusedCashCounters is already called in twice. planPatch does not return
+    // its reasoning, and a refusal nobody is told about is how a held movement
+    // becomes a lost one: the client keeps a movement pending only because this
+    // names it.
+    {
+      const d = cashDeltaOf(record) ?? {};
+      const st: Record<string, number> = {};
+      for (const f of CASH_COUNTERS) st[f] = Number(d[f]) || 0;
+      const mv = planCashMovements(row, record, st, {
+        cutoffMs: historyCutoff,
+        maxDelta: MAX_CASH_DELTA,
+      });
+      movementsApplied += mv.applied.length;
+      mv.absorbed.forEach((id) => movementsAbsorbed.push(id));
+      mv.refused.forEach((r) => movementsRefused.push({ key, id: r.id, why: r.why }));
+      if (mv.hasResidual) unkeyedResidual.push(key);
+    }
+
     if (Object.keys(patch).length > 0) patches.push({ key, rowId: row._id, patch });
   }
-  return { patches, skipped, countersIgnored };
+  return {
+    patches, skipped, countersIgnored,
+    movementsApplied, movementsAbsorbed, movementsRefused, unkeyedResidual,
+  };
 }

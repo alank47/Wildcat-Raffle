@@ -1,0 +1,282 @@
+// A cash movement moves a counter ONCE, however many times it is sent.
+// Run: npm test
+//
+// THE INCIDENT, measured on production 2026-09-18. Wildcat Cash keeps two
+// stores. The ROWS are keyed by their own id and unioned, so sending one twice
+// is harmless. The COUNTERS moved by a DELTA the browser stated, applied
+// unconditionally, so sending one twice DOUBLE-COUNTED.
+//
+// A bulk award by one teacher at 17:35:57 held exactly 7 students, and exactly
+// those 7 ended the day $100 above their own ledger. His next bulk 95 seconds
+// later held the same 7 plus three more, and those three were fine -- so it was
+// not the teacher, the class, the period or the device. It was ONE SAVE,
+// applied twice. The ledger holds 7 rows for that instant, not 14.
+//
+// The first assertion below is that incident, and it FAILS against the code
+// that shipped it.
+//
+// WHY THE OBVIOUS FIX IS ABSENT HERE. An idempotency key per save ATTEMPT
+// cannot work: a retry re-enters saveData(), which recomputes the payload from
+// in-memory state, so a fresh attempt id is minted and sails past the check.
+// The key is the MOVEMENT id, which is born with the movement and lives in the
+// durable outbox, so it survives the recomputation.
+import { readFileSync } from "node:fs";
+import ts from "typescript";
+
+let pass = 0, fail = 0;
+const check = (n, c, why) => {
+  c ? (pass++, console.log(`  PASS  ${n}`)) : (fail++, console.log(`  FAIL  ${n}${why ? "  (" + why + ")" : ""}`));
+};
+
+// The rules live INSIDE appDataShape.ts, not beside it: that file must keep
+// zero imports because convex/appDataShape.test.mjs imports it directly under
+// Node, which cannot resolve an extensionless .ts specifier.
+const src = readFileSync(new URL("./convex/appDataShape.ts", import.meta.url), "utf8");
+const shapeSrc = src;
+const script = readFileSync(new URL("./script.js", import.meta.url), "utf8");
+
+function lift(name) {
+  const start = src.indexOf(`export function ${name}(`);
+  if (start < 0) throw new Error(`${name} is not exported from convex/appDataShape.ts`);
+  const end = src.indexOf("\n}\n", start) + 3;
+  return src.slice(start, end).replace("export function", "function");
+}
+const consts = ["CASH_COUNTERS", "CASH_APPLIED_MAX"]
+  .map((n) => src.match(new RegExp(`^export const ${n} =[\\s\\S]*?;$`, "m"))[0]
+    .replace("export ", "").replace(" as const", ""))
+  .join("\n") + "\nconst HISTORY_SLACK_MS = 60 * 60 * 1000;";
+const js = ts.transpileModule(
+  consts + "\n" + ["cashMovementEffect", "ringPush", "planCashMovements"].map(lift).join("\n"),
+  { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } },
+).outputText;
+const [cashMovementEffect, ringPush, planCashMovements, MOVEMENT_FIELDS, CASH_APPLIED_MAX] =
+  new Function(js + "\nreturn [cashMovementEffect, ringPush, planCashMovements, CASH_COUNTERS, CASH_APPLIED_MAX];")();
+
+const F = ["wildcatCashBalance", "wildcatCashEarned", "wildcatCashSpent", "wildcatCashDeducted"];
+const OPTS = { cutoffMs: null, maxDelta: 5000 };
+
+/** One student row, as the server holds it. */
+const row = (o = {}) => ({ wildcatCashBalance: 0, wildcatCashEarned: 0, wildcatCashSpent: 0, wildcatCashDeducted: 0, ...o });
+/** Apply a plan to a row the way planPatch does, and return the new row. */
+function applyTo(r, record) {
+  const stated = {};
+  F.forEach((f) => { stated[f] = Number((record.cashDelta || {})[f]) || 0; });
+  const mv = planCashMovements(r, record, stated, OPTS);
+  const next = { ...r };
+  F.forEach((f) => { if (mv.net[f]) next[f] = (Number(r[f]) || 0) + mv.net[f]; });
+  if (mv.nextApplied) next.cashApplied = mv.nextApplied;
+  return { row: next, mv };
+}
+/** The payload a tab sends for an award of `amount`, measured from a base of 0. */
+const award = (id, amount, at = "2026-09-18T17:35:57.100Z", kind = "award") => {
+  const e = cashMovementEffect(amount, kind);
+  return { cashDelta: { ...e }, cashMovements: [{ id, at, amount, kind }] };
+};
+
+console.log("\n2026-09-18: the seven-student bulk award, applied twice");
+{
+  // Exactly the incident. Seven students, one payload each, delivered twice.
+  let doubled = 0;
+  for (let i = 0; i < 7; i++) {
+    const p = award("txn_bulk_" + i, 100);
+    const first = applyTo(row({ wildcatCashBalance: 300, wildcatCashEarned: 300 }), p);
+    const second = applyTo(first.row, p);          // the same payload, again
+    if (second.row.wildcatCashBalance !== 400) doubled++;
+  }
+  check("all seven counters move ONCE, not twice", doubled === 0, `${doubled} doubled`);
+
+  const p = award("txn_bulk_0", 100);
+  const a = applyTo(row(), p);
+  const b = applyTo(a.row, p);
+  check("the first delivery applies it", a.row.wildcatCashBalance === 100 && a.mv.applied.length === 1);
+  check("the second applies nothing", b.row.wildcatCashBalance === 100 && b.mv.applied.length === 0);
+  check("and says it absorbed it, so the bug becomes a measurement",
+    b.mv.absorbed.length === 1 && b.mv.absorbed[0] === "txn_bulk_0");
+  check("earned moved once too", b.row.wildcatCashEarned === 100);
+  check("a third delivery is still a no-op", applyTo(b.row, p).row.wildcatCashBalance === 100);
+}
+
+console.log("\nOrder does not matter, which is what makes it safe");
+{
+  // P1 = (+100, [M]); P2 = (+200, [M,N]) -- the shape a retry interleaved with
+  // a new award actually takes.
+  const M = { id: "M", at: "2026-09-18T17:00:00.000Z", amount: 100, kind: "award" };
+  const N = { id: "N", at: "2026-09-18T17:01:00.000Z", amount: 100, kind: "award" };
+  const P1 = { cashDelta: { wildcatCashBalance: 100, wildcatCashEarned: 100 }, cashMovements: [M] };
+  const P2 = { cashDelta: { wildcatCashBalance: 200, wildcatCashEarned: 200 }, cashMovements: [M, N] };
+
+  const forward = applyTo(applyTo(row(), P1).row, P2).row;
+  const backward = applyTo(applyTo(row(), P2).row, P1).row;
+  check("P1 then P2 lands +200", forward.wildcatCashBalance === 200);
+  check("P2 then P1 lands +200 as well", backward.wildcatCashBalance === 200);
+  check("and the two orders agree on every counter",
+    F.every((f) => (forward[f] || 0) === (backward[f] || 0)));
+  check("a duplicate delivery of P2 changes nothing",
+    applyTo(forward, P2).row.wildcatCashBalance === 200);
+}
+
+console.log("\nAn OLD client is the residual path, byte-for-byte");
+{
+  // A tab that has not reloaded sends a delta and no movements. Old and new
+  // clients WILL overlap: a tab with unsaved work deliberately does not
+  // self-update, and refusing an unkeyed save would stop cash reaching the
+  // counters for most of forty staff on deploy morning.
+  const old = { cashDelta: { wildcatCashBalance: 100, wildcatCashEarned: 100 } };
+  const r = applyTo(row({ wildcatCashBalance: 300, wildcatCashEarned: 300 }), old);
+  check("its delta applies exactly as before", r.row.wildcatCashBalance === 400);
+  check("it is reported as unkeyed, so the fleet is measurable", r.mv.hasResidual === true);
+  check("and it writes NO register", r.row.cashApplied === undefined);
+  check("so it cannot consume ring capacity or evict a new tab's entry",
+    r.mv.applied.length === 0);
+  // An old tab keeps failure mode 2 for its own life -- nothing server-side
+  // can tell its recomputed delta from a genuinely larger one -- but it
+  // cannot break a NEW tab's guarantee.
+  const keyed = applyTo(r.row, award("txn_new", 100));
+  check("a new tab's movement still registers afterwards", keyed.mv.applied.length === 1);
+  check("and re-sending it is still absorbed",
+    applyTo(keyed.row, award("txn_new", 100)).mv.applied.length === 0);
+}
+
+console.log("\nA delta that nets a counter to zero is not skipped, and is not NaN");
+{
+  // cashDeltaOf drops zero-valued fields, so reading the delta by iterating
+  // its KEYS would miss the correction entirely. This is the defect that made
+  // baseline-keying wrong, asserted here so the shape cannot come back.
+  const M = { id: "M", at: "2026-09-18T17:00:00.000Z", amount: 100, kind: "award" };
+  const D = { id: "D", at: "2026-09-18T17:05:00.000Z", amount: -100, kind: "deduct" };
+  // Award then deduct: balance nets to 0, earned +100, deducted +100.
+  const p = { cashDelta: { wildcatCashEarned: 100, wildcatCashDeducted: 100 }, cashMovements: [M, D] };
+  const r = applyTo(row({ wildcatCashBalance: 500 }), p);
+  check("the balance is unchanged, not NaN", r.row.wildcatCashBalance === 500);
+  F.forEach((f) => check(`${f} is a finite number`, Number.isFinite(Number(r.row[f] ?? 0))));
+  check("earned moved", r.row.wildcatCashEarned === 100);
+  check("deducted moved", r.row.wildcatCashDeducted === 100);
+  check("both movements registered", r.mv.applied.length === 2);
+  const again = applyTo(r.row, p);
+  check("and re-sending changes nothing", again.row.wildcatCashEarned === 100 && again.row.wildcatCashDeducted === 100);
+}
+
+console.log("\nThe cap still stops the stale-reset shape");
+{
+  // A stale tab's reset computes 0 - 30500 against a server holding 0. It
+  // arrives as a RESIDUAL with no movement id, and the residual is what the
+  // cap sees. $4,901,850 of phantom debt is the incident this prevents.
+  const stale = { cashDelta: { wildcatCashBalance: -30500 } };
+  const r = applyTo(row(), stale);
+  check("a huge unkeyed delta is refused", r.row.wildcatCashBalance === 0);
+  check("and the field is named as capped", r.mv.capped.includes("wildcatCashBalance"));
+  // A capped field must not swallow a movement: registered but never applied
+  // would lose it forever.
+  const big = award("txn_big", 9999);
+  const rb = applyTo(row(), big);
+  check("a capped MOVEMENT is not applied", rb.row.wildcatCashBalance === 0);
+  check("and is NOT registered, so it can be re-sent", rb.mv.applied.length === 0);
+  check("it is reported as held, by id", rb.mv.refused.some((x) => x.id === "txn_big" && x.why === "capped"));
+  check("a normal award is under the cap", applyTo(row(), award("t", 100)).row.wildcatCashBalance === 100);
+}
+
+console.log("\nThe register is bounded, and its watermark only moves forward");
+{
+  const mk = (i) => ({ id: "m" + i, at: `2026-09-18T10:${String(i).padStart(2, "0")}:00.000Z`, amount: 100, kind: "award" });
+  let reg = null;
+  for (let i = 0; i < CASH_APPLIED_MAX + 5; i++) reg = ringPush(reg, [mk(i)]);
+  check(`it holds at most ${CASH_APPLIED_MAX}`, reg.ids.length === CASH_APPLIED_MAX);
+  check("the oldest are evicted, the newest kept", reg.ids[reg.ids.length - 1].i === "m" + (CASH_APPLIED_MAX + 4));
+  check("eviction sets a watermark", typeof reg.since === "string");
+  const before = reg.since;
+  reg = ringPush(reg, [mk(99)]);
+  check("which only ever moves forward", reg.since >= before);
+  check("pushing an id it already holds does not duplicate it",
+    ringPush(reg, [mk(99)]).ids.filter((e) => e.i === "m99").length === 1);
+  check("a null register starts empty", ringPush(null, []).ids.length === 0);
+  check("and has no watermark until something is evicted", ringPush(null, [mk(1)]).since === undefined);
+}
+
+console.log("\nWhat it refuses, it refuses by name, and the client re-sends it");
+{
+  const reg = { ids: [], since: "2026-09-18T12:00:00.000Z" };
+  const old = applyTo(row({ cashApplied: reg }), award("txn_old", 100, "2026-09-18T11:00:00.000Z"));
+  check("a movement older than the watermark is refused, not guessed",
+    old.mv.refused.some((x) => x.why === "coverage_lost"));
+  check("and its counter does not move", old.row.wildcatCashBalance === 0);
+
+  const undated = applyTo(row(), { cashDelta: { wildcatCashBalance: 100 }, cashMovements: [{ id: "u", at: "", amount: 100, kind: "award" }] });
+  check("an undated movement is refused", undated.mv.refused.some((x) => x.why === "undated"));
+
+  const cut = Date.parse("2026-09-14T15:30:00Z");
+  const pre = planCashMovements(row(), award("p", 100, "2026-09-01T10:00:00.000Z"),
+    { wildcatCashBalance: 100, wildcatCashEarned: 100, wildcatCashSpent: 0, wildcatCashDeducted: 0 },
+    { cutoffMs: cut, maxDelta: 5000 });
+  check("a movement from before the history cutoff is refused",
+    pre.refused.some((x) => x.why === "before_cutoff"));
+  const inside = planCashMovements(row(), award("q", 100, "2026-09-14T15:00:00.000Z"),
+    { wildcatCashBalance: 100, wildcatCashEarned: 100, wildcatCashSpent: 0, wildcatCashDeducted: 0 },
+    { cutoffMs: cut, maxDelta: 5000 });
+  check("one inside the hour of slack is allowed", inside.applied.length === 1);
+
+  const dup = applyTo(row(), {
+    cashDelta: { wildcatCashBalance: 100, wildcatCashEarned: 100 },
+    cashMovements: [{ id: "d", at: "2026-09-18T17:00:00.000Z", amount: 100, kind: "award" },
+                    { id: "d", at: "2026-09-18T17:00:00.000Z", amount: 100, kind: "award" }],
+  });
+  check("one movement listed twice in a record counts once",
+    dup.mv.applied.length === 1 && dup.row.wildcatCashBalance === 100);
+  check("and the copy is named", dup.mv.refused.some((x) => x.why === "duplicate_in_record"));
+
+  const bad = applyTo(row(), { cashDelta: { wildcatCashBalance: 100 }, cashMovements: [{ id: "", amount: 100, kind: "award" }] });
+  check("a shapeless entry is refused rather than counted", bad.mv.refused.some((x) => x.why === "bad_shape"));
+}
+
+console.log("\nThe effect rule is ONE rule, in two places that must agree");
+{
+  check("a redemption is spent, not deducted",
+    cashMovementEffect(-100, "redeem").wildcatCashSpent === 100 &&
+    cashMovementEffect(-100, "redeem").wildcatCashDeducted === 0);
+  check("a deduction is deducted, not spent",
+    cashMovementEffect(-100, "deduct").wildcatCashDeducted === 100 &&
+    cashMovementEffect(-100, "deduct").wildcatCashSpent === 0);
+  check("an award is earned", cashMovementEffect(100, "award").wildcatCashEarned === 100);
+  check("the balance always takes the signed amount",
+    cashMovementEffect(-100, "deduct").wildcatCashBalance === -100);
+  check("junk is zero, not NaN", F.every((f) => cashMovementEffect("x", "award")[f] === 0));
+
+  // The client has the same function. A divergence between them is money.
+  const m = script.match(/function cashMovementEffect\(amount, kind\) \{[\s\S]*?\n        \}/);
+  check("the client defines it too", Boolean(m));
+  const clientFn = new Function("amount", "kind", m[0].replace(/^\s*function cashMovementEffect\(amount, kind\) \{/, "").replace(/\}\s*$/, ""));
+  const cases = [[100, "award"], [-100, "deduct"], [-100, "redeem"], [0, "award"], [250, "award"], [-50, "redeem"]];
+  const agree = cases.every(([a, k]) => {
+    const s = cashMovementEffect(a, k), c = clientFn(a, k);
+    return F.every((f) => s[f] === c[f]);
+  });
+  check("and computes exactly the same effect as the server, on every case", agree);
+
+  // The field list must match appDataShape's, or a counter would be missed.
+  const shape = shapeSrc.match(/export const CASH_COUNTERS = \[([\s\S]*?)\]/)[1];
+  const shapeFields = [...shape.matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+  check("the rule iterates exactly CASH_COUNTERS, so no counter is missed",
+    [...MOVEMENT_FIELDS].join(",") === shapeFields.join(","),
+    `${[...MOVEMENT_FIELDS].join(",")} vs ${shapeFields.join(",")}`);
+  check("and the rules sit inside the pure save-shape module, which has no imports",
+    !/^import /m.test(src));
+}
+
+console.log("\nThe client keeps a held movement pending, and forgets an accepted one");
+{
+  check("movements are recorded as pending when a movement is created",
+    /_pendingCashMovements\.set\(_sid, _list\)/.test(script));
+  check("born with the transaction, before any save exists",
+    script.indexOf("_pendingCashMovements.set(_sid") > script.indexOf("cashTransactions.push(tx);"));
+  check("they are sent beside the delta", /cashMovements: pend/.test(script));
+  check("the response is read defensively, never destructured",
+    /result && result\.cashMovementsHeld \? result\.cashMovementsHeld : \[\]/.test(script));
+  check("a held movement stays pending", /return !sentThis \|\| heldMovements\.has\(String\(m\.id\)\)/.test(script));
+  check("and a held movement is logged rather than swallowed",
+    /the server held ' \+ heldMovements\.size/.test(script));
+  check("the server reports what it held, by id", /cashMovementsHeld: movementsRefused\.map/.test(src === "" ? "" : readFileSync(new URL("./convex/appData.ts", import.meta.url), "utf8")));
+  check("and reports absorptions, which is the bug becoming a measurement",
+    /cashMovementsAbsorbed: movementsAbsorbed\.length/.test(readFileSync(new URL("./convex/appData.ts", import.meta.url), "utf8")));
+}
+
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);

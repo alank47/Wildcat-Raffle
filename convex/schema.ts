@@ -109,6 +109,39 @@ export default defineSchema({
     wildcatCashEarned: v.optional(v.number()),
     wildcatCashSpent: v.optional(v.number()),
     wildcatCashDeducted: v.optional(v.number()),
+
+    /**
+     * Which cash movements this student's counters have already had applied.
+     *
+     * THE REGISTER THAT MAKES A COUNTER IDEMPOTENT. A cash ROW is keyed by its
+     * own id and unioned, so sending it twice is harmless; a counter moved by
+     * a DELTA is not, and on 2026-09-18 one bulk award of seven students was
+     * applied twice -- every one of them $100 above their own ledger, against
+     * seven ledger rows. An idempotency key per save ATTEMPT cannot fix it,
+     * because a retry recomputes the payload and mints a fresh one. The key is
+     * the MOVEMENT id, which is born inside recordCashTransaction and already
+     * keys the ledger row.
+     *
+     * ON THIS ROW, not in a table of its own, for the reason that IS the bug:
+     * the register and the counter it guards must be written by one
+     * ctx.db.patch in one transaction. A separate table would be a second
+     * store under a second guarantee.
+     *
+     * `since` is a watermark. The list is capped at CASH_APPLIED_MAX, and
+     * every eviction moves `since` forward to the evicted entry's timestamp
+     * and never back -- so the invariant holds by induction: every movement
+     * applied to these counters whose `at` is after `since` is in `ids`. A
+     * movement older than the watermark cannot be proved unseen, so it is
+     * refused and reported rather than guessed at.
+     *
+     * Absent on a student whose counters no keyed save has ever moved, which
+     * is every student until their first award after this shipped.
+     */
+    cashApplied: v.optional(v.object({
+      ids: v.array(v.object({ i: v.string(), at: v.string() })),
+      since: v.optional(v.string()),
+    })),
+
     // A LIST of redeemed rewards, not a count. Assumed to be a number
     // first; the import refused it, which is the validator doing its job.
     wildcatCashRewardsRedeemed: v.optional(v.array(v.any())),

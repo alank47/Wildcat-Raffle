@@ -384,6 +384,10 @@ export const save = mutation({
     let studentsChanged = 0;
     let skipped: string[] = [];
     let countersIgnored: string[] = [];
+    let movementsApplied = 0;
+    let movementsAbsorbed: string[] = [];
+    let movementsRefused: Array<{ key: string; id: string; why: string }> = [];
+    let unkeyedResidual: string[] = [];
     if (args.students?.length) {
       const rows = await lookupStudents(ctx, args.students);
       // THE SERVER'S HISTORY CUTOFF, read here and passed down.
@@ -415,6 +419,10 @@ export const save = mutation({
       }
       skipped = plan.skipped;
       countersIgnored = plan.countersIgnored;
+      movementsApplied = plan.movementsApplied;
+      movementsAbsorbed = plan.movementsAbsorbed;
+      movementsRefused = plan.movementsRefused;
+      unkeyedResidual = plan.unkeyedResidual;
     }
 
     let teachersChanged = 0;
@@ -472,6 +480,31 @@ export const save = mutation({
       // resurrection was at least visible in the totals.
       cashCountersIgnored: countersIgnored.length,
       cashCountersIgnoredSample: countersIgnored.slice(0, 5),
+
+      // MOVEMENT-KEYED COUNTERS, reported so the thing we could not see
+      // becomes a number.
+      //
+      // `cashMovementsAbsorbed` is the live measurement of the bug this
+      // closes: non-zero means a save landed, its response was lost, it was
+      // re-sent, and the counter did NOT move twice. On 2026-09-18 that same
+      // sequence cost seven students $100 each.
+      //
+      // `cashMovementsHeld` is the one the client acts on: a movement the
+      // server would not account for stays pending in the browser and is
+      // re-sent, rather than being dropped quietly. Named, not counted, for
+      // the same reason as the two above.
+      //
+      // `cashUnkeyedResidual` counts records whose counters moved with no
+      // movement id behind them -- an old tab, or the reset / rollover /
+      // starting-balance paths. It is how "how much of the fleet has not
+      // reloaded yet" stops being a guess.
+      cashMovementsApplied: movementsApplied,
+      cashMovementsAbsorbed: movementsAbsorbed.length,
+      cashMovementsAbsorbedSample: movementsAbsorbed.slice(0, 5),
+      cashMovementsHeld: movementsRefused.map((r) => r.id),
+      cashMovementsHeldSample: movementsRefused.slice(0, 5),
+      cashUnkeyedResidual: unkeyedResidual.length,
+      cashUnkeyedResidualSample: unkeyedResidual.slice(0, 5),
     };
   },
 });

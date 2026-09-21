@@ -28,6 +28,9 @@ export const EARNED_FIELDS = [
   "wildcatCashDeducted",
   "wildcatCashRewardsRedeemed",
   "wildcatCashTransactions",
+  // The movement register. App-owned like the counters it guards; a roster
+  // sync must never touch it, or a movement could be applied a second time.
+  "cashApplied",
   "cashBalance",
   "cashTransactions",
 ] as const;
