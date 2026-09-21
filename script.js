@@ -35720,8 +35720,14 @@
                                 : (Number(_cashDrift.diverged) || 0) + (Number(_cashDrift.heldBack) || 0),
                             { absent: 'the nightly check could not run',
                               tone: 'warn',
-                              onclick: "switchTab('auditLog')",
-                              arrowLabel: 'Open the audit log' })
+                              // switchTab('auditLog') -- which is what this
+                              // said, and there is no element with that id, so
+                              // the arrow did nothing at all. The friendly name
+                              // for the cash audit log is 'cashAudit', mapped
+                              // to #cashAuditTab. dom-refs.test.mjs now
+                              // asserts every switchTab target resolves.
+                              onclick: "switchTab('cashAudit')",
+                              arrowLabel: 'Open the cash audit log' })
                         : ''
                 ].join('');
             }

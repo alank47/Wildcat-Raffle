@@ -139,7 +139,10 @@ export const recordResult = internalMutation({
         payload: {
           action: "cash_drift_detected",
           entryId, timestamp: at,
-          studentId: "all", studentName: "",
+          // "All students", not "": describe() renders an entry with no name
+          // as "Student #" + studentId, so an empty name and studentId "all"
+          // read as a child called "Student #all".
+          studentId: "all", studentName: "All students",
           category: "Wildcat Cash",
           teacher: "System (nightly check)",
           teacherName: "System (nightly check)",

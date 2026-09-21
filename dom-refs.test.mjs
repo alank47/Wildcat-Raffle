@@ -87,5 +87,38 @@ console.log("\nThe three that actually shipped are gone");
     /has been throwing on every logout/.test(rawJs));
 }
 
+console.log("\nEvery switchTab target names a pane that exists");
+{
+  // THE BUG THIS EXISTS FOR, shipped 2026-09-20. A dashboard tile was given
+  // `onclick: "switchTab('auditLog')"`. There is no element with that id --
+  // the friendly name for the cash audit log is 'cashAudit', mapped to
+  // #cashAuditTab -- so switchTab found nothing, added .active to nothing, and
+  // the arrow did NOTHING AT ALL. No error, no warning, no hint. It was
+  // reported as "the box doesnt do anything if i click it", which is the only
+  // way it could have been found.
+  //
+  // switchTab resolves a friendly name through tabIdMap and otherwise uses the
+  // name as the element id, so a target is valid if either resolves. The same
+  // silent-nothing already cost this app the Settings, Students and Teachers
+  // buttons inside a mode (see the comment in switchTab itself).
+  const mapBlock = /const tabIdMap = \{([\s\S]*?)\};/.exec(js);
+  check("the friendly-name map was found", Boolean(mapBlock));
+  const mapped = new Map(
+    [...(mapBlock ? mapBlock[1] : "").matchAll(/'([^']+)':\s*'([^']+)'/g)].map((m) => [m[1], m[2]]));
+
+  const targets = new Set([
+    ...[...js.matchAll(/switchTab\('([^']+)'\)/g)].map((m) => m[1]),
+    ...[...html.matchAll(/switchTab\('([^']+)'\)/g)].map((m) => m[1]),
+  ]);
+  check(`there are switchTab targets to check (${targets.size})`, targets.size > 10);
+
+  const broken = [];
+  for (const t of targets) {
+    const id = mapped.get(t) || t;
+    if (!inHtml.has(id) && !madeAtRuntime.has(id)) broken.push(`switchTab('${t}') -> #${id}`);
+  }
+  check("every one of them resolves to a real element", broken.length === 0, broken.join("; "));
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);
