@@ -29,6 +29,8 @@ import type * as cashReversalRules from "../cashReversalRules.js";
 import type * as courseSubject from "../courseSubject.js";
 import type * as crons from "../crons.js";
 import type * as disciplineAggregates from "../disciplineAggregates.js";
+import type * as earlyWarning from "../earlyWarning.js";
+import type * as earlyWarningProfile from "../earlyWarningProfile.js";
 import type * as entraProbe from "../entraProbe.js";
 import type * as entraSync from "../entraSync.js";
 import type * as gradeProjection from "../gradeProjection.js";
@@ -114,6 +116,8 @@ declare const fullApi: ApiFromModules<{
   courseSubject: typeof courseSubject;
   crons: typeof crons;
   disciplineAggregates: typeof disciplineAggregates;
+  earlyWarning: typeof earlyWarning;
+  earlyWarningProfile: typeof earlyWarningProfile;
   entraProbe: typeof entraProbe;
   entraSync: typeof entraSync;
   gradeProjection: typeof gradeProjection;

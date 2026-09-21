@@ -9540,3 +9540,35 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 .wc-drift-owed .wc-att-badge { background: #fef3c7; color: #92400e; }
 .wc-drift-held .wc-att-badge { background: #fee2e2; color: #991b1b; }
 .wc-drift .wc-att-list { margin-top: 10px; }
+
+/* EARLY WARNING tier accents.
+   Only the accent classes are new: the cards, the ranked rows, the search box
+   and the grade select are the wc-att-* furniture Attendance Watch already
+   defines, reused as-is so the two screens read as siblings rather than as two
+   people's work. The selectors are compound for the same reason the attendance
+   ones are -- .wc-att-tier and .wc-att-row need different treatments of the
+   same tier colour. */
+.wc-att-tier.wc-ew-act { border-color: #dc2626; background: #fef2f2; }
+.wc-att-tier.wc-ew-watch { border-color: #ea580c; background: #fff7ed; }
+.wc-att-tier.wc-ew-some { border-color: #ca8a04; background: #fefce8; }
+.wc-att-tier.wc-ew-clear { border-color: #16a34a; background: #f0fdf4; }
+.wc-att-row.wc-ew-act { border-left: 4px solid #dc2626; }
+.wc-att-row.wc-ew-watch { border-left: 4px solid #ea580c; }
+.wc-att-row.wc-ew-some { border-left: 4px solid #ca8a04; }
+.wc-att-row.wc-ew-clear { border-left: 4px solid var(--wc-line, #e5e7eb); }
+/* The score sits where the attendance percentage does, so it needs to read as
+   a figure rather than as a percentage that lost its sign. */
+.wc-att-row.wc-ew-act .wc-att-pct,
+.wc-att-row.wc-ew-watch .wc-att-pct { color: #b91c1c; }
+/* Said above the list, not inside it: what the screen cannot see. */
+.wc-ew-basis-note {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--wc-line, #e5e7eb);
+  border-left: 4px solid var(--wc-blue, #2563eb);
+  border-radius: 6px;
+  background: var(--wc-surface-2, #f9fafb);
+  color: var(--wc-gray-text, #4b5563);
+  font-size: 13px;
+  line-height: 1.5;
+}

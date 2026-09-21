@@ -219,10 +219,16 @@
    * kind of record as the referral history beside it. A teacher who may only
    * file a referral about their own class has no business with the list, and
    * convex/attendanceList.ts refuses them independently of this.
+   *
+   * EARLY WARNING SITS THERE FOR A STRONGER VERSION OF THE SAME REASON. It is
+   * the most sensitive list this app can produce: it ranks children across
+   * attendance, behaviour and grades at once and says which the school is most
+   * worried about this week. convex/earlyWarning.ts refuses the other roles
+   * independently, so this list and that one have to agree.
    */
   function disciplineTabsFor(role) {
     return seesAllReferrals(role)
-      ? ['submit', 'review', 'closed', 'detention', 'attendance', 'uniform', 'history', 'analytics']
+      ? ['submit', 'review', 'closed', 'detention', 'attendance', 'earlyWarning', 'uniform', 'history', 'analytics']
       : ['submit', 'review', 'closed'];
   }
 
@@ -824,6 +830,349 @@
     return { ranked: ranked, noData: noData, counts: counts, settings: s, tiers: UNIFORM_TIERS };
   }
 
+  // =====================================================================
+  // THE COMBINED EARLY WARNING INDICATOR -- attendance, behaviour, course
+  // performance, ranked worst-first.
+  //
+  // WHY A SCORE RATHER THAN A RULE, and the measurements that forced it.
+  //
+  // Every single-axis threshold at this school names a roster rather than a
+  // queue, and this has now been measured three times. A flat chronic-absence
+  // line put 54% of the school on one list on 2026-09-08. A flat "failing a
+  // class" line put 66% on another, and that feature was dropped for it.
+  // Measured again across all 679 students on 2026-09-21: 50% are chronically
+  // absent or worse, 49% have a genuinely failing course, 56% owe work due in
+  // the last fortnight. There is no line on any ONE axis that yields a list a
+  // person can work.
+  //
+  // What separates students is how many axes they are failing at once and how
+  // hard. So each axis contributes points, the points are summed, and the
+  // tiers sit where the measured distribution puts a workable number of
+  // children in the top one. The boundaries below are not taste: they came
+  // from running THIS function over the whole school and reading the
+  // histogram. Re-run scripts/calibrate-early-warning.mjs when the shape
+  // moves, which it will.
+  //
+  // ABSENCE IS NOT ZERO, AND IT IS NOT SAFETY. A missing figure never scores
+  // 0 points as though the child were fine. An axis that cannot be read is
+  // named in `unknown` on the row, and a student with nothing readable at all
+  // goes to `noData` rather than being ranked clear -- the same refusal
+  // attendanceRanking and uniformRanking both make.
+  //
+  // THE BEHAVIOUR AXIS IS DARK TODAY, ON PURPOSE AND IN WORDS. PowerSchool
+  // holds 16,987 behaviour log entries for this district and none of them are
+  // in this system: psBehaviorLog is not declared, nothing calls
+  // psBehavior.replaceWindow, and there is no coverage record. The app's own
+  // referral corpus is 4 rows. So behaviour contributes nothing to anybody and
+  // the screen says so. The one thing that must not happen is a dark axis
+  // rendering as "no incidents", which is a claim about a child that nobody
+  // made. The owner chose this on 2026-09-21 over using cash deductions as a
+  // proxy, because a deduction is a teacher's discretionary act and that axis
+  // would partly rank teachers.
+  //
+  // UNIFORM VIOLATIONS ARE NOT AN INPUT AND MUST NEVER BECOME ONE. The
+  // owner's decision of 2026-09-18, recorded in schema.ts: "uniform
+  // violations are a SEPARATE log. They do not appear in discipline
+  // analytics, do not trigger parent email, and are not part of a child's
+  // formal discipline record." A dress-code note inside a risk ranking is the
+  // same wrong number about children that keeping it out of the
+  // disproportionality index exists to avoid.
+  // =====================================================================
+
+  var RISK_TIERS = [
+    { key: 'act',   label: 'Act now',    min: 7 },
+    { key: 'watch', label: 'Watch',      min: 6 },
+    { key: 'some',  label: 'Some signs', min: 1 },
+    { key: 'clear', label: 'Clear',      min: 0 }
+  ];
+
+  /**
+   * Defaults, with the measured reason for each beside it.
+   *
+   * The attendance cuts are the same three Attendance Watch already uses, so a
+   * child is not "chronic" on one screen and something else on another.
+   *
+   * The course cuts sit where the 2026-09-21 distribution actually bends: 49%
+   * of students have one genuinely failing course but only 15% have three,
+   * and 31% owe work from the last fortnight but only 8% owe five or more. So
+   * "some" is ordinary here and "many" is not, which is what makes them worth
+   * different points.
+   *
+   * `actAt` 7 and `watchAt` 6 were not chosen, they were READ OFF the
+   * histogram of this function's own output over all 679 students on
+   * 2026-09-21. The scores run 0-8 and the counts at or above each cut were:
+   * 8 pts 7 students, 7 pts 31, 6 pts 80, 5 pts 139, 4 pts 205, 3 pts 322.
+   * Only one cut lands on a list a team can actually finish, and 7 is it --
+   * 31 children, against the 30-40 the interventionist team said it can work.
+   * watchAt 6 puts the next 49 beside them, so the default view is the 80
+   * students who are flagged on BOTH axes that currently hold data. At the
+   * next cut down, 5, the list is 139 and on its way back to being a roster.
+   *
+   * Every one of these is an owner-editable setting. They are only what it
+   * ships with.
+   */
+  var DEFAULT_RISK_SETTINGS = {
+    recentDays: 14,
+    absSevereAt: 0.20, absChronicAt: 0.10, absAtRiskAt: 0.05,
+    tardyManyAt: 10,
+    failManyAt: 3, failSomeAt: 1,
+    missManyAt: 5, missSomeAt: 2,
+    actAt: 7, watchAt: 6,
+    /** Hold back students whose SIS row has not refreshed since this date. */
+    staleBefore: ''
+  };
+
+  /**
+   * Coerce a stored settings blob. Absent falls back; a string, a negative or
+   * a non-number is refused rather than trusted. Settings arrive as an
+   * ARGUMENT and are never read from a global, so a test can vary every
+   * threshold without touching app state.
+   */
+  function riskSettingsOrDefault(raw) {
+    var d = DEFAULT_RISK_SETTINGS;
+    var s = (raw && typeof raw === 'object') ? raw : {};
+    function num(v, fallback, min) {
+      if (typeof v !== 'number' || !isFinite(v)) return fallback;
+      if (v < min) return fallback;
+      return v;
+    }
+    function int(v, fallback, min) { return Math.round(num(v, fallback, min)); }
+    var out = {
+      recentDays: int(s.recentDays, d.recentDays, 1),
+      absSevereAt: num(s.absSevereAt, d.absSevereAt, 0),
+      absChronicAt: num(s.absChronicAt, d.absChronicAt, 0),
+      absAtRiskAt: num(s.absAtRiskAt, d.absAtRiskAt, 0),
+      tardyManyAt: int(s.tardyManyAt, d.tardyManyAt, 1),
+      failManyAt: int(s.failManyAt, d.failManyAt, 1),
+      failSomeAt: int(s.failSomeAt, d.failSomeAt, 1),
+      missManyAt: int(s.missManyAt, d.missManyAt, 1),
+      missSomeAt: int(s.missSomeAt, d.missSomeAt, 1),
+      actAt: int(s.actAt, d.actAt, 1),
+      watchAt: int(s.watchAt, d.watchAt, 1),
+      staleBefore: (typeof s.staleBefore === 'string') ? s.staleBefore.slice(0, 10) : d.staleBefore
+    };
+    // A LADDER CANNOT INVERT. If someone sets "many" below "some", or the act
+    // tier below the watch tier, the stricter one wins rather than two bands
+    // silently overlapping and meaning the same thing.
+    if (out.absChronicAt > out.absSevereAt) out.absChronicAt = out.absSevereAt;
+    if (out.absAtRiskAt > out.absChronicAt) out.absAtRiskAt = out.absChronicAt;
+    if (out.failManyAt < out.failSomeAt) out.failManyAt = out.failSomeAt;
+    if (out.missManyAt < out.missSomeAt) out.missManyAt = out.missSomeAt;
+    // A TIER THAT CANNOT HOLD ANYBODY IS NOT A TIER, and the old clamp allowed
+    // two of them. `actAt = watchAt` made "Watch" unreachable, because riskTier
+    // tests actAt first -- and the card then rendered its band as
+    // "6-5 points" above a count permanently stuck at 0. `watchAt = 1` did the
+    // same to "Some signs", printing "1-0 points". So the bands are forced
+    // apart rather than merely ordered: Watch starts at 2 or higher, and Act
+    // now is strictly above Watch.
+    if (out.watchAt < 2) out.watchAt = 2;
+    if (out.actAt <= out.watchAt) out.actAt = out.watchAt + 1;
+    return out;
+  }
+
+  /**
+   * The attendance axis. The same tiers Attendance Watch uses, scored.
+   *
+   * A rate is REFUSED rather than guessed when there are no school days yet or
+   * no figure on file: dividing by zero would put every child at 0% and absent
+   * data would render as perfect attendance, which is the worst possible way
+   * to be wrong about this.
+   *
+   * Tardies earn a separate point rather than being folded into the rate,
+   * because a student who is present but always late never appears on an
+   * absence ranking at all.
+   */
+  function riskAttendance(daysAbsent, daysTardy, schoolDays, settings) {
+    var s = riskSettingsOrDefault(settings);
+    var days = (typeof schoolDays === 'number' && isFinite(schoolDays) && schoolDays > 0) ? schoolDays : null;
+    var abs = (typeof daysAbsent === 'number' && isFinite(daysAbsent) && daysAbsent >= 0) ? daysAbsent : null;
+    var tardy = (typeof daysTardy === 'number' && isFinite(daysTardy) && daysTardy >= 0) ? daysTardy : null;
+    if (days === null || abs === null) {
+      return { known: false, points: 0, rate: null, tier: null, daysAbsent: abs, daysTardy: tardy,
+               why: days === null ? 'No school days counted yet' : 'No attendance figure on file' };
+    }
+    var rate = abs / days;
+    var points = 0, tier = 'satisfactory';
+    if (rate >= s.absSevereAt) { points = 3; tier = 'severe'; }
+    else if (rate >= s.absChronicAt) { points = 2; tier = 'chronic'; }
+    else if (rate >= s.absAtRiskAt) { points = 1; tier = 'at-risk'; }
+    var tardyFlag = (tardy !== null && tardy >= s.tardyManyAt);
+    if (tardyFlag) points += 1;
+    return { known: true, points: points, rate: rate, tier: tier,
+             daysAbsent: abs, daysTardy: tardy, tardyFlag: tardyFlag, why: null };
+  }
+
+  /**
+   * The course-performance axis: how much is genuinely failing, and how much
+   * work is owed FROM THE LAST FORTNIGHT.
+   *
+   * RECENCY IS THE POINT. With half the school failing something, a total
+   * count of owed work separates nobody. But psMissingWork carries a due date
+   * on every row -- measured, 0 of 4,928 undated -- so one snapshot still
+   * contains time. Five assignments owed from the last two weeks is a child
+   * coming apart now; the same five spread since August is not, and shows up
+   * as `missingOlder`, carried but unscored. That is also what lets this
+   * screen show a student IMPROVING before any history table exists: older
+   * work owed, nothing recent.
+   *
+   * `failingCourses` has already had the zero-percent artefact removed by the
+   * server, which is a data-correctness rule rather than a display one. The
+   * raw count rides along so the screen can show both.
+   */
+  function riskCourse(row, settings) {
+    var s = riskSettingsOrDefault(settings);
+    var r = row || {};
+    var failing = (typeof r.failingCourses === 'number' && isFinite(r.failingCourses)) ? r.failingCourses : null;
+    var recent = (typeof r.missingRecent === 'number' && isFinite(r.missingRecent)) ? r.missingRecent : null;
+    var older = (typeof r.missingOlder === 'number' && isFinite(r.missingOlder)) ? r.missingOlder : null;
+    if (failing === null && recent === null) {
+      return { known: false, points: 0, failing: null, missingRecent: null, missingOlder: older,
+               gradesKnown: false, missingKnown: false,
+               missingTruncated: r.missingTruncated === true, gradesTruncated: r.gradesTruncated === true,
+               ungraded: null, failingRaw: null, why: 'No grades or assignment data on file' };
+    }
+    var points = 0;
+    if (failing !== null) {
+      if (failing >= s.failManyAt) points += 2;
+      else if (failing >= s.failSomeAt) points += 1;
+    }
+    if (recent !== null) {
+      if (recent >= s.missManyAt) points += 2;
+      else if (recent >= s.missSomeAt) points += 1;
+    }
+    // GRADES AND OWED WORK ARE TRACKED SEPARATELY, and the calibration run of
+    // 2026-09-21 is why. 62 students have no psGrades rows at all. Missing work
+    // is a presence-only feed, so those same students read missingRecent 0 --
+    // a genuine zero -- and an earlier version of this function therefore
+    // scored them known-and-fine on course performance when their grades were
+    // simply not on file. That is the "absence is not zero" failure this
+    // module refuses everywhere else, so `gradesKnown` is carried and the row
+    // is marked instead of quietly reading as passing.
+    return {
+      known: true, points: points, failing: failing,
+      gradesKnown: failing !== null,
+      missingKnown: recent !== null,
+      missingRecent: recent, missingOlder: older,
+      ungraded: (typeof r.ungradedCourses === 'number') ? r.ungradedCourses : null,
+      failingRaw: (typeof r.failingCoursesRaw === 'number') ? r.failingCoursesRaw : null,
+      // AT THE READ CAP MEANS UNDER-COUNTED, so the score is a floor rather
+      // than a total and the screen has to be able to say so. Otherwise the
+      // student who has handed in nothing all year sinks below students with
+      // less owed work.
+      missingTruncated: r.missingTruncated === true,
+      gradesTruncated: r.gradesTruncated === true,
+      why: failing === null ? 'No grades on file' : null
+    };
+  }
+
+  /**
+   * The behaviour axis, which today knows nothing and says so.
+   *
+   * `coverage` is what convex/earlyWarning.ts returns: status "unknown" until
+   * a behaviour window has really been pulled. Unknown scores ZERO POINTS FOR
+   * EVERYONE -- it cannot differentiate, so it must not pretend to -- and
+   * returns known:false so the row and the screen both carry the gap.
+   */
+  function riskBehaviour(coverage) {
+    var c = coverage || {};
+    if (c.status !== 'covered') {
+      return { known: false, points: 0, entries: null, status: c.status || 'unknown',
+               why: 'No behaviour data is loaded, so nobody is scored on it' };
+    }
+    return { known: true, points: 0, entries: null, status: 'covered', why: null };
+  }
+
+  /** The tier for a total, under these thresholds. */
+  function riskTier(points, settings) {
+    if (typeof points !== 'number' || !isFinite(points)) return null;
+    var s = riskSettingsOrDefault(settings);
+    if (points >= s.actAt) return RISK_TIERS[0];
+    if (points >= s.watchAt) return RISK_TIERS[1];
+    if (points >= 1) return RISK_TIERS[2];
+    return RISK_TIERS[3];
+  }
+
+  /**
+   * Score one student across all three axes.
+   *
+   * `row` is an academicCounts row merged with the two attendance figures:
+   * { studentNumber, daysAbsent, daysTardy, failingCourses, failingCoursesRaw,
+   *   ungradedCourses, gradedCourses, missingRecent, missingOlder, sisAsOf }.
+   */
+  function riskScore(row, schoolDays, coverage, settings) {
+    var r = row || {};
+    var a = riskAttendance(r.daysAbsent, r.daysTardy, schoolDays, settings);
+    var b = riskBehaviour(coverage);
+    var c = riskCourse(r, settings);
+    var unknown = [];
+    if (!a.known) unknown.push('attendance');
+    if (!b.known) unknown.push('behaviour');
+    if (!c.known) unknown.push('course');
+    else {
+      // Named separately from 'course' so a student whose grades are simply not
+      // on file is visibly a gap rather than a quiet pass.
+      if (c.gradesKnown === false) unknown.push('grades');
+      // And the same for owed work. A caller that cannot see the missing-work
+      // feed passes null rather than 0, and this is what makes those children
+      // reachable on the screen instead of merely absent from the top tier.
+      if (c.missingKnown === false) unknown.push('missing');
+    }
+    return {
+      studentNumber: (r.studentNumber === 0 || r.studentNumber) ? String(r.studentNumber) : '',
+      points: a.points + b.points + c.points,
+      tier: riskTier(a.points + b.points + c.points, settings),
+      attendance: a, behaviour: b, course: c,
+      unknown: unknown,
+      // Readable on at least one of the two axes that hold data today.
+      scorable: a.known || c.known,
+      sisAsOf: r.sisAsOf || null
+    };
+  }
+
+  /**
+   * Rank the whole school worst-first, and count each tier.
+   *
+   * A student readable on NO axis goes to `noData`, never into the ranking as
+   * though they were clear. A student readable on one but not the other is
+   * ranked on what is known and carries `unknown`, so the screen marks the row
+   * rather than quietly under-scoring them.
+   *
+   * A student whose SIS row has not refreshed since `staleBefore` goes to
+   * `stale` -- 61 of the 679 on file were last seen as far back as August and
+   * have almost certainly withdrawn. They are held back and COUNTED, not
+   * dropped: silently removing children from a risk list is how a child who
+   * is still enrolled disappears from it.
+   *
+   * TIES BREAK ON THE WORST SINGLE AXIS, then days absent, then student
+   * number. Without a deterministic tail the list reorders itself between
+   * renders and a person loses their place in it.
+   */
+  function riskRanking(rows, schoolDays, coverage, settings) {
+    var s = riskSettingsOrDefault(settings);
+    var ranked = [], noData = [], stale = [];
+    (rows || []).forEach(function (row) {
+      var scored = riskScore(row, schoolDays, coverage, s);
+      if (!scored.scorable) { noData.push(scored); return; }
+      if (s.staleBefore && scored.sisAsOf && scored.sisAsOf < s.staleBefore) { stale.push(scored); return; }
+      ranked.push(scored);
+    });
+    ranked.sort(function (x, y) {
+      if (y.points !== x.points) return y.points - x.points;
+      if (y.attendance.points !== x.attendance.points) return y.attendance.points - x.attendance.points;
+      var xd = x.attendance.daysAbsent || 0, yd = y.attendance.daysAbsent || 0;
+      if (yd !== xd) return yd - xd;
+      return String(x.studentNumber) < String(y.studentNumber) ? -1 : 1;
+    });
+    var counts = { act: 0, watch: 0, some: 0, clear: 0 };
+    ranked.forEach(function (r) { if (r.tier && counts[r.tier.key] !== undefined) counts[r.tier.key] += 1; });
+    return {
+      ranked: ranked, noData: noData, stale: stale, counts: counts,
+      settings: s, schoolDays: schoolDays, tiers: RISK_TIERS,
+      behaviourKnown: Boolean(coverage && coverage.status === 'covered'),
+      actOrWatch: counts.act + counts.watch
+    };
+  }
+
   root.WildcatDiscipline = {
     mergeReferrals: mergeReferrals,
     UNIFORM_TIERS: UNIFORM_TIERS,
@@ -831,6 +1180,15 @@
     uniformSettingsOrDefault: uniformSettingsOrDefault,
     uniformTier: uniformTier,
     uniformRanking: uniformRanking,
+    RISK_TIERS: RISK_TIERS,
+    DEFAULT_RISK_SETTINGS: DEFAULT_RISK_SETTINGS,
+    riskSettingsOrDefault: riskSettingsOrDefault,
+    riskAttendance: riskAttendance,
+    riskBehaviour: riskBehaviour,
+    riskCourse: riskCourse,
+    riskTier: riskTier,
+    riskScore: riskScore,
+    riskRanking: riskRanking,
     newReferralId: newReferralId,
     duplicateReferralIds: duplicateReferralIds,
     SMALL_GROUP: SMALL_GROUP,

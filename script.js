@@ -2070,6 +2070,24 @@
          */
         let uniformSettings = { windowDays: 14, concerningAt: 2, habitAt: 3 };
 
+        /**
+         * Early Warning thresholds. Owner-editable for the same reason the
+         * uniform ones are: where "Act now" starts decides which children a
+         * team spends its week on, and that must be changeable without a
+         * deploy.
+         *
+         * DECLARED, READ, SENT, CACHED AND EXPORTED IN ONE COMMIT, because
+         * appData:save replaces the whole settings blob: a key that is read but
+         * not sent is destroyed by the next save from any tab.
+         *
+         * EMPTY ON PURPOSE. The defaults and their measured justification live
+         * in wildcat-discipline.js (DEFAULT_RISK_SETTINGS), and
+         * riskSettingsOrDefault fills every gap, so a stored blob only ever
+         * carries what somebody deliberately changed. Copying the numbers here
+         * would create a second set to drift.
+         */
+        let riskSettings = {};
+
         // EmailJS Configuration
         let emailJSConfig = {
             serviceId: '',      // Will be set in Settings
@@ -3100,6 +3118,7 @@
                         lastPowerSchoolSync = mainData.lastPowerSchoolSync || null;
                         kickboardSettings = mainData.kickboardSettings || kickboardSettings;
                         uniformSettings = mainData.uniformSettings || uniformSettings;
+                        riskSettings = mainData.riskSettings || riskSettings;
                         emailJSConfig = mainData.emailJSConfig || emailJSConfig;
                         passSettings = mainData.passSettings || passSettings;
                         schoolBranding = mainData.schoolBranding || schoolBranding;
@@ -3341,6 +3360,7 @@
                 lastPowerSchoolSync = data.lastPowerSchoolSync || null;
                 kickboardSettings = data.kickboardSettings || kickboardSettings;
                 uniformSettings = data.uniformSettings || uniformSettings;
+                riskSettings = data.riskSettings || riskSettings;
                 emailJSConfig = data.emailJSConfig || emailJSConfig;
                 hallPasses = data.hallPasses || [];
                 passSettings = data.passSettings || passSettings;
@@ -4305,6 +4325,7 @@
                                         // fidelity; it is not a credential.
                                         kickboardSettings, emailJSConfig, passSettings, schoolBranding,
                                         uniformSettings,
+                                        riskSettings,
                                         // Both counters take the max against the
                                         // server's own value, peeked at the top of
                                         // this save. They only ever go up, or a
@@ -5041,6 +5062,7 @@
                             lastPowerSchoolSync,
                             kickboardSettings,
                             uniformSettings,
+                            riskSettings,
                             emailJSConfig,
                             hallPasses,
                             passSettings,
@@ -5103,6 +5125,7 @@
                             lastPowerSchoolSync,
                             kickboardSettings,
                             uniformSettings,
+                            riskSettings,
                             emailJSConfig,
                             hallPasses,
                             passSettings,
@@ -5217,6 +5240,7 @@
                 lastPowerSchoolSync,
                 kickboardSettings,
                 uniformSettings,
+                riskSettings,
                 emailJSConfig,
                 hallPasses,
                 passSettings,
@@ -25636,6 +25660,7 @@
                 { id: 'closed',    fn: 'switchDisciplineTab', label: wcIcon('audit') + ' Closed Referrals' },
                 { id: 'detention', fn: 'switchDisciplineTab', label: wcIcon('stopwatch') + ' Detention Tracker' },
                 { id: 'attendance', fn: 'switchDisciplineTab', label: wcIcon('calendar') + ' Attendance Watch' },
+                { id: 'earlyWarning', fn: 'switchDisciplineTab', label: wcIcon('target') + ' Early Warning' },
                 { id: 'uniform',   fn: 'switchDisciplineTab', label: wcIcon('identity') + ' Uniform Violations' },
                 { id: 'history',   fn: 'switchDisciplineTab', label: wcIcon('book') + ' Student History' },
                 { id: 'analytics', fn: 'switchDisciplineTab', label: wcIcon('analytics') + ' Analytics' }
@@ -29910,6 +29935,7 @@
                 closed:    { pane: 'behaviorClosed',    btn: null },
                 detention: { pane: 'behaviorDetention', btn: 'detentionTabBtn' },
                 attendance:{ pane: 'behaviorAttendance', btn: null },
+                earlyWarning: { pane: 'behaviorEarlyWarning', btn: null },
                 uniform:   { pane: 'behaviorUniform',   btn: null },
                 history:   { pane: 'behaviorHistory',   btn: 'historyDisciplineTabBtn' },
                 analytics: { pane: 'behaviorAnalytics', btn: 'analyticsDisciplineTabBtn' }
@@ -29968,6 +29994,8 @@
                 if (typeof updateDetentionLists === 'function') updateDetentionLists();
             } else if (subtab === 'attendance') {
                 renderAttendanceWatch();
+            } else if (subtab === 'earlyWarning') {
+                renderEarlyWarning();
             } else if (subtab === 'uniform') {
                 openUniformViolations();
             } else if (subtab === 'history') {
@@ -30289,6 +30317,553 @@
                 // textContent, so nothing here can be escaped twice or not at all.
                 foot.textContent = bits.join(' ');
             }
+        }
+
+        // ========================================
+        // EARLY WARNING
+        //
+        // Attendance, behaviour and course performance in one ranking.
+        //
+        // WHY THIS SCREEN EXISTS RATHER THAN A THIRD THRESHOLD. Every
+        // single-axis line at this school names a roster: a flat chronic-
+        // absence line put 54% of students on one list, a flat failing-a-class
+        // line put 66% on another and that feature was dropped for it, and on
+        // 2026-09-21 half the school was chronically absent, half had a
+        // genuinely failing course and 56% owed work from the last fortnight.
+        // What separates children is how many axes at once and how hard, so
+        // WildcatDiscipline.riskRanking scores them and the tiers sit where the
+        // measured histogram leaves 31 in "Act now" and 49 in "Watch".
+        //
+        // IT REUSES ATTENDANCE WATCH'S QUERY AND ITS DENOMINATOR, on purpose.
+        // attendanceList:schoolAttendance already returns the two figures this
+        // needs, already role-gated and already tested, and a second
+        // attendance path is a second thing to drift. The school-day divisor
+        // comes from attendanceSchoolDays() -- the same two inputs -- so a
+        // child cannot be chronic on one screen and fine on the other.
+        // ========================================
+
+        let _ewCache = null;
+        let _ewTierFilter = 'actWatch';
+        // A STRING, like the attendance filter, and '(none)' is a real bucket:
+        // a student with no grade on file must be reachable rather than
+        // silently absent from every option.
+        let _ewGradeFilter = 'all';
+        let _ewBusy = false;
+        // The threshold inputs belong to the admin once the pane has drawn.
+        // See the note in renderEarlyWarning for the save-the-old-number bug
+        // that an every-render hydrate caused.
+        let _ewSettingsHydrated = false;
+
+        /** Fill the threshold inputs from stored settings. Called on the first
+         *  render of the pane and after a successful save, never on a
+         *  re-render, so an unsaved edit is not reverted under the admin. */
+        function hydrateRiskSettingsInputs(settings) {
+            const s = window.WildcatDiscipline.riskSettingsOrDefault(settings || riskSettings);
+            [['ewActAt', 'actAt'], ['ewWatchAt', 'watchAt'], ['ewRecentDays', 'recentDays'],
+             ['ewFailManyAt', 'failManyAt'], ['ewMissManyAt', 'missManyAt'],
+             ['ewTardyManyAt', 'tardyManyAt']].forEach(pair => {
+                const el = document.getElementById(pair[0]);
+                if (!el) return;
+                el.value = s[pair[1]];
+            });
+            _ewSettingsHydrated = true;
+        }
+
+        function setEarlyWarningTierFilter(which) {
+            _ewTierFilter = String(which || 'actWatch');
+            const bar = document.getElementById('ewTierFilter');
+            if (bar) Array.prototype.forEach.call(bar.querySelectorAll('.analytics-tab'), b => {
+                b.classList.toggle('active', b.getAttribute('data-etier') === _ewTierFilter);
+            });
+            renderEarlyWarning();
+        }
+
+        function setEarlyWarningGradeFilter(which) {
+            _ewGradeFilter = String(which || 'all');
+            renderEarlyWarning();
+        }
+
+        /**
+         * Merge the cached academic counts onto whatever attendance figures are
+         * CURRENTLY in hand, and remember which attendance object that was.
+         *
+         * WHY IT IS NOT DONE ONCE IN THE LOADER. _attCache is shared with
+         * Attendance Watch, which replaces it whenever somebody hits Refresh
+         * there. An Early Warning cache that had copied the old figures would
+         * then disagree with Attendance Watch about the same child -- one
+         * screen saying 21% absent and the other 18%, with nothing to tell an
+         * interventionist which is true. So the cache holds `attRef`, the
+         * render compares it against the live _attCache by identity, and a
+         * changed attendance object re-merges rather than going stale.
+         *
+         * MERGED ON STUDENT NUMBER, attendance leading. Both queries anchor on
+         * the same psAttendance table, so a student in one and not the other is
+         * a real discrepancy rather than a join bug, and they stay in the list
+         * carrying whichever axis was readable.
+         */
+        function mergeEarlyWarningRows(cache, att) {
+            if (!cache) return cache;
+            const dark = cache.missingFeedDark === true;
+            // A DARK FEED IS NULL, NOT ZERO, for every student. This is the
+            // whole point of detecting it: riskCourse then reports
+            // missingKnown false, riskScore names 'missing' as a gap, and no
+            // row can read "owes nothing" as something anybody checked.
+            const pick = (c) => ({
+                failingCourses: c.failingCourses, failingCoursesRaw: c.failingCoursesRaw,
+                ungradedCourses: c.ungradedCourses, gradedCourses: c.gradedCourses,
+                missingRecent: dark ? null : c.missingRecent,
+                missingOlder: dark ? null : c.missingOlder,
+                missingTruncated: c.missingTruncated, gradesTruncated: c.gradesTruncated,
+                hasMissingFeed: c.hasMissingFeed, sisAsOf: c.sisAsOf || null
+            });
+            const byNumber = {};
+            (cache.academic || []).forEach(r => { if (r && r.studentNumber) byNumber[String(r.studentNumber)] = r; });
+            const rows = ((att && att.rows) || []).map(a => {
+                const key = String(a.studentNumber);
+                const c = byNumber[key] || {};
+                delete byNumber[key];
+                return Object.assign({ studentNumber: key, daysAbsent: a.daysAbsent, daysTardy: a.daysTardy }, pick(c));
+            });
+            // Anyone the academic pass saw and the attendance pass did not.
+            Object.keys(byNumber).forEach(k => {
+                rows.push(Object.assign({ studentNumber: k, daysAbsent: null, daysTardy: null }, pick(byNumber[k])));
+            });
+            cache.rows = rows;
+            cache.attRef = att || null;
+            cache.lastSyncedAt = (att && att.lastSyncedAt) || cache.lastSyncedAt || null;
+            cache.truncated = Boolean(att && att.truncated) || cache.truncated;
+            return cache;
+        }
+
+        /**
+         * Pull the course-performance counts, paged, and merge them onto the
+         * attendance figures.
+         *
+         * PAGED BECAUSE IT HAS TO BE. Convex allows 4,096 document reads per
+         * call and one pass over every student's grades and assignments costs
+         * about 11,000, so the server hands back 250 students at a time and
+         * this keeps asking until `done`. The page loop is bounded: a server
+         * that stopped setting `done` would otherwise spin forever.
+         */
+        async function loadEarlyWarningRows(force) {
+            if (_ewCache && !force) return _ewCache;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) {
+                // Not a permissions refusal, and it must not read as one.
+                return { allowed: false, needsSignIn: true, rows: [],
+                         reason: 'Early Warning reads the SIS, which needs a Microsoft sign-in.' };
+            }
+
+            const att = await loadAttendanceRows(force === true);
+            if (!att || att.allowed === false) return att || { allowed: false, rows: [], reason: 'Attendance could not be loaded.' };
+
+            const today = wcIsoDay ? wcIsoDay(new Date()) : new Date().toISOString().slice(0, 10);
+            const settings = window.WildcatDiscipline.riskSettingsOrDefault(riskSettings);
+            const academic = [];
+            let behaviour = { status: 'unknown' };
+            let after = '';
+            let pages = 0;
+            let incomplete = false;
+            // Reported so a page creeping toward Convex's 4,096-read ceiling
+            // shows up on screen rather than arriving as a dead tab in March.
+            let nearReadLimit = false;
+            // Students whose grade or owed-work read hit its per-student cap,
+            // and are therefore under-counted and under-ranked.
+            let truncatedRows = 0;
+            try {
+                for (pages = 0; pages < 40; pages++) {
+                    const args = { today: today, recentDays: settings.recentDays };
+                    if (after) args.after = after;
+                    const res = await auth.convexQuery('earlyWarning:academicCounts', args, session.idToken);
+                    if (!res || res.allowed === false) return res || { allowed: false, rows: [], reason: 'Early Warning could not be loaded.' };
+                    academic.push.apply(academic, res.rows || []);
+                    if (res.behaviour) behaviour = res.behaviour;
+                    if (res.nearReadLimit) nearReadLimit = true;
+                    truncatedRows += Number(res.truncatedRows) || 0;
+                    if (res.done) { after = ''; break; }
+                    after = res.last;
+                    // A server that never says done, or repeats a cursor, must
+                    // not loop: stop and say the list is short rather than
+                    // hanging the tab.
+                    if (!after) { incomplete = true; break; }
+                }
+                if (after) incomplete = true;
+            } catch (e) {
+                const msg = (e && e.message) || String(e);
+                if (/\b401\b|unauthor/i.test(msg)) {
+                    return { allowed: false, needsSignIn: true, rows: [],
+                             reason: 'Your sign-in expired. Sign in again to load Early Warning.' };
+                }
+                return { allowed: false, rows: [], reason: 'Early Warning could not be loaded: ' + msg };
+            }
+
+            // HOW MANY STUDENTS THE OWED-WORK FEED COVERS, school-wide.
+            //
+            // ZERO IS NOT "NOBODY OWES ANYTHING". sisAction.ts clears
+            // psMissingWork unconditionally before it inserts, and this feed
+            // returned HTTP 200 with zero rows for the whole of plugin 1.3.0,
+            // so a wiped or half-written table is a state it has really been
+            // in. If that happened and every student were scored as a known
+            // zero on owed work, the score ceiling would fall from 8 to 6 --
+            // the top tier at 7 would be mathematically empty, and 7 admins
+            // and 5 PBIS staff would read an emptied table as the school being
+            // fine. So a dark feed is detected once, school-wide, and the
+            // counts become null for everybody: unknown, not clean.
+            const feedStudents = academic.reduce((n, r) => n + (r && r.hasMissingFeed ? 1 : 0), 0);
+            const missingFeedDark = academic.length > 0 && feedStudents === 0;
+
+            _ewCache = {
+                allowed: true, reason: null, behaviour: behaviour,
+                // The ACADEMIC half is what was expensive to fetch, so it is
+                // what gets cached. Attendance is merged in at render time
+                // against whatever _attCache currently holds -- see
+                // mergeEarlyWarningRows for why that matters.
+                academic: academic, attRef: null, rows: [],
+                truncated: Boolean(att.truncated), incomplete: incomplete,
+                nearReadLimit: nearReadLimit,
+                missingFeedDark: missingFeedDark, feedStudents: feedStudents,
+                truncatedRows: truncatedRows,
+                lastSyncedAt: att.lastSyncedAt || null, pages: pages + 1
+            };
+            mergeEarlyWarningRows(_ewCache, att);
+            return _ewCache;
+        }
+
+        async function renderEarlyWarning(force) {
+            const list = document.getElementById('earlyWarningList');
+            const cards = document.getElementById('ewTierCards');
+            const note = document.getElementById('ewCoverageNote');
+            const foot = document.getElementById('ewFoot');
+            const hint = document.getElementById('ewSettingsHint');
+            if (!list) return;
+            const D = window.WildcatDiscipline;
+            if (!D || typeof D.riskRanking !== 'function') {
+                list.innerHTML = '<p class="wu-absent">Early warning rules did not load. Refresh the page.</p>';
+                return;
+            }
+
+            // THE GUARD IS ON THE FETCH, NOT ON THE RENDER. Guarding the whole
+            // function drops a keystroke that arrives during the load and never
+            // retries it, leaving a list that no longer matches the search box
+            // above it -- and no way to tell, because a wrong list looks
+            // exactly like a right one.
+            let res = _ewCache;
+            if (!res || force) {
+                if (_ewBusy) return;
+                _ewBusy = true;
+                list.innerHTML = '<p class="wu-absent">Loading early warning&hellip;</p>';
+                try { res = await loadEarlyWarningRows(force === true); }
+                finally { _ewBusy = false; }
+            }
+
+            // ATTENDANCE MAY HAVE MOVED UNDER US. Attendance Watch shares
+            // _attCache and replaces it on Refresh; re-merging against the
+            // live object is what stops the two screens disagreeing about the
+            // same child.
+            if (res && res.allowed !== false && _attCache && res.attRef !== _attCache) {
+                mergeEarlyWarningRows(res, _attCache);
+            }
+
+            if (!res || res.allowed === false) {
+                if (cards) cards.innerHTML = '';
+                if (foot) foot.textContent = '';
+                if (note) note.textContent = '';
+                list.innerHTML = '<p class="wu-absent">' +
+                    escapeHtml((res && res.reason) || 'Early Warning is not available to your access level.') + '</p>';
+                return;
+            }
+
+            const settings = D.riskSettingsOrDefault(riskSettings);
+            // HYDRATED ONCE, NOT ON EVERY RENDER, and that is a bug fix
+            // rather than an optimisation. The search box calls
+            // renderEarlyWarning() on every keystroke, so an every-render
+            // hydrate overwrote a threshold an admin had typed but not yet
+            // saved the moment they clicked into the search box -- and then
+            // "Save thresholds" read the reverted number straight back out of
+            // the DOM and stored it, while the toast reported the old value as
+            // though it were the new one. Skipping the focused input was not
+            // enough, because focus moves before the save. So the inputs are
+            // filled when the pane first draws and after a successful save,
+            // and are the admin's until then.
+            if (!_ewSettingsHydrated) hydrateRiskSettingsInputs(settings);
+            // The SAME denominator Attendance Watch uses, read from the same
+            // two inputs, so one child cannot be chronic on one screen and
+            // fine on the other.
+            const basis = attendanceSchoolDays();
+
+            if (note) {
+                const bits = [];
+                bits.push(basis.days > 0
+                    ? basis.days + ' school days so far, set on Attendance Watch.'
+                    : 'No school days counted yet, so no absence rate can be worked out. Set the start date on Attendance Watch.');
+                // WHAT THIS SCREEN CANNOT SEE, SAID OUT LOUD. A dark axis
+                // rendering as "no incidents" would be a claim about a child
+                // that nobody made.
+                bits.push(res.behaviour && res.behaviour.status === 'covered'
+                    ? 'Behaviour data is loaded.'
+                    : 'Behaviour is NOT part of these scores: no behaviour data is loaded yet, so nobody is scored on it. Attendance and course performance are.');
+                // SAID AS LOUDLY AS THE BEHAVIOUR GAP, because its effect is
+                // worse: with owed work dark the highest reachable score is
+                // ' + (settings.actAt - 1) + ', so the top tier cannot be
+                // reached by anybody and an emptied list would otherwise read
+                // as good news.
+                if (res.missingFeedDark) {
+                    bits.push('WARNING: owed work is NOT part of these scores either \u2014 the missing-work feed is '
+                        + 'empty for every student, which is a sync problem rather than a school with nothing '
+                        + 'outstanding. With two axes dark the highest reachable score is 6, so "Act now" at '
+                        + settings.actAt + ' will read 0. Tell an administrator before acting on this list.');
+                }
+                note.textContent = bits.join(' ');
+            }
+
+            const byNumber = {};
+            (students || []).forEach(st => {
+                const n = st && st.studentNumber ? String(st.studentNumber) : '';
+                if (n) byNumber[n] = st;
+            });
+            const allRows = (res.rows || []).map(r => {
+                const st = byNumber[String(r.studentNumber)] || { studentNumber: r.studentNumber };
+                return { row: r, student: st };
+            });
+
+            // Grade options come from the data, and their counts from ALL rows
+            // rather than the filtered set: counting the filtered set puts
+            // "(0)" beside every grade but the chosen one, which reads as
+            // "that grade has nobody" instead of "you are not looking at it".
+            const gradeCounts = {};
+            allRows.forEach(r => {
+                const k = attGradeKey(r.student);
+                gradeCounts[k] = (gradeCounts[k] || 0) + 1;
+            });
+            const gradeSel = document.getElementById('ewGradeFilter');
+            if (gradeSel) {
+                if (_ewGradeFilter !== 'all' && !gradeCounts[_ewGradeFilter]) _ewGradeFilter = 'all';
+                const wanted = ['all=All grades (' + allRows.length + ')']
+                    .concat(attGradeOrder(Object.keys(gradeCounts)).map(k => k + '=' +
+                        (k === '(none)' ? 'No grade on file' : 'Grade ' + k) + ' (' + gradeCounts[k] + ')'))
+                    .join('|');
+                if (gradeSel.getAttribute('data-built') !== wanted) {
+                    gradeSel.innerHTML = wanted.split('|').map(pair => {
+                        const eq = pair.indexOf('=');
+                        return '<option value="' + escapeHtml(pair.slice(0, eq)) + '">' +
+                               escapeHtml(pair.slice(eq + 1)) + '</option>';
+                    }).join('');
+                    gradeSel.setAttribute('data-built', wanted);
+                }
+                if (gradeSel.value !== _ewGradeFilter) gradeSel.value = _ewGradeFilter;
+            }
+
+            // FILTERED BEFORE RANKING, so a grade scopes the tier cards and the
+            // counts too. Cards reading 31 over a list of four looks like a bug
+            // rather than a filter.
+            const scoped = _ewGradeFilter === 'all'
+                ? allRows
+                : allRows.filter(r => attGradeKey(r.student) === _ewGradeFilter);
+
+            const ranked = D.riskRanking(scoped.map(r => r.row), basis.days, res.behaviour, settings);
+            const studentOf = {};
+            scoped.forEach(r => { studentOf[String(r.row.studentNumber)] = r.student; });
+
+            if (cards) {
+                const c = ranked.counts;
+                cards.innerHTML = [
+                    ['act',   'Act now',    settings.actAt + '+ points', c.act],
+                    ['watch', 'Watch',      settings.watchAt + '&ndash;' + (settings.actAt - 1) + ' points', c.watch],
+                    ['some',  'Some signs', '1&ndash;' + (settings.watchAt - 1) + ' points', c.some],
+                    ['clear', 'Clear',      'No signs', c.clear]
+                ].map(t =>
+                    '<div class="wc-att-tier wc-ew-' + t[0] + '">' +
+                        '<div class="wc-att-tier-n">' + t[3] + '</div>' +
+                        // NOT escaped: these labels are literals three lines up,
+                        // and escaping turns the &ndash; into a visible entity.
+                        '<div class="wc-att-tier-l">' + t[1] + '</div>' +
+                        '<div class="wc-att-tier-s">' + t[2] + '</div>' +
+                    '</div>').join('');
+            }
+
+            const search = ((document.getElementById('ewSearch') || {}).value || '').trim().toLowerCase();
+            let shown = ranked.ranked;
+            if (_ewTierFilter === 'actWatch') {
+                shown = shown.filter(r => r.tier && (r.tier.key === 'act' || r.tier.key === 'watch'));
+            } else if (_ewTierFilter === 'act' || _ewTierFilter === 'watch') {
+                shown = shown.filter(r => r.tier && r.tier.key === _ewTierFilter);
+            } else if (_ewTierFilter === 'improving') {
+                // OWED WORK CARRIES A DUE DATE, so recovery is visible from one
+                // snapshot: old work outstanding and nothing recent. Sorted by
+                // how much they have climbed out of rather than by score.
+                shown = shown.filter(r => (r.course.missingOlder || 0) >= 3 && (r.course.missingRecent || 0) === 0)
+                             .slice().sort((a, b) => (b.course.missingOlder || 0) - (a.course.missingOlder || 0));
+            } else if (_ewTierFilter === 'gaps') {
+                // The children this screen knows least about. A gap is not a
+                // good result and it must be reachable, not just counted.
+                shown = shown.filter(r => r.unknown.indexOf('grades') !== -1 || r.unknown.indexOf('attendance') !== -1
+                                       || r.unknown.indexOf('course') !== -1 || r.unknown.indexOf('missing') !== -1);
+            }
+            if (search) {
+                shown = shown.filter(r => {
+                    const st = studentOf[String(r.studentNumber)] || {};
+                    return (((st.firstName || '') + ' ' + (st.lastName || '')).toLowerCase().indexOf(search) !== -1)
+                        || String(r.studentNumber || '').toLowerCase().indexOf(search) !== -1;
+                });
+            }
+
+            const CAP = 150;
+            const clipped = shown.length > CAP;
+            const view = clipped ? shown.slice(0, CAP) : shown;
+
+            if (!view.length) {
+                list.innerHTML = '<p class="wu-absent">' +
+                    escapeHtml('No students match this filter.') + '</p>';
+            } else {
+                list.innerHTML = view.map(r => {
+                    const st = studentOf[String(r.studentNumber)] || {};
+                    const name = escapeHtml(((st.firstName || '') + ' ' + (st.lastName || '')).trim()
+                                            || ('Student ' + (r.studentNumber || '?')));
+                    const meta = [st.grade ? 'Grade ' + st.grade : '', r.studentNumber || '']
+                        .filter(Boolean).map(escapeHtml).join('  &middot;  ');
+                    // WHY THIS CHILD IS ON THE LIST, on the row. A score with no
+                    // reasons beside it is a number a person cannot act on or
+                    // argue with.
+                    const why = [];
+                    if (r.attendance.known) {
+                        const pct = Math.round(r.attendance.rate * 100);
+                        if (r.attendance.points > 0 || pct > 0) why.push(pct + '% absent (' + r.attendance.daysAbsent + 'd)');
+                        if (r.attendance.tardyFlag) why.push(r.attendance.daysTardy + ' tardies');
+                    } else { why.push('no attendance on file'); }
+                    if (r.course.gradesKnown === false) why.push('no grades on file');
+                    else if (r.course.failing) why.push(r.course.failing + ' failing');
+                    if (r.course.missingKnown === false) why.push('owed work unknown');
+                    else if (r.course.missingRecent) why.push(r.course.missingRecent + ' owed recently');
+                    else if ((r.course.missingOlder || 0) >= 3) why.push('owed work all older');
+                    if (r.course.missingTruncated || r.course.gradesTruncated) why.push('score is a floor');
+                    const openable = st.id ? ' onclick="openStudentProfile(\'' + escapeHtml(String(st.id)) + '\')"' : '';
+                    const tierKey = r.tier ? r.tier.key : 'clear';
+                    return '<button type="button" class="wc-att-row wc-ew-' + tierKey + '"' + openable + '>' +
+                        '<span class="wc-att-name">' + name +
+                            (meta ? '<span class="wc-att-meta">' + meta + '</span>' : '') + '</span>' +
+                        '<span class="wc-att-figs">' +
+                            '<span class="wc-att-pct">' + r.points + '</span>' +
+                            // Joined with the character, not the entity: this text goes
+                            // through escapeHtml, which would render a literal
+                            // &middot; as a visible "&amp;middot;".
+                            '<span class="wc-att-days">' + escapeHtml(why.join('  ·  ')) + '</span>' +
+                        '</span>' +
+                        '<span class="wc-att-badge">' + escapeHtml(r.tier ? r.tier.label : '') + '</span>' +
+                    '</button>';
+                }).join('');
+            }
+
+            if (hint) {
+                // THE TWO HALVES OF THIS SENTENCE MUST BE THE SAME POPULATION.
+                // ranked.counts comes from the SCOPED rows, so with a grade
+                // picked it is that grade's count -- and printing it after
+                // "measured across the whole school" asserted that a grade's
+                // four students were the school's 31.
+                const where = _ewGradeFilter === 'all'
+                    ? ' across the whole school'
+                    : (_ewGradeFilter === '(none)' ? ' among students with no grade on file' : ' in grade ' + _ewGradeFilter);
+                hint.textContent = 'Scores run 0 to 8: up to 4 for attendance, up to 4 for course performance, '
+                    + '0 for behaviour while no behaviour data is loaded. Measured across the whole school on '
+                    + '2026-09-21, "Act now" at 7 named 31 students and at 6 it named 80. '
+                    + 'Right now these thresholds name ' + ranked.counts.act + ' and ' + ranked.counts.watch + where + '.';
+            }
+
+            if (foot) {
+                const bits = [];
+                if (_ewGradeFilter !== 'all') {
+                    bits.push(_ewGradeFilter === '(none)'
+                        ? 'Scoped to students with no grade on file; the cards above cover only those students.'
+                        : 'Scoped to grade ' + _ewGradeFilter + '; the cards above cover only that grade.');
+                }
+                if (clipped) bits.push('Showing the first ' + CAP + ' of ' + shown.length + '. Search to narrow.');
+                // Said out loud rather than silently dropped. A child with no
+                // readable axis is not a child who is fine.
+                if (ranked.noData.length) {
+                    bits.push(ranked.noData.length + ' student' + (ranked.noData.length === 1 ? '' : 's') +
+                              ' could not be scored on any axis and are not ranked.');
+                }
+                const gaps = ranked.ranked.filter(r => r.unknown.indexOf('grades') !== -1).length;
+                if (gaps) bits.push(gaps + ' ranked on attendance only, with no grades on file.');
+                if (res.incomplete) bits.push('The list may be short: the server stopped paging early. Tell an administrator.');
+                if (res.nearReadLimit) bits.push('This screen is close to the database read limit for one request. It still works; tell an administrator so the page size is reduced before it stops.');
+                // A capped read means an under-counted, and therefore
+                // under-ranked, student -- the child who has handed in nothing
+                // all year is exactly who sinks.
+                if (res.truncatedRows) bits.push(res.truncatedRows + ' student' + (res.truncatedRows === 1 ? ' has' : 's have')
+                    + ' more grades or owed work than this screen reads, so their score is a floor rather than a total.');
+                if (!res.missingFeedDark && typeof res.feedStudents === 'number' && res.rows.length) {
+                    bits.push('Owed-work data covers ' + res.feedStudents + ' of ' + res.rows.length + ' students.');
+                }
+                if (res.truncated) bits.push('The attendance table was larger than this screen reads. Tell an administrator.');
+                if (res.lastSyncedAt) bits.push('Last synced ' + String(res.lastSyncedAt).slice(0, 16).replace('T', ' ') + '.');
+                foot.textContent = bits.join(' ');
+            }
+        }
+
+        /**
+         * Save the thresholds. Admin only, and the numbers are coerced by the
+         * same rule the ranking uses, so an inverted ladder cannot be stored.
+         */
+        /**
+         * Save the thresholds. Admin only, and the numbers go through the same
+         * coercer the ranking uses, so an inverted ladder cannot be stored.
+         *
+         * IT REPORTS A FAILED SAVE. requestSave returns false when the write
+         * did not land, and saying "saved" anyway is how an admin sets a
+         * threshold, watches the list not move, and concludes the screen is
+         * broken. The same shape as saveUniformSettings.
+         */
+        async function saveRiskSettings() {
+            const read = (id, fallback) => {
+                const el = document.getElementById(id);
+                const v = el ? Number(el.value) : NaN;
+                return (isFinite(v) && v > 0) ? Math.round(v) : fallback;
+            };
+            const D = window.WildcatDiscipline;
+            const d = D.DEFAULT_RISK_SETTINGS;
+            const prev = D.riskSettingsOrDefault(riskSettings);
+            const next = D.riskSettingsOrDefault({
+                recentDays: read('ewRecentDays', d.recentDays),
+                actAt: read('ewActAt', d.actAt),
+                watchAt: read('ewWatchAt', d.watchAt),
+                failManyAt: read('ewFailManyAt', d.failManyAt),
+                missManyAt: read('ewMissManyAt', d.missManyAt),
+                tardyManyAt: read('ewTardyManyAt', d.tardyManyAt),
+                // CARRIED THROUGH, not defaulted. The card does not show these,
+                // and re-deriving them from d would silently reset a cut
+                // somebody set deliberately somewhere else.
+                failSomeAt: prev.failSomeAt,
+                missSomeAt: prev.missSomeAt,
+                absSevereAt: prev.absSevereAt,
+                absChronicAt: prev.absChronicAt,
+                absAtRiskAt: prev.absAtRiskAt,
+                staleBefore: prev.staleBefore
+            });
+            // THE RECENCY WINDOW IS COUNTED ON THE SERVER, so changing it has
+            // to re-fetch rather than re-filter what is already in hand.
+            const refetch = next.recentDays !== prev.recentDays;
+            riskSettings = next;
+            const ok = await requestSave('Early warning thresholds');
+            if (ok === false) {
+                // ROLL BACK, do not just report. The old code assigned the new
+                // settings before saving and returned here on failure, leaving
+                // riskSettings claiming a 30-day window while _ewCache still
+                // held counts the server had split at 14 -- so the next render
+                // scored a 14-day window under a 30-day label, with no error
+                // anywhere. Restoring means the screen and the numbers on it
+                // always describe the same thing.
+                riskSettings = prev;
+                hydrateRiskSettingsInputs(prev);
+                showToast('The thresholds were NOT saved, so they have been put back. Try again.', 'warn', 8000);
+                await renderEarlyWarning(false);
+                return;
+            }
+            if (refetch) _ewCache = null;
+            hydrateRiskSettingsInputs(next);
+            showToast('Thresholds saved: Act now at ' + next.actAt +
+                      '+, Watch at ' + next.watchAt + '+.', 'success', 5000);
+            await renderEarlyWarning(refetch);
         }
 
         // ========================================

@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20260921a">
-    <link rel="icon" href="favicon.ico?v=20260921a" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260921a" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260921a" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20260921b">
+    <link rel="icon" href="favicon.ico?v=20260921b" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260921b" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260921b" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260921a">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260921b">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20260921a">
+    <link rel="stylesheet" href="styles.css?v=20260921b">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260921a">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260921b">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20260921a">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260921b">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20260921a" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20260921b" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -184,7 +184,7 @@
                      asset, so there is one logo to replace when the school
                      changes it. -->
                 <div class="wp-brand">
-                    <img src="assets/westbrook-logo.png?v=20260921a"
+                    <img src="assets/westbrook-logo.png?v=20260921b"
                          alt="Westbrook Academy" class="wp-brandlogo" id="wpBrandLogo">
                     <!-- The product's name, which appeared nowhere on the
                          student's screen while the teacher's topbar has said
@@ -412,7 +412,7 @@
         <header class="app-topbar">
             <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-menu"></use></svg></button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20260921a" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20260921b" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -3551,6 +3551,118 @@
                     </div>
                 </div>
 
+                <!-- Early Warning Subtab
+                     ===============================================
+                     THE COMBINED INDICATOR: attendance, behaviour and course
+                     performance in one ranking, worst first.
+
+                     WHY A SCORE AND NOT A LIST OF RULES. Every single-axis
+                     threshold at this school names a roster rather than a
+                     queue, measured three times now: a flat chronic-absence
+                     line put 54% of students on one list, a flat failing-a-
+                     class line put 66% on another and that feature was
+                     dropped for it, and on 2026-09-21 half the school was
+                     chronically absent, half had a genuinely failing course
+                     and 56% owed work from the last fortnight. So each axis
+                     scores points and the tiers sit where the measured
+                     histogram puts a workable number of children at the top:
+                     31 in Act now, 49 in Watch, out of 679.
+
+                     THE DENOMINATOR LIVES ON ATTENDANCE WATCH, deliberately.
+                     Both screens divide absences by days in session, and two
+                     inputs would let one child be chronic on one screen and
+                     fine on the other. This reads the same two fields and
+                     says where to change them.
+                     =============================================== -->
+                <div id="behaviorEarlyWarning" class="discipline-subtab hidden">
+                    <div class="page-header">
+                        <div>
+                            <h2 class="page-title">🎯 Early Warning</h2>
+                            <p class="page-subtitle">Attendance, behaviour and course performance combined, worst first</p>
+                        </div>
+                        <button type="button" class="btn btn-secondary" onclick="renderEarlyWarning(true)">Refresh</button>
+                    </div>
+
+                    <!-- WHAT THIS SCREEN CANNOT SEE, SAID OUT LOUD AND FIRST.
+                         A dark axis rendering as "no incidents" would be a
+                         claim about a child that nobody made, so the gap is
+                         stated above the list rather than inferred from it. -->
+                    <p class="wc-ew-basis-note" id="ewCoverageNote"></p>
+
+                    <div class="wc-att-tiers" id="ewTierCards"></div>
+
+                    <div class="wc-card panel-card">
+                        <div class="wc-att-controls">
+                            <div class="subtab-bar analytics-tabs" id="ewTierFilter">
+                                <button type="button" class="analytics-tab active" data-etier="actWatch"
+                                        onclick="setEarlyWarningTierFilter('actWatch')">Act now &amp; watch</button>
+                                <button type="button" class="analytics-tab" data-etier="act"
+                                        onclick="setEarlyWarningTierFilter('act')">Act now</button>
+                                <button type="button" class="analytics-tab" data-etier="watch"
+                                        onclick="setEarlyWarningTierFilter('watch')">Watch</button>
+                                <!-- IMPROVING IS A VIEW, NOT A TIER. Owed work
+                                     carries a due date, so a student with old
+                                     work outstanding and nothing recent is
+                                     visibly recovering. That is worth seeing
+                                     before any history table exists. -->
+                                <button type="button" class="analytics-tab" data-etier="improving"
+                                        onclick="setEarlyWarningTierFilter('improving')">Improving</button>
+                                <button type="button" class="analytics-tab" data-etier="gaps"
+                                        onclick="setEarlyWarningTierFilter('gaps')">Data gaps</button>
+                                <button type="button" class="analytics-tab" data-etier="all"
+                                        onclick="setEarlyWarningTierFilter('all')">Everyone</button>
+                            </div>
+                            <div class="wc-att-controls-end">
+                                <label class="wc-att-grade-wrap" for="ewGradeFilter">
+                                    <span class="wc-att-grade-label">Grade</span>
+                                    <select id="ewGradeFilter" class="wc-att-grade"
+                                            onchange="setEarlyWarningGradeFilter(this.value)">
+                                        <option value="all">All grades</option>
+                                    </select>
+                                </label>
+                                <input type="search" id="ewSearch" class="wc-att-search" placeholder="Search name or student number"
+                                       oninput="renderEarlyWarning()">
+                            </div>
+                        </div>
+                        <div id="earlyWarningList" class="wc-att-list"></div>
+                        <p class="wc-att-foot" id="ewFoot"></p>
+                    </div>
+
+                    <!-- ADMIN ONLY, and for the same reason the uniform
+                         thresholds are: where "Act now" starts decides which
+                         children a team spends its week on, and that is a
+                         school leadership decision rather than a per-user
+                         preference. The measured counts are printed beside the
+                         inputs so a change can be judged before it is saved. -->
+                    <div class="wc-card panel-card admin-only">
+                        <h4>Early warning thresholds</h4>
+                        <p class="wc-uv-hint" id="ewSettingsHint"></p>
+                        <div class="wc-uv-settings">
+                            <!-- THE BANDS CANNOT COLLAPSE. Act now must sit
+                                 strictly above Watch, and Watch at 2 or more,
+                                 or a tier the card advertises can hold nobody
+                                 and renders an inverted range like "6-5
+                                 points" beside a permanent zero.
+                                 riskSettingsOrDefault enforces it whatever is
+                                 typed; these bounds just stop the arrows
+                                 offering an impossible number. -->
+                            <label for="ewActAt">&ldquo;Act now&rdquo; starts at
+                                <input type="number" id="ewActAt" min="3" max="8" step="1" value="7"></label>
+                            <label for="ewWatchAt">&ldquo;Watch&rdquo; starts at
+                                <input type="number" id="ewWatchAt" min="2" max="7" step="1" value="6"></label>
+                            <label for="ewRecentDays">Owed work counts as recent for
+                                <input type="number" id="ewRecentDays" min="1" max="120" step="1" value="14"> days</label>
+                            <label for="ewFailManyAt">&ldquo;Several&rdquo; failing courses is
+                                <input type="number" id="ewFailManyAt" min="1" max="12" step="1" value="3"></label>
+                            <label for="ewMissManyAt">&ldquo;A lot&rdquo; of recent owed work is
+                                <input type="number" id="ewMissManyAt" min="1" max="60" step="1" value="5"></label>
+                            <label for="ewTardyManyAt">Tardies that count as a pattern
+                                <input type="number" id="ewTardyManyAt" min="1" max="60" step="1" value="10"></label>
+                        </div>
+                        <button type="button" class="btn-secondary" onclick="saveRiskSettings()">Save thresholds</button>
+                    </div>
+                </div>
+
                 <!-- Uniform Violations Subtab
                      ===============================================
                      A DAILY TASK AT A DOOR, and the whole layout follows from
@@ -5740,24 +5852,24 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260921a"></script>
+    <script src="wildcat-auth.js?v=20260921b"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
     <!-- The icon sprite. Injected at load, before anything renders, so an
          icon is never a blank square for a frame. -->
-    <script src="wildcat-icons.js?v=20260921a"></script>
-    <script src="wildcat-motion.js?v=20260921a"></script>
-    <script src="wildcat-discipline.js?v=20260921a"></script>
-    <script src="wildcat-audit.js?v=20260921a"></script>
-    <script src="wildcat-cashaudit.js?v=20260921a"></script>
-    <script src="wildcat-dirty.js?v=20260921a"></script>
-    <script src="wildcat-update.js?v=20260921a"></script>
-    <script src="wildcat-modes.js?v=20260921a"></script>
-    <script src="wildcat-merge.js?v=20260921a"></script>
-    <script src="wildcat-savequeue.js?v=20260921a"></script>
-    <script src="wildcat-roster.js?v=20260921a"></script>
-    <script src="wildcat-store.js?v=20260921a"></script>
-    <script src="script.js?v=20260921a"></script>
+    <script src="wildcat-icons.js?v=20260921b"></script>
+    <script src="wildcat-motion.js?v=20260921b"></script>
+    <script src="wildcat-discipline.js?v=20260921b"></script>
+    <script src="wildcat-audit.js?v=20260921b"></script>
+    <script src="wildcat-cashaudit.js?v=20260921b"></script>
+    <script src="wildcat-dirty.js?v=20260921b"></script>
+    <script src="wildcat-update.js?v=20260921b"></script>
+    <script src="wildcat-modes.js?v=20260921b"></script>
+    <script src="wildcat-merge.js?v=20260921b"></script>
+    <script src="wildcat-savequeue.js?v=20260921b"></script>
+    <script src="wildcat-roster.js?v=20260921b"></script>
+    <script src="wildcat-store.js?v=20260921b"></script>
+    <script src="script.js?v=20260921b"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -5767,7 +5879,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20260921a').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20260921b').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {
