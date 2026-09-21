@@ -9525,3 +9525,18 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
    Returned buttons, and a button inside a button is invalid markup that
    swallows the inner click. */
 .wc-att-list .wc-att-row:not(button) { cursor: default; }
+
+/* =====================================================================
+   CASH DRIFT PANEL
+   Which balances need attention, on the screen the dashboard tile sends
+   you to. Reuses the .wc-att-row furniture; only the accents are new.
+   ===================================================================== */
+.wc-drift { border-left: 4px solid #f59e0b; }
+.wc-drift-failed { border-left-color: #64748b; }
+/* Owed money reads as a correction waiting to happen; needs-a-decision
+   reads as a stop, because applying it takes money off a child. */
+.wc-drift-owed { border-left-color: #f59e0b !important; }
+.wc-drift-held { border-left-color: #dc2626 !important; }
+.wc-drift-owed .wc-att-badge { background: #fef3c7; color: #92400e; }
+.wc-drift-held .wc-att-badge { background: #fee2e2; color: #991b1b; }
+.wc-drift .wc-att-list { margin-top: 10px; }

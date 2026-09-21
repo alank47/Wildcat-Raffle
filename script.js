@@ -8848,7 +8848,108 @@
             updateAuditLogTable();
         }
 
+        /**
+         * WHICH balances need attention, on the screen the tile sends you to.
+         *
+         * The owner, having clicked the tile: "i clicked and it sent to the
+         * audit log but how am i supposed to know the balances that need
+         * attention". He was right -- the audit entry said SEVEN and named
+         * none of them, and the only way to see the list was to run a script.
+         *
+         * `storedBalance` against `recordsSay` because the difference is the
+         * whole question. A HELD-BACK student is listed separately in tone: the
+         * repair refuses those deliberately, so they need a decision rather
+         * than a correction, and the reason is printed rather than summarised.
+         *
+         * Says WHEN it was checked, because this is last night's answer and an
+         * unlabelled stale list is worse than no list. Re-check is admin-only:
+         * it pages the whole ledger.
+         */
+        function renderCashDriftPanel() {
+            const host = document.getElementById('cashDriftPanel');
+            if (!host) return;
+            fetchCashDrift();
+            const d = _cashDrift;
+            const rows = (d && Array.isArray(d.rows)) ? d.rows : [];
+            const wrong = d ? (Number(d.diverged) || 0) + (Number(d.heldBack) || 0) : 0;
+
+            if (!d || (d.ok !== false && wrong === 0)) { host.innerHTML = ''; return; }
+
+            const when = String((d && d.at) || '').slice(0, 16).replace('T', ' ');
+            const recheck = '<button type="button" class="wc-uv-mini admin-only" ' +
+                'onclick="recheckCashDrift()">Re-check now</button>';
+
+            if (d.ok === false) {
+                host.innerHTML = '<div class="wc-card panel-card wc-drift wc-drift-failed">' +
+                    '<h4 style="margin:0 0 4px;">The nightly balance check could not run</h4>' +
+                    '<p class="wc-uv-hint">' + escapeHtml(String(d.why || 'No reason was recorded.')) +
+                    ' Last attempt ' + escapeHtml(when) + '.</p>' + recheck + '</div>';
+                return;
+            }
+
+            const list = rows.length ? rows.map(r => {
+                const diff = Number(r.difference) || 0;
+                const owed = diff > 0;
+                return '<div class="wc-att-row ' + (r.heldBack ? 'wc-drift-held' : 'wc-drift-owed') + '">' +
+                    '<span class="wc-att-name">' + escapeHtml(r.name || ('Student #' + r.studentId)) +
+                        '<span class="wc-att-meta">' + escapeHtml(String(r.studentId)) +
+                        (r.alsoWrong && r.alsoWrong.length
+                            ? ' &middot; also wrong: ' + escapeHtml(r.alsoWrong.join(', ')) : '') +
+                        (r.heldBack && r.why ? ' &middot; ' + escapeHtml(r.why) : '') + '</span></span>' +
+                    '<span class="wc-att-figs">' +
+                        '<span class="wc-att-pct">' + (owed ? '+' : '') + '$' + Math.abs(diff) + '</span>' +
+                        '<span class="wc-att-days">shows $' + (Number(r.storedBalance) || 0) +
+                            ' &middot; records say $' + (Number(r.recordsSay) || 0) + '</span>' +
+                    '</span>' +
+                    '<span class="wc-att-badge">' + (r.heldBack ? 'Needs a decision' : 'Owed') + '</span>' +
+                '</div>';
+            }).join('') : '<p class="wc-att-foot">The check found ' + wrong +
+                ', but did not record the list. Re-check to fill it in.</p>';
+
+            host.innerHTML = '<div class="wc-card panel-card wc-drift">' +
+                '<h4 style="margin:0 0 4px;">' + wrong + ' balance' + (wrong === 1 ? '' : 's') +
+                    ' need attention</h4>' +
+                '<p class="wc-uv-hint">Checked ' + escapeHtml(when) +
+                    '. <strong>Nothing has been changed</strong> — this is a report. ' +
+                    '&ldquo;Owed&rdquo; means the student\'s records add up to more than their balance shows. ' +
+                    '&ldquo;Needs a decision&rdquo; means correcting it would take money off them, ' +
+                    'so a person has to look first.' +
+                    (d.rowsTruncated ? ' Showing the largest ' + rows.length + '.' : '') + '</p>' +
+                '<div class="wc-att-list">' + list + '</div>' +
+                '<p class="wc-uv-hint">' + recheck + '</p>' +
+            '</div>';
+        }
+
+        async function recheckCashDrift() {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+            if (!session) { showToast('You are signed out.', 'warn', 5000); return; }
+            const before = (_cashDrift && _cashDrift.at) || '';
+            try {
+                await auth.convexMutation('cashDriftCheck:recheckNow', {}, session.idToken);
+                showToast('Re-checking every balance against its records\u2026', 'info', 8000);
+                // Scheduled, not awaited, so the answer is polled for. Six
+                // tries at two seconds: the first run took 2.2 seconds over
+                // 2,505 rows.
+                for (let i = 0; i < 6; i++) {
+                    await new Promise(r => setTimeout(r, 2000));
+                    await fetchCashDrift(true);
+                    if (((_cashDrift && _cashDrift.at) || '') !== before) {
+                        renderCashDriftPanel();
+                        const w = (Number(_cashDrift.diverged) || 0) + (Number(_cashDrift.heldBack) || 0);
+                        showToast(w ? w + ' balance(s) need attention.' : 'Every balance agrees with its records.',
+                            w ? 'warn' : 'success', 7000);
+                        return;
+                    }
+                }
+                showToast('The check is still running. Reopen this tab in a moment.', 'info', 7000);
+            } catch (e) {
+                showToast('Could not start the check: ' + ((e && e.message) || ''), 'error', 8000);
+            }
+        }
+
         function updateCashAuditLogTable(keepPage) {
+            renderCashDriftPanel();
             const tbody = document.getElementById('cashAuditLogTable');
             const CA = window.WildcatCashAudit;
 
@@ -35092,8 +35193,8 @@
          */
         let _cashDrift = null;
         let _cashDriftAsked = false;
-        async function fetchCashDrift() {
-            if (_cashDriftAsked) return;
+        async function fetchCashDrift(force) {
+            if (_cashDriftAsked && force !== true) return;
             _cashDriftAsked = true;
             const auth = window.WildcatAuth;
             const session = auth && auth.getSession();
@@ -35102,6 +35203,7 @@
                 const res = await auth.convexQuery('cashDriftCheck:latest', {}, session.idToken);
                 _cashDrift = (res && res.value) || null;
                 if (_cashDrift && typeof updateDashboard === 'function') updateDashboard();
+                if (typeof renderCashDriftPanel === 'function') renderCashDriftPanel();
             } catch (e) {
                 // A dashboard tile is not worth a visible error. The nightly
                 // check's own audit entry is the durable record.

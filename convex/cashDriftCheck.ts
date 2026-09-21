@@ -1,7 +1,7 @@
-import { internalAction, internalMutation, query } from "./_generated/server";
+import { internalAction, internalMutation, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
-import { requireStaff } from "./identity";
+import { requireStaff, requireAdmin } from "./identity";
 
 /**
  * The nightly answer to "are the cash counters still telling the truth?"
@@ -106,6 +106,56 @@ export function driftSummary(batches: readonly any[], extra?: Record<string, unk
         (heldBack ? `, ${heldBack} of them needing a person to look` : "") + ".",
     ...(extra || {}),
   };
+}
+
+/**
+ * WHICH students, not just how many.
+ *
+ * THE GAP THIS CLOSES, in the owner's words: "i clicked and it sent to the
+ * audit log but how am i supposed to know the balances that need attention".
+ * A count is an alarm; it is not something a person can act on. The only way
+ * to see the list was to run a script from a laptop, which is no use to
+ * somebody standing in a school.
+ *
+ * Each row carries what is STORED against what the records SAY, because the
+ * difference is the whole question, and a held-back student carries the reason
+ * they were held back -- those are the ones that need a decision rather than a
+ * correction.
+ *
+ * Worst first, capped, and `rowsTruncated` says so rather than the list
+ * quietly ending. Pure, so the shaping is testable.
+ */
+export function driftRows(
+  batches: readonly any[],
+  cap = 200,
+): { rows: any[]; rowsTruncated: boolean } {
+  const out: any[] = [];
+  for (const b of batches || []) {
+    for (const d of (b && b.details) || []) {
+      const act = String((d && d.action) || "");
+      if (act !== "would repair" && act !== "held back") continue;
+      const changes = (d && d.changes) || [];
+      const bal = changes.find((c: any) => c && c.field === "wildcatCashBalance") || null;
+      out.push({
+        studentId: String((d && d.studentId) || ""),
+        name: String((d && d.name) || ""),
+        heldBack: act === "held back",
+        why: d && d.why ? String(d.why) : null,
+        storedBalance: bal ? bal.was : null,
+        recordsSay: bal ? bal.now : null,
+        difference: bal ? Number(bal.now) - Number(bal.was) : 0,
+        // Named plainly, because "wildcatCashDeducted" is not a word anybody
+        // outside this repo uses.
+        alsoWrong: changes
+          .filter((c: any) => c && c.field !== "wildcatCashBalance")
+          .map((c: any) => String(c.field).replace("wildcatCash", "").toLowerCase()),
+      });
+    }
+  }
+  out.sort((a, b) =>
+    Math.abs(Number(b.difference) || 0) - Math.abs(Number(a.difference) || 0) ||
+    String(a.name).localeCompare(String(b.name)));
+  return { rows: out.slice(0, cap), rowsTruncated: out.length > cap };
 }
 
 /** Where the dashboard reads the last result from. */
@@ -235,6 +285,9 @@ export const nightly = internalAction({
     }
 
     const result = driftSummary(batches, {
+      // The list itself, so the screen can name the students rather than
+      // leaving somebody to run a script to find out who they are.
+      ...driftRows(batches),
       reason: reason ?? null,
       cutoff: cutoffIso,
       today,
@@ -248,6 +301,24 @@ export const nightly = internalAction({
       tookMs: Date.now() - started,
     });
     return await ctx.runMutation(internal.cashDriftCheck.recordResult, { result });
+  },
+});
+
+/**
+ * Run the check now, rather than waiting for tonight.
+ *
+ * ADMIN ONLY, and scheduled rather than awaited: the action pages the whole
+ * ledger, so a browser must not sit on an open request for it. The screen
+ * polls `latest` for the new timestamp.
+ */
+export const recheckNow = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const staff = await requireAdmin(ctx);
+    await ctx.scheduler.runAfter(0, internal.cashDriftCheck.nightly, {
+      reason: `by hand: ${String(staff.email ?? "")}`,
+    });
+    return { scheduled: true, at: new Date().toISOString() };
   },
 });
 
