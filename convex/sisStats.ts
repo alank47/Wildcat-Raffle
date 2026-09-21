@@ -2,6 +2,35 @@ import { internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 
 /**
+ * Has a student's attendance actually moved since the row we hold?
+ *
+ * Pure, and exported so a test exercises THIS rather than a restatement of it.
+ *
+ * ALL THREE FIGURES, and in BOTH DIRECTIONS. Absences year-to-date, absences
+ * this term and tardies this term each matter on their own -- a child who is
+ * present but always late never appears in an absence count, which is why
+ * Attendance Watch already keeps tardies as a separate axis. And a DECREASE is
+ * a change: PowerSchool corrects an absence sometimes, and a correction is a
+ * real event on a child's record rather than noise to suppress.
+ *
+ * ABSENT AND ZERO COMPARE EQUAL, deliberately. A field PowerSchool stops
+ * sending must not read as "changed to nothing" and append a row every sync
+ * forever.
+ */
+export function attendanceMoved(
+  prior: Record<string, any> | null | undefined,
+  next: Record<string, any>,
+): boolean {
+  if (!prior) return false;
+  const n = (x: unknown) => Number(x) || 0;
+  return (
+    n(prior.daysAbsentYtd) !== n(next.daysAbsentYtd) ||
+    n(prior.daysAbsentTerm) !== n(next.daysAbsentTerm) ||
+    n(prior.daysTardyTerm) !== n(next.daysTardyTerm)
+  );
+}
+
+/**
  * Load attendance and grade statistics from the SIS.
  *
  * Both are full replacements per sync run rather than merges. A student who
@@ -31,13 +60,175 @@ export const putAttendance = internalMutation({
   handler: async (ctx, { rows, syncedAt }) => {
     const existing = await ctx.db.query("psAttendance").collect();
     const byNumber = new Map(existing.map((r) => [r.studentNumber, r]));
-    let created = 0, updated = 0;
+    const observedOn = String(syncedAt).slice(0, 10);
+    let created = 0, updated = 0, appended = 0;
     for (const r of rows) {
       const prior = byNumber.get(r.studentNumber);
+
+      // HISTORY, APPENDED BEFORE THE OVERWRITE.
+      //
+      // This row is about to be replaced, and until now that is all that ever
+      // happened: the figure moved and the previous one was gone. So a child
+      // with three absences could not be told apart from a child with three
+      // absences last week, which is the difference an early-warning system is
+      // made of. psAttendanceHistory in schema.ts has the full account.
+      //
+      // ZERO EXTRA READS: `prior` is already in hand from the collect above,
+      // so the comparison is free and only a genuine change writes a row.
+      // A DECREASE COUNTS AS A CHANGE -- PowerSchool corrects an absence
+      // sometimes, and a correction is a real event on a child's record.
+      if (prior && attendanceMoved(prior, r)) {
+        await ctx.db.insert("psAttendanceHistory", {
+          studentNumber: r.studentNumber,
+          observedOn,
+          daysAbsentYtd: r.daysAbsentYtd,
+          daysAbsentTerm: r.daysAbsentTerm,
+          daysTardyTerm: r.daysTardyTerm,
+          termFirstDay: r.termFirstDay,
+          termId: r.termId,
+          syncedAt,
+        });
+        appended++;
+      }
+
       if (prior) { await ctx.db.patch(prior._id, { ...r, syncedAt }); updated++; }
-      else { await ctx.db.insert("psAttendance", { ...r, syncedAt }); created++; }
+      else {
+        await ctx.db.insert("psAttendance", { ...r, syncedAt });
+        // A STUDENT THE APP HAS NEVER SEEN gets their starting point recorded
+        // now, so their series has a first point rather than beginning at
+        // whatever their second observation happens to be.
+        await ctx.db.insert("psAttendanceHistory", {
+          studentNumber: r.studentNumber,
+          observedOn,
+          daysAbsentYtd: r.daysAbsentYtd,
+          daysAbsentTerm: r.daysAbsentTerm,
+          daysTardyTerm: r.daysTardyTerm,
+          termFirstDay: r.termFirstDay,
+          termId: r.termId,
+          syncedAt,
+          baseline: true,
+        });
+        appended++;
+        created++;
+      }
     }
-    return { created, updated, received: rows.length };
+    return { created, updated, received: rows.length, historyAppended: appended };
+  },
+});
+
+/**
+ * Give every student already on file a starting point, once.
+ *
+ * WHY A SEPARATE ONE-OFF. putAttendance appends only when a figure MOVES,
+ * which is right for every sync after the first -- but on the first sync after
+ * this shipped, every one of the 679 students already had a psAttendance row,
+ * so an unchanged student would have got no row at all and their series would
+ * begin at whatever their next absence happened to be. This writes the "as of
+ * today, here is where everybody stands" point that the change-appends hang
+ * off.
+ *
+ * PAGED, and SKIPS ANYONE WHO ALREADY HAS HISTORY, so running it twice is
+ * harmless and running it later cannot overwrite a real series with a flat
+ * baseline. Call until `remaining` is 0.
+ */
+export const seedAttendanceHistory = internalMutation({
+  args: { limit: v.optional(v.number()), apply: v.optional(v.boolean()) },
+  handler: async (ctx, { limit, apply }) => {
+    const take = Math.min(Math.max(1, Number(limit) || 200), 400);
+    const rows = await ctx.db.query("psAttendance").take(1000);
+    let seeded = 0, alreadyHad = 0, looked = 0;
+    for (const r of rows) {
+      if (seeded >= take) break;
+      looked++;
+      const has = await ctx.db
+        .query("psAttendanceHistory")
+        .withIndex("by_student", (q) => q.eq("studentNumber", r.studentNumber))
+        .first();
+      if (has) { alreadyHad++; continue; }
+      if (apply === true) {
+        await ctx.db.insert("psAttendanceHistory", {
+          studentNumber: r.studentNumber,
+          observedOn: String(r.syncedAt).slice(0, 10),
+          daysAbsentYtd: r.daysAbsentYtd,
+          daysAbsentTerm: r.daysAbsentTerm,
+          daysTardyTerm: r.daysTardyTerm,
+          termFirstDay: r.termFirstDay,
+          termId: r.termId,
+          syncedAt: r.syncedAt,
+          baseline: true,
+        });
+      }
+      seeded++;
+    }
+    // NO SILENT CAP. take(1000) is a read-limit guard, not a claim about the
+    // table; if psAttendance ever outgrows it the rows past 1000 would never
+    // be seeded and `remaining` would still reach 0. Say so out loud instead.
+    const truncated = rows.length >= 1000;
+    return {
+      applied: apply === true,
+      onFile: rows.length, looked, alreadyHad, truncated,
+      seeded, remaining: Math.max(0, rows.length - alreadyHad - (apply === true ? seeded : 0)),
+      note: truncated
+        ? "PARTIAL: psAttendance has at least 1000 rows and only the first 1000 are visible here. Seed the rest another way."
+        : apply === true ? "Seeded. Call again until remaining is 0." : "Dry run. Pass apply: true.",
+    };
+  },
+});
+
+/**
+ * Is the attendance series still growing?
+ *
+ * WHY THIS EXISTS. The whole value of psAttendanceHistory is in the appends,
+ * and a sync that quietly stopped appending would look exactly like a calm
+ * fortnight: no error, no gap anyone would notice, just a series that stops.
+ * By the time an early-warning indicator read flat it would be months of
+ * trajectory gone, and it cannot be backfilled. So this answers, cheaply,
+ * "when was the last time this table learned anything".
+ *
+ * NO collect() ANYWHERE, ON PURPOSE. This table grows all year. An unbounded
+ * read is the exact failure that broke clearRoster and the grade sync once
+ * psGrades passed Convex's 4,096 reads, and both were invisible because a run
+ * is only recorded on success. This walks the by_observedOn index newest-first,
+ * stops as soon as it has the days asked for, and says when it hit its cap.
+ */
+export const attendanceHistoryHealth = internalQuery({
+  args: { days: v.optional(v.number()) },
+  handler: async (ctx, { days }) => {
+    const want = Math.min(Math.max(1, Number(days) || 14), 60);
+    const SCAN_CAP = 3000;
+    const byDay = new Map<string, { rows: number; changes: number; baselines: number }>();
+    const students = new Set<string>();
+    let scanned = 0, capped = false;
+    for await (const doc of ctx.db.query("psAttendanceHistory").withIndex("by_observedOn").order("desc")) {
+      const day = String(doc.observedOn || "");
+      if (!byDay.has(day) && byDay.size >= want) break;
+      if (scanned >= SCAN_CAP) { capped = true; break; }
+      scanned++;
+      const bucket = byDay.get(day) || { rows: 0, changes: 0, baselines: 0 };
+      bucket.rows++;
+      if (doc.baseline === true) bucket.baselines++; else bucket.changes++;
+      byDay.set(day, bucket);
+      students.add(String(doc.studentNumber || ""));
+    }
+    const dayList = [...byDay.entries()]
+      .map(([observedOn, b]) => ({ observedOn, ...b }))
+      .sort((a, b) => (a.observedOn < b.observedOn ? 1 : -1));
+    return {
+      newestDay: dayList.length ? dayList[0].observedOn : null,
+      oldestDayScanned: dayList.length ? dayList[dayList.length - 1].observedOn : null,
+      daysWithData: dayList.length,
+      studentsSeen: students.size,
+      // Baselines are the one-off starting points; CHANGES are the signal.
+      // A run of days with 0 changes means either a calm school or a sync that
+      // has stopped appending, and those are worth telling apart by hand.
+      changesScanned: dayList.reduce((n, d) => n + d.changes, 0),
+      baselinesScanned: dayList.reduce((n, d) => n + d.baselines, 0),
+      days: dayList,
+      scanned, capped,
+      note: capped
+        ? `PARTIAL: stopped at ${SCAN_CAP} rows, so the oldest day shown may be incomplete.`
+        : "Complete for the days shown.",
+    };
   },
 });
 

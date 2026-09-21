@@ -399,6 +399,59 @@ export default defineSchema({
   }).index("by_studentNumber", ["studentNumber"]),
 
   /**
+   * ATTENDANCE OVER TIME. One row each time a student's absence or tardy
+   * figures CHANGE, rather than one row per student overwritten twice a day.
+   *
+   * WHY THIS EXISTS, and why it could not wait. psAttendance above holds a
+   * single row per student and every sync overwrites it, so the app can say a
+   * child has missed three days and cannot say WHEN. Three absences last week
+   * is a child coming apart; three since August is ordinary life. Clustering
+   * and recency are the strongest signals in absenteeism, and until this table
+   * existed they were being discarded twice a day, permanently. Measured
+   * 2026-09-21: 679 students, 679 rows, one apiece, and `daysAbsentYtd` equal
+   * to `daysAbsentTerm` for every one of them -- there was no history in the
+   * system at all, this term or any prior one.
+   *
+   * It is also the precondition for ever PREDICTING chronic absenteeism rather
+   * than merely counting it. A predictive model needs two things this school
+   * did not have: a trajectory per student, and past students whose outcome is
+   * known to learn from. Both accumulate from here and NEITHER CAN BE
+   * BACKFILLED -- which is why the table shipped before the system that reads
+   * it.
+   *
+   * APPENDED ON CHANGE, not on schedule. A row per student per sync would be
+   * ~244,000 rows a year to say almost nothing; a row when the number actually
+   * moves is a few thousand, and is exactly the event an early-warning rule
+   * cares about. The value on any date is the last row at or before it -- a
+   * step function -- so nothing is lost by not writing the flat stretches.
+   *
+   * A DECREASE IS KEPT TOO. PowerSchool corrects an absence sometimes, and a
+   * correction is a real event on a child's record.
+   *
+   * `observedOn` is the UTC date of the sync that saw the change, NOT a
+   * guaranteed local school day. Both scheduled syncs (13:00 and 19:00 UTC)
+   * fall on the correct Los Angeles date; a manual sync late in the evening
+   * would land on the next UTC day. `syncedAt` is kept in full so that skew is
+   * visible rather than silent, and ordering -- which is what the analysis
+   * needs -- is unaffected either way.
+   */
+  psAttendanceHistory: defineTable({
+    studentNumber: v.string(),
+    observedOn: v.string(),        // "YYYY-MM-DD", the sync's UTC date
+    daysAbsentYtd: v.optional(v.number()),
+    daysAbsentTerm: v.optional(v.number()),
+    daysTardyTerm: v.optional(v.number()),
+    termFirstDay: v.optional(v.string()),
+    termId: v.optional(v.string()),
+    syncedAt: v.string(),
+    /** True on a row seeded as a starting point rather than observed changing. */
+    baseline: v.optional(v.boolean()),
+  })
+    .index("by_student", ["studentNumber"])
+    .index("by_student_observedOn", ["studentNumber", "observedOn"])
+    .index("by_observedOn", ["observedOn"]),
+
+  /**
    * Current grade per student per section.
    *
    * currentPercent is OPTIONAL on purpose. A student with no PGFinalGrades row
