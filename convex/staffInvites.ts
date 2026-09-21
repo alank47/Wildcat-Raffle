@@ -325,8 +325,41 @@ export const inviteStaffFromCli = internalMutation({
       if (existing.role === role) {
         return { outcome: "unchanged", email: target, role, name: existing.name };
       }
+      const previousRole = existing.role;
       await ctx.db.patch(existing._id, { role });
-      return { outcome: "role-changed", email: target, role, previousRole: existing.role };
+
+      // WRITTEN DOWN HERE TOO. setStaffRole below says it out loud -- a change
+      // to who can see the school's record has to be answerable months later,
+      // and "who gave them access" is the first question asked. This path
+      // changed a role and wrote nothing, so a role granted from a terminal was
+      // invisible in the log that exists to answer exactly that.
+      //
+      // ATTRIBUTED HONESTLY AS A COMMAND-LINE ACTION. Naming a person who did
+      // not click it would be a false record in an audit trail, which is worse
+      // than a vague true one.
+      const now = new Date().toISOString();
+      const entryId = `role_cli_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+      await ctx.db.insert("appAuditLog", {
+        entryId,
+        timestamp: now,
+        payload: {
+          // Repeated inside the payload: the browser derives its own id from
+          // the contents when the column-only id does not reach it, and
+          // uploads the event back as a second row.
+          entryId,
+          action: "Changed access level",
+          teacher: "command line",
+          teacherName: "command line",
+          // BOTH NAMES, because the two readers disagree: the app's entries
+          // carry `reason` and the audit tables render that, while `details`
+          // is what the sibling mutation wrote first.
+          details: `${existing.name || target}: ${previousRole} \u2192 ${role} (command line)`,
+          reason: `${existing.name || target}: ${previousRole} \u2192 ${role} (command line)`,
+          userId: "cli",
+          timestamp: now,
+        },
+      });
+      return { outcome: "role-changed", email: target, role, previousRole };
     }
 
     await ctx.db.insert("teachers", {

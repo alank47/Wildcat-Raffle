@@ -1107,3 +1107,63 @@ export const dayKindTally = internalQuery({
     };
   },
 });
+
+/**
+ * Find one staff member and report their access, without dumping the directory.
+ *
+ * WHY IT EXISTS. A role change needs three facts first: does this person have
+ * exactly one record, what is their role now, and which students does that
+ * role actually reach. Guessing any of them is how the wrong account gets
+ * changed -- and a duplicate record is the failure that matters most, because
+ * changing one of two leaves the person still locked out and the change looking
+ * done.
+ *
+ * SEARCHES BY NAME FRAGMENT, case-insensitively, and returns only what a role
+ * decision needs: name, email, role, and how many roster sections name them.
+ * internalQuery, CLI only.
+ */
+export const findStaff = internalQuery({
+  args: { q: v.string() },
+  handler: async (ctx, { q }) => {
+    const needle = String(q || "").trim().toLowerCase();
+    if (needle.length < 2) return { matches: [], reason: "Give at least two characters." };
+    const staff = await ctx.db.query("teachers").take(1000);
+    const hit = staff.filter((t) => {
+      const name = `${String((t as any).firstName ?? "")} ${String((t as any).lastName ?? "")}`.toLowerCase();
+      const email = String((t as any).email ?? "").toLowerCase();
+      const legacy = String((t as any).name ?? "").toLowerCase();
+      return name.includes(needle) || email.includes(needle) || legacy.includes(needle);
+    });
+    const out: Array<Record<string, any>> = [];
+    for (const t of hit) {
+      const email = String((t as any).email ?? "").trim().toLowerCase();
+      // How many sections name them as teacher of record -- which is exactly
+      // what a `teacher` role can see and nothing more.
+      let sections = 0, students = new Set<string>();
+      if (email) {
+        const rows = await ctx.db
+          .query("psRoster")
+          .withIndex("by_teacherEmail", (qq) => qq.eq("teacherEmail", email))
+          .take(500);
+        sections = new Set(rows.map((r) => String(r.sectionId ?? ""))).size;
+        for (const r of rows) students.add(String(r.studentNumber ?? ""));
+      }
+      out.push({
+        firstName: (t as any).firstName ?? null,
+        lastName: (t as any).lastName ?? null,
+        email: email || null,
+        role: (t as any).role ?? null,
+        sectionsTaught: sections,
+        studentsOnOwnRoster: students.size,
+        // A duplicate record is the thing to catch before changing anything.
+        id: String(t._id),
+      });
+    }
+    return {
+      matches: out,
+      totalStaff: staff.length,
+      note: "campusaide and pbis both reach every student with no admin power; "
+        + "admin and superadmin add staff invites, settings and the week rollover.",
+    };
+  },
+});
