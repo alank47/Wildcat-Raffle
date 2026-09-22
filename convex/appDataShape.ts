@@ -484,6 +484,14 @@ export type MovementPlan = {
   net: Record<string, number>;
   /** Counters refused for magnitude. */
   capped: string[];
+  /**
+   * Counters where a real movement was cancelled to zero by the residual.
+   *
+   * The payload contradicted itself: it listed a movement and stated a delta
+   * that does not include it. Nothing is applied and nothing is registered, so
+   * the next save re-sends it rather than the money vanishing.
+   */
+  cancelled: string[];
   /** Movements applied on this call, to be registered. */
   applied: CashMovement[];
   /** Ids this student's counters had already had applied. */
@@ -543,13 +551,35 @@ export function planCashMovements(
     CASH_COUNTERS.forEach((f) => { claimed[f] += e[f] || 0; });
   });
 
+  // A PAYLOAD THAT LISTS MOVEMENTS AND STATES NO CHANGE IS NOT BELIEVED.
+  //
+  // `residual` is `stated - claimed`, and the whole order-independence
+  // argument rests on `stated` including every movement the record lists. A
+  // tab that lists a +100 award and states a delta of zero breaks that: the
+  // residual becomes -100 and SUBTRACTS a real movement, whether that movement
+  // is fresh (net cancels to zero, and it used to be registered anyway) or
+  // already absorbed (net goes negative and takes the money back off).
+  //
+  // Both shapes end the same way and both were on production 2026-09-22: 38
+  // students short exactly one movement, every one of those movements
+  // registered as applied while the counter had not moved.
+  //
+  // An all-zero delta is otherwise completely normal -- the first save after
+  // every load ships every student that way -- but always with NO movements.
+  // All-zero WITH movements listed is self-contradictory, so nothing is
+  // applied, nothing is registered, and the next save re-sends it. The
+  // alternative is guessing which half of the payload is true and writing the
+  // guess down.
+  const statesNothing = CASH_COUNTERS.every((f) => (Number(stated[f]) || 0) === 0);
+  const incoherent = statesNothing && accepted.length > 0;
+
   const residual: Record<string, number> = {};
   let hasResidual = false;
   CASH_COUNTERS.forEach((f) => {
     // READ WITH A DEFAULT, never by iterating the delta's keys: cashDeltaOf
     // drops zero-valued fields, so a delta that nets a counter to zero would
     // otherwise skip its own correction or compute `undefined - 100` = NaN.
-    const r = (Number(stated[f]) || 0) - claimed[f];
+    const r = incoherent ? 0 : (Number(stated[f]) || 0) - claimed[f];
     residual[f] = r;
     if (r !== 0) hasResidual = true;
   });
@@ -592,20 +622,64 @@ export function planCashMovements(
     net[f] = n;
   });
 
+  // --- a field whose movement was CANCELLED by the residual --------------
+  //
+  // MEASURED ON PRODUCTION 2026-09-22: 38 students were short exactly one
+  // movement, and every one of those movements was REGISTERED as applied
+  // while the counter had not moved. That is this, and it is the worst shape
+  // a cash bug can take -- registered means never re-sent, so the money is
+  // gone permanently rather than recoverably.
+  //
+  // HOW IT HAPPENS. `residual` is `stated - claimed`: the part of the client's
+  // own stated delta that its listed movements do not explain. When a tab
+  // states a delta of zero while still LISTING a movement -- which happens
+  // whenever its cash base was refreshed after the movement was recorded
+  // locally -- claimed is +100, residual is -100, and net is zero. Nothing is
+  // capped, so the old code registered the movement and planPatch then skipped
+  // the counter because the delta was zero.
+  //
+  // WHAT IS RIGHT HERE. The server cannot tell which half of a
+  // self-contradictory payload is true, so it must not guess -- but it must
+  // not RECORD a guess either. Leaving the movement unregistered makes the
+  // next save re-send it, which turns a permanent loss into a retry, and the
+  // nightly drift check sees anything that never resolves.
+  const cancelled: string[] = [];
+  CASH_COUNTERS.forEach((f) => {
+    if (keyed[f] !== 0 && net[f] === 0) cancelled.push(f);
+  });
+  // An incoherent payload blocks every counter, so a listed movement cannot be
+  // recorded as done on the strength of a delta that contradicts it.
+  if (incoherent) CASH_COUNTERS.forEach((f) => {
+    if (cancelled.indexOf(f) === -1) cancelled.push(f);
+  });
+
+  // APPLY AND REGISTER MOVE TOGETHER, OR NEITHER. A first draft of this guard
+  // zeroed the residual and left `net` at +100 while refusing to register --
+  // which applies the movement and then lets the NEXT save apply it again,
+  // turning a loss into a double-credit. A blocked field therefore moves
+  // nothing, exactly as a capped one does.
+  cancelled.forEach((f) => { net[f] = 0; });
+
   // --- registration is CONTINGENT on the movement actually landing -----
-  // Without this a capped field swallows a movement permanently: registered,
-  // so never re-sent, but never applied either.
+  // Without this a capped or cancelled field swallows a movement
+  // permanently: registered, so never re-sent, but never applied either.
+  const blocked = new Set([...capped, ...cancelled]);
   const cappedSet = new Set(capped);
   const applied = fresh.filter((m) => {
     const e = cashMovementEffect(m.amount, m.kind);
-    return !CASH_COUNTERS.some((f) => (e[f] || 0) !== 0 && cappedSet.has(f));
+    return !CASH_COUNTERS.some((f) => (e[f] || 0) !== 0 && blocked.has(f));
   });
   fresh.forEach((m) => {
-    if (!applied.includes(m)) refused.push({ id: m.id, why: "capped" });
+    if (applied.includes(m)) return;
+    const e = cashMovementEffect(m.amount, m.kind);
+    const why = CASH_COUNTERS.some((f) => (e[f] || 0) !== 0 && cappedSet.has(f))
+      ? "capped"
+      : incoherent ? "stated_no_change" : "cancelled_by_residual";
+    refused.push({ id: m.id, why });
   });
 
   return {
-    net, capped, applied, absorbed, refused,
+    net, capped, cancelled, applied, absorbed, refused,
     // NOT WRITTEN WHEN NOTHING WAS APPLIED. The first save after every load
     // ships every student with an all-zero delta and no movements; a version
     // that touched the register unconditionally would turn that into ~700 row

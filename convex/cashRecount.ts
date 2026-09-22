@@ -226,3 +226,111 @@ export const recountStudents = internalMutation({
     };
   },
 });
+
+/**
+ * WHEN did the movements that never reached a counter happen?
+ *
+ * Timing is what cracked this the last two times. On 2026-09-20 the seven
+ * double-applied students were EXACTLY the seven in one teacher's 17:35:57
+ * save batch, which proved it was one save applied twice rather than seven
+ * independent faults -- and told us an attempt-id fix would not work, because
+ * a retry recomputes the payload. A per-student total cannot say any of that;
+ * only the timestamps can.
+ *
+ * Takes the student ids the recount flagged and returns their cash rows with
+ * timestamps, amounts and the behaviour that caused them. NO NAMES: the caller
+ * already has them and this is a diagnostic, not a roster.
+ */
+export const rowsForStudents = internalQuery({
+  args: { studentIds: v.array(v.string()), doc: v.string() },
+  handler: async (ctx, { studentIds, doc }) => {
+    const want = new Set(studentIds.map((s) => String(s)));
+    const slices = await ctx.db
+      .query("legacyMirror")
+      .withIndex("by_doc", (q) => q.eq("doc", doc))
+      .take(4000);
+    const out: Array<Record<string, any>> = [];
+    for (const r of slices) {
+      if (r.collection !== "transactions") continue;
+      const p: any = r.payload;
+      // ONE TRANSACTION PER MIRROR ROW is the shape here, not an array of
+      // them. Treating the payload as a container turned its own FIELDS into
+      // candidate transactions, which matched nothing and returned a confident
+      // empty answer -- the most expensive kind of wrong.
+      const list: any[] = Array.isArray(p)
+        ? p
+        : (p && typeof p === "object"
+            ? (p.studentId !== undefined || p.amount !== undefined ? [p] : Object.values(p))
+            : []);
+      for (const t of list as any[]) {
+        if (!t || typeof t !== "object") continue;
+        const sid = String((t as any).studentId ?? "");
+        if (!want.has(sid)) continue;
+        out.push({
+          studentId: sid,
+          at: String((t as any).timestamp ?? ""),
+          amount: Number((t as any).amount),
+          kind: String((t as any).kind ?? ""),
+          behaviorId: String((t as any).behaviorId ?? ""),
+          by: String((t as any).teacherName ?? (t as any).by ?? ""),
+          id: String((t as any).id ?? ""),
+          balanceAfter: (t as any).balanceAfter ?? null,
+        });
+      }
+    }
+    out.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+    return { rows: out, slicesRead: slices.length };
+  },
+});
+
+/**
+ * DID THE SERVER THINK IT HAD ALREADY APPLIED THE MOVEMENT THAT IS MISSING?
+ *
+ * This is the question that separates the two possible causes, and nothing
+ * else does. `cashApplied` on the students row is the register the
+ * movement-keyed delta logic writes when it moves a counter: ids plus a
+ * monotone `since` watermark.
+ *
+ *   If the missing movement's id IS in cashApplied, the server registered it
+ *   as applied and the counter still did not move -- a server-side fault, and
+ *   the movement is lost permanently because every later save will absorb it.
+ *
+ *   If it is NOT in cashApplied and its timestamp is at or before `since`, the
+ *   watermark swallowed it: the ring holds 24 ids and once one is evicted the
+ *   watermark advances past it, so a movement that arrives late looks like a
+ *   retry of something already done.
+ *
+ *   If it is NOT in cashApplied and is AFTER `since`, the server never saw it
+ *   -- the ledger write landed and the counter write did not, which is the
+ *   two-mutation split doing exactly what it structurally can.
+ *
+ * Reports the verdict per student. Counters and ids only.
+ */
+export const appliedRegisterFor = internalQuery({
+  args: { studentNumbers: v.array(v.string()) },
+  handler: async (ctx, { studentNumbers }) => {
+    const want = new Set(studentNumbers.map((s) => String(s)));
+    const all = await ctx.db.query("students").take(2000);
+    const out: Array<Record<string, any>> = [];
+    for (const s of all) {
+      const num = String((s as any).studentNumber ?? (s as any).legacyId ?? "");
+      if (!want.has(num)) continue;
+      const applied: any = (s as any).cashApplied ?? null;
+      const ids: any[] = applied && Array.isArray(applied.ids) ? applied.ids : [];
+      out.push({
+        studentNumber: num,
+        balance: (s as any).wildcatCashBalance ?? null,
+        earned: (s as any).wildcatCashEarned ?? null,
+        deducted: (s as any).wildcatCashDeducted ?? null,
+        hasRegister: Boolean(applied),
+        registeredCount: ids.length,
+        since: applied ? applied.since ?? null : null,
+        newestRegistered: ids.length
+          ? ids.map((x) => Number(x?.at ?? 0)).sort((a, b) => b - a)[0]
+          : null,
+        registeredIds: ids.map((x) => String(x?.i ?? "")).filter(Boolean),
+      });
+    }
+    return { rows: out, studentsRead: all.length };
+  },
+});

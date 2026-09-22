@@ -278,5 +278,126 @@ console.log("\nThe client keeps a held movement pending, and forgets an accepted
     /cashMovementsAbsorbed: movementsAbsorbed\.length/.test(readFileSync(new URL("./convex/appData.ts", import.meta.url), "utf8")));
 }
 
+
+console.log("\nthe sign convention, which a test fixture got wrong first");
+{
+  // cashMovementEffect reads the AMOUNT, not the kind. Only "redeem" is
+  // special-cased. A deduction is a NEGATIVE amount carrying kind "deduct",
+  // and script.js sends exactly that (kind: points >= 0 ? 'award' : 'deduct').
+  const e = (a, k) => cashMovementEffect(a, k);
+  check("a positive award earns", e(100, "award").wildcatCashEarned === 100);
+  check("and does not deduct", e(100, "award").wildcatCashDeducted === 0);
+  check("a NEGATIVE amount deducts", e(-100, "deduct").wildcatCashDeducted === 100);
+  check("and does not earn", e(-100, "deduct").wildcatCashEarned === 0);
+  check("the balance follows the amount either way",
+    e(100, "award").wildcatCashBalance === 100 && e(-100, "deduct").wildcatCashBalance === -100);
+  check("redeem spends rather than deducting",
+    e(-50, "redeem").wildcatCashSpent === 50 && e(-50, "redeem").wildcatCashDeducted === 0);
+  // The trap: a POSITIVE amount with kind "deduct" reads as an award, because
+  // the kind string is not consulted. Nothing sends that, and the guard below
+  // refuses it when a payload does.
+  check("a positive amount labelled deduct still reads as earned, so the sign is what matters",
+    e(100, "deduct").wildcatCashEarned === 100);
+}
+
+console.log("\nthe self-contradictory payload, which cost 38 students a movement");
+
+// MEASURED ON PRODUCTION 2026-09-22. 53 students had drifted; 38 of them were
+// short exactly one movement, and every one of those movements was REGISTERED
+// in cashApplied while the counter had not moved. Registered means never
+// re-sent, so the money was gone permanently rather than recoverably -- the
+// worst shape a cash bug can take.
+//
+// The cause: `residual` is `stated - claimed`, and the order-independence
+// argument rests on `stated` including every movement the record lists. A tab
+// that lists a +100 award and states a delta of ZERO breaks that. The residual
+// becomes -100 and cancels the movement, nothing is capped, so the old code
+// registered it and planPatch then skipped the counter because the delta was
+// zero.
+{
+  const mv = (id, amount, kind) => ({ id, at: "2026-09-21T18:13:00.000Z", amount, kind: kind || "award" });
+  const zero = { wildcatCashBalance: 0, wildcatCashEarned: 0, wildcatCashSpent: 0, wildcatCashDeducted: 0 };
+  const plan = (row, movements, stated) =>
+    planCashMovements(row, { cashMovements: movements }, stated, { cutoffMs: null, maxDelta: 5000 });
+
+  {
+    const p = plan({ wildcatCashBalance: 800, cashApplied: null }, [mv("txn_a", 100)], zero);
+    check("a fresh movement with an all-zero stated delta is NOT registered",
+      p.applied.length === 0, `registered ${p.applied.length}`);
+    check("and nothing is applied either, so it cannot double-credit later",
+      p.net.wildcatCashBalance === 0 && p.net.wildcatCashEarned === 0);
+    check("and the refusal names the reason rather than going quiet",
+      p.refused.length === 1 && p.refused[0].why === "stated_no_change",
+      JSON.stringify(p.refused));
+  }
+  {
+    // The second shape with the same end state: a movement already registered,
+    // re-sent with a zero stated delta. The residual used to SUBTRACT it.
+    const row = {
+      wildcatCashBalance: 900,
+      cashApplied: { ids: [{ i: "txn_a", at: Date.parse("2026-09-21T18:13:00.000Z") }],
+                     since: "2026-09-20T00:00:00.000Z" },
+    };
+    const p = plan(row, [mv("txn_a", 100)], zero);
+    check("an already-applied movement re-sent with a zero delta takes nothing back",
+      p.net.wildcatCashBalance === 0, String(p.net.wildcatCashBalance));
+    check("and it is not registered a second time", p.applied.length === 0);
+  }
+
+  // APPLY AND REGISTER MOVE TOGETHER, OR NEITHER. A first draft of the guard
+  // zeroed the residual and left net at +100 while refusing to register --
+  // which applies the movement and then lets the NEXT save apply it again,
+  // turning a loss into a double-credit.
+  {
+    const blocked = plan({ wildcatCashBalance: 800, cashApplied: null }, [mv("txn_a", 100)], zero);
+    check("TEETH: a blocked movement never moves a counter without registering",
+      !(blocked.applied.length === 0 && blocked.net.wildcatCashBalance !== 0),
+      "net moved while nothing was registered, which double-credits on the next save");
+    check("the blocked counters are named, not merely zeroed",
+      blocked.cancelled.indexOf("wildcatCashBalance") !== -1, JSON.stringify(blocked.cancelled));
+  }
+
+  // THE HEALTHY SHAPES MUST BE UNTOUCHED. An all-zero delta is completely
+  // normal -- the first save after every load ships every student that way --
+  // but always with NO movements listed.
+  {
+    const p = plan({ wildcatCashBalance: 800, cashApplied: null }, [mv("txn_a", 100)],
+      { wildcatCashBalance: 100, wildcatCashEarned: 100 });
+    check("a coherent payload still applies and registers", p.net.wildcatCashBalance === 100 && p.applied.length === 1);
+    check("and refuses nothing", p.refused.length === 0);
+  }
+  {
+    const p = plan({ wildcatCashBalance: 800, cashApplied: null }, [], zero);
+    check("the ordinary post-load save with no movements is untouched",
+      p.net.wildcatCashBalance === 0 && p.applied.length === 0 && p.refused.length === 0);
+  }
+  {
+    const p = plan({ wildcatCashBalance: 800, cashApplied: null }, [],
+      { wildcatCashBalance: -50, wildcatCashSpent: 50 });
+    check("a purchase, which is residual with no movements, still applies",
+      p.net.wildcatCashBalance === -50 && p.net.wildcatCashSpent === 50);
+  }
+  {
+    const p = plan({ wildcatCashBalance: 800, cashApplied: null },
+      [mv("txn_a", 100), mv("txn_b", 100)],
+      { wildcatCashBalance: 200, wildcatCashEarned: 200 });
+    check("two coherent awards both apply and both register",
+      p.net.wildcatCashBalance === 200 && p.applied.length === 2);
+  }
+  {
+    // A deduction stated coherently must still go through. NOTE THE SIGN:
+    // cashMovementEffect keys off the AMOUNT, not the kind string -- only
+    // "redeem" is special-cased -- so a deduction carries a NEGATIVE amount.
+    // A first draft of this fixture passed +100 with kind "deduct" and the
+    // guard correctly refused it, because a movement claiming +100 earned
+    // against a stated -100 balance really is self-contradictory.
+    const p = plan({ wildcatCashBalance: 800, cashApplied: null }, [mv("txn_d", -100, "deduct")],
+      { wildcatCashBalance: -100, wildcatCashDeducted: 100 });
+    check("a coherent deduction applies and registers",
+      p.net.wildcatCashBalance === -100 && p.net.wildcatCashDeducted === 100 && p.applied.length === 1,
+      JSON.stringify(p.net) + " applied=" + p.applied.length);
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
