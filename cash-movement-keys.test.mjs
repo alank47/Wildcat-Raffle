@@ -399,5 +399,106 @@ console.log("\nthe self-contradictory payload, which cost 38 students a movement
   }
 }
 
+
+console.log("\nthe reload rebase, executed rather than pattern-matched");
+
+// THE SEQUENCE THAT COST 38 STUDENTS AN AWARD ON 2026-09-22, run end to end.
+// A teacher awards cash; the tab reloads before the save confirms; the next
+// save must state a delta that MATCHES the movements it lists. When it did
+// not, the server cancelled the movement against its own residual and
+// registered it as applied, so no later save could ever re-send it.
+{
+  const src = readFileSync(new URL("./script.js", import.meta.url), "utf8");
+  const lift = (start, end) => {
+    const i = src.indexOf(start);
+    if (i < 0) throw new Error("not found: " + start);
+    const j = src.indexOf(end, i);
+    return src.slice(i, j < 0 ? src.length : j);
+  };
+  const body = [
+    lift("function cashCountersOf(st) {", "\n        /**"),
+    lift("function cashMovementEffect(amount, kind) {", "\n        /** How much this tab"),
+    lift("function cashDeltaBetween(now, base) {", "\n        /** Cash this tab has moved"),
+    lift("function snapshotPendingCashDeltas() {", "\n        /**\n         * Put that movement"),
+    lift("function reapplyPendingCashDeltas(pending, into) {", "\n        function rememberCashBase"),
+    lift("function rememberCashBase(st) {", "\n\n        //"),
+  ].join("\n");
+
+  const make = () => new Function("CASH_COUNTER_FIELDS", "state", `
+    const _studentCashBase = state.base;
+    let students = state.students, nonEnrolledStudents = [];
+    ${body}
+    return {
+      snapshot: snapshotPendingCashDeltas,
+      reapply: reapplyPendingCashDeltas,
+      remember: rememberCashBase,
+      effect: cashMovementEffect,
+      delta: cashDeltaBetween,
+      counters: cashCountersOf,
+      setStudents: (s) => { students = s; },
+    };
+  `);
+
+  const FIELDS = ["wildcatCashBalance", "wildcatCashEarned", "wildcatCashSpent", "wildcatCashDeducted"];
+  const serverRow = () => ({ id: "s1", wildcatCashBalance: 800, wildcatCashEarned: 800,
+                             wildcatCashSpent: 0, wildcatCashDeducted: 0 });
+
+  // 1. Load. Base is seeded from the server.
+  const state = { base: new Map(), students: [serverRow()] };
+  const api = make()(FIELDS, state);
+  api.remember(state.students[0]);
+  check("after a clean load the delta is zero",
+    api.delta(state.students[0], state.base.get("s1")).wildcatCashBalance === 0);
+
+  // 2. A teacher awards $100. The tab's record moves; the base does not.
+  const e = api.effect(100, "award");
+  FIELDS.forEach((f) => { state.students[0][f] = (state.students[0][f] || 0) + (e[f] || 0); });
+  check("the award shows as a delta of +100",
+    api.delta(state.students[0], state.base.get("s1")).wildcatCashBalance === 100);
+
+  // 3. THE RELOAD, before the save confirms. Fresh server records arrive
+  //    WITHOUT the award, and the base is reseeded from them.
+  const pending = api.snapshot();
+  check("the snapshot caught the unconfirmed movement",
+    pending.size === 1 && pending.get("s1").wildcatCashBalance === 100);
+  const fresh = [serverRow()];
+  fresh.forEach(api.remember);
+  api.reapply(pending, fresh);
+  api.setStudents(fresh);
+
+  // 4. The next save must state exactly what it lists.
+  const after = api.delta(fresh[0], state.base.get("s1"));
+  check("AFTER THE RELOAD THE DELTA STILL CARRIES THE AWARD", after.wildcatCashBalance === 100,
+    JSON.stringify(after));
+  check("and the earned counter too", after.wildcatCashEarned === 100);
+  check("so the payload is coherent: stated matches the movement it lists",
+    after.wildcatCashBalance === e.wildcatCashBalance);
+  check("and the teacher still sees the money on screen", fresh[0].wildcatCashBalance === 900);
+
+  // 5. TEETH: skip the rebase, which is what three of four callers did.
+  const state2 = { base: new Map(), students: [serverRow()] };
+  const api2 = make()(FIELDS, state2);
+  api2.remember(state2.students[0]);
+  FIELDS.forEach((f) => { state2.students[0][f] = (state2.students[0][f] || 0) + (e[f] || 0); });
+  const fresh2 = [serverRow()];
+  fresh2.forEach(api2.remember);          // base reseeded...
+  api2.setStudents(fresh2);               // ...and NO reapply
+  const broken = api2.delta(fresh2[0], state2.base.get("s1"));
+  check("TEETH: without the rebase the delta reads ZERO while the movement is still listed",
+    broken.wildcatCashBalance === 0,
+    "that is the self-contradictory payload the server cancels and registers");
+  check("which is exactly the shape that lost 38 awards",
+    broken.wildcatCashBalance !== e.wildcatCashBalance);
+
+  // 6. Applying it twice would be the other failure: a double credit.
+  const twice = [serverRow()];
+  twice.forEach(api.remember);
+  api.reapply(pending, twice);
+  api.reapply(pending, twice);
+  check("applying the rebase twice really would double the award",
+    twice[0].wildcatCashBalance === 1000,
+    "which is why exactly one call site is pinned above");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

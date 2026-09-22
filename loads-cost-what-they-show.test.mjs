@@ -79,8 +79,25 @@ console.log("\nThe idle refresh reads the roster, not everything");
   const idle = between("Auto-refreshing data in background", "Background data sync complete");
   check("it refreshes the roster through appData:load", /await refreshRosterFromConvex\('idle refresh', \{ redraw: false \}\);/.test(idle));
   check("and not through a full loadData()", !/await loadData\(\)/.test(idle));
-  check("this tab's unconfirmed cash is put back on top",
-    /const pendingCash = snapshotPendingCashDeltas\(\);[\s\S]{0,300}reapplyPendingCashDeltas\(pendingCash\);/.test(idle));
+  // THIS TAB'S UNCONFIRMED CASH SURVIVES THE IDLE REFRESH -- guaranteed by the
+  // loader now, not by this caller remembering to ask.
+  //
+  // This used to pin the snapshot-and-reapply pair inside this block. That was
+  // the shape of the bug: the rebase was every caller's job, and on 2026-09-22
+  // three of four callers of refreshRosterFromConvex did not do it, costing 38
+  // students an award each. It moved inside loadRosterFromConvex, which every
+  // path goes through, so the right assertion here is that this block does NOT
+  // do it a second time -- which would apply the movement twice.
+  check("the refresh goes through the loader, which rebases",
+    /await refreshRosterFromConvex\('idle refresh'/.test(idle));
+  check("and this block does NOT re-apply it again, which would double it",
+    !/reapplyPendingCashDeltas\(/.test(idle));
+  {
+    const fn = code.slice(code.indexOf("async function loadRosterFromConvex"));
+    const body = fn.slice(0, fn.indexOf("\n        }"));
+    check("the loader is where the rebase actually lives",
+      /reapplyPendingCashDeltas\(pendingBeforeLoad, data\.students\)/.test(body));
+  }
   check("the audit and cash panels are pulled by the live path", /pullLiveActivity\('idle'\)/.test(idle));
   const refresh = between("async function refreshRosterFromConvex(reason, opts)", "rosterSource = 'convex';");
   check("the roster refresh takes an opts argument", refresh.length > 0);

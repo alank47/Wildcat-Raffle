@@ -194,9 +194,20 @@ console.log("\nAnd it is wired into the paths that actually run");
 
   // THE CUTOFF IS CAPTURED AT THE ONE CHOKE POINT every successful load passes
   // through, before anything merges.
-  check("loadRosterFromConvex records the cutoff the server sent",
-    /data\.students\.forEach\(rememberCashBase\);[\s\S]{0,200}noteHistoryCutoff\(data\.historyCutoff\)/
-      .test(code));
+  // ORDER, NOT ADJACENCY. This was a 200-character proximity window, which
+  // broke the moment the cash rebase moved in between the two lines on
+  // 2026-09-22 -- a real and necessary change that the assertion called a
+  // regression. What actually matters is that both run inside this loader,
+  // base first, and that the cutoff is recorded before the function returns.
+  {
+    const fn = code.slice(code.indexOf("async function loadRosterFromConvex"));
+    const body = fn.slice(0, fn.indexOf("\n        }"));
+    const base = body.indexOf("data.students.forEach(rememberCashBase);");
+    const cutoff = body.indexOf("noteHistoryCutoff(data.historyCutoff)");
+    check("loadRosterFromConvex records the cutoff the server sent", cutoff > 0);
+    check("and it seeds the cash base first, then records the cutoff",
+      base > 0 && cutoff > base, `base ${base} cutoff ${cutoff}`);
+  }
 
   // THE FUNNEL. reconcileCashLedger is the single path from the per-student
   // arrays into the array the analytics count.

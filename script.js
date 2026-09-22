@@ -111,6 +111,10 @@
             const session = auth.getSession();
             if (!session) throw new Error('Not signed in to Convex.');
 
+            // SNAPSHOT BEFORE THE AWAIT. It reads the live arrays, and after
+            // the await they are about to be replaced.
+            const pendingBeforeLoad = snapshotPendingCashDeltas();
+
             const data = await auth.convexQuery('appData:load', {}, session.idToken);
             if (!data || !Array.isArray(data.students)) {
                 throw new Error('appData:load returned no students array.');
@@ -118,6 +122,30 @@
             // What the server holds is the base every cash delta is measured
             // from, until a save confirms a new one.
             data.students.forEach(rememberCashBase);
+
+            // AND THEN THIS TAB'S UNCONFIRMED MOVEMENT GOES BACK ON TOP.
+            //
+            // IT LIVES HERE, NOT AT THE CALL SITES, and that is the actual fix.
+            // The rebase used to be the caller's job, and on 2026-09-22 three
+            // of the four callers of refreshRosterFromConvex did not do it --
+            // staff invite, sign-in, and RESUMED SESSION. That last one is a
+            // teacher awarding cash, switching away before the save confirms,
+            // and coming back, which is why the losses were scattered across
+            // staff, days and hours rather than batched.
+            //
+            // What went wrong when it was skipped: the fresh student row and
+            // the freshly seeded base are BOTH the server's pre-movement
+            // numbers, so the delta reads zero while the movement is still in
+            // `_pendingCashMovements` and still listed on the next save. The
+            // server read that self-contradictory payload, cancelled the
+            // movement against its own residual, and -- before the guard added
+            // the same day -- registered it as applied. 38 students lost an
+            // award each, unrecoverably.
+            //
+            // Ordered deliberately: base FIRST, from the server's numbers, then
+            // the movement on top of the record. That is what makes the next
+            // delta equal exactly the movements the payload lists.
+            reapplyPendingCashDeltas(pendingBeforeLoad, data.students);
             // Before anything merges: the merge below depends on it.
             noteHistoryCutoff(data.historyCutoff);
             return {
@@ -736,11 +764,19 @@
             });
             return pending;
         }
-        /** Put that movement back on top of freshly loaded server values, so the next save sends exactly it. */
-        function reapplyPendingCashDeltas(pending) {
+        /**
+         * Put that movement back on top of freshly loaded server values, so the
+         * next save sends exactly it.
+         *
+         * `into` is the array to rebase. It exists so this can run INSIDE
+         * loadRosterFromConvex, against the records it is about to hand back,
+         * before they become the globals. Omit it for the old behaviour.
+         */
+        function reapplyPendingCashDeltas(pending, into) {
             if (!pending || !pending.size) return 0;
             let reapplied = 0;
-            (students || []).concat(nonEnrolledStudents || []).forEach(st => {
+            const targets = into ? (into || []) : (students || []).concat(nonEnrolledStudents || []);
+            targets.forEach(st => {
                 const d = st && pending.get(String(st.id));
                 if (!d) return;
                 CASH_COUNTER_FIELDS.forEach(f => { st[f] = (Number(st[f]) || 0) + d[f]; });
@@ -3780,13 +3816,12 @@
                 const id = ensureEntryId(e); return id && !auditIdsOnServer.has(id);
             });
             const pendingCash = (cashTransactions || []).filter(t => t && t.id && !cashIdsOnServer.has(t.id));
-            // Cash this tab has moved but not confirmed, per student. The
-            // reload takes the server's counters (which may include other
-            // tabs' awards by now) and this puts our own movement back on top,
-            // so the next save sends exactly that as its delta.
-            const pendingDeltas = snapshotPendingCashDeltas();
+            // The cash rebase used to be done here, around this call. It is
+            // now inside loadRosterFromConvex, beside the line that reseeds the
+            // base -- because doing it at the call site meant every new caller
+            // was a new bug, and on 2026-09-22 three of four callers were
+            // missing it. Doing it here as well would apply the movement twice.
             await loadData();
-            reapplyPendingCashDeltas(pendingDeltas);
             {
                 const have = new Set((auditLog || []).map(e => ensureEntryId(e)));
                 let back = 0;
@@ -5460,9 +5495,11 @@
                             // the audit and cash panels are kept current by the
                             // live pull. This tab's own unconfirmed cash is put
                             // back on top, as the stale-guard rebase does.
-                            const pendingCash = snapshotPendingCashDeltas();
+                            // The rebase is inside loadRosterFromConvex now, so
+                            // this tab's unconfirmed cash survives the refresh
+                            // without the caller having to remember. Repeating
+                            // it here would apply the movement twice.
                             await refreshRosterFromConvex('idle refresh', { redraw: false });
-                            reapplyPendingCashDeltas(pendingCash);
                             if (typeof pullLiveActivity === 'function') pullLiveActivity('idle');
                             
                             // DON'T call updateAllDisplays() - it redraws everything and is disruptive

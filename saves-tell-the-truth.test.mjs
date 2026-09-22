@@ -185,9 +185,38 @@ console.log("\nCash counters travel as deltas, so two tabs awarding the same chi
   check("the load-time merge takes the server's counters over the local overlay",
     /\.\.\.localStudent,[^\n]*\n[\s\S]{0,600}\.\.\.serverCashCounters\(serverStudent\),/.test(code)
     && code.indexOf("...localStudent,") < code.indexOf("...serverCashCounters(serverStudent),"));
-  check("a rollback reload keeps this tab's own unconfirmed movement, as a delta",
-    /const pendingDeltas = snapshotPendingCashDeltas\(\);\s*await loadData\(\);\s*reapplyPendingCashDeltas\(pendingDeltas\);/.test(code)
-    && /function snapshotPendingCashDeltas\(\)/.test(code) && /function reapplyPendingCashDeltas\(pending\)/.test(code));
+  // A RELOAD KEEPS THIS TAB'S UNCONFIRMED MOVEMENT -- and the rebase lives
+  // INSIDE the loader, not around its callers.
+  //
+  // This used to pin the call-site pattern verbatim: snapshot, loadData,
+  // reapply. That pattern was the defect. On 2026-09-22 three of the four
+  // callers of refreshRosterFromConvex did not do it -- staff invite, sign-in
+  // and RESUMED SESSION -- so a teacher who awarded cash and switched away
+  // before the save confirmed came back to a tab whose delta read zero while
+  // the movement was still listed. The server cancelled it against its own
+  // residual and registered it as applied: 38 students lost an award each,
+  // unrecoverably. An assertion that pins a call-site pattern cannot see a
+  // caller that never adopted it, so this pins the structure instead.
+  {
+    const fn = code.slice(code.indexOf("async function loadRosterFromConvex"));
+    const body = fn.slice(0, fn.indexOf("\n        }"));
+    check("the snapshot is taken inside the loader, before the await",
+      body.indexOf("snapshotPendingCashDeltas()") > 0
+      && body.indexOf("snapshotPendingCashDeltas()") < body.indexOf("await auth.convexQuery"));
+    check("and the movement is re-applied onto the freshly loaded records",
+      /reapplyPendingCashDeltas\(pendingBeforeLoad, data\.students\)/.test(body));
+    check("AFTER the base is seeded from the server, or the delta cancels itself",
+      body.indexOf("data.students.forEach(rememberCashBase)") <
+      body.indexOf("reapplyPendingCashDeltas(pendingBeforeLoad"));
+    check("both helpers still exist",
+      /function snapshotPendingCashDeltas\(\)/.test(code)
+      && /function reapplyPendingCashDeltas\(pending, into\)/.test(code));
+    // TEETH: exactly once. A caller that ALSO re-applies would double the
+    // movement, which turns a loss into a double credit.
+    const calls = (code.match(/reapplyPendingCashDeltas\(/g) || []).length;
+    check("EXACTLY ONE call site, so the movement cannot be applied twice",
+      calls === 2, `${calls} occurrences (one definition, one call)`);
+  }
   const shape = readFileSync(new URL("./convex/appDataShape.ts", import.meta.url), "utf8");
   // Not pinned to the argument list: planPatch grew a fourth parameter (the
   // history cutoff) and this assertion failed for a change that had nothing to

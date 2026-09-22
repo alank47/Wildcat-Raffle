@@ -84,6 +84,23 @@ export function toAppStudent(row: Record<string, any>): AppStudent {
     wildcatCashDeducted: row.wildcatCashDeducted,
     wildcatCashRewardsRedeemed: row.wildcatCashRewardsRedeemed,
     wildcatCashTransactions: row.wildcatCashTransactions,
+    /**
+     * THE REGISTER, READ ONLY, so the browser can tell a movement the server
+     * has already applied from one it has not.
+     *
+     * Without it, a tab that records an award and then RELOADS before the save
+     * confirms keeps the movement in its pending list while both sides of the
+     * delta forget it -- the fresh student row and the freshly seeded base are
+     * both the server's pre-movement numbers, so the delta is zero while the
+     * movement is still listed. That self-contradictory payload is what cost
+     * 38 students an award on 2026-09-22.
+     *
+     * NOT WRITABLE. STUDENT_WRITABLE does not list it, so a client echo is
+     * dropped on the way back in. That matters more than it looks: a stale tab
+     * able to overwrite this register could erase the record of what had
+     * already been applied and make every one of those movements land twice.
+     */
+    cashApplied: row.cashApplied,
     cashBalance: row.cashBalance,
     cashTransactions: row.cashTransactions,
 
