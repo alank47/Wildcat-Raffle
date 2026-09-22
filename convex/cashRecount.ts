@@ -273,6 +273,10 @@ export const rowsForStudents = internalQuery({
           kind: String((t as any).kind ?? ""),
           behaviorId: String((t as any).behaviorId ?? ""),
           by: String((t as any).teacherName ?? (t as any).by ?? ""),
+          // WHAT THE TEACHER TYPED. A deduction that reduces a child's balance
+          // should not be applied on the strength of a row's existence alone;
+          // the note is what says a person did it on purpose.
+          notes: String((t as any).notes ?? ""),
           id: String((t as any).id ?? ""),
           balanceAfter: (t as any).balanceAfter ?? null,
         });
