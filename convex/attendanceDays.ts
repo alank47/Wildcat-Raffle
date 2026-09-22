@@ -164,6 +164,35 @@ export const rebuild = internalAction({
     const att = await readTable(host, tok, "attendance", q,
       "studentid,att_date,periodid,attendance_codeid,ccid");
 
+    // A TRUNCATED READ MUST NOT REACH THE CLEAR.
+    //
+    // The cc read above refuses when it pages out, because a partial slot map
+    // makes every verdict wrong. This read had no such guard, and it is the
+    // more dangerous of the two: the write path below CLEARS psAbsenceDayTotals
+    // before rewriting it, so a truncated read does not produce a slightly
+    // wrong calendar -- it produces a permanently SHORT one, missing its most
+    // recent dates, and then everything that counts school days silently
+    // stops. referralPing reads exactly this table.
+    //
+    // It is not hypothetical and it is dated. On 2026-09-22 the ATTENDANCE
+    // table held 16,134 rows across about 40 school days -- roughly 400 a day
+    // -- and MAX_PAGES 400 times PAGE 100 is 40,000. The cron calls rebuild
+    // with no `since`, so every run reads the whole year. That wall arrives
+    // around the hundredth school day of this year.
+    //
+    // Refusing leaves YESTERDAY'S calendar in place, which is the right
+    // failure: stale and detectable beats short and silent.
+    if (att.pagedOut) {
+      return {
+        ok: false,
+        reason: `attendance paged out at ${att.pages} pages (${att.rows.length} rows), so the read is `
+          + `truncated and the newest dates are missing. Nothing was written and the previous `
+          + `calendar is untouched. Raise MAX_PAGES or pass { since } to read only recent days.`,
+        attendanceRows: att.rows.length,
+        attendancePages: att.pages,
+      };
+    }
+
     // 5. Which slots ran on each date, school-wide. Derived, not transcribed.
     const slotsRan = new Map<string, Set<string>>();
     // And each student's own absences and explicit presents, per date.

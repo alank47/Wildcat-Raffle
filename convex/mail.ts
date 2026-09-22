@@ -94,25 +94,44 @@ export const send = internalAction({
     const token = await graphToken();
     let sent = 0;
 
+    // ONE ADDRESS'S FAILURE IS THAT ADDRESS'S FAILURE, and nothing else.
+    //
+    // This loop used to let a rejected fetch -- a transient network fault, a
+    // Graph blip -- propagate out of the whole action, and with it went the
+    // running count of who HAD already been delivered to. The caller then saw
+    // only an exception, recorded "failed" with no delivered count, and a
+    // person following the documented retry would re-send the whole thing to
+    // everybody, including the recipients who already had it. For a behavior
+    // referral that means six school leaders receiving a named child's record
+    // twice.
+    //
+    // So every address is now accounted for individually and this function
+    // always returns { sent, refused }. Whether anything was delivered is
+    // knowable from the outside, always, which is what makes a retry decision
+    // possible at all.
     for (const address of allowed) {
-      const res = await fetch(`${GRAPH}/users/${encodeURIComponent(SENDER)}/sendMail`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: {
-            subject,
-            body: { contentType: "HTML", content: html },
-            toRecipients: [{ emailAddress: { address } }],
-          },
-          saveToSentItems: true,
-        }),
-      });
-      if (res.status === 202) {
-        sent++;
-      } else {
-        // 403 here almost always means the application access policy above is
-        // in place and does NOT include this sender, which is the good failure.
-        refused.push(`${address} (HTTP ${res.status})`);
+      try {
+        const res = await fetch(`${GRAPH}/users/${encodeURIComponent(SENDER)}/sendMail`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: {
+              subject,
+              body: { contentType: "HTML", content: html },
+              toRecipients: [{ emailAddress: { address } }],
+            },
+            saveToSentItems: true,
+          }),
+        });
+        if (res.status === 202) {
+          sent++;
+        } else {
+          // 403 here almost always means the application access policy above is
+          // in place and does NOT include this sender, which is the good failure.
+          refused.push(`${address} (HTTP ${res.status})`);
+        }
+      } catch (err: any) {
+        refused.push(`${address} (${String(err?.message ?? err).slice(0, 80)})`);
       }
     }
 

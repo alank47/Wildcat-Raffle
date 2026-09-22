@@ -23,7 +23,7 @@
  */
 
 import {
-  REFERRAL_RECIPIENTS, esc, shortName, whenText, MAX_FIELD, MAX_DESCRIPTION,
+  REFERRAL_RECIPIENTS, esc, shortName, whenText, MAX_FIELD, MAX_DESCRIPTION, SCHOOL_TZ,
 } from "./referralMailRules";
 
 /** A stage is a distinct piece of mail, logged and sent at most once. */
@@ -71,6 +71,65 @@ export function pingSettingsOrDefault(raw: unknown) {
 }
 
 /**
+ * A DATE, not merely ten characters.
+ *
+ * The length test this replaces accepted anything whose first ten characters
+ * numbered ten, and several shapes a browser-written payload can actually
+ * carry get through it: a numeric epoch pasted as a string slices to
+ * "1757894400", which sorts ABOVE every "2026-.." row in the calendar and
+ * therefore reads as the maximum possible age; a "09/14/2026" slices to
+ * "09/14/2026", which sorts BELOW every row and reads as age zero forever.
+ * Both are silent, and both are wrong in the direction that matters.
+ */
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * ISO-shaped, so Date.parse's answer does not depend on where the code runs.
+ *
+ * "09/14/2026" parses in V8, but as midnight in the RUNTIME's zone -- UTC on
+ * Convex, Pacific on a developer's laptop -- so the same payload would produce
+ * two different school days. Refusing it is the only answer that is the same
+ * everywhere. Every shape this app actually writes is ISO: script.js stores
+ * submittedAt as an ISO instant and `date` as a bare YYYY-MM-DD.
+ */
+const ISO_PREFIX = /^\d{4}-\d{2}-\d{2}([T ]|$)/;
+
+/**
+ * The LOS ANGELES calendar day a value falls on.
+ *
+ * SLICING A UTC INSTANT IS NOT A LOCAL DAY. `submittedAt` and `closedAt` are
+ * ISO instants and Convex runs in UTC, so between about 17:00 Pacific and
+ * midnight the UTC date is already tomorrow. A referral filed at 5:30pm on a
+ * Monday would be dated Tuesday, every stage would fire one school day late,
+ * and the mail would contradict itself -- the body prints the filing time in
+ * Pacific through whenText, so it would read "Monday 5:30 PM" beside an age
+ * counted from Tuesday.
+ *
+ * A value that is ALREADY a bare date is returned untouched. Parsing
+ * "2026-09-14" gives UTC midnight, which is the 13th in Los Angeles, so
+ * converting it would move a date the client deliberately wrote as a local
+ * school day. script.js writes `date` in exactly that shape.
+ */
+export function schoolDay(raw: unknown): string | null {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  if (ISO_DAY.test(s)) return s;
+  if (!ISO_PREFIX.test(s)) return null;
+  const t = Date.parse(s);
+  if (!Number.isFinite(t)) return null;
+  try {
+    // en-CA formats as YYYY-MM-DD, which is the shape everything else here
+    // compares lexically.
+    const d = new Intl.DateTimeFormat("en-CA", {
+      timeZone: SCHOOL_TZ, year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date(t));
+    return ISO_DAY.test(d) ? d : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * School days strictly after `from`, up to and including `to`.
  *
  * `schoolDays` is the set of dates the school actually ran, derived from
@@ -86,13 +145,15 @@ export function pingSettingsOrDefault(raw: unknown) {
 export function schoolDaysBetween(
   from: unknown, to: unknown, schoolDays: readonly string[] | null | undefined,
 ): number | null {
-  const a = String(from ?? "").slice(0, 10);
-  const b = String(to ?? "").slice(0, 10);
-  if (a.length !== 10 || b.length !== 10) return null;
+  const a = schoolDay(from);
+  const b = schoolDay(to);
+  if (!a || !b) return null;
   if (!schoolDays || !schoolDays.length) return null;
   let n = 0;
   for (const d of schoolDays) {
     const x = String(d ?? "").slice(0, 10);
+    // A calendar row that is not a date cannot be counted as one.
+    if (!ISO_DAY.test(x)) continue;
     if (x > a && x <= b) n++;
   }
   return n;
@@ -105,8 +166,7 @@ export type Referral = Record<string, any>;
 
 /** Filed-on, from whichever field the payload actually carries. */
 export function filedOn(r: Referral): string | null {
-  const raw = String(r?.submittedAt || r?.dateTime || r?.date || "").slice(0, 10);
-  return raw.length === 10 ? raw : null;
+  return schoolDay(r?.submittedAt || r?.dateTime || r?.date || "");
 }
 
 export function isOpen(r: Referral): boolean {
@@ -178,8 +238,8 @@ export function pingsDue(
     // decided something -- a referral that sat open for three weeks and was
     // closed this morning is not overdue for a loop reminder, and dating it
     // from the filing would have sent one the same afternoon.
-    const closedOn = String(r?.closedAt ?? "").slice(0, 10);
-    const clockFrom = open ? filed : (closedOn.length === 10 ? closedOn : filed);
+    const closedOn = schoolDay(r?.closedAt);
+    const clockFrom = open ? filed : (closedOn || filed);
     const age = schoolDaysBetween(clockFrom, opts.today, opts.schoolDays);
     if (age === null) { skipped.push({ referralId: id, why: "no_school_day_list" }); continue; }
 
@@ -221,8 +281,6 @@ export function pingsDue(
 // ---------------------------------------------------------------------------
 
 
-const normEmail = (s: unknown) => String(s ?? "").trim().toLowerCase();
-
 /**
  * Leadership, for the escalation stage.
  *
@@ -230,6 +288,8 @@ const normEmail = (s: unknown) => String(s ?? "").trim().toLowerCase();
  * change to that list cannot leave two copies of an address disagreeing.
  */
 export const ESCALATION_ONLY = ["Chief of Schools"];
+
+const normEmail = (s: unknown) => String(s ?? "").trim().toLowerCase();
 
 /**
  * The addresses for one stage.
@@ -252,8 +312,36 @@ export const ESCALATION_ONLY = ["Chief of Schools"];
  * something to tell them. Adding them to a chase would mail a teacher every
  * few days about a decision that is not theirs to make.
  */
+/**
+ * The address for the person a payload names as having closed a referral --
+ * but ONLY if they are already on the standing list.
+ *
+ * THE CAPABILITY THIS REFUSES TO CREATE. `closedBy` is a display name written
+ * by a browser through legacyData:mergeSlice, which is gated by requireStaff
+ * and nothing more, so all fifty-eight signed-in staff can set it to anything.
+ * Resolving it against the whole `teachers` table -- whose `name` column is
+ * itself staff-writable through appData:save -- would mean any staff member
+ * could choose which colleague receives a named child's full discipline
+ * record, by typing their name. That is the exact capability
+ * referralMailRules.ts exists to make impossible, and it was reintroduced here
+ * by the back door.
+ *
+ * Confining the answer to REFERRAL_RECIPIENTS costs nothing real: only an
+ * administrator can close a referral, and every administrator who can is
+ * already on that list and already receives every referral ever filed. So
+ * this grants no access that does not exist, whatever the payload says.
+ */
+export function loopRecipientFor(closedByName: unknown): string | null {
+  const want = String(closedByName ?? "").trim().toLowerCase();
+  if (!want) return null;
+  const hits = REFERRAL_RECIPIENTS.filter((r) => r.name.trim().toLowerCase() === want);
+  // AN AMBIGUOUS NAME IS A REFUSAL, not a first match. Scan order is not a
+  // decision about who receives a child's discipline record.
+  return hits.length === 1 ? hits[0].email : null;
+}
+
 export function pingRecipients(stage: PingStage): string[] {
-  if (stage === "loop") return [];   // resolved from closedBy by the caller
+  if (stage === "loop") return [];   // see loopRecipientFor
   const leadershipOnly = stage === "escalation" || stage === "severe";
   return REFERRAL_RECIPIENTS
     .filter((r) => leadershipOnly || ESCALATION_ONLY.indexOf(r.why) === -1)

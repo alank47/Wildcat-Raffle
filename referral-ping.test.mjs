@@ -58,7 +58,7 @@ function loadRules(transform) {
   }).outputText;
   const names = ["REFERRAL_RECIPIENTS", "recipientsFor", "pingsDue", "pingRecipients", "pingMailPlan",
     "pingSettingsOrDefault", "schoolDaysBetween", "isOpen", "loopIsOpen", "filedOn",
-    "DEFAULT_PING_SETTINGS", "PING_STAGES", "ESCALATION_ONLY"];
+    "DEFAULT_PING_SETTINGS", "PING_STAGES", "ESCALATION_ONLY", "schoolDay", "loopRecipientFor"];
   return new Function(`${js}\nreturn {${names.join(",")}};`)();
 }
 
@@ -81,7 +81,7 @@ function loadPing(transformPing, transformRules) {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
   }).outputText;
   return new Function(
-    `${js}\nreturn { due, claim, finish, sweep, configure, emailForName, history, retryFailed };`)();
+    `${js}\nreturn { due, claim, finish, sweep, configure, history, retryFailed };`)();
 }
 
 // --------------------------------------------------------- the fake database
@@ -239,12 +239,12 @@ const R = loadRules();
   check("status closed closes it even with no closedAt",
     !R.isOpen({ ...base, status: "closed" }));
 
-  const fully = R.pingsDue([{ ...base, status: "closed", closedAt: "2026-09-05T00:00:00Z", loopClosed: true }],
+  const fully = R.pingsDue([{ ...base, status: "closed", closedAt: "2026-09-05T20:00:00Z", loopClosed: true }],
     { today, schoolDays: days });
   check("a fully closed referral is never chased",
     fully.due.length === 0 && fully.skipped[0]?.why === "fully_closed");
 
-  const loop = R.pingsDue([{ ...base, status: "closed", closedAt: "2026-09-05T00:00:00Z", closedBy: "Leah Ruiz" }],
+  const loop = R.pingsDue([{ ...base, status: "closed", closedAt: "2026-09-05T20:00:00Z", closedBy: "Leah Ruiz" }],
     { today, schoolDays: days });
   check("closed with the loop still open is a loop reminder", loop.due[0]?.stage === "loop");
   check("...addressed from whoever closed it", loop.due[0]?.closedBy === "Leah Ruiz");
@@ -252,7 +252,7 @@ const R = loadRules();
   // A referral that sat open three weeks and was closed this morning is not
   // overdue for a loop reminder. Dating the loop from the FILING would have
   // sent one the same afternoon.
-  const justClosed = R.pingsDue([{ ...base, status: "closed", closedAt: "2026-09-10T16:00:00Z" }],
+  const justClosed = R.pingsDue([{ ...base, status: "closed", closedAt: "2026-09-10T20:00:00Z" }],
     { today, schoolDays: days });
   check("the loop clock starts at the CLOSURE, not the filing",
     justClosed.due.length === 0, JSON.stringify(justClosed.due));
@@ -261,7 +261,7 @@ const R = loadRules();
     JSON.stringify(loop.due[0]));
 
   check("loopClosedAt alone counts as closed",
-    R.pingsDue([{ ...base, status: "closed", closedAt: "2026-09-05T00:00:00Z", loopClosedAt: "2026-09-06T00:00:00Z" }],
+    R.pingsDue([{ ...base, status: "closed", closedAt: "2026-09-05T20:00:00Z", loopClosedAt: "2026-09-06T20:00:00Z" }],
       { today, schoolDays: days }).due.length === 0);
 
   const undated = R.pingsDue([{ id: "U", status: "open" }], { today, schoolDays: days });
@@ -461,7 +461,6 @@ function wire(P, seed, opts = {}) {
     async runQuery(ref, args) {
       const name = String(ref?._ref || "");
       if (name.endsWith(":due")) return P.due.handler(ctx, args || {});
-      if (name.endsWith(":emailForName")) return P.emailForName.handler(ctx, args);
       throw new Error("unexpected query " + name);
     },
     async runMutation(ref, args) {
@@ -605,14 +604,29 @@ const OPEN = {
     !sentMail[0]?.to.includes("jasonm@lapromisefund.org"));
   check("...logged as the loop stage", tables.referralPingLog[0]?.stage === "loop");
 
+  // THE CAPABILITY THIS MUST NOT HAVE. closedBy is a display name a browser
+  // wrote behind requireStaff and nothing more, so all 58 staff can set it.
+  // Resolving it against the whole teachers table would have let any of them
+  // choose which colleague receives a named child's discipline record.
+  const forged = await runSweep([{ ...closed, closedBy: "Rosa Lopez" }]);
+  check("a payload naming a teacher does NOT redirect a child's record to them",
+    !forged.sentMail[0]?.to.includes("rosal@lapromisefund.org"),
+    JSON.stringify(forged.sentMail[0]?.to));
+  check("...it falls back to the five on the standing list",
+    forged.sentMail[0]?.to.length === 5);
+  const standing = R.REFERRAL_RECIPIENTS.map((r) => r.email);
+  check("...and every address is from the code constant, whatever the payload says",
+    forged.sentMail[0]?.to.every((e) => standing.includes(e)));
+
   const o = await runSweep([{ ...closed, closedBy: "Somebody Who Left" }]);
-  check("a closer with no staff account is skipped, not guessed at",
-    o.sentMail.length === 0 && o.tables.referralPingLog[0]?.state === "skipped");
-  check("...and the skip names the account that could not be matched",
-    /Somebody Who Left/.test(String(o.tables.referralPingLog[0]?.reason)),
-    String(o.tables.referralPingLog[0]?.reason));
-  check("...and holds the slot, so it is not retried every morning forever",
-    o.tables.referralPingLog.length === 1);
+  check("an unrecognised closer still gets the reminder sent, not dropped",
+    o.sentMail.length === 1 && o.sentMail[0].to.length === 5);
+  check("...and the body still names who the record says closed it",
+    /Somebody Who Left/.test(String(o.sentMail[0]?.html)));
+
+  const noCloser = await runSweep([{ ...closed, closedBy: "" }]);
+  check("a record that does not say who closed it still reminds the five",
+    noCloser.sentMail.length === 1 && noCloser.sentMail[0].to.length === 5);
 
   check("a fully closed referral is left alone",
     (await runSweep([{ ...closed, loopClosed: true }])).sentMail.length === 0);
@@ -712,6 +726,42 @@ const OPEN = {
     return w.sentMail.length;
   })()) === 1);
 
+  // AN UNKNOWN DELIVERY COUNT IS NOT ZERO. A send that threw records no count,
+  // and re-arming it could re-send a stage some of those inboxes already hold.
+  const threw = await runSweep([OPEN], { mailThrows: true });
+  check("a send that threw records no delivered count",
+    threw.tables.referralPingLog[0]?.state === "failed" &&
+    (threw.tables.referralPingLog[0]?.sent ?? null) === null,
+    JSON.stringify(threw.tables.referralPingLog[0]));
+  const Pu = loadPing();
+  const wu = wire(Pu, { ...seedWith([OPEN]), referralPingLog: threw.tables.referralPingLog });
+  const refusedRetry = await Pu.retryFailed.handler(wu.ctx, {});
+  check("...and retryFailed REFUSES to re-arm it", refusedRetry.cleared === 0,
+    JSON.stringify(refusedRetry));
+  check("...saying why, rather than staying silent",
+    refusedRetry.keptBecauseDeliveryUnknown.length === 1 &&
+    /may have reached some/.test(String(refusedRetry.keptBecauseDeliveryUnknown[0].why)));
+
+  // A "queued" row a crash left behind was previously unrecoverable by any
+  // command, which contradicted the schema's own promise.
+  const Pq = loadPing();
+  const wq = wire(Pq, {
+    ...seedWith([OPEN]),
+    referralPingLog: [{ referralId: "R-open", stage: "nudge", state: "queued",
+      at: "2020-01-01T00:00:00.000Z" }],
+  });
+  const stuck = await Pq.retryFailed.handler(wq.ctx, {});
+  check("a stranded 'queued' row is recoverable", stuck.cleared === 1 &&
+    /never finished/.test(String(stuck.rows[0]?.why)), JSON.stringify(stuck));
+  const Pf = loadPing();
+  const wf = wire(Pf, {
+    ...seedWith([OPEN]),
+    referralPingLog: [{ referralId: "R-open", stage: "nudge", state: "queued",
+      at: new Date().toISOString() }],
+  });
+  check("...but one from moments ago is left alone, in case a sweep is running",
+    (await Pf.retryFailed.handler(wf.ctx, {})).cleared === 0);
+
   // It must never reopen somebody's inbox.
   const P2 = loadPing();
   const ok = await runSweep([OPEN]);
@@ -725,6 +775,101 @@ const OPEN = {
   const w3 = wire(P3, { ...seedWith([OPEN]), referralPingLog: skipped.tables.referralPingLog });
   check("a SKIPPED row is a decision, not an error, and is left alone",
     (await P3.retryFailed.handler(w3.ctx, {})).cleared === 0);
+}
+
+console.log("\nDATES ARE THE SCHOOL'S, AND ARE ACTUALLY DATES\n");
+{
+  // SLICING A UTC INSTANT IS NOT A LOCAL DAY. Convex runs UTC; the school is
+  // in Los Angeles. Between about 17:00 Pacific and midnight the UTC date is
+  // already tomorrow, so a referral filed at 5:30pm Monday was being dated
+  // Tuesday and every stage fired one school day late.
+  check("a referral filed at 5:40pm Pacific is dated that Monday, not Tuesday",
+    R.schoolDay("2026-09-15T00:40:00Z") === "2026-09-14",
+    String(R.schoolDay("2026-09-15T00:40:00Z")));
+  check("...and one filed at 11:40pm Pacific is still that day",
+    R.schoolDay("2026-09-15T06:40:00Z") === "2026-09-14",
+    String(R.schoolDay("2026-09-15T06:40:00Z")));
+  check("a morning instant is unaffected",
+    R.schoolDay("2026-09-14T16:00:00Z") === "2026-09-14");
+  // A bare date is what the client deliberately wrote as a local school day.
+  // Parsing it would give UTC midnight, which is the day before in LA.
+  check("a bare date is returned untouched, not shifted backwards",
+    R.schoolDay("2026-09-14") === "2026-09-14");
+
+  // TEN CHARACTERS IS NOT A DATE. These are shapes a browser-written payload
+  // can actually carry, and each one used to pass the length check.
+  check("a numeric epoch is refused, not read as the maximum possible age",
+    R.schoolDay("1757894400000") === null, String(R.schoolDay("1757894400000")));
+  // It PARSES in V8, but as midnight in the runtime's own zone -- UTC on
+  // Convex, Pacific on a laptop -- so the same payload would mean two
+  // different school days. Refusing is the only answer that travels.
+  check("a US-format date is refused, because its meaning depends on the runtime",
+    R.schoolDay("09/14/2026") === null, String(R.schoolDay("09/14/2026")));
+  check("empty and junk are refused", R.schoolDay("") === null && R.schoolDay("banana") === null);
+
+  const week = ["2026-09-14", "2026-09-15", "2026-09-16"];
+  check("schoolDaysBetween refuses a non-date rather than comparing it lexically",
+    R.schoolDaysBetween("1757894400000", "2026-09-16", week) === null);
+  check("...and a junk row in the calendar is not counted as a day",
+    R.schoolDaysBetween("2026-09-14", "2026-09-16", [...week, "not-a-date", "99999999999"]) === 2);
+  check("filedOn refuses a payload whose date is a number",
+    R.filedOn({ submittedAt: "1757894400000" }) === null);
+}
+
+console.log("\nTHE LOOP RECIPIENT CANNOT BE CHOSEN BY A PAYLOAD\n");
+{
+  check("a name on the standing list resolves to that person",
+    R.loopRecipientFor("Leah Ruiz") === "leahr@lapromisefund.org");
+  check("...case and spacing do not matter",
+    R.loopRecipientFor("  leah ruiz  ") === "leahr@lapromisefund.org");
+  check("a name NOT on the standing list resolves to nobody",
+    R.loopRecipientFor("Rosa Lopez") === null);
+  check("...including a name crafted to look like an address",
+    R.loopRecipientFor("attacker@evil.com") === null);
+  check("empty resolves to nobody", R.loopRecipientFor("") === null && R.loopRecipientFor(null) === null);
+  const standing = R.REFERRAL_RECIPIENTS.map((r) => r.email);
+  for (const r of R.REFERRAL_RECIPIENTS) {
+    check(`the standing list resolves its own name: ${r.name}`,
+      standing.includes(String(R.loopRecipientFor(r.name))));
+  }
+}
+
+console.log("\nA STALE CALENDAR STOPS THE SWEEP, LOUDLY\n");
+{
+  // attendanceDays:rebuild CLEARS psAbsenceDayTotals and rewrites it. If it
+  // starts failing, the table keeps its last good rows and every referral
+  // filed after that date scores an age of zero -- forever. Chasing would stop
+  // dead while every count still read healthy.
+  const frozen = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04"];
+  const stale = await runSweep([OPEN], { schoolDays: frozen, today: "2026-09-16" });
+  check("a calendar that stops two weeks ago sends nothing", stale.sentMail.length === 0);
+  check("...and names the gap and the likely cause",
+    /calendar stops at 2026-09-04/.test(String(stale.out.note)) &&
+    /attendanceDays:rebuild/.test(String(stale.out.note)), String(stale.out.note));
+  check("...and claims no slot, so nothing is lost once the calendar recovers",
+    stale.tables.referralPingLog.length === 0);
+  check("...and the summary shows the calendar's health, so a dry run can be trusted",
+    stale.out.newestSchoolDay === "2026-09-04" && stale.out.calendarStale === true &&
+    stale.out.calendarLagDays === 12,
+    JSON.stringify({ n: stale.out.newestSchoolDay, s: stale.out.calendarStale, l: stale.out.calendarLagDays }));
+  const recovered = await runSweep([OPEN], { today: "2026-09-16" });
+  check("...proved: once the calendar is current again it sends", recovered.sentMail.length === 1);
+
+  // A long weekend is three days. The guard must not fire on one.
+  const friday = SEPT_SCHOOL_DAYS.filter((d) => d <= "2026-09-18");
+  const tuesday = await runSweep([OPEN], { schoolDays: friday, today: "2026-09-22" });
+  check("a three-day weekend does NOT trip the staleness guard",
+    tuesday.sentMail.length === 1, String(tuesday.out.note));
+}
+
+console.log("\nAN ID WITH A STRAY SPACE DOES NOT BLOCK A SLOT FOREVER\n");
+{
+  const padded = { ...OPEN, id: "  R-open  " };
+  const { sentMail, tables } = await runSweep([padded]);
+  check("a referral whose payload id has whitespace is still chased",
+    sentMail.length === 1, JSON.stringify(tables.referralPingLog));
+  check("...and is not written off as 'no longer in the mirror'",
+    !tables.referralPingLog.some((r) => /no longer in the mirror/.test(String(r.reason))));
 }
 
 console.log("\nDO THE ASSERTIONS HAVE TEETH?\n");
@@ -769,13 +914,13 @@ console.log("\nDO THE ASSERTIONS HAVE TEETH?\n");
   // The loop clock, re-pointed at the filing date.
   const broken = loadRules((body) => {
     const before = body;
-    body = body.replace("const clockFrom = open ? filed : (closedOn.length === 10 ? closedOn : filed);",
+    body = body.replace("const clockFrom = open ? filed : (closedOn || filed);",
       "const clockFrom = filed;");
     if (body === before) throw new Error("teeth 4: anchor moved");
     return body;
   });
   const days = Array.from({ length: 20 }, (_, i) => `2026-09-${String(i + 1).padStart(2, "0")}`);
-  const res = broken.pingsDue([{ id: "C", submittedAt: "2026-09-01T09:00:00Z", status: "closed", closedAt: "2026-09-10T16:00:00Z" }],
+  const res = broken.pingsDue([{ id: "C", submittedAt: "2026-09-01T09:00:00Z", status: "closed", closedAt: "2026-09-10T20:00:00Z" }],
     { today: "2026-09-10", schoolDays: days });
   check("TEETH: dating the loop from the filing mails a closer the same afternoon",
     res.due.length > 0);
@@ -808,6 +953,54 @@ console.log("\nDO THE ASSERTIONS HAVE TEETH?\n");
     w.tables.referralPingLog[0]?.state === "sent");
 }
 
+{
+  // The loop recipient, resolved from the payload again.
+  const P = loadPing(null, (body) => {
+    const before = body;
+    body = body.replace("return hits.length === 1 ? hits[0].email : null;",
+      'return hits.length === 1 ? hits[0].email : (String(closedByName || "").toLowerCase().replace(" ", "") + "@lapromisefund.org");');
+    if (body === before) throw new Error("teeth 7: anchor moved");
+    return body;
+  });
+  const w = wire(P, seedWith([{ ...OPEN, id: "R-c", status: "closed",
+    closedAt: "2026-09-10T20:00:00Z", closedBy: "Rosa Lopez" }]));
+  await P.sweep.handler(w.ctx, { today: "2026-09-16" });
+  check("TEETH: a payload-chosen loop recipient is caught",
+    (w.sentMail[0]?.to || []).includes("rosalopez@lapromisefund.org"));
+}
+{
+  // The staleness guard, removed.
+  const P = loadPing((body) => {
+    const before = body;
+    body = body.replace("if (plan.calendarStale) {", "if (false) {");
+    if (body === before) throw new Error("teeth 8: anchor moved");
+    return body;
+  });
+  const w = wire(P, seedWith([OPEN], { schoolDays: ["2026-09-01", "2026-09-02"] }));
+  const out = await P.sweep.handler(w.ctx, { today: "2026-09-16" });
+  // Removing the guard does not produce a WRONG send -- it produces SILENCE,
+  // which is the whole point. A frozen calendar makes every age zero, so
+  // nothing is ever due and the sweep reports a clean, healthy, empty run.
+  // The guard's only job is turning that silence into an explanation, so that
+  // is what the teeth check measures.
+  check("TEETH: with the staleness guard gone, the silence goes unexplained",
+    w.sentMail.length === 0 && !/calendar stops at/.test(String(out.note || "")),
+    JSON.stringify(out.note ?? null));
+}
+{
+  // retryFailed, re-arming a row whose delivery is unknown.
+  const P = loadPing((body) => {
+    const before = body;
+    body = body.replace("if (Number(r.sent ?? -1) === 0) {", "if (true) {");
+    if (body === before) throw new Error("teeth 9: anchor moved");
+    return body;
+  });
+  const threw = await runSweep([OPEN], { mailThrows: true });
+  const w = wire(P, { ...seedWith([OPEN]), referralPingLog: threw.tables.referralPingLog });
+  check("TEETH: re-arming an unknown-delivery row is caught",
+    (await P.retryFailed.handler(w.ctx, {})).cleared === 1);
+}
+
 console.log("\nWIRING\n");
 {
   check("the cron is registered", /internal\.referralPing\.sweep/.test(cronsSrc));
@@ -828,6 +1021,23 @@ console.log("\nWIRING\n");
   check("no recipient is ever taken from an argument",
     !/to: v\.array|recipients: v\.array\(v\.string/.test(pingSrc));
   check("it is off by default in the shipped source", /enabled: false/.test(rulesSrc));
+  // If one address's fetch can throw, the running delivered count is lost with
+  // it, and no caller can decide whether a retry would duplicate.
+  check("mail.send accounts for each address individually and cannot throw mid-loop",
+    (() => {
+      const mailSrc = readFileSync(new URL("./convex/mail.ts", import.meta.url), "utf8");
+      const loop = mailSrc.slice(mailSrc.indexOf("for (const address of allowed)"));
+      const body = loop.slice(0, loop.indexOf("\n    }") + 6);
+      return /try\s*\{/.test(body) && /catch\s*\(/.test(body) &&
+        body.indexOf("try") < body.indexOf("await fetch");
+    })());
+  check("the attendance read refuses before it can clear the calendar",
+    (() => {
+      const a = readFileSync(new URL("./convex/attendanceDays.ts", import.meta.url), "utf8");
+      const guard = a.indexOf("if (att.pagedOut)");
+      const clear = a.indexOf("replaceAbsenceDayTotals");
+      return guard > 0 && clear > guard;
+    })());
   check("every stage in PING_STAGES is one the schema will accept",
     R.PING_STAGES.every((s) => PING_TABLE.includes(`v.literal("${s}")`)), R.PING_STAGES.join(","));
 }

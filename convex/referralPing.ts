@@ -1,7 +1,10 @@
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
-import { pingsDue, pingRecipients, pingMailPlan, pingSettingsOrDefault, SCHOOL_DAY_SOURCE } from "./referralPingRules";
+import {
+  pingsDue, pingRecipients, pingMailPlan, pingSettingsOrDefault, schoolDay,
+  loopRecipientFor, SCHOOL_DAY_SOURCE,
+} from "./referralPingRules";
 
 /**
  * NOBODY CLOSED THE REFERRAL. Say so, once, to the people who can.
@@ -39,6 +42,17 @@ const MAX_AGE_SCHOOL_DAYS = 60;
 
 /** Per run. A backlog arrives over days, not in one morning's mail flood. */
 const MAX_SENDS_PER_SWEEP = 12;
+
+/**
+ * How far behind the school-day calendar may fall before the sweep refuses.
+ *
+ * Four days clears a three-day weekend with a day in hand, and still catches
+ * a rebuild that has been failing since the week before.
+ */
+const MAX_CALENDAR_LAG_DAYS = 4;
+
+/** A "queued" row older than this never finished; a sweep takes seconds. */
+const STUCK_QUEUED_MS = 6 * 60 * 60 * 1000;
 
 type Settings = ReturnType<typeof pingSettingsOrDefault>;
 
@@ -96,10 +110,29 @@ export const due = internalQuery({
   args: { today: v.optional(v.string()) },
   handler: async (ctx, { today }) => {
     const settings = await readSettings(ctx);
-    const day = String(today || new Date().toISOString().slice(0, 10)).slice(0, 10);
+    // THE SCHOOL'S DAY, NOT THE SERVER'S. Convex runs UTC. The cron fires at
+    // 15:00 UTC, which is the same date in Los Angeles, but a human running
+    // this by hand at 5pm Pacific is already on tomorrow's UTC date, and every
+    // age would come out a day too large.
+    const day = schoolDay(today || new Date().toISOString()) || "";
 
     const dayRows = await ctx.db.query("psAbsenceDayTotals").withIndex("by_date").take(400);
-    const schoolDays = dayRows.map((d) => String(d.date).slice(0, 10)).filter((d) => d.length === 10).sort();
+    const schoolDays = dayRows.map((d) => String(d.date).slice(0, 10))
+      .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+    const newestSchoolDay = schoolDays.length ? schoolDays[schoolDays.length - 1] : null;
+
+    // HOW STALE IS THE CALENDAR? Emptiness was the only thing checked, and it
+    // is the rarer fault. attendanceDays:rebuild clears psAbsenceDayTotals and
+    // rewrites it; if it starts failing -- a PowerSchool outage, a credential
+    // expiring, the read paging out -- the table keeps yesterday's rows and
+    // every referral filed after that date scores an age of zero, forever.
+    // Chasing would stop dead while every diagnostic still read healthy, which
+    // is the worst failure this feature has and the one it would report as
+    // success. Days, not rows: a long weekend is three.
+    const staleDays = newestSchoolDay && day
+      ? Math.floor((Date.parse(day + "T00:00:00Z") - Date.parse(newestSchoolDay + "T00:00:00Z")) / 86400000)
+      : null;
+    const calendarStale = staleDays !== null && staleDays > MAX_CALENDAR_LAG_DAYS;
 
     const mirror = await ctx.db
       .query("legacyMirror").withIndex("by_doc", (q) => q.eq("doc", "referrals")).take(2000);
@@ -123,7 +156,11 @@ export const due = internalQuery({
 
     // Attach what the sender needs, and drop anything too old to chase.
     const byId = new Map<string, any>();
-    for (const r of referrals) if (r?.id) byId.set(String(r.id), r);
+    // TRIMMED THE SAME WAY pingsDue TRIMS IT. Keying one map on the raw id and
+    // the other on the trimmed one means a payload id with a stray space never
+    // matches, and sweep then writes a permanent "no longer in the mirror"
+    // skip -- a slot blocked forever, with a reason that is not true.
+    for (const r of referrals) if (r?.id) byId.set(String(r.id).trim(), r);
 
     const plans = res.due
       .filter((d) => d.ageSchoolDays <= MAX_AGE_SCHOOL_DAYS)
@@ -134,6 +171,9 @@ export const due = internalQuery({
       enabled: settings.enabled,
       settings,
       schoolDaysKnown: schoolDays.length,
+      newestSchoolDay,
+      staleDays,
+      calendarStale,
       schoolDaySource: SCHOOL_DAY_SOURCE,
       referrals: referrals.length,
       due: plans,
@@ -205,18 +245,6 @@ export const finish = internalMutation({
   },
 });
 
-/** The address for a display name, via the staff table. Loop stage only. */
-export const emailForName = internalQuery({
-  args: { name: v.string() },
-  handler: async (ctx, { name }) => {
-    const want = String(name || "").trim().toLowerCase();
-    if (!want) return null;
-    const staff = await ctx.db.query("teachers").take(300);
-    const hit = staff.find((t) => String(t.name || "").trim().toLowerCase() === want);
-    return hit?.email ? String(hit.email) : null;
-  },
-});
-
 /**
  * The cron entry. Decide, claim, send, record.
  *
@@ -231,8 +259,21 @@ export const sweep = internalAction({
     if (!plan.enabled && !dryRun) {
       return { ...summarise(plan), sent: 0, note: "disabled; run referralPing:configure '{\"enabled\":true}' to turn it on" };
     }
+    if (!plan.today) {
+      return { ...summarise(plan), sent: 0, note: "could not determine the school's date; nothing sent" };
+    }
     if (!plan.schoolDaysKnown) {
       return { ...summarise(plan), sent: 0, note: "no school-day list; nothing sent" };
+    }
+    if (plan.calendarStale) {
+      // Refused for the same reason the empty list is refused, and said out
+      // loud for the same reason: a stale calendar makes every age too small,
+      // so the failure mode is silence.
+      return {
+        ...summarise(plan), sent: 0,
+        note: `the school-day calendar stops at ${plan.newestSchoolDay}, ${plan.staleDays} days `
+          + `before ${plan.today}; attendanceDays:rebuild is probably failing. Nothing sent.`,
+      };
     }
 
     const results: any[] = [];
@@ -250,15 +291,21 @@ export const sweep = internalAction({
       let skipReason: string | undefined;
 
       if (d.stage === "loop") {
-        // The reminder goes to whoever closed it, and the record stores a
-        // display name rather than an address, so it has to be looked up.
-        const email: string | null = d.closedBy
-          ? await ctx.runQuery(internal.referralPing.emailForName, { name: d.closedBy })
-          : null;
-        if (email) to = [email];
-        else skipReason = d.closedBy
-          ? `no staff account matches the name that closed it (${String(d.closedBy).slice(0, 80)})`
-          : "the record does not say who closed it";
+        // NEVER AN ADDRESS THE PAYLOAD CHOSE. `closedBy` is a display name a
+        // browser wrote through mergeSlice behind requireStaff and nothing
+        // more, so all fifty-eight staff can set it. Resolving it against the
+        // whole `teachers` table -- whose name column is itself staff-writable
+        // -- would have let any of them pick which colleague receives a named
+        // child's full discipline record, by typing a name. That is the exact
+        // capability referralMailRules.ts exists to make impossible.
+        //
+        // So the name is matched against the STANDING LIST, and nothing else.
+        // If it names one of the six, the reminder goes to them alone; if it
+        // does not, it goes to the five who can action it anyway, with the
+        // recorded closer printed in the body. Either way the address set is a
+        // constant in this repository and the payload cannot move it.
+        const direct = loopRecipientFor(d.closedBy);
+        to = direct ? [direct] : pingRecipients("nudge");
       }
       if (!skipReason && !to.length) skipReason = "no recipients for this stage";
       if (!skipReason && !d.referral) skipReason = "the referral is no longer in the mirror";
@@ -294,10 +341,36 @@ export const sweep = internalAction({
       });
 
       sends++;
+      // ONLY THE SEND IS INSIDE THE TRY. With finish() in here too, a failure
+      // of the bookkeeping mutation was caught by the same catch and written
+      // down as a send failure -- describing mail that had already left the
+      // tenant as undelivered, which is the one thing a person must be able
+      // to trust this log about.
+      let res: any = null;
+      let sendError: string | null = null;
       try {
-        const res: any = await ctx.runAction(internal.mail.send, {
+        res = await ctx.runAction(internal.mail.send, {
           to: mail.to, subject: mail.subject, html: mail.html, live: true,
         });
+      } catch (err: any) {
+        sendError = String(err?.message ?? err).slice(0, 400);
+      }
+
+      if (sendError !== null) {
+        // NOT RETRIED, and the row says why it cannot be. mail:send now
+        // records each address's own outcome rather than throwing part-way
+        // through, so reaching here means the send never started -- but the
+        // delivered count is still written as unknown rather than zero, and
+        // retryFailed refuses to re-arm a row whose count is unknown.
+        await ctx.runMutation(internal.referralPing.finish, {
+          referralId: d.referralId, stage: d.stage, state: "failed",
+          recipients: mail.to.length, error: sendError,
+        });
+        results.push({ referralId: d.referralId, stage: d.stage, state: "failed", error: sendError.slice(0, 200) });
+        continue;
+      }
+
+      {
         const delivered = Number(res?.sent ?? 0);
         const refused: string[] = Array.isArray(res?.refused) ? res.refused : [];
 
@@ -343,12 +416,6 @@ export const sweep = internalAction({
           delivered, recipients: mail.to.length,
           ...(refused.length ? { refused } : {}),
         });
-      } catch (err: any) {
-        await ctx.runMutation(internal.referralPing.finish, {
-          referralId: d.referralId, stage: d.stage, state: "failed",
-          recipients: mail.to.length, error: String(err?.message ?? err).slice(0, 400),
-        });
-        results.push({ referralId: d.referralId, stage: d.stage, state: "failed", error: String(err?.message ?? err).slice(0, 200) });
       }
     }
 
@@ -359,7 +426,14 @@ export const sweep = internalAction({
 function summarise(plan: any) {
   return {
     today: plan.today, enabled: plan.enabled, settings: plan.settings,
-    schoolDaysKnown: plan.schoolDaysKnown, referrals: plan.referrals,
+    // THE CALENDAR'S HEALTH IS PART OF THE ANSWER, not a detail. Every wrong
+    // age this thing can compute comes from the school-day list, so a dry run
+    // that does not show how current it is cannot be used to check the sweep.
+    schoolDaysKnown: plan.schoolDaysKnown,
+    newestSchoolDay: plan.newestSchoolDay ?? null,
+    calendarLagDays: plan.staleDays ?? null,
+    calendarStale: plan.calendarStale ?? null,
+    referrals: plan.referrals,
     due: plan.due.length, agedOut: plan.agedOut, skippedWhy: plan.skippedWhy,
   };
 }
@@ -388,18 +462,54 @@ export const retryFailed = internalMutation({
       ? await ctx.db.query("referralPingLog")
           .withIndex("by_referral", (q) => q.eq("referralId", referralId)).take(50)
       : await ctx.db.query("referralPingLog").take(2000);
-    const cleared: Array<{ referralId: string; stage: string; error?: string }> = [];
+    const now = Date.now();
+    const cleared: Array<{ referralId: string; stage: string; why: string; error?: string }> = [];
+    const kept: Array<{ referralId: string; stage: string; why: string }> = [];
+
     for (const r of rows) {
-      if (r.state !== "failed") continue;
-      cleared.push({ referralId: r.referralId, stage: r.stage, error: r.error });
-      await ctx.db.delete(r._id);
+      // A ROW IS ONLY RE-ARMED IF IT PROVABLY REACHED NOBODY.
+      //
+      // "failed" means two different things. The delivered-to-nobody path
+      // writes sent: 0 explicitly. A send that could not even be attempted
+      // writes no count at all -- and an unknown count is not zero. Clearing
+      // the second kind would re-send a stage that may already be sitting in
+      // some of those inboxes, which is precisely the duplicate this whole
+      // design refuses elsewhere. Unknown stays put and stays visible.
+      if (r.state === "failed") {
+        if (Number(r.sent ?? -1) === 0) {
+          cleared.push({ referralId: r.referralId, stage: r.stage, why: "delivered to nobody", error: r.error });
+          await ctx.db.delete(r._id);
+        } else {
+          kept.push({
+            referralId: r.referralId, stage: r.stage,
+            why: "the send never reported a delivered count, so it may have reached some of them",
+          });
+        }
+        continue;
+      }
+
+      // A "queued" ROW THAT NEVER FINISHED. claim() writes it before the send
+      // so two runs cannot race; a crash in between leaves it with no
+      // finishedAt and nothing else could ever clear it, which made the
+      // recovery schema.ts promises impossible. Hours, not minutes: a sweep
+      // takes seconds, so nothing in flight is anywhere near this old.
+      if (r.state === "queued" && !r.finishedAt) {
+        const at = Date.parse(String(r.at ?? ""));
+        if (Number.isFinite(at) && now - at > STUCK_QUEUED_MS) {
+          cleared.push({ referralId: r.referralId, stage: r.stage, why: "queued and never finished" });
+          await ctx.db.delete(r._id);
+        }
+      }
+      // "sent" is somebody's inbox and "skipped" is a decision. Neither moves.
     }
+
     return {
       cleared: cleared.length,
       rows: cleared,
+      keptBecauseDeliveryUnknown: kept,
       note: cleared.length
         ? "the next sweep will re-decide these; run referralPing:sweep '{\"dryRun\":true}' first"
-        : "nothing was in a failed state",
+        : "nothing was safe to re-arm",
     };
   },
 });
@@ -420,7 +530,13 @@ export const history = internalQuery({
       stuck: rows.filter((r) => r.state === "queued")
         .map((r) => ({ referralId: r.referralId, stage: r.stage, at: r.at })),
       failed: rows.filter((r) => r.state === "failed")
-        .map((r) => ({ referralId: r.referralId, stage: r.stage, at: r.at, error: r.error })),
+        .map((r) => ({
+          referralId: r.referralId, stage: r.stage, at: r.at, error: r.error,
+          // Zero means provably nobody, and retryFailed will re-arm it. null
+          // means the send never reported, and it will not.
+          delivered: r.sent ?? null,
+          retryable: Number(r.sent ?? -1) === 0,
+        })),
       // A "sent" row that reached fewer inboxes than it addressed. Not an
       // error -- it is not retried and must not be -- but not silence either.
       partial: rows.filter((r) => r.state === "sent" &&
