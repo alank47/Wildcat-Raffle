@@ -9683,3 +9683,45 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
   line-height: 1.45;
   color: var(--wc-gray-text, #4b5563);
 }
+/* The hover readout. Positioned against .wc-rc-plot, which is why that wrapper
+   exists: the svg scales with the card, so its own coordinates are not pixels. */
+.wc-rc-plot { position: relative; }
+/* An invisible, generous hit target over each point. A 3px dot cannot be hit
+   with a trackpad; 11px can. */
+.wc-rc-hit { fill: transparent; cursor: pointer; }
+.wc-rc-hit:focus { outline: none; }
+.wc-rc-hit:hover + .wc-rc-dot, .wc-rc-hit:focus + .wc-rc-dot { r: 6; }
+/* Focus must be visible on its own, not only via the tooltip. */
+.wc-rc-hit:focus-visible { outline: 2px solid var(--wc-blue, #2563eb); outline-offset: 1px; }
+.wc-rc-tip {
+  position: absolute;
+  z-index: 5;
+  min-width: 150px;
+  padding: 8px 10px;
+  border: 1px solid var(--wc-line, #e5e7eb);
+  border-radius: 8px;
+  background: var(--wc-surface, #fff);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .12);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--wc-ink, #111827);
+  /* It follows the pointer, so it must never eat the pointer. */
+  pointer-events: none;
+}
+.wc-rc-tip[hidden] { display: none; }
+.wc-rc-tip-when { font-weight: 700; margin-bottom: 4px; }
+.wc-rc-tip-rows { width: 100%; border-collapse: collapse; }
+.wc-rc-tip-rows th {
+  text-align: left; font-weight: 400; padding: 1px 8px 1px 0;
+  color: var(--wc-gray-text, #6b7280);
+}
+.wc-rc-tip-rows td { text-align: right; font-weight: 700; padding: 1px 0; }
+.wc-rc-tip-side {
+  margin-top: 5px; padding-top: 5px;
+  border-top: 1px solid var(--wc-line, #e5e7eb);
+  color: var(--wc-gray-text, #6b7280);
+}
+/* The rule and the reading, kept visibly apart: the first is statistics, the
+   second is a judgement about a school, and a reader should be able to tell. */
+.wc-rc-rule { display: block; font-weight: 600; }
+.wc-rc-why { display: block; margin-top: 4px; font-weight: 400; color: var(--wc-gray-text, #4b5563); }

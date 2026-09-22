@@ -30531,16 +30531,44 @@
             const x = i => L + (series.length === 1 ? pw / 2 : (pw * i) / (series.length - 1));
             const y = v => T + ph - (ph * (Number(v) || 0)) / top;
 
+            const label0 = which === 'all' ? 'students absent'
+                : which === 'partial' ? 'partial-day absences' : 'whole-day absences';
             const inSpan = new Array(series.length).fill(false);
             (sig.shifts || []).concat(sig.trends || []).forEach(s => {
                 for (let i = s.from; i <= s.to && i < inSpan.length; i++) inSpan[i] = true;
             });
 
             const line = series.map((p, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(p.value).toFixed(1)).join(' ');
-            const dots = series.map((p, i) =>
-                '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(p.value).toFixed(1) + '" r="'
-                + (inSpan[i] ? 4 : 3) + '" class="wc-rc-dot' + (inSpan[i] ? ' wc-rc-sig' : '') + '">'
-                + '<title>' + escapeHtml(p.date + ': ' + p.value) + '</title></circle>').join('');
+            // EACH POINT IS A HIT TARGET, not just a dot. A 3px circle is
+            // unhittable with a mouse and impossible with a trackpad, so an
+            // invisible 11px circle sits over it. It carries the whole day in
+            // data attributes, which is what lets the tooltip answer "and the
+            // other two figures" without a second pass over the rows.
+            //
+            // aria-label RATHER THAN <title>. An SVG <title> IS the accessible
+            // name but ALSO produces the browser's own slow tooltip, so keeping
+            // it would show two tooltips saying different things.
+            //
+            // tabindex="0" because a keyboard user has the same question a
+            // mouse user does, and focus fires the same handler.
+            const dots = series.map((p, i) => {
+                const above = p.value > sig.median ? 'above' : p.value < sig.median ? 'below' : 'on';
+                const label = p.date + ': ' + p.value + ' ' + label0
+                    + ', ' + above + ' the median of ' + sig.median;
+                return '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(p.value).toFixed(1) + '" r="'
+                    + (inSpan[i] ? 4 : 3) + '" class="wc-rc-dot' + (inSpan[i] ? ' wc-rc-sig' : '') + '"/>'
+                    + '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(p.value).toFixed(1) + '" r="11"'
+                    + ' class="wc-rc-hit" tabindex="0" role="img"'
+                    + ' aria-label="' + escapeHtml(label) + '"'
+                    + ' data-rc-i="' + i + '"'
+                    + ' data-rc-date="' + escapeHtml(String(p.date)) + '"'
+                    + ' data-rc-value="' + escapeHtml(String(p.value)) + '"'
+                    + ' data-rc-full="' + escapeHtml(String(p.full)) + '"'
+                    + ' data-rc-partial="' + escapeHtml(String(p.partial)) + '"'
+                    + ' data-rc-total="' + escapeHtml(String(p.studentsAbsent)) + '"'
+                    + ' data-rc-side="' + above + '"'
+                    + ' data-rc-signal="' + (inSpan[i] ? '1' : '') + '"/>';
+            }).join('');
             // Sparse labels: every date would be unreadable at this width.
             const step = Math.max(1, Math.ceil(series.length / 6));
             const labels = series.map((p, i) => (i % step === 0 || i === series.length - 1)
@@ -30558,9 +30586,14 @@
                 + '<text x="' + (L - 6) + '" y="' + (T + ph) + '" class="wc-rc-ylab">0</text>'
                 + '<path d="' + line + '" class="wc-rc-line"/>' + dots + labels
                 + '</svg>';
+            // POSITIONED AGAINST THE WRAPPER, not the page. The svg scales with
+            // the card, so its internal coordinates are not pixels; the handler
+            // measures the hovered point instead.
+            const plot = '<div class="wc-rc-plot">' + svg
+                + '<div class="wc-rc-tip" role="status" aria-live="polite" hidden></div>'
+                + '</div>';
 
-            const label = which === 'all' ? 'students absent'
-                : which === 'partial' ? 'partial-day absences' : 'whole-day absences';
+            const label = label0;
             const head = '<p class="wc-rc-head">' + escapeHtml(
                 series.length + ' school days, median ' + sig.median + ' ' + label + ' a day'
                 + (res.schoolDaysOnFile && res.schoolDaysOnFile > series.length
@@ -30571,9 +30604,19 @@
             // matter of taste.
             let verdict;
             if (sig.signals.length) {
-                verdict = '<ul class="wc-rc-signals">' + sig.signals.map(s =>
-                    '<li class="wc-rc-signal wc-rc-' + escapeHtml(s.rule) + '">'
-                    + escapeHtml(s.text) + '</li>').join('') + '</ul>';
+                // THE RULE, THEN WHAT IT LIKELY MEANS. The first line is the
+                // statistics and the second is the reading -- kept visibly
+                // apart, because a run chart establishes that something
+                // CHANGED and can never say why. Every reading names what to
+                // check rather than what happened.
+                verdict = '<ul class="wc-rc-signals">' + sig.signals.map(s => {
+                    const why = (typeof R.absenceSignalBlurb === 'function')
+                        ? R.absenceSignalBlurb(s, which) : '';
+                    return '<li class="wc-rc-signal wc-rc-' + escapeHtml(s.rule) + '">'
+                        + '<span class="wc-rc-rule">' + escapeHtml(s.text) + '</span>'
+                        + (why ? '<span class="wc-rc-why">' + escapeHtml(why) + '</span>' : '')
+                        + '</li>';
+                }).join('') + '</ul>';
             } else {
                 verdict = '<p class="wc-rc-none">' + escapeHtml(
                     'No signal: this is ordinary variation, not a change. '
@@ -30588,7 +30631,102 @@
                 + 'the series rather than plotted as zero.'
                 + (res.truncated ? ' The day table is larger than this screen reads; tell an administrator.' : ''))
                 + '</p>';
-            return head + svg + verdict + foot;
+            return head + plot + verdict + foot;
+        }
+
+        /**
+         * Show the day behind a point when it is hovered or focused.
+         *
+         * ONE DELEGATED LISTENER ON THE HOST, attached once. The chart's
+         * innerHTML is replaced on every toggle and every refresh, so binding
+         * to the points themselves would stack a fresh set of handlers on each
+         * render and leak them for the life of the tab. The host element
+         * survives, so the listener does too.
+         *
+         * MEASURED, NOT COMPUTED. The svg scales with the card via its
+         * viewBox, so a point's internal coordinates are not pixels. The
+         * handler reads the real rectangles instead, which is correct at any
+         * width and needs no knowledge of the chart's geometry.
+         *
+         * FOCUS COUNTS AS HOVER. A keyboard user has exactly the question a
+         * mouse user has, and the points carry tabindex for that reason.
+         */
+        function wireRunChartHover() {
+            const host = document.getElementById('attRunChart');
+            if (!host || host.getAttribute('data-hover-wired') === '1') return;
+            host.setAttribute('data-hover-wired', '1');
+
+            // SCOPED TO THE CHART, not looked up by a global id. The tooltip is
+            // created by the renderer rather than living in index.html, so a
+            // getElementById here is an id that dom-refs.test.mjs cannot verify
+            // against the markup -- and that guard exists because a lookup for
+            // an element that does not exist is a silently dead screen. Asking
+            // the host for it is also simply more correct: there is one chart,
+            // and its tooltip belongs to it.
+            const tipOf = () => host.querySelector('.wc-rc-tip');
+            const hide = () => {
+                const tip = tipOf();
+                if (tip) { tip.hidden = true; tip.innerHTML = ''; }
+            };
+            const show = (hit) => {
+                const tip = tipOf();
+                const plot = host.querySelector('.wc-rc-plot');
+                if (!tip || !plot || !hit) return;
+                const d = (k) => hit.getAttribute('data-rc-' + k) || '';
+                const n = (k) => {
+                    const v = Number(d(k));
+                    return isFinite(v) ? v : null;
+                };
+                const iso = d('date');
+                // A DATE STRING PARSED AT NOON, never bare. new Date('2026-09-14')
+                // is midnight UTC, which in Los Angeles is the previous evening
+                // and names the wrong weekday on a chart about school days.
+                const dt = new Date(iso + 'T12:00:00');
+                const when = isNaN(dt.getTime()) ? iso
+                    : dt.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+                const side = d('side');
+                const rows = [
+                    ['Whole days', n('full')],
+                    ['Partial days', n('partial')],
+                    ['Students absent', n('total')]
+                ];
+                tip.innerHTML =
+                    '<div class="wc-rc-tip-when">' + escapeHtml(when) + '</div>'
+                    + '<table class="wc-rc-tip-rows">' + rows.map(r =>
+                        '<tr><th>' + escapeHtml(r[0]) + '</th><td>'
+                        + (r[1] === null ? '&mdash;' : escapeHtml(String(r[1]))) + '</td></tr>').join('')
+                      + '</table>'
+                    + '<div class="wc-rc-tip-side">' + escapeHtml(
+                        side === 'on' ? 'Exactly on the median'
+                          : side === 'above' ? 'Above the median' : 'Below the median')
+                      + (d('signal') ? ' · part of a signal' : '') + '</div>';
+                tip.hidden = false;
+
+                // Positioned from the real rectangles, then clamped so a point
+                // at either end does not push the tooltip off the card.
+                const hr = hit.getBoundingClientRect();
+                const pr = plot.getBoundingClientRect();
+                const tr = tip.getBoundingClientRect();
+                let left = (hr.left - pr.left) + hr.width / 2 - tr.width / 2;
+                left = Math.max(4, Math.min(left, pr.width - tr.width - 4));
+                let top = (hr.top - pr.top) - tr.height - 10;
+                // Above the point by default; below it when there is no room,
+                // which is what a point near the top of the chart needs.
+                if (top < 0) top = (hr.top - pr.top) + hr.height + 10;
+                tip.style.left = Math.round(left) + 'px';
+                tip.style.top = Math.round(top) + 'px';
+            };
+
+            const hitOf = (e) => {
+                const t = e && e.target;
+                return (t && t.getAttribute && t.getAttribute('data-rc-i') !== null) ? t : null;
+            };
+            host.addEventListener('mouseover', (e) => { const h = hitOf(e); if (h) show(h); });
+            host.addEventListener('mouseout', (e) => { if (hitOf(e)) hide(); });
+            host.addEventListener('focusin', (e) => { const h = hitOf(e); if (h) show(h); });
+            host.addEventListener('focusout', (e) => { if (hitOf(e)) hide(); });
+            // Escape closes it, the same as every other transient thing here.
+            host.addEventListener('keydown', (e) => { if (e && e.key === 'Escape') hide(); });
         }
 
         async function renderAbsenceRunChart(force) {
@@ -30610,6 +30748,9 @@
                 finally { _runBusy = false; }
             }
             host.innerHTML = renderRunChartBody(res, R, _runWhich, riskSettings);
+            // After the markup exists, and idempotent: the host survives every
+            // re-render, so this binds once and never stacks.
+            wireRunChartHover();
         }
 
         // ========================================

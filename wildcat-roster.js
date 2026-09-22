@@ -1071,8 +1071,86 @@
       var value = pick === 'all' ? total
         : pick === 'partial' ? Math.max(0, total - full)
         : full;
-      return { date: (r && r.date) || '', value: value, studentsAbsent: total, full: full };
+      return {
+        date: (r && r.date) || '', value: value,
+        // The WHOLE day carried on every point, not only the plotted series, so
+        // a tooltip can answer "and what were the other two" without a second
+        // pass over the rows.
+        studentsAbsent: total, full: full, partial: Math.max(0, total - full)
+      };
     });
+  }
+
+  /**
+   * What a signal on an ABSENCE chart likely means, in words a person can act
+   * on.
+   *
+   * SEPARATE FROM runChartSignals ON PURPOSE. Those rules are generic
+   * statistics and know nothing about schools; this is the domain reading, and
+   * keeping them apart is what stops the maths quietly acquiring opinions.
+   *
+   * IT SAYS "LIKELY" AND MEANS IT. A run chart establishes that something
+   * CHANGED. It cannot say why, and a chart that implies otherwise is worse
+   * than no chart -- so every reading below names what to check rather than
+   * what happened, and the downward ones name the boring explanation first.
+   */
+  function absenceSignalBlurb(signal, which) {
+    var s = signal || {};
+    var pick = String(which || 'full');
+    var series = pick === 'all' ? 'absence overall'
+      : pick === 'partial' ? 'partial-day absence' : 'whole-day absence';
+
+    if (s.rule === 'shift') {
+      var up = /above/.test(String(s.text));
+      if (!up) {
+        // THE BORING EXPLANATION FIRST. A fall in recorded absence and a fall
+        // in RECORDING look identical on a chart, and 1,631 of 5,563 class
+        // registers currently carry no attendance at all.
+        return 'Fewer than usual, sustained. Worth confirming before celebrating: '
+          + 'absence falls on this chart both when more students attend and when fewer '
+          + 'teachers take the register. Check that attendance is still being recorded '
+          + 'in the same classes before reading it as a win.';
+      }
+      if (pick === 'partial') {
+        return 'More students than usual are missing PART of the day, sustained rather than a bad week. '
+          + 'That is usually arriving late rather than staying away, so the things to check are the '
+          + 'morning routine, transport, and what is scheduled first.';
+      }
+      if (pick === 'full') {
+        return 'More students than usual are missing WHOLE days, sustained rather than a bad week. '
+          + 'Check illness, a community event and the weather before reading it as disengagement -- '
+          + 'this says something changed, not what.';
+      }
+      return 'Absence is running above its usual level, sustained rather than a bad week.';
+    }
+
+    if (s.rule === 'trend') {
+      var down = /moving down/.test(String(s.text));
+      if (down) {
+        return 'A steady fall in ' + series + ' rather than a step. If something was changed '
+          + 'deliberately, this is the shape of it working -- and it is worth writing down WHAT '
+          + 'changed and WHEN, because a chart cannot tell you later.';
+      }
+      return 'A steady climb in ' + series + ' rather than a step. Gradual causes look like this: '
+        + 'illness building through a season, or engagement slipping week by week. A one-off event '
+        + 'would show as a jump instead, so it is worth checking what began around the start of the '
+        + 'climb rather than looking for a single bad day.';
+    }
+
+    if (s.rule === 'runs') {
+      if (/Only /.test(String(s.text))) {
+        return 'The measure is drifting rather than settling around one level. That usually means it '
+          + 'moved from one level to another during this window -- so the useful question is WHEN, '
+          + 'and what changed around then.';
+      }
+      // THE DAY-OF-WEEK TRAP, named because it is the likeliest cause here and
+      // because a reader would otherwise hunt for a cause that is not there.
+      return 'Something is alternating rather than varying. At this school the first thing to rule '
+        + 'out is the day of the week: Mondays and Fridays run higher than midweek, and a daily '
+        + 'chart mixes them together. Looking at one weekday at a time, or at weekly totals, '
+        + 'separates them.';
+    }
+    return '';
   }
 
   /**
@@ -1186,6 +1264,7 @@
     runChartMedian: runChartMedian,
     runChartSignals: runChartSignals,
     absenceSeriesValues: absenceSeriesValues,
+    absenceSignalBlurb: absenceSignalBlurb,
     RUNS_LIMITS: RUNS_LIMITS,
     median: median,
     dailyGoal: dailyGoal,
