@@ -1,4 +1,4 @@
-import { query, mutation, internalMutation } from "./_generated/server";
+import { query, mutation, internalMutation, internalQuery } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
 import { roleChangeVerdict } from "./roleChangeRules";
 import { requireStaff, requireAdmin } from "./identity";
@@ -530,5 +530,69 @@ export const removeStaffFromCli = internalMutation({
       ticketsAwarded: row.ticketsAwarded ?? 0,
       auditEntryId: entryId,
     };
+  },
+});
+
+
+/**
+ * IS THIS PERSON IN THE SYSTEM, AND AS WHAT?
+ *
+ * Answers the question that comes before every "add so-and-so": do they have a
+ * Microsoft account, do they already have a Wildcat Hub one, and what does the
+ * directory say they do. Both halves matter -- inviteStaffFromCli refuses
+ * anybody not in the directory, and re-inviting somebody who already has an
+ * account silently changes their role.
+ *
+ * internalQuery: CLI only, no client caller. It returns staff names and work
+ * addresses, which is why it lives here beside the other staff tooling rather
+ * than in earlyWarningProfile.ts -- that file promises distributions and no
+ * names, and this would have broken its contract.
+ */
+export const whoIs = internalQuery({
+  args: { q: v.string() },
+  handler: async (ctx, { q }) => {
+    const want = String(q || "").trim().toLowerCase();
+    const dir = await ctx.db.query("entraDirectory").take(2000);
+    const staff = await ctx.db.query("teachers").take(500);
+    return {
+      directory: dir.filter((d) => String(d.searchText || "").includes(want))
+        .map((d) => ({ name: d.name, email: d.email, jobTitle: d.jobTitle, department: d.department })),
+      staffAccounts: staff.filter((t) => String(t.name || "").toLowerCase().includes(want) ||
+        String(t.email || "").toLowerCase().includes(want))
+        .map((t) => ({ name: t.name, email: t.email, role: t.role, sections: (t.sections || []).length })),
+      directorySize: dir.length, staffSize: staff.length,
+    };
+  },
+});
+
+/**
+ * What job titles sit behind each Wildcat Hub role.
+ *
+ * WHY THIS IS WORTH A FUNCTION. A role here is an access decision -- pbis
+ * reads the whole school's discipline record, campusaide does not -- and the
+ * job title in the directory does not decide it. Asked on 2026-09-22 about an
+ * Instructional Aide, this answered that the four already in the app were
+ * split two and two between exactly those roles, which turned a guess into a
+ * question worth putting to the owner.
+ *
+ * It also reports how many holders of each role have no PowerSchool sections,
+ * because a `teacher` with none sees no students at all.
+ */
+export const roleTitles = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const staff = await ctx.db.query("teachers").take(500);
+    const dir = await ctx.db.query("entraDirectory").take(2000);
+    const titleOf = new Map(dir.map((d) => [String(d.email || "").toLowerCase(), d.jobTitle || "(none)"]));
+    const out: Record<string, Record<string, number>> = {};
+    const sectionless: Record<string, number> = {};
+    for (const t of staff) {
+      const role = String(t.role);
+      const title = String(titleOf.get(String(t.email || "").toLowerCase()) ?? "(not in directory)");
+      out[role] = out[role] || {};
+      out[role][title] = (out[role][title] || 0) + 1;
+      if (!(t.sections || []).length) sectionless[role] = (sectionless[role] || 0) + 1;
+    }
+    return { byRole: out, staffWithNoSections: sectionless, total: staff.length };
   },
 });
