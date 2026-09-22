@@ -9644,3 +9644,42 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 .wc-ad-row.wc-ad-day-unknown { border-left: 4px solid var(--wc-line, #e5e7eb); padding-left: 8px; }
 .wc-ad-row.wc-ad-day-full .wc-ad-abs { color: #b91c1c; }
 .wc-ad-row.wc-ad-flagged .wc-ad-abs { color: #b45309; }
+/* THE ATTENDANCE RUN CHART. Only the chart furniture is new; the card, the
+   toggle bar and the note styles are the wc-att / analytics-tab idiom reused. */
+.wc-rc-card { margin-bottom: 14px; }
+.wc-rc-header { align-items: center; gap: 12px; flex-wrap: wrap; }
+.wc-rc-title { margin: 0; font-size: 15px; font-weight: 700; color: var(--wc-ink, #111827); }
+.wc-rc-head { margin: 0 0 6px; font-size: 13px; color: var(--wc-gray-text, #4b5563); }
+.wc-rc-svg { width: 100%; height: auto; display: block; }
+.wc-rc-line { fill: none; stroke: var(--wc-blue, #2563eb); stroke-width: 2; }
+/* The median is the reference every rule is read against, so it is drawn as a
+   reference and not as a second data line. */
+.wc-rc-median { stroke: var(--wc-gray-text, #9ca3af); stroke-width: 1; stroke-dasharray: 4 4; }
+.wc-rc-dot { fill: var(--wc-blue, #2563eb); }
+/* A point inside a shift or a trend. Marked because a signal a reader has to
+   find for themselves is not much better than no signal. */
+.wc-rc-sig { fill: #dc2626; }
+.wc-rc-xlab { font-size: 10px; fill: var(--wc-gray-text, #6b7280); text-anchor: middle; }
+.wc-rc-ylab { font-size: 10px; fill: var(--wc-gray-text, #9ca3af); text-anchor: end; }
+.wc-rc-signals { list-style: none; margin: 8px 0 0; padding: 0; }
+.wc-rc-signal {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border-left: 4px solid #dc2626;
+  border-radius: 6px;
+  background: #fef2f2;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--wc-ink, #111827);
+}
+.wc-rc-signal.wc-rc-runs { border-left-color: #ca8a04; background: #fefce8; }
+.wc-rc-none {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-left: 4px solid #16a34a;
+  border-radius: 6px;
+  background: #f0fdf4;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--wc-gray-text, #4b5563);
+}

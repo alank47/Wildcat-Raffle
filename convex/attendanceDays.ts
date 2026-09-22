@@ -315,7 +315,47 @@ export const rebuild = internalAction({
         syncedAt, rows: totalRows.slice(i, i + 200), clearFirst: false,
       });
     }
+    // --- and the same thing per DAY, for the run chart ---------------------
+    // A date with no absences at all still gets no row: school may not have
+    // run. 2026-09-04 and Labor Day 2026-09-07 are exactly that, and plotting
+    // them as zero would invent two perfect days.
+    type DayTot = {
+      date: string; studentsAbsent: number; fullDaysStrict: number;
+      misrecordDaysByGap: number[]; partialDays: number;
+    };
+    const perDay = new Map<string, DayTot>();
+    for (const r of out) {
+      let t = perDay.get(r.date);
+      if (!t) {
+        t = { date: r.date, studentsAbsent: 0, fullDaysStrict: 0,
+              misrecordDaysByGap: [0, 0, 0], partialDays: 0 };
+        perDay.set(r.date, t);
+      }
+      t.studentsAbsent++;
+      const gap = r.blocksThatDay - r.absentBlocks;
+      if (gap <= 0) { t.fullDaysStrict++; continue; }
+      if (r.presentBlocks >= gap) {
+        const i = gap <= 1 ? 0 : gap === 2 ? 1 : 2;
+        t.misrecordDaysByGap[i]++;
+      } else {
+        t.partialDays++;
+      }
+    }
+    const dayRows = [...perDay.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
+    for (let pass = 0; pass < 20; pass++) {
+      const r: { moreToClear?: boolean } = await ctx.runMutation(
+        internal.sisStats.replaceAbsenceDayTotals, { syncedAt, rows: [], clearFirst: true },
+      );
+      if (!r.moreToClear) break;
+    }
+    for (let i = 0; i < dayRows.length; i += 200) {
+      await ctx.runMutation(internal.sisStats.replaceAbsenceDayTotals, {
+        syncedAt, rows: dayRows.slice(i, i + 200), clearFirst: false,
+      });
+    }
+
     summary.totalRows = totalRows.length;
+    summary.dayRows = dayRows.length;
     return summary;
   },
 });

@@ -30031,6 +30031,7 @@
                 if (typeof updateDetentionLists === 'function') updateDetentionLists();
             } else if (subtab === 'attendance') {
                 renderAttendanceWatch();
+                renderAbsenceRunChart();
             } else if (subtab === 'earlyWarning') {
                 renderEarlyWarning();
             } else if (subtab === 'uniform') {
@@ -30441,6 +30442,174 @@
                 // textContent, so nothing here can be escaped twice or not at all.
                 foot.textContent = bits.join(' ');
             }
+        }
+
+        // ========================================
+        // THE ATTENDANCE RUN CHART
+        //
+        // Attendance Watch answers "who is absent a lot". It cannot answer "is
+        // this getting better or worse", and that is the question any
+        // intervention is actually judged on. A run chart plots the measure in
+        // time order against its MEDIAN and applies a small set of published
+        // signal rules, so a real change is told apart from the bouncing every
+        // measure does anyway.
+        //
+        // THE MEDIAN, NOT THE MEAN. Absence counts are skewed by the odd very
+        // bad day, and a mean chases those while a median does not.
+        //
+        // ONE SERIES AT A TIME. A run chart reads against ONE median; two lines
+        // sharing a chart leave it ambiguous which median the rules are
+        // testing, which is how a run chart quietly becomes decoration.
+        // ========================================
+
+        let _runCache = null;
+        let _runWhich = 'full';
+        let _runBusy = false;
+
+        function setAbsenceRunSeries(which) {
+            _runWhich = String(which || 'full');
+            const bar = document.getElementById('attRunToggle');
+            if (bar) Array.prototype.forEach.call(bar.querySelectorAll('.analytics-tab'), b => {
+                b.classList.toggle('active', b.getAttribute('data-run') === _runWhich);
+            });
+            renderAbsenceRunChart();
+        }
+
+        async function loadAbsenceSeries(force) {
+            if (_runCache && !force) return _runCache;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) {
+                return { allowed: false, needsSignIn: true, points: [],
+                         reason: 'The attendance trend comes from the SIS, which needs a Microsoft sign-in.' };
+            }
+            const today = wcIsoDay ? wcIsoDay(new Date()) : new Date().toISOString().slice(0, 10);
+            try {
+                const res = await auth.convexQuery('attendanceList:dailyAbsenceSeries',
+                    { today: today, days: 30 }, session.idToken);
+                _runCache = res;
+                return res;
+            } catch (e) {
+                const msg = (e && e.message) || String(e);
+                if (/\b401\b|unauthor/i.test(msg)) {
+                    return { allowed: false, needsSignIn: true, points: [],
+                             reason: 'Your sign-in expired. Sign in again to load the trend.' };
+                }
+                return { allowed: false, points: [], reason: 'The trend could not be loaded: ' + msg };
+            }
+        }
+
+        /**
+         * The chart body. PURE: it takes the server's answer and the rules
+         * module and returns markup, so a test runs it with no DOM and no
+         * network.
+         */
+        function renderRunChartBody(res, R, which, settings) {
+            if (!res || res.allowed === false) {
+                return '<p class="wc-att-basis-note">' +
+                    escapeHtml((res && res.reason) || 'Not available to your access level.') + '</p>';
+            }
+            const rows = res.points || [];
+            if (rows.length < 5) {
+                return '<p class="wc-att-basis-note">' + escapeHtml(
+                    'Only ' + rows.length + ' school day' + (rows.length === 1 ? '' : 's') +
+                    ' of data so far. A run chart needs about ten before its signals mean anything, '
+                    + 'and twenty to read confidently.') + '</p>';
+            }
+
+            const series = R.absenceSeriesValues(rows, settings, which);
+            const sig = R.runChartSignals(series);
+            const vals = series.map(p => p.value);
+            const hi = Math.max.apply(null, vals);
+            const lo = Math.min.apply(null, vals);
+            // A FLOOR OF ZERO AND A LITTLE HEADROOM. Starting the axis at the
+            // lowest point exaggerates every wobble into a cliff, which is the
+            // classic way a chart lies without a single wrong number.
+            const top = Math.max(1, hi + Math.max(1, Math.round((hi - lo) * 0.15)));
+            const W = 720, H = 220, L = 42, Rr = 12, T = 12, B = 34;
+            const pw = W - L - Rr, ph = H - T - B;
+            const x = i => L + (series.length === 1 ? pw / 2 : (pw * i) / (series.length - 1));
+            const y = v => T + ph - (ph * (Number(v) || 0)) / top;
+
+            const inSpan = new Array(series.length).fill(false);
+            (sig.shifts || []).concat(sig.trends || []).forEach(s => {
+                for (let i = s.from; i <= s.to && i < inSpan.length; i++) inSpan[i] = true;
+            });
+
+            const line = series.map((p, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(p.value).toFixed(1)).join(' ');
+            const dots = series.map((p, i) =>
+                '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(p.value).toFixed(1) + '" r="'
+                + (inSpan[i] ? 4 : 3) + '" class="wc-rc-dot' + (inSpan[i] ? ' wc-rc-sig' : '') + '">'
+                + '<title>' + escapeHtml(p.date + ': ' + p.value) + '</title></circle>').join('');
+            // Sparse labels: every date would be unreadable at this width.
+            const step = Math.max(1, Math.ceil(series.length / 6));
+            const labels = series.map((p, i) => (i % step === 0 || i === series.length - 1)
+                ? '<text x="' + x(i).toFixed(1) + '" y="' + (H - 12) + '" class="wc-rc-xlab">'
+                  + escapeHtml(String(p.date).slice(5)) + '</text>' : '').join('');
+            const medY = y(sig.median);
+
+            const svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" class="wc-rc-svg" role="img" '
+                + 'aria-label="' + escapeHtml('Daily absence run chart, median ' + sig.median) + '">'
+                + '<line x1="' + L + '" y1="' + medY.toFixed(1) + '" x2="' + (W - Rr) + '" y2="' + medY.toFixed(1)
+                    + '" class="wc-rc-median"/>'
+                + '<text x="' + (L - 6) + '" y="' + (medY + 4).toFixed(1) + '" class="wc-rc-ylab">'
+                    + escapeHtml(String(sig.median)) + '</text>'
+                + '<text x="' + (L - 6) + '" y="' + (T + 6) + '" class="wc-rc-ylab">' + top + '</text>'
+                + '<text x="' + (L - 6) + '" y="' + (T + ph) + '" class="wc-rc-ylab">0</text>'
+                + '<path d="' + line + '" class="wc-rc-line"/>' + dots + labels
+                + '</svg>';
+
+            const label = which === 'all' ? 'students absent'
+                : which === 'partial' ? 'partial-day absences' : 'whole-day absences';
+            const head = '<p class="wc-rc-head">' + escapeHtml(
+                series.length + ' school days, median ' + sig.median + ' ' + label + ' a day'
+                + (res.schoolDaysOnFile && res.schoolDaysOnFile > series.length
+                    ? ' (of ' + res.schoolDaysOnFile + ' on file)' : '')) + '</p>';
+
+            // WHAT THE CHART SAYS, IN WORDS. A chart nobody can read is a
+            // decoration; the rules exist precisely so the reading is not a
+            // matter of taste.
+            let verdict;
+            if (sig.signals.length) {
+                verdict = '<ul class="wc-rc-signals">' + sig.signals.map(s =>
+                    '<li class="wc-rc-signal wc-rc-' + escapeHtml(s.rule) + '">'
+                    + escapeHtml(s.text) + '</li>').join('') + '</ul>';
+            } else {
+                verdict = '<p class="wc-rc-none">' + escapeHtml(
+                    'No signal: this is ordinary variation, not a change. '
+                    + (sig.runsVerdict === 'not enough data'
+                        ? 'Too few points off the median to run the runs test yet.'
+                        : sig.runs + ' runs, which is what ' + sig.usefulObservations
+                          + ' points would be expected to produce.')) + '</p>';
+            }
+            const foot = '<p class="wc-att-basis-note">' + escapeHtml(
+                'Counts, not rates: enrolment grew over this period and there is no per-day enrolment '
+                + 'on file, so a percentage would be invented. Days school did not run are absent from '
+                + 'the series rather than plotted as zero.'
+                + (res.truncated ? ' The day table is larger than this screen reads; tell an administrator.' : ''))
+                + '</p>';
+            return head + svg + verdict + foot;
+        }
+
+        async function renderAbsenceRunChart(force) {
+            const host = document.getElementById('attRunChart');
+            if (!host) return;
+            const R = window.WildcatRoster;
+            if (!R || typeof R.runChartSignals !== 'function') {
+                host.innerHTML = '<p class="wc-att-basis-note">Trend rules did not load. Refresh the page.</p>';
+                return;
+            }
+            // THE GUARD IS ON THE FETCH, NOT THE RENDER, so a toggle pressed
+            // during the load is not dropped and never retried.
+            let res = _runCache;
+            if (!res || force) {
+                if (_runBusy) return;
+                _runBusy = true;
+                host.innerHTML = '<p class="wc-att-basis-note">Loading the trend&hellip;</p>';
+                try { res = await loadAbsenceSeries(force === true); }
+                finally { _runBusy = false; }
+            }
+            host.innerHTML = renderRunChartBody(res, R, _runWhich, riskSettings);
         }
 
         // ========================================

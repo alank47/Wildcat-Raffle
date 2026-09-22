@@ -887,6 +887,194 @@
     };
   }
 
+  // =====================================================================
+  // RUN CHART RULES
+  //
+  // A run chart is a measure in time order against its MEDIAN, read with a
+  // small set of signal rules. Its whole value is telling a real change apart
+  // from the bouncing every measure does anyway -- so that an intervention is
+  // judged on evidence rather than on whether last week felt better.
+  //
+  // THE MEDIAN, NOT THE MEAN, and that is not a preference. Absence counts are
+  // skewed by the odd very bad day, and a mean chases those while a median
+  // does not. The median is also what the published rules below are built on.
+  //
+  // WHAT IS EXACT AND WHAT IS A TABLE, stated because they differ in
+  // confidence. SHIFT and TREND are exact combinatorial rules and are
+  // implemented exactly. The RUNS test compares the observed number of runs
+  // against published limits (Swed and Eisenhart, as tabulated for run charts
+  // by Perla, Provost and Murray) -- a table reproduced here rather than
+  // derived, so it is reported as informational and never as the only signal.
+  // =====================================================================
+
+  /** Points NOT on the median are the "useful observations" every rule counts. */
+  function runChartMedian(values) {
+    // Number(null) IS 0, and 0 is finite. So a null slipped through as a real
+    // zero and dragged the median down -- the same trap the cash recount hit
+    // with an unreadable amount. Absent has to be refused explicitly.
+    var v = (values || [])
+      .filter(function (x) { return x !== null && x !== undefined && x !== ''; })
+      .map(function (x) { return Number(x); })
+      .filter(function (x) { return isFinite(x); })
+      .sort(function (a, b) { return a - b; });
+    if (!v.length) return null;
+    var mid = Math.floor(v.length / 2);
+    return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
+  }
+
+  /**
+   * Published limits for the number of runs, by useful observations.
+   *
+   * Outside 10 to 40 the test is NOT applied: below ten there is not enough to
+   * say anything, and above forty this table stops. Saying "not enough data"
+   * is the honest answer and is what `runsVerdict` returns.
+   */
+  var RUNS_LIMITS = {
+    10: [3, 9],   11: [3, 10],  12: [3, 11],  13: [4, 11],  14: [4, 12],
+    15: [5, 12],  16: [5, 13],  17: [5, 13],  18: [6, 14],  19: [6, 15],
+    20: [6, 16],  21: [7, 16],  22: [7, 17],  23: [7, 17],  24: [8, 18],
+    25: [8, 18],  26: [9, 19],  27: [9, 20],  28: [10, 20], 29: [10, 21],
+    30: [11, 22], 31: [11, 22], 32: [11, 23], 33: [11, 24], 34: [12, 24],
+    35: [12, 25], 36: [13, 25], 37: [13, 26], 38: [14, 26], 39: [14, 27],
+    40: [15, 27]
+  };
+
+  /**
+   * Every signal in one pass.
+   *
+   * `points` are { date, value } in time order. Returns the median, the runs
+   * count with its verdict, and the exact index spans of any shift or trend so
+   * a chart can mark them rather than merely announce them.
+   *
+   * A POINT EXACTLY ON THE MEDIAN IS SKIPPED for shift and runs, which is the
+   * published rule: it is on neither side, so it neither extends nor breaks a
+   * run. It is NOT skipped for the trend rule, which reads the raw sequence.
+   */
+  function runChartSignals(points) {
+    var pts = (points || []).filter(function (p) {
+      return p && isFinite(Number(p.value));
+    }).map(function (p) {
+      return { date: p.date, value: Number(p.value) };
+    });
+
+    var out = {
+      points: pts, n: pts.length, median: null,
+      usefulObservations: 0, runs: 0, runsLimits: null, runsVerdict: 'not enough data',
+      shifts: [], trends: [], signals: []
+    };
+    if (pts.length < 2) return out;
+
+    var med = runChartMedian(pts.map(function (p) { return p.value; }));
+    out.median = med;
+
+    // --- runs, and the shift rule, over points off the median -------------
+    var sides = [];   // { i, side } for every point not on the median
+    pts.forEach(function (p, i) {
+      if (p.value === med) return;
+      sides.push({ i: i, side: p.value > med ? 1 : -1 });
+    });
+    out.usefulObservations = sides.length;
+
+    var runs = 0, runStart = 0;
+    for (var k = 0; k < sides.length; k++) {
+      if (k === 0 || sides[k].side !== sides[k - 1].side) {
+        // A run just ended; check the one before it for length.
+        if (k > 0 && (k - runStart) >= 6) {
+          out.shifts.push({ from: sides[runStart].i, to: sides[k - 1].i, length: k - runStart,
+                            side: sides[runStart].side > 0 ? 'above' : 'below' });
+        }
+        runs++; runStart = k;
+      }
+    }
+    if (sides.length && (sides.length - runStart) >= 6) {
+      out.shifts.push({ from: sides[runStart].i, to: sides[sides.length - 1].i,
+                        length: sides.length - runStart,
+                        side: sides[runStart].side > 0 ? 'above' : 'below' });
+    }
+    out.runs = runs;
+
+    var lim = RUNS_LIMITS[out.usefulObservations];
+    if (lim) {
+      out.runsLimits = { low: lim[0], high: lim[1] };
+      out.runsVerdict = runs < lim[0] ? 'too few'
+        : runs > lim[1] ? 'too many' : 'as expected';
+    }
+
+    // --- the trend rule, over the raw sequence ---------------------------
+    //
+    // FIVE OR MORE POINTS ALL MOVING ONE WAY. Equal consecutive values break
+    // neither direction and are skipped, which is the published handling: a
+    // repeated value is no evidence either way, and treating it as a break
+    // would hide a genuine climb that happens to plateau for a day.
+    var dir = 0, start = 0, count = 1;
+    for (var j = 1; j < pts.length; j++) {
+      var d = pts[j].value > pts[j - 1].value ? 1 : pts[j].value < pts[j - 1].value ? -1 : 0;
+      if (d === 0) continue;
+      if (d === dir) { count++; }
+      else { dir = d; start = j - 1; count = 2; }
+      if (count >= 5) {
+        var last = out.trends[out.trends.length - 1];
+        if (last && last.from === start) { last.to = j; last.length = count; }
+        else out.trends.push({ from: start, to: j, length: count, direction: dir > 0 ? 'up' : 'down' });
+      }
+    }
+
+    // --- what a person should read ---------------------------------------
+    out.shifts.forEach(function (s) {
+      out.signals.push({
+        rule: 'shift',
+        text: s.length + ' points in a row ' + s.side + ' the median. That is a real change, not noise.'
+      });
+    });
+    out.trends.forEach(function (t) {
+      out.signals.push({
+        rule: 'trend',
+        text: t.length + ' points in a row moving ' + t.direction + '. That is a real change, not noise.'
+      });
+    });
+    if (out.runsVerdict === 'too few') {
+      out.signals.push({ rule: 'runs',
+        text: 'Only ' + out.runs + ' runs where ' + out.runsLimits.low + ' to ' + out.runsLimits.high
+          + ' would be expected: the measure is drifting rather than bouncing.' });
+    } else if (out.runsVerdict === 'too many') {
+      out.signals.push({ rule: 'runs',
+        text: out.runs + ' runs where ' + out.runsLimits.low + ' to ' + out.runsLimits.high
+          + ' would be expected: something is alternating, which usually means two things are mixed together.' });
+    }
+    return out;
+  }
+
+  /**
+   * Turn the server's per-day rows into the one series a run chart plots.
+   *
+   * `which` is 'full', 'partial' or 'all'. The misrecord threshold is applied
+   * HERE rather than on the server, for the same reason it is everywhere else:
+   * it is a display rule the school will argue about, and it belongs where it
+   * can be changed without a deploy.
+   *
+   * ONE SERIES AT A TIME, on purpose. A run chart reads against ONE median;
+   * two lines sharing a chart leave it ambiguous which median the signal rules
+   * are testing, which is how a run chart quietly becomes decoration.
+   */
+  function absenceSeriesValues(rows, settings, which) {
+    var s = daySettingsOrDefault(settings);
+    var pick = String(which || 'full');
+    return (rows || []).map(function (r) {
+      var strict = Number(r && r.fullDaysStrict) || 0;
+      var gaps = (r && Array.isArray(r.misrecordDaysByGap)) ? r.misrecordDaysByGap : [];
+      var counted = 0;
+      for (var i = 0; i < gaps.length; i++) {
+        if ((i + 1) <= s.misrecordAt) counted += Number(gaps[i]) || 0;
+      }
+      var full = strict + counted;
+      var total = Number(r && r.studentsAbsent) || 0;
+      var value = pick === 'all' ? total
+        : pick === 'partial' ? Math.max(0, total - full)
+        : full;
+      return { date: (r && r.date) || '', value: value, studentsAbsent: total, full: full };
+    });
+  }
+
   /**
    * Rank students by attendance, worst first.
    *
@@ -995,6 +1183,10 @@
     classifyAbsenceDay: classifyAbsenceDay,
     absenceDayTally: absenceDayTally,
     absenceSplit: absenceSplit,
+    runChartMedian: runChartMedian,
+    runChartSignals: runChartSignals,
+    absenceSeriesValues: absenceSeriesValues,
+    RUNS_LIMITS: RUNS_LIMITS,
     median: median,
     dailyGoal: dailyGoal,
     quietStudents: quietStudents,

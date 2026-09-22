@@ -248,3 +248,81 @@ export const studentPeriods = query({
     };
   },
 });
+
+/**
+ * THE DAILY ABSENCE SERIES, for a run chart.
+ *
+ * WHY A SERIES AND NOT A TOTAL. Attendance Watch answers "who is absent a
+ * lot"; it cannot answer "is this getting better or worse", and that is the
+ * question an intervention is judged on. A run chart against the median tells
+ * a real change apart from the bouncing every measure does anyway.
+ *
+ * COUNTS ONLY, and the browser draws and decides. The median, the signal rules
+ * and the misrecord threshold all live in WildcatRoster, where they can be
+ * argued with and unit-tested without a deploy.
+ *
+ * FUTURE DATES ARE EXCLUDED. Two students carry pre-entered absences running to
+ * 2026-10-09; charting them would put ten phantom two-absence days on the end
+ * of the series and drag the median with them. `today` comes from the browser,
+ * never from a server clock, because a server-side UTC date rolls over at 5pm
+ * Pacific.
+ *
+ * A DAY SCHOOL DID NOT RUN HAS NO ROW AND STAYS ABSENT FROM THE SERIES. There
+ * is no attendance at all on 2026-09-04 or Labor Day 2026-09-07, and plotting
+ * those as zero would invent two spectacular days and pull the median down.
+ */
+export const dailyAbsenceSeries = query({
+  args: {
+    /** "YYYY-MM-DD" from the browser. Anything after this is dropped. */
+    today: v.string(),
+    /** How many school days to return, most recent last. */
+    days: v.optional(v.number()),
+  },
+  handler: async (ctx, { today, days }) => {
+    const staff = await requireStaff(ctx);
+    if (!ATTENDANCE_ROLES.includes(staff.role)) {
+      return {
+        allowed: false as const,
+        reason:
+          "The attendance trend is available to administrators and the PBIS team. " +
+          "Ask an administrator to set your access level to PBIS Team.",
+        points: [], truncated: false,
+      };
+    }
+    const want = Math.min(Math.max(5, Number(days) || 25), 120);
+    const day = String(today || "").slice(0, 10);
+
+    // ~180 rows a year, so one read covers it. The cap is about noticing: if
+    // this table ever outgrows it the chart must say so rather than quietly
+    // charting a slice.
+    const CAP = 400;
+    const raw = await ctx.db.query("psAbsenceDayTotals").take(CAP + 1);
+    const truncated = raw.length > CAP;
+
+    const usable = raw
+      .filter((r) => {
+        const d = String(r.date || "").slice(0, 10);
+        return d.length === 10 && (!day || d <= day);
+      })
+      .sort((a, b) => (String(a.date) < String(b.date) ? -1 : 1));
+
+    const points = usable.slice(-want).map((r) => ({
+      date: r.date,
+      studentsAbsent: r.studentsAbsent,
+      fullDaysStrict: r.fullDaysStrict,
+      misrecordDaysByGap: r.misrecordDaysByGap ?? [],
+      partialDays: r.partialDays,
+    }));
+
+    return {
+      allowed: true as const,
+      reason: null,
+      points,
+      // So a screen can say "25 of 27 school days" rather than implying the
+      // series is everything there is.
+      schoolDaysOnFile: usable.length,
+      truncated,
+      syncedAt: raw.length ? (raw[0].syncedAt ?? null) : null,
+    };
+  },
+});

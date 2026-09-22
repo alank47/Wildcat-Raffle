@@ -670,6 +670,37 @@ export default defineSchema({
     syncedAt: v.string(),
   }).index("by_studentNumber", ["studentNumber"]),
 
+  /**
+   * ONE ROW PER SCHOOL DAY: how many students were absent, and how that day
+   * split into whole days and partial ones.
+   *
+   * WHY A PER-DAY TABLE RATHER THAN SUMMING psAttendanceDays AT READ TIME.
+   * That table is ~2,579 rows today and grows all year -- by spring it is well
+   * past Convex's 4,096 document limit, so a chart that summed it would work
+   * now and stop in March. This is about 180 rows a year, written by the same
+   * rebuild, so the run chart costs one cheap read forever.
+   *
+   * COMPONENTS, NOT A VERDICT, exactly as psAbsenceTotals stores them: the
+   * misrecord threshold is a display rule and stays in the browser.
+   *
+   * A DATE WITH NO ROW IS A DAY SCHOOL DID NOT RUN, and that is load-bearing
+   * for a run chart -- 2026-09-04 and Labor Day 2026-09-07 have no attendance
+   * at all, and plotting them as zero-absence days would invent two
+   * spectacularly good days and drag the median down.
+   */
+  psAbsenceDayTotals: defineTable({
+    /** "YYYY-MM-DD", exactly as ATTENDANCE.ATT_DATE returns it. */
+    date: v.string(),
+    /** Distinct students with at least one absent block that day. */
+    studentsAbsent: v.number(),
+    /** Every block that ran was missed. No interpretation involved. */
+    fullDaysStrict: v.number(),
+    /** Days whose only non-absent blocks were explicitly marked present, by gap size. */
+    misrecordDaysByGap: v.array(v.number()),
+    partialDays: v.number(),
+    syncedAt: v.string(),
+  }).index("by_date", ["date"]),
+
   psMissingWork: defineTable({
     studentNumber: v.string(),
     assignmentSectionId: v.string(),
