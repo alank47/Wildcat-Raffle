@@ -438,7 +438,10 @@ function seedWith(referrals, opts = {}) {
       mirroredAt: "x",
     }],
     psAbsenceDayTotals: dayList.map((date) => ({
-      date, studentsAbsent: 30, fullDaysStrict: 5, misrecordDaysByGap: [], partialDays: 10, syncedAt: "x",
+      date, studentsAbsent: 30, fullDaysStrict: 5, misrecordDaysByGap: [], partialDays: 10,
+      // syncedAt is what attendanceDays stamps every time it writes, and it is
+      // what freshness is actually measured by. Default to now.
+      syncedAt: "syncedAt" in opts ? opts.syncedAt : new Date().toISOString(),
     })),
     legacyMirror: referrals.map((r) => ({
       doc: "referrals", collection: "behaviorReferrals", key: r.id, payload: r,
@@ -850,14 +853,40 @@ console.log("\nA STALE CALENDAR STOPS THE SWEEP, LOUDLY\n");
     stale.tables.referralPingLog.length === 0);
   check("...and the summary shows the calendar's health, so a dry run can be trusted",
     stale.out.newestSchoolDay === "2026-09-04" && stale.out.calendarStale === true &&
-    stale.out.calendarLagDays === 12,
-    JSON.stringify({ n: stale.out.newestSchoolDay, s: stale.out.calendarStale, l: stale.out.calendarLagDays }));
+    stale.out.calendarDateLagDays === 12,
+    JSON.stringify({ n: stale.out.newestSchoolDay, s: stale.out.calendarStale, l: stale.out.calendarDateLagDays }));
   const recovered = await runSweep([OPEN], { today: "2026-09-16" });
   check("...proved: once the calendar is current again it sends", recovered.sentMail.length === 1);
 
+  // THE MEASUREMENT PRODUCTION CORRECTED WITHIN MINUTES. PowerSchool holds
+  // attendance dated into the FUTURE: on 2026-09-22 the newest row was
+  // 2026-10-09, seventeen days ahead. So "newest school day vs today" was
+  // permanently negative, and a rebuild that died this morning would not have
+  // looked stale until October. Freshness is the age of the last WRITE.
+  const ahead = SEPT_SCHOOL_DAYS.concat(["2026-10-05", "2026-10-06", "2026-10-09"]);
+  const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
+
+  const deadJob = await runSweep([OPEN], { schoolDays: ahead, syncedAt: daysAgo(9), today: "2026-09-16" });
+  check("a calendar full of future dates does NOT look fresh when the job is dead",
+    deadJob.sentMail.length === 0, JSON.stringify(deadJob.out.note));
+  check("...and the note gives the age of the last write, not of the data",
+    /last written 9 days ago/.test(String(deadJob.out.note)), String(deadJob.out.note));
+
+  const liveJob = await runSweep([OPEN], { schoolDays: ahead, syncedAt: daysAgo(0), today: "2026-09-16" });
+  check("...while the same future-dated calendar written today is fine",
+    liveJob.sentMail.length === 1, String(liveJob.out.note));
+  check("...and dates beyond today are never counted toward an age",
+    liveJob.tables.referralPingLog[0]?.ageSchoolDays === 2,
+    String(liveJob.tables.referralPingLog[0]?.ageSchoolDays));
+
+  const unstamped = await runSweep([OPEN], { syncedAt: "", today: "2026-09-16" });
+  check("a calendar with no write stamp is refused: nothing can vouch for it",
+    unstamped.sentMail.length === 0 && /vouch/.test(String(unstamped.out.note)),
+    String(unstamped.out.note));
+
   // A long weekend is three days. The guard must not fire on one.
   const friday = SEPT_SCHOOL_DAYS.filter((d) => d <= "2026-09-18");
-  const tuesday = await runSweep([OPEN], { schoolDays: friday, today: "2026-09-22" });
+  const tuesday = await runSweep([OPEN], { schoolDays: friday, syncedAt: daysAgo(3), today: "2026-09-22" });
   check("a three-day weekend does NOT trip the staleness guard",
     tuesday.sentMail.length === 1, String(tuesday.out.note));
 }

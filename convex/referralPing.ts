@@ -50,6 +50,9 @@ const MAX_SENDS_PER_SWEEP = 12;
  * a rebuild that has been failing since the week before.
  */
 const MAX_CALENDAR_LAG_DAYS = 4;
+/* Four clears a three-day weekend with a day to spare, and still catches a
+ * rebuild that has been failing since the week before. It applies to both the
+ * age of the last write and the gap between the last school day and today. */
 
 /** A "queued" row older than this never finished; a sweep takes seconds. */
 const STUCK_QUEUED_MS = 6 * 60 * 60 * 1000;
@@ -121,6 +124,24 @@ export const due = internalQuery({
       .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
     const newestSchoolDay = schoolDays.length ? schoolDays[schoolDays.length - 1] : null;
 
+    // WHEN WAS THE CALENDAR LAST WRITTEN, not what dates it happens to hold.
+    //
+    // The obvious freshness test -- how far the newest school day is behind
+    // today -- is the wrong measurement here, and production said so within
+    // minutes of shipping it. PowerSchool holds attendance dated into the
+    // FUTURE: on 2026-09-22 the newest row was 2026-10-09, seventeen days
+    // ahead. So "newest date vs today" was permanently negative, and a rebuild
+    // that died this morning would not have looked stale until October.
+    //
+    // syncedAt is what the rebuild stamps every time it writes, so it answers
+    // the question actually being asked: is that job still running? It is
+    // immune to whatever dates the data contains.
+    let newestSync: string | null = null;
+    for (const r of dayRows) {
+      const t = String(r.syncedAt ?? "");
+      if (t && (newestSync === null || t > newestSync)) newestSync = t;
+    }
+
     // HOW STALE IS THE CALENDAR? Emptiness was the only thing checked, and it
     // is the rarer fault. attendanceDays:rebuild clears psAbsenceDayTotals and
     // rewrites it; if it starts failing -- a PowerSchool outage, a credential
@@ -129,10 +150,27 @@ export const due = internalQuery({
     // Chasing would stop dead while every diagnostic still read healthy, which
     // is the worst failure this feature has and the one it would report as
     // success. Days, not rows: a long weekend is three.
-    const staleDays = newestSchoolDay && day
+    const syncedAgeMs = newestSync !== null && Number.isFinite(Date.parse(newestSync))
+      ? Date.now() - Date.parse(newestSync)
+      : null;
+    const syncAgeDays = syncedAgeMs === null ? null
+      : Math.floor(syncedAgeMs / 86400000);
+
+    // Two different faults, so two checks.
+    //   the rebuild has stopped running   -> syncAgeDays
+    //   it runs but the data stops short  -> dateLagDays, kept because a
+    //                                        truncated read is a real failure
+    //                                        mode and stamps a fresh syncedAt
+    //                                        over a short calendar.
+    const dateLagDays = newestSchoolDay && day
       ? Math.floor((Date.parse(day + "T00:00:00Z") - Date.parse(newestSchoolDay + "T00:00:00Z")) / 86400000)
       : null;
-    const calendarStale = staleDays !== null && staleDays > MAX_CALENDAR_LAG_DAYS;
+    const staleDays = syncAgeDays;
+    const calendarStale =
+      (syncAgeDays !== null && syncAgeDays > MAX_CALENDAR_LAG_DAYS) ||
+      (dateLagDays !== null && dateLagDays > MAX_CALENDAR_LAG_DAYS) ||
+      // No stamp at all means nothing can vouch for this calendar.
+      (newestSync === null && schoolDays.length > 0);
 
     const mirror = await ctx.db
       .query("legacyMirror").withIndex("by_doc", (q) => q.eq("doc", "referrals")).take(2000);
@@ -172,6 +210,9 @@ export const due = internalQuery({
       settings,
       schoolDaysKnown: schoolDays.length,
       newestSchoolDay,
+      newestSync,
+      syncAgeDays,
+      dateLagDays,
       staleDays,
       calendarStale,
       schoolDaySource: SCHOOL_DAY_SOURCE,
@@ -271,8 +312,14 @@ export const sweep = internalAction({
       // so the failure mode is silence.
       return {
         ...summarise(plan), sent: 0,
-        note: `the school-day calendar stops at ${plan.newestSchoolDay}, ${plan.staleDays} days `
-          + `before ${plan.today}; attendanceDays:rebuild is probably failing. Nothing sent.`,
+        note: plan.newestSync === null
+          ? `the school-day calendar carries no syncedAt stamp, so nothing can vouch for it. Nothing sent.`
+          : (plan.syncAgeDays !== null && plan.syncAgeDays > MAX_CALENDAR_LAG_DAYS)
+            ? `the school-day calendar was last written ${plan.syncAgeDays} days ago `
+              + `(${plan.newestSync}); attendanceDays:rebuild is probably failing. Nothing sent.`
+            : `the school-day calendar stops at ${plan.newestSchoolDay}, ${plan.dateLagDays} days `
+              + `before ${plan.today}, so the read behind attendanceDays:rebuild is truncated. `
+              + `Nothing sent.`,
       };
     }
 
@@ -431,7 +478,9 @@ function summarise(plan: any) {
     // that does not show how current it is cannot be used to check the sweep.
     schoolDaysKnown: plan.schoolDaysKnown,
     newestSchoolDay: plan.newestSchoolDay ?? null,
-    calendarLagDays: plan.staleDays ?? null,
+    calendarWrittenAt: plan.newestSync ?? null,
+    calendarWrittenDaysAgo: plan.syncAgeDays ?? null,
+    calendarDateLagDays: plan.dateLagDays ?? null,
     calendarStale: plan.calendarStale ?? null,
     referrals: plan.referrals,
     due: plan.due.length, agedOut: plan.agedOut, skippedWhy: plan.skippedWhy,
