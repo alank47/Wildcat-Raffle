@@ -60,6 +60,8 @@ import type * as pushSend from "../pushSend.js";
 import type * as raceRollup from "../raceRollup.js";
 import type * as referralMail from "../referralMail.js";
 import type * as referralMailRules from "../referralMailRules.js";
+import type * as referralPing from "../referralPing.js";
+import type * as referralPingRules from "../referralPingRules.js";
 import type * as restrictedPolicy from "../restrictedPolicy.js";
 import type * as roleChangeRules from "../roleChangeRules.js";
 import type * as rosterEmail from "../rosterEmail.js";
@@ -150,6 +152,8 @@ declare const fullApi: ApiFromModules<{
   raceRollup: typeof raceRollup;
   referralMail: typeof referralMail;
   referralMailRules: typeof referralMailRules;
+  referralPing: typeof referralPing;
+  referralPingRules: typeof referralPingRules;
   restrictedPolicy: typeof restrictedPolicy;
   roleChangeRules: typeof roleChangeRules;
   rosterEmail: typeof rosterEmail;

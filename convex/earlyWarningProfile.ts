@@ -1167,3 +1167,81 @@ export const findStaff = internalQuery({
     };
   },
 });
+
+
+/**
+ * HOW LONG HAVE THE OPEN REFERRALS BEEN OPEN?
+ *
+ * Grounds a reminder design in the real record rather than a guess at what a
+ * threshold should be. STATUS FIELDS AND AGES ONLY -- no student name, no
+ * description, no admin notes. A referral names a child and says what they
+ * did, and a diagnostic has no business carrying that.
+ *
+ * TWO CLOSURES EXIST on these payloads and they are not the same thing:
+ * `closedAt` / `closedBy` / `closingActions`, and `loopClosed` /
+ * `loopClosedAt` / `loopClosedBy`. A referral can be closed by an
+ * administrator while the loop back to the teacher who filed it is still open,
+ * and a reminder that conflated them would nag about the wrong thing.
+ */
+export const openReferrals = internalQuery({
+  args: { today: v.optional(v.string()) },
+  handler: async (ctx, { today }) => {
+    const rows = await ctx.db
+      .query("legacyMirror").withIndex("by_doc", (q) => q.eq("doc", "referrals")).take(2000);
+    const now = Date.parse(String(today || "") + "T12:00:00Z");
+    const nowMs = Number.isFinite(now) ? now : Date.now();
+
+    const out: Array<Record<string, any>> = [];
+    const statuses: Record<string, number> = {};
+    for (const r of rows) {
+      const p: any = r.payload;
+      if (!p || typeof p !== "object") continue;
+      const status = String(p.status ?? "(none)");
+      statuses[status] = (statuses[status] || 0) + 1;
+      const filed = String(p.submittedAt || p.dateTime || p.date || "");
+      const t = Date.parse(filed);
+      const ageDays = Number.isFinite(t) ? Math.floor((nowMs - t) / 86400000) : null;
+      out.push({
+        // NO NAME, NO DESCRIPTION. Just enough to design a threshold.
+        status,
+        closed: Boolean(p.closedAt),
+        closedAt: p.closedAt ? String(p.closedAt).slice(0, 10) : null,
+        loopClosed: p.loopClosed === true || Boolean(p.loopClosedAt),
+        loopClosedAt: p.loopClosedAt ? String(p.loopClosedAt).slice(0, 10) : null,
+        severeBypass: p.severeBypass === true,
+        filedOn: filed ? String(filed).slice(0, 10) : null,
+        ageDays,
+        hasResolution: Boolean(p.resolutionType),
+        hasConsequence: Boolean(p.consequence),
+        forwarded: Boolean(p.forwardedTo),
+      });
+    }
+    out.sort((a, b) => (Number(b.ageDays) || 0) - (Number(a.ageDays) || 0));
+    return {
+      referrals: rows.length,
+      statusCounts: statuses,
+      stillOpen: out.filter((x) => !x.closed).length,
+      closedButLoopOpen: out.filter((x) => x.closed && !x.loopClosed).length,
+      fullyClosed: out.filter((x) => x.closed && x.loopClosed).length,
+      rows: out,
+    };
+  },
+});
+
+/** What the referral mails actually sent: counts only, no addresses. */
+export const referralMailHistory = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("referralMailLog").take(500);
+    return {
+      entries: rows.length,
+      byState: rows.reduce((a: Record<string, number>, r) => {
+        a[r.state] = (a[r.state] || 0) + 1; return a;
+      }, {}),
+      recipientCounts: rows.map((r) => ({
+        state: r.state, recipients: r.recipients ?? null, sent: r.sent ?? null,
+        at: String(r.at || "").slice(0, 10), reason: r.reason ?? null,
+      })),
+    };
+  },
+});

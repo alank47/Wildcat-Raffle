@@ -123,4 +123,30 @@ crons.cron(
   { reason: "nightly" },
 );
 
+/**
+ * Chase referrals nobody has closed.
+ *
+ * WHY. On 2026-09-22, three of the four referrals ever filed were still open
+ * -- at four, five and seven school days -- and the oldest was the one flagged
+ * too severe for classroom interventions. A fourth was closed and the teacher
+ * who filed it had never been told. The filing email goes out once and then
+ * the referral's future depends on somebody remembering to open a tab.
+ *
+ * ONCE A DAY, ON A SCHOOL MORNING. 15:00 UTC is roughly 08:00 in Los Angeles:
+ * after the 13:00 sync and the 13:30 absence rebuild that the school-day count
+ * is read from, before anyone has started their day, and on an hour none of
+ * the other jobs use. Age is counted in school days, so a Saturday firing
+ * finds nothing newly due and sends nothing -- running seven days a week costs
+ * one bounded read and saves a calendar nobody maintains.
+ *
+ * IT DOES NOTHING UNTIL IT IS TURNED ON:
+ *   npx convex run referralPing:configure '{"enabled":true}'
+ */
+crons.cron(
+  "chase open referrals",
+  "0 15 * * *",
+  internal.referralPing.sweep,
+  {},
+);
+
 export default crons;

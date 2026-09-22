@@ -844,6 +844,53 @@ export default defineSchema({
     finishedAt: v.optional(v.string()),
   }).index("by_referral", ["referralId"]),
 
+  /**
+   * One row per reminder about a referral nobody has closed.
+   *
+   * ITS OWN TABLE, NOT A referralMailLog ROW, and that is load-bearing.
+   * referralMailLog holds exactly one row per referral -- the filing mail --
+   * and both `notifyNewReferrals` and `finish` reach it with
+   * `.withIndex("by_referral").first()`. Adding reminder rows there would give
+   * `.first()` a choice, and the two things it could pick wrong are the
+   * idempotency guard that stops a referral being mailed twice and the patch
+   * that records whether the filing mail was delivered. A second table leaves
+   * the send path that already works untouched.
+   *
+   * `by_stage` IS THE "ONCE" GUARANTEE. A row is inserted with state "queued"
+   * BEFORE the mail is attempted, so two overlapping cron runs cannot both
+   * decide the same stage is due: the second finds the row and stops. A crash
+   * between the insert and the send leaves a "queued" row and no email, which
+   * is the failure this chooses -- a reminder nobody got is recoverable by a
+   * person reading the log, a reminder six leaders got twice is not.
+   */
+  referralPingLog: defineTable({
+    referralId: v.string(),
+    stage: v.union(
+      v.literal("nudge"),
+      v.literal("escalation"),
+      v.literal("severe"),
+      v.literal("loop"),
+    ),
+    state: v.union(
+      v.literal("queued"),
+      v.literal("sent"),
+      v.literal("failed"),
+      v.literal("skipped"),
+    ),
+    /** How old the referral was, in school days, when this fired. */
+    ageSchoolDays: v.optional(v.number()),
+    recipients: v.optional(v.number()),
+    sent: v.optional(v.number()),
+    refused: v.optional(v.array(v.string())),
+    error: v.optional(v.string()),
+    /** Why, when state is "skipped". */
+    reason: v.optional(v.string()),
+    at: v.string(),
+    finishedAt: v.optional(v.string()),
+  })
+    .index("by_referral", ["referralId"])
+    .index("by_stage", ["referralId", "stage"]),
+
   /** One row per sync run: rows in, rows changed, duration, errors. */
   syncRuns: defineTable({
     at: v.string(),
