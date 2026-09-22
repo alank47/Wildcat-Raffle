@@ -731,3 +731,42 @@ export const replaceSectionPoints = internalMutation({
     return { deleted, written: rows.length, moreToClear: false };
   },
 });
+
+/**
+ * Replace the per-student attendance marks rollup.
+ *
+ * SAME PAGED CLEAR AS ITS NEIGHBOURS. A delete-everything-then-write in one
+ * mutation is the shape that broke clearRoster: the clear alone exceeds the
+ * document limit once the table is a school year old. The caller loops on
+ * `moreToClear` until it comes back false, then writes in batches.
+ */
+export const replaceAttendanceMarks = internalMutation({
+  args: {
+    syncedAt: v.string(),
+    clearFirst: v.optional(v.boolean()),
+    rows: v.array(
+      v.object({
+        studentNumber: v.string(),
+        firstName: v.optional(v.string()),
+        lastName: v.optional(v.string()),
+        gradeLevel: v.optional(v.string()),
+        entryDate: v.optional(v.string()),
+        absentDates: v.array(v.string()),
+        excusedAbsentDates: v.array(v.string()),
+        tardyDates: v.array(v.string()),
+        excusedTardyDates: v.array(v.string()),
+      }),
+    ),
+  },
+  handler: async (ctx, { rows, syncedAt, clearFirst }) => {
+    let deleted = 0;
+    if (clearFirst) {
+      const old = await ctx.db.query("psAttendanceMarks").take(2000);
+      for (const r of old) { await ctx.db.delete(r._id); deleted++; }
+      const more = await ctx.db.query("psAttendanceMarks").take(1);
+      if (more.length) return { deleted, written: 0, moreToClear: true };
+    }
+    for (const r of rows) await ctx.db.insert("psAttendanceMarks", { ...r, syncedAt });
+    return { deleted, written: rows.length, moreToClear: false };
+  },
+});

@@ -227,8 +227,21 @@ check("it reads the precomputed per-day table, not the per-student rows",
   "summing 2,579 growing rows would pass Convex's 4,096 limit by spring");
 check("the read cap is announced rather than silently truncating",
   /truncated = raw\.length > CAP/.test(conv));
+// JUST THIS EXPORT. Slicing to the end of the file only worked while
+// dailyAbsenceSeries happened to be last in it; a perfect attendance query
+// added on 2026-09-22 landed after it and tripped this, correctly by the
+// letter and wrongly by the intent. The run chart's own series is still held
+// to counts-only, which is the thing this was protecting.
+const seriesSrc = (() => {
+  const i = conv.indexOf("export const dailyAbsenceSeries = ");
+  if (i < 0) return "";
+  const next = conv.indexOf("\nexport const ", i + 1);
+  return conv.slice(i, next < 0 ? conv.length : next);
+})();
+check("this test found the series function, rather than checking nothing",
+  seriesSrc.length > 200, String(seriesSrc.length));
 check("it sends counts, no names",
-  !/firstName|lastName|studentName/.test(conv.slice(conv.indexOf("dailyAbsenceSeries"))));
+  !/firstName|lastName|studentName/.test(seriesSrc));
 
 // THE DENOMINATOR FIX. There is no attendance at all on 2026-09-04 or on Labor
 // Day 2026-09-07, so two weekdays in the window were not school days. The box

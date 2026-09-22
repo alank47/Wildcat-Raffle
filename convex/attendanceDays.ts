@@ -103,12 +103,35 @@ export const rebuild = internalAction({
     //    "Ditching" is coded Present and "Suspended" Absent, which is why this
     //    cannot be guessed from a code letter.
     const codes = await readTable(host, tok, "attendance_code",
-      `schoolid==${schoolid}`, "id,att_code,presence_status_cd");
+      `schoolid==${schoolid}`, "id,att_code,description,presence_status_cd");
     const absentCode = new Set<string>();
+    // TARDY HAS NO PRESENCE STATUS OF ITS OWN, and that is PowerSchool being
+    // right rather than a gap: a tardy student IS present. But it means the
+    // only thing separating "late" from "here" is the code's own description,
+    // so the word is matched against the school's configuration rather than a
+    // list of letters transcribed into this file. The codes it matched are
+    // returned in the run summary so the mapping can be checked by eye.
+    const tardyCode = new Set<string>();
+    const excusedCode = new Set<string>();
+    const codeMap: Array<Record<string, any>> = [];
     for (const c of codes.rows) {
-      if (String(c.presence_status_cd) === "Absent") absentCode.add(String(c.id));
+      const id = String(c.id);
+      const desc = String(c.description ?? "");
+      const absent = String(c.presence_status_cd) === "Absent";
+      const tardy = !absent && /tardy/i.test(desc);
+      const excused = /excus/i.test(desc);
+      if (absent) absentCode.add(id);
+      if (tardy) tardyCode.add(id);
+      if (excused) excusedCode.add(id);
+      if ((absent || tardy) && !codeMap.some((m) => m.code === c.att_code)) {
+        codeMap.push({ code: c.att_code, description: desc, counts: absent ? "absence" : "tardy", excused });
+      }
     }
     if (!absentCode.size) return { ok: false, reason: "No absent-status attendance codes were readable." };
+    // A SCHOOL WITH NO TARDY CODE IS A CONFIGURATION TO REPORT, NOT TO ASSUME
+    // AWAY. Silently writing zero tardies for everyone would make every
+    // student look punctual and the perfect attendance list twice too long.
+    const tardyCodesFound = tardyCode.size;
 
     // 2. ccid -> the period slot, so a row can be placed in the timetable.
     //    CC.Expression is the section expression, e.g. "2(A-E)".
@@ -147,12 +170,19 @@ export const rebuild = internalAction({
 
     // 3. PowerSchool's internal student id -> the student number everything
     //    else in this app joins on.
+    //    entrydate comes with them: a student who enrolled in September cannot
+    //    have a perfect YEAR, and without it they would appear on the same
+    //    list as somebody with the whole year behind them.
     const studs = await readTable(host, tok, "students",
-      `schoolid==${schoolid};enroll_status==0`, "id,student_number");
+      `schoolid==${schoolid};enroll_status==0`, "id,student_number,entrydate");
     const numberOf = new Map<string, string>();
+    const entryOf = new Map<string, string>();
     for (const r of studs.rows) {
       const n = String(r.student_number || "").trim();
-      if (n) numberOf.set(String(r.id), n);
+      if (!n) continue;
+      numberOf.set(String(r.id), n);
+      const e = String(r.entrydate || "").slice(0, 10);
+      if (e.length === 10) entryOf.set(n, e);
     }
 
     // 4. THE ATTENDANCE ITSELF. Filtered by date when asked, so a routine run
@@ -199,10 +229,39 @@ export const rebuild = internalAction({
     type Cell = { absent: Set<string>; present: Set<string> };
     const byStudentDate = new Map<string, Cell>();
     let unmappedCc = 0, unmappedStudent = 0;
+    // The per-student marks for the perfect attendance rollup, accumulated in
+    // this same pass.
+    type Marks = { absent: Set<string>; exAbsent: Set<string>; tardy: Set<string>; exTardy: Set<string> };
+    const marksOf = new Map<string, Marks>();
+    const marksFor = (num: string) => {
+      let m = marksOf.get(num);
+      if (!m) { m = { absent: new Set(), exAbsent: new Set(), tardy: new Set(), exTardy: new Set() }; marksOf.set(num, m); }
+      return m;
+    };
+
     for (const r of att.rows) {
       const date = String(r.att_date || "").slice(0, 10);
       const slot = slotOf.get(String(r.ccid || ""));
       if (!date) continue;
+
+      // MARKS ARE TAKEN BEFORE THE SLOT MAP, ON PURPOSE. Everything below this
+      // point needs to know WHICH period a row belongs to, and drops the row
+      // when the cc join fails. Perfect attendance does not: a child marked
+      // absent in a section this build could not place was still marked
+      // absent, and dropping that row would put them on an award list. So the
+      // verdict that hands out awards does not depend on a join succeeding.
+      const numAny = numberOf.get(String(r.studentid || ""));
+      if (numAny) {
+        const code = String(r.attendance_codeid || "");
+        const isAbsent = absentCode.has(code), isTardy = tardyCode.has(code);
+        if (isAbsent || isTardy) {
+          const m = marksFor(numAny);
+          const excused = excusedCode.has(code);
+          if (isAbsent) { m.absent.add(date); if (excused) m.exAbsent.add(date); }
+          if (isTardy) { m.tardy.add(date); if (excused) m.exTardy.add(date); }
+        }
+      }
+
       if (!slot) { unmappedCc++; continue; }
       if (!slotsRan.has(date)) slotsRan.set(date, new Set());
       slotsRan.get(date)!.add(slot);
@@ -383,8 +442,59 @@ export const rebuild = internalAction({
       });
     }
 
+    // --- and the per-student marks rollup, for perfect attendance ----------
+    //
+    // A ROW FOR EVERY ENROLLED STUDENT, including the ones with nothing
+    // against them. They ARE the answer: a table holding only students with
+    // absences could not name a single perfect one.
+    const names: Record<string, { firstName: string; lastName: string; grade: string }> =
+      await ctx.runQuery(internal.attendanceDaysRead.studentNames, {});
+    const sorted = (v: Set<string>) => [...v].sort();
+    const markRows = [...new Set(numberOf.values())].sort().map((num) => {
+      const m = marksOf.get(num);
+      const who = names[num];
+      return {
+        studentNumber: num,
+        firstName: who?.firstName || undefined,
+        lastName: who?.lastName || undefined,
+        gradeLevel: who?.grade || undefined,
+        entryDate: entryOf.get(num),
+        absentDates: m ? sorted(m.absent) : [],
+        excusedAbsentDates: m ? sorted(m.exAbsent) : [],
+        tardyDates: m ? sorted(m.tardy) : [],
+        excusedTardyDates: m ? sorted(m.exTardy) : [],
+      };
+    });
+    for (let pass = 0; pass < 20; pass++) {
+      const r: { moreToClear?: boolean } = await ctx.runMutation(
+        internal.sisStats.replaceAttendanceMarks, { syncedAt, rows: [], clearFirst: true },
+      );
+      if (!r.moreToClear) break;
+    }
+    for (let i = 0; i < markRows.length; i += 200) {
+      await ctx.runMutation(internal.sisStats.replaceAttendanceMarks, {
+        syncedAt, rows: markRows.slice(i, i + 200), clearFirst: false,
+      });
+    }
+
     summary.totalRows = totalRows.length;
     summary.dayRows = dayRows.length;
+    summary.markRows = markRows.length;
+    summary.marksWithSomething = marksOf.size;
+    summary.studentsWithNoMarks = markRows.length - marksOf.size;
+    summary.withoutEntryDate = markRows.filter((r) => !r.entryDate).length;
+    summary.withoutName = markRows.filter((r) => !r.lastName).length;
+    // THE CODE MAPPING IS PART OF THE RESULT, not a detail. Which codes count
+    // as a tardy is derived from the school's own descriptions, so the run has
+    // to show its working; a school that renamed its tardy code would
+    // otherwise quietly start producing twice as many perfect students.
+    summary.codeMapping = codeMap;
+    summary.tardyCodesFound = tardyCodesFound;
+    if (!tardyCodesFound) {
+      summary.warning = "No attendance code's description mentions 'tardy', so every student "
+        + "will look punctual and any perfect attendance list will be too long. Check the "
+        + "attendance_code table before trusting it.";
+    }
     return summary;
   },
 });

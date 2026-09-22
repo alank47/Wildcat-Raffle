@@ -217,21 +217,57 @@ check("the absence figures are NOT count-up animated",
 
 console.log("\nthe server side");
 
+// JUST THIS EXPORT, not "everything after it".
+//
+// These assertions used to slice from `studentPeriods` to the end of the file,
+// which was only ever right because it happened to be the last thing in it. A
+// perfect attendance query added on 2026-09-22 landed after it and tripped the
+// no-names check -- correctly by the letter, wrongly by the intent, because
+// that query returns names on purpose and is gated for exactly that reason.
+// Narrowing it to the function keeps the invariant and makes it mean what it
+// says; the sweep below then holds every OTHER query in the file to it, so a
+// third query cannot quietly start sending names.
+const exportAt = (src, name) => {
+  const i = src.indexOf(`export const ${name} = `);
+  if (i < 0) return "";
+  const next = src.indexOf("\nexport const ", i + 1);
+  return src.slice(i, next < 0 ? src.length : next);
+};
+const studentPeriodsSrc = exportAt(listSrc, "studentPeriods");
+
 check("the per-student query exists", /export const studentPeriods = query\(/.test(listSrc));
+check("...and this test found its body, rather than silently checking nothing",
+  studentPeriodsSrc.length > 200, String(studentPeriodsSrc.length));
 check("it is gated to the same three roles as the ranking",
-  /ATTENDANCE_ROLES\.includes\(staff\.role\)/.test(listSrc.slice(listSrc.indexOf("studentPeriods"))));
+  /ATTENDANCE_ROLES\.includes\(staff\.role\)/.test(studentPeriodsSrc));
 check("it never queries an empty student key",
   /const key = String\(studentNumber \|\| ""\)\.trim\(\);[\s\S]{0,200}if \(!key\)/.test(listSrc));
 check("it sends no name, grade or demographic",
-  !/firstName|lastName|studentName|gradeLevel|raceCodes/.test(listSrc.slice(listSrc.indexOf("studentPeriods"))));
+  !/firstName|lastName|studentName|gradeLevel|raceCodes/.test(studentPeriodsSrc));
+
+// THE SWEEP. Every query in this file sends numbers only, with ONE declared
+// exception: perfect attendance is an award list read out at an assembly, and
+// the browser's own roster is scoped per teacher so it cannot be derived
+// client-side. Any query that is neither on this list nor number-only is a
+// leak nobody decided on.
+const NAMED_OK = ["attendanceMarks"];
+const queryNames = [...listSrc.matchAll(/export const (\w+) = query\(/g)].map((m) => m[1]);
+check("this file's queries were found at all", queryNames.length >= 3, queryNames.join(","));
+for (const name of queryNames) {
+  if (NAMED_OK.includes(name)) continue;
+  check(`${name} sends no name or grade either`,
+    !/firstName|lastName|studentName|gradeLevel|raceCodes/.test(exportAt(listSrc, name)));
+}
+check("the one exception is gated to the privileged roles",
+  /ATTENDANCE_ROLES\.includes\(staff\.role\)/.test(exportAt(listSrc, "attendanceMarks")),
+  "a query that returns names has nothing else protecting it");
 check("it returns no rate or percentage", !/percent|rate/i.test(
-  listSrc.slice(listSrc.indexOf("export const studentPeriods"))
-    .replace(/\/\*[\s\S]*?\*\//g, "")));
+  studentPeriodsSrc.replace(/\/\*[\s\S]*?\*\//g, "")));
 check("attendanceRows crosses the wire, so never-taken stays distinguishable",
   /attendanceRows: typeof r\.attendanceRows === "number"/.test(listSrc));
 check("a missing figure is null via dayCount, never 0",
   /daysAbsent: dayCount\(r\.daysAbsent\)/.test(listSrc));
-check("reads are capped", /\.take\(40\)/.test(listSrc.slice(listSrc.indexOf("studentPeriods"))));
+check("reads are capped", /\.take\(40\)/.test(studentPeriodsSrc));
 
 check("the table is declared with a by_studentNumber index",
   /psAttendanceBySection: defineTable\(/.test(schemaSrc)

@@ -674,3 +674,218 @@ export const joinHealth = internalAction({
     };
   },
 });
+
+/**
+ * WHAT WOULD A PERFECT ATTENDANCE LIST ACTUALLY LOOK LIKE?
+ *
+ * Measured before anything is built, for the reason recorded in
+ * project-academics-year-groups-declined: a per-grade academics screen was
+ * designed around a flat "failing" threshold and, when it was finally
+ * measured, the list named 66% of the school -- a roster, not a queue. A
+ * perfect attendance award has the mirror failure. If the year-to-date list is
+ * empty the feature is a blank screen, and if it names most of the school it
+ * is not an award.
+ *
+ * COUNTS AND DISTRIBUTIONS ONLY. No student numbers, no names.
+ *
+ * WHY IT READS RAW RATHER THAN psAttendanceDays: that table has no tardy
+ * field. It records absentBlocks, presentBlocks and unrecordedBlocks, and
+ * PowerSchool classifies a tardy as PRESENCE: PRESENT -- so today a student
+ * marked tardy every morning is indistinguishable from one who was never
+ * late. Half the owner's definition does not exist in the warehouse yet, which
+ * is the thing this has to price.
+ */
+export const perfectAttendance = internalAction({
+  args: {},
+  handler: async (): Promise<Record<string, any>> => {
+    const host = process.env.PS_HOST, id = process.env.PS_CLIENT_ID;
+    const secret = process.env.PS_CLIENT_SECRET, schoolid = process.env.PS_SCHOOL_ID;
+    const yearid = process.env.PS_YEAR_ID;
+    if (!host || !id || !secret || !schoolid || !yearid) {
+      return { ok: false, reason: "PowerSchool settings are not all present." };
+    }
+    const tok = await token(host, id, secret);
+
+    const read = async (table: string, q: string, projection: string) => {
+      const rows: any[] = [];
+      let page = 1;
+      for (; page <= 400; page++) {
+        const url = `https://${host}/ws/schema/table/${table}?q=${encodeURIComponent(q)}`
+          + `&projection=${encodeURIComponent(projection)}&pagesize=100&page=${page}`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${tok}`, Accept: "application/json" } });
+        if (!res.ok) return { rows, pages: page, error: `HTTP ${res.status}` };
+        const body: any = await res.json();
+        const got = (body?.record ?? []).map((r: any) => r.tables?.[table] ?? r);
+        rows.push(...got);
+        if (got.length < 100) break;
+      }
+      return { rows, pages: page, error: null as string | null };
+    };
+
+    // 1. WHICH CODES MEAN WHAT. Absent comes from PRESENCE_STATUS_CD, which is
+    //    the only thing that decides it -- "Ditching" is coded Present and
+    //    "Suspended" Absent, so no code letter can be guessed at.
+    //
+    //    TARDY HAS NO PRESENCE STATUS OF ITS OWN. PowerSchool calls a tardy
+    //    student present, correctly, so the only thing separating "late" from
+    //    "here" is the code's description. Matching on the word is derived
+    //    from the school's own configuration rather than transcribed, and the
+    //    codes it matched are returned so the mapping can be checked by eye.
+    const codes = await read("attendance_code", `schoolid==${schoolid};yearid==${yearid}`,
+      "id,att_code,description,presence_status_cd");
+    const absentIds = new Set<string>(), tardyIds = new Set<string>();
+    const excusedAbsentIds = new Set<string>(), excusedTardyIds = new Set<string>();
+    const mapping: Array<Record<string, any>> = [];
+    for (const c of codes.rows) {
+      const desc = String(c.description ?? "");
+      const absent = String(c.presence_status_cd) === "Absent";
+      const tardy = !absent && /tardy/i.test(desc);
+      const excused = /excus/i.test(desc);
+      if (absent) { absentIds.add(String(c.id)); if (excused) excusedAbsentIds.add(String(c.id)); }
+      if (tardy) { tardyIds.add(String(c.id)); if (excused) excusedTardyIds.add(String(c.id)); }
+      if ((absent || tardy) && !mapping.some((m) => m.code === c.att_code)) {
+        mapping.push({ code: c.att_code, description: desc, counts: absent ? "absence" : "tardy", excused });
+      }
+    }
+    if (!absentIds.size) return { ok: false, reason: "no absent-status codes readable" };
+
+    // 2. Enrolled students, which is the DENOMINATOR. A perfect attendance
+    //    list is only meaningful against how many could have been on it.
+    const studs = await read("students", `schoolid==${schoolid};enroll_status==0`, "id,student_number");
+    const numberOf = new Map<string, string>();
+    for (const r of studs.rows) {
+      const n = String(r.student_number || "").trim();
+      if (n) numberOf.set(String(r.id), n);
+    }
+    const enrolled = new Set(numberOf.values());
+
+    // 3. Every attendance row this year.
+    const att = await read("attendance", `schoolid==${schoolid};yearid==${yearid}`,
+      "studentid,att_date,attendance_codeid");
+    if (att.error) return { ok: false, reason: `attendance read failed: ${att.error}` };
+
+    type Mark = { absent: number; tardy: number; exAbsent: number; exTardy: number };
+    const perStudentDate = new Map<string, Map<string, Mark>>();
+    const allDates = new Set<string>();
+    let unmappedStudent = 0;
+
+    for (const r of att.rows) {
+      const num = numberOf.get(String(r.studentid || ""));
+      if (!num) { unmappedStudent++; continue; }
+      const date = String(r.att_date || "").slice(0, 10);
+      if (date.length !== 10) continue;
+      const code = String(r.attendance_codeid || "");
+      const isAbsent = absentIds.has(code), isTardy = tardyIds.has(code);
+      if (!isAbsent && !isTardy) continue;   // an ordinary present row
+      allDates.add(date);
+      let byDate = perStudentDate.get(num);
+      if (!byDate) { byDate = new Map(); perStudentDate.set(num, byDate); }
+      const m = byDate.get(date) ?? { absent: 0, tardy: 0, exAbsent: 0, exTardy: 0 };
+      if (isAbsent) { m.absent++; if (excusedAbsentIds.has(code)) m.exAbsent++; }
+      if (isTardy) { m.tardy++; if (excusedTardyIds.has(code)) m.exTardy++; }
+      byDate.set(date, m);
+    }
+
+    // CLAMPED TO TODAY, and that is not tidiness. PowerSchool holds attendance
+    // dated into the FUTURE -- on 2026-09-22 the newest att_date was
+    // 2026-10-09, seventeen days ahead. Taking "the last five school days" off
+    // the end of a sorted date list therefore measured a window nobody has
+    // lived through yet, and the first run of this probe duly reported 616 of
+    // 618 students perfect for "last week" because barely anything is recorded
+    // in those future days. Every window in this feature has to end at today.
+    const today = new Date().toISOString().slice(0, 10);
+    const dates = [...allDates].filter((d) => d <= today).sort();
+    const future = [...allDates].filter((d) => d > today).sort();
+    const window = (n: number | null) => (n === null ? dates : dates.slice(Math.max(0, dates.length - n)));
+    /** Calendar month to date, which is what a person means by "this month". */
+    const monthToDate = dates.filter((d) => d.slice(0, 7) === today.slice(0, 7));
+
+    /** How many enrolled students carry nothing in this window. */
+    const tally = (win: string[]) => {
+      const inWin = new Set(win);
+      let anyAbsence = 0, anyTardy = 0, anyEither = 0, anyUnexcused = 0;
+      for (const num of enrolled) {
+        const byDate = perStudentDate.get(num);
+        let a = 0, t = 0, ua = 0, ut = 0;
+        if (byDate) {
+          for (const [d, m] of byDate) {
+            if (!inWin.has(d)) continue;
+            a += m.absent; t += m.tardy;
+            ua += m.absent - m.exAbsent; ut += m.tardy - m.exTardy;
+          }
+        }
+        if (a > 0) anyAbsence++;
+        if (t > 0) anyTardy++;
+        if (a > 0 || t > 0) anyEither++;
+        if (ua > 0 || ut > 0) anyUnexcused++;
+      }
+      const n = enrolled.size;
+      return {
+        schoolDays: win.length,
+        from: win[0] ?? null, to: win[win.length - 1] ?? null,
+        enrolled: n,
+        // THE OWNER'S DEFINITION: no absences and no tardies.
+        perfect: n - anyEither,
+        perfectPct: n ? Math.round(((n - anyEither) / n) * 1000) / 10 : 0,
+        // The two looser definitions, so the cost of the strict one is visible.
+        noAbsencesOnly: n - anyAbsence,
+        perfectIfExcusedForgiven: n - anyUnexcused,
+        brokenByTardyAlone: anyEither - anyAbsence,
+      };
+    };
+
+    return {
+      ok: true,
+      codeMapping: mapping,
+      attendanceRows: att.rows.length,
+      attendancePages: att.pages,
+      unmappedStudentRows: unmappedStudent,
+      enrolledStudents: enrolled.size,
+      schoolDaysSeen: dates.length,
+      firstDate: dates[0] ?? null, lastDate: dates[dates.length - 1] ?? null,
+      today,
+      futureDatedSchoolDays: future.length,
+      futureDatesIgnored: future.slice(0, 3),
+      windows: {
+        last5SchoolDays: tally(window(5)),
+        last20SchoolDays: tally(window(20)),
+        thisCalendarMonth: tally(monthToDate),
+        yearToDate: tally(window(null)),
+      },
+    };
+  },
+});
+
+/** Does PowerSchool give us an enrolment date we can fence a year-long award with? */
+export const enrolmentDates = internalAction({
+  args: {},
+  handler: async (): Promise<Record<string, any>> => {
+    const host = process.env.PS_HOST, id = process.env.PS_CLIENT_ID;
+    const secret = process.env.PS_CLIENT_SECRET, schoolid = process.env.PS_SCHOOL_ID;
+    if (!host || !id || !secret || !schoolid) return { ok: false, reason: "PowerSchool settings missing." };
+    const tok = await token(host, id, secret);
+    const tries = ["id,student_number,entrydate", "id,student_number,entrydate,exitdate", "id,student_number"];
+    const out: Array<Record<string, any>> = [];
+    for (const projection of tries) {
+      const url = `https://${host}/ws/schema/table/students`
+        + `?q=${encodeURIComponent(`schoolid==${schoolid};enroll_status==0`)}`
+        + `&projection=${encodeURIComponent(projection)}&pagesize=100`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${tok}`, Accept: "application/json" } });
+      if (!res.ok) { out.push({ projection, http: res.status, error: (await res.text()).slice(0, 160) }); continue; }
+      const body: any = await res.json();
+      const rows = (body?.record ?? []).map((r: any) => r.tables?.students ?? r);
+      const dates = rows.map((r: any) => String(r.entrydate ?? "").slice(0, 10)).filter(Boolean);
+      const byDate: Record<string, number> = {};
+      for (const d of dates) byDate[d] = (byDate[d] || 0) + 1;
+      out.push({
+        projection, http: 200, rows: rows.length,
+        sampleKeys: Object.keys(rows[0] ?? {}),
+        withEntryDate: dates.length,
+        distinctEntryDates: Object.keys(byDate).length,
+        topEntryDates: Object.entries(byDate).sort((a, b) => b[1] - a[1]).slice(0, 5),
+      });
+      if (dates.length) break;
+    }
+    return { ok: true, attempts: out };
+  },
+});

@@ -326,3 +326,76 @@ export const dailyAbsenceSeries = query({
     };
   },
 });
+
+/**
+ * The per-student attendance marks, for the perfect attendance panel.
+ *
+ * WHY THIS ONE DOES CARRY NAMES, where schoolAttendance deliberately does not.
+ *
+ * Its neighbour above returns numbers only, because the browser already holds
+ * the roster and a ranking of the most-absent children never needs to build a
+ * student record. That reasoning does not transfer here, and pretending it
+ * does would be worse than useless: a perfect attendance list is read out at
+ * an assembly and printed on a certificate. It is a list of names by purpose.
+ * The roster the browser holds is also SCOPED -- a teacher sees their own
+ * sections -- so deriving a whole-school award list from it client-side would
+ * give a different answer to each member of staff.
+ *
+ * So the gate is the thing that protects it, and it is the same gate: admin,
+ * superadmin and PBIS. Note that this is a POSITIVE list, which is why the
+ * refusal below matters less than it looks -- but the same rows also say which
+ * children were absent and when, so it is exactly as sensitive as the ranking
+ * next door and is treated the same way.
+ *
+ * WINDOWS AND THE EXCUSED RULE ARE NOT ARGUMENTS. This returns every enrolled
+ * student's marked dates and the browser decides, the same split as the Early
+ * Warning tiers: the window is a display choice the school changes with a
+ * dropdown, and whether "excused" breaks perfection is a switch the owner
+ * asked for on the screen. Sending the rule to the server would put a deploy
+ * between a headteacher and a question about their own school.
+ */
+export const attendanceMarks = query({
+  args: {},
+  handler: async (ctx) => {
+    const staff = await requireStaff(ctx);
+    if (!ATTENDANCE_ROLES.includes(staff.role)) {
+      return {
+        allowed: false,
+        reason:
+          "Perfect attendance is limited to administrators and the PBIS team. " +
+          "Ask an administrator to set your access level to PBIS Team.",
+        rows: [], truncated: false, lastSyncedAt: null as string | null,
+      };
+    }
+
+    // ONE ROW PER STUDENT, which is the whole point of the rollup table. A
+    // year-long window over psAttendanceDays would be ~36,000 reads against a
+    // limit of 4,096; this is one read per enrolled child whatever the window.
+    const raw = await ctx.db.query("psAttendanceMarks").take(MAX_ROWS + 1);
+    const truncated = raw.length > MAX_ROWS;
+    const rows = raw.slice(0, MAX_ROWS);
+
+    let lastSyncedAt: string | null = null;
+    for (const r of rows) {
+      const t = String(r.syncedAt ?? "");
+      if (t && (lastSyncedAt === null || t > lastSyncedAt)) lastSyncedAt = t;
+    }
+
+    return {
+      allowed: true,
+      truncated,
+      lastSyncedAt,
+      rows: rows.map((r) => ({
+        studentNumber: r.studentNumber,
+        firstName: r.firstName ?? "",
+        lastName: r.lastName ?? "",
+        gradeLevel: r.gradeLevel ?? "",
+        entryDate: r.entryDate ?? null,
+        absentDates: r.absentDates ?? [],
+        excusedAbsentDates: r.excusedAbsentDates ?? [],
+        tardyDates: r.tardyDates ?? [],
+        excusedTardyDates: r.excusedTardyDates ?? [],
+      })),
+    };
+  },
+});

@@ -701,6 +701,68 @@ export default defineSchema({
     syncedAt: v.string(),
   }).index("by_date", ["date"]),
 
+  /**
+   * ONE ROW PER ENROLLED STUDENT: the dates they were marked, and nothing else.
+   *
+   * WHY A ROLLUP RATHER THAN A QUERY OVER psAttendanceDays. Perfect attendance
+   * asks the INVERSE question of every other attendance screen -- not "who was
+   * absent" but "who has nothing against them in this window" -- and the
+   * obvious implementation is the one that breaks. psAttendanceDays is keyed
+   * by student AND date, so a year-long window means reading every marked
+   * student-date in the year: at roughly 200 rows a day over 180 days that is
+   * 36,000 reads against Convex's limit of 4,096. It is the same shape as the
+   * collect() that broke clearRoster and the grade sync.
+   *
+   * Storing the DATES on the student instead makes any window one read per
+   * student. 618 enrolled students is 618 reads, and a week, a month, a term
+   * and the whole year all cost exactly the same. A student absent every block
+   * of every day carries about 180 short strings, which is nothing beside
+   * Convex's 1MB document limit.
+   *
+   * A ROW EXISTS FOR EVERY ENROLLED STUDENT, including -- especially -- the
+   * ones with four empty arrays. They are the answer. A table that only held
+   * students with absences could not name a single perfect one.
+   *
+   * TARDIES ARE HERE BECAUSE THEY ARE NOWHERE ELSE. PowerSchool classifies a
+   * tardy as PRESENCE: PRESENT, correctly, so psAttendanceDays counts a child
+   * marked late as having attended and psAttendance only carries a per-term
+   * total. Measured 2026-09-22: of the 105 students with no absences at all
+   * this year, only 36 also had no tardies -- so two thirds of a perfect
+   * attendance list is decided by data the app could not previously see.
+   *
+   * EXCUSED IS STORED SEPARATELY, NOT SUBTRACTED. Whether an excused absence
+   * breaks perfection is a school's decision and the owner asked for it as a
+   * switch on the screen, so the server records what happened and the browser
+   * decides what it means -- the same split as the Early Warning tiers.
+   *
+   * `entryDate` IS THE FAIRNESS FENCE. A student who enrolled on 2026-09-15
+   * cannot have a perfect YEAR, and without this they would stand on the same
+   * list as someone with 28 clean days behind them. PowerSchool's
+   * students.entrydate is populated for every enrolled student.
+   *
+   * Names and grade are SNAPSHOT here, the way a purchase receipt snapshots
+   * its reward, so the whole screen is one indexed table read rather than a
+   * second pass over the roster.
+   */
+  psAttendanceMarks: defineTable({
+    studentNumber: v.string(),
+    firstName: v.optional(v.string()),
+    lastName: v.optional(v.string()),
+    gradeLevel: v.optional(v.string()),
+    /** "YYYY-MM-DD". The first day this student could have attended. */
+    entryDate: v.optional(v.string()),
+    /** Every date carrying at least one absence-coded block. Sorted, unique. */
+    absentDates: v.array(v.string()),
+    /** The subset of those whose code was an excused one. */
+    excusedAbsentDates: v.array(v.string()),
+    /** Every date carrying at least one tardy-coded block. Sorted, unique. */
+    tardyDates: v.array(v.string()),
+    excusedTardyDates: v.array(v.string()),
+    syncedAt: v.string(),
+  })
+    .index("by_studentNumber", ["studentNumber"])
+    .index("by_gradeLevel", ["gradeLevel"]),
+
   psMissingWork: defineTable({
     studentNumber: v.string(),
     assignmentSectionId: v.string(),

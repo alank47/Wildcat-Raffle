@@ -1246,6 +1246,204 @@
   }
 
 
+  // =====================================================================
+  // PERFECT ATTENDANCE
+  //
+  // "No missed classes and no tardies", the owner's definition, 2026-09-22.
+  //
+  // THE NUMBERS THIS WAS BUILT AGAINST, measured against production before a
+  // line of screen existed, 618 enrolled over 28 school days:
+  //
+  //            window        perfect     no absences only
+  //            last 5 days   183 (30%)   300
+  //            September      75 (12%)   172
+  //            year to date   36 (6%)    105
+  //
+  // Two thirds of the year-to-date list is decided by TARDIES: 105 students
+  // have no absences at all, and only 36 of those were never once late. That
+  // is the whole reason this needed new data rather than a new screen over the
+  // old data, and it is why the tardy half must never silently read as zero --
+  // a school whose tardy code went unrecognised would hand out three times too
+  // many awards and nobody would notice.
+  //
+  // WHETHER "EXCUSED" COUNTS IS A SWITCH, NOT A CONSTANT. The owner asked for
+  // it on the screen: strict by default, forgiving on request, because a
+  // school argues about that one every year and it must not need a developer.
+  // Year to date the choice is 36 students against 63.
+  // =====================================================================
+
+  /** A day, in the school's own calendar terms, from "YYYY-MM-DD". */
+  function dayFrom(iso) {
+    var s = String(iso || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+    var p = s.split('-');
+    // UTC, deliberately: these are calendar days, never instants. Building
+    // them in local time makes the same string mean a different day either
+    // side of midnight, which is the bug that dated referrals to tomorrow.
+    return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2]));
+  }
+
+  function isoOf(d) {
+    return d.toISOString().slice(0, 10);
+  }
+
+  function shiftDays(iso, n) {
+    var d = dayFrom(iso);
+    if (!d) return null;
+    d.setUTCDate(d.getUTCDate() + n);
+    return isoOf(d);
+  }
+
+  /**
+   * The three windows, from today.
+   *
+   * WEEK IS THE LAST COMPLETED MONDAY-TO-FRIDAY, chosen by the owner over a
+   * rolling five days and over the current week. An award list has to hold
+   * still: a window ending today changes under whoever is reading it out, and
+   * "this week" on a Monday morning is a one-day window that almost everyone
+   * wins. The last finished week is the same list all week long.
+   *
+   * MONTH AND YEAR RUN TO TODAY, because those are read as progress rather
+   * than as a finished result, and a completed-month rule would show nothing
+   * at all for the first week of October.
+   */
+  function perfectWindows(todayIso, yearStartIso) {
+    var today = dayFrom(todayIso);
+    if (!today) return null;
+    var iso = isoOf(today);
+
+    // Back up to the most recent Monday. getUTCDay is 0 for Sunday, so the
+    // shift is (dow + 6) % 7 rather than dow - 1.
+    var dow = today.getUTCDay();
+    var daysSinceMonday = (dow + 6) % 7;
+    var thisMonday = shiftDays(iso, -daysSinceMonday);
+
+    // ON A WEEKEND, THE WEEK JUST GONE IS ALREADY FINISHED. Stepping back a
+    // further week on a Saturday would show the week before last, so a school
+    // looking on Friday evening and again on Saturday morning would see the
+    // list go BACKWARDS. Monday to Friday has run its course by Saturday;
+    // on a weekday it has not, and the last completed week is the one before.
+    var weekend = (dow === 0 || dow === 6);
+    var lastMonday = weekend ? thisMonday : shiftDays(thisMonday, -7);
+    var lastFriday = shiftDays(lastMonday, 4);
+
+    var monthStart = iso.slice(0, 8) + '01';
+    var yearStart = /^\d{4}-\d{2}-\d{2}$/.test(String(yearStartIso || ''))
+      ? String(yearStartIso).slice(0, 10) : null;
+
+    return {
+      week: { key: 'week', from: lastMonday, to: lastFriday, label: 'Last full week' },
+      month: { key: 'month', from: monthStart, to: iso, label: 'This month so far' },
+      year: { key: 'year', from: yearStart, to: iso, label: 'Year to date' }
+    };
+  }
+
+  /** Dates in `list` that fall inside [from, to]. Plain string comparison. */
+  function datesInWindow(list, win) {
+    var out = [];
+    if (!list || !win) return out;
+    var from = win.from, to = win.to;
+    for (var i = 0; i < list.length; i++) {
+      var d = String(list[i] || '').slice(0, 10);
+      if (d.length !== 10) continue;
+      if (from && d < from) continue;
+      if (to && d > to) continue;
+      out.push(d);
+    }
+    return out;
+  }
+
+  /**
+   * Was this student perfect over this window, and if not, why not?
+   *
+   * `countExcused` true means an excused absence or tardy still breaks it --
+   * the strict reading, and the default.
+   *
+   * ELIGIBILITY IS PART OF THE ANSWER, not a filter applied elsewhere. A
+   * student who enrolled on 2026-09-15 has no year to be perfect over, and
+   * putting them on the same list as somebody with 28 clean days behind them
+   * would quietly devalue it for everyone on it. They come back
+   * eligible:false with the date, so a screen can say so rather than silently
+   * dropping a child from a list their family expects them on.
+   */
+  function perfectVerdict(row, win, opts) {
+    var o = opts || {};
+    var countExcused = o.countExcused !== false;
+    var r = row || {};
+
+    var absences = datesInWindow(r.absentDates, win);
+    var tardies = datesInWindow(r.tardyDates, win);
+    if (!countExcused) {
+      var exA = datesInWindow(r.excusedAbsentDates, win);
+      var exT = datesInWindow(r.excusedTardyDates, win);
+      absences = absences.filter(function (d) { return exA.indexOf(d) === -1; });
+      tardies = tardies.filter(function (d) { return exT.indexOf(d) === -1; });
+    }
+
+    var entry = String(r.entryDate || '').slice(0, 10);
+    var eligible = true, since = null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(entry) && win && win.from && entry > win.from) {
+      eligible = false;
+      since = entry;
+    }
+
+    return {
+      studentNumber: String(r.studentNumber || ''),
+      eligible: eligible,
+      enrolledSince: since,
+      absentDays: absences.length,
+      tardyDays: tardies.length,
+      perfect: eligible && absences.length === 0 && tardies.length === 0,
+      // What broke it, for a screen that wants to say "one tardy, 16 Sept".
+      brokenBy: absences.length && tardies.length ? 'both'
+        : absences.length ? 'absence' : tardies.length ? 'tardy' : null,
+      firstAbsence: absences.length ? absences[0] : null,
+      firstTardy: tardies.length ? tardies[0] : null
+    };
+  }
+
+  /**
+   * The list, and the counts that make it readable.
+   *
+   * IT RETURNS THE DENOMINATOR TOO. "36 students" means nothing without "of
+   * 618"; a perfect attendance screen that shows only the winners cannot tell
+   * anyone whether the school is improving, and a list that quietly shrank
+   * because a sync broke would look like a bad week.
+   */
+  function perfectList(rows, win, opts) {
+    var o = opts || {};
+    var all = rows || [], out = [], counts = {
+      considered: 0, eligible: 0, perfect: 0,
+      notEligible: 0, brokenByAbsence: 0, brokenByTardy: 0, brokenByBoth: 0
+    };
+    for (var i = 0; i < all.length; i++) {
+      var v = perfectVerdict(all[i], win, o);
+      counts.considered++;
+      if (!v.eligible) { counts.notEligible++; continue; }
+      counts.eligible++;
+      if (v.perfect) {
+        counts.perfect++;
+        out.push({
+          studentNumber: v.studentNumber,
+          firstName: all[i].firstName || '',
+          lastName: all[i].lastName || '',
+          gradeLevel: all[i].gradeLevel || '',
+          enrolledSince: all[i].entryDate || ''
+        });
+      } else if (v.brokenBy === 'both') counts.brokenByBoth++;
+      else if (v.brokenBy === 'absence') counts.brokenByAbsence++;
+      else if (v.brokenBy === 'tardy') counts.brokenByTardy++;
+    }
+    out.sort(function (a, b) {
+      var g = String(a.gradeLevel).localeCompare(String(b.gradeLevel), undefined, { numeric: true });
+      if (g) return g;
+      var l = String(a.lastName).localeCompare(String(b.lastName));
+      return l || String(a.firstName).localeCompare(String(b.firstName));
+    });
+    counts.pct = counts.eligible ? Math.round((counts.perfect / counts.eligible) * 1000) / 10 : 0;
+    return { students: out, counts: counts, window: win };
+  }
+
   root.WildcatRoster = {
     CASH_NOTE_MIN: CASH_NOTE_MIN,
     cashNoteVerdict: cashNoteVerdict,
@@ -1265,6 +1463,10 @@
     runChartSignals: runChartSignals,
     absenceSeriesValues: absenceSeriesValues,
     absenceSignalBlurb: absenceSignalBlurb,
+    perfectWindows: perfectWindows,
+    datesInWindow: datesInWindow,
+    perfectVerdict: perfectVerdict,
+    perfectList: perfectList,
     RUNS_LIMITS: RUNS_LIMITS,
     median: median,
     dailyGoal: dailyGoal,

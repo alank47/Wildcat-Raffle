@@ -5521,6 +5521,10 @@
                             _attCache = null;
                             _runCache = null;
                             _ewCache = null;
+                            // The marks rollup is rewritten by the same twice
+                            // daily rebuild the other two read, so it goes
+                            // stale on exactly the same schedule.
+                            _paCache = null;
                             if (typeof pullLiveActivity === 'function') pullLiveActivity('idle');
                             
                             // DON'T call updateAllDisplays() - it redraws everything and is disruptive
@@ -30053,6 +30057,7 @@
             } else if (subtab === 'attendance') {
                 renderAttendanceWatch();
                 renderAbsenceRunChart();
+                renderPerfectAttendance();
             } else if (subtab === 'earlyWarning') {
                 renderEarlyWarning();
             } else if (subtab === 'uniform') {
@@ -30155,6 +30160,196 @@
             const off = Math.max(0, Number(offEl && offEl.value) || 0);
             const weekdays = R && R.schoolDaysElapsed ? R.schoolDaysElapsed(first, new Date()) : 0;
             return { first: first, weekdays: weekdays, off: off, days: Math.max(0, weekdays - off) };
+        }
+
+        // =====================================================================
+        // PERFECT ATTENDANCE
+        //
+        // The only panel on this screen that names children the school is NOT
+        // worried about. Asked for by the owner on 2026-09-22: no missed
+        // classes and no tardies, filterable by week, month and year.
+        //
+        // WHY IT NEEDED A NEW TABLE RATHER THAN A NEW VIEW. PowerSchool
+        // classifies a tardy as PRESENCE: PRESENT -- correctly, the child is
+        // in the room -- so nothing the app already stored could tell a
+        // punctual student from a chronically late one except a per-term
+        // total. Measured against production first: of the 103 students with
+        // no absences at all this year, only 35 were also never once late. Two
+        // thirds of this list is decided by data that did not exist here a day
+        // ago, which is also why an unrecognised tardy code has to be loud
+        // rather than quietly producing three times too many winners.
+        //
+        // THE COUNTS THIS SHIPPED AGAINST, 618 enrolled, 28 school days:
+        //   last full week   200 of 614 eligible
+        //   month so far      74 of 607
+        //   year to date      35 of 586
+        // =====================================================================
+        let _paCache = null;
+        let _paWindow = 'week';
+        let _paBusy = false;
+
+        function setPerfectWindow(key) {
+            _paWindow = String(key || 'week');
+            document.querySelectorAll('#attPerfectWindow .analytics-tab').forEach(b => {
+                const k = b.getAttribute('data-pa');
+                if (k) b.classList.toggle('active', k === _paWindow);
+            });
+            renderPerfectAttendance();
+        }
+
+        async function loadPerfectMarks(force) {
+            if (_paCache && !force) return _paCache;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) {
+                return { allowed: false, needsSignIn: true, rows: [],
+                         reason: 'Perfect attendance comes from the SIS, which needs a Microsoft sign-in.' };
+            }
+            try {
+                const res = await auth.convexQuery('attendanceList:attendanceMarks', {}, session.idToken);
+                _paCache = res;
+                return res;
+            } catch (e) {
+                const msg = (e && e.message) || String(e);
+                if (/\b401\b|unauthor/i.test(msg)) {
+                    return { allowed: false, needsSignIn: true, rows: [],
+                             reason: 'Your sign-in expired. Sign in again to load perfect attendance.' };
+                }
+                return { allowed: false, rows: [], reason: 'Perfect attendance could not be loaded: ' + msg };
+            }
+        }
+
+        async function renderPerfectAttendance(force) {
+            const body = document.getElementById('attPerfectBody');
+            if (!body) return;
+            const R = window.WildcatRoster;
+            if (!R || typeof R.perfectList !== 'function') {
+                body.innerHTML = '<p class="wu-absent">Attendance rules did not load. Refresh the page.</p>';
+                return;
+            }
+
+            // The guard is on the FETCH, not the render, for the same reason
+            // as Attendance Watch above: guarding the whole function drops a
+            // click that arrives mid-load and never retries it.
+            let res = _paCache;
+            if (!res || force) {
+                if (_paBusy) return;
+                _paBusy = true;
+                body.innerHTML = '<p class="wu-absent">Loading perfect attendance&hellip;</p>';
+                try { res = await loadPerfectMarks(force === true); }
+                finally { _paBusy = false; }
+            }
+            if (!res || res.allowed === false) {
+                body.innerHTML = '<p class="wu-absent">' +
+                    escapeHtml((res && res.reason) || 'Perfect attendance is not available to your access level.')
+                    + '</p>';
+                return;
+            }
+
+            const basis = attendanceSchoolDays();
+            const today = new Date().toISOString().slice(0, 10);
+            const windows = R.perfectWindows(today, basis.first);
+            const win = windows && windows[_paWindow];
+            if (!win || !win.from) {
+                body.innerHTML = '<p class="wu-absent">That period could not be worked out. '
+                    + 'Check the school year start date above.</p>';
+                return;
+            }
+
+            const strict = !!(document.getElementById('attPerfectExcused') || {}).checked;
+            const rows = res.rows || [];
+
+            // The grade dropdown is rebuilt from the data rather than hard
+            // coded, so a new year group appears by itself.
+            const sel = document.getElementById('attPerfectGrade');
+            let grade = 'all';
+            if (sel) {
+                grade = sel.value || 'all';
+                const keys = [];
+                rows.forEach(r => {
+                    const g = String(r.gradeLevel == null ? '' : r.gradeLevel).trim() || '(none)';
+                    if (keys.indexOf(g) === -1) keys.push(g);
+                });
+                const want = ['all'].concat(attGradeOrder(keys));
+                const have = Array.from(sel.options).map(o => o.value);
+                if (want.join('|') !== have.join('|')) {
+                    sel.innerHTML = want.map(k => '<option value="' + escapeHtml(k) + '">'
+                        + (k === 'all' ? 'All grades' : k === '(none)' ? 'No grade recorded' : 'Grade ' + escapeHtml(k))
+                        + '</option>').join('');
+                    sel.value = want.indexOf(grade) === -1 ? 'all' : grade;
+                    grade = sel.value;
+                }
+            }
+
+            const scoped = grade === 'all' ? rows : rows.filter(r => {
+                const g = String(r.gradeLevel == null ? '' : r.gradeLevel).trim() || '(none)';
+                return g === grade;
+            });
+
+            const out = R.perfectList(scoped, win, { countExcused: strict });
+            const c = out.counts;
+
+            const fmt = d => {
+                const p = String(d || '').split('-');
+                if (p.length !== 3) return String(d || '');
+                return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2]))
+                    .toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
+            };
+
+            let html = '';
+            html += '<p class="wc-att-basis-note">'
+                + escapeHtml(win.label) + ': <strong>' + fmt(win.from) + '</strong> to <strong>'
+                + fmt(win.to) + '</strong>. '
+                + '<strong>' + c.perfect + '</strong> of ' + c.eligible + ' students'
+                + (c.eligible ? ' (' + c.pct + '%)' : '')
+                + ' had no absences and no tardies'
+                + (strict ? '' : ', excused ones forgiven') + '.'
+                // THE DENOMINATOR IS ON SCREEN. "35 students" means nothing
+                // without "of 586", and a list that quietly shrank because a
+                // sync broke would otherwise read as a bad week.
+                + (c.notEligible
+                    ? ' ' + c.notEligible + ' student' + (c.notEligible === 1 ? ' is' : 's are')
+                      + ' not counted: they enrolled after this period began.'
+                    : '')
+                + '</p>';
+
+            if (!out.students.length) {
+                html += '<p class="wu-absent">Nobody has a clean record for this period'
+                    + (grade === 'all' ? '' : ' in this grade') + '. '
+                    + c.brokenByTardy + ' student' + (c.brokenByTardy === 1 ? '' : 's')
+                    + ' missed out on lateness alone.</p>';
+                body.innerHTML = html;
+                return;
+            }
+
+            html += '<div class="wc-att-list wc-pa-list">';
+            out.students.forEach(st => {
+                const name = ((st.firstName || '') + ' ' + (st.lastName || '')).trim()
+                    || ('Student ' + st.studentNumber);
+                html += '<div class="wc-att-row wc-pa-row">'
+                    + '<div class="wc-att-name">' + escapeHtml(name)
+                    + '<div class="cell-sub">'
+                    + (st.gradeLevel ? 'Grade ' + escapeHtml(String(st.gradeLevel)) + ' &middot; ' : '')
+                    + 'ID ' + escapeHtml(String(st.studentNumber)) + '</div></div>'
+                    + '<div class="wc-pa-badge">Perfect</div>'
+                    + '</div>';
+            });
+            html += '</div>';
+
+            // WHAT THE LIST COSTS, said out loud. Lateness is doing most of
+            // the filtering and a headteacher looking at a short list should
+            // be able to see that without being told.
+            html += '<p class="wc-att-foot">'
+                + c.brokenByTardy + ' more had no absences but were late at least once. '
+                + c.brokenByAbsence + ' missed class without being late, and '
+                + c.brokenByBoth + ' did both.'
+                + (res.lastSyncedAt
+                    ? ' Attendance last read from PowerSchool ' + escapeHtml(wcClockAt(res.lastSyncedAt)) + '.'
+                    : '')
+                + (res.truncated ? ' The roster is longer than this screen reads; some students are missing.' : '')
+                + '</p>';
+
+            body.innerHTML = html;
         }
 
         async function loadAttendanceRows(force) {

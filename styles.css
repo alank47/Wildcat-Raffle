@@ -9725,3 +9725,57 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
    second is a judgement about a school, and a reader should be able to tell. */
 .wc-rc-rule { display: block; font-weight: 600; }
 .wc-rc-why { display: block; margin-top: 4px; font-weight: 400; color: var(--wc-gray-text, #4b5563); }
+
+/* ---------------------------------------------------------------------------
+   PERFECT ATTENDANCE
+
+   The one panel on Attendance Watch that is good news, so it is the one place
+   on the screen that gets a positive colour. Everything else here borrows the
+   absence list's shapes deliberately -- a row is a row -- because a reader
+   should be able to move between "who is missing school" and "who never has"
+   without relearning the layout.
+--------------------------------------------------------------------------- */
+.wc-pa-header { flex-wrap: wrap; gap: 10px; }
+.wc-pa-title { margin: 0; }
+
+.wc-pa-controls {
+    display: flex; align-items: center; flex-wrap: wrap;
+    gap: 12px; margin: 2px 0 12px;
+}
+.wc-pa-check {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12.5px; color: var(--wc-gray-text, #8892a0);
+    cursor: pointer; user-select: none;
+}
+.wc-pa-check input { width: 15px; height: 15px; accent-color: var(--wc-blue, #2F67A7); cursor: pointer; }
+.wc-pa-check input:focus-visible { outline: 2px solid var(--wc-blue, #2F67A7); outline-offset: 2px; }
+
+/* A list of winners is read down, not clicked, so the rows do not pretend to
+   be buttons the way the absence rows do. */
+.wc-pa-list { margin-top: 4px; }
+.wc-pa-row {
+    cursor: default;
+    border-left-color: #16a34a;
+}
+.wc-pa-row:hover { background: var(--wc-surface, #fff); }
+
+.wc-pa-badge {
+    flex: 0 0 auto;
+    padding: 3px 10px; border-radius: 999px;
+    font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+    color: #14532d; background: #dcfce7; border: 1px solid #bbf7d0;
+}
+
+/* NO DARK-MODE BLOCK HERE, deliberately.
+   This app has no dark mode: there is no data-theme anywhere and this was the
+   only prefers-color-scheme rule in the whole stylesheet. A partial one for a
+   single badge does not add dark mode, it breaks the badge -- the rule fired
+   on any machine set to dark while every surface around it stayed light, so
+   the label came out pale green on pale green and could not be read at all.
+   Caught by looking at it; no unit test would have. If dark mode is ever
+   added it belongs to the whole stylesheet at once. */
+
+@media (max-width: 640px) {
+    .wc-pa-controls { gap: 8px; }
+    .wc-pa-controls .wc-att-grade { width: 100%; }
+}

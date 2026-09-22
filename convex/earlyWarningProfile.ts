@@ -1245,3 +1245,41 @@ export const referralMailHistory = internalQuery({
     };
   },
 });
+
+/**
+ * Perfect attendance counts straight off psAttendanceMarks. COUNTS ONLY.
+ *
+ * A second, deliberately naive implementation, kept so the shipped rules can
+ * be checked against something that shares no code with them. The probe in
+ * attendanceProbe.ts reads PowerSchool directly; this reads the table the
+ * rebuild wrote; wildcat-roster.js decides what the browser shows. Three paths
+ * agreeing on a number is worth more than any one of them being careful.
+ */
+export const perfectCounts = internalQuery({
+  args: { windows: v.array(v.object({ key: v.string(), from: v.string(), to: v.string() })) },
+  handler: async (ctx, { windows }) => {
+    const rows = await ctx.db.query("psAttendanceMarks").take(2000);
+    const inWin = (dates: string[] | undefined, from: string, to: string) =>
+      (dates ?? []).some((d) => d >= from && d <= to);
+    return {
+      students: rows.length,
+      windows: windows.map((w) => {
+        let perfect = 0, noAbsences = 0, forgiving = 0, ineligible = 0;
+        for (const r of rows) {
+          const entry = String(r.entryDate ?? "");
+          if (entry && entry > w.from) { ineligible++; continue; }
+          const a = inWin(r.absentDates, w.from, w.to);
+          const t = inWin(r.tardyDates, w.from, w.to);
+          const ua = (r.absentDates ?? []).some((d) =>
+            d >= w.from && d <= w.to && !(r.excusedAbsentDates ?? []).includes(d));
+          const ut = (r.tardyDates ?? []).some((d) =>
+            d >= w.from && d <= w.to && !(r.excusedTardyDates ?? []).includes(d));
+          if (!a) noAbsences++;
+          if (!a && !t) perfect++;
+          if (!ua && !ut) forgiving++;
+        }
+        return { ...w, eligible: rows.length - ineligible, ineligible, perfect, noAbsences, forgiving };
+      }),
+    };
+  },
+});
