@@ -81,7 +81,7 @@ function loadPing(transformPing, transformRules) {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
   }).outputText;
   return new Function(
-    `${js}\nreturn { due, claim, finish, sweep, configure, emailForName, history };`)();
+    `${js}\nreturn { due, claim, finish, sweep, configure, emailForName, history, retryFailed };`)();
 }
 
 // --------------------------------------------------------- the fake database
@@ -140,6 +140,12 @@ function makeDb(seed) {
         const row = { ...doc, _id: `${name}:new${n++}` };
         tables[name].push(row);
         return row._id;
+      },
+      async delete(id) {
+        for (const t of Object.values(tables)) {
+          const i = t.findIndex((x) => x._id === id);
+          if (i >= 0) t.splice(i, 1);
+        }
       },
       async patch(id, fields) {
         for (const t of Object.values(tables)) {
@@ -467,6 +473,9 @@ function wire(P, seed, opts = {}) {
     async runAction(ref, args) {
       if (opts.mailThrows) throw new Error("Graph said no");
       sentMail.push(args);
+      // mail:send does NOT throw when it delivers nothing -- it returns
+      // { sent: 0 }. Let a test say so.
+      if (opts.mailResult) return opts.mailResult(args);
       return { sent: args.to.length, refused: [] };
     },
   };
@@ -634,6 +643,90 @@ const OPEN = {
     old.sentMail.length === 0 && old.out.agedOut === 1, JSON.stringify(old.out.agedOut));
 }
 
+// ------------------------------------------ a send that reached nobody is not a send
+{
+  // mail:send returns { sent: 0 } WITHOUT throwing in two live cases: the
+  // STAFF_DOMAIN filter emptying the allowed list, and Graph answering 403 to
+  // every address, which is what a tenant policy that omits this sender looks
+  // like. Recording either as "sent" would leave four referrals in a log
+  // reading byState: { sent: 4 } while nobody had been told anything.
+  const dead = await runSweep([OPEN], {
+    mailResult: (a) => ({ sent: 0, refused: a.to.map((x) => `${x} (HTTP 403)`) }),
+  });
+  const row = dead.tables.referralPingLog[0];
+  check("delivered to nobody is recorded as FAILED, not sent", row?.state === "failed",
+    JSON.stringify(row));
+  check("...and says so in words a person can act on",
+    /delivered to nobody/.test(String(row?.error)) && /403/.test(String(row?.error)),
+    String(row?.error));
+  check("...and history does not count it as a success",
+    (await (async () => {
+      const P = loadPing();
+      const { db } = makeDb({ ...seedWith([OPEN]), referralPingLog: dead.tables.referralPingLog });
+      const h = await P.history.handler({ db }, {});
+      return (h.byState.sent ?? 0) === 0 && h.failed.length === 1;
+    })()));
+
+  // A PARTIAL delivery is still a delivery. Some of those inboxes have it,
+  // so it must never be retried -- but it must not be silent either.
+  const part = await runSweep([OPEN], {
+    mailResult: (a) => ({ sent: 3, refused: a.to.slice(3).map((x) => `${x} (HTTP 403)`) }),
+  });
+  const prow = part.tables.referralPingLog[0];
+  check("a partial delivery stays SENT, so nobody gets it twice", prow?.state === "sent");
+  check("...with the shortfall on the row", prow?.sent === 3 && prow?.recipients === 5);
+  check("...and history surfaces it separately from a clean send",
+    (await (async () => {
+      const P = loadPing();
+      const { db } = makeDb({ ...seedWith([OPEN]), referralPingLog: part.tables.referralPingLog });
+      const h = await P.history.handler({ db }, {});
+      return h.partial.length === 1 && h.partial[0].delivered === 3 && h.partial[0].addressed === 5;
+    })()));
+  check("...and a later sweep does not re-send it",
+    (await (async () => {
+      const P = loadPing();
+      const w = wire(P, { ...seedWith([OPEN]), referralPingLog: part.tables.referralPingLog });
+      await P.sweep.handler(w.ctx, { today: "2026-09-16" });
+      return w.sentMail.length;
+    })()) === 0);
+}
+
+// ------------------------------------------------- the operator's escape hatch
+{
+  const dead = await runSweep([OPEN], { mailResult: () => ({ sent: 0, refused: ["all"] }) });
+  check("a failed stage is stuck until a person says otherwise",
+    (await (async () => {
+      const P = loadPing();
+      const w = wire(P, { ...seedWith([OPEN]), referralPingLog: dead.tables.referralPingLog });
+      await P.sweep.handler(w.ctx, { today: "2026-09-16" });
+      return w.sentMail.length;
+    })()) === 0);
+
+  const P = loadPing();
+  const w = wire(P, { ...seedWith([OPEN]), referralPingLog: dead.tables.referralPingLog });
+  const cleared = await P.retryFailed.handler(w.ctx, {});
+  check("retryFailed clears exactly the failed rows", cleared.cleared === 1,
+    JSON.stringify(cleared));
+  check("...and the next sweep then re-sends", (await (async () => {
+    await P.sweep.handler(w.ctx, { today: "2026-09-16" });
+    return w.sentMail.length;
+  })()) === 1);
+
+  // It must never reopen somebody's inbox.
+  const P2 = loadPing();
+  const ok = await runSweep([OPEN]);
+  const w2 = wire(P2, { ...seedWith([OPEN]), referralPingLog: ok.tables.referralPingLog });
+  const none = await P2.retryFailed.handler(w2.ctx, {});
+  check("a SENT row is never reopened by retryFailed", none.cleared === 0,
+    JSON.stringify(none));
+  const skipped = await runSweep([{ ...OPEN, id: "R-x", status: "closed",
+    closedAt: "2026-09-10T20:00:00Z", closedBy: "Nobody At All" }]);
+  const P3 = loadPing();
+  const w3 = wire(P3, { ...seedWith([OPEN]), referralPingLog: skipped.tables.referralPingLog });
+  check("a SKIPPED row is a decision, not an error, and is left alone",
+    (await P3.retryFailed.handler(w3.ctx, {})).cleared === 0);
+}
+
 console.log("\nDO THE ASSERTIONS HAVE TEETH?\n");
 
 // Re-break the shipped code and require the guard to notice. An assertion that
@@ -699,6 +792,20 @@ console.log("\nDO THE ASSERTIONS HAVE TEETH?\n");
   await P.sweep.handler(w.ctx, { today: "2026-09-16", dryRun: true });
   check("TEETH: a dry run that claims the slot is caught",
     w.tables.referralPingLog.length > 0);
+}
+
+{
+  // Zero delivered, logged as a clean send -- the silent permanent stop.
+  const P = loadPing((body) => {
+    const before = body;
+    body = body.replace("        if (delivered === 0) {", "        if (false) {");
+    if (body === before) throw new Error("teeth 6: anchor moved");
+    return body;
+  });
+  const w = wire(P, seedWith([OPEN]), { mailResult: () => ({ sent: 0, refused: ["all"] }) });
+  await P.sweep.handler(w.ctx, { today: "2026-09-16" });
+  check("TEETH: a zero-delivery logged as sent is caught",
+    w.tables.referralPingLog[0]?.state === "sent");
 }
 
 console.log("\nWIRING\n");

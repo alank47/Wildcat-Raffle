@@ -298,11 +298,51 @@ export const sweep = internalAction({
         const res: any = await ctx.runAction(internal.mail.send, {
           to: mail.to, subject: mail.subject, html: mail.html, live: true,
         });
+        const delivered = Number(res?.sent ?? 0);
+        const refused: string[] = Array.isArray(res?.refused) ? res.refused : [];
+
+        // A SEND THAT DELIVERED TO NOBODY IS NOT A SEND.
+        //
+        // mail:send does not throw when it delivers nothing. Two live paths
+        // reach zero without an exception: the STAFF_DOMAIN filter emptying
+        // the allowed list (it returns { sent: 0 } and never calls Graph at
+        // all), and Graph answering 403 to every address, which is what a
+        // tenant-wide application access policy that omits this sender looks
+        // like. Recording either as "sent" would put four referrals in a log
+        // that reads byState: { sent: 4 } while nobody had been told anything
+        // -- and because the slot is claimed, they would never be chased
+        // again. A silent permanent stop is the worst failure this feature
+        // has, so it is made loud here.
+        if (delivered === 0) {
+          await ctx.runMutation(internal.referralPing.finish, {
+            referralId: d.referralId, stage: d.stage, state: "failed",
+            sent: 0, recipients: mail.to.length, refused,
+            error: `delivered to nobody: ${refused.length} of ${mail.to.length} refused` +
+              (refused.length ? ` (${refused.slice(0, 3).join(", ")})` : ""),
+          });
+          results.push({
+            referralId: d.referralId, stage: d.stage, state: "failed",
+            delivered: 0, recipients: mail.to.length, refused,
+          });
+          continue;
+        }
+
         await ctx.runMutation(internal.referralPing.finish, {
           referralId: d.referralId, stage: d.stage, state: "sent",
-          sent: res?.sent ?? 0, recipients: mail.to.length, refused: res?.refused ?? [],
+          sent: delivered, recipients: mail.to.length, refused,
+          // A PARTIAL DELIVERY IS STILL A DELIVERY, so it stays "sent" and is
+          // never retried -- some of these people already have it, and a
+          // retry is how they get a child's referral twice. The count is on
+          // the row so referralPing:history can surface the shortfall.
+          error: delivered < mail.to.length
+            ? `partial: ${delivered} of ${mail.to.length} delivered`
+            : undefined,
         });
-        results.push({ referralId: d.referralId, stage: d.stage, state: "sent", recipients: mail.to.length });
+        results.push({
+          referralId: d.referralId, stage: d.stage, state: "sent",
+          delivered, recipients: mail.to.length,
+          ...(refused.length ? { refused } : {}),
+        });
       } catch (err: any) {
         await ctx.runMutation(internal.referralPing.finish, {
           referralId: d.referralId, stage: d.stage, state: "failed",
@@ -324,6 +364,46 @@ function summarise(plan: any) {
   };
 }
 
+/**
+ * Let a FAILED stage be attempted again. CLI only, and a human decides.
+ *
+ *   npx convex run referralPing:retryFailed '{}'
+ *   npx convex run referralPing:retryFailed '{"referralId":"REF-260914-ZTX9D4W"}'
+ *
+ * WHY THIS IS MANUAL. referralMail:deliver refuses to retry for a reason
+ * worth repeating: mail:send sets saveToSentItems, so a send that reached
+ * Graph is already visible in the Westbrook mailbox, and a blind automatic
+ * retry is how six school leaders get the same child's referral twice. But a
+ * stage that delivered to NOBODY -- the domain gate emptying the list, or a
+ * tenant policy answering 403 to every address -- must not be stuck forever
+ * either. So the retry exists, and a person runs it after fixing the cause.
+ *
+ * IT ONLY EVER TOUCHES "failed" ROWS. A "sent" row is somebody's inbox and is
+ * never reopened; a "skipped" row is a decision, not an error.
+ */
+export const retryFailed = internalMutation({
+  args: { referralId: v.optional(v.string()) },
+  handler: async (ctx, { referralId }) => {
+    const rows = referralId
+      ? await ctx.db.query("referralPingLog")
+          .withIndex("by_referral", (q) => q.eq("referralId", referralId)).take(50)
+      : await ctx.db.query("referralPingLog").take(2000);
+    const cleared: Array<{ referralId: string; stage: string; error?: string }> = [];
+    for (const r of rows) {
+      if (r.state !== "failed") continue;
+      cleared.push({ referralId: r.referralId, stage: r.stage, error: r.error });
+      await ctx.db.delete(r._id);
+    }
+    return {
+      cleared: cleared.length,
+      rows: cleared,
+      note: cleared.length
+        ? "the next sweep will re-decide these; run referralPing:sweep '{\"dryRun\":true}' first"
+        : "nothing was in a failed state",
+    };
+  },
+});
+
 /** What has been chased, and what is stuck. Counts and states; no student. */
 export const history = internalQuery({
   args: {},
@@ -341,6 +421,12 @@ export const history = internalQuery({
         .map((r) => ({ referralId: r.referralId, stage: r.stage, at: r.at })),
       failed: rows.filter((r) => r.state === "failed")
         .map((r) => ({ referralId: r.referralId, stage: r.stage, at: r.at, error: r.error })),
+      // A "sent" row that reached fewer inboxes than it addressed. Not an
+      // error -- it is not retried and must not be -- but not silence either.
+      partial: rows.filter((r) => r.state === "sent" &&
+        Number(r.sent ?? 0) < Number(r.recipients ?? 0))
+        .map((r) => ({ referralId: r.referralId, stage: r.stage,
+          delivered: r.sent ?? 0, addressed: r.recipients ?? 0, refused: r.refused ?? [] })),
       skipped: rows.filter((r) => r.state === "skipped")
         .map((r) => ({ referralId: r.referralId, stage: r.stage, reason: r.reason })),
     };
