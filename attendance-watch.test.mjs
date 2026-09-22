@@ -189,7 +189,17 @@ console.log("\n-- the screen --");
   check("the pane exists", /id="behaviorAttendance"/.test(html));
   check("it is hidden until opened", /id="behaviorAttendance" class="discipline-subtab hidden"/.test(html));
   check("switchDisciplineTab knows the pane", /attendance:\{ pane: 'behaviorAttendance'/.test(script));
-  check("opening the tab renders it", /subtab === 'attendance'\)\s*\{\s*renderAttendanceWatch\(\)/.test(script));
+  // THE CHAIN, since 2026-09-22. The tab handler no longer calls the renderer
+  // itself: it applies the remembered view, and the absence half draws this.
+  // Both links are asserted so neither end can drop it silently.
+  check("opening the tab applies the remembered view",
+    /subtab === 'attendance'\)\s*\{[\s\S]{0,320}setAttendanceView\(_attView\)/.test(script));
+  check("...and the absence half is what this tab defaults to",
+    /let _attView = 'watch';/.test(script),
+    "a reader opening Attendance Watch expects the absence list, not the award list");
+  check("...and showing it renders the list",
+    /function setAttendanceView[\s\S]{0,2600}else \{ renderAttendanceWatch\(\); renderAbsenceRunChart\(\); \}/
+      .test(script));
   check("the sidebar lists it", /id: 'attendance', fn: 'switchDisciplineTab'/.test(script));
 
   // EVERY id the renderer touches must exist. This exact class of bug -- a

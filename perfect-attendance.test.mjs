@@ -27,6 +27,7 @@ const statsSrc = readFileSync(new URL("./convex/sisStats.ts", import.meta.url), 
 const schemaSrc = readFileSync(new URL("./convex/schema.ts", import.meta.url), "utf8");
 const htmlSrc = readFileSync(new URL("./index.html", import.meta.url), "utf8");
 const scriptSrc = readFileSync(new URL("./script.js", import.meta.url), "utf8");
+const cssSrc = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
 let pass = 0, fail = 0;
 const check = (n, c, why) => {
@@ -348,7 +349,9 @@ console.log("\nTHE SCREEN\n");
   check("all three windows have a button",
     ["week", "month", "year"].every((k) => htmlSrc.includes(`setPerfectWindow('${k}')`)));
   check("the panel is drawn when the Attendance tab opens",
-    /subtab === 'attendance'[\s\S]{0,200}renderPerfectAttendance\(\)/.test(scriptSrc));
+    /subtab === 'attendance'\)\s*\{[\s\S]{0,320}setAttendanceView\(_attView\)/.test(scriptSrc) &&
+    /function setAttendanceView[\s\S]{0,2600}if \(_attView === 'perfect'\) renderPerfectAttendance\(\);/
+      .test(scriptSrc));
   check("its cache is dropped on the idle refresh, like the other three",
     /_paCache = null/.test(scriptSrc),
     "staff are never asked to hard refresh, so a stale panel must expire itself");
@@ -369,6 +372,66 @@ console.log("\nTHE SCREEN\n");
       const stamps = [...htmlSrc.matchAll(/\?v=([0-9a-z]+)/g)].map((m) => m[1]);
       return stamps.length > 0 && new Set(stamps).size === 1;
     })(), [...new Set([...htmlSrc.matchAll(/\?v=([0-9a-z]+)/g)].map((m) => m[1]))].join(","));
+}
+
+console.log("\nTHE VIEW SWITCH\n");
+{
+  // It shipped at the BOTTOM of the tab: under the basis card, the run chart,
+  // four tier cards and a list of up to 671 children. Reaching the one panel
+  // on the screen that is good news meant scrolling past every child the
+  // school is worried about, which made it effectively unreachable.
+  const switchAt = htmlSrc.indexOf('id="attViewSwitch"');
+  check("the switch exists", switchAt > 0);
+  check("...and is ABOVE everything it switches between",
+    switchAt < htmlSrc.indexOf('class="wc-card wc-att-basis"') &&
+    switchAt < htmlSrc.indexOf('id="attRunChart"') &&
+    switchAt < htmlSrc.indexOf('id="attTierCards"') &&
+    switchAt < htmlSrc.indexOf('id="attPerfectBody"'),
+    "a switch below the thing it reveals is the problem it was added to fix");
+  check("both halves have a button",
+    /data-attview="watch"/.test(htmlSrc) && /data-attview="perfect"/.test(htmlSrc));
+
+  check("the two halves are wrapped separately",
+    /id="attWatchView"/.test(htmlSrc) && /id="attPerfectView"/.test(htmlSrc));
+  check("the absence half is the one that loads",
+    /<div id="attWatchView">/.test(htmlSrc) && /<div id="attPerfectView" hidden>/.test(htmlSrc),
+    "somebody opening Attendance Watch expects the absence list");
+  check("the script agrees on that default", /let _attView = 'watch';/.test(scriptSrc));
+
+  // THE 2026-09-08 TRAP. `hidden` is a user-agent rule and loses to ANY author
+  // declaration that sets display, which is how a red unsaved-referral bar
+  // shipped visible to every user on launch morning. A wrapper with no class
+  // of its own cannot be caught by it. (hidden-attribute.test.mjs enforces the
+  // general rule; this pins the specific decision.)
+  check("the toggled wrappers carry no class that could set display",
+    !/<div id="attWatchView" [^>]*class=/.test(htmlSrc) &&
+    !/<div id="attPerfectView"[^>]*class=/.test(htmlSrc),
+    "an author display rule silently defeats the hidden attribute");
+
+  const switcher = (() => {
+    const i = scriptSrc.indexOf("function setAttendanceView");
+    return scriptSrc.slice(i, i + 2600);
+  })();
+  check("the switch function was found", switcher.length > 500);
+  check("it toggles BOTH halves, so they cannot both show",
+    /watchEl\.hidden = \(_attView !== 'watch'\)/.test(switcher) &&
+    /perfectEl\.hidden = \(_attView !== 'perfect'\)/.test(switcher));
+  check("...and announces the state, not just colours a button",
+    /setAttribute\('aria-pressed'/.test(switcher),
+    "two buttons are not a tablist, so the state has to be spoken");
+  check("...and swaps the subtitle, so the page says which question it answers",
+    /attViewSubtitle/.test(switcher) && /ATT_VIEW_SUBTITLES/.test(scriptSrc));
+  check("anything not 'perfect' falls back to the absence list",
+    /\(view === 'perfect'\) \? 'perfect' : 'watch'/.test(switcher));
+
+  check("the header Refresh aims at whichever half is showing",
+    /onclick="refreshAttendanceView\(\)"/.test(htmlSrc) &&
+    /function refreshAttendanceView[\s\S]{0,400}renderPerfectAttendance\(true\)[\s\S]{0,200}renderAttendanceWatch\(true\)/
+      .test(scriptSrc),
+    "a Refresh that reloads the hidden half does nothing a reader can see");
+
+  check("every class the switch uses is defined in the stylesheet",
+    ["wc-att-views"].every((c) => cssSrc.includes("." + c)));
 }
 
 console.log("\nDO THE ASSERTIONS HAVE TEETH?\n");
@@ -422,6 +485,18 @@ console.log("\nDO THE ASSERTIONS HAVE TEETH?\n");
   const w = broken.perfectWindows("2026-09-22", "2026-08-12");
   check("TEETH: a student who enrolled last week landing on the year list is caught",
     broken.perfectVerdict(student({ entryDate: "2026-09-15" }), w.year, {}).perfect === true);
+}
+
+{
+  // Leave the absence half showing when perfect attendance is selected, which
+  // is the switch doing nothing at all.
+  const broken = scriptSrc.replace(
+    "if (watchEl) watchEl.hidden = (_attView !== 'watch');", "");
+  check("TEETH: a switch that never hides the absence half is caught",
+    broken !== scriptSrc &&
+    !/watchEl\.hidden = \(_attView !== 'watch'\)/.test(
+      broken.slice(broken.indexOf("function setAttendanceView"),
+                   broken.indexOf("function setAttendanceView") + 2600)));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

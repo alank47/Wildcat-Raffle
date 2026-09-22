@@ -202,7 +202,17 @@ check("and sits ABOVE the tier cards, since the trend frames the tiers",
   html.indexOf('id="attRunChart"') < html.indexOf('id="attTierCards"'));
 check("the series toggle is present and wired",
   /data-run="full"/.test(html) && /setAbsenceRunSeries\('partial'\)/.test(html));
-check("opening the tab draws it", /subtab === 'attendance'\)\s*\{[\s\S]{0,160}renderAbsenceRunChart\(\)/.test(script));
+// THE CHAIN, not one direct call. The tab handler used to call the three
+// renderers itself; since 2026-09-22 it applies the remembered view and that
+// draws whichever half is showing. Both links are asserted, so the chart
+// cannot be orphaned by either end changing.
+check("opening the tab applies the remembered view",
+  /subtab === 'attendance'\)\s*\{[\s\S]{0,320}setAttendanceView\(_attView\)/.test(script));
+check("...and showing the absence half draws the run chart",
+  /function setAttendanceView[\s\S]{0,2600}else \{ renderAttendanceWatch\(\); renderAbsenceRunChart\(\); \}/
+    .test(script));
+check("...and the header Refresh reaches it too",
+  /function refreshAttendanceView[\s\S]{0,400}renderAbsenceRunChart\(true\)/.test(script));
 check("the fetch is guarded, not the render",
   /if \(!res \|\| force\) \{\s*\n\s*if \(_runBusy\) return;/.test(script));
 check("every handler named in the markup is a real function",

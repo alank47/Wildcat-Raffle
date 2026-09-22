@@ -30055,9 +30055,10 @@
                 if (typeof initializeDetentionForm === 'function') initializeDetentionForm();
                 if (typeof updateDetentionLists === 'function') updateDetentionLists();
             } else if (subtab === 'attendance') {
-                renderAttendanceWatch();
-                renderAbsenceRunChart();
-                renderPerfectAttendance();
+                // setAttendanceView draws the half it shows, so this is one
+                // call rather than three, and it honours whichever half the
+                // reader was last looking at.
+                setAttendanceView(_attView);
             } else if (subtab === 'earlyWarning') {
                 renderEarlyWarning();
             } else if (subtab === 'uniform') {
@@ -30098,6 +30099,64 @@
         // comparing '9' to 9 across a re-render is a bug waiting to be written.
         let _attGradeFilter = 'all';
         let _attBusy = false;
+
+        /**
+         * WHICH HALF OF ATTENDANCE WATCH IS ON SCREEN.
+         *
+         * Perfect attendance shipped at the bottom of the tab, under the basis
+         * card, the run chart, four tier cards and a list of up to 671
+         * children. Reaching the one panel on the screen that is good news
+         * meant scrolling past every child the school is worried about, so it
+         * was effectively unreachable. These are two questions asked of the
+         * same data and neither is a footnote to the other.
+         *
+         * IT REMEMBERS, for the session. Somebody reading out an award list
+         * moves between this tab and a student's profile repeatedly, and being
+         * dropped back on the absence ranking every time is the kind of small
+         * friction that stops a feature being used at all.
+         */
+        let _attView = 'watch';
+
+        const ATT_VIEW_SUBTITLES = {
+            watch: 'Chronic absence and tardiness, worst first',
+            perfect: 'Students with no absences and no tardies'
+        };
+
+        function setAttendanceView(view) {
+            _attView = (view === 'perfect') ? 'perfect' : 'watch';
+
+            const watchEl = document.getElementById('attWatchView');
+            const perfectEl = document.getElementById('attPerfectView');
+            // `hidden` rather than a display rule, and on a wrapper with no
+            // class of its own: an author `display` declaration outranks the
+            // user-agent `[hidden] { display: none }`, which is exactly how a
+            // red unsaved-referral bar shipped visible to every user.
+            if (watchEl) watchEl.hidden = (_attView !== 'watch');
+            if (perfectEl) perfectEl.hidden = (_attView !== 'perfect');
+
+            document.querySelectorAll('#attViewSwitch [data-attview]').forEach(b => {
+                const on = b.getAttribute('data-attview') === _attView;
+                b.classList.toggle('active', on);
+                // aria-pressed, not just a class: the switch is two buttons
+                // rather than a tablist, so the state has to be announced.
+                b.setAttribute('aria-pressed', on ? 'true' : 'false');
+            });
+
+            const sub = document.getElementById('attViewSubtitle');
+            if (sub) sub.textContent = ATT_VIEW_SUBTITLES[_attView] || ATT_VIEW_SUBTITLES.watch;
+
+            // Draw whichever half just appeared. Both are cached, so this
+            // costs nothing after the first time, and a panel that was never
+            // opened is fetched the moment it is.
+            if (_attView === 'perfect') renderPerfectAttendance();
+            else { renderAttendanceWatch(); renderAbsenceRunChart(); }
+        }
+
+        /** The header Refresh, aimed at whichever half is actually showing. */
+        function refreshAttendanceView() {
+            if (_attView === 'perfect') renderPerfectAttendance(true);
+            else { renderAttendanceWatch(true); renderAbsenceRunChart(true); }
+        }
 
         function setAttendanceTierFilter(tier) {
             _attTierFilter = tier;

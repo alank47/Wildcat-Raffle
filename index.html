@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20260922e">
-    <link rel="icon" href="favicon.ico?v=20260922e" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260922e" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260922e" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20260922f">
+    <link rel="icon" href="favicon.ico?v=20260922f" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260922f" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260922f" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260922e">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260922f">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20260922e">
+    <link rel="stylesheet" href="styles.css?v=20260922f">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260922e">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260922f">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20260922e">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260922f">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20260922e" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20260922f" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -184,7 +184,7 @@
                      asset, so there is one logo to replace when the school
                      changes it. -->
                 <div class="wp-brand">
-                    <img src="assets/westbrook-logo.png?v=20260922e"
+                    <img src="assets/westbrook-logo.png?v=20260922f"
                          alt="Westbrook Academy" class="wp-brandlogo" id="wpBrandLogo">
                     <!-- The product's name, which appeared nowhere on the
                          student's screen while the teacher's topbar has said
@@ -412,7 +412,7 @@
         <header class="app-topbar">
             <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-menu"></use></svg></button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20260922e" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20260922f" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -3482,10 +3482,36 @@
                     <div class="page-header">
                         <div>
                             <h2 class="page-title">📅 Attendance Watch</h2>
-                            <p class="page-subtitle">Chronic absence and tardiness, worst first</p>
+                            <p class="page-subtitle" id="attViewSubtitle">Chronic absence and tardiness, worst first</p>
                         </div>
-                        <button type="button" class="btn btn-secondary" onclick="renderAttendanceWatch(true)">Refresh</button>
+                        <button type="button" class="btn btn-secondary" onclick="refreshAttendanceView()">Refresh</button>
                     </div>
+
+                    <!-- WHICH HALF OF THE SCREEN, AT THE TOP OF IT.
+                         Perfect attendance shipped at the bottom of this tab,
+                         below the basis card, the run chart, four tier cards
+                         and a list of up to 671 children -- so reaching the
+                         one panel that is good news meant scrolling past
+                         everything that is not. These are two different
+                         questions asked of the same data, and neither is a
+                         footnote to the other, so they get equal billing and
+                         only one is on screen at a time. -->
+                    <div class="subtab-bar analytics-tabs wc-att-views" id="attViewSwitch" role="group"
+                         aria-label="Which attendance view to show">
+                        <button type="button" class="analytics-tab active" data-attview="watch"
+                                aria-pressed="true"
+                                onclick="setAttendanceView('watch')">Who is missing</button>
+                        <button type="button" class="analytics-tab" data-attview="perfect"
+                                aria-pressed="false"
+                                onclick="setAttendanceView('perfect')">Perfect attendance</button>
+                    </div>
+
+                    <!-- A BARE DIV, NOT A CARD. `hidden` is beaten by any
+                         author rule that sets `display`, which is how a red
+                         unsaved-referral bar shipped visible to everybody on
+                         2026-09-08. A wrapper with no class of its own cannot
+                         be caught by that. -->
+                    <div id="attWatchView">
 
                     <!-- THE DENOMINATOR IS ON SCREEN, NOT BURIED.
                          Every percentage below is days absent over days in
@@ -3591,6 +3617,9 @@
                         <p class="wc-att-foot" id="attFoot"></p>
                     </div>
 
+                    </div><!-- /attWatchView -->
+
+                    <div id="attPerfectView" hidden>
                     <!-- PERFECT ATTENDANCE.
                          Everything above this point names the children the
                          school is worried about. This is the only panel on the
@@ -3633,6 +3662,7 @@
                         </div>
                         <div id="attPerfectBody"></div>
                     </div>
+                    </div><!-- /attPerfectView -->
                 </div>
 
                 <!-- Early Warning Subtab
@@ -5936,24 +5966,24 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260922e"></script>
+    <script src="wildcat-auth.js?v=20260922f"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
     <!-- The icon sprite. Injected at load, before anything renders, so an
          icon is never a blank square for a frame. -->
-    <script src="wildcat-icons.js?v=20260922e"></script>
-    <script src="wildcat-motion.js?v=20260922e"></script>
-    <script src="wildcat-discipline.js?v=20260922e"></script>
-    <script src="wildcat-audit.js?v=20260922e"></script>
-    <script src="wildcat-cashaudit.js?v=20260922e"></script>
-    <script src="wildcat-dirty.js?v=20260922e"></script>
-    <script src="wildcat-update.js?v=20260922e"></script>
-    <script src="wildcat-modes.js?v=20260922e"></script>
-    <script src="wildcat-merge.js?v=20260922e"></script>
-    <script src="wildcat-savequeue.js?v=20260922e"></script>
-    <script src="wildcat-roster.js?v=20260922e"></script>
-    <script src="wildcat-store.js?v=20260922e"></script>
-    <script src="script.js?v=20260922e"></script>
+    <script src="wildcat-icons.js?v=20260922f"></script>
+    <script src="wildcat-motion.js?v=20260922f"></script>
+    <script src="wildcat-discipline.js?v=20260922f"></script>
+    <script src="wildcat-audit.js?v=20260922f"></script>
+    <script src="wildcat-cashaudit.js?v=20260922f"></script>
+    <script src="wildcat-dirty.js?v=20260922f"></script>
+    <script src="wildcat-update.js?v=20260922f"></script>
+    <script src="wildcat-modes.js?v=20260922f"></script>
+    <script src="wildcat-merge.js?v=20260922f"></script>
+    <script src="wildcat-savequeue.js?v=20260922f"></script>
+    <script src="wildcat-roster.js?v=20260922f"></script>
+    <script src="wildcat-store.js?v=20260922f"></script>
+    <script src="script.js?v=20260922f"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -5963,7 +5993,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20260922e').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20260922f').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {

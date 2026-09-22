@@ -9779,3 +9779,16 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     .wc-pa-controls { gap: 8px; }
     .wc-pa-controls .wc-att-grade { width: 100%; }
 }
+
+/* The two halves of Attendance Watch, switched at the top of the tab rather
+   than reached by scrolling past 671 children. Slightly more presence than the
+   filter pills further down, because this one changes the whole screen. */
+.wc-att-views {
+    margin: 0 0 16px;
+    flex-wrap: wrap;
+}
+.wc-att-views .analytics-tab {
+    padding: 9px 18px;
+    font-size: 13.5px;
+    font-weight: 600;
+}
