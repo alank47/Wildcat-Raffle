@@ -5500,6 +5500,27 @@
                             // without the caller having to remember. Repeating
                             // it here would apply the movement twice.
                             await refreshRosterFromConvex('idle refresh', { redraw: false });
+
+                            // AND THE SIS-BACKED SCREENS GO STALE OTHERWISE.
+                            //
+                            // _attCache, _runCache and _ewCache are filled once
+                            // and never invalidated, so a tab opened at 8am
+                            // still showed 8am's numbers at 2pm -- and 8am's
+                            // numbers were the 6am sync, which runs before
+                            // school and therefore carries YESTERDAY. Today's
+                            // absences would not appear at all until somebody
+                            // pressed Refresh.
+                            //
+                            // A fix that needs forty people to remember to
+                            // press a button is not a fix. Dropped here, on the
+                            // idle timer that already exists, so the next time
+                            // a teacher opens Attendance Watch or Early Warning
+                            // it fetches. Dropping the cache costs nothing: the
+                            // screens re-fetch lazily when they are next drawn,
+                            // and an idle tab draws nothing.
+                            _attCache = null;
+                            _runCache = null;
+                            _ewCache = null;
                             if (typeof pullLiveActivity === 'function') pullLiveActivity('idle');
                             
                             // DON'T call updateAllDisplays() - it redraws everything and is disruptive

@@ -487,5 +487,44 @@ console.log("\nthe reading reaches the screen");
   check("both classes are styled", css.includes(".wc-rc-rule") && css.includes(".wc-rc-why"));
 }
 
+
+console.log("\nthe chart goes stale on its own, without anyone pressing anything");
+
+{
+  // THE STALENESS THIS CLOSES. _attCache, _runCache and _ewCache are filled
+  // once and were never invalidated, so a tab opened at 8am still showed 8am's
+  // numbers at 2pm -- and 8am's numbers were the 6am sync, which runs BEFORE
+  // school and therefore carries yesterday. Today's absences would not have
+  // appeared at all until somebody pressed Refresh, and a fix that needs forty
+  // people to remember a button is not a fix.
+  const idle = script.slice(script.indexOf("Auto-refresh data from cloud only when inactive"),
+                            script.indexOf("Background data sync complete"));
+  check("the idle refresh drops the attendance cache", /_attCache = null;/.test(idle));
+  check("and the run chart cache", /_runCache = null;/.test(idle));
+  check("and the early warning cache", /_ewCache = null;/.test(idle));
+  check("all three are dropped together, since all three read the same sync",
+    (idle.match(/_(att|run|ew)Cache = null;/g) || []).length === 3);
+
+  // ORDERING: the assignment sits ABOVE the `let` that declares each cache.
+  // That is safe only because it runs inside an interval callback, which
+  // fires long after the declaration has executed -- and it is worth pinning,
+  // because moving it out of the callback would be a temporal dead zone.
+  ["_attCache", "_runCache", "_ewCache"].forEach((name) => {
+    const drop = script.indexOf(name + " = null;");
+    const decl = script.indexOf("let " + name + " = null;");
+    check(`${name} is dropped before its declaration, so it must stay inside a callback`,
+      drop > 0 && decl > drop,
+      "if this ever stops being true the comment explaining it is wrong, not the code");
+  });
+  check("and the reason is written down for whoever moves it",
+    /A fix that needs forty people to remember to\s*\n\s*\/\/ press a button is not a fix/.test(script));
+
+  // The explicit Refresh button stays: an admin who has just fixed something
+  // upstream should not have to wait for a timer.
+  check("the Refresh button still forces a fetch",
+    /onclick="renderAbsenceRunChart\(true\)"/.test(html));
+  check("and force bypasses the cache", /if \(_runCache && !force\) return _runCache;/.test(script));
+}
+
 console.log(`\nattendance run chart: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
