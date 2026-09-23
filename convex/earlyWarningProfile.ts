@@ -1428,3 +1428,83 @@ export const tierBoundaryCheck = internalQuery({
     };
   },
 });
+
+/**
+ * IS A RUN CHART OF CHRONIC ABSENCE MEANINGFUL? Counts only.
+ *
+ * Two things are tested, because the honest answer needs both.
+ *
+ * (a) THE PHANTOM TREND. "Chronically absent" is absences divided by school
+ *     days ELAPSED, so the divisor grows every day the school opens. Two
+ *     absences is 40% in week one and 2% by February, for a child who has not
+ *     changed. A run chart of that count therefore falls whatever the students
+ *     do, and its signals describe the calendar. This walks the year day by
+ *     day and reports the count as a reader would have seen it each morning.
+ *
+ * (b) A MEASURE THAT WOULD WORK INSTEAD. Per school week, how many students
+ *     missed at least two of that week's days. Fixed divisor, so it is
+ *     stationary and run-chartable, and it counts STUDENTS where the existing
+ *     chart counts ABSENCE EVENTS -- 90 absences could be 90 children once or
+ *     18 children five times, and the current chart cannot tell those apart.
+ */
+export const chronicRunChartFeasibility = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const days = (await ctx.db.query("psAbsenceDayTotals").withIndex("by_date").take(400))
+      .map((d) => String(d.date).slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+    const marks = await ctx.db.query("psAttendanceMarks").take(2000);
+    const today = new Date().toISOString().slice(0, 10);
+    const schoolDays = days.filter((d) => d <= today);
+
+    // (a) The count a reader would have seen each morning.
+    const walk: Array<{ date: string; elapsed: number; chronic: number; pct: number }> = [];
+    for (let i = 0; i < schoolDays.length; i++) {
+      const upto = schoolDays[i];
+      const elapsed = i + 1;
+      let chronic = 0, measured = 0;
+      for (const m of marks) {
+        const absent = (m.absentDates ?? []).filter((d) => d <= upto).length;
+        measured++;
+        if (absent / elapsed >= 0.10) chronic++;
+      }
+      walk.push({
+        date: upto, elapsed, chronic,
+        pct: measured ? Math.round((chronic / measured) * 1000) / 10 : 0,
+      });
+    }
+
+    // (b) Students badly absent WITHIN each week. Monday-anchored.
+    const weekOf = (iso: string) => {
+      const d = new Date(iso + "T00:00:00Z");
+      d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+      return d.toISOString().slice(0, 10);
+    };
+    const weekDays = new Map<string, number>();
+    for (const d of schoolDays) weekDays.set(weekOf(d), (weekDays.get(weekOf(d)) ?? 0) + 1);
+
+    const perWeek = new Map<string, { any: number; two: number }>();
+    for (const wk of weekDays.keys()) perWeek.set(wk, { any: 0, two: 0 });
+    for (const m of marks) {
+      const byWeek = new Map<string, number>();
+      for (const d of (m.absentDates ?? [])) {
+        if (d > today || !weekDays.has(weekOf(d))) continue;
+        byWeek.set(weekOf(d), (byWeek.get(weekOf(d)) ?? 0) + 1);
+      }
+      for (const [wk, n] of byWeek) {
+        const c = perWeek.get(wk); if (!c) continue;
+        c.any++; if (n >= 2) c.two++;
+      }
+    }
+    const weekly = [...perWeek.entries()].sort().map(([week, c]) => ({
+      week, schoolDays: weekDays.get(week) ?? 0,
+      studentsAbsentAtAll: c.any, studentsMissingTwoPlus: c.two,
+    }));
+
+    return {
+      schoolDaysSoFar: schoolDays.length,
+      students: marks.length,
+      cumulativeWalk: walk,
+      weekly,
+    };
+  },
+});
