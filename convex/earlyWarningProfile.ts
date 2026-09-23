@@ -1929,3 +1929,214 @@ export const lostLedgerRecoverable = internalQuery({
     };
   },
 });
+
+/** What kinds of entry the app audit log holds, and how many. Counts only. */
+export const auditActions = internalQuery({
+  args: { sinceIso: v.optional(v.string()) },
+  handler: async (ctx, { sinceIso }) => {
+    const rows = await ctx.db.query("appAuditLog")
+      .withIndex("by_timestamp", (q) => sinceIso ? q.gte("timestamp", sinceIso) : q)
+      .take(4000);
+    const byAction: Record<string, number> = {};
+    const cashKeys = new Set<string>();
+    for (const r of rows) {
+      const p: any = r.payload || {};
+      const a = String(p.action ?? "(none)");
+      byAction[a] = (byAction[a] || 0) + 1;
+      if (/cash/i.test(a)) for (const k of Object.keys(p)) cashKeys.add(k);
+    }
+    return { rows: rows.length, byAction, cashEntryFields: [...cashKeys].sort() };
+  },
+});
+
+/**
+ * THE THIRD WITNESS. For each student holding more than their ledger supports,
+ * does the AUDIT LOG record the extra being awarded?
+ *
+ * Three independent records exist and they were written by different code at
+ * different moments: the weekly ledger (`cash_tx_<week>`), the student's own
+ * transaction array, and `appAuditLog`. The first two have already been shown
+ * to agree with each other. If the audit log agrees with the stored BALANCE
+ * instead, the extra money was really awarded and the ledger is what is
+ * missing -- and reducing those balances would take money a teacher genuinely
+ * gave. If the audit log agrees with the ledger, the extra came from nowhere.
+ *
+ * It is the only question that decides whether the 83 should be reduced, so it
+ * is asked of the record neither previous check touched.
+ */
+export const auditVsLedger = internalQuery({
+  args: { weeks: v.array(v.string()), studentIds: v.array(v.string()), sinceIso: v.string() },
+  handler: async (ctx, { weeks, studentIds, sinceIso }) => {
+    const want = new Set(studentIds.map(String));
+
+    // 1. the weekly ledger
+    const ledger = new Map<string, { sum: number; ids: Set<string> }>();
+    for (const w of weeks) {
+      const rows = await ctx.db.query("legacyMirror")
+        .withIndex("by_doc", (q) => q.eq("doc", `cash_tx_${w}`)).take(3000);
+      for (const r of rows) {
+        if (r.collection !== "transactions") continue;
+        const p: any = r.payload;
+        if (!p || typeof p !== "object") continue;
+        const sid = String(p.studentId ?? "");
+        if (!want.has(sid)) continue;
+        const e = ledger.get(sid) ?? { sum: 0, ids: new Set<string>() };
+        const amt = Number(p.amount) || 0;
+        e.sum += String(p.kind) === "redeem" ? -Math.abs(amt) : amt;
+        e.ids.add(String(p.id ?? ""));
+        ledger.set(sid, e);
+      }
+    }
+
+    // 2. the audit log
+    const audit = new Map<string, { sum: number; n: number; entries: string[] }>();
+    const auditRows = await ctx.db.query("appAuditLog")
+      .withIndex("by_timestamp", (q) => q.gte("timestamp", sinceIso)).take(4000);
+    const seenEntry = new Set<string>();
+    for (const r of auditRows) {
+      const p: any = r.payload || {};
+      const a = String(p.action ?? "");
+      if (a !== "cash_award" && a !== "cash_deduct") continue;
+      const sid = String(p.studentId ?? "");
+      if (!want.has(sid)) continue;
+      // An audit entry re-sent under the same id is one event, not two.
+      const eid = String(p.entryId ?? r.entryId ?? "");
+      if (eid && seenEntry.has(eid)) continue;
+      if (eid) seenEntry.add(eid);
+      // THE VALUE IS `ticketCount`, NOT `amount`. Reading `amount` gave every
+      // student an audit total of exactly zero while showing nine entries --
+      // a "disagrees with everything" verdict produced entirely by looking at
+      // the wrong field. Worth stating: a cross-check that silently reads a
+      // missing field does not fail, it lies.
+      const amt = Number(p.ticketCount ?? p.amount) || 0;
+      const e = audit.get(sid) ?? { sum: 0, n: 0, entries: [] };
+      e.sum += a === "cash_deduct" ? -Math.abs(amt) : amt;
+      e.n++;
+      if (e.entries.length < 40) e.entries.push(`${String(p.timestamp ?? "").slice(0, 19)} ${a === "cash_deduct" ? "-" : "+"}${Math.abs(amt)} ${String(p.teacher ?? p.teacherName ?? "?")}`);
+      audit.set(sid, e);
+    }
+
+    const out: any[] = [];
+    let auditMatchesBalance = 0, auditMatchesLedger = 0, auditMatchesNeither = 0, noAudit = 0;
+    for (const sid of want) {
+      const st = await ctx.db.query("students")
+        .withIndex("by_legacyId", (q) => q.eq("legacyId", sid)).first();
+      if (!st) continue;
+      const stored = Number(st.wildcatCashBalance ?? 0);
+      const led = ledger.get(sid)?.sum ?? 0;
+      const aud = audit.get(sid);
+      const auditSum = aud ? aud.sum : null;
+      let verdict: string;
+      if (auditSum === null) { verdict = "no audit entries"; noAudit++; }
+      else if (Math.abs(auditSum - stored) < 0.005) { verdict = "audit agrees with the BALANCE"; auditMatchesBalance++; }
+      else if (Math.abs(auditSum - led) < 0.005) { verdict = "audit agrees with the LEDGER"; auditMatchesLedger++; }
+      else { verdict = "audit agrees with neither"; auditMatchesNeither++; }
+      out.push({
+        studentId: sid,
+        name: `${st.firstName ?? ""} ${st.lastName ?? ""}`.trim(),
+        grade: st.grade ?? "",
+        storedBalance: stored, ledgerSays: led,
+        auditSays: auditSum, auditEntries: aud ? aud.n : 0,
+        ledgerRows: ledger.get(sid)?.ids.size ?? 0,
+        extra: Math.round(stored - led),
+        verdict,
+        trail: aud ? aud.entries : [],
+      });
+    }
+    out.sort((a, b) => b.extra - a.extra);
+    return {
+      students: out.length,
+      summary: { auditMatchesBalance, auditMatchesLedger, auditMatchesNeither, noAudit },
+      totalExtra: out.reduce((a, r) => a + r.extra, 0),
+      rows: out,
+    };
+  },
+});
+
+/** One raw cash_award audit payload, so its real shape can be read. */
+export const auditSample = internalQuery({
+  args: { studentId: v.string() },
+  handler: async (ctx, { studentId }) => {
+    const rows = await ctx.db.query("appAuditLog")
+      .withIndex("by_timestamp", (q) => q.gte("timestamp", "2026-09-14T00:00:00Z")).take(4000);
+    const mine = rows.map((r) => r.payload as any)
+      .filter((p) => p && /^cash_/.test(String(p.action ?? "")) && String(p.studentId ?? "") === studentId);
+    return { found: mine.length, samples: mine.slice(0, 3) };
+  },
+});
+
+/**
+ * The audit entries for a student that have NO matching ledger row.
+ *
+ * Matched by cashMovementKey -- student, second, amount -- not by id, because
+ * the audit entry never carried the ledger row's id. That is the same key
+ * unionCashRows refuses a duplicate on, so anything this returns is genuinely
+ * absent from the week rather than merely wearing a different id.
+ *
+ * It also proposes the behaviorId, mapped from the behaviour NAMES the live
+ * ledger actually uses. A name with no mapping is returned unmapped for a
+ * person to decide, never guessed.
+ */
+export const missingLedgerRows = internalQuery({
+  args: { weeks: v.array(v.string()), studentIds: v.array(v.string()), sinceIso: v.string() },
+  handler: async (ctx, { weeks, studentIds, sinceIso }) => {
+    const want = new Set(studentIds.map(String));
+    const keyOf = (sid: unknown, ts: unknown, amt: unknown) => {
+      const n = Number(amt);
+      if (!sid || !ts || !Number.isFinite(n)) return null;
+      return `${String(sid)}|${String(ts).slice(0, 19)}|${n}`;
+    };
+
+    const present = new Set<string>();
+    const behaviourIdByName = new Map<string, string>();
+    const weekOfRow = new Map<string, string>();
+    for (const w of weeks) {
+      const rows = await ctx.db.query("legacyMirror")
+        .withIndex("by_doc", (q) => q.eq("doc", `cash_tx_${w}`)).take(3000);
+      for (const r of rows) {
+        if (r.collection !== "transactions") continue;
+        const p: any = r.payload;
+        if (!p || typeof p !== "object") continue;
+        const bn = String(p.behaviorName ?? "").trim();
+        const bid = String(p.behaviorId ?? "").trim();
+        if (bn && bid && !behaviourIdByName.has(bn)) behaviourIdByName.set(bn, bid);
+        const sid = String(p.studentId ?? "");
+        if (!want.has(sid)) continue;
+        const k = keyOf(sid, p.timestamp, p.amount);
+        if (k) { present.add(k); weekOfRow.set(k, w); }
+      }
+    }
+
+    const audit = await ctx.db.query("appAuditLog")
+      .withIndex("by_timestamp", (q) => q.gte("timestamp", sinceIso)).take(4000);
+    const missing: any[] = [];
+    for (const r of audit) {
+      const p: any = r.payload || {};
+      const a = String(p.action ?? "");
+      if (a !== "cash_award" && a !== "cash_deduct") continue;
+      const sid = String(p.studentId ?? "");
+      if (!want.has(sid)) continue;
+      const raw = Number(p.ticketCount ?? p.amount);
+      if (!Number.isFinite(raw) || raw === 0) continue;
+      const amount = a === "cash_deduct" ? -Math.abs(raw) : Math.abs(raw);
+      const ts = String(p.timestamp ?? "");
+      const k = keyOf(sid, ts, amount);
+      if (!k || present.has(k)) continue;
+      const bn = String(p.behavior ?? "").trim();
+      missing.push({
+        studentId: sid, studentName: String(p.studentName ?? ""),
+        timestamp: ts, amount, kind: a === "cash_deduct" ? "deduct" : "award",
+        behaviorName: bn, behaviorId: behaviourIdByName.get(bn) ?? null,
+        notes: String(p.notes ?? ""),
+        teacherId: String(p.teacherId ?? ""), teacherName: String(p.teacher ?? p.teacherName ?? ""),
+        auditEntryId: String(p.entryId ?? r.entryId ?? ""),
+      });
+    }
+    missing.sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)));
+    return {
+      missing,
+      behaviourNamesKnown: [...behaviourIdByName.keys()].sort(),
+      unmappedBehaviours: [...new Set(missing.filter((m) => !m.behaviorId).map((m) => m.behaviorName))],
+    };
+  },
+});
