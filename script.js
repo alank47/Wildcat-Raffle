@@ -5525,6 +5525,7 @@
                             // daily rebuild the other two read, so it goes
                             // stale on exactly the same schedule.
                             _paCache = null;
+                            _sgCache = null;
                             if (typeof pullLiveActivity === 'function') pullLiveActivity('idle');
                             
                             // DON'T call updateAllDisplays() - it redraws everything and is disruptive
@@ -30119,20 +30120,24 @@
 
         const ATT_VIEW_SUBTITLES = {
             watch: 'Chronic absence and tardiness, worst first',
-            perfect: 'Students with no absences and no tardies'
+            perfect: 'Students with no absences and no tardies',
+            subgroup: 'Chronic absence by student group, against the school\'s own rate'
         };
+        const ATT_VIEWS = ['watch', 'perfect', 'subgroup'];
 
         function setAttendanceView(view) {
-            _attView = (view === 'perfect') ? 'perfect' : 'watch';
+            _attView = ATT_VIEWS.indexOf(view) === -1 ? 'watch' : view;
 
             const watchEl = document.getElementById('attWatchView');
             const perfectEl = document.getElementById('attPerfectView');
+            const subgroupEl = document.getElementById('attSubgroupView');
             // `hidden` rather than a display rule, and on a wrapper with no
             // class of its own: an author `display` declaration outranks the
             // user-agent `[hidden] { display: none }`, which is exactly how a
             // red unsaved-referral bar shipped visible to every user.
             if (watchEl) watchEl.hidden = (_attView !== 'watch');
             if (perfectEl) perfectEl.hidden = (_attView !== 'perfect');
+            if (subgroupEl) subgroupEl.hidden = (_attView !== 'subgroup');
 
             document.querySelectorAll('#attViewSwitch [data-attview]').forEach(b => {
                 const on = b.getAttribute('data-attview') === _attView;
@@ -30149,12 +30154,14 @@
             // costs nothing after the first time, and a panel that was never
             // opened is fetched the moment it is.
             if (_attView === 'perfect') renderPerfectAttendance();
+            else if (_attView === 'subgroup') renderAttendanceSubgroups();
             else { renderAttendanceWatch(); renderAbsenceRunChart(); }
         }
 
         /** The header Refresh, aimed at whichever half is actually showing. */
         function refreshAttendanceView() {
             if (_attView === 'perfect') renderPerfectAttendance(true);
+            else if (_attView === 'subgroup') renderAttendanceSubgroups(true);
             else { renderAttendanceWatch(true); renderAbsenceRunChart(true); }
         }
 
@@ -30254,6 +30261,197 @@
                 if (k) b.classList.toggle('active', k === _paWindow);
             });
             renderPerfectAttendance();
+        }
+
+        // =====================================================================
+        // CHRONIC ABSENCE BY STUDENT GROUP
+        //
+        // Asked for on 2026-09-22: Hispanic/Latino, African American, English
+        // Learners, socioeconomically disadvantaged.
+        //
+        // EVERY NUMBER HERE IS COMPUTED AND SUPPRESSED ON THE SERVER, which is
+        // the opposite of this app's usual split and deliberately so. Counts
+        // on the server and display rules in the browser is the convention --
+        // but a cell small enough to identify a child is not a display rule,
+        // it is the privacy guarantee, and a guarantee enforced in the browser
+        // is a guarantee that arrived over the network first. Westbrook has 2
+        // Pacific Islander students; that row never leaves Convex.
+        //
+        // THE BASELINE LEADS THE PANEL. Measured the same day: 52.4% of all
+        // 618 students are chronically absent. Every subgroup row is therefore
+        // roughly half the students in it, and a 55% row reads as alarming
+        // until the reader has the 52% in front of them. This is an equity
+        // report, not a way to find a smaller group to work with.
+        // =====================================================================
+        let _sgCache = null;
+        let _sgBusy = false;
+
+        /**
+         * Points away from the school average before a row is called a
+         * direction rather than the same.
+         *
+         * 1.5 is roughly one student in the smallest group this screen will
+         * ever show (ten enrolled), so anything inside it cannot be
+         * distinguished from rounding.
+         */
+        const SG_DEAD_BAND = 1.5;
+
+        async function loadAttendanceSubgroups(force, schoolDays) {
+            if (_sgCache && _sgCache.forDays === schoolDays && !force) return _sgCache.res;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) {
+                return { allowed: false, needsSignIn: true, rows: [],
+                         reason: 'Student group data comes from the SIS, which needs a Microsoft sign-in.' };
+            }
+            try {
+                const res = await auth.convexQuery('attendanceSubgroups:chronicBySubgroup',
+                    { schoolDays: schoolDays }, session.idToken);
+                // KEYED ON THE DENOMINATOR. Correcting the holiday count moves
+                // who is chronic, so a cache that ignored it would keep
+                // showing rates worked out from the old divisor.
+                _sgCache = { forDays: schoolDays, res: res };
+                return res;
+            } catch (e) {
+                const msg = (e && e.message) || String(e);
+                if (/\b401\b|unauthor/i.test(msg)) {
+                    return { allowed: false, needsSignIn: true, rows: [],
+                             reason: 'Your sign-in expired. Sign in again to load student groups.' };
+                }
+                return { allowed: false, rows: [], reason: 'Student groups could not be loaded: ' + msg };
+            }
+        }
+
+        async function renderAttendanceSubgroups(force) {
+            const body = document.getElementById('attSubgroupBody');
+            if (!body) return;
+
+            const basis = attendanceSchoolDays();
+            let res = (_sgCache && _sgCache.forDays === basis.days) ? _sgCache.res : null;
+            if (!res || force) {
+                if (_sgBusy) return;
+                _sgBusy = true;
+                body.innerHTML = '<p class="wu-absent">Loading student groups&hellip;</p>';
+                try { res = await loadAttendanceSubgroups(force === true, basis.days); }
+                finally { _sgBusy = false; }
+            }
+            if (!res || res.allowed === false || res.notYet) {
+                body.innerHTML = '<p class="wu-absent">' +
+                    escapeHtml((res && res.reason) || 'Student groups are not available to your access level.')
+                    + '</p>';
+                return;
+            }
+
+            const base = res.baseline || {};
+            const pct = v => (v === null || v === undefined) ? '&mdash;' : escapeHtml(String(v)) + '%';
+
+            let html = '';
+            // THE SCHOOL'S OWN RATE, FIRST AND BIGGEST.
+            html += '<div class="wc-sg-baseline">'
+                + '<div class="wc-sg-base-n">' + pct(base.chronicPct) + '</div>'
+                + '<div class="wc-sg-base-l">of the whole school is chronically absent<br>'
+                + '<span class="wc-sub">' + base.chronic + ' of ' + base.withAttendance
+                + ' students measured, at ' + Math.round((res.chronicAt || 0.1) * 100) + '% of '
+                + res.schoolDays + ' school days or more</span></div></div>';
+
+            html += '<p class="wc-att-basis-note">Every row below is compared with that figure. '
+                + 'A group is only shown once at least ' + res.smallGroupFloor + ' students are enrolled in it'
+                + (res.suppressedGroups
+                    ? ', so ' + res.suppressedGroups + ' smaller group'
+                      + (res.suppressedGroups === 1 ? ' is' : 's are') + ' not listed: a rate over a handful of '
+                      + 'children can identify them.'
+                    : '.')
+                + '</p>';
+
+            const AXES = [
+                { key: 'race', label: 'By race and ethnicity' },
+                { key: 'el', label: 'By English Learner status' },
+                { key: 'ela', label: 'By language classification' }
+            ];
+            AXES.forEach(ax => {
+                const rows = (res.rows || []).filter(r => r.axis === ax.key);
+                if (!rows.length) return;
+                html += '<h4 class="wc-sg-axis">' + escapeHtml(ax.label) + '</h4>';
+                html += '<div class="wc-att-list wc-sg-list">';
+                rows.forEach(r => {
+                    // ABOVE OR BELOW, and by how much. The absolute rate alone
+                    // cannot answer the question that was actually asked.
+                    //
+                    // COLOUR ONLY CLAIMS WHAT THE DATA SUPPORTS, and the first
+                    // draft of this claimed more than that twice over. It
+                    // tinted Hispanic or Latino green for being 0.1 points
+                    // below a 52% average -- a difference of about half a
+                    // child across 566 -- and tinted Black or African
+                    // American amber for 2.9 points while printing "one
+                    // student moves this by 2.1 points" directly underneath.
+                    // Saying a gap is uncertain in words and certain in colour
+                    // is worse than saying nothing, because the colour is the
+                    // part that gets remembered.
+                    //
+                    // So: a group already flagged fragile is never coloured,
+                    // and for the rest a difference has to clear a dead band
+                    // before it counts as a direction at all.
+                    const d = r.vsSchool;
+                    const dir = (d === null || r.fragile) ? 'wc-sg-same'
+                        : d > SG_DEAD_BAND ? 'wc-sg-worse'
+                        : d < -SG_DEAD_BAND ? 'wc-sg-better' : 'wc-sg-same';
+                    const sign = d === null ? '' : (d > 0 ? '+' : '');
+                    html += '<div class="wc-att-row wc-sg-row ' + dir + '">'
+                        + '<div class="wc-att-name">' + escapeHtml(r.group)
+                        + '<div class="cell-sub">' + r.chronic + ' of ' + r.withAttendance + ' chronically absent'
+                        + (r.severe ? ' &middot; ' + r.severe + ' severely' : '')
+                        // A GROUP TOO SMALL TO READ A DIFFERENCE INTO, even
+                        // though it is large enough to report at all.
+                        + (r.fragile
+                            ? '<br><span class="wc-sg-fragile">Small group &mdash; one student moves this by '
+                              + (r.withAttendance ? (Math.round((100 / r.withAttendance) * 10) / 10) : 0)
+                              + ' points, so treat a gap this size as uncertain</span>'
+                            : '')
+                        + '</div></div>'
+                        + '<div class="wc-sg-figs">'
+                        + '<div class="wc-sg-pct">' + pct(r.chronicPct) + '</div>'
+                        + '<div class="wc-sg-delta">' + (d === null ? '' : escapeHtml(sign + d) + ' pts vs school')
+                        + '</div></div>'
+                        + '</div>';
+                });
+                html += '</div>';
+            });
+
+            // GROUPS THE QUESTION NAMED THAT THIS APP CANNOT ANSWER.
+            // A group missing from an equity breakdown reads as a group with
+            // no disparity, which is the most misleading way to be absent.
+            if ((res.unavailable || []).length) {
+                html += '<h4 class="wc-sg-axis">Not available yet</h4>';
+                html += '<div class="wc-sg-gaps">';
+                res.unavailable.forEach(u => {
+                    html += '<div class="wc-sg-gap"><strong>' + escapeHtml(u.group) + '</strong>'
+                        + '<div class="wc-sub">' + escapeHtml(u.reason) + '</div>'
+                        + '<div class="wc-sub wc-sg-fix">What would fix it: ' + escapeHtml(u.fix) + '</div></div>';
+                });
+                html += '</div>';
+            }
+
+            const notes = [];
+            if (res.unknownEthnicity) {
+                // A SYNC GAP LOOKS LIKE A SYNC GAP. Students whose ethnicity
+                // never arrived must not be silently counted as non-Hispanic:
+                // that is the bug that reported this school as White.
+                notes.push(res.unknownEthnicity + ' student'
+                    + (res.unknownEthnicity === 1 ? ' has' : 's have')
+                    + ' no ethnicity recorded, so they are counted by race code alone.');
+            }
+            if (res.unclassified) {
+                notes.push(res.unclassified + ' could not be placed in any category at all.');
+            }
+            if ((res.unmappedRaceCodes || []).length) {
+                notes.push('Unrecognised race codes: ' + res.unmappedRaceCodes.map(escapeHtml).join(', ') + '.');
+            }
+            if (res.lastSyncedAt) {
+                notes.push('Group data last read from PowerSchool ' + escapeHtml(wcClockAt(res.lastSyncedAt)) + '.');
+            }
+            if (notes.length) html += '<p class="wc-att-foot">' + notes.join(' ') + '</p>';
+
+            body.innerHTML = html;
         }
 
         async function loadPerfectMarks(force) {

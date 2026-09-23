@@ -1,6 +1,7 @@
 import { internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { countsForStudent, recencyCutoff } from "./earlyWarning";
+import { reportedCategories } from "./raceRollup";
 
 /**
  * MEASURE THE SCHOOL BEFORE DRAWING A LINE THROUGH IT.
@@ -1304,6 +1305,126 @@ export const restrictedLoad = internalQuery({
       withFedEthnicity: rows.filter((r) => r.fedEthnicity).length,
       lastSyncedAt: rows.reduce((a: string | null, r) =>
         (!a || String(r.syncedAt) > a ? String(r.syncedAt) : a), null),
+    };
+  },
+});
+
+/**
+ * CHRONIC ABSENTEEISM BY SUBGROUP -- measured before any screen exists.
+ *
+ * The question asked on 2026-09-22: chronic absence for Hispanic/Latino,
+ * African American, English Learner and socioeconomically disadvantaged
+ * students. This prices it, because the answer at a 618-student school is
+ * dominated by one thing: how many subgroups are large enough to report at
+ * all. SMALL_GROUP in disciplineAggregates.ts is 10 enrolled students, and a
+ * rate over fewer than that is both noise and a way to identify a child.
+ *
+ * COUNTS ONLY. No names, no student numbers.
+ */
+export const chronicBySubgroupProfile = internalQuery({
+  args: { schoolDays: v.number() },
+  handler: async (ctx, { schoolDays }) => {
+    const SMALL_GROUP = 10;
+    const CHRONIC = 0.10, SEVERE = 0.20;
+
+    const restricted = await ctx.db.query("psRestricted").take(2000);
+    const att = await ctx.db.query("psAttendance").take(2000);
+    const absentOf = new Map<string, number>();
+    for (const a of att) {
+      const n = String(a.studentNumber || "");
+      const d = Number(a.daysAbsentYtd);
+      if (n && Number.isFinite(d)) absentOf.set(n, d);
+    }
+
+    type Cell = { enrolled: number; withAttendance: number; chronic: number; severe: number };
+    const groups = new Map<string, Cell>();
+    const bump = (key: string, absent: number | undefined) => {
+      let c = groups.get(key);
+      if (!c) { c = { enrolled: 0, withAttendance: 0, chronic: 0, severe: 0 }; groups.set(key, c); }
+      c.enrolled++;
+      if (absent === undefined) return;
+      c.withAttendance++;
+      const rate = schoolDays > 0 ? absent / schoolDays : 0;
+      if (rate >= CHRONIC) c.chronic++;
+      if (rate >= SEVERE) c.severe++;
+    };
+
+    for (const r of restricted) {
+      const num = String(r.studentNumber || "");
+      const absent = absentOf.get(num);
+      // The CA rule, reused rather than re-implemented: Hispanic ethnicity
+      // wins and race codes are not reported separately for those students.
+      const rep = reportedCategories({
+        fedEthnicity: r.fedEthnicity, raceCodes: r.raceCodes,
+      } as any);
+      for (const cat of rep.categories) bump("race:" + cat, absent);
+      if (!rep.categories.length) bump("race:(unclassified)", absent);
+
+      const ela = String(r.elaStatus || "").trim().toUpperCase();
+      bump("ela:" + (ela || "(blank)"), absent);
+      // The grouping a school actually acts on: currently an EL, or not.
+      bump(ela === "EL" ? "el:Current English Learner" : "el:Not currently EL", absent);
+      bump("all:Every student", absent);
+    }
+
+    const rows = [...groups.entries()].map(([key, c]) => ({
+      axis: key.slice(0, key.indexOf(":")),
+      group: key.slice(key.indexOf(":") + 1),
+      enrolled: c.enrolled,
+      withAttendance: c.withAttendance,
+      chronic: c.chronic,
+      severe: c.severe,
+      chronicPct: c.withAttendance ? Math.round((c.chronic / c.withAttendance) * 1000) / 10 : null,
+      // THE LINE THAT DECIDES WHETHER THIS IS REPORTABLE AT ALL.
+      suppressed: c.enrolled < SMALL_GROUP,
+    })).sort((a, b) => a.axis.localeCompare(b.axis) || b.enrolled - a.enrolled);
+
+    return {
+      schoolDays,
+      restrictedRows: restricted.length,
+      attendanceRows: att.length,
+      smallGroupFloor: SMALL_GROUP,
+      reportable: rows.filter((r) => !r.suppressed).length,
+      suppressedGroups: rows.filter((r) => r.suppressed).length,
+      rows,
+    };
+  },
+});
+
+/**
+ * How many students sit EXACTLY on a tier boundary, and does float maths
+ * decide it? Counts only.
+ *
+ * Asked because 2.8 / 28 is 0.09999999999999999 in IEEE 754, so a student
+ * absent 2.8 of 28 days is "not chronic" by a hair while a reader doing the
+ * sum by hand gets exactly 10%. Whether that matters is a question about real
+ * data, not about arithmetic.
+ */
+export const tierBoundaryCheck = internalQuery({
+  args: { schoolDays: v.number() },
+  handler: async (ctx, { schoolDays }) => {
+    const rows = await ctx.db.query("psAttendance").take(2000);
+    const days = Math.max(1, Number(schoolDays) || 1);
+    let onChronicEdge = 0, onSevereEdge = 0, nonIntegerAbsence = 0, measured = 0;
+    const EPS = 1e-9;
+    let chronicStrict = 0, chronicEps = 0;
+    for (const r of rows) {
+      const a = Number(r.daysAbsentYtd);
+      if (!Number.isFinite(a)) continue;
+      measured++;
+      if (!Number.isInteger(a)) nonIntegerAbsence++;
+      const rate = a / days;
+      if (rate >= 0.10) chronicStrict++;
+      if (rate >= 0.10 - EPS) chronicEps++;
+      // Within a hair of the line either way.
+      if (Math.abs(rate - 0.10) < 1e-6) onChronicEdge++;
+      if (Math.abs(rate - 0.20) < 1e-6) onSevereEdge++;
+    }
+    return {
+      schoolDays: days, measured, nonIntegerAbsence,
+      onChronicEdge, onSevereEdge,
+      chronicStrict, chronicWithEpsilon: chronicEps,
+      studentsThatWouldMove: chronicEps - chronicStrict,
     };
   },
 });

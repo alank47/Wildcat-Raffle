@@ -18,6 +18,7 @@ import type * as attendanceDays from "../attendanceDays.js";
 import type * as attendanceDaysRead from "../attendanceDaysRead.js";
 import type * as attendanceList from "../attendanceList.js";
 import type * as attendanceProbe from "../attendanceProbe.js";
+import type * as attendanceSubgroups from "../attendanceSubgroups.js";
 import type * as auditLog from "../auditLog.js";
 import type * as auditMigrate from "../auditMigrate.js";
 import type * as auditMigrateRead from "../auditMigrateRead.js";
@@ -110,6 +111,7 @@ declare const fullApi: ApiFromModules<{
   attendanceDaysRead: typeof attendanceDaysRead;
   attendanceList: typeof attendanceList;
   attendanceProbe: typeof attendanceProbe;
+  attendanceSubgroups: typeof attendanceSubgroups;
   auditLog: typeof auditLog;
   auditMigrate: typeof auditMigrate;
   auditMigrateRead: typeof auditMigrateRead;

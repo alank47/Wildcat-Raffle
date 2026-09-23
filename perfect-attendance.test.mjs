@@ -421,8 +421,14 @@ console.log("\nTHE VIEW SWITCH\n");
     "two buttons are not a tablist, so the state has to be spoken");
   check("...and swaps the subtitle, so the page says which question it answers",
     /attViewSubtitle/.test(switcher) && /ATT_VIEW_SUBTITLES/.test(scriptSrc));
-  check("anything not 'perfect' falls back to the absence list",
-    /\(view === 'perfect'\) \? 'perfect' : 'watch'/.test(switcher));
+  // The switch grew a third view on 2026-09-22 (by student group), so the
+  // fallback is now a membership test rather than a two-way ternary. The
+  // invariant is unchanged: an unrecognised view shows the absence list.
+  check("anything unrecognised falls back to the absence list",
+    /ATT_VIEWS\.indexOf\(view\) === -1 \? 'watch' : view/.test(switcher),
+    "an unknown view must not leave the tab blank");
+  check("...and the absence list is a member of that set",
+    /ATT_VIEWS = \['watch'/.test(scriptSrc));
 
   check("the header Refresh aims at whichever half is showing",
     /onclick="refreshAttendanceView\(\)"/.test(htmlSrc) &&

@@ -9792,3 +9792,68 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     font-size: 13.5px;
     font-weight: 600;
 }
+
+/* ---------------------------------------------------------------------------
+   CHRONIC ABSENCE BY STUDENT GROUP
+
+   The school's own rate leads, at a size nothing else on the panel competes
+   with, because every row below it is meaningless without it: at a 52%
+   baseline a 55% group is ordinary and a 43% group is the finding.
+
+   Colour marks DIRECTION ONLY, never the group. Tinting "Black or African
+   American" red because its rate is three points above average, on 47
+   students, would be a claim the data cannot support in a colour nobody can
+   argue with.
+--------------------------------------------------------------------------- */
+.wc-sg-card { /* the panel itself; shape comes from .wc-card .panel-card */ }
+.wc-sg-header { flex-wrap: wrap; gap: 10px; }
+.wc-sg-title { margin: 0; }
+
+.wc-sg-baseline {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 16px 18px; margin: 4px 0 14px;
+    border: 1px solid var(--wc-line, #E7ECF2); border-radius: 12px;
+    background: var(--wc-blue-mist, #EAF1F9);
+}
+.wc-sg-base-n {
+    flex: 0 0 auto;
+    font-size: 34px; font-weight: 800; line-height: 1;
+    color: var(--wc-blue, #2F67A7); font-variant-numeric: tabular-nums;
+}
+.wc-sg-base-l { font-size: 13.5px; line-height: 1.5; color: var(--wc-ink, #14171C); }
+
+.wc-sg-axis {
+    margin: 20px 0 8px; font-size: 12px; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--wc-gray-text, #8892a0);
+}
+
+.wc-sg-list { margin-bottom: 4px; }
+.wc-sg-row { cursor: default; align-items: flex-start; }
+.wc-sg-row:hover { background: var(--wc-surface, #fff); }
+/* Direction, not identity. */
+.wc-sg-row.wc-sg-worse  { border-left-color: #f59e0b; }
+.wc-sg-row.wc-sg-better { border-left-color: #16a34a; }
+.wc-sg-row.wc-sg-same   { border-left-color: var(--wc-line, #E7ECF2); }
+
+.wc-sg-figs { flex: 0 0 auto; text-align: right; min-width: 104px; }
+.wc-sg-pct {
+    font-size: 17px; font-weight: 700; line-height: 1.2;
+    color: var(--wc-ink, #14171C); font-variant-numeric: tabular-nums;
+}
+.wc-sg-delta { font-size: 11.5px; color: var(--wc-gray-text, #8892a0); white-space: nowrap; }
+
+.wc-sg-fragile { color: #92400e; font-size: 11.5px; }
+
+.wc-sg-gaps { display: flex; flex-direction: column; gap: 10px; }
+.wc-sg-gap {
+    padding: 11px 14px; border-radius: 10px;
+    border: 1px dashed var(--wc-line, #E7ECF2); background: var(--wc-bg, #f8fafc);
+    font-size: 13px;
+}
+.wc-sg-fix { margin-top: 4px; }
+
+@media (max-width: 640px) {
+    .wc-sg-baseline { gap: 10px; }
+    .wc-sg-base-n { font-size: 28px; }
+    .wc-sg-figs { min-width: 88px; }
+}

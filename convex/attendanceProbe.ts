@@ -889,3 +889,70 @@ export const enrolmentDates = internalAction({
     return { ok: true, attempts: out };
   },
 });
+
+/**
+ * Can PowerSchool tell us who is socioeconomically disadvantaged?
+ *
+ * IT WAS NEVER ASKED FOR. The 19-field manifest in docs/access-gap.md does not
+ * include it, so no probe has ever touched it and no plugin version requests
+ * it. "We do not have it" is therefore the honest answer until this runs; what
+ * this establishes is whether that is a permissions wall or simply a field
+ * nobody asked for yet.
+ *
+ * In California the state definition is a composite, not one flag: eligible
+ * for free or reduced price meals, OR neither parent holds a high school
+ * diploma, OR the child is a foster, homeless or migrant student. Each part
+ * lives somewhere different, so each is tried separately and reported
+ * separately rather than collapsed into a yes or no.
+ *
+ * VALUE DISTRIBUTIONS ONLY, never a student number.
+ */
+export const socioEconomicProbe = internalAction({
+  args: {},
+  handler: async (): Promise<Record<string, any>> => {
+    const host = process.env.PS_HOST, id = process.env.PS_CLIENT_ID;
+    const secret = process.env.PS_CLIENT_SECRET, schoolid = process.env.PS_SCHOOL_ID;
+    if (!host || !id || !secret || !schoolid) return { ok: false, reason: "PowerSchool settings missing." };
+    const tok = await token(host, id, secret);
+
+    const candidates: Array<{ table: string; field: string; why: string }> = [
+      { table: "students", field: "lunchstatus", why: "PowerSchool core meal status (F/R/P)" },
+      { table: "students", field: "lunch_id", why: "core meal id" },
+      { table: "S_CA_STU_X", field: "FRPMEligibility", why: "CA: free/reduced meal eligibility" },
+      { table: "S_CA_STU_X", field: "ParentEdLevel", why: "CA: parent education, the second SED route" },
+      { table: "S_CA_STU_X", field: "FosterYouth", why: "CA: foster, an automatic SED route" },
+      { table: "S_CA_STU_X", field: "HomelessStatus", why: "CA: homeless, an automatic SED route" },
+      { table: "S_CA_STU_X", field: "MigrantStatus", why: "CA: migrant, an automatic SED route" },
+      { table: "S_CA_STU_X", field: "SED", why: "CA: a precomputed composite, if the district keeps one" },
+      { table: "S_CA_STU_X", field: "SocioEconomicallyDisadvantaged", why: "CA: long-form composite" },
+    ];
+
+    const out: Array<Record<string, any>> = [];
+    for (const c of candidates) {
+      const url = `https://${host}/ws/schema/table/${c.table}`
+        + `?q=${encodeURIComponent(`schoolid==${schoolid};enroll_status==0`)}`
+        + `&projection=${encodeURIComponent("id," + c.field)}&pagesize=100`;
+      try {
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${tok}`, Accept: "application/json" } });
+        if (!res.ok) {
+          out.push({ ...c, http: res.status, verdict: res.status === 403 ? "no permission" : "not a field",
+                     detail: (await res.text()).slice(0, 140) });
+          continue;
+        }
+        const body: any = await res.json();
+        const rows = (body?.record ?? []).map((r: any) => r.tables?.[c.table] ?? r);
+        const vals: Record<string, number> = {};
+        for (const r of rows) {
+          const v = String(r[c.field.toLowerCase()] ?? r[c.field] ?? "").trim() || "(blank)";
+          vals[v] = (vals[v] || 0) + 1;
+        }
+        const filled = rows.length - (vals["(blank)"] ?? 0);
+        out.push({ ...c, http: 200, verdict: filled ? "AVAILABLE" : "field exists but empty",
+                   sampled: rows.length, filled, values: vals });
+      } catch (e: any) {
+        out.push({ ...c, verdict: "error", detail: String(e?.message ?? e).slice(0, 140) });
+      }
+    }
+    return { ok: true, candidates: out };
+  },
+});
