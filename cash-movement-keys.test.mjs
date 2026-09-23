@@ -500,5 +500,93 @@ console.log("\nthe reload rebase, executed rather than pattern-matched");
     "which is why exactly one call site is pinned above");
 }
 
+// ===========================================================================
+// A CLIENT WITH NO MOVEMENT KEYS, which is every tab opened before the keyed
+// client shipped at 09:23 on 2026-09-22 -- and staff do not close tabs.
+//
+// THE HOLE, measured on production 2026-09-23. `residual` is `stated -
+// claimed`, and a record with no cashMovements has claimed = 0, so its whole
+// stated delta was applied with NO dedupe at all. Re-send that save and the
+// same money lands again: 83 students were holding $21,300 more than their
+// ledger supports, one at exactly twice, every one with a complete ledger.
+//
+// The fix keys those saves on the transaction list the SAME tabs already send,
+// so nothing in any browser had to change.
+// ===========================================================================
+console.log("\n-- an older client, keyed on its own history --");
+{
+  const tx = (id, amount, at, kind = "award") => ({ id, amount, kind, timestamp: at });
+  /** What a pre-keys tab sends: a delta, no movements, and its history. */
+  const legacy = (amount, txs, kind = "award") => ({
+    cashDelta: { ...cashMovementEffect(amount, kind) },
+    wildcatCashTransactions: txs,
+  });
+
+  const AT = "2026-09-23T17:00:00.000Z";
+  const first = applyTo(row(), legacy(100, [tx("t1", 100, AT)]));
+  check("an older client's award still applies", first.row.wildcatCashBalance === 100,
+    String(first.row.wildcatCashBalance));
+  check("...and its history row is registered, so it can be recognised again",
+    (first.row.cashApplied?.ids || []).some((e) => e.i === "t1"),
+    JSON.stringify(first.row.cashApplied));
+  check("...and it is reported as recovered rather than silently keyed",
+    first.mv.legacyKeyed === 1);
+
+  // THE ONE THAT MATTERS. The same save arrives twice.
+  const again = applyTo(first.row, legacy(100, [tx("t1", 100, AT)]));
+  check("THE SAME SAVE SENT TWICE DOES NOT PAY TWICE",
+    again.row.wildcatCashBalance === 100, String(again.row.wildcatCashBalance));
+  check("...and it says why, rather than failing silently",
+    again.mv.legacyRepeat === true &&
+    again.mv.refused.some((r) => /legacy_repeat/.test(r.why)),
+    JSON.stringify(again.mv.refused));
+  check("...and nothing is registered for a save that moved nothing",
+    again.mv.nextApplied === null);
+
+  // A genuinely new award from the same tab still lands.
+  const third = applyTo(again.row, legacy(100, [
+    tx("t1", 100, AT), tx("t2", 100, "2026-09-23T17:05:00.000Z"),
+  ]));
+  check("a NEW award from the same older client still applies",
+    third.row.wildcatCashBalance === 200, String(third.row.wildcatCashBalance));
+  check("...and only the new row is registered",
+    (third.row.cashApplied?.ids || []).filter((e) => e.i === "t2").length === 1);
+
+  // EVIDENCE ONLY. A record with no history at all cannot be judged, and
+  // refusing it would stop a legitimate award from a shape never seen before.
+  const blind = applyTo(row(), { cashDelta: { ...cashMovementEffect(100, "award") } });
+  check("a record carrying NO history is applied, not refused",
+    blind.row.wildcatCashBalance === 100 && blind.mv.legacyRepeat !== true);
+  const emptyHistory = applyTo(row(), legacy(100, []));
+  check("...and so is one with an empty history",
+    emptyHistory.row.wildcatCashBalance === 100);
+
+  // Pre-cutoff rows are not recent history and cannot settle anything.
+  const pruned = planCashMovements(row(), legacy(100, [tx("old", 100, "2026-09-01T10:00:00.000Z")]),
+    { ...cashMovementEffect(100, "award") }, { cutoffMs: Date.parse("2026-09-14T15:30:00Z"), maxDelta: 5000 });
+  check("a history of only pre-cutoff rows is not judged as a repeat",
+    pruned.net.wildcatCashBalance === 100 && pruned.legacyRepeat !== true,
+    JSON.stringify(pruned.net));
+
+  // A DEDUCTION re-sent must not be taken twice either.
+  const dRow = row({ wildcatCashBalance: 500, wildcatCashEarned: 500 });
+  const d1 = applyTo(dRow, legacy(-100, [tx("d1", -100, AT, "deduct")], "deduct"));
+  check("an older client's deduction applies", d1.row.wildcatCashBalance === 400,
+    String(d1.row.wildcatCashBalance));
+  const d2 = applyTo(d1.row, legacy(-100, [tx("d1", -100, AT, "deduct")], "deduct"));
+  check("...and is not taken a second time", d2.row.wildcatCashBalance === 400,
+    String(d2.row.wildcatCashBalance));
+
+  // TEETH: without the guard, the re-send pays twice. That is the bug.
+  check("TEETH: the guard is what stops it", (() => {
+    const noGuard = applyTo(first.row, {
+      cashDelta: { ...cashMovementEffect(100, "award") },
+      // no history at all -> unjudgeable -> applied, which is the old
+      // behaviour for EVERY legacy save and the hole that was open.
+    });
+    return noGuard.row.wildcatCashBalance === 200;
+  })(), "an unjudgeable payload still applies, which is why the history matters");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
