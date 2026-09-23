@@ -44,7 +44,7 @@
  *   --max-change <n>       per-counter blast radius (default 50000)
  */
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, readFileSync } from "node:fs";
 
 const argv = process.argv.slice(2);
 const has = (f) => argv.includes(f);
@@ -89,7 +89,37 @@ function weekKey(ms) {
 const money = (n) => (n < 0 ? "-$" : "$") + Math.abs(n).toLocaleString("en-US");
 const line = (c) => c.repeat(66);
 
-console.log(`\nCash counter recount  ${PROD ? "PRODUCTION" : "dev"}  ${APPLY ? "APPLY" : "DRY RUN"}`);
+/**
+ * WHICH DEPLOYMENT IS THIS ACTUALLY TALKING TO?
+ *
+ * The label used to read "dev" whenever --prod was absent, which is a guess
+ * about the caller's setup rather than a fact. This repo's .env.local holds
+ * CONVEX_DEPLOYMENT=prod:quick-cassowary-644, so a bare `npx convex run` here
+ * hits PRODUCTION and the script announced "dev" while doing it. Somebody
+ * reading that line before typing --apply would have been told the opposite
+ * of the truth about 577 real children's balances.
+ *
+ * So it is read rather than inferred, and an unreadable answer says so
+ * instead of picking the reassuring one.
+ */
+function deploymentLabel() {
+  if (PROD) return "PRODUCTION (--prod)";
+  const env = String(process.env.CONVEX_DEPLOYMENT ?? "");
+  let configured = env;
+  if (!configured) {
+    try {
+      const txt = readFileSync(new URL("../.env.local", import.meta.url), "utf8");
+      const m = txt.match(/^CONVEX_DEPLOYMENT=(.+)$/m);
+      configured = m ? m[1].trim() : "";
+    } catch { configured = ""; }
+  }
+  if (!configured) return "UNKNOWN deployment -- check .env.local before applying";
+  return configured.startsWith("prod:")
+    ? `PRODUCTION (${configured})`
+    : `${configured}`;
+}
+
+console.log(`\nCash counter recount  ${deploymentLabel()}  ${APPLY ? "APPLY" : "DRY RUN"}`);
 console.log(line("="));
 
 // ---- 1. the cutoff bounds which weeks may be read ------------------------

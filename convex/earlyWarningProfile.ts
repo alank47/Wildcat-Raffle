@@ -1508,3 +1508,424 @@ export const chronicRunChartFeasibility = internalQuery({
     };
   },
 });
+
+/** The stored nightly cash-drift result, verbatim. CLI only. */
+export const driftLatest = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const row = await ctx.db.query("appState")
+      .withIndex("by_key", (q) => q.eq("key", "cashDriftCheck")).unique();
+    return row ? row.value : null;
+  },
+});
+
+/**
+ * WHY DO BALANCES DRIFT? Look at WHEN and HOW the movements were made.
+ *
+ * The owner's hypothesis, 2026-09-23: teachers awarding in batches, or at
+ * particular times. Worth testing rather than assuming, because the two known
+ * mechanisms both predict CONCURRENCY rather than volume:
+ *
+ *   - `cash_tx_<week>` is written with saveSlice, which REPLACES the weekly
+ *     document. Two staff saving at once and one of them loses their ledger
+ *     rows while the counter has already moved -- a balance HIGHER than the
+ *     ledger supports.
+ *   - The counters move by delta through a different mutation, so the mirror
+ *     failure gives a balance LOWER than the ledger.
+ *
+ * Both need two people in the same window. A single teacher awarding thirty
+ * children one after another is NOT the same thing and should be harmless, so
+ * "batch" has to be split into "one person in a burst" and "several people at
+ * once" or the answer will be wrong.
+ *
+ * COUNTS AND DISTRIBUTIONS. Student names are not returned.
+ */
+export const cashDriftPatterns = internalQuery({
+  args: {
+    weeks: v.array(v.string()),
+    driftedStudentIds: v.array(v.string()),
+  },
+  handler: async (ctx, { weeks, driftedStudentIds }) => {
+    const drifted = new Set(driftedStudentIds.map(String));
+    type Mv = { at: number; iso: string; student: string; teacher: string; amount: number; kind: string };
+    const moves: Mv[] = [];
+    const sampleKeys = new Set<string>();
+
+    // take(), not paginate(): Convex allows ONE paginated query per function
+    // and this reads a document per week. The cap is stated rather than
+    // silent -- a truncated read here would quietly analyse part of the week
+    // and report a pattern about the part it happened to see.
+    const PER_WEEK = 3000;
+    let truncated = false;
+    for (const w of weeks) {
+      const rows = await ctx.db.query("legacyMirror")
+        .withIndex("by_doc", (q) => q.eq("doc", `cash_tx_${w}`))
+        .take(PER_WEEK + 1);
+      if (rows.length > PER_WEEK) truncated = true;
+      for (const r of rows.slice(0, PER_WEEK)) {
+        if (r.collection !== "transactions") continue;
+        const p: any = r.payload;
+        if (!p || typeof p !== "object") continue;
+        for (const k of Object.keys(p)) sampleKeys.add(k);
+        const t = Date.parse(String(p.timestamp ?? ""));
+        if (!Number.isFinite(t)) continue;
+        moves.push({
+          at: t, iso: new Date(t).toISOString(),
+          student: String(p.studentId ?? ""),
+          teacher: String(p.teacherId ?? p.teacher ?? p.teacherName ?? p.awardedBy ?? "(none)"),
+          amount: Number(p.amount) || 0,
+          kind: String(p.kind ?? ""),
+        });
+      }
+    }
+    moves.sort((a, b) => a.at - b.at);
+
+    // Los Angeles, because "certain times" means school times.
+    const la = (iso: string, opt: Intl.DateTimeFormatOptions) =>
+      new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", ...opt }).format(new Date(iso));
+
+    const byHour: Record<string, { all: number; drifted: number }> = {};
+    const byDow: Record<string, { all: number; drifted: number }> = {};
+    // Minute buckets: who was saving, and how many movements landed.
+    const minute = new Map<string, { n: number; teachers: Set<string>; drifted: number }>();
+
+    for (const m of moves) {
+      const h = la(m.iso, { hour: "2-digit", hour12: false });
+      const dw = la(m.iso, { weekday: "short" });
+      const isD = drifted.has(m.student);
+      (byHour[h] ??= { all: 0, drifted: 0 }).all++;
+      (byDow[dw] ??= { all: 0, drifted: 0 }).all++;
+      if (isD) { byHour[h].drifted++; byDow[dw].drifted++; }
+      const key = m.iso.slice(0, 16);
+      const b = minute.get(key) ?? { n: 0, teachers: new Set<string>(), drifted: 0 };
+      b.n++; b.teachers.add(m.teacher); if (isD) b.drifted++;
+      minute.set(key, b);
+    }
+
+    // THE TEST THAT MATTERS: is a movement more likely to belong to a drifted
+    // student when OTHER staff were saving in the same minute?
+    let soloMoves = 0, soloDrifted = 0, sharedMoves = 0, sharedDrifted = 0;
+    let burstMoves = 0, burstDrifted = 0, calmMoves = 0, calmDrifted = 0;
+    for (const [, b] of minute) {
+      const shared = b.teachers.size > 1;
+      const burst = b.n >= 5;           // one person rattling through a class
+      if (shared) { sharedMoves += b.n; sharedDrifted += b.drifted; }
+      else { soloMoves += b.n; soloDrifted += b.drifted; }
+      if (burst) { burstMoves += b.n; burstDrifted += b.drifted; }
+      else { calmMoves += b.n; calmDrifted += b.drifted; }
+    }
+
+    const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : null);
+    // WHOSE AWARDS END UP ON DRIFTED STUDENTS? If one or two people account
+    // for it, the cause is a workflow; if it is spread evenly across 34, the
+    // cause is the machinery and no amount of retraining will touch it.
+    const byTeacher = new Map<string, { n: number; drifted: number; name: string }>();
+    for (const m of moves) {
+      const b = byTeacher.get(m.teacher) ?? { n: 0, drifted: 0, name: m.teacher };
+      b.n++; if (drifted.has(m.student)) b.drifted++;
+      byTeacher.set(m.teacher, b);
+    }
+    const teachers = [...byTeacher.values()]
+      .filter((t) => t.n >= 10)
+      .map((t) => ({ moves: t.n, driftedPct: Math.round((t.drifted / t.n) * 1000) / 10 }))
+      .sort((a, b) => b.moves - a.moves);
+
+    // THE HYPOTHESIS THE CONCURRENCY NUMBERS POINT AT. Drifted students hold a
+    // bigger share of the movements than of the roll, which would happen if
+    // drift were simply proportional to how often a child is awarded: every
+    // movement is another chance for one to be lost. Bucketing students by
+    // how many movements they have tests that directly, and it is the
+    // difference between "a workflow to change" and "a rate per movement".
+    const perStudent = new Map<string, number>();
+    for (const m of moves) perStudent.set(m.student, (perStudent.get(m.student) ?? 0) + 1);
+    const BUCKETS = [1, 2, 3, 5, 8, 13, 21, 1e9];
+    const buckets = BUCKETS.map((hi, i) => ({
+      from: i === 0 ? 1 : BUCKETS[i - 1] + 1,
+      to: hi === 1e9 ? null : hi,
+      students: 0, drifted: 0,
+    }));
+    let driftedMoveTotal = 0, cleanMoveTotal = 0, driftedStudents = 0, cleanStudents = 0;
+    for (const [sid, n] of perStudent) {
+      const isD = drifted.has(sid);
+      if (isD) { driftedStudents++; driftedMoveTotal += n; } else { cleanStudents++; cleanMoveTotal += n; }
+      for (let i = 0; i < BUCKETS.length; i++) {
+        const lo = i === 0 ? 1 : BUCKETS[i - 1] + 1;
+        if (n >= lo && n <= BUCKETS[i]) { buckets[i].students++; if (isD) buckets[i].drifted++; break; }
+      }
+    }
+
+    // NEW DRIFT, OR DRIFT THAT WAS NEVER CLEARED? A repair on 2026-09-22
+    // reported 0 of 575 wrong; 131 the next morning is either a very bad day
+    // or a repair whose scope was narrower than its headline. The date of each
+    // drifted student's LAST movement settles it: a student who has not been
+    // awarded since before the repair cannot have drifted since.
+    const lastMoveOf = new Map<string, string>();
+    for (const m of moves) {
+      const day = m.iso.slice(0, 10);
+      const prev = lastMoveOf.get(m.student);
+      if (!prev || day > prev) lastMoveOf.set(m.student, day);
+    }
+    const lastMoveDay: Record<string, { drifted: number; clean: number }> = {};
+    for (const [sid, day] of lastMoveOf) {
+      const b = (lastMoveDay[day] ??= { drifted: 0, clean: 0 });
+      if (drifted.has(sid)) b.drifted++; else b.clean++;
+    }
+
+    // ONE DAY, BY THE HOUR. Every drifted student was last awarded on
+    // 2026-09-22, so the question is no longer "why do balances drift" but
+    // "what happened that day". If the rate steps up at a particular hour,
+    // something changed at that hour.
+    const focusDay = String(weeks.length ? "" : "");
+    const hourOnDay: Record<string, Record<string, { all: number; drifted: number }>> = {};
+    for (const m of moves) {
+      const day = m.iso.slice(0, 10);
+      const hr = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/Los_Angeles", hour: "2-digit", hour12: false,
+      }).format(new Date(m.iso));
+      const d1 = (hourOnDay[day] ??= {});
+      const b = (d1[hr] ??= { all: 0, drifted: 0 });
+      b.all++; if (drifted.has(m.student)) b.drifted++;
+    }
+
+    const busiest = [...minute.entries()]
+      .sort((a, b) => b[1].n - a[1].n).slice(0, 8)
+      .map(([k, b]) => ({ minute: k, movements: b.n, staff: b.teachers.size, driftedMoves: b.drifted }));
+
+    return {
+      movements: moves.length,
+      truncated,
+      distinctTeachers: new Set(moves.map((m) => m.teacher)).size,
+      teacherFieldSeen: [...sampleKeys].filter((k) => /teach|award|by|staff/i.test(k)),
+      payloadKeys: [...sampleKeys].sort(),
+      byHourLA: byHour, byWeekdayLA: byDow,
+      concurrency: {
+        sharedMinuteMoves: sharedMoves, sharedMinuteDriftedPct: pct(sharedDrifted, sharedMoves),
+        soloMinuteMoves: soloMoves, soloMinuteDriftedPct: pct(soloDrifted, soloMoves),
+      },
+      burst: {
+        burstMoves, burstDriftedPct: pct(burstDrifted, burstMoves),
+        calmMoves, calmDriftedPct: pct(calmDrifted, calmMoves),
+      },
+      busiestMinutes: busiest,
+      perTeacher: teachers,
+      lastMovementDay: lastMoveDay,
+      hourByDay: hourOnDay,
+      movementsPerStudent: {
+        drifted: driftedStudents ? Math.round((driftedMoveTotal / driftedStudents) * 100) / 100 : null,
+        clean: cleanStudents ? Math.round((cleanMoveTotal / cleanStudents) * 100) / 100 : null,
+        driftedStudents, cleanStudents,
+      },
+      byMovementCount: buckets.map((b) => ({
+        range: b.to === null ? `${b.from}+` : (b.from === b.to ? `${b.from}` : `${b.from}-${b.to}`),
+        students: b.students, drifted: b.drifted,
+        driftedPct: b.students ? Math.round((b.drifted / b.students) * 1000) / 10 : null,
+      })),
+      overallDriftedPct: pct(moves.filter((m) => drifted.has(m.student)).length, moves.length),
+    };
+  },
+});
+
+/**
+ * WALK ONE DRIFTED STUDENT'S LEDGER, using the balanceAfter the CLIENT wrote.
+ *
+ * Every cash row carries `balanceAfter`: what the browser believed the balance
+ * was the moment it made that movement. That turns an unanswerable question
+ * into an arithmetic one.
+ *
+ *   - If the last balanceAfter EQUALS the stored balance but the amounts do
+ *     not sum to it, the client saw movements the server no longer has: rows
+ *     were LOST after the counter moved. `cash_tx_<week>` is written with
+ *     saveSlice, which replaces the weekly document, so a concurrent save
+ *     drops rows exactly this way.
+ *   - If the last balanceAfter DISAGREES with the stored balance, the counter
+ *     moved without the client believing it did, which is a delta applied
+ *     twice or applied from stale state.
+ *
+ * The two have opposite fixes, so guessing between them is how a repair makes
+ * things worse.
+ */
+export const traceDriftedStudents = internalQuery({
+  args: { weeks: v.array(v.string()), studentIds: v.array(v.string()), limit: v.optional(v.number()) },
+  handler: async (ctx, { weeks, studentIds, limit }) => {
+    const want = new Set(studentIds.map(String));
+    const rowsBy = new Map<string, any[]>();
+    for (const w of weeks) {
+      const rows = await ctx.db.query("legacyMirror")
+        .withIndex("by_doc", (q) => q.eq("doc", `cash_tx_${w}`)).take(3000);
+      for (const r of rows) {
+        if (r.collection !== "transactions") continue;
+        const p: any = r.payload;
+        if (!p || typeof p !== "object") continue;
+        const sid = String(p.studentId ?? "");
+        if (!want.has(sid)) continue;
+        (rowsBy.get(sid) ?? rowsBy.set(sid, []).get(sid)!).push(p);
+      }
+    }
+
+    const out: any[] = [];
+    let lastMatches = 0, lastDiffers = 0, noBalanceAfter = 0, gapsFound = 0;
+    /**
+     * FOUR DIFFERENT FAULTS WEAR THE SAME HEADLINE, and they have opposite
+     * repairs. The recount treats the ledger sum as truth, which is right for
+     * three of these and WRONG for the fourth: if rows were lost from the
+     * ledger, the counter is the honest number and "correcting" it down takes
+     * money a child actually earned.
+     */
+    const classify: Record<string, number> = {
+      counterShort_studentIsOwed: 0,
+      counterOver_appliedTwiceOrMore: 0,
+      counterOver_other: 0,
+      agreesAfterAll: 0,
+    };
+    const classMoney: Record<string, number> = {
+      counterShort_studentIsOwed: 0,
+      counterOver_appliedTwiceOrMore: 0,
+      counterOver_other: 0,
+    };
+    for (const [sid, rows] of rowsBy) {
+      rows.sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)));
+      const student = await ctx.db.query("students")
+        .withIndex("by_legacyId", (q) => q.eq("legacyId", sid)).first();
+      const stored = student ? Number(student.wildcatCashBalance ?? student.cashBalance ?? 0) : null;
+
+      let running = 0;
+      const steps: any[] = [];
+      let jumps = 0;
+      for (const p of rows) {
+        const amt = Number(p.amount) || 0;
+        const kind = String(p.kind ?? "");
+        const signed = kind === "redeem" ? -Math.abs(amt) : amt;
+        running += signed;
+        const ba = p.balanceAfter === undefined || p.balanceAfter === null ? null : Number(p.balanceAfter);
+        // A step where the client's own balance jumped by more than this
+        // movement is a movement the server never stored.
+        const gap = ba === null ? null : Math.round(ba - running);
+        if (gap !== null && gap !== 0) jumps++;
+        steps.push({ at: String(p.timestamp).slice(0, 19), amount: signed, kind, running, balanceAfter: ba, gap });
+      }
+      const lastBa = [...steps].reverse().find((s) => s.balanceAfter !== null);
+      if (!lastBa) noBalanceAfter++;
+      else if (stored !== null && Math.round(lastBa.balanceAfter) === Math.round(stored)) lastMatches++;
+      else lastDiffers++;
+      if (jumps) gapsFound++;
+
+      // The client's own last word, when it left one, is the best evidence of
+      // what the browser believed. A ledger with an internal gap means rows
+      // went missing AFTER the browser had already counted them.
+      const clientSaid = lastBa ? Number(lastBa.balanceAfter) : null;
+      const diff = stored === null ? 0 : Math.round(stored - running);
+      let cls: string;
+      // CORRECTED 2026-09-23. The first version of this read a jump in
+      // balanceAfter as rows LOST from the weekly document, and concluded the
+      // counter was the honest number. Two checks disproved it: the
+      // per-student copy of the ledger holds nothing the weekly document
+      // lacks, so no rows went missing; and every jump is NEGATIVE -- the
+      // browser's balance lagged its OWN ledger, which is two staff awarding
+      // the same child from stale copies, not a lost write. The ledger is the
+      // complete record in all 131 cases and the counters are what disagree
+      // with it. A repair built on the first reading would have been built on
+      // a fault that does not exist.
+      if (diff === 0) cls = "agreesAfterAll";
+      else if (diff < 0) cls = "counterShort_studentIsOwed";
+      else if (running > 0 && Math.abs(stored! - 2 * running) < 1e-9) cls = "counterOver_appliedTwiceOrMore";
+      else cls = "counterOver_other";
+      classify[cls]++;
+      if (cls in classMoney) classMoney[cls] += diff;
+
+      if ((limit ?? 4) < 0 ? jumps > 0 && out.length < 3 : out.length < (limit ?? 4)) {
+        out.push({ studentId: sid, storedBalance: stored, ledgerSum: running,
+                   lastBalanceAfter: lastBa ? lastBa.balanceAfter : null, steps });
+      }
+    }
+    return {
+      students: rowsBy.size,
+      verdict: {
+        clientBalanceMatchesStored: lastMatches,
+        clientBalanceDiffersFromStored: lastDiffers,
+        noBalanceAfterRecorded: noBalanceAfter,
+        studentsWithAGapInTheirOwnLedger: gapsFound,
+      },
+      classes: classify,
+      staleClientBalanceSeen: gapsFound,
+      classTotals: classMoney,
+      samples: out,
+    };
+  },
+});
+
+/**
+ * Are the rows the weekly ledger lost still on the STUDENT?
+ *
+ * Every movement is written twice: into `cash_tx_<week>` (a document replaced
+ * wholesale by saveSlice, which is how concurrent saves drop rows) and into
+ * the student's own `wildcatCashTransactions` array. If the second copy
+ * survived, the 84 students whose weekly ledger is short can have it rebuilt
+ * from evidence rather than from arithmetic -- nothing is invented, the rows
+ * are simply put back where they were lost.
+ *
+ * COUNTS ONLY, no names.
+ */
+export const lostLedgerRecoverable = internalQuery({
+  args: { weeks: v.array(v.string()), studentIds: v.array(v.string()) },
+  handler: async (ctx, { weeks, studentIds }) => {
+    const want = new Set(studentIds.map(String));
+    const inWeekly = new Map<string, Set<string>>();
+    for (const w of weeks) {
+      const rows = await ctx.db.query("legacyMirror")
+        .withIndex("by_doc", (q) => q.eq("doc", `cash_tx_${w}`)).take(3000);
+      for (const r of rows) {
+        if (r.collection !== "transactions") continue;
+        const p: any = r.payload;
+        if (!p || typeof p !== "object") continue;
+        const sid = String(p.studentId ?? "");
+        if (!want.has(sid)) continue;
+        (inWeekly.get(sid) ?? inWeekly.set(sid, new Set()).get(sid)!).add(String(p.id ?? ""));
+      }
+    }
+
+    let studentsChecked = 0, withArray = 0, recoverable = 0, fullyRecoverable = 0;
+    let rowsMissing = 0, rowsFoundOnStudent = 0, moneyRecoverable = 0;
+    const sample: any[] = [];
+    for (const sid of want) {
+      const st = await ctx.db.query("students")
+        .withIndex("by_legacyId", (q) => q.eq("legacyId", sid)).first();
+      if (!st) continue;
+      studentsChecked++;
+      const arr: any[] = Array.isArray(st.wildcatCashTransactions) ? st.wildcatCashTransactions : [];
+      if (arr.length) withArray++;
+      const weekly = inWeekly.get(sid) ?? new Set<string>();
+      const onlyOnStudent = arr.filter((t: any) => t && t.id && !weekly.has(String(t.id)));
+      if (!onlyOnStudent.length) continue;
+      recoverable++;
+      rowsMissing += onlyOnStudent.length;
+      rowsFoundOnStudent += onlyOnStudent.length;
+      const money = onlyOnStudent.reduce((a: number, t: any) => {
+        const amt = Number(t.amount) || 0;
+        return a + (String(t.kind) === "redeem" ? -Math.abs(amt) : amt);
+      }, 0);
+      moneyRecoverable += money;
+      const stored = Number(st.wildcatCashBalance ?? st.cashBalance ?? 0);
+      const weeklySum = 0; // computed by the trace query; not needed here
+      if (sample.length < 3) {
+        sample.push({
+          studentId: sid, storedBalance: stored,
+          rowsInWeeklyDoc: weekly.size, rowsOnStudent: arr.length,
+          rowsOnlyOnStudent: onlyOnStudent.length,
+          recoverableAmount: money,
+          example: onlyOnStudent.slice(0, 3).map((t: any) => ({
+            id: String(t.id).slice(0, 24), at: String(t.timestamp ?? "").slice(0, 19),
+            amount: t.amount, kind: t.kind,
+          })),
+        });
+      }
+      fullyRecoverable++;
+    }
+    return {
+      studentsChecked, studentsWithAStudentSideArray: withArray,
+      studentsWithRowsOnlyOnTheStudent: recoverable,
+      rowsRecoverableFromStudent: rowsFoundOnStudent,
+      moneyThoseRowsAccountFor: moneyRecoverable,
+      sample,
+    };
+  },
+});
