@@ -133,8 +133,15 @@ console.log("\nBoth screens read through the same rules");
   check("and nothing regex-parses a reason string for an amount",
     !/details\.match\(/.test(code));
 
+  // Whitespace-tolerant since 2026-09-23, when the three award sites began
+  // passing a fourth field (the audit id derived from the award's receipt)
+  // and the literal was wrapped across lines. The count of three is the rule.
   check("the award sites record behaviour and notes as their own fields",
-    (code.match(/\{ behavior: behavior\.name, notes:/g) || []).length >= 3);
+    (code.match(/\{\s*behavior: behavior\.name, notes:/g) || []).length >= 3,
+    String((code.match(/\{\s*behavior: behavior\.name, notes:/g) || []).length));
+  check("...and give the audit entry the id derived from the award's receipt",
+    (code.match(/entryId: tx \? cashAwardAuditId\(tx\.id\) : undefined/g) || []).length === 3,
+    "so the server's copy and this tab's copy dedupe instead of doubling");
   check("addToAuditLog stores them when given",
     /if \(extra && typeof extra === 'object'\)[\s\S]{0,200}logEntry\.behavior/.test(code));
   check("while still writing reason, which every stored entry has",

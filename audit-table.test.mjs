@@ -66,8 +66,14 @@ console.log("\nLegacy ids are left exactly alone");
     /if \(entry && entry\.entryId && typeof entry\.entryId === 'string'\) return entry\.entryId;/.test(script));
   check("and still derives the old hash for an entry without one",
     /return 'e_' \+ Math\.abs\(h\)\.toString\(36\);/.test(script));
+  // Since 2026-09-23 a caller may SUPPLY the id -- the cash award paths derive
+  // it from the award's receipt so the server command's copy and this tab's
+  // copy dedupe. Otherwise it is still minted at birth, which is the rule.
   check("new entries are born with a minted id",
-    /entryId: window\.WildcatAudit\.newAuditEntryId\(\)/.test(code));
+    /entryId: \(extra && typeof extra\.entryId === 'string' && extra\.entryId\)\s*\?\s*extra\.entryId\s*:\s*window\.WildcatAudit\.newAuditEntryId\(\)/.test(code));
+  check("...and a supplied id is honoured only when it is a non-empty string",
+    /typeof extra\.entryId === 'string' && extra\.entryId\)/.test(code),
+    "an empty or non-string id must fall through to minting, never to the old hash");
 }
 
 console.log("\nThe wire shape lifts the indexed columns out, keeps the entry whole");

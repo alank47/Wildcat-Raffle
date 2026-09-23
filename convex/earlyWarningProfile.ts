@@ -2141,19 +2141,41 @@ export const missingLedgerRows = internalQuery({
   },
 });
 
-/** Recent stale-tab refusals: which builds, which accounts, how many. CLI only. */
+/**
+ * Recent cash refusals, CLI only, in two kinds kept apart:
+ *   - `refusals`: an unexplained residual refused -- a stale tab, by build and
+ *     account. This is the number that should fall to zero.
+ *   - `held`: named movements the server would not apply (from 2026-09-23),
+ *     by reason. Current builds write these too, so they are never counted as
+ *     stale tabs.
+ * Newest first; `capped` says whether the read stopped at its limit.
+ */
 export const refusalLogRecent = internalQuery({
   args: { sinceIso: v.optional(v.string()) },
   handler: async (ctx, { sinceIso }) => {
+    const LIMIT = 500;
     const rows = await ctx.db.query("cashRefusalLog")
-      .withIndex("by_at", (q) => sinceIso ? q.gte("at", sinceIso) : q).take(500);
+      .withIndex("by_at", (q) => sinceIso ? q.gte("at", sinceIso) : q).order("desc").take(LIMIT);
+    const residual = rows.filter((r) => (r as any).kind !== "held");
+    const held = rows.filter((r) => (r as any).kind === "held");
     const byVersion: Record<string, number> = {};
     const byActor: Record<string, number> = {};
-    for (const r of rows) {
+    for (const r of residual) {
       byVersion[r.clientVersion ?? "(none)"] = (byVersion[r.clientVersion ?? "(none)"] || 0) + 1;
       byActor[r.actorEmail ?? "(unknown)"] = (byActor[r.actorEmail ?? "(unknown)"] || 0) + 1;
     }
-    return { refusals: rows.length, byVersion, byActor,
-             last: rows.slice(-8).map((r) => ({ at: r.at, v: r.clientVersion, who: r.actorEmail, n: r.students })) };
+    const heldByReason: Record<string, number> = {};
+    for (const r of held) {
+      for (const s of r.sample) {
+        const why = String(s).split(":")[0] || "(unknown)";
+        heldByReason[why] = (heldByReason[why] || 0) + 1;
+      }
+    }
+    return {
+      refusals: residual.length, byVersion, byActor,
+      held: held.length, heldByReason,
+      capped: rows.length === LIMIT,
+      last: rows.slice(0, 8).map((r) => ({ at: r.at, kind: (r as any).kind ?? "residual", v: r.clientVersion, who: r.actorEmail, n: r.students, sample: r.sample.slice(0, 3) })),
+    };
   },
 });

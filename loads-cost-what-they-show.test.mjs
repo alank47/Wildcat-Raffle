@@ -90,13 +90,17 @@ console.log("\nThe idle refresh reads the roster, not everything");
   // do it a second time -- which would apply the movement twice.
   check("the refresh goes through the loader, which rebases",
     /await refreshRosterFromConvex\('idle refresh'/.test(idle));
-  check("and this block does NOT re-apply it again, which would double it",
-    !/reapplyPendingCashDeltas\(/.test(idle));
+  check("and this block does NOT rebase it again, which would double it",
+    !/commitRosterCash\(|\.install\(\)/.test(idle));
   {
+    // RE-POINTED 2026-09-23. The rebase now happens when the rows go on
+    // screen, and the loader makes that unskippable: it hands the rows out
+    // only through install(), and install() IS the rebase.
     const fn = code.slice(code.indexOf("async function loadRosterFromConvex"));
-    const body = fn.slice(0, fn.indexOf("\n        }"));
-    check("the loader is where the rebase actually lives",
-      /reapplyPendingCashDeltas\(pendingBeforeLoad, data\.students\)/.test(body));
+    const body = fn.slice(0, fn.indexOf("\n        }\n"));
+    check("the loader is where the rebase actually lives: install() is the only way to the rows",
+      /install\(\) \{[\s\S]{0,300}commitRosterCash\(data\.students, cashMark\);[\s\S]{0,80}return data\.students;/.test(body)
+      && !/\bstudents: data\.students\b/.test(body));
   }
   check("the audit and cash panels are pulled by the live path", /pullLiveActivity\('idle'\)/.test(idle));
   const refresh = between("async function refreshRosterFromConvex(reason, opts)", "rosterSource = 'convex';");

@@ -52,10 +52,17 @@ console.log("\n-- NO BLOCKED PATH RETURNS undefined --");
   // from a tab behind the server is applied, not blocked.
   check("the staleness path neither reloads nor refuses",
     /if \(serverTs > localTs \+ STALENESS_THRESHOLD_MS\) \{\s*console\.log\('\[save\] the server has newer saves than this tab; merging on the server, not reloading'\);\s*\}/.test(save));
+  // Anchored on the END of the alert, not its start: the message grew on
+  // 2026-09-23 to stop inviting a teacher to re-enter an award the reload had
+  // kept, and a window measured from the first words broke for a change that
+  // had nothing to do with what this checks.
   check("the cycle guard returns false",
-    /outdated cycle number[\s\S]{0,300}return false;/.test(save));
+    /outdated cycle number[^`]*`\);[\s\S]{0,200}return false;/.test(save));
   check("the week guard returns false",
-    /outdated week number[\s\S]{0,300}return false;/.test(save));
+    /outdated week number[^`]*`\);[\s\S]{0,200}return false;/.test(save));
+  check("neither alert tells a teacher to re-do work the reload kept",
+    !/outdated (cycle|week) number[^`]*Please re-do your last action/.test(save) &&
+    (save.match(/you just made were kept, so please do not enter them again/g) || []).length === 2);
 }
 
 console.log("\n-- a forced reload REBASES, it does not discard --");

@@ -436,6 +436,24 @@ export const save = mutation({
           sample: unkeyedResidual.slice(0, 5).map(String),
         });
       }
+      // A NAMED MOVEMENT HELD, logged too (2026-09-23). A save that lists a
+      // movement but states no change used to leave no trace anywhere: no
+      // patch, no countersIgnored, no residual, no row here -- the shape that
+      // cost 38 students an award on 2026-09-22. The client now repairs
+      // itself when it sees one; this is so a person can see it happened, and
+      // which build did it. The "(unexplained change)" marker is the residual
+      // row above, not a movement.
+      const heldNamed = movementsRefused.filter((r) => !String(r.id).startsWith("("));
+      if (heldNamed.length) {
+        await ctx.db.insert("cashRefusalLog", {
+          at: new Date().toISOString(),
+          actorEmail: String((me as any)?.email ?? "") || undefined,
+          clientVersion: args.clientVersion ?? undefined,
+          kind: "held",
+          students: new Set(heldNamed.map((r) => r.key)).size,
+          sample: heldNamed.slice(0, 5).map((r) => `${r.why}:${r.id}`),
+        });
+      }
     }
 
     let teachersChanged = 0;
@@ -516,6 +534,12 @@ export const save = mutation({
       cashMovementsAbsorbedSample: movementsAbsorbed.slice(0, 5),
       cashMovementsHeld: movementsRefused.map((r) => r.id),
       cashMovementsHeldSample: movementsRefused.slice(0, 5),
+      // WHY each was held, for every one, not a sample. The client drops a
+      // movement refused for a reason no retry can change (before_cutoff,
+      // coverage_lost, undated, bad_shape) instead of showing it on top of
+      // the server's number after every reload for as long as the page stays
+      // open. Ids and reason codes only.
+      cashMovementsHeldWhy: movementsRefused.map((r) => ({ id: r.id, why: r.why })),
       cashUnkeyedResidual: unkeyedResidual.length,
       cashUnkeyedResidualSample: unkeyedResidual.slice(0, 5),
     };

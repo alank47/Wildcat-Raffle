@@ -975,6 +975,35 @@ export default defineSchema({
     .index("by_stage", ["referralId", "stage"]),
 
   /**
+   * THE RECEIPT REGISTER for cash awards made as a server command.
+   *
+   * One row per receipt the command has seen, looked up BY INDEX on every
+   * award. It is the whole idempotency story for cashAward:award -- a retry,
+   * a double tap and a lost response all find their row here and move nothing
+   * -- and it is never a scan of a ledger week, which would cost ~2,500 reads
+   * per award and put every award in conflict with every other one that week.
+   *
+   * `status` says which path moved the money: "applied" (this command did, and
+   * wrote the ledger row and audit entry with it) or "absorbed" (the ordinary
+   * save got there first; this command recorded that and wrote nothing).
+   * `wroteRecords` is what the browser needs to know before treating the ledger
+   * row and audit entry as already on the server.
+   */
+  cashAwardCommands: defineTable({
+    txnId: v.string(),
+    studentId: v.string(),
+    status: v.union(v.literal("applied"), v.literal("absorbed")),
+    wroteRecords: v.boolean(),
+    amount: v.number(),
+    kind: v.string(),
+    actorEmail: v.string(),
+    at: v.string(),
+    recordedAt: v.string(),
+  })
+    .index("by_txnId", ["txnId"])
+    .index("by_recordedAt", ["recordedAt"]),
+
+  /**
    * Every save the server refused to let describe money it could not name.
    *
    * WHY IT EXISTS. On 2026-09-23 a browser holding pre-repair numbers put 76
@@ -993,6 +1022,9 @@ export default defineSchema({
     at: v.string(),
     actorEmail: v.optional(v.string()),
     clientVersion: v.optional(v.string()),
+    // Absent: an unexplained residual refused. "held": named movements the
+    // server would not apply (sample entries are "why:id").
+    kind: v.optional(v.string()),
     students: v.number(),
     sample: v.array(v.string()),
   }).index("by_at", ["at"]),

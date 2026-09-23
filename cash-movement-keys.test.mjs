@@ -285,10 +285,15 @@ console.log("\nThe client keeps a held movement pending, and forgets an accepted
     /_pendingCashMovements\.set\(_sid, _list\)/.test(script));
   check("born with the transaction, before any save exists",
     script.indexOf("_pendingCashMovements.set(_sid") > script.indexOf("cashTransactions.push(tx);"));
-  check("they are sent beside the delta", /cashMovements: pend/.test(script));
+  // RE-POINTED 2026-09-23: the send step is buildCashSend, and it sends the
+  // COPY of the list it also settles the answer against.
+  check("they are sent beside the delta",
+    /function buildCashSend\(changedStudents\) \{[\s\S]{0,700}const moves = \(_pendingCashMovements\.get\(key\) \|\| \[\]\)\.slice\(\);[\s\S]{0,300}cashMovements: moves/.test(script));
+  // RE-POINTED 2026-09-23: read in heldFromAnswer now, same defensive shape.
   check("the response is read defensively, never destructured",
-    /result && result\.cashMovementsHeld \? result\.cashMovementsHeld : \[\]/.test(script));
-  check("a held movement stays pending", /return !sentThis \|\| heldMovements\.has\(String\(m\.id\)\)/.test(script));
+    /result && Array\.isArray\(result\.cashMovementsHeld\) \? result\.cashMovementsHeld : \[\]/.test(script));
+  // RE-POINTED 2026-09-23: the answer is settled in settleSaveAnswerCash now.
+  check("a held movement stays pending", /if \(!sentIds\.has\(id\) \|\| held\.has\(id\)\) \{ keep\.push\(m\); return; \}/.test(script));
   check("and a held movement is logged rather than swallowed",
     /the server held ' \+ heldMovements\.size/.test(script));
   check("the server reports what it held, by id", /cashMovementsHeld: movementsRefused\.map/.test(src === "" ? "" : readFileSync(new URL("./convex/appData.ts", import.meta.url), "utf8")));
@@ -432,97 +437,118 @@ console.log("\nthe reload rebase, executed rather than pattern-matched");
 // save must state a delta that MATCHES the movements it lists. When it did
 // not, the server cancelled the movement against its own residual and
 // registered it as applied, so no later save could ever re-send it.
+//
+// RE-POINTED 2026-09-23 to the list-based rebase (commitRosterCash). The
+// sequence and the property are the same; the shipped function is new.
 {
-  const src = readFileSync(new URL("./script.js", import.meta.url), "utf8");
-  const lift = (start, end) => {
-    const i = src.indexOf(start);
-    if (i < 0) throw new Error("not found: " + start);
-    const j = src.indexOf(end, i);
-    return src.slice(i, j < 0 ? src.length : j);
+  const liftFn = (name) => {
+    const i = script.indexOf("function " + name + "(");
+    if (i < 0) throw new Error("not found: " + name);
+    const head = script.lastIndexOf("\n", i);
+    let depth = 0;
+    for (let k = script.indexOf("{", i); k < script.length; k++) {
+      if (script[k] === "{") depth++;
+      else if (script[k] === "}") { depth--; if (depth === 0) return script.slice(head + 1, k + 1); }
+    }
+    throw new Error("unbalanced: " + name);
   };
-  const body = [
-    lift("function cashCountersOf(st) {", "\n        /**"),
-    lift("function cashMovementEffect(amount, kind) {", "\n        /** How much this tab"),
-    lift("function cashDeltaBetween(now, base) {", "\n        /** Cash this tab has moved"),
-    lift("function snapshotPendingCashDeltas() {", "\n        /**\n         * Put that movement"),
-    lift("function reapplyPendingCashDeltas(pending, into) {", "\n        function rememberCashBase"),
-    lift("function rememberCashBase(st) {", "\n\n        //"),
-  ].join("\n");
-
-  const make = () => new Function("CASH_COUNTER_FIELDS", "state", `
-    const _studentCashBase = state.base;
-    let students = state.students, nonEnrolledStudents = [];
+  const SCRIPT_SRC = script;
+  // THE STATE, LIFTED FROM script.js, not copied: a test that hardcodes the
+  // journal's settings cannot notice them change (review 3, 2026-09-23).
+  const liftDecl = (name) => {
+    const m = new RegExp("\\n\\s*((?:const|let) " + name + " = [^\\n]*;)").exec(SCRIPT_SRC);
+    if (!m) throw new Error("declaration not found: " + name);
+    return m[1];
+  };
+  const CASH_STATE = ["_studentCashBase", "_pendingCashMovements", "_cashConfirmations", "_cashConfirmSeq",
+    "CASH_CONFIRMATION_KEEP_MAX", "_openCashLoads", "_cashLoadSeq", "_serverCashOfRow",
+    "CASH_TERMINAL_REFUSALS", "CASH_REFUSALS_TO_SAY"].map(liftDecl).join("\n");
+  const body = ["cashCountersOf", "cashMovementEffect", "cashDeltaBetween", "rememberCashBase",
+    "pruneCashConfirmations", "noteCashConfirmed", "beginCashLoad", "endCashLoad", "commitRosterCash"].map(liftFn).join("\n");
+  const make = () => new Function("CASH_COUNTER_FIELDS", "console", `
+    ${CASH_STATE}
     ${body}
-    return {
-      snapshot: snapshotPendingCashDeltas,
-      reapply: reapplyPendingCashDeltas,
-      remember: rememberCashBase,
-      effect: cashMovementEffect,
-      delta: cashDeltaBetween,
-      counters: cashCountersOf,
-      setStudents: (s) => { students = s; },
-    };
-  `);
-
-  const FIELDS = ["wildcatCashBalance", "wildcatCashEarned", "wildcatCashSpent", "wildcatCashDeducted"];
+    return { base: _studentCashBase, pending: _pendingCashMovements, remember: rememberCashBase,
+             effect: cashMovementEffect, delta: cashDeltaBetween, begin: beginCashLoad, commit: commitRosterCash };
+  `)(F, { log() {} });
   const serverRow = () => ({ id: "s1", wildcatCashBalance: 800, wildcatCashEarned: 800,
                              wildcatCashSpent: 0, wildcatCashDeducted: 0 });
+  const M = { id: "txn_1", at: "2026-09-22T17:00:00.000Z", amount: 100, kind: "award" };
 
   // 1. Load. Base is seeded from the server.
-  const state = { base: new Map(), students: [serverRow()] };
-  const api = make()(FIELDS, state);
-  api.remember(state.students[0]);
+  const api = make();
+  const first = [serverRow()];
+  api.commit(first, api.begin());
   check("after a clean load the delta is zero",
-    api.delta(state.students[0], state.base.get("s1")).wildcatCashBalance === 0);
+    api.delta(first[0], api.base.get("s1")).wildcatCashBalance === 0);
 
-  // 2. A teacher awards $100. The tab's record moves; the base does not.
+  // 2. A teacher awards $100. The tab's record moves and the movement is listed.
   const e = api.effect(100, "award");
-  FIELDS.forEach((f) => { state.students[0][f] = (state.students[0][f] || 0) + (e[f] || 0); });
+  F.forEach((f) => { first[0][f] = (first[0][f] || 0) + (e[f] || 0); });
+  api.pending.set("s1", [M]);
   check("the award shows as a delta of +100",
-    api.delta(state.students[0], state.base.get("s1")).wildcatCashBalance === 100);
+    api.delta(first[0], api.base.get("s1")).wildcatCashBalance === 100);
 
   // 3. THE RELOAD, before the save confirms. Fresh server records arrive
-  //    WITHOUT the award, and the base is reseeded from them.
-  const pending = api.snapshot();
-  check("the snapshot caught the unconfirmed movement",
-    pending.size === 1 && pending.get("s1").wildcatCashBalance === 100);
+  //    WITHOUT the award (its register does not hold it).
+  const mark = api.begin();
   const fresh = [serverRow()];
-  fresh.forEach(api.remember);
-  api.reapply(pending, fresh);
-  api.setStudents(fresh);
+  api.commit(fresh, mark);
 
   // 4. The next save must state exactly what it lists.
-  const after = api.delta(fresh[0], state.base.get("s1"));
+  const after = api.delta(fresh[0], api.base.get("s1"));
   check("AFTER THE RELOAD THE DELTA STILL CARRIES THE AWARD", after.wildcatCashBalance === 100,
     JSON.stringify(after));
   check("and the earned counter too", after.wildcatCashEarned === 100);
   check("so the payload is coherent: stated matches the movement it lists",
-    after.wildcatCashBalance === e.wildcatCashBalance);
+    after.wildcatCashBalance === e.wildcatCashBalance && api.pending.get("s1").length === 1);
   check("and the teacher still sees the money on screen", fresh[0].wildcatCashBalance === 900);
+  // And the real planner agrees: the save is applied, nothing refused.
+  const applied = applyTo(row({ wildcatCashBalance: 800, wildcatCashEarned: 800 }),
+    { cashDelta: after, cashMovements: api.pending.get("s1") });
+  check("the server applies it, once, with nothing refused",
+    applied.row.wildcatCashBalance === 900 && !applied.mv.hasResidual, JSON.stringify(applied.row));
 
-  // 5. TEETH: skip the rebase, which is what three of four callers did.
-  const state2 = { base: new Map(), students: [serverRow()] };
-  const api2 = make()(FIELDS, state2);
-  api2.remember(state2.students[0]);
-  FIELDS.forEach((f) => { state2.students[0][f] = (state2.students[0][f] || 0) + (e[f] || 0); });
+  // 5. TEETH: install the fresh rows WITHOUT the rebase, which is what three of
+  //    four callers did before 2026-09-22.
+  const api2 = make();
+  const r2 = [serverRow()];
+  api2.commit(r2, api2.begin());
+  F.forEach((f) => { r2[0][f] = (r2[0][f] || 0) + (e[f] || 0); });
+  api2.pending.set("s1", [M]);
   const fresh2 = [serverRow()];
   fresh2.forEach(api2.remember);          // base reseeded...
-  api2.setStudents(fresh2);               // ...and NO reapply
-  const broken = api2.delta(fresh2[0], state2.base.get("s1"));
+  const broken = api2.delta(fresh2[0], api2.base.get("s1"));   // ...and nothing carried
   check("TEETH: without the rebase the delta reads ZERO while the movement is still listed",
     broken.wildcatCashBalance === 0,
     "that is the self-contradictory payload the server cancels and registers");
   check("which is exactly the shape that lost 38 awards",
     broken.wildcatCashBalance !== e.wildcatCashBalance);
 
-  // 6. Applying it twice would be the other failure: a double credit.
+  // 6. Rebasing twice cannot double it: shown is REBUILT from the server's
+  //    numbers as read (remembered per row) plus the list, never incremented.
+  //    install() already refuses a second call; this is the second fence.
+  const api3 = make();
+  const r3 = [serverRow()];
+  api3.commit(r3, api3.begin());
+  api3.pending.set("s1", [M]);
   const twice = [serverRow()];
-  twice.forEach(api.remember);
-  api.reapply(pending, twice);
-  api.reapply(pending, twice);
-  check("applying the rebase twice really would double the award",
-    twice[0].wildcatCashBalance === 1000,
-    "which is why exactly one call site is pinned above");
+  api3.commit(twice, api3.begin());
+  api3.commit(twice, api3.begin());
+  check("committing the same rows twice shows the award ONCE",
+    twice[0].wildcatCashBalance === 900 && api3.pending.get("s1").length === 1);
+
+  // 7. The award the server ALREADY holds (the command applied it) is not
+  //    added again -- the defect the first review of 2026-09-23 found.
+  const api4 = make();
+  const r4 = [serverRow()];
+  api4.commit(r4, api4.begin());
+  api4.pending.set("s1", [M]);
+  const held = [Object.assign(serverRow(), { wildcatCashBalance: 900, wildcatCashEarned: 900,
+    cashApplied: { ids: [{ i: M.id, at: M.at }] } })];
+  api4.commit(held, api4.begin());
+  check("a movement the server's register holds is shown once and leaves the list",
+    held[0].wildcatCashBalance === 900 && !api4.pending.has("s1"));
 }
 
 // ===========================================================================

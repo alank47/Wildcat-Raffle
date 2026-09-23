@@ -111,45 +111,56 @@
             const session = auth.getSession();
             if (!session) throw new Error('Not signed in to Convex.');
 
-            // SNAPSHOT BEFORE THE AWAIT. It reads the live arrays, and after
-            // the await they are about to be replaced.
-            const pendingBeforeLoad = snapshotPendingCashDeltas();
+            // WHERE THIS LOAD STARTS in the journal of confirmed movements.
+            // BEFORE the query goes out: anything confirmed after this may or
+            // may not be in what the server reads, and commitRosterCash asks
+            // each student's register which.
+            const cashMark = beginCashLoad();
 
-            const data = await auth.convexQuery('appData:load', {}, session.idToken);
-            if (!data || !Array.isArray(data.students)) {
-                throw new Error('appData:load returned no students array.');
+            let data;
+            try {
+                data = await auth.convexQuery('appData:load', {}, session.idToken);
+                if (!data || !Array.isArray(data.students)) {
+                    throw new Error('appData:load returned no students array.');
+                }
+            } catch (err) {
+                endCashLoad(cashMark);
+                throw err;
             }
-            // What the server holds is the base every cash delta is measured
-            // from, until a save confirms a new one.
-            data.students.forEach(rememberCashBase);
-
-            // AND THEN THIS TAB'S UNCONFIRMED MOVEMENT GOES BACK ON TOP.
-            //
-            // IT LIVES HERE, NOT AT THE CALL SITES, and that is the actual fix.
-            // The rebase used to be the caller's job, and on 2026-09-22 three
-            // of the four callers of refreshRosterFromConvex did not do it --
-            // staff invite, sign-in, and RESUMED SESSION. That last one is a
-            // teacher awarding cash, switching away before the save confirms,
-            // and coming back, which is why the losses were scattered across
-            // staff, days and hours rather than batched.
-            //
-            // What went wrong when it was skipped: the fresh student row and
-            // the freshly seeded base are BOTH the server's pre-movement
-            // numbers, so the delta reads zero while the movement is still in
-            // `_pendingCashMovements` and still listed on the next save. The
-            // server read that self-contradictory payload, cancelled the
-            // movement against its own residual, and -- before the guard added
-            // the same day -- registered it as applied. 38 students lost an
-            // award each, unrecoverably.
-            //
-            // Ordered deliberately: base FIRST, from the server's numbers, then
-            // the movement on top of the record. That is what makes the next
-            // delta equal exactly the movements the payload lists.
-            reapplyPendingCashDeltas(pendingBeforeLoad, data.students);
             // Before anything merges: the merge below depends on it.
             noteHistoryCutoff(data.historyCutoff);
+
+            // THE ROWS ARE HANDED OVER ONLY THROUGH install(), which makes them
+            // this tab's cash truth (commitRosterCash) at the moment the caller
+            // puts them on screen.
+            //
+            // WHY NOT HERE. This used to rebase the rows right here, before
+            // returning, and on 2026-09-22 that was the fix: the rebase had been
+            // every caller's job and three of four callers skipped it, costing
+            // 38 students an award each. But loadData does not put these rows on
+            // screen until seconds later, after paging the audit log -- and for
+            // those seconds the base was new while the records were old. So the
+            // rebase stays out of the callers' hands in a different way: there
+            // is no `students` on what this returns. The only way to get the
+            // rows is install(), and install() is the rebase. A caller cannot
+            // use them and forget it, and cannot do it twice.
+            let installed = false;
             return {
-                students: data.students,
+                count: data.students.length,
+                install() {
+                    if (installed) throw new Error('A roster load can be installed once.');
+                    installed = true;
+                    commitRosterCash(data.students, cashMark);
+                    endCashLoad(cashMark);
+                    return data.students;
+                },
+                // For a caller that will never install these rows after all
+                // (loadData failing after the roster came back): lets the
+                // journal forget what only this load needed. A no-op once
+                // installed.
+                release() {
+                    if (!installed) endCashLoad(cashMark);
+                },
                 teachers: Array.isArray(data.teachers) ? data.teachers : [],
                 settings: data.settings || {},
             };
@@ -752,41 +763,484 @@
             CASH_COUNTER_FIELDS.forEach(f => { d[f] = (Number(now && now[f]) || 0) - (Number(base && base[f]) || 0); });
             return d;
         }
-        /** Cash this tab has moved but the server has not confirmed, per student. */
-        function snapshotPendingCashDeltas() {
-            const pending = new Map();
-            (students || []).concat(nonEnrolledStudents || []).forEach(st => {
-                if (!st) return;
-                const base = _studentCashBase.get(String(st.id));
-                if (!base) return;
-                const d = cashDeltaBetween(st, base);
-                if (CASH_COUNTER_FIELDS.some(f => d[f])) pending.set(String(st.id), d);
-            });
-            return pending;
-        }
-        /**
-         * Put that movement back on top of freshly loaded server values, so the
-         * next save sends exactly it.
-         *
-         * `into` is the array to rebase. It exists so this can run INSIDE
-         * loadRosterFromConvex, against the records it is about to hand back,
-         * before they become the globals. Omit it for the old behaviour.
-         */
-        function reapplyPendingCashDeltas(pending, into) {
-            if (!pending || !pending.size) return 0;
-            let reapplied = 0;
-            const targets = into ? (into || []) : (students || []).concat(nonEnrolledStudents || []);
-            targets.forEach(st => {
-                const d = st && pending.get(String(st.id));
-                if (!d) return;
-                CASH_COUNTER_FIELDS.forEach(f => { st[f] = (Number(st[f]) || 0) + d[f]; });
-                reapplied++;
-            });
-            if (reapplied) console.log('[save] rebased after reload:', reapplied, 'student(s) keep this tab\'s unconfirmed cash movement');
-            return reapplied;
-        }
         function rememberCashBase(st) {
             if (st && st.id !== undefined && st.id !== null) _studentCashBase.set(String(st.id), cashCountersOf(st));
+        }
+
+        // ============================================================
+        // THIS TAB'S CASH, KEPT AS A LIST AND NEVER AS A RUNNING TOTAL
+        // ============================================================
+        //
+        // THE ONE RULE (2026-09-23). For every student:
+        //
+        //     what this tab shows  =  its base  +  the effect of every movement
+        //                                          still in _pendingCashMovements
+        //
+        // and the base is the server's numbers as far as this tab knows them.
+        // Every save states (shown - base) and lists the movements; the server
+        // refuses a save whose statement its list does not explain, and the tab
+        // then force-reloads with "some money was not saved". So the rule is
+        // not tidiness: every way this tab has broken it has been a forced
+        // reload, a balance shown twice, or an award that never reached a
+        // counter.
+        //
+        // Three things change a student's cash in this tab, and each keeps the
+        // rule by construction:
+        //   - recordCashTransaction: shown += effect, and the movement is listed.
+        //   - a save's answer (settleSaveAnswerCash): each movement the server
+        //     applied or absorbed leaves the list and its effect joins the base.
+        //   - a reload (commitRosterCash): the base becomes the server's numbers,
+        //     the list keeps only what those numbers do not already hold, and
+        //     shown is REBUILT as base + list.
+        //
+        // WHAT THIS REPLACED, and why. The reload used to carry a running total
+        // -- "shown minus base" snapshotted before the load -- and add it back on
+        // top. Two adversarial reviews on 2026-09-23 showed that a total and a
+        // list can disagree, and every bug either review found lived in the
+        // disagreement: an award the command had already applied shown twice; a
+        // save answered during the load that left the award on screen but
+        // unlisted; an award made during the load that vanished; money
+        // subtracted that had never been added. A list cannot disagree with
+        // itself.
+
+        /**
+         * Movements that LEFT the pending list because the server holds them,
+         * in order, for a short while -- whether a save's answer confirmed
+         * them or a reload found them in the server's register.
+         *
+         * A load reads the server at some moment during its await, and
+         * anything can happen on either side of that moment: a save can be
+         * answered, and ANOTHER load can be installed. A movement that left the
+         * list after this load began may or may not be in what it read, and the
+         * register that comes down with each student (`cashApplied`) is what
+         * says which. Without this journal the load could not even ask.
+         *
+         * WHY RELOADS WRITE HERE TOO. Found by the ordering sweep in
+         * cash-award-command.test.mjs, 2026-09-23: two reloads overlap (the
+         * sign-in path after a token renewal runs loadData and then
+         * refreshRosterFromConvex), the NEWER one is installed first and drops
+         * an award its read already holds, and the OLDER one is installed last
+         * with a read from before that award reached the server. With only
+         * save answers journalled, the older load never heard of the award and
+         * the screen lost $100 until the next reload.
+         */
+        //
+        // HOW LONG AN ENTRY IS KEPT: exactly as long as a load that began
+        // before it is still waiting to be installed -- no clock involved. A
+        // load only ever asks about entries made after its own mark, so once
+        // every load open at an entry's birth has installed, nothing can ask
+        // about it again. The first version kept entries for 15 minutes, and
+        // review showed a load stalled past that (a hung audit page, a closed
+        // lid) installing without them: the screen lost awards the server had.
+        //
+        // NO CLOCK AT ALL. A second review found that releasing a load after
+        // an hour let a load stalled across a closed lid install without the
+        // entries it needed. A load that will never install (loadData threw
+        // after the roster came back) is released by loadData's own error
+        // path (release()); the count cap is a memory bound only, far beyond
+        // anything one load can see.
+        const _cashConfirmations = [];
+        let _cashConfirmSeq = 0;
+        const CASH_CONFIRMATION_KEEP_MAX = 5000;
+        const _openCashLoads = new Map();
+        let _cashLoadSeq = 0;
+        function pruneCashConfirmations() {
+            let oldest = Infinity;
+            _openCashLoads.forEach(mark => { if (mark.seq < oldest) oldest = mark.seq; });
+            while (_cashConfirmations.length &&
+                   (_cashConfirmations[0].seq <= oldest || _cashConfirmations.length > CASH_CONFIRMATION_KEEP_MAX)) {
+                _cashConfirmations.shift();
+            }
+        }
+        function noteCashConfirmed(key, m) {
+            _cashConfirmations.push({
+                seq: ++_cashConfirmSeq, key: String(key), t: Date.now(),
+                m: { id: m.id, at: m.at, amount: m.amount, kind: m.kind },
+            });
+            pruneCashConfirmations();
+        }
+        /** Where a load starts in that journal. Taken BEFORE its query goes out. */
+        function beginCashLoad() {
+            const mark = { id: ++_cashLoadSeq, seq: _cashConfirmSeq };
+            _openCashLoads.set(mark.id, mark);
+            return mark;
+        }
+        /** The load installed, or failed: it no longer needs the journal. */
+        function endCashLoad(mark) {
+            if (mark && _openCashLoads.delete(mark.id)) pruneCashConfirmations();
+        }
+
+        /**
+         * THE RECORD ON SCREEN, whatever object the caller happens to hold.
+         *
+         * Every save replaces `students` with fresh copies, so an object a
+         * screen captured earlier -- the Add Cash modal holds the student it
+         * opened on -- can be detached by the time the teacher confirms. An
+         * award recorded on a detached copy moved nothing anybody could see,
+         * while its movement was still listed: the next save stated no change
+         * and listed a movement, the server refused it as incoherent, and with
+         * the award command off the counter never moved at all.
+         */
+        function liveStudentRecord(st) {
+            if (!st || st.id === undefined || st.id === null) return st;
+            const id = String(st.id);
+            const find = (arr) => (arr || []).find(s => s && String(s.id) === id);
+            return find(students) || find(nonEnrolledStudents) || st;
+        }
+
+        /**
+         * WHAT A SAVE SENDS for each changed student, and the snapshot its
+         * answer is settled against. See THE ONE RULE above.
+         *
+         * The counters and the movement list are COPIED here, before the
+         * await. recordCashTransaction pushes onto the live list array, so an
+         * award made during the round trip would otherwise appear in "what was
+         * sent", be treated as confirmed when the answer came, and never reach
+         * the server (2026-09-20: 21 students, $2,300, for the counters' half of
+         * the same mistake). The payload carries the same copy.
+         *
+         * cashDelta and cashMovements are added here and not in studentsToSave,
+         * so neither enters the save fingerprint; STUDENT_WRITABLE is an
+         * allowlist, so neither can reach a stored row.
+         */
+        function buildCashSend(changedStudents) {
+            const sentCounters = new Map();
+            const sentMovements = new Map();
+            const studentsToSend = (changedStudents || []).map(st => {
+                const key = String(st.id);
+                const base = _studentCashBase.get(key);
+                sentCounters.set(key, cashCountersOf(st));
+                const moves = (_pendingCashMovements.get(key) || []).slice();
+                sentMovements.set(key, moves);
+                return base
+                    ? Object.assign({}, st, { cashDelta: cashDeltaBetween(st, base), cashMovements: moves })
+                    : st;
+            });
+            return { studentsToSend, sentCounters, sentMovements };
+        }
+
+        /**
+         * A save's answer, applied to this tab's cash. See THE ONE RULE above.
+         *
+         * WHY THE BASE MOVES BY WHAT WAS CONFIRMED, NOT TO WHAT WAS SENT. It
+         * used to be pinned to the counters the save had sent. That was right
+         * only if nothing else had touched the base in between -- and a roster
+         * load does not wait for a save. A load that landed during the round
+         * trip reseeded the base from the server (including other teachers'
+         * awards), and the answer then put it back to this tab's older sent
+         * numbers: the next save stated money nobody had listed and the tab
+         * force-reloaded. Moving the base by exactly the movements this answer
+         * confirmed is right whichever order they came in.
+         *
+         * WHAT IT KEEPS FROM THE PIN (2026-09-20, 21 students and $2,300). An
+         * award made during the round trip was not sent, so it is not
+         * confirmed, so it stays listed and on top of the base: the next save
+         * still carries it.
+         *
+         * A MOVEMENT THE SERVER HELD stays listed and stays out of the base, so
+         * the next save states it and lists it -- coherent, and re-sent. The
+         * pin used to put a held movement INTO the base while leaving it
+         * listed, which made the very next save contradict itself.
+         */
+        /**
+         * Refusals that can never succeed on a retry. A movement refused for
+         * one of these leaves the list WITHOUT entering the base: the server
+         * did not apply it and never will, so what this tab shows becomes the
+         * server's number. Kept listed, as the first version of this did, it
+         * was re-added on top of the server after every reload for as long as
+         * the page stayed open -- review 3, 2026-09-23.
+         *
+         * `capped` is deliberately NOT here: it can come from several movements
+         * together passing the per-save cap, each of which alone would land.
+         * `stated_no_change` and `cancelled_by_residual` are not either: they
+         * describe an incoherent payload, which the next save repairs.
+         */
+        const CASH_TERMINAL_REFUSALS = new Set(['before_cutoff', 'coverage_lost', 'undated', 'bad_shape']);
+        /**
+         * Of those, the ones the tab can SAY were not applied. coverage_lost is
+         * not one: it means the server can no longer prove the movement is
+         * unseen, and it may well have been paid (the award command, or a save
+         * whose answer was lost). Telling a teacher "it could not be applied"
+         * there invites a second award. It leaves the list silently, the tab
+         * re-reads the server, and the nightly drift check is where a real
+         * shortfall surfaces -- to a person, not to a teacher mid-class.
+         */
+        const CASH_REFUSALS_TO_SAY = new Set(['before_cutoff', 'undated', 'bad_shape']);
+
+        /**
+         * The save answer's held movements, read defensively: ids, and why.
+         * An older backend sends ids only; then nothing is treated as final.
+         */
+        function heldFromAnswer(result) {
+            const heldMovements = new Set(
+                (result && Array.isArray(result.cashMovementsHeld) ? result.cashMovementsHeld : []).map(String));
+            const heldWhy = new Map(
+                (result && Array.isArray(result.cashMovementsHeldWhy) ? result.cashMovementsHeldWhy : [])
+                    .filter(r => r && r.id).map(r => [String(r.id), String(r.why || '')]));
+            return { heldMovements, heldWhy };
+        }
+
+        /**
+         * After a save's answer held anything: say only what is certain, and
+         * re-read the server so the screen shows its number.
+         *
+         * WHY RE-READ. Dropping a movement refused for good leaves the tab on
+         * the base it last read, which may be older than the server (a reset,
+         * another teacher). And a movement held as stated_no_change or
+         * cancelled_by_residual means this tab's numbers and list disagree --
+         * the shape that cost 38 students an award on 2026-09-22, which used
+         * to pass with no toast, no log and no reload. A roster refresh
+         * rebuilds every record as the server's number plus this tab's list
+         * (commitRosterCash), which repairs it. `capped` is not re-read for:
+         * a refresh cannot change the answer.
+         */
+        /**
+         * RE-READ THE SERVER'S CASH, AND ONLY THE CASH.
+         *
+         * The first version of this called refreshRosterFromConvex, which
+         * replaces `students` and `teachers` wholesale -- from inside the save
+         * that asked for it, so a ticket award made in those seconds was put
+         * back to the server's old value and never sent (review 5,
+         * 2026-09-23). This touches the four counters and the register on the
+         * records already on screen, nothing else: the rows go through
+         * install(), so every record becomes the server's number plus this
+         * tab's list, and the rest of each record is left exactly as it is.
+         *
+         * It waits for any save in flight or queued to finish first, and does
+         * nothing while an admin is previewing as a teacher.
+         */
+        async function refreshCashFromServer(reason, attempt) {
+            if (typeof DATA_SOURCE !== 'undefined' && DATA_SOURCE !== 'convex') return;
+            if (typeof isPreviewingTeacher === 'function' && isPreviewingTeacher()) return;
+            const busy = (typeof isSyncing !== 'undefined' && isSyncing)
+                || (typeof _saveQueue !== 'undefined' && _saveQueue && _saveQueue.isPending());
+            if (busy) {
+                if ((attempt || 0) < 30) setTimeout(() => { refreshCashFromServer(reason, (attempt || 0) + 1); }, 2000);
+                return;
+            }
+            try {
+                const fresh = await loadRosterFromConvex();
+                const rows = fresh.install();
+                const byId = new Map(rows.map(r => [String(r.id), r]));
+                let touched = 0;
+                (students || []).concat(nonEnrolledStudents || []).forEach(st => {
+                    const r = st && byId.get(String(st.id));
+                    if (!r) return;
+                    CASH_COUNTER_FIELDS.forEach(f => { st[f] = r[f]; });
+                    st.cashApplied = r.cashApplied;
+                    touched++;
+                });
+                console.log('[save] cash re-read from the server after ' + reason + ':', touched, 'record(s)');
+                try {
+                    if (typeof updateCashTable === 'function') updateCashTable();
+                    if (typeof updateStudentAccounts === 'function') updateStudentAccounts();
+                } catch (e) { /* a redraw is not the point */ }
+            } catch (e) {
+                console.warn('[save] cash re-read after ' + reason + ' failed:', (e && e.message) || e);
+            }
+        }
+
+        let _lastCashHeldRefresh = 0;
+        function onCashHeld(dropped, heldMovements, heldWhy) {
+            const told = (dropped || []).filter(d => CASH_REFUSALS_TO_SAY.has(d.why));
+            if (told.length) {
+                const who = told.slice(0, 3).map(d => {
+                    const st = liveStudentRecord({ id: d.key });
+                    const name = st && (st.firstName || st.lastName) ? `${st.firstName || ''} ${st.lastName || ''}`.trim() : 'a student';
+                    return `${name} (${Number(d.amount) >= 0 ? '+' : '-'}$${Math.abs(Number(d.amount) || 0)})`;
+                }).join(', ');
+                showToast(`Not applied: ${who}${told.length > 3 ? ` and ${told.length - 3} more` : ''} -- dated before the last Wildcat Cash reset. Nothing else needs doing.`, 'warn', 10000);
+            }
+            const why = heldWhy || new Map();
+            const wantsRefresh = (dropped && dropped.length)
+                || [...(heldMovements || [])].some(id => why.get(id) && why.get(id) !== 'capped');
+            if (!wantsRefresh) return;
+            const now = Date.now();
+            if (now - _lastCashHeldRefresh < 30000) return;
+            _lastCashHeldRefresh = now;
+            setTimeout(() => { refreshCashFromServer('a movement the server held'); }, 0);
+        }
+
+        function settleSaveAnswerCash(changedStudents, sentCounters, sentMovements, heldMovements, heldWhy) {
+            const held = heldMovements || new Set();
+            const why = heldWhy || new Map();
+            const dropped = [];
+            (changedStudents || []).forEach(st => {
+                if (!st || st.id === undefined || st.id === null) return;
+                const key = String(st.id);
+                const hadBase = _studentCashBase.has(key);
+                // A student this tab never had a base for was sent absolute
+                // values, as before; what was sent is the only base there is.
+                if (!hadBase) {
+                    const sent = sentCounters && sentCounters.get(key);
+                    if (sent) _studentCashBase.set(key, Object.assign({}, sent));
+                    else rememberCashBase(st);
+                }
+                const wasSent = (sentMovements && sentMovements.get(key)) || [];
+                if (!wasSent.length) return;
+                const sentIds = new Set(wasSent.filter(x => x && x.id).map(x => String(x.id)));
+                const base = Object.assign({}, _studentCashBase.get(key) || cashCountersOf(null));
+                const keep = [];
+                (_pendingCashMovements.get(key) || []).forEach(m => {
+                    if (!m || !m.id) return;
+                    const id = String(m.id);
+                    if (sentIds.has(id) && held.has(id) && CASH_TERMINAL_REFUSALS.has(why.get(id))) {
+                        // Refused for good: off the list, NOT into the base --
+                        // and off the record on screen, which showed it as
+                        // part of base + list. Leaving it there broke THE ONE
+                        // RULE, so the very next save was refused (the test
+                        // that caught this is in cash-award-command.test.mjs).
+                        const live = liveStudentRecord(st);
+                        const e = cashMovementEffect(m.amount, m.kind);
+                        if (live) CASH_COUNTER_FIELDS.forEach(f => { live[f] = (Number(live[f]) || 0) - (Number(e[f]) || 0); });
+                        dropped.push({ key, id, why: why.get(id), amount: m.amount });
+                        return;
+                    }
+                    if (!sentIds.has(id) || held.has(id)) { keep.push(m); return; }
+                    // Applied or absorbed: the server's numbers hold it now.
+                    if (hadBase) {
+                        const e = cashMovementEffect(m.amount, m.kind);
+                        CASH_COUNTER_FIELDS.forEach(f => { base[f] = (Number(base[f]) || 0) + (Number(e[f]) || 0); });
+                    }
+                    noteCashConfirmed(key, m);
+                });
+                if (hadBase) _studentCashBase.set(key, base);
+                if (keep.length) _pendingCashMovements.set(key, keep);
+                else _pendingCashMovements.delete(key);
+            });
+            if (dropped.length) {
+                console.warn('[save] the server refused ' + dropped.length + ' cash movement(s) for good; ' +
+                    'they are no longer shown or re-sent:', JSON.stringify(dropped.slice(0, 8)));
+            }
+            return dropped;
+        }
+
+        /**
+         * A reload's rows, made this tab's truth. See THE ONE RULE above.
+         *
+         * Called at the moment the rows go ON SCREEN, never earlier. loadData
+         * reads the roster and then keeps awaiting -- the audit log, the
+         * tombstones -- for seconds while the old records are still what the
+         * teacher sees and awards on. Reseeding the base at the read, as this
+         * used to, left those seconds with a new base under old records: a save
+         * in the gap stated every other teacher's awards as this tab's own, and
+         * an award in the gap was dropped by the merge.
+         *
+         * What it does, per student in the rows:
+         *   1. The base becomes the server's numbers as read.
+         *   2. The list keeps every movement this tab still has pending, plus
+         *      every movement a save confirmed after this load began (it may
+         *      postdate the read) -- minus each one the student's register
+         *      says the read already includes.
+         *   3. The row shows base + list, rebuilt, not adjusted.
+         *
+         * Step 2's second half is what makes a save answered during the load
+         * safe in both orders. If the read came after the save's commit, the
+         * register holds the movement and it is dropped; if before, it is
+         * listed again, and the next save names it and the server absorbs it
+         * (the server registered it when it applied it, so it cannot pay twice).
+         *
+         * ONE LIMIT, stated rather than hidden: the register keeps the last 24
+         * movements per student. A movement confirmed during a load, and then
+         * pushed out of the register by 24 more for the same child before the
+         * read, would be listed again and shown once too many -- until the
+         * next save, which the server answers coverage_lost, and a refusal no
+         * retry can change leaves the list (settleSaveAnswerCash). It is never
+         * paid twice.
+         */
+        /**
+         * Records that did NOT come from the server -- the localStorage copy a
+         * failed load falls back to -- shown by THE ONE RULE rather than by
+         * whatever numbers the copy happened to hold.
+         *
+         * That copy is written after each save, so it can be older than this
+         * tab's base (a reload since has seen other teachers' awards) or than
+         * its list (an award since). Shown as it was, the next save stated the
+         * difference as this tab's own movement, the server refused it, and the
+         * tab force-reloaded. A student this tab has no base for is left alone:
+         * there is nothing better to show.
+         */
+        function showCashByTheRule(rows) {
+            let fixed = 0;
+            (rows || []).forEach(st => {
+                if (!st || st.id === undefined || st.id === null) return;
+                const key = String(st.id);
+                const base = _studentCashBase.get(key);
+                if (!base) return;
+                CASH_COUNTER_FIELDS.forEach(f => { st[f] = Number(base[f]) || 0; });
+                (_pendingCashMovements.get(key) || []).forEach(m => {
+                    if (!m || !m.id) return;
+                    const e = cashMovementEffect(m.amount, m.kind);
+                    CASH_COUNTER_FIELDS.forEach(f => { st[f] = (Number(st[f]) || 0) + (Number(e[f]) || 0); });
+                });
+                fixed++;
+            });
+            return fixed;
+        }
+
+        /**
+         * The server's numbers for each installed row, as read. Kept aside
+         * because commitRosterCash REWRITES the row to base + list, and a
+         * second commit of the same row must start from the server's figure,
+         * not from the figure the first one put on screen. A WeakMap, so it is
+         * never a field on the record, never in a save and never in a
+         * fingerprint.
+         */
+        const _serverCashOfRow = new WeakMap();
+        function commitRosterCash(rows, mark) {
+            const sinceSeq = mark && typeof mark.seq === 'number' ? mark.seq : _cashConfirmSeq;
+            const confirmedByKey = new Map();
+            _cashConfirmations.forEach(c => {
+                if (c.seq <= sinceSeq) return;
+                const list = confirmedByKey.get(c.key) || [];
+                list.push(c.m);
+                confirmedByKey.set(c.key, list);
+            });
+            let carried = 0, alreadyThere = 0, relisted = 0;
+            (rows || []).forEach(st => {
+                if (!st || st.id === undefined || st.id === null) return;
+                const key = String(st.id);
+                let server = _serverCashOfRow.get(st);
+                if (!server) { server = cashCountersOf(st); _serverCashOfRow.set(st, server); }
+                _studentCashBase.set(key, Object.assign({}, server));
+                const live = (_pendingCashMovements.get(key) || []).filter(m => m && m.id);
+                const confirmed = confirmedByKey.get(key) || [];
+                if (!live.length && !confirmed.length) return;
+                const reg = st.cashApplied;
+                const holds = new Set(((reg && Array.isArray(reg.ids)) ? reg.ids : []).map(e => String(e && e.i)));
+                const next = [];
+                const seen = new Set();
+                live.forEach(m => {
+                    const id = String(m.id);
+                    if (seen.has(id)) return;
+                    seen.add(id);
+                    // The server holds it: it leaves the list, and the journal
+                    // hears so, for any older load still to be installed.
+                    if (holds.has(id)) { alreadyThere++; noteCashConfirmed(key, m); return; }
+                    next.push(m);
+                    carried++;
+                });
+                confirmed.forEach(m => {
+                    const id = String(m.id);
+                    if (seen.has(id)) return;
+                    seen.add(id);
+                    if (holds.has(id)) return;
+                    next.push(m);
+                    relisted++;
+                });
+                CASH_COUNTER_FIELDS.forEach(f => { st[f] = server[f]; });
+                next.forEach(m => {
+                    const e = cashMovementEffect(m.amount, m.kind);
+                    CASH_COUNTER_FIELDS.forEach(f => { st[f] = (Number(st[f]) || 0) + (Number(e[f]) || 0); });
+                });
+                if (next.length) _pendingCashMovements.set(key, next);
+                else _pendingCashMovements.delete(key);
+            });
+            if (carried || alreadyThere || relisted) {
+                console.log('[save] roster installed: cash movements carried', carried,
+                    '| already on the server', alreadyThere, '| confirmed during the load, listed again', relisted);
+            }
+            return { carried, alreadyThere, relisted };
         }
 
         // ============================================================
@@ -2676,6 +3130,9 @@
 
         // Cloud Sync Functions
         async function loadData() {
+            // Declared out here so the catch below can release it: a roster
+            // read that is never installed must not hold the cash journal open.
+            let rosterLoad = null;
             {
                 try {
 
@@ -2821,10 +3278,15 @@
                         if (DATA_SOURCE === 'convex') {
                             try {
                                 const fresh = await loadRosterFromConvex();
-                                // Enrolled feeds the app; the rest are set aside
-                                // for saveData to stitch back on.
-                                mainData.students = fresh.students.filter(s => s.enrolled !== false);
-                                nonEnrolledStudents = fresh.students.filter(s => s.enrolled === false);
+                                // NOT INSTALLED YET. The rows go on screen at the
+                                // student merge below, after the audit log and
+                                // tombstones are read, and that is where their
+                                // cash is made this tab's truth (install()). Until
+                                // then the old records, the old base and the
+                                // pending list stay together and agree, so an
+                                // award or a save made while this function is
+                                // still awaiting is not stranded between them.
+                                rosterLoad = fresh;
                                 mainData.teachers = fresh.teachers;
 
                                 // SETTINGS, added 2026-08-31, and this is the
@@ -2854,7 +3316,7 @@
                                     Object.assign(mainData, fresh.settings);
                                 }
                                 rosterSource = 'convex';
-                                console.log(`✅ Roster from Convex: ${mainData.students.length} enrolled, ${nonEnrolledStudents.length} former, ${fresh.teachers.length} staff`);
+                                console.log(`✅ Roster from Convex: ${fresh.count} students, ${fresh.teachers.length} staff`);
                             } catch (err) {
                                 // There is no second copy to fall back to now.
                                 // rosterSource stays null, which is what
@@ -3030,6 +3492,18 @@
                         });
                         localTombstones = Array.from(tombstoneMap.values());
                         
+                        // THE ROSTER GOES ON SCREEN HERE, and its cash with it.
+                        // Nothing between this line and `students = ...` below
+                        // awaits, so the base, the pending list and the records
+                        // the teacher sees change together.
+                        if (rosterLoad) {
+                            const rows = rosterLoad.install();
+                            // Enrolled feeds the app; the rest are set aside
+                            // for saveData to stitch back on.
+                            mainData.students = rows.filter(s => s.enrolled !== false);
+                            nonEnrolledStudents = rows.filter(s => s.enrolled === false);
+                        }
+
                         // CRITICAL: MERGE students instead of overwriting to preserve local changes
                         const serverStudents = mainData.students || [];
                         
@@ -3104,9 +3578,20 @@
                                 };
                             });
                             
-                            // Add any NEW students that are only in local
+                            // Add any NEW students that are only in local --
+                            // ONLY IN LOCAL, checked against every row the
+                            // server sent, not just the enrolled. A student the
+                            // sync has just withdrawn is in nonEnrolledStudents
+                            // now; carrying the old enrolled copy too put one
+                            // child in the tab twice, every save then sent
+                            // both, and the stale copy's cash was refused with
+                            // a false "money was not saved" (review 3,
+                            // 2026-09-23). It also let RESET ALL CASH charge
+                            // that child twice.
+                            const formerIds = new Set((nonEnrolledStudents || []).map(s => String(s && s.id)));
                             students.forEach(localStudent => {
-                                if (!serverStudents.find(s => s.id === localStudent.id)) {
+                                if (!serverStudents.find(s => String(s.id) === String(localStudent.id))
+                                    && !formerIds.has(String(localStudent.id))) {
                                     mergedStudents.push(localStudent);
                                 }
                             });
@@ -3362,6 +3847,7 @@
                                           && window.WildcatAuth.getSession())
                     });
                     console.error('Server load error:', error && error.message);
+                    if (rosterLoad) rosterLoad.release();
                     loadDataLocal();
                 }
             }
@@ -3372,6 +3858,8 @@
             if (saved) {
                 const data = JSON.parse(saved);
                 students = data.students || [];
+                // This tab's cash is its base plus its list, not the copy's.
+                showCashByTheRule(students);
                 // THE SAME CUTOFF APPLIES TO THE FALLBACK COPY. This runs
                 // before every successful load (the first loadData() call has
                 // no session yet, so it lands in the catch), which is how the
@@ -4070,7 +4558,7 @@
                                     console.warn(`   Reloading fresh state from Firebase...`);
                                     isSyncing = false;
                                     await reloadPreservingUnsavedWork();
-                                    alert(`⚠️ Your tab was holding an outdated cycle number (Cycle ${localCycleNum}). The system has refreshed to the current cycle (Cycle ${serverCycleNum}). Please re-do your last action if needed.`);
+                                    alert(`⚠️ Your tab was holding an outdated cycle number (Cycle ${localCycleNum}). The system has refreshed to the current cycle (Cycle ${serverCycleNum}). Wildcat Cash, referrals and log entries you just made were kept, so please do not enter them again. If anything else you just did is missing, re-do it.`);
                                     // false, not undefined: this save did NOT happen.
                                     return false;
                                 }
@@ -4087,7 +4575,7 @@
                                     console.warn(`   Reloading fresh state from Firebase...`);
                                     isSyncing = false;
                                     await reloadPreservingUnsavedWork();
-                                    alert(`⚠️ Your tab was holding an outdated week number (Week ${currentWeek}). The system has refreshed to the current week (${serverWeek}). Please re-do your last action if needed.`);
+                                    alert(`⚠️ Your tab was holding an outdated week number (Week ${currentWeek}). The system has refreshed to the current week (${serverWeek}). Wildcat Cash, referrals and log entries you just made were kept, so please do not enter them again. If anything else you just did is missing, re-do it.`);
                                     // false, not undefined: this save did NOT happen.
                                     return false;
                                 }
@@ -4290,8 +4778,14 @@
                                 // server now looks each record up by key, so
                                 // what is sent is what is read; sending the
                                 // changed ones makes both small.
+                                // A student with cash still listed as pending is
+                                // ALWAYS sent, whatever its fingerprint says: the
+                                // list is what delivers the money, and a reload
+                                // can relist a movement on a record that happens
+                                // to look unchanged.
                                 const changedStudents = studentsForConvex.filter(st =>
-                                    st && JSON.stringify(st) !== _studentSaveFingerprint.get(String(st.id)));
+                                    st && (JSON.stringify(st) !== _studentSaveFingerprint.get(String(st.id))
+                                           || _pendingCashMovements.has(String(st.id))));
                                 // COUNTERS AS DELTAS. Each record carries how
                                 // much this tab moved the four cash counters
                                 // since the value it last confirmed, and the
@@ -4319,30 +4813,10 @@
                                 // Pinning the base to the numbers that were
                                 // actually SENT leaves the difference intact,
                                 // so the next save carries it.
-                                const sentCounters = new Map();
-                                const sentMovements = new Map();
-                                const studentsToSend = changedStudents.map(st => {
-                                    const base = _studentCashBase.get(String(st.id));
-                                    // Snapshotted here, from primitives, so a
-                                    // later mutation of `st` cannot reach it.
-                                    sentCounters.set(String(st.id), cashCountersOf(st));
-                                    // THE MOVEMENTS THIS DELTA IS MADE OF, so
-                                    // the server can apply each one once. Added
-                                    // HERE and not in studentsToSave, so like
-                                    // cashDelta it never enters the save
-                                    // fingerprint and cannot churn the
-                                    // changed-rows filter. STUDENT_WRITABLE is
-                                    // an allowlist, so neither key can reach a
-                                    // stored row.
-                                    const pend = _pendingCashMovements.get(String(st.id)) || [];
-                                    sentMovements.set(String(st.id), pend.slice());
-                                    return base
-                                        ? Object.assign({}, st, {
-                                              cashDelta: cashDeltaBetween(st, base),
-                                              cashMovements: pend
-                                          })
-                                        : st;
-                                });
+                                // Built by buildCashSend, which the ordering
+                                // sweep in cash-award-command.test.mjs runs as
+                                // is, so the sweep checks the real send step.
+                                const { studentsToSend, sentCounters, sentMovements } = buildCashSend(changedStudents);
                                 const result = await auth.convexMutation('appData:save', {
                                     // WHICH BUILD IS ASKING. The server refuses a
                                     // save from a client below its floor and says
@@ -4395,45 +4869,21 @@
                                 // Recorded only once the server has answered.
                                 changedStudents.forEach(st =>
                                     _studentSaveFingerprint.set(String(st.id), JSON.stringify(st)));
-                                // THE COUNTERS JUST SENT are the new base --
-                                // not the counters the student object holds
-                                // now, which is what this used to read.
-                                //
-                                // The difference is every award made during the
-                                // round trip. rememberCashBase(st) would pin
-                                // the base to the CURRENT values and erase that
-                                // movement from the next delta; taking the
-                                // snapshot captured before the await leaves it
-                                // to be sent.
-                                // WHAT THE SERVER WOULD NOT ACCOUNT FOR STAYS
-                                // PENDING. A held movement (its ring entry
-                                // evicted, undated, before the cutoff, or
-                                // capped) is named by the server and kept here,
-                                // so it is re-sent rather than silently
-                                // forgotten. Read with `|| []` and never
-                                // destructured: a response field an older
-                                // backend does not send must not throw.
-                                const heldMovements = new Set(
-                                    (result && result.cashMovementsHeld ? result.cashMovementsHeld : [])
-                                        .map(String));
-                                changedStudents.forEach(st => {
-                                    const key = String(st.id);
-                                    const sent = sentCounters.get(key);
-                                    if (sent) _studentCashBase.set(key, sent);
-                                    else rememberCashBase(st);
-                                    // Everything sent is accounted for -- applied
-                                    // or absorbed -- unless the server named it
-                                    // held.
-                                    const wasSent = sentMovements.get(key) || [];
-                                    if (!wasSent.length) return;
-                                    const keep = (_pendingCashMovements.get(key) || []).filter(m => {
-                                        if (!m || !m.id) return false;
-                                        const sentThis = wasSent.some(x => x && x.id === m.id);
-                                        return !sentThis || heldMovements.has(String(m.id));
-                                    });
-                                    if (keep.length) _pendingCashMovements.set(key, keep);
-                                    else _pendingCashMovements.delete(key);
-                                });
+                                // THIS TAB'S CASH, SETTLED AGAINST THE ANSWER.
+                                // Each movement the server applied or absorbed
+                                // leaves the pending list and its effect joins
+                                // the base; one the server HELD stays listed and
+                                // out of the base, so it is re-sent coherently.
+                                // See settleSaveAnswerCash for why the base is no
+                                // longer pinned to the counters that were sent.
+                                // Read with `|| []` and never destructured: a
+                                // response field an older backend does not send
+                                // must not throw.
+                                // WHY each was held, so a refusal that can never
+                                // succeed is dropped rather than re-sent forever.
+                                const { heldMovements, heldWhy } = heldFromAnswer(result);
+                                const refusedForGood = settleSaveAnswerCash(changedStudents, sentCounters, sentMovements, heldMovements, heldWhy);
+                                onCashHeld(refusedForGood, heldMovements, heldWhy);
                                 if (heldMovements.size) {
                                     console.warn('[save] the server held ' + heldMovements.size +
                                         ' cash movement(s) and they are still pending:',
@@ -8472,7 +8922,16 @@
                 // collision means the second is treated as a duplicate and
                 // dropped. A cash award that happened, with no record that it
                 // did. Legacy entries keep their hashed ids -- see wildcat-audit.js.
-                entryId: window.WildcatAudit.newAuditEntryId(),
+                //
+                // A SUPPLIED ID WINS, and only the cash award paths supply one.
+                // They derive it from the award's receipt (cashAwardAuditId),
+                // so the entry the server command writes and the copy this tab
+                // still sends through the ordinary save carry the SAME id, and
+                // auditLog:append refuses the second rather than the Cash Audit
+                // Log showing every award twice.
+                entryId: (extra && typeof extra.entryId === 'string' && extra.entryId)
+                    ? extra.entryId
+                    : window.WildcatAudit.newAuditEntryId(),
                 timestamp: new Date().toISOString(),
                 teacher: currentUser.name,
                 teacherId: currentUser.id,
@@ -9559,44 +10018,58 @@
             if (!behavior) { alert('Behavior not found'); return; }
 
             const amount = Math.abs(behavior.points);
-            recordCashTransaction({
-                student: selectedStudentForCash,
+
+            // THE STUDENT IS HELD HERE, before the modal closes. cancelAddCash()
+            // sets selectedStudentForCash to null, and this function used to
+            // read it again afterwards to build the toast -- a TypeError that
+            // landed after the award was recorded and BEFORE the save was
+            // requested. The award then sat in this tab until some unrelated
+            // save happened, and if the tab reloaded first its ledger row was
+            // restored from the outbox without its money: a student left short.
+            // Found 2026-09-23 while mapping the award paths for the command.
+            const st = selectedStudentForCash;
+
+            const tx = recordCashTransaction({
+                student: st,
                 amount,
                 behaviorId: behavior.id,
                 behaviorName: behavior.name,
                 notes: notes.trim(),
                 kind: 'award'
             });
+            const cmdItems = tx ? [{ tx, entryId: cashAwardAuditId(tx.id) }] : [];
             if (typeof addToAuditLog === 'function') {
                 // 'cash_award' is what the Cash Audit Log filters for. This
                 // used to pass 'Awarded Wildcat Cash', which matched nothing,
                 // so awards never appeared there. The last two arguments were
                 // also reversed: the signature is (.., ticketCount, reason).
                 addToAuditLog('cash_award',
-                    selectedStudentForCash.id, 'Wildcat Cash',
+                    st.id, 'Wildcat Cash',
                     Math.abs(amount),
                     behavior.name + (notes.trim() ? ', ' + notes.trim() : ''),
-                    null, null, { behavior: behavior.name, notes: notes.trim() });
+                    null, null, {
+                        behavior: behavior.name, notes: notes.trim(),
+                        entryId: tx ? cashAwardAuditId(tx.id) : undefined
+                    });
             }
 
             cancelAddCash();   // was closeAddCashModal/closeRemoveCashModal, which do not exist.
-            //
-            // The throw landed BETWEEN the award and the save. The balance had
-            // already been changed in memory and the audit entry pushed, so the
-            // teacher's own screen showed the award -- and the four lines below,
-            // including `await saveData()`, never ran. The award reached no
-            // other person and no database. The modal simply stayed open.
             if (typeof updateStudentAccounts === 'function') updateStudentAccounts();
             if (typeof updateCashTable === 'function') updateCashTable();
             {
-                const summary = `+$${Math.abs(amount)} · ${behavior.name}\n${selectedStudentForCash.firstName} ${selectedStudentForCash.lastName}`;
+                const summary = `+$${Math.abs(amount)} · ${behavior.name}\n${st.firstName} ${st.lastName}`;
                 const unsavedKey = 'cash:' + Date.now();
-                markCashUnsaved(unsavedKey, `+$${Math.abs(amount)} to ${selectedStudentForCash.firstName} ${selectedStudentForCash.lastName}`);
+                markCashUnsaved(unsavedKey, `+$${Math.abs(amount)} to ${st.firstName} ${st.lastName}`);
                 showToast(`Saving ${summary}`, 'info', 8000);
+                // The instruction goes first and is not awaited here: the save
+                // below waits ~1.2s for quiet, so the command normally lands
+                // before it, and the save's copy is then absorbed.
+                const cmd = sendCashAwardCommand(cmdItems);
                 // Through the queue, not saveData() directly: a direct call
                 // during a save in flight used to be dropped.
                 const ok = await requestSave('Cash award');
-                if (!allCashOnServer(ok)) {
+                const cmdRes = await cmd;
+                if (!allCashOnServer(ok) && !cashAwardCommandLanded(cmdRes, cmdItems)) {
                     showToast(`⚠️ NOT saved yet: ${summary}\nIt will retry. Do not close this tab.`, 'warn', 12000);
                 } else {
                     _unsavedCash.delete(unsavedKey);
@@ -9674,32 +10147,43 @@
             if (!behavior) { alert('Behavior not found'); return; }
 
             const amount = -Math.abs(behavior.points);
-            recordCashTransaction({
-                student: selectedStudentForCash,
+
+            // Held before the modal closes; see confirmAddCash for the crash
+            // this ends.
+            const st = selectedStudentForCash;
+
+            const tx = recordCashTransaction({
+                student: st,
                 amount,
                 behaviorId: behavior.id,
                 behaviorName: behavior.name,
                 notes: notes.trim(),
                 kind: 'deduct'
             });
+            const cmdItems = tx ? [{ tx, entryId: cashAwardAuditId(tx.id) }] : [];
             if (typeof addToAuditLog === 'function') {
                 addToAuditLog('cash_deduct',
-                    selectedStudentForCash.id, 'Wildcat Cash',
+                    st.id, 'Wildcat Cash',
                     Math.abs(amount),
                     behavior.name + (notes.trim() ? ', ' + notes.trim() : ''),
-                    null, null, { behavior: behavior.name, notes: notes.trim() });
+                    null, null, {
+                        behavior: behavior.name, notes: notes.trim(),
+                        entryId: tx ? cashAwardAuditId(tx.id) : undefined
+                    });
             }
 
             cancelRemoveCash();   // was closeRemoveCashModal; see confirmAddCash.
             if (typeof updateStudentAccounts === 'function') updateStudentAccounts();
             if (typeof updateCashTable === 'function') updateCashTable();
             {
-                const summary = `-$${Math.abs(amount)} · ${behavior.name}\n${selectedStudentForCash.firstName} ${selectedStudentForCash.lastName}`;
+                const summary = `-$${Math.abs(amount)} · ${behavior.name}\n${st.firstName} ${st.lastName}`;
                 const unsavedKey = 'cash:' + Date.now();
-                markCashUnsaved(unsavedKey, `-$${Math.abs(amount)} from ${selectedStudentForCash.firstName} ${selectedStudentForCash.lastName}`);
+                markCashUnsaved(unsavedKey, `-$${Math.abs(amount)} from ${st.firstName} ${st.lastName}`);
                 showToast(`Saving ${summary}`, 'info', 8000);
+                const cmd = sendCashAwardCommand(cmdItems);
                 const ok = await requestSave('Cash adjustment');
-                if (!allCashOnServer(ok)) {
+                const cmdRes = await cmd;
+                if (!allCashOnServer(ok) && !cashAwardCommandLanded(cmdRes, cmdItems)) {
                     showToast(`⚠️ NOT saved yet: ${summary}\nIt will retry. Do not close this tab.`, 'warn', 12000);
                 } else {
                     _unsavedCash.delete(unsavedKey);
@@ -17166,10 +17650,12 @@
             if (DATA_SOURCE !== 'convex') return;
             try {
                 const fresh = await loadRosterFromConvex();
+                // On screen now, so its cash is made this tab's truth now.
+                const rows = fresh.install();
 
                 const previous = new Map(students.map((s) => [String(s.id), s]));
-                nonEnrolledStudents = fresh.students.filter((s) => s.enrolled === false);
-                students = fresh.students.filter((s) => s.enrolled !== false).map((s) => {
+                nonEnrolledStudents = rows.filter((s) => s.enrolled === false);
+                students = rows.filter((s) => s.enrolled !== false).map((s) => {
                     // Carried across because the Convex roster does not include
                     // them. Only correct when `students` is ALREADY populated:
                     // called against an empty array this replaces real sections
@@ -27054,6 +27540,9 @@
 
             const ids = Array.from(checkboxes).map(cb => cb.dataset.studentId);
             const awarded = [];
+            // One instruction per student, each with its own receipt, sent as
+            // one call after the loop so a class of thirty is one round trip.
+            const cmdItems = [];
             ids.forEach(studentId => {
                 const student = students.find(s => s.id === studentId);
                 if (!student) return;
@@ -27066,7 +27555,10 @@
                     notes,
                     kind: behavior.points >= 0 ? 'award' : 'deduct'
                 });
-                if (tx) awarded.push(student);
+                if (tx) {
+                    awarded.push(student);
+                    cmdItems.push({ tx, entryId: cashAwardAuditId(tx.id) });
+                }
                 if (typeof addToAuditLog === 'function') {
                     addToAuditLog(
                         behavior.points >= 0 ? 'cash_award' : 'cash_deduct',
@@ -27074,7 +27566,10 @@
                         Math.abs(behavior.points),
                         `${behavior.name}${notes ? ', ' + notes : ''}`,
                         null, null,
-                        { behavior: behavior.name, notes: notes }
+                        {
+                            behavior: behavior.name, notes: notes,
+                            entryId: tx ? cashAwardAuditId(tx.id) : undefined
+                        }
                     );
                 }
             });
@@ -27099,8 +27594,10 @@
             const unsavedKey = 'cash:' + Date.now();
             markCashUnsaved(unsavedKey, `${sign}$${Math.abs(behavior.points)} to ${awarded.length} student${awarded.length === 1 ? '' : 's'}`);
             showToast(`Saving ${summary}`, 'info', 8000);
+            const cmd = sendCashAwardCommand(cmdItems);
             const ok = await requestSave('Cash award');
-            if (!allCashOnServer(ok)) {
+            const cmdRes = await cmd;
+            if (!allCashOnServer(ok) && !cashAwardCommandLanded(cmdRes, cmdItems)) {
                 showToast(`⚠️ NOT saved yet: ${summary}\nIt will retry. Do not close this tab.`, 'warn', 12000);
             } else {
                 _unsavedCash.delete(unsavedKey);
@@ -29281,7 +29778,19 @@
             // student who had left. Invisible, because the only screens that
             // show a balance show the enrolled, and waiting: a student who
             // re-enrols comes back holding it.
-            const everyStudent = (students || []).concat(nonEnrolledStudents || []);
+            //
+            // ONCE PER CHILD. A child held twice (see the loadData merge) was
+            // charged twice by this loop and left owing their balance.
+            const everyStudent = [];
+            {
+                const seenIds = new Set();
+                (students || []).concat(nonEnrolledStudents || []).forEach(s => {
+                    const id = s && String(s.id);
+                    if (!s || seenIds.has(id)) return;
+                    seenIds.add(id);
+                    everyStudent.push(liveStudentRecord(s));
+                });
+            }
 
             // Read the balance BEFORE zeroing it.
             //
@@ -33075,8 +33584,135 @@
         // THE single place a cash transaction is created. Every award, deduction
         // and redemption goes through here so the shape stays consistent and the
         // analytics can rely on it.
+        // =====================================================================
+        // CASH AWARDS AS A SERVER COMMAND (2026-09-23)
+        //
+        // The owner's standard: "A stale tab should never dictate the
+        // information 40+ users see." An award used to reach the server only as
+        // a delta this tab worked out from its own copy of the balance, plus a
+        // ledger row and an audit entry sent separately seconds later. On
+        // 2026-09-23 a stale tab put 76 repaired students back at their old
+        // balances and another paid 27 repayments twice.
+        //
+        // Now the award is also sent as an INSTRUCTION -- this child, this
+        // amount, this behaviour, this receipt -- and the server moves the money
+        // from its own numbers, writing the ledger row, the child's copy and the
+        // audit entry in the same transaction.
+        //
+        // THERE IS NO FALLBACK TO GET WRONG. The ordinary path below still runs
+        // exactly as before: recordCashTransaction moves this tab's view, lists
+        // the movement, and the next save sends it. Both carry the SAME receipt
+        // (the ledger row's id), the command registers it where appData:save
+        // looks, and the audit entry's id is derived from it -- so whichever
+        // reaches the server first counts and the other is a duplicate every
+        // store already refuses. If the command is switched off, times out, or
+        // fails in any way, the ordinary save delivers the award as it always
+        // has. This function never throws and never moves this tab's numbers.
+        // =====================================================================
+        const CASH_AWARD_TIMEOUT_MS = 15000;
+
+        /** The audit entry id for an award, derived exactly as the server does. */
+        function cashAwardAuditId(txnId) { return 'a_' + String(txnId); }
+
+        /**
+         * Send awards as one server command. `items` is [{ tx, entryId }].
+         *
+         * Returns the server's answer, or null when nothing was sent or the
+         * call did not complete. On success it marks the ledger rows and audit
+         * entries the SERVER wrote as already there, so the ordinary save does
+         * not spend a whole-week read re-sending them -- but only those the
+         * server says it wrote. Marking a row as sent when it was not would
+         * leave the ledger short, which is the failure all of this exists to end.
+         */
+        async function sendCashAwardCommand(items) {
+            try {
+                if (!items || !items.length) return null;
+                // PREVIEWING AS A TEACHER IS READ-ONLY. saveData refuses in that
+                // mode; this must too, because the token is the admin's and the
+                // server would record the award under the wrong person.
+                if (typeof isPreviewingTeacher === 'function' && isPreviewingTeacher()) return null;
+                const auth = window.WildcatAuth;
+                const session = auth && auth.getSession && auth.getSession();
+                if (!auth || !session || typeof auth.convexMutation !== 'function') return null;
+
+                const awards = items.map(({ tx }) => ({
+                    studentId: String(tx.studentId),
+                    txnId: String(tx.id),
+                    at: String(tx.timestamp),
+                    amount: Number(tx.amount),
+                    kind: String(tx.kind),
+                    behaviorId: String(tx.behaviorId || ''),
+                    behaviorName: String(tx.behaviorName || ''),
+                    notes: String(tx.notes || ''),
+                }));
+                const TIMED_OUT = {};
+                const res = await Promise.race([
+                    auth.convexMutation('cashAward:award', {
+                        awards,
+                        week: (typeof currentWeek === 'number') ? currentWeek : null,
+                        cycle: (typeof getCurrentCycleNumber === 'function') ? getCurrentCycleNumber() : null,
+                    }, session.idToken),
+                    // A TIMEOUT IS "UNKNOWN", NOT "FAILED". The award may well
+                    // have landed. That is safe precisely because the ordinary
+                    // save carries the same receipt and will be absorbed.
+                    new Promise(resolve => setTimeout(() => resolve(TIMED_OUT), CASH_AWARD_TIMEOUT_MS)),
+                ]);
+                if (res === TIMED_OUT || !res || res.ok !== true) return (res === TIMED_OUT) ? null : (res || null);
+
+                // SETS, NOT ARRAYS. Both prune functions call `.has()`, as every
+                // other caller's argument does. The first build of this passed
+                // arrays: every award the server confirmed then threw here,
+                // was reported as "NOT saved yet", and invited a teacher to
+                // award the child a second time. Review caught it; the test
+                // now runs the real prune functions so it cannot come back.
+                const cashConfirmed = new Set();
+                const auditConfirmed = new Set();
+                (res.results || []).forEach(r => {
+                    if (!r || r.wroteRecords !== true) return;
+                    if (r.status !== 'applied' && r.status !== 'alreadyApplied') return;
+                    cashIdsOnServer.add(String(r.txnId));
+                    cashConfirmed.add(String(r.txnId));
+                    if (r.entryId) {
+                        auditIdsOnServer.add(String(r.entryId));
+                        auditConfirmed.add(String(r.entryId));
+                    }
+                });
+                // TIDYING, NOT THE VERDICT. The server has answered; what it
+                // said is true whether or not this browser manages to tidy its
+                // own outbox. A localStorage failure here must not turn an
+                // award that landed into one reported as lost.
+                try {
+                    if (cashConfirmed.size) pruneCashOutbox(cashConfirmed);
+                    if (auditConfirmed.size) pruneAuditOutbox(auditConfirmed);
+                } catch (e) {
+                    console.warn('[cash] award landed; tidying the local outbox failed:', (e && e.message) || e);
+                }
+                return res;
+            } catch (e) {
+                console.warn('[cash] award command did not complete; the ordinary save will deliver it:',
+                    (e && e.message) || e);
+                return null;
+            }
+        }
+
+        /**
+         * Did the command put EVERY one of these awards, and its records, on the
+         * server? Then the money is safe whatever happens to the ordinary save,
+         * and saying so is the truth rather than a guess.
+         */
+        function cashAwardCommandLanded(res, items) {
+            if (!res || res.ok !== true || !Array.isArray(res.results) || !items || !items.length) return false;
+            const done = new Set(res.results
+                .filter(r => r && r.wroteRecords === true && (r.status === 'applied' || r.status === 'alreadyApplied'))
+                .map(r => String(r.txnId)));
+            return items.every(({ tx }) => done.has(String(tx.id)));
+        }
+
         function recordCashTransaction(opts) {
-            const student = ensureCashFields(opts.student);
+            // THE RECORD ON SCREEN, not whatever copy the caller captured. See
+            // liveStudentRecord: an award on a detached copy moved nothing
+            // anybody could see while its movement was still listed.
+            const student = ensureCashFields(liveStudentRecord(opts.student));
             if (!student) return null;
 
             const amount = Number(opts.amount) || 0;

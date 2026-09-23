@@ -269,7 +269,9 @@ console.log("\nEnrolled and former students are split at the source");
   check("former students are held separately", /let nonEnrolledStudents = \[\]/.test(script));
   check(
     "the Convex overlay splits them",
-    /nonEnrolledStudents = fresh\.students\.filter/.test(script),
+    // Both installers split the rows they install (loadData and
+    // refreshRosterFromConvex); since 2026-09-23 the rows come from install().
+    (script.match(/nonEnrolledStudents = rows\.filter\(\(?s\)? => s\.enrolled === false\)/g) || []).length === 2,
     "roughly thirty places read `students`; filtering at each is how one gets missed",
   );
   check(

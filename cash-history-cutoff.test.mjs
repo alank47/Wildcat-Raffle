@@ -202,11 +202,16 @@ console.log("\nAnd it is wired into the paths that actually run");
   {
     const fn = code.slice(code.indexOf("async function loadRosterFromConvex"));
     const body = fn.slice(0, fn.indexOf("\n        }"));
-    const base = body.indexOf("data.students.forEach(rememberCashBase);");
+    // RE-POINTED 2026-09-23. The cash base is no longer seeded here at the
+    // read: it is seeded when the rows go on screen, by install() ->
+    // commitRosterCash, because loadData shows them seconds later. What this
+    // pins is unchanged in substance: the cutoff is recorded by the loader,
+    // before any caller can install (and so merge) the rows.
+    const install = body.indexOf("install() {");
     const cutoff = body.indexOf("noteHistoryCutoff(data.historyCutoff)");
     check("loadRosterFromConvex records the cutoff the server sent", cutoff > 0);
-    check("and it seeds the cash base first, then records the cutoff",
-      base > 0 && cutoff > base, `base ${base} cutoff ${cutoff}`);
+    check("and records it before the rows can be installed and merged",
+      install > 0 && cutoff > 0 && cutoff < install, `cutoff ${cutoff} install ${install}`);
   }
 
   // THE FUNNEL. reconcileCashLedger is the single path from the per-student
@@ -227,8 +232,11 @@ console.log("\nAnd it is wired into the paths that actually run");
   // THE FALLBACK COPY. loadDataLocal runs before EVERY successful load, because
   // the first loadData() call has no session yet. It is where the stale rows
   // entered memory.
+  // Window widened 900 -> 1300 on 2026-09-23: loadDataLocal now also shows
+  // each balance as base + pending list (showCashByTheRule) right after it
+  // reads the copy. The pruning pinned here is untouched.
   check("loadDataLocal prunes the localStorage copy it reads",
-    /function loadDataLocal\(\)[\s\S]{0,900}st\.wildcatCashTransactions\.filter\(t => !cashRowIsPreCutoff\(t\)\)/
+    /function loadDataLocal\(\)[\s\S]{0,1300}st\.wildcatCashTransactions\.filter\(t => !cashRowIsPreCutoff\(t\)\)/
       .test(code));
 
   // THE SERVER SENDS IT. Without this the client's cutoff is always null and

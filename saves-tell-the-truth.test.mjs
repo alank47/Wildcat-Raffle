@@ -66,8 +66,10 @@ console.log("\nOne freshness read per save, not three");
 console.log("\nOnly what changed goes on the wire");
 {
   check("students are fingerprinted per id", /const _studentSaveFingerprint = new Map\(\);/.test(code));
-  check("a save sends only students whose shape differs",
-    /const changedStudents = studentsForConvex\.filter\(st =>\s*st && JSON\.stringify\(st\) !== _studentSaveFingerprint\.get\(String\(st\.id\)\)\);/.test(save));
+  // RE-POINTED 2026-09-23: a student with cash still listed as pending is
+  // always sent too, because the list is what delivers the money.
+  check("a save sends only students whose shape differs, or who still have cash pending",
+    /const changedStudents = studentsForConvex\.filter\(st =>\s*st && \(JSON\.stringify\(st\) !== _studentSaveFingerprint\.get\(String\(st\.id\)\)\s*\|\| _pendingCashMovements\.has\(String\(st\.id\)\)\)\);/.test(save));
   // The second half was /convexMutation\('appData:save', \{\s*students: …/ and
   // broke on 2026-09-13 when a `clientVersion` field was added ahead of
   // `students`. The property is which LIST is sent, not which key is first.
@@ -78,13 +80,18 @@ console.log("\nOnly what changed goes on the wire");
   // RE-POINTED 2026-09-21. Each changed student now goes with its delta AND
   // the movements that delta is made of, so the server can apply each movement
   // once. The property asserted is the same one.
+  // RE-POINTED 2026-09-23: the per-student send step is buildCashSend, a named
+  // function the ordering sweep runs as is. Same property.
+  const send = code.slice(code.indexOf("function buildCashSend(changedStudents) {"),
+                          code.indexOf("function settleSaveAnswerCash("));
   check("and that, with each one's cash delta attached, is what appData:save receives",
-    /const studentsToSend = changedStudents\.map\(st => \{/.test(save)
-    && /const base = _studentCashBase\.get\(String\(st\.id\)\);/.test(save)
-    && /cashDelta: cashDeltaBetween\(st, base\)/.test(save)
+    /const \{ studentsToSend, sentCounters, sentMovements \} = buildCashSend\(changedStudents\);/.test(save)
+    && /const base = _studentCashBase\.get\(key\);/.test(send)
+    && /cashDelta: cashDeltaBetween\(st, base\)/.test(send)
     && /students: studentsToSend,/.test(save));
-  check("and the movements that delta is made of travel with it",
-    /cashMovements: pend/.test(save) && /_pendingCashMovements\.get\(String\(st\.id\)\)/.test(save));
+  check("and the movements that delta is made of travel with it -- the same COPY the answer is settled against",
+    /const moves = \(_pendingCashMovements\.get\(key\) \|\| \[\]\)\.slice\(\);/.test(send)
+    && /sentMovements\.set\(key, moves\);/.test(send) && /cashMovements: moves/.test(send));
   // AND THE BUILD IS NAMED. A save that cannot say which build sent it is a
   // save the server cannot refuse, which is how a four-day-stale tab put
   // $4,901,850 back on 2026-09-13.
@@ -119,8 +126,14 @@ console.log("\nThe toast follows the save, on every award path");
     check(`${name} claims success only after it`, okAt > saveAt);
     // Was `if (ok === false)`. That treated null (nothing dirty) and
     // undefined (coalesced) as success and ticked an unsaved award.
-    check(`${name} says NOT saved unless the outbox is empty`,
-      /if \(!allCashOnServer\(ok\)\) \{[\s\S]{0,200}NOT saved yet/.test(body));
+    // Since 2026-09-23 there are TWO ways to know the money is on the server:
+    // the ordinary save emptied the outbox, or the server command confirmed
+    // this award AND wrote its ledger row and audit entry. Either is real
+    // confirmation; neither is a guess.
+    check(`${name} says NOT saved unless the outbox is empty or the command confirmed it`,
+      /if \(!allCashOnServer\(ok\) && !cashAwardCommandLanded\(cmdRes, cmdItems\)\) \{[\s\S]{0,200}NOT saved yet/.test(body));
+    check(`${name} waits for the command's answer before judging`,
+      body.indexOf("const cmdRes = await cmd;") > saveAt && body.indexOf("const cmdRes = await cmd;") < okAt);
     check(`${name} no longer accepts a merely non-false result`,
       !/if \(ok === false\) \{[\s\S]{0,200}NOT saved yet/.test(body));
     check(`${name} marks the work unsaved until confirmed`, /markCashUnsaved\(unsavedKey/.test(body));
@@ -168,15 +181,21 @@ console.log("\nCash counters travel as deltas, so two tabs awarding the same chi
   // history cutoff between these two statements now. What matters is that the
   // base is taken from what the SERVER returned, in the function that returns
   // it -- not from the local array.
+  // RE-POINTED 2026-09-23: the base is seeded from the server's rows when
+  // they are installed (commitRosterCash), not at the read -- still from what
+  // the SERVER returned, never from the local array.
   check("the base is recorded from what the server returned at load",
-    /data\.students\.forEach\(rememberCashBase\);[\s\S]{0,400}return \{\s*students: data\.students,/.test(code));
+    /function commitRosterCash\(rows, mark\) \{[\s\S]{0,1200}server = cashCountersOf\(st\);[\s\S]{0,120}_studentCashBase\.set\(key, Object\.assign\(\{\}, server\)\);/.test(code));
   // RE-POINTED 2026-09-20. This pinned `changedStudents.forEach(rememberCashBase)`,
   // which read the student object AFTER the await and so erased any award made
   // during the round trip -- 21 students and $2,300 on 2026-09-18. The base is
   // now pinned from the snapshot taken before the await. The property asserted
   // is still the one that matters: it happens only once the server has answered.
-  check("and again from what was sent, once the server answered",
-    /_studentSaveFingerprint\.set\(String\(st\.id\), JSON\.stringify\(st\)\)\);[\s\S]{0,1400}const sent = sentCounters\.get\(key\);/.test(save));
+  // RE-POINTED 2026-09-23: once the server has answered, the base moves by
+  // exactly the movements the answer confirmed (settleSaveAnswerCash). It is
+  // exercised for real further down this file.
+  check("and again once the server answered, from what the answer confirmed",
+    /_studentSaveFingerprint\.set\(String\(st\.id\), JSON\.stringify\(st\)\)\);[\s\S]{0,2000}settleSaveAnswerCash\(changedStudents, sentCounters, sentMovements, heldMovements, heldWhy\);/.test(save));
   // ORDER IS THE WHOLE ASSERTION: the counters must be spread AFTER
   // ...localStudent so the server's values win. What follows them is not
   // pinned -- the cash history is taken from the server on the next line now
@@ -197,25 +216,45 @@ console.log("\nCash counters travel as deltas, so two tabs awarding the same chi
   // residual and registered it as applied: 38 students lost an award each,
   // unrecoverably. An assertion that pins a call-site pattern cannot see a
   // caller that never adopted it, so this pins the structure instead.
+  //
+  // RE-POINTED 2026-09-23, same lesson, stricter form. The rebase now happens
+  // when the rows go ON SCREEN (loadData shows them seconds after the read),
+  // and the loader makes it unskippable in a way no caller can route around:
+  // it hands out no `students` at all, only install(), and install() is the
+  // rebase. So the structure pinned is: no rows without install(), install()
+  // runs commitRosterCash once, and each installer puts the rows on screen with
+  // no await in between.
   {
     const fn = code.slice(code.indexOf("async function loadRosterFromConvex"));
-    const body = fn.slice(0, fn.indexOf("\n        }"));
-    check("the snapshot is taken inside the loader, before the await",
-      body.indexOf("snapshotPendingCashDeltas()") > 0
-      && body.indexOf("snapshotPendingCashDeltas()") < body.indexOf("await auth.convexQuery"));
-    check("and the movement is re-applied onto the freshly loaded records",
-      /reapplyPendingCashDeltas\(pendingBeforeLoad, data\.students\)/.test(body));
-    check("AFTER the base is seeded from the server, or the delta cancels itself",
-      body.indexOf("data.students.forEach(rememberCashBase)") <
-      body.indexOf("reapplyPendingCashDeltas(pendingBeforeLoad"));
-    check("both helpers still exist",
-      /function snapshotPendingCashDeltas\(\)/.test(code)
-      && /function reapplyPendingCashDeltas\(pending, into\)/.test(code));
-    // TEETH: exactly once. A caller that ALSO re-applies would double the
-    // movement, which turns a loss into a double credit.
-    const calls = (code.match(/reapplyPendingCashDeltas\(/g) || []).length;
-    check("EXACTLY ONE call site, so the movement cannot be applied twice",
+    const body = fn.slice(0, fn.indexOf("\n        }\n"));
+    check("the journal mark is taken inside the loader, before the await",
+      body.indexOf("beginCashLoad()") > 0 && body.indexOf("beginCashLoad()") < body.indexOf("await auth.convexQuery"));
+    check("the rows are handed out ONLY through install(), which is the rebase",
+      /install\(\) \{[\s\S]{0,300}commitRosterCash\(data\.students, cashMark\);[\s\S]{0,80}return data\.students;/.test(body)
+      && !/\bstudents: data\.students\b/.test(body));
+    check("and install() refuses to run twice, so the rebase cannot be doubled",
+      /if \(installed\) throw new Error/.test(body));
+    // TEETH: exactly one place rebases. A second would double the movement.
+    const calls = (code.match(/commitRosterCash\(/g) || []).length;
+    check("EXACTLY ONE call site of commitRosterCash, so the movement cannot be applied twice",
       calls === 2, `${calls} occurrences (one definition, one call)`);
+    // Each installer: from install() to the assignment of `students`, nothing
+    // awaits, so the base, the list and the records on screen change together.
+    // Searched INSIDE each function, so one installer's text cannot stand in
+    // for another's.
+    const fnText = (head) => { const i = code.indexOf(head); return i < 0 ? "" : code.slice(i, code.indexOf("\n        }\n", i)); };
+    const between = (text, from, to) => { const i = text.indexOf(from); const j = text.indexOf(to, i); return i >= 0 && j > i ? text.slice(i, j) : null; };
+    const inLoadData = between(fnText("async function loadData() {"), "const rows = rosterLoad.install();", "students = mergedStudents;");
+    const inRefresh = between(fnText("async function refreshRosterFromConvex(reason, opts) {"), "const rows = fresh.install();", "students = rows.filter((s) => s.enrolled !== false)");
+    const inCash = between(fnText("async function refreshCashFromServer(reason, attempt) {"), "const rows = fresh.install();", "st.cashApplied = r.cashApplied;");
+    check("loadData installs at the merge, with no await before the rows are on screen",
+      inLoadData !== null && !/\bawait\b/.test(inLoadData));
+    check("refreshRosterFromConvex installs and shows with no await between",
+      inRefresh !== null && !/\bawait\b/.test(inRefresh));
+    check("refreshCashFromServer installs and copies the cash onto the records on screen with no await between",
+      inCash !== null && !/\bawait\b/.test(inCash));
+    check("and they are the only three installers",
+      (code.match(/\.install\(\);/g) || []).length === 3);
   }
   const shape = readFileSync(new URL("./convex/appDataShape.ts", import.meta.url), "utf8");
   // Not pinned to the argument list: planPatch grew a fourth parameter (the
@@ -353,7 +392,37 @@ console.log("\nA green tick for cash requires confirmation, not a non-false valu
   check("no cash site still tests ok === false directly",
     !/requestSave\('Cash [^']*'\);\s*if \(ok === false\)/.test(code));
   check("all three cash sites use it",
-    (code.match(/if \(!allCashOnServer\(ok\)\) \{/g) || []).length === 3);
+    (code.match(/if \(!allCashOnServer\(ok\) && !cashAwardCommandLanded\(cmdRes, cmdItems\)\) \{/g) || []).length === 3);
+  // THE WIDENING MUST NOT TICK WHAT THE SERVER DID NOT FULLY RECORD. A command
+  // answer counts only when EVERY award in it came back with its records
+  // written; "absorbed" (the ordinary save moved the money and still owes the
+  // ledger row) does not, and neither does a refusal or a partial answer.
+  {
+    const lift = (name) => {
+      const i = code.indexOf("function " + name + "(");
+      let depth = 0, j = code.indexOf("{", i);
+      for (let k = j; k < code.length; k++) {
+        if (code[k] === "{") depth++;
+        else if (code[k] === "}") { depth--; if (depth === 0) return code.slice(i, k + 1); }
+      }
+      return "";
+    };
+    const landed = new Function(lift("cashAwardCommandLanded") + "\nreturn cashAwardCommandLanded;")();
+    const items = [{ tx: { id: "txn_1" } }, { tx: { id: "txn_2" } }];
+    const good = (id, extra) => Object.assign({ txnId: id, status: "applied", wroteRecords: true }, extra || {});
+    check("the command answer counts when every award was written",
+      landed({ ok: true, results: [good("txn_1"), good("txn_2")] }, items) === true);
+    check("...but not when one of them was only absorbed",
+      landed({ ok: true, results: [good("txn_1"), good("txn_2", { status: "alreadyApplied", wroteRecords: false })] }, items) === false);
+    check("...nor when one was refused",
+      landed({ ok: true, results: [good("txn_1"), { txnId: "txn_2", status: "refused", wroteRecords: false }] }, items) === false);
+    check("...nor when one is simply missing from the answer",
+      landed({ ok: true, results: [good("txn_1")] }, items) === false);
+    check("...nor when the switch was off",
+      landed({ ok: false, code: "disabled", results: [] }, items) === false);
+    check("...nor when nothing came back", landed(null, items) === false);
+    check("...nor for an empty award list", landed({ ok: true, results: [] }, []) === false);
+  }
   check("the Retry button judges cash separately from referrals",
     /const cashOk = allCashOnServer\(ok\);/.test(code) &&
     /if \(cashOk\) \[\.\.\._unsavedCash\.keys\(\)\]\.forEach/.test(code));
@@ -522,13 +591,134 @@ console.log("\nAn award made WHILE a save is in flight still reaches a counter")
 
   // And the shipped code must do the second one.
   check("the counters sent are snapshotted before the await",
-    /const sentCounters = new Map\(\);/.test(code) &&
-    /sentCounters\.set\(String\(st\.id\), cashCountersOf\(st\)\);/.test(code));
-  check("and the base is pinned from that snapshot, not from the live object",
-    /const sent = sentCounters\.get\(key\);\s*\n\s*if \(sent\) _studentCashBase\.set\(key, sent\);/.test(code));
-  // A movement the server would not account for must NOT be forgotten.
-  check("a held movement stays pending and is re-sent",
-    /heldMovements\.has\(String\(m\.id\)\)/.test(code));
+    /function buildCashSend\(changedStudents\) \{[\s\S]{0,400}const sentCounters = new Map\(\);[\s\S]{0,400}sentCounters\.set\(key, cashCountersOf\(st\)\);/.test(code)
+    && save.indexOf("buildCashSend(changedStudents)") < save.indexOf("await auth.convexMutation('appData:save'"));
+  // RE-POINTED 2026-09-23. The base no longer pins to what was sent: it
+  // moves by exactly the movements the answer confirmed, which keeps the
+  // property above (an award made during the round trip was not sent, so it
+  // is not confirmed, so the next delta still carries it) and survives a
+  // roster load landing during the round trip, which the pin did not. Run
+  // for real, lifted from script.js:
+  {
+    const liftFn = (name) => {
+      const i = code.indexOf("function " + name + "(");
+      const head = code.lastIndexOf("\n", i);
+      let depth = 0;
+      for (let k = code.indexOf("{", i); k < code.length; k++) {
+        if (code[k] === "{") depth++;
+        else if (code[k] === "}") { depth--; if (depth === 0) return code.slice(head + 1, k + 1); }
+      }
+      return "";
+    };
+    const SCRIPT_SRC = code;
+  // THE STATE, LIFTED FROM script.js, not copied: a test that hardcodes the
+    // journal's settings cannot notice them change (review 3, 2026-09-23).
+    const liftDecl = (name) => {
+      const m = new RegExp("\\n\\s*((?:const|let) " + name + " = [^\\n]*;)").exec(SCRIPT_SRC);
+      if (!m) throw new Error("declaration not found: " + name);
+      return m[1];
+    };
+    const CASH_STATE = ["_studentCashBase", "_pendingCashMovements", "_cashConfirmations", "_cashConfirmSeq",
+      "CASH_CONFIRMATION_KEEP_MAX", "_openCashLoads", "_cashLoadSeq", "_serverCashOfRow",
+      "CASH_TERMINAL_REFUSALS", "CASH_REFUSALS_TO_SAY"].map(liftDecl).join("\n");
+    const make = () => new Function("CASH_COUNTER_FIELDS", "console", `
+      ${CASH_STATE}
+      let students = [], nonEnrolledStudents = [];
+      ${["cashCountersOf", "cashMovementEffect", "rememberCashBase", "pruneCashConfirmations", "noteCashConfirmed",
+         "beginCashLoad", "liveStudentRecord", "settleSaveAnswerCash"].map(liftFn).join("\n")}
+      return { base: _studentCashBase, pending: _pendingCashMovements, journal: _cashConfirmations,
+               settleSaveAnswerCash, begin: beginCashLoad };
+    `)(FIELDS, { log() {}, warn() {} });
+    const m1 = { id: "M1", at: "2026-09-23T10:00:00.000Z", amount: 100, kind: "award" };
+    const m2 = { id: "M2", at: "2026-09-23T10:00:01.000Z", amount: 100, kind: "award" };
+    // base 0; M1 sent; M2 awarded during the round trip; the answer confirms M1.
+    const H = make();
+    H.base.set("1", countersOf({})); H.pending.set("1", [m1, m2]);
+    H.begin();   // a reload is in flight, so the journal has someone to keep entries for
+    const st = { id: "1", wildcatCashBalance: 200, wildcatCashEarned: 200, wildcatCashSpent: 0, wildcatCashDeducted: 0 };
+    H.settleSaveAnswerCash([st], new Map([["1", countersOf({ wildcatCashBalance: 100, wildcatCashEarned: 100 })]]),
+      new Map([["1", [m1]]]), new Set());
+    check("the base moves by exactly what the answer confirmed", H.base.get("1").wildcatCashBalance === 100);
+    check("...so the award made during the round trip is still carried by the next delta",
+      deltaBetween(st, H.base.get("1")).wildcatCashBalance === 100 && H.pending.get("1").map((m) => m.id).join() === "M2");
+    check("...and the confirmation is journalled, so a load running meanwhile can ask about it",
+      H.journal.length === 1 && H.journal[0].m.id === "M1");
+    // With no load open, nothing can ever ask: nothing is kept.
+    const N = make();
+    N.base.set("1", countersOf({})); N.pending.set("1", [m1]);
+    N.settleSaveAnswerCash([{ id: "1", wildcatCashBalance: 100, wildcatCashEarned: 100, wildcatCashSpent: 0, wildcatCashDeducted: 0 }],
+      new Map(), new Map([["1", [m1]]]), new Set());
+    check("...and with no load open, the journal keeps nothing", N.journal.length === 0);
+    // A refusal no retry can change leaves the list WITHOUT entering the base.
+    const T = make();
+    T.base.set("1", countersOf({ wildcatCashBalance: 500, wildcatCashEarned: 500 })); T.pending.set("1", [m1]);
+    const stT = { id: "1", wildcatCashBalance: 600, wildcatCashEarned: 600, wildcatCashSpent: 0, wildcatCashDeducted: 0 };
+    const droppedT = T.settleSaveAnswerCash([stT], new Map(), new Map([["1", [m1]]]), new Set(["M1"]),
+      new Map([["M1", "before_cutoff"]]));
+    check("a movement refused for good (before_cutoff) leaves the list and stays OUT of the base",
+      !T.pending.has("1") && T.base.get("1").wildcatCashBalance === 500 && droppedT.length === 1);
+    check("...and comes off the record on screen, so shown = base + list still holds",
+      stT.wildcatCashBalance === 500 && stT.wildcatCashEarned === 500);
+    const R = make();
+    R.base.set("1", countersOf({})); R.pending.set("1", [m1]);
+    R.settleSaveAnswerCash([{ id: "1" }], new Map(), new Map([["1", [m1]]]), new Set(["M1"]),
+      new Map([["M1", "stated_no_change"]]));
+    check("...but one refused for a reason the next save repairs stays listed",
+      R.pending.get("1").map((m) => m.id).join() === "M1");
+    const C = make();
+    C.base.set("1", countersOf({})); C.pending.set("1", [m1]);
+    C.settleSaveAnswerCash([{ id: "1" }], new Map(), new Map([["1", [m1]]]), new Set(["M1"]), new Map([["M1", "capped"]]));
+    check("...and so does one CAPPED, which may land once sent on its own",
+      C.pending.get("1").map((m) => m.id).join() === "M1");
+    const O = make();
+    O.base.set("1", countersOf({})); O.pending.set("1", [m1]);
+    O.settleSaveAnswerCash([{ id: "1" }], new Map(), new Map([["1", [m1]]]), new Set(["M1"]));
+    check("...and an older backend that sends no reasons keeps everything held, as before",
+      O.pending.get("1").map((m) => m.id).join() === "M1");
+
+    // THE LISTS, pinned exactly: a reason moved into "final" by mistake loses
+    // awards for good; one moved out brings back the forever-re-added display.
+    const setOf = (name) => {
+      const m = new RegExp("const " + name + " = new Set\\(\\[([^\\]]*)\\]\\);").exec(code);
+      return m ? m[1].split(",").map((x) => x.trim().replace(/^'|'$/g, "")).sort().join(",") : null;
+    };
+    check("final refusals are exactly before_cutoff, coverage_lost, undated, bad_shape",
+      setOf("CASH_TERMINAL_REFUSALS") === "bad_shape,before_cutoff,coverage_lost,undated", setOf("CASH_TERMINAL_REFUSALS"));
+    check("...and the ones a teacher is TOLD about leave out coverage_lost, which may have been paid",
+      setOf("CASH_REFUSALS_TO_SAY") === "bad_shape,before_cutoff,undated", setOf("CASH_REFUSALS_TO_SAY"));
+
+    // The answer is read by a named function, run here on both backends.
+    const readHeld = new Function(liftFn("heldFromAnswer") + "\nreturn heldFromAnswer;")();
+    const fromNew = readHeld({ cashMovementsHeld: ["M1", "M2"], cashMovementsHeldWhy: [{ id: "M1", why: "before_cutoff" }, { id: "M2", why: "capped" }] });
+    check("the answer's reasons are read, one per held id",
+      fromNew.heldMovements.size === 2 && fromNew.heldWhy.get("M1") === "before_cutoff" && fromNew.heldWhy.get("M2") === "capped");
+    const fromOld = readHeld({ cashMovementsHeld: ["M1"] });
+    check("...and an answer with no reasons gives none, so nothing is treated as final",
+      fromOld.heldMovements.has("M1") && fromOld.heldWhy.size === 0);
+    check("...and a missing answer is not a throw", readHeld(null).heldMovements.size === 0);
+    check("saveData reads the answer through it and hands every held movement on",
+      /const \{ heldMovements, heldWhy \} = heldFromAnswer\(result\);[\s\S]{0,200}settleSaveAnswerCash\(changedStudents, sentCounters, sentMovements, heldMovements, heldWhy\);\s*onCashHeld\(refusedForGood, heldMovements, heldWhy\);/.test(save));
+    // A movement the server would not account for must NOT be forgotten --
+    // and must stay OUT of the base, so the next save states what it lists.
+    const K = make();
+    K.base.set("1", countersOf({})); K.pending.set("1", [m1]);
+    const st2 = { id: "1", wildcatCashBalance: 100, wildcatCashEarned: 100, wildcatCashSpent: 0, wildcatCashDeducted: 0 };
+    K.settleSaveAnswerCash([st2], new Map([["1", countersOf(st2)]]), new Map([["1", [m1]]]), new Set(["M1"]));
+    check("a held movement stays pending and is re-sent",
+      K.pending.get("1").map((m) => m.id).join() === "M1");
+    check("...and stays out of the base, so the next save states exactly what it lists",
+      deltaBetween(st2, K.base.get("1")).wildcatCashBalance === 100 && K.journal.length === 0);
+    // THE CASE THE PIN GOT WRONG: a roster load reseeded the base (another
+    // teacher's +7 included) while this save was in flight.
+    const L = make();
+    L.base.set("1", countersOf({ wildcatCashBalance: 107, wildcatCashEarned: 107 })); // the load's read, M1 not in it
+    L.pending.set("1", [m1]);
+    const st3 = { id: "1", wildcatCashBalance: 207, wildcatCashEarned: 207, wildcatCashSpent: 0, wildcatCashDeducted: 0 };
+    L.settleSaveAnswerCash([st3], new Map([["1", countersOf({ wildcatCashBalance: 100, wildcatCashEarned: 100 })]]),
+      new Map([["1", [m1]]]), new Set());
+    check("a load during the round trip keeps its reseeded base: +M1, not back to what was sent",
+      L.base.get("1").wildcatCashBalance === 207 && deltaBetween(st3, L.base.get("1")).wildcatCashBalance === 0);
+  }
   check("the old unconditional rebase is gone",
     !/changedStudents\.forEach\(rememberCashBase\);/.test(code));
   check("a student with no snapshot still gets a base, rather than none",
