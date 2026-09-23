@@ -162,18 +162,39 @@ const keysOf = (r) => [r.legacyId, r.studentNumber];
   check("a stale tab cannot null a balance", plan.patches.length === 0, JSON.stringify(plan));
 }
 
+// WHAT A CURRENT BROWSER SENDS: the delta AND the named movement it is made
+// of. Since 2026-09-23 the server applies money it can attribute to a named
+// movement and nothing else, so every fixture below that expects money to
+// move says which movement moved it -- exactly as recordCashTransaction does.
+// The assertions are unchanged; only the fixtures now describe a real save.
+let _mvSeq = 0;
+function keyed(amount, kind, extra) {
+  const a = Number(amount);
+  const eff = {
+    wildcatCashBalance: a,
+    wildcatCashEarned: (kind !== "redeem" && a > 0) ? a : 0,
+    wildcatCashSpent: kind === "redeem" ? Math.abs(a) : 0,
+    wildcatCashDeducted: (kind !== "redeem" && a <= 0) ? Math.abs(a) : 0,
+  };
+  const cashDelta = {};
+  for (const [f, v] of Object.entries(eff)) if (v) cashDelta[f] = v;
+  return {
+    ...(extra || {}),
+    cashDelta,
+    cashMovements: [{ id: `m${++_mvSeq}`, at: "2026-09-20T17:00:00.000Z", amount: a, kind }],
+  };
+}
+
 console.log("\nCash counters are incremented, so two tabs awarding the same child add up");
 {
   // Stored 100. Tab A loaded at 100 and awarded 10; tab B loaded at 100 and
   // awarded 5. Before: A sends 110, B sends 105, the child ends at 105 with
   // two awards in the ledger. Now each sends its delta.
   const stored = { _id: "s1", legacyId: "12217", wildcatCashBalance: 100, wildcatCashEarned: 100 };
-  const fromA = { id: "12217", wildcatCashBalance: 110, wildcatCashEarned: 110,
-                  cashDelta: { wildcatCashBalance: 10, wildcatCashEarned: 10 } };
+  const fromA = keyed(10, "award", { id: "12217", wildcatCashBalance: 110, wildcatCashEarned: 110 });
   const afterA = { ...stored, ...planPatch(stored, fromA, STUDENT_WRITABLE) };
   check("A's delta lands", afterA.wildcatCashBalance === 110 && afterA.wildcatCashEarned === 110);
-  const fromB = { id: "12217", wildcatCashBalance: 105, wildcatCashEarned: 105,
-                  cashDelta: { wildcatCashBalance: 5, wildcatCashEarned: 5 } };
+  const fromB = keyed(5, "award", { id: "12217", wildcatCashBalance: 105, wildcatCashEarned: 105 });
   const afterB = { ...afterA, ...planPatch(afterA, fromB, STUDENT_WRITABLE) };
   check("B's delta is added to what A left, not to what B saw", afterB.wildcatCashBalance === 115);
   check("earned too", afterB.wildcatCashEarned === 115);
@@ -247,9 +268,7 @@ console.log("\nCash counters are incremented, so two tabs awarding the same chil
 
   // THE CASE THE FLOOR BROKE: a real deduction against a zero balance, which
   // is every student in the school tomorrow morning.
-  const deductFromZero = planPatch(cleared,
-    { id: "12217", cashDelta: { wildcatCashBalance: -100, wildcatCashDeducted: 100 } },
-    STUDENT_WRITABLE);
+  const deductFromZero = planPatch(cleared, keyed(-100, "deduct", { id: "12217" }), STUDENT_WRITABLE);
   check("a real deduction against a $0 balance APPLIES, and goes negative",
     deductFromZero.wildcatCashBalance === -100);
   check("and its counter moves with it", deductFromZero.wildcatCashDeducted === 100);
@@ -260,24 +279,20 @@ console.log("\nCash counters are incremented, so two tabs awarding the same chil
     MAX_CASH_DELTA > 100);
   // A LEGITIMATE deduction still lands in full. The clamp only bites where the
   // movement exceeds what the server actually holds.
-  const realDeduct = planPatch(stored,
-    { id: "12217", cashDelta: { wildcatCashBalance: -40, wildcatCashDeducted: 40 } },
-    STUDENT_WRITABLE);
+  const realDeduct = planPatch(stored, keyed(-40, "deduct", { id: "12217" }), STUDENT_WRITABLE);
   check("a real deduction still applies", realDeduct.wildcatCashBalance === 60);
   check("and its counter moves with it", realDeduct.wildcatCashDeducted === 40);
   check("a deduction within the balance is not reported",
     refusedCashCounters(stored,
       { id: "12217", cashDelta: { wildcatCashBalance: -40 } }, STUDENT_WRITABLE).length === 0);
   // And spending, which is the same movement by a different name.
-  const spend = planPatch(stored,
-    { id: "12217", cashDelta: { wildcatCashBalance: -25, wildcatCashSpent: 25 } },
-    STUDENT_WRITABLE);
+  const spend = planPatch(stored, keyed(-25, "redeem", { id: "12217" }), STUDENT_WRITABLE);
   check("a purchase applies", spend.wildcatCashBalance === 75 && spend.wildcatCashSpent === 25);
 
-  const missing = planPatch({ _id: "s2" }, { id: "x", cashDelta: { wildcatCashDeducted: 25 } }, STUDENT_WRITABLE);
+  const missing = planPatch({ _id: "s2" }, keyed(-25, "deduct", { id: "x" }), STUDENT_WRITABLE);
   check("a counter the row never had starts from zero", missing.wildcatCashDeducted === 25);
 
-  const mixed = planPatch(stored, { id: "12217", pbisTickets: 3, cashDelta: { wildcatCashBalance: -20 } }, STUDENT_WRITABLE);
+  const mixed = planPatch(stored, keyed(-20, "deduct", { id: "12217", pbisTickets: 3 }), STUDENT_WRITABLE);
   check("other writable fields still merge beside a delta", mixed.pbisTickets === 3 && mixed.wildcatCashBalance === 80);
 
   check("garbage deltas are ignored", cashDeltaOf({ cashDelta: { wildcatCashBalance: "ten", wildcatCashEarned: NaN } }) !== null
@@ -289,6 +304,51 @@ console.log("\nCash counters are incremented, so two tabs awarding the same chil
 
   const plan = planSave([stored], [fromA], STUDENT_WRITABLE, (r) => [r.legacyId, r.studentNumber]);
   check("planSave carries the delta rule end to end", plan.patches.length === 1 && plan.patches[0].patch.wildcatCashBalance === 110);
+
+  // ===========================================================================
+  // A STALE TAB CANNOT DECIDE WHAT ANYBODY ELSE SEES. 2026-09-23.
+  //
+  // At 16:44 UTC 79 students were reduced to what three independent records
+  // agreed they had earned. By 16:49, 76 were back at EXACTLY their old
+  // balances: a browser still holding the pre-repair numbers saved them back
+  // as a delta with no movement behind it, and the server applied it.
+  // ===========================================================================
+  const repaired = { _id: "s9", legacyId: "12101", wildcatCashBalance: 900, wildcatCashEarned: 900 };
+  const staleTab = { id: "12101", cashDelta: { wildcatCashBalance: 900, wildcatCashEarned: 900 }, cashMovements: [] };
+  const reverted = planPatch(repaired, staleTab, STUDENT_WRITABLE);
+  check("THE 16:49 SHAPE: a stale tab's +900 with no movement behind it moves NOTHING",
+    !("wildcatCashBalance" in reverted) && !("wildcatCashEarned" in reverted), JSON.stringify(reverted));
+  const staleSave = planSave([repaired], [staleTab], STUDENT_WRITABLE, (r) => [r.legacyId]);
+  check("...and the tab is told it is out of date, which makes it reload itself",
+    staleSave.countersIgnored.includes("12101") && staleSave.unkeyedResidual.includes("12101"),
+    JSON.stringify({ c: staleSave.countersIgnored, u: staleSave.unkeyedResidual }));
+
+  // The pre-2026-09-20 shape: a delta and no movement list at all.
+  const oldBuild = planPatch(stored, { id: "12217", cashDelta: { wildcatCashBalance: 10, wildcatCashEarned: 10 } }, STUDENT_WRITABLE);
+  check("a build too old to name its movements moves no money",
+    !("wildcatCashBalance" in oldBuild));
+  check("...and is told, so it reloads onto one that can",
+    planSave([stored], [{ id: "12217", cashDelta: { wildcatCashBalance: 10 } }], STUDENT_WRITABLE,
+      (r) => [r.legacyId]).countersIgnored.includes("12217"));
+
+  // A REAL award riding in the same save as a stale excess: the award lands,
+  // the excess does not.
+  const mixedStale = planPatch(stored, {
+    id: "12217",
+    cashDelta: { wildcatCashBalance: 910, wildcatCashEarned: 910 },
+    cashMovements: [{ id: "real-1", at: "2026-09-20T17:00:00.000Z", amount: 10, kind: "award" }],
+  }, STUDENT_WRITABLE);
+  check("a named award in the same save still applies, and only the award",
+    mixedStale.wildcatCashBalance === 110 && mixedStale.wildcatCashEarned === 110, JSON.stringify(mixedStale));
+
+  // Nothing is reported for a tab that is simply correct.
+  const honest = planSave([stored], [fromA], STUDENT_WRITABLE, (r) => [r.legacyId]);
+  check("a correct tab is never told it is out of date",
+    honest.countersIgnored.length === 0 && honest.unkeyedResidual.length === 0,
+    JSON.stringify({ c: honest.countersIgnored, u: honest.unkeyedResidual }));
+  check("...and neither is the all-zero save every tab sends after a load",
+    planSave([stored], [{ id: "12217", cashDelta: {}, cashMovements: [] }], STUDENT_WRITABLE,
+      (r) => [r.legacyId]).countersIgnored.length === 0);
 }
 
 console.log("\n-- a current tab is not judged on absolutes it never claimed --");
@@ -417,11 +477,10 @@ console.log("\n-- the third write path: per-student history arrays --");
 
   // AND THE COUNTERS ARE UNTOUCHED BY ANY OF THIS. Pruning history must not
   // move money: the balance is delta-only and this rule never sees a delta.
-  const withDelta = planPatch({ ...stored, wildcatCashBalance: 100 }, {
+  const withDelta = planPatch({ ...stored, wildcatCashBalance: 100 }, keyed(50, "award", {
     id: "1",
     wildcatCashTransactions: rows("2026-08-20T16:37:14.634Z"),
-    cashDelta: { wildcatCashBalance: 50 },
-  }, STUDENT_WRITABLE, CUT);
+  }), STUDENT_WRITABLE, CUT);
   check("a delta still applies while its history row is pruned",
     withDelta.wildcatCashBalance === 150 && withDelta.wildcatCashTransactions.length === 0);
 

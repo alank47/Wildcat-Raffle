@@ -517,10 +517,11 @@ export type MovementPlan = {
   refused: Array<{ id: string; why: string }>;
   /** The register to write, or null when nothing was applied. */
   nextApplied: CashApplied | null;
-  /** Movements recovered from an older client's own history, and registered. */
-  legacyKeyed?: number;
-  /** True when an older client re-sent a delta its history no longer explains. */
-  legacyRepeat?: boolean;
+  /**
+   * True when the tab stated a change its listed movements do not account
+   * for. That part was NOT applied, and the tab is told it is out of date.
+   */
+  residualRefused?: boolean;
   /** True when any counter moved without a movement id behind it. */
   hasResidual: boolean;
 };
@@ -567,73 +568,6 @@ export function planCashMovements(
   const known = new Set(((cur && Array.isArray(cur.ids)) ? cur.ids : []).map((e: any) => String(e && e.i)));
   const sinceMs = (cur && typeof cur.since === "string") ? Date.parse(cur.since) : NaN;
 
-  /**
-   * A CLIENT THAT SENDS NO MOVEMENT KEYS STILL SENDS ITS HISTORY.
-   *
-   * THE HOLE THIS CLOSES, measured on production 2026-09-23. `residual` is
-   * `stated - claimed`, and a record with no `cashMovements` has claimed = 0,
-   * so its whole stated delta is applied with NO dedupe whatsoever. Re-send
-   * that save -- a retry, a reconnect, a second save before the tab clears its
-   * pending list -- and the same money lands again. 83 students were holding
-   * $21,300 more than their ledger supports, one of them at exactly twice,
-   * and every one of them had a complete and correct ledger.
-   *
-   * Every tab opened before the movement-keyed client shipped at 09:23 on
-   * 2026-09-22 is such a client, and staff do not close tabs. Waiting for
-   * them to reload is not a fix -- it is the thing this project has a standing
-   * rule against.
-   *
-   * `wildcatCashTransactions` IS in STUDENT_WRITABLE, so those same tabs
-   * already send the student's own transaction list on every save. That is
-   * enough to dedupe on without changing a single browser: if the list holds
-   * nothing this register has not already counted, the delta is a repeat of a
-   * save already applied, and applying it again is how money appears from
-   * nowhere.
-   *
-   * IT FAILS TOWARDS SHORT, NOT OVER. If a tab somehow states a delta before
-   * its own history carries the row, this refuses and the counter ends up
-   * BEHIND the ledger -- which the nightly check reports and the recount
-   * repairs, because increases need no decision about any child. The opposite
-   * failure is money that cannot be taken back without telling a student their
-   * balance was wrong.
-   */
-  const legacyUnkeyed: CashMovement[] = [];
-  let legacyRepeat = false;
-  if (!raw.length) {
-    // ONLY ON EVIDENCE. A record that carries no transaction list at all
-    // cannot be judged either way, and refusing it would stop a legitimate
-    // award from a client this server has never seen the shape of. The repeat
-    // verdict therefore needs the list to be PRESENT and non-empty: that is
-    // the case where the student demonstrably has history and none of it is
-    // new, which is the shape a re-sent save actually takes.
-    const txs = Array.isArray(record?.wildcatCashTransactions)
-      ? (record.wildcatCashTransactions as any[]) : null;
-    // ELIGIBLE means a row recent enough to explain a delta being stated now:
-    // dated, after the history cutoff, and after the register's watermark. A
-    // student whose every row is older than that has no recent history to
-    // judge against -- pruned rows are exactly that case -- so the verdict is
-    // "cannot tell" and the delta goes through as it always did.
-    let eligible = 0;
-    for (const t of (txs ?? [])) {
-      const id = String((t && (t as any).id) || "");
-      if (!id) continue;
-      const at = String((t && (t as any).timestamp) || "");
-      const ms = Date.parse(at);
-      if (!Number.isFinite(ms)) continue;
-      if (Number.isFinite(sinceMs) && ms <= sinceMs) continue;
-      if (cutoffMs !== null && Number.isFinite(cutoffMs) && ms < cutoffMs - HISTORY_SLACK_MS) continue;
-      eligible++;
-      if (known.has(id)) continue;
-      const amount = Number((t as any).amount);
-      if (!Number.isFinite(amount)) continue;
-      legacyUnkeyed.push({ id, at, amount, kind: String((t as any).kind ?? "") });
-    }
-    // Recent history exists, the register has already counted all of it, and
-    // the client still claims a change: that is a save being applied twice.
-    legacyRepeat = eligible > 0 && legacyUnkeyed.length === 0 &&
-      CASH_COUNTERS.some((f) => (Number(stated[f]) || 0) !== 0);
-  }
-
   // --- claimed and residual -------------------------------------------
   // `claimed` covers the WHOLE accepted list, seen or not: that is what makes
   // the residual independent of server history, and therefore order-safe.
@@ -666,15 +600,52 @@ export function planCashMovements(
   const statesNothing = CASH_COUNTERS.every((f) => (Number(stated[f]) || 0) === 0);
   const incoherent = statesNothing && accepted.length > 0;
 
+  /**
+   * THE UNEXPLAINED PART OF A DELTA IS NEVER APPLIED. 2026-09-23.
+   *
+   * `residual` is what a tab says it moved MINUS what its listed movements
+   * account for. In a tab whose view of the money is correct that is always
+   * zero: every change to a counter in the client goes through
+   * recordCashTransaction, which records the keyed movement in the same
+   * breath. So a non-zero residual is, by construction, a tab describing money
+   * it cannot name -- and the only things that produce one are stale state and
+   * builds too old to name their movements.
+   *
+   * THE INCIDENT THAT MADE THIS A RULE. At 16:44 UTC 79 students were reduced
+   * to what three independent records agreed they had earned. By 16:49, 76 of
+   * them were back at EXACTLY their old balances -- a browser still holding
+   * the pre-repair numbers saved them back as a delta, and the server applied
+   * it. The morning's narrower guard could not see it, because those students'
+   * old awards had never been registered, so their history looked "new".
+   *
+   * Every previous fix here narrowed WHEN an unexplained delta was trusted.
+   * This stops trusting it at all. The server applies money it can attribute
+   * to a named movement, and nothing else -- which is how a stale tab stops
+   * being able to decide what forty other people see.
+   *
+   * The residual is still MEASURED and reported: planSave names the student in
+   * `countersIgnored`, and every client since 2026-09-13 answers that by
+   * saying so and reloading itself onto current code. Nobody is asked to
+   * refresh anything.
+   *
+   * WHAT IT COSTS. Two admin-only operations set counters directly -- the
+   * year-end rollover (already known broken and not to be run) and the
+   * all-accounts reset, whose BALANCE change is keyed and still applies but
+   * whose pinning of the running totals is not. Both are rare, deliberate, and
+   * visible; neither is worth leaving a door open that any stale tab can walk
+   * through. A pre-2026-09-20 tab that makes an award has the counter refused
+   * and reloads; its ledger row still lands, so the counter ends up SHORT and
+   * the recount pays it -- the direction that needs no decision about a child.
+   */
   const residual: Record<string, number> = {};
   let hasResidual = false;
   CASH_COUNTERS.forEach((f) => {
     // READ WITH A DEFAULT, never by iterating the delta's keys: cashDeltaOf
     // drops zero-valued fields, so a delta that nets a counter to zero would
     // otherwise skip its own correction or compute `undefined - 100` = NaN.
-    const r = (incoherent || legacyRepeat) ? 0 : (Number(stated[f]) || 0) - claimed[f];
-    residual[f] = r;
-    if (r !== 0) hasResidual = true;
+    const measured = incoherent ? 0 : (Number(stated[f]) || 0) - claimed[f];
+    if (measured !== 0) hasResidual = true;
+    residual[f] = 0;
   });
 
   // --- classify each movement -----------------------------------------
@@ -768,28 +739,18 @@ export function planCashMovements(
     refused.push({ id: m.id, why });
   });
 
-  // A LEGACY DELTA THAT LANDED MUST BE REGISTERED TOO, or the next save from
-  // that same tab finds its history "new" again and pays twice -- which is
-  // the whole failure this path exists to stop. It is registered only when
-  // something actually moved, exactly as a keyed movement is: apply and
-  // register move together, or neither.
-  const legacyApplied = (!raw.length && !legacyRepeat &&
-      CASH_COUNTERS.some((f) => (net[f] || 0) !== 0))
-    ? legacyUnkeyed : [];
-  if (legacyRepeat) {
-    refused.push({ id: "(no movement keys)", why: "legacy_repeat_nothing_new_in_history" });
+  if (hasResidual) {
+    refused.push({ id: "(unexplained change)", why: "residual_refused_names_no_movement" });
   }
-  const toRegister = applied.concat(legacyApplied);
 
   return {
     net, capped, cancelled, applied, absorbed, refused,
-    legacyKeyed: legacyApplied.length,
-    legacyRepeat,
+    residualRefused: hasResidual,
     // NOT WRITTEN WHEN NOTHING WAS APPLIED. The first save after every load
     // ships every student with an all-zero delta and no movements; a version
     // that touched the register unconditionally would turn that into ~700 row
     // writes.
-    nextApplied: toRegister.length ? ringPush(cur, toRegister) : null,
+    nextApplied: applied.length ? ringPush(cur, applied) : null,
     hasResidual,
   };
 }
@@ -1017,7 +978,14 @@ export function planSave(
       movementsApplied += mv.applied.length;
       mv.absorbed.forEach((id) => movementsAbsorbed.push(id));
       mv.refused.forEach((r) => movementsRefused.push({ key, id: r.id, why: r.why }));
-      if (mv.hasResidual) unkeyedResidual.push(key);
+      if (mv.hasResidual) {
+        unkeyedResidual.push(key);
+        // THE TAB IS TOLD, which is what retires it. countersIgnored is the
+        // signal every client since 2026-09-13 answers with "this tab was out
+        // of date" and a self-reload -- so a stale tab's first attempt to
+        // describe money it cannot name is also its last.
+        if (countersIgnored.indexOf(key) === -1) countersIgnored.push(key);
+      }
     }
 
     if (Object.keys(patch).length > 0) patches.push({ key, rowId: row._id, patch });

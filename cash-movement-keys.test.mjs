@@ -115,15 +115,23 @@ console.log("\nOrder does not matter, which is what makes it safe");
     applyTo(forward, P2).row.wildcatCashBalance === 200);
 }
 
-console.log("\nAn OLD client is the residual path, byte-for-byte");
+console.log("\nAn OLD client's unnamed delta moves nothing (2026-09-23)");
 {
-  // A tab that has not reloaded sends a delta and no movements. Old and new
-  // clients WILL overlap: a tab with unsaved work deliberately does not
-  // self-update, and refusing an unkeyed save would stop cash reaching the
-  // counters for most of forty staff on deploy morning.
+  // THIS BLOCK USED TO ASSERT THE OPPOSITE, and recorded the trade-off
+  // honestly: "an old tab keeps failure mode 2 for its own life -- nothing
+  // server-side can tell its recomputed delta from a genuinely larger one."
+  // That was accepted on 2026-09-20 because most tabs were old and refusing
+  // them would have stopped cash for most of forty staff on deploy morning.
+  //
+  // On 2026-09-23 the accepted risk arrived: a tab holding pre-repair numbers
+  // saved 76 students back to their old balances within five minutes of a
+  // repair. Three days on, the fleet has turned over, and a delta the server
+  // cannot attribute to a named movement is no longer applied. The tab is told
+  // it is out of date and reloads itself; its ledger row still lands, so any
+  // real award it was carrying leaves the counter SHORT, which the recount pays.
   const old = { cashDelta: { wildcatCashBalance: 100, wildcatCashEarned: 100 } };
   const r = applyTo(row({ wildcatCashBalance: 300, wildcatCashEarned: 300 }), old);
-  check("its delta applies exactly as before", r.row.wildcatCashBalance === 400);
+  check("its unnamed delta moves no money", r.row.wildcatCashBalance === 300);
   check("it is reported as unkeyed, so the fleet is measurable", r.mv.hasResidual === true);
   check("and it writes NO register", r.row.cashApplied === undefined);
   check("so it cannot consume ring capacity or evict a new tab's entry",
@@ -164,7 +172,17 @@ console.log("\nThe cap still stops the stale-reset shape");
   const stale = { cashDelta: { wildcatCashBalance: -30500 } };
   const r = applyTo(row(), stale);
   check("a huge unkeyed delta is refused", r.row.wildcatCashBalance === 0);
-  check("and the field is named as capped", r.mv.capped.includes("wildcatCashBalance"));
+  // REFUSED EARLIER NOW, and by a stronger rule: since 2026-09-23 an unnamed
+  // delta never reaches the cap, because it is never applied at all. So the
+  // refusal is reported as an unexplained change -- which is also what tells
+  // the tab to reload -- rather than as a capped field.
+  check("and it is reported as unexplained, so the tab is told",
+    r.mv.residualRefused === true);
+  // The cap is still what guards a NAMED movement of absurd size.
+  const huge = applyTo(row(), award("txn_huge", -30500, "2026-09-23T17:00:00.000Z", "deduct"));
+  check("the cap still stops a named movement of absurd size",
+    huge.row.wildcatCashBalance === 0 && huge.mv.capped.includes("wildcatCashBalance"),
+    JSON.stringify(huge.mv.capped));
   // A capped field must not swallow a movement: registered but never applied
   // would lose it forever.
   const big = award("txn_big", 9999);
@@ -374,8 +392,15 @@ console.log("\nthe self-contradictory payload, which cost 38 students a movement
   {
     const p = plan({ wildcatCashBalance: 800, cashApplied: null }, [],
       { wildcatCashBalance: -50, wildcatCashSpent: 50 });
-    check("a purchase, which is residual with no movements, still applies",
-      p.net.wildcatCashBalance === -50 && p.net.wildcatCashSpent === 50);
+    // THIS USED TO SAY A PURCHASE IS A RESIDUAL WITH NO MOVEMENTS. No live
+    // path produces that shape: students buy through studentStore:purchase, a
+    // server mutation that charges the balance itself and never passes through
+    // appData:save, and the staff client has no redeem call at all. An
+    // unexplained change is therefore stale state wearing a purchase's shape,
+    // and it moves nothing.
+    check("an unexplained change moves nothing, whatever it resembles",
+      p.net.wildcatCashBalance === 0 && p.net.wildcatCashSpent === 0);
+    check("...and it is flagged, so the tab is told", p.residualRefused === true);
   }
   {
     const p = plan({ wildcatCashBalance: 800, cashApplied: null },
@@ -501,91 +526,72 @@ console.log("\nthe reload rebase, executed rather than pattern-matched");
 }
 
 // ===========================================================================
-// A CLIENT WITH NO MOVEMENT KEYS, which is every tab opened before the keyed
-// client shipped at 09:23 on 2026-09-22 -- and staff do not close tabs.
+// A STALE TAB CANNOT DECIDE WHAT ANYBODY ELSE SEES. 2026-09-23.
 //
-// THE HOLE, measured on production 2026-09-23. `residual` is `stated -
-// claimed`, and a record with no cashMovements has claimed = 0, so its whole
-// stated delta was applied with NO dedupe at all. Re-send that save and the
-// same money lands again: 83 students were holding $21,300 more than their
-// ledger supports, one at exactly twice, every one with a complete ledger.
+// This replaces a guard written that morning, which keyed an old client's
+// delta on the transaction list it sends and applied it when anything in that
+// list was "new". Within the day it was shown insufficient: 79 students were
+// repaired at 16:44 UTC and by 16:49, 76 were back at EXACTLY their old
+// balances. Their old awards had never been registered, so to that guard the
+// whole history looked new, and a stale tab's +900 matched nine real +100 rows.
 //
-// The fix keys those saves on the transaction list the SAME tabs already send,
-// so nothing in any browser had to change.
+// No narrowing of WHEN to trust an unnamed delta could have caught that, so
+// the server no longer trusts one at all.
 // ===========================================================================
-console.log("\n-- an older client, keyed on its own history --");
+console.log("\n-- the 16:49 incident, and the rule that closes it --");
 {
   const tx = (id, amount, at, kind = "award") => ({ id, amount, kind, timestamp: at });
-  /** What a pre-keys tab sends: a delta, no movements, and its history. */
-  const legacy = (amount, txs, kind = "award") => ({
-    cashDelta: { ...cashMovementEffect(amount, kind) },
-    wildcatCashTransactions: txs,
+  const nine = Array.from({ length: 9 }, (_, i) =>
+    tx(`t${i}`, 100, `2026-09-${String(14 + i).padStart(2, "0")}T17:00:00.000Z`));
+
+  // The shape exactly: repaired to 900, a stale tab still believes 1800.
+  const repaired = row({ wildcatCashBalance: 900, wildcatCashEarned: 900 });
+  const stale = {
+    cashDelta: { wildcatCashBalance: 900, wildcatCashEarned: 900 },
+    cashMovements: [],
+    wildcatCashTransactions: nine,
+  };
+  const r = applyTo(repaired, stale);
+  check("THE 16:49 SHAPE: a stale tab cannot put a repaired child back",
+    r.row.wildcatCashBalance === 900 && r.row.wildcatCashEarned === 900,
+    JSON.stringify(r.row));
+  check("...even though nine real rows would have 'explained' the +900",
+    nine.length * 100 === 900);
+  check("...and it is flagged, which is what makes the tab reload itself",
+    r.mv.residualRefused === true && r.mv.hasResidual === true);
+  check("...and nothing is registered for money that did not move",
+    r.mv.nextApplied === null);
+
+  // Sent again, and again: still nothing.
+  const twice = applyTo(applyTo(repaired, stale).row, stale);
+  check("sending it again changes nothing", twice.row.wildcatCashBalance === 900);
+
+  // A real award from a CURRENT tab, in the same breath, still lands.
+  const real = applyTo(repaired, award("txn_real", 100, "2026-09-23T17:00:00.000Z"));
+  check("a named award from a current tab still applies",
+    real.row.wildcatCashBalance === 1000, String(real.row.wildcatCashBalance));
+  check("...and is not flagged", real.mv.residualRefused !== true);
+  check("...and is registered, so its own re-send is absorbed",
+    applyTo(real.row, award("txn_real", 100, "2026-09-23T17:00:00.000Z")).row.wildcatCashBalance === 1000);
+
+  // A named award riding with a stale excess: only the award moves.
+  const both = applyTo(repaired, {
+    cashDelta: { wildcatCashBalance: 1000, wildcatCashEarned: 1000 },
+    cashMovements: [{ id: "txn_x", at: "2026-09-23T17:05:00.000Z", amount: 100, kind: "award" }],
   });
+  check("a real award beside a stale excess: the award lands, the excess does not",
+    both.row.wildcatCashBalance === 1000, String(both.row.wildcatCashBalance));
 
-  const AT = "2026-09-23T17:00:00.000Z";
-  const first = applyTo(row(), legacy(100, [tx("t1", 100, AT)]));
-  check("an older client's award still applies", first.row.wildcatCashBalance === 100,
-    String(first.row.wildcatCashBalance));
-  check("...and its history row is registered, so it can be recognised again",
-    (first.row.cashApplied?.ids || []).some((e) => e.i === "t1"),
-    JSON.stringify(first.row.cashApplied));
-  check("...and it is reported as recovered rather than silently keyed",
-    first.mv.legacyKeyed === 1);
+  // Downward too. A stale tab cannot undo a repair that PAID a child.
+  const paid = row({ wildcatCashBalance: 1100, wildcatCashEarned: 1100 });
+  const undo = applyTo(paid, { cashDelta: { wildcatCashBalance: -100, wildcatCashEarned: -100 }, cashMovements: [] });
+  check("nor can it take back money a repair restored",
+    undo.row.wildcatCashBalance === 1100, String(undo.row.wildcatCashBalance));
 
-  // THE ONE THAT MATTERS. The same save arrives twice.
-  const again = applyTo(first.row, legacy(100, [tx("t1", 100, AT)]));
-  check("THE SAME SAVE SENT TWICE DOES NOT PAY TWICE",
-    again.row.wildcatCashBalance === 100, String(again.row.wildcatCashBalance));
-  check("...and it says why, rather than failing silently",
-    again.mv.legacyRepeat === true &&
-    again.mv.refused.some((r) => /legacy_repeat/.test(r.why)),
-    JSON.stringify(again.mv.refused));
-  check("...and nothing is registered for a save that moved nothing",
-    again.mv.nextApplied === null);
-
-  // A genuinely new award from the same tab still lands.
-  const third = applyTo(again.row, legacy(100, [
-    tx("t1", 100, AT), tx("t2", 100, "2026-09-23T17:05:00.000Z"),
-  ]));
-  check("a NEW award from the same older client still applies",
-    third.row.wildcatCashBalance === 200, String(third.row.wildcatCashBalance));
-  check("...and only the new row is registered",
-    (third.row.cashApplied?.ids || []).filter((e) => e.i === "t2").length === 1);
-
-  // EVIDENCE ONLY. A record with no history at all cannot be judged, and
-  // refusing it would stop a legitimate award from a shape never seen before.
-  const blind = applyTo(row(), { cashDelta: { ...cashMovementEffect(100, "award") } });
-  check("a record carrying NO history is applied, not refused",
-    blind.row.wildcatCashBalance === 100 && blind.mv.legacyRepeat !== true);
-  const emptyHistory = applyTo(row(), legacy(100, []));
-  check("...and so is one with an empty history",
-    emptyHistory.row.wildcatCashBalance === 100);
-
-  // Pre-cutoff rows are not recent history and cannot settle anything.
-  const pruned = planCashMovements(row(), legacy(100, [tx("old", 100, "2026-09-01T10:00:00.000Z")]),
-    { ...cashMovementEffect(100, "award") }, { cutoffMs: Date.parse("2026-09-14T15:30:00Z"), maxDelta: 5000 });
-  check("a history of only pre-cutoff rows is not judged as a repeat",
-    pruned.net.wildcatCashBalance === 100 && pruned.legacyRepeat !== true,
-    JSON.stringify(pruned.net));
-
-  // A DEDUCTION re-sent must not be taken twice either.
-  const dRow = row({ wildcatCashBalance: 500, wildcatCashEarned: 500 });
-  const d1 = applyTo(dRow, legacy(-100, [tx("d1", -100, AT, "deduct")], "deduct"));
-  check("an older client's deduction applies", d1.row.wildcatCashBalance === 400,
-    String(d1.row.wildcatCashBalance));
-  const d2 = applyTo(d1.row, legacy(-100, [tx("d1", -100, AT, "deduct")], "deduct"));
-  check("...and is not taken a second time", d2.row.wildcatCashBalance === 400,
-    String(d2.row.wildcatCashBalance));
-
-  // TEETH: without the guard, the re-send pays twice. That is the bug.
-  check("TEETH: the guard is what stops it", (() => {
-    const noGuard = applyTo(first.row, {
-      cashDelta: { ...cashMovementEffect(100, "award") },
-      // no history at all -> unjudgeable -> applied, which is the old
-      // behaviour for EVERY legacy save and the hole that was open.
-    });
-    return noGuard.row.wildcatCashBalance === 200;
-  })(), "an unjudgeable payload still applies, which is why the history matters");
+  // Healthy shapes are untouched.
+  const quiet = applyTo(repaired, { cashDelta: {}, cashMovements: [] });
+  check("the all-zero save every tab sends after a load is not flagged",
+    quiet.mv.residualRefused !== true && quiet.row.wildcatCashBalance === 900);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -2140,3 +2140,20 @@ export const missingLedgerRows = internalQuery({
     };
   },
 });
+
+/** Recent stale-tab refusals: which builds, which accounts, how many. CLI only. */
+export const refusalLogRecent = internalQuery({
+  args: { sinceIso: v.optional(v.string()) },
+  handler: async (ctx, { sinceIso }) => {
+    const rows = await ctx.db.query("cashRefusalLog")
+      .withIndex("by_at", (q) => sinceIso ? q.gte("at", sinceIso) : q).take(500);
+    const byVersion: Record<string, number> = {};
+    const byActor: Record<string, number> = {};
+    for (const r of rows) {
+      byVersion[r.clientVersion ?? "(none)"] = (byVersion[r.clientVersion ?? "(none)"] || 0) + 1;
+      byActor[r.actorEmail ?? "(unknown)"] = (byActor[r.actorEmail ?? "(unknown)"] || 0) + 1;
+    }
+    return { refusals: rows.length, byVersion, byActor,
+             last: rows.slice(-8).map((r) => ({ at: r.at, v: r.clientVersion, who: r.actorEmail, n: r.students })) };
+  },
+});

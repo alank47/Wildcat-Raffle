@@ -375,7 +375,7 @@ export const save = mutation({
     clientVersion: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, args) => {
-    await requireStaff(ctx);
+    const me = await requireStaff(ctx);
 
     // The plan is computed by a pure function that is unit tested against
     // hostile payloads (unknown ids, renamed children, nulled balances). This
@@ -423,6 +423,19 @@ export const save = mutation({
       movementsAbsorbed = plan.movementsAbsorbed;
       movementsRefused = plan.movementsRefused;
       unkeyedResidual = plan.unkeyedResidual;
+
+      // WRITTEN DOWN, NOT JUST RETURNED. The refusal already reaches the tab
+      // that sent it; this is so a person can see which build and which
+      // account is still running stale, and watch those numbers fall to zero.
+      if (unkeyedResidual.length) {
+        await ctx.db.insert("cashRefusalLog", {
+          at: new Date().toISOString(),
+          actorEmail: String((me as any)?.email ?? "") || undefined,
+          clientVersion: args.clientVersion ?? undefined,
+          students: unkeyedResidual.length,
+          sample: unkeyedResidual.slice(0, 5).map(String),
+        });
+      }
     }
 
     let teachersChanged = 0;

@@ -974,6 +974,29 @@ export default defineSchema({
     .index("by_referral", ["referralId"])
     .index("by_stage", ["referralId", "stage"]),
 
+  /**
+   * Every save the server refused to let describe money it could not name.
+   *
+   * WHY IT EXISTS. On 2026-09-23 a browser holding pre-repair numbers put 76
+   * students back at their old balances within five minutes of a repair, and
+   * nothing recorded which tab, which build or whose account did it --
+   * appData:save computed the answer and handed it only to the tab that was
+   * wrong. This keeps it.
+   *
+   * INSERT-ONLY, one row per refusing save, never one shared row. Forty staff
+   * saving through a single appState document would contend on it and turn a
+   * diagnostic into a cause of failed saves.
+   *
+   * Student NUMBERS only, never names, and at most five of them.
+   */
+  cashRefusalLog: defineTable({
+    at: v.string(),
+    actorEmail: v.optional(v.string()),
+    clientVersion: v.optional(v.string()),
+    students: v.number(),
+    sample: v.array(v.string()),
+  }).index("by_at", ["at"]),
+
   /** One row per sync run: rows in, rows changed, duration, errors. */
   syncRuns: defineTable({
     at: v.string(),
