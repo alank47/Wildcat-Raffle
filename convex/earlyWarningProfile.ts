@@ -1283,3 +1283,27 @@ export const perfectCounts = internalQuery({
     };
   },
 });
+
+/** Is the restricted demographics table loaded? Counts only, no student rows. */
+export const restrictedLoad = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("psRestricted").take(2000);
+    const tally = (pick: (r: any) => unknown) => {
+      const out: Record<string, number> = {};
+      for (const r of rows) {
+        const v = String(pick(r) ?? "(empty)");
+        out[v] = (out[v] || 0) + 1;
+      }
+      return out;
+    };
+    return {
+      rows: rows.length,
+      withElaStatus: rows.filter((r) => r.elaStatus).length,
+      elaValues: rows.length ? tally((r) => r.elaStatus) : {},
+      withFedEthnicity: rows.filter((r) => r.fedEthnicity).length,
+      lastSyncedAt: rows.reduce((a: string | null, r) =>
+        (!a || String(r.syncedAt) > a ? String(r.syncedAt) : a), null),
+    };
+  },
+});

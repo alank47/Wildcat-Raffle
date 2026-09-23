@@ -812,11 +812,32 @@ export default defineSchema({
    * RESTRICTED demographics: federal ethnicity, federal race, English Learner.
    *
    * A SEPARATE TABLE, never blended into a student view, per Grilled.md
-   * constraint 3 and the brief's Phase 3 point 1. Deliberately NOT LOADED yet:
-   * the brief's closing question asks what decision federal race and ethnicity
-   * inform in a teacher-facing dashboard, and says to descope them if nobody
-   * can name one. The table exists so the shape is decided; loading it is a
-   * separate, deliberate act with its own go/no-go line.
+   * constraint 3 and the brief's Phase 3 point 1.
+   *
+   * IT IS LOADED. This comment used to say it was not, and that was wrong and
+   * dangerous: a "no data here yet" note on the restricted-demographics table
+   * is exactly what makes somebody reason wrongly about what is at risk.
+   * sisAction.ts fills it on every twice-daily sync from the named queries
+   * `student_restricted` and `student_race_restricted`. Verified 2026-09-22:
+   * 618 rows, 618 with federal ethnicity, 617 with an English Learner status
+   * (EL 118, EO 273, RFEP 197, IFEP 29, one blank).
+   *
+   * LOADED IS NOT VISIBLE, and that distinction is the whole design.
+   * restrictedPolicy.ts grants `elaStatus` to NO role -- not teacher, not
+   * pbis, not admin, not superadmin -- and no query in this codebase returns
+   * it. The only public query that reads restricted fields at all is
+   * disciplineAggregates:raceVerification, which uses federal race and
+   * ethnicity, the two fields the owner explicitly approved on 2026-08-19, and
+   * never touches English Learner.
+   *
+   * ENGLISH LEARNER IS THE ONE RESERVED DECISION. docs/field-sourcing.md
+   * singles it out from the rest of the restricted block: unlike federal race
+   * and ethnicity, EL status has an obvious instructional use for a classroom
+   * teacher, so it needs a visibility decision rather than a justification for
+   * existing at all. docs/field-sourcing-approval.md still records it as NOT
+   * approved, because no decision it informs has been named. Widening it means
+   * an entry in ALLOWED_BY_ROLE, a named approver and purpose in that
+   * approval doc, and a test pinning the roles still denied.
    */
   psRestricted: defineTable({
     studentNumber: v.string(),
