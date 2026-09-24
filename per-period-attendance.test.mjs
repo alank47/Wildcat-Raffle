@@ -191,8 +191,22 @@ check("neither ranked list opens the raffle profile any more",
   [script.indexOf("async function renderAttendanceWatch"), script.indexOf("async function renderEarlyWarning")]
     .every((i) => !/onclick="openStudentProfile\(/.test(script.slice(i, i + 9000))),
   "the profile is reachable from a button inside the new view instead");
+// Three since 2026-09-23: the year list, the week/month list
+// (renderAttendanceWindow) and Early Warning -- every attendance row, one
+// destination.
 check("Early Warning opens the same screen, so one child has one destination",
-  (script.match(/onclick="openAttendanceDetail\(/g) || []).length === 2);
+  (script.match(/onclick="openAttendanceDetail\(/g) || []).length === 3
+  && (() => {
+    // Searched inside renderAttendanceWindow itself, found by brace matching,
+    // not within a fixed distance of its first line.
+    const i = script.indexOf("async function renderAttendanceWindow(");
+    let depth = 0, end = -1;
+    for (let k = script.indexOf("{", i); k < script.length; k++) {
+      if (script[k] === "{") depth++;
+      else if (script[k] === "}") { depth--; if (depth === 0) { end = k; break; } }
+    }
+    return i > 0 && end > i && /onclick="openAttendanceDetail\(/.test(script.slice(i, end));
+  })());
 // st.id is absent for any student whose PowerSchool number does not match a
 // local record. Their row used to look clickable, take focus, and do nothing.
 check("the row passes studentNumber, not the app's roster id",

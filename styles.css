@@ -8873,6 +8873,9 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     color: var(--wc-gray-text, #8892a0);
 }
 
+/* The period picker sits above everything it scopes. */
+.wc-att-period { margin-bottom: 14px; flex-wrap: wrap; }
+
 .wc-att-tiers {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 12px; margin-bottom: 18px;

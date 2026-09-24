@@ -1444,6 +1444,167 @@
     return { students: out, counts: counts, window: win };
   }
 
+  // =====================================================================
+  // WHO WAS MISSING IN A WEEK OR A MONTH (2026-09-23)
+  //
+  // Attendance Watch's "Who is missing" ranks the YEAR, against the chronic
+  // absence tiers. The owner asked for a week and a month as well -- the
+  // question a Monday meeting and a monthly report ask. Two rules differ from
+  // the year view, on purpose:
+  //
+  //   - NO CHRONIC TIERS. "Chronic" and "severe" are year-scale definitions
+  //     (10% and 20% of the days in session). In a five-day week one absence
+  //     is 20%, so the year's labels would call every absent child severe.
+  //     A window gets plain bands instead: every day, half or more, at least
+  //     one.
+  //   - THE DENOMINATOR IS THE DAYS SCHOOL RAN in the window, per student --
+  //     from the day they enrolled, if that falls inside it -- never weekdays.
+  // =====================================================================
+
+  function lastDayOfMonth(iso) {
+    var d = dayFrom(iso.slice(0, 8) + '01');
+    if (!d) return null;
+    d.setUTCMonth(d.getUTCMonth() + 1);
+    d.setUTCDate(0);
+    return isoOf(d);
+  }
+
+  /**
+   * This week, last week, this month, last month -- from today.
+   *
+   * A WEEK IS MONDAY TO FRIDAY. On a Saturday or Sunday "this week" is the one
+   * just finished (Monday to Friday has run its course) and "last week" the
+   * one before. So on a weekend, "This week" here is the week the Perfect
+   * attendance panel calls "Last full week"; on a weekday the two panels' "last
+   * week" are the same week.
+   *
+   * ONLY COMPLETED DAYS. `completeThrough` is the last day whose attendance
+   * is fully in -- yesterday, at the latest: the 06:30 sync carries yesterday,
+   * and the 12:30 one carries a half-taken today, in which every afternoon
+   * period not yet reached reads as unrecorded and every absence as partial.
+   * Before school, today's only rows are absences entered ahead of time, which
+   * would make today a "school day" two children missed. A window that runs
+   * past `completeThrough` ends there; one that starts after it is empty.
+   */
+  function absenceWindows(todayIso, completeThrough) {
+    var today = dayFrom(todayIso);
+    if (!today) return null;
+    var iso = isoOf(today);
+    var dow = today.getUTCDay();
+    var thisMonday = shiftDays(iso, -((dow + 6) % 7));
+    var thisFriday = shiftDays(thisMonday, 4);
+    var lastMonday = shiftDays(thisMonday, -7);
+    var lastFriday = shiftDays(lastMonday, 4);
+    var monthStart = iso.slice(0, 8) + '01';
+    var prevMonthEnd = shiftDays(monthStart, -1);
+    var prevMonthStart = prevMonthEnd.slice(0, 8) + '01';
+    var yesterday = shiftDays(iso, -1);
+    var through = /^\d{4}-\d{2}-\d{2}$/.test(String(completeThrough || ''))
+      ? String(completeThrough).slice(0, 10) : yesterday;
+    if (through > yesterday) through = yesterday;
+    var mk = function (key, from, to, label) {
+      var capped = to > through;
+      return { key: key, from: from, to: capped ? through : to, label: label, capped: capped, through: through };
+    };
+    return {
+      thisWeek: mk('thisWeek', thisMonday, thisFriday, 'This week'),
+      lastWeek: mk('lastWeek', lastMonday, lastFriday, 'Last week'),
+      thisMonth: mk('thisMonth', monthStart, lastDayOfMonth(monthStart), 'This month'),
+      lastMonth: mk('lastMonth', prevMonthStart, lastDayOfMonth(prevMonthStart), 'Last month')
+    };
+  }
+
+  /** The band a window row falls in. Plain words, no chronic labels. */
+  var WINDOW_BANDS = [
+    { key: 'every', label: 'Every day' },
+    { key: 'half', label: 'Half or more' },
+    { key: 'some', label: 'Missed a day' },
+    { key: 'none', label: 'No absences' }
+  ];
+  function windowBand(daysAbsent, schoolDays) {
+    if (!(schoolDays > 0) || !(daysAbsent > 0)) return WINDOW_BANDS[3];
+    if (daysAbsent >= schoolDays) return WINDOW_BANDS[0];
+    if (daysAbsent * 2 >= schoolDays) return WINDOW_BANDS[1];
+    return WINDOW_BANDS[2];
+  }
+
+  /**
+   * Every student's absences and tardies inside one window.
+   *
+   * `marks` is attendanceList:attendanceMarks rows (the dates); `schoolDays` is
+   * the list of dates school ran in the window (from the server). A date in
+   * `marks` that is not a school day in the window -- entered ahead of time, or
+   * on a date the per-date rebuild has no record of -- is not counted: the
+   * numerator and the denominator come from the same days, so a rate can
+   * never pass 100%.
+   *
+   * ENROLMENT IS PART OF THE ANSWER. A student who arrived on Wednesday had a
+   * three-day week, and "3 of 5" would overstate them.
+   *
+   * RANKED WORST FIRST: most days absent, then the larger share of the
+   * window, then FEWER tardies (a child late every morning is in school; the
+   * screen adds whole days above this when it has them), then by number for a
+   * stable order.
+   */
+  function windowAbsenceList(marks, schoolDays, win) {
+    var days = (schoolDays || []).filter(function (d) {
+      return (!win || !win.from || d >= win.from) && (!win || !win.to || d <= win.to);
+    }).slice().sort();
+    var daySet = {};
+    days.forEach(function (d) { daySet[d] = true; });
+    var rows = [], counts = { every: 0, half: 0, some: 0, none: 0, tardy: 0, considered: 0 };
+    (marks || []).forEach(function (m) {
+      if (!m) return;
+      var entry = String(m.entryDate || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(entry)) entry = '';
+      // A RECORDED absence or tardy before the entry date means the student
+      // was there to miss it (a re-entry): PowerSchool counts it, so this
+      // does too, from the earliest such day.
+      if (entry) {
+        [].concat(m.absentDates || [], m.tardyDates || []).forEach(function (x) {
+          var d = String(x || '').slice(0, 10);
+          if (daySet[d] && d < entry) entry = d;
+        });
+      }
+      var mine = entry ? days.filter(function (d) { return d >= entry; }) : days;
+      // NOT ENROLLED IN THIS WINDOW AT ALL (arrived after it): not a row, not
+      // a count. Listing them as "0 of 0 days" read as a perfect week.
+      if (days.length && !mine.length) return;
+      var mineSet = {};
+      mine.forEach(function (d) { mineSet[d] = true; });
+      var uniq = function (list) {
+        var seen = {}, out = [];
+        (list || []).forEach(function (x) {
+          var d = String(x || '').slice(0, 10);
+          if (mineSet[d] && !seen[d]) { seen[d] = true; out.push(d); }
+        });
+        return out.sort();
+      };
+      var absent = uniq(m.absentDates);
+      var tardy = uniq(m.tardyDates);
+      var band = windowBand(absent.length, mine.length);
+      counts.considered++;
+      counts[band.key]++;
+      if (tardy.length) counts.tardy++;
+      rows.push({
+        studentNumber: String(m.studentNumber || ''),
+        daysAbsent: absent.length,
+        daysTardy: tardy.length,
+        schoolDays: mine.length,
+        rate: mine.length ? absent.length / mine.length : 0,
+        band: band,
+        enrolledSince: (entry && mine.length < days.length) ? entry : null,
+        absentDates: absent,
+        tardyDates: tardy
+      });
+    });
+    rows.sort(function (a, b) {
+      return (b.daysAbsent - a.daysAbsent) || (b.rate - a.rate) || (a.daysTardy - b.daysTardy)
+        || String(a.studentNumber).localeCompare(String(b.studentNumber));
+    });
+    return { rows: rows, counts: counts, schoolDays: days, window: win };
+  }
+
   root.WildcatRoster = {
     CASH_NOTE_MIN: CASH_NOTE_MIN,
     cashNoteVerdict: cashNoteVerdict,
@@ -1467,6 +1628,10 @@
     datesInWindow: datesInWindow,
     perfectVerdict: perfectVerdict,
     perfectList: perfectList,
+    absenceWindows: absenceWindows,
+    WINDOW_BANDS: WINDOW_BANDS,
+    windowBand: windowBand,
+    windowAbsenceList: windowAbsenceList,
     RUNS_LIMITS: RUNS_LIMITS,
     median: median,
     dailyGoal: dailyGoal,

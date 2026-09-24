@@ -2,6 +2,7 @@ import { query } from "./_generated/server";
 import { v } from "convex/values";
 import { requireStaff } from "./identity";
 import { dayCount } from "./views";
+import { addAbsenceDay, emptyAbsenceSplit, type AbsenceSplit } from "./absenceDayRules";
 
 /**
  * The school-wide attendance figures behind the chronic absence list.
@@ -323,6 +324,127 @@ export const dailyAbsenceSeries = query({
       schoolDaysOnFile: usable.length,
       truncated,
       syncedAt: raw.length ? (raw[0].syncedAt ?? null) : null,
+    };
+  },
+});
+
+/**
+ * WHO WAS MISSING IN ONE WEEK OR ONE MONTH, split into whole days and partial.
+ *
+ * Asked for by the owner on 2026-09-23: Attendance Watch's "Who is missing"
+ * ranks the year to date, and a week or a month is the question a Monday
+ * meeting or a monthly report actually asks. The COUNTS of absent and tardy
+ * days for any window come from attendanceMarks (one row per student, any
+ * window, same cost); what only this can add is the whole-day / partial-day
+ * split and the school days the window really held.
+ *
+ * WHY psAttendanceDays AT READ TIME, when the year's split is precomputed:
+ * the year is ~2,700 per-date rows and grows past Convex's read limit by
+ * spring, which is why psAbsenceTotals exists. A window is a slice of it, read
+ * by date through the index -- measured 2026-09-23, a month to date is 1,670
+ * rows and the busiest day 165 -- so a month costs about what one busy fortnight
+ * of the year does. The cap is about NOTICING: past it the answer says
+ * `truncated` and the screen says so, rather than quietly under-counting.
+ *
+ * SCHOOL DAYS ARE THE DAYS SCHOOL RAN, from psAbsenceDayTotals, where a date
+ * with no row is a day school did not run (Labor Day, 2026-09-04) -- not
+ * weekdays minus a holiday count someone typed.
+ *
+ * ONLY COMPLETED DAYS, which means nothing from today. Review of 2026-09-23
+ * measured why: the 06:30 rebuild carries yesterday, so before school today's
+ * only rows are absences entered ahead of time (two children, every school day
+ * to 2026-10-09) and today would count as a school day those two "missed"; the
+ * 12:30 rebuild carries a half-taken today, in which every afternoon period
+ * not yet reached reads as unrecorded and every absence as partial. So the
+ * window ends at the last COMPLETE day: the day before today, and the day
+ * before the latest rebuild's own date too -- before the morning rebuild has
+ * run, yesterday itself is still the lunchtime snapshot. `through` says which
+ * day that was, so the screen can say so.
+ *
+ * NUMBERS ONLY, NO NAMES, like schoolAttendance: the browser holds the roster
+ * and adds them. Same gate: admin, superadmin, PBIS.
+ */
+export const absenceWindow = query({
+  args: {
+    /** "YYYY-MM-DD", inclusive. */
+    from: v.string(),
+    /** "YYYY-MM-DD", inclusive. Clamped to `today`. */
+    to: v.string(),
+    /** The browser's calendar day. Nothing after it is read. */
+    today: v.string(),
+  },
+  handler: async (ctx, { from, to, today }) => {
+    const staff = await requireStaff(ctx);
+    const refuse = (reason: string) => ({
+      allowed: false as const, reason, from: null as string | null, to: null as string | null,
+      through: null as string | null,
+      schoolDays: [] as string[], rows: [] as Array<{ studentNumber: string; split: AbsenceSplit }>,
+      truncated: false, lastSyncedAt: null as string | null,
+    });
+    if (!ATTENDANCE_ROLES.includes(staff.role)) {
+      return refuse(
+        "The attendance list is limited to administrators and the PBIS team. " +
+        "Ask an administrator to set your access level to PBIS Team.");
+    }
+    const ISO = /^\d{4}-\d{2}-\d{2}$/;
+    const a = String(from || "").slice(0, 10);
+    const b0 = String(to || "").slice(0, 10);
+    const t = String(today || "").slice(0, 10);
+    if (!ISO.test(a) || !ISO.test(b0) || !ISO.test(t)) return refuse("That date range could not be read.");
+    const dayBefore = (iso: string) => {
+      const d = new Date(Date.parse(iso + "T00:00:00Z") - 86400000);
+      return d.toISOString().slice(0, 10);
+    };
+    // The latest rebuild. Every row of the day table is rewritten by each
+    // rebuild, so any row carries its time.
+    const anyDay = await ctx.db.query("psAbsenceDayTotals").first();
+    const syncDate = anyDay && typeof anyDay.syncedAt === "string" && ISO.test(anyDay.syncedAt.slice(0, 10))
+      ? anyDay.syncedAt.slice(0, 10) : null;
+    let through = dayBefore(t);
+    if (syncDate && dayBefore(syncDate) < through) through = dayBefore(syncDate);
+    const b = b0 < through ? b0 : through;
+    if (a > b) {
+      // No completed day in the window yet -- "this week" on a Monday -- is
+      // empty, not an error.
+      return { allowed: true as const, reason: null, from: a, to: b, through, schoolDays: [] as string[],
+               rows: [] as Array<{ studentNumber: string; split: AbsenceSplit }>, truncated: false,
+               lastSyncedAt: (anyDay && anyDay.syncedAt) || null };
+    }
+    // A MONTH IS THE WIDEST THIS SERVES. The year has its own precomputed path;
+    // a longer window here would be the read-limit problem psAbsenceTotals
+    // exists to avoid.
+    const spanDays = (Date.parse(b + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / 86400000;
+    if (!(spanDays <= 62)) return refuse("That range is longer than two months; use Year to date.");
+
+    const CAP = 4000;
+    const raw = await ctx.db.query("psAttendanceDays")
+      .withIndex("by_date", (q) => q.gte("date", a).lte("date", b))
+      .take(CAP + 1);
+    const truncated = raw.length > CAP;
+    const dayRows = truncated ? raw.slice(0, CAP) : raw;
+
+    const byStudent = new Map<string, AbsenceSplit>();
+    let lastSyncedAt: string | null = null;
+    for (const r of dayRows) {
+      const n = String(r.studentNumber || "");
+      if (!n) continue;
+      let sp = byStudent.get(n);
+      if (!sp) { sp = emptyAbsenceSplit(); byStudent.set(n, sp); }
+      addAbsenceDay(sp, r);
+      const s = typeof r.syncedAt === "string" ? r.syncedAt : null;
+      if (s && (!lastSyncedAt || s > lastSyncedAt)) lastSyncedAt = s;
+    }
+
+    const dayTotals = await ctx.db.query("psAbsenceDayTotals")
+      .withIndex("by_date", (q) => q.gte("date", a).lte("date", b))
+      .take(100);
+    const schoolDays = dayTotals.map((d) => String(d.date).slice(0, 10))
+      .filter((d) => ISO.test(d)).sort();
+
+    return {
+      allowed: true as const, reason: null, from: a, to: b, through, schoolDays,
+      rows: [...byStudent.entries()].map(([studentNumber, split]) => ({ studentNumber, split })),
+      truncated, lastSyncedAt,
     };
   },
 });
