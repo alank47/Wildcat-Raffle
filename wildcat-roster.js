@@ -1870,6 +1870,85 @@
     }).filter(function (p) { return p.value !== null && !(policy === 'drop' && p.flag); });
   }
 
+  /**
+   * SAME WEEK LAST YEAR, for each point: last year's rate over the same
+   * calendar weeks, 52 weeks earlier. 364 days, not a year, so a Monday stays
+   * a Monday and the seasons line up -- this September against last
+   * September, this Thanksgiving week against last Thanksgiving week. A
+   * point whose matching weeks had no school last year (a break that fell
+   * differently) gets no comparison rather than an invented one.
+   *
+   * A LINE TO LOOK AT, NEVER A BASELINE. The owner chose (2026-09-24) that no
+   * signal rule reads it: warnings come from one normal only, so the chart
+   * never says "better" and "worse" about the same week.
+   */
+  function runLastYearWeekly(rows, series, points, settings, onlyYear) {
+    var days = runSeriesDays(rows, series, settings);
+    return (points || []).map(function (p) {
+      // THE NEWEST YEAR ONLY. With three years on the chart, 2026-27 would
+      // otherwise be compared with 2025-26 as well, and those forty weeks
+      // would drown the few that the sentence is about (found in review).
+      if (onlyYear !== undefined && onlyYear !== null && p.yearid !== onlyYear) return null;
+      var start = shiftDays(weekOf(p.from), -364);
+      var end = shiftDays(weekOf(p.to), 6 - 364);
+      var md = 0, full = 0, n = 0;
+      days.forEach(function (d) {
+        if (d.yearid !== p.yearid - 1 || d.date < start || d.date > end) return;
+        md += d.members; full += d.full; n++;
+      });
+      return md ? { key: p.key, x: p.x, value: Math.round((1 - full / md) * 1000) / 10, schoolDays: n, from: start, to: end } : null;
+    });
+  }
+
+  /**
+   * The same, by month: this October against last October.
+   *
+   * ONLY LIKE AGAINST LIKE. A month flagged short on either side is not
+   * compared: August had 12 school days last year and 14 this year, and
+   * "days absent per student" grows with the days in the month, so the same
+   * daily attendance read as "worse" (found in review). For that measure the
+   * comparison is also put on this month's footing -- last year's absence
+   * per student-day, times this month's enrolled days per student -- so a
+   * 21-day month is not judged against a 20-day one. The chronic share is
+   * already relative to each student's own days.
+   */
+  function runLastYearMonthly(months, series, measure, points, days, today, onlyYear) {
+    var prev = runMonthly(months, series, measure === 'monthlyChronic' ? 'chronic' : 'avgAbsent', 'merge', today, days);
+    var by = {};
+    prev.forEach(function (q) { by[q.key + '|' + q.yearid] = q; });
+    return (points || []).map(function (p) {
+      if (onlyYear !== undefined && onlyYear !== null && p.yearid !== onlyYear) return null;
+      var q = by[(Number(p.key.slice(0, 4)) - 1) + p.key.slice(4) + '|' + (p.yearid - 1)];
+      if (!q || q.flag || p.flag) return null;
+      var value = q.value;
+      if (measure === 'monthlyAvgAbsent' && q.students && q.memberDays && p.students && p.memberDays) {
+        value = Math.round(q.full / q.memberDays * (p.memberDays / p.students) * 100) / 100;
+      }
+      return { key: p.key, x: p.x, value: value, raw: q.value, from: q.from, to: q.to, adjusted: value !== q.value };
+    });
+  }
+
+  /**
+   * The plain sentence: how many of this year's periods beat the same period
+   * last year, and by how much on average. "Better" follows the measure:
+   * higher is better for the attendance rate, lower for days absent and for
+   * the chronic share.
+   */
+  function runVsLastYear(points, ghost, measure) {
+    var m = RATE_MEASURES[measure] || RATE_MEASURES.weeklyRate;
+    var n = 0, better = 0, worse = 0, same = 0, sum = 0;
+    (points || []).forEach(function (p, i) {
+      var g = ghost && ghost[i];
+      if (!g) return;
+      var d = Number(p.value) - Number(g.value);
+      n++; sum += d;
+      if (Math.abs(d) < 1e-9) same++;
+      else if ((d > 0) === m.higherIsBetter) better++;
+      else worse++;
+    });
+    return n ? { n: n, better: better, worse: worse, same: same, avgDiff: Math.round(sum / n * 100) / 100 } : null;
+  }
+
   /** Median absolute deviation, for the astronomical-point prompt. */
   function medianAbsDev(values, med) {
     return runChartMedian((values || []).map(function (v) { return Math.abs(v - med); }));
@@ -1901,11 +1980,13 @@
    * Iglewicz-Hoaglin cut-off), and the screen says to ask what happened that
    * week before believing it.
    *
-   * `candidate` (optional) is a range someone is thinking of freezing: the
-   * answer then says whether THOSE points are signal-free, which is the
-   * condition for freezing them.
+   * `opts.scopeFrom` (optional, used only while nothing is frozen): read the
+   * median and every rule from that date on. The owner chose on 2026-09-24
+   * that THIS school year is its own normal, and that last year is a
+   * comparison to look at -- so last year's points are drawn but not tested,
+   * exactly as points before a frozen baseline are not.
    */
-  function runChartAnalysis(points, baseline) {
+  function runChartAnalysis(points, baseline, opts) {
     if (baseline && !isFinite(Number(baseline.median))) baseline = null;
     var pts = (points || []).filter(function (p) { return p && isFinite(Number(p.value)); });
     var frozen = !!(baseline && isFinite(Number(baseline.median)));
@@ -1916,13 +1997,15 @@
     var base = frozen
       ? pts.filter(function (p) { return p.from >= baseline.from && p.from <= baseline.to; })
       : pts;
-    var median = frozen ? Number(baseline.median) : runChartMedian(pts.map(function (p) { return p.value; }));
     // A FROZEN MEDIAN IS CARRIED FORWARD, NEVER BACK. Points before the
     // baseline began are drawn for context but not tested against it: after
     // a re-baseline on a better year, the old year would otherwise read as a
-    // "shift below" that is only the reason the baseline was moved.
+    // "shift below" that is only the reason the baseline was moved. With
+    // nothing frozen, `opts.scopeFrom` draws the same line (see above).
+    var from = frozen ? baseline.from : (opts && opts.scopeFrom) || null;
     var start = 0;
-    if (frozen) { start = pts.findIndex(function (p) { return p.from >= baseline.from; }); if (start < 0) start = pts.length; }
+    if (from) { start = pts.findIndex(function (p) { return p.from >= from; }); if (start < 0) start = pts.length; }
+    var median = frozen ? Number(baseline.median) : runChartMedian(pts.slice(start).map(function (p) { return p.value; }));
     var series = pts.slice(start).map(function (p) { return { date: p.key, value: Number(p.value) }; });
     var all = runChartSignals(series, { median: median });
     var shift = function (sp) { return Object.assign({}, sp, { from: sp.from + start, to: sp.to + start }); };
@@ -1932,14 +2015,15 @@
 
     // Against the points' OWN centre, not the frozen median: the question is
     // "far from the rest", and a real, lasting improvement would otherwise
-    // make every later point look like a freak.
-    var vals = pts.map(function (p) { return Number(p.value); });
+    // make every later point look like a freak. Over the points being read.
+    var tested = pts.slice(start);
+    var vals = tested.map(function (p) { return Number(p.value); });
     var centre = runChartMedian(vals);
     var mad = medianAbsDev(vals, centre);
     var astronomical = [];
     if (mad && mad > 0) {
-      pts.forEach(function (p, i) {
-        if (Math.abs(0.6745 * (Number(p.value) - centre) / mad) > 3.5) astronomical.push(i);
+      tested.forEach(function (p, i) {
+        if (Math.abs(0.6745 * (Number(p.value) - centre) / mad) > 3.5) astronomical.push(i + start);
       });
     }
     var signals = all.signals.filter(function (s) { return s.rule !== 'runs'; });
@@ -1955,8 +2039,10 @@
     var flagged = pts.map(function (p, i) { return p.flag ? i : -1; }).filter(function (i) { return i >= 0; });
     return {
       median: median, frozen: frozen,
-      status: frozen ? 'frozen' : (pts.length >= 10 ? 'provisional' : 'too-few'),
-      baselinePoints: base.length, beforeBaseline: start,
+      status: frozen ? 'frozen' : (pts.length - start >= 10 ? 'provisional' : 'too-few'),
+      baselinePoints: base.length, beforeBaseline: frozen ? start : 0,
+      // How many points at the start are drawn but not read, and why.
+      notTested: start, scope: frozen ? 'baseline' : (start ? 'year' : 'all'),
       shifts: all.shifts, trends: all.trends, astronomical: astronomical, flaggedDenominator: flagged,
       runs: runsOn.runs, runsLimits: runsOn.runsLimits, runsVerdict: runsOn.runsVerdict,
       runsApproximate: runsOn.runsApproximate === true,
@@ -1999,6 +2085,10 @@
         : runMonthly(months, sr, measure === 'monthlyChronic' ? 'chronic' : 'avgAbsent', policy, o.today, days);
     };
 
+    // THIS SCHOOL YEAR IS ITS OWN NORMAL (the owner, 2026-09-24): while
+    // nothing is frozen, the median and the rules read the newest year only.
+    var newest = -Infinity;
+    var firstOfNewest = null;
     // ONE TIME AXIS for every line, so a week sits at the same x on all three.
     var keyset = {};
     var series = shown.map(function (sr) {
@@ -2008,7 +2098,7 @@
       ((res && res.baselines) || []).forEach(function (b) {
         if (b && b.measure === measure && b.series === sr) baseline = b;
       });
-      var analysis = runChartAnalysis(pts, baseline);
+      var analysis = null;          // read below, once the newest year is known
       var cand = null;
       if (o.candidate && o.candidate.from && o.candidate.to) {
         var cpts = pts.filter(function (p) { return p.from >= o.candidate.from && p.from <= o.candidate.to; });
@@ -2033,6 +2123,22 @@
     var indexOf = {};
     axis.forEach(function (a, i) { indexOf[a.key] = i; });
     series.forEach(function (s) { s.points.forEach(function (p) { p.x = indexOf[p.key]; }); });
+    // THE NEWEST YEAR COMES FROM THE DATA, not from the finished points. In
+    // August the new year has days but no finished week yet; taken from the
+    // points, "this year" silently became LAST year, and last year's warnings
+    // and a countdown about the wrong year came back (found in review). When
+    // this year has nothing finished, nothing is tested yet.
+    days.forEach(function (d) { if (d && d.yearid > newest) newest = d.yearid; });
+    months.forEach(function (d) { if (d && d.yearid > newest) newest = d.yearid; });
+    axis.forEach(function (a) { if (a.yearid > newest) newest = a.yearid; });
+    axis.forEach(function (a) { if (a.yearid === newest && firstOfNewest === null) firstOfNewest = a.from; });
+    series.forEach(function (s) {
+      s.analysis = runChartAnalysis(s.points, s.baseline, { scopeFrom: firstOfNewest || '9999-12-31' });
+      s.lastYear = measure === 'weeklyRate'
+        ? runLastYearWeekly(days, s.series, s.points, o.settings, newest)
+        : runLastYearMonthly(months, s.series, measure, s.points, days, o.today, newest);
+      s.vsLastYear = runVsLastYear(s.points, s.lastYear, measure);
+    });
 
     // WHERE A SCHOOL YEAR TURNS OVER: drawn as a line, because the summer is
     // not on the chart and two adjacent points can be ten weeks apart.
@@ -2072,7 +2178,14 @@
         if (!monthsBy[y][mo] && mo.slice(5) !== '07') missingMonths.push(mo);
       }
     });
+    // The same measure LAST year under the same short-period setting: how
+    // many points a whole year gives, which the countdown needs (under
+    // "leave off", last year's monthly chart had only 7 -- a tenth month
+    // may never come).
+    var lastYearPoints = axis.filter(function (a) { return a.yearid === newest - 1; });
     return {
+      newestYear: isFinite(newest) ? newest : null, newestFrom: firstOfNewest,
+      lastYearAxis: lastYearPoints,
       shortPeriods: shortPeriods, missingMonths: missingMonths,
       pendingWeeks: groups ? (groups.pending || 0) : 0,
       measure: measure, meta: RATE_MEASURES[measure], policy: policy,
@@ -2126,6 +2239,9 @@
     runWeeklyRate: runWeeklyRate,
     runMonthly: runMonthly,
     runChartAnalysis: runChartAnalysis,
+    runLastYearWeekly: runLastYearWeekly,
+    runLastYearMonthly: runLastYearMonthly,
+    runVsLastYear: runVsLastYear,
     RATE_MEASURES: RATE_MEASURES,
     runRateModel: runRateModel,
     rateSignalReading: rateSignalReading,

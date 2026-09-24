@@ -9778,6 +9778,14 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 .wc-ar-addnote input[type="text"] { flex: 1 1 200px; }
 .wc-ar-tip-sub td { font-weight: 400; font-size: 11px; color: var(--wc-gray-text, #6b7280); text-align: left; padding-bottom: 3px; }
 .wc-ar-card .wc-sub { color: var(--wc-gray-text, #6b7280); }
+/* Same week last year: a comparison, drawn quieter than anything the rules
+   read -- thin, dashed, faded -- so it never competes with this year's line. */
+.wc-ar-ghost { fill: none; stroke: var(--ar); stroke-width: 1.25; stroke-dasharray: 3 3; opacity: .45; }
+.wc-ar-ghost-dot { fill: var(--ar); opacity: .45; }
+.wc-ar-ghost-key { background: repeating-linear-gradient(90deg, #6b7280 0 3px, transparent 3px 6px); height: 2px; }
+.wc-ar-vs { margin: 4px 0 8px; font-size: 13px; color: var(--wc-gray-text, #4b5563); }
+.wc-ar-countdown { margin: 6px 0; padding: 8px 10px; border-left: 4px solid var(--wc-blue, #2563eb);
+  border-radius: 6px; background: #eff6ff; font-size: 13px; color: var(--wc-ink, #111827); }
 /* ON A PHONE THE CHART KEEPS A READABLE SIZE and scrolls inside its own card:
    squeezed to 340px its labels are 4px tall. The PAGE never scrolls sideways. */
 @media (max-width: 640px) {

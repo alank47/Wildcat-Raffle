@@ -31360,6 +31360,9 @@
         // off, never merged -- see runMonthly for why.
         let _arMonthDrop = false;
         let _arShown = { all: true, '6-8': true, '9-12': true };
+        // The faint "same week last year" lines: a comparison to look at,
+        // never read by the warning rules (the owner's choice, 2026-09-24).
+        let _arGhost = true;
         // The range offered as a baseline, { from, to } as period start dates.
         // null means "the default": all of last school year when it has ten
         // points, otherwise everything on the chart.
@@ -31432,6 +31435,11 @@
             renderAttendanceRate();
         }
 
+        function toggleAttendanceRateGhost() {
+            _arGhost = !_arGhost;
+            renderAttendanceRate();
+        }
+
         function toggleAttendanceRateSeries(key) {
             if (!Object.prototype.hasOwnProperty.call(_arShown, key)) return;
             _arShown[key] = !_arShown[key];
@@ -31493,20 +31501,26 @@
         }
 
         /**
-         * The default baseline range: all of the earliest school year on the
-         * chart when it has ten points, otherwise every point.
+         * The default baseline range: THIS school year, every finished period
+         * so far -- even under ten, so the panel can count down to ten.
          *
-         * WHY LAST YEAR. A baseline should describe how things were before
-         * whatever is being judged, and it should contain a whole year's
-         * ordinary ups and downs -- the holiday weeks, the spring slump -- so
-         * that none of them is later mistaken for a change.
+         * WHY THIS YEAR, NOT LAST (the owner's choice, 2026-09-24). Last year
+         * was not stable -- eight weeks above its median in the fall, six
+         * below in the spring -- and the school is half again as big, so it
+         * makes a poor yardstick. This year becomes its own normal once it
+         * has ten weeks; last year stays on the chart as a comparison line.
+         * Any other range can still be picked by hand.
          */
-        function arDefaultRange(axis) {
+        function arDefaultRange(axis, newestYear) {
             if (!axis || !axis.length) return null;
-            const first = axis[0].yearid;
-            const year = axis.filter(a => a.yearid === first);
-            const pick = year.length >= 10 ? year : axis;
-            return { from: pick[0].from, to: pick[pick.length - 1].from };
+            const newest = (newestYear !== undefined && newestYear !== null)
+                ? newestYear : axis.reduce((m, a) => (a.yearid > m ? a.yearid : m), -Infinity);
+            const year = axis.filter(a => a.yearid === newest);
+            // NEVER FALL BACK TO LAST YEAR: in August this year has nothing
+            // finished, and offering last year to freeze is the one thing
+            // option C set out not to do.
+            if (!year.length) return null;
+            return { from: year[0].from, to: year[year.length - 1].from };
         }
 
         /**
@@ -31523,7 +31537,7 @@
             const shownKeys = AR_SERIES.filter(s => st.shown[s.key]).map(s => s.key);
             const base = { measure: measure, policy: st.policy, series: shownKeys, settings: st.settings, today: st.today };
             const first = R.runRateModel(res, Object.assign({}, base, { candidate: null }));
-            const cand = st.cand && st.cand.from && st.cand.to ? st.cand : arDefaultRange(first.axis);
+            const cand = st.cand && st.cand.from && st.cand.to ? st.cand : arDefaultRange(first.axis, first.newestYear);
             const model = R.runRateModel(res, Object.assign({}, base, { candidate: cand }));
             model.candidateRange = cand;
             const meta = model.meta;
@@ -31537,6 +31551,12 @@
                     + ' onchange="toggleAttendanceRateSeries(\'' + s.key + '\')">'
                     + '<span class="wc-ar-swatch ' + s.cls + '"></span>' + escapeHtml(s.label) + '</label>').join('')
                 + '</div>';
+            const hasGhost = model.series.some(s => (s.lastYear || []).some(Boolean));
+            if (hasGhost) {
+                html += '<label class="wc-ar-toggle"><input type="checkbox"' + (st.ghost ? ' checked' : '')
+                    + ' onchange="toggleAttendanceRateGhost()"><span class="wc-ar-swatch wc-ar-ghost-key"></span>'
+                    + escapeHtml('Same ' + meta.period + ' last year') + '</label>';
+            }
             if (measure === 'weeklyRate') {
                 html += '<label class="wc-ar-policy">Short weeks '
                     + '<select onchange="setAttendanceRatePolicy(this.value)" aria-label="What to do with short weeks">'
@@ -31572,6 +31592,7 @@
             model.series.forEach(s => {
                 s.points.forEach(p => vals.push(Number(p.value)));
                 if (s.analysis.median !== null) vals.push(Number(s.analysis.median));
+                if (st.ghost) (s.lastYear || []).forEach(g => { if (g) vals.push(Number(g.value)); });
             });
             let lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
             const unitPad = measure === 'monthlyAvgAbsent' ? 0.1 : 1;
@@ -31648,8 +31669,26 @@
                         svg += '<line x1="' + f1(bx0) + '" y1="' + my + '" x2="' + f1(bx1) + '" y2="' + my + '" class="wc-ar-median wc-ar-frozen ' + info.cls + '"/>'
                             + '<line x1="' + f1(bx1) + '" y1="' + my + '" x2="' + (W - Rr) + '" y2="' + my + '" class="wc-ar-median wc-ar-extended ' + info.cls + '"/>';
                     } else {
-                        svg += '<line x1="' + L + '" y1="' + my + '" x2="' + (W - Rr) + '" y2="' + my + '" class="wc-ar-median wc-ar-provisional ' + info.cls + '"/>';
+                        // Only over the points it was read from: this year,
+                        // while this year is becoming its own normal.
+                        const sx = a.notTested && s.points[a.notTested] ? x(s.points[a.notTested].x) : L;
+                        svg += '<line x1="' + f1(sx) + '" y1="' + my + '" x2="' + (W - Rr) + '" y2="' + my + '" class="wc-ar-median wc-ar-provisional ' + info.cls + '"/>';
                     }
+                }
+                // SAME WEEK LAST YEAR: faint, dashed, thin, and drawn under the
+                // line it compares with. Broken wherever last year had no
+                // matching week, rather than joined across the gap.
+                if (st.ghost && s.lastYear) {
+                    let gd = '', prevOk = false;
+                    s.lastYear.forEach((g, gi) => {
+                        const prevPt = s.points[gi - 1];
+                        if (prevPt && prevPt.yearid !== s.points[gi].yearid) prevOk = false;
+                        if (!g) { prevOk = false; return; }
+                        gd += (prevOk ? 'L' : 'M') + f1(x(g.x)) + ' ' + f1(y(g.value)) + ' ';
+                        svg += '<circle cx="' + f1(x(g.x)) + '" cy="' + f1(y(g.value)) + '" r="2" class="wc-ar-ghost-dot ' + info.cls + '"/>';
+                        prevOk = true;
+                    });
+                    if (gd) svg += '<path d="' + gd.trim() + '" class="wc-ar-ghost ' + info.cls + '"/>';
                 }
                 // THE LINE BREAKS OVER THE SUMMER: the two points either side
                 // are ten weeks apart, and joining them would draw a change
@@ -31717,13 +31756,16 @@
                 const info = arSeriesInfo(s.series);
                 const a = s.analysis;
                 const how = a.frozen ? 'frozen median'
+                    : a.median === null ? 'no finished ' + meta.period + ' this year yet'
                     : a.status === 'provisional' ? 'median so far (not frozen)'
                     : 'median so far, from fewer than 10 points';
                 return '<li><span class="wc-ar-swatch ' + info.cls + '"></span><strong>' + escapeHtml(info.label)
-                    + '</strong> ' + escapeHtml(how + ' ' + arFmt(a.median, measure)) + '</li>';
+                    + '</strong> ' + escapeHtml(a.median === null ? how : how + ' ' + arFmt(a.median, measure)) + '</li>';
             }).join('') + '<li class="wc-ar-legend-key">' + escapeHtml(
                 'Haloed points: part of a signal. Gold ring: far from the rest. Hollow: a short '
-                + meta.period + '. Numbers at the top: dates marked below.') + '</li></ul>';
+                + meta.period + '. Numbers at the top: dates marked below.'
+                + (hasGhost && st.ghost ? ' Faint dashed line: the same ' + meta.period
+                    + ' last year, for comparison; no warning is read from it.' : '')) + '</li></ul>';
 
             // --- what the chart says, line by line -------------------------
             html += '<h4 class="wc-ar-h">What the chart says</h4>';
@@ -31763,6 +31805,32 @@
                     html += '<p class="wc-att-basis-note">' + escapeHtml(a.beforeBaseline + ' ' + meta.period
                         + (a.beforeBaseline === 1 ? '' : 's') + ' before the baseline began are shown for context and not tested '
                         + 'against it: a frozen median is carried forward, never back.') + '</p>';
+                } else if (!a.frozen && a.notTested) {
+                    html += '<p class="wc-att-basis-note">' + escapeHtml('Read on ' + arYearLabel(model.newestYear)
+                        + ' only: this year is becoming its own normal. Earlier years are drawn for comparison and not tested.')
+                        + '</p>';
+                }
+                const vs = st.ghost ? s.vsLastYear : null;
+                if (vs) {
+                    // A SENTENCE, NOT A SIGNAL: counted and averaged, and styled
+                    // as a note, because no rule reads last year (the owner's
+                    // choice). "Better" follows the measure's direction.
+                    // DECIDED ON THE VALUE AS SHOWN: a difference that prints as
+                    // 0.0 must not be called "higher, which is better".
+                    const places = measure === 'monthlyAvgAbsent' ? 2 : 1;
+                    const shown = Number(Math.abs(vs.avgDiff).toFixed(places));
+                    const moreGood = meta.higherIsBetter ? vs.avgDiff > 0 : vs.avgDiff < 0;
+                    const how = shown === 0 ? 'no different on average'
+                        : measure === 'monthlyAvgAbsent'
+                            ? shown.toFixed(2) + (vs.avgDiff < 0 ? ' fewer' : ' more') + ' days absent per student on average'
+                            : shown.toFixed(1) + ' points ' + (vs.avgDiff > 0 ? 'higher' : 'lower') + ' on average';
+                    const ending = measure === 'weeklyRate' ? '.'
+                        : (measure === 'monthlyAvgAbsent' ? ', allowing for the school days in each month' : '')
+                          + '. Short months are not compared.';
+                    html += '<p class="wc-ar-vs">' + escapeHtml('Against the same ' + meta.period + 's last year: better in '
+                        + vs.better + ' of ' + vs.n + (vs.worse ? ', worse in ' + vs.worse : '') + (vs.same ? ', equal in ' + vs.same : '')
+                        + ' (' + how + (shown === 0 ? '' : moreGood ? ', which is better' : ', which is worse') + ')' + ending)
+                        + '</p>';
                 }
                 if (items.length) {
                     html += '<ul class="wc-rc-signals">' + items.map(it =>
@@ -31793,8 +31861,53 @@
             const fromShown = cand ? (axis.find(p => p.from >= cand.from) || axis[axis.length - 1]).from : null;
             const inTo = cand ? axis.filter(p => p.from <= cand.to) : [];
             const toShown = inTo.length ? inTo[inTo.length - 1].from : (axis[0] && axis[0].from);
-            const opts = (sel) => axis.map(p => '<option value="' + escapeHtml(p.from) + '"' + (p.from === sel ? ' selected' : '') + '>'
+            const opts = (sel) => (sel ? '' : '<option value="" selected>\u2014</option>')
+                + axis.map(p => '<option value="' + escapeHtml(p.from) + '"' + (p.from === sel ? ' selected' : '') + '>'
                 + escapeHtml(arPeriodLabel(p, measure, false)) + '</option>').join('');
+            // THE COUNTDOWN TO THIS YEAR'S OWN NORMAL (option C, 2026-09-24).
+            // Until this year has ten finished periods there is nothing to
+            // freeze; saying how many, and roughly when, means nobody has to
+            // remember to come back and check.
+            const thisYear = axis.filter(p => p.yearid === model.newestYear);
+            // SHOWN WHILE ANY LINE IS STILL WAITING, and says which: freezing
+            // one line used to hide the countdown for the other two.
+            const waiting = model.series.filter(s => !s.baseline);
+            if (model.newestYear !== null && waiting.length && thisYear.length < 10) {
+                const left = 10 - thisYear.length;
+                const who = waiting.length === model.series.length ? ''
+                    : ' (for ' + waiting.map(s => arSeriesInfo(s.series).label).join(' and ') + ')';
+                let tail;
+                if (measure === 'weeklyRate') {
+                    let when = '';
+                    const last = thisYear.length ? thisYear[thisYear.length - 1].to : null;
+                    const base = new Date(String(last || model.newestFrom || '') + 'T12:00:00');
+                    if (last && !isNaN(base.getTime())) {
+                        base.setDate(base.getDate() + 7 * left);
+                        when = base.toLocaleDateString(undefined, { month: 'long', day: 'numeric' });
+                    }
+                    tail = ': about ' + left + ' more' + (when ? ' (around ' + when + ')' : '') + '.';
+                } else {
+                    // HONEST FOR MONTHS. A school year has about ten months, and
+                    // with short months left off, fewer: last year gave only
+                    // seven, so under that setting a tenth may never come. The
+                    // estimate is last year's own tenth month, a year on.
+                    const ly = model.lastYearAxis || [];
+                    if (ly.length && ly.length < 10) {
+                        tail = ', but with short months left off last year had only ' + ly.length + ', so this year will '
+                            + 'probably not reach 10. The weekly chart gets there first.';
+                    } else if (ly.length >= 10) {
+                        const d = new Date(String(ly[9].from) + 'T12:00:00');
+                        d.setDate(1);
+                        d.setFullYear(d.getFullYear() + 1);
+                        tail = ': about ' + left + ' more (around ' + d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) + ').';
+                    } else {
+                        tail = ': about ' + left + ' more.';
+                    }
+                }
+                html += '<p class="wc-ar-countdown">' + escapeHtml(arYearLabel(model.newestYear) + ' has '
+                    + (thisYear.length ? thisYear.length : 'no') + ' finished ' + meta.period + (thisYear.length === 1 ? '' : 's')
+                    + (thisYear.length ? '' : ' yet') + '. Its own normal can be frozen at 10' + who + tail) + '</p>';
+            }
             html += '<div class="wc-ar-range">'
                 + '<label>From <select onchange="setAttendanceRateCandidate(\'from\', this.value)">' + opts(fromShown) + '</select></label>'
                 + '<label>to <select onchange="setAttendanceRateCandidate(\'to\', this.value)">' + opts(toShown) + '</select></label>'
@@ -31927,11 +32040,14 @@
                         : measure === 'monthlyChronic'
                             ? (pt.chronic + ' of ' + pt.students + ' students')
                             : (pt.full + ' whole days, ' + pt.students + ' students');
+                    const gi = pt ? s.points.indexOf(pt) : -1;
+                    const g = _arGhost && gi >= 0 && s.lastYear ? s.lastYear[gi] : null;
                     return '<tr><th><span class="wc-ar-swatch ' + arSeriesInfo(s.series).cls + '"></span>'
                         + escapeHtml(arSeriesInfo(s.series).label) + '</th><td>'
                         + escapeHtml(pt ? arFmt(pt.value, measure) : '—') + '</td></tr>'
                         + (pt ? '<tr class="wc-ar-tip-sub"><td colspan="2">' + escapeHtml(detail
-                            + (side ? ', ' + (side === 'on' ? 'on' : side) + ' the median' : '')) + '</td></tr>' : '');
+                            + (side ? ', ' + (side === 'on' ? 'on' : side) + ' the median' : '')
+                            + (g ? '. Same ' + m.meta.period + ' last year: ' + arFmt(g.value, measure) : '')) + '</td></tr>' : '');
                 }).join('');
                 const ref = (m.series[0] && m.series[0].points.find(q => q.x === i)) || null;
                 const extra = [];
@@ -31999,7 +32115,7 @@
             const out = renderAttendanceRateBody(res, R, {
                 measure: _arMeasure,
                 policy: _arMeasure === 'weeklyRate' ? _arPolicy : (_arMonthDrop ? 'drop' : 'merge'),
-                shown: _arShown, cand: _arCand,
+                shown: _arShown, cand: _arCand, ghost: _arGhost,
                 settings: riskSettings, today: arAsOf(res, realToday), realToday: realToday
             });
             _arModel = out.model;

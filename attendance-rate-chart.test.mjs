@@ -478,6 +478,95 @@ console.log("\nTHE SCREEN'S MODEL: CANDIDATE BASELINES, NOTES, YEARS\n");
 }
 
 // ---------------------------------------------------------------------------
+console.log("\nOPTION C, AND THE SAME WEEK LAST YEAR (the owner, 2026-09-24)\n");
+{
+  // Last year and this year, flat weeks; this year slightly better.
+  const rows = [];
+  const add = (yearid, mon, perDay) => schoolDates(mon, 5).forEach((d) => rows.push(row(yearid, d, "6-8", 100, perDay)));
+  ["2025-08-18", "2025-08-25", "2025-09-01", "2025-09-08", "2025-09-15", "2025-09-22"].forEach((m) => add(35, m, 10));
+  ["2025-10-06", "2025-10-13", "2025-10-20", "2025-10-27", "2025-11-03", "2025-11-10"].forEach((m) => add(35, m, 14));
+  ["2026-08-17", "2026-08-24", "2026-08-31", "2026-09-07", "2026-09-14"].forEach((m) => add(36, m, 8));
+  const res = { days: rows, months: [], baselines: [], annotations: [] };
+  const opt = { measure: "weeklyRate", policy: "merge", series: ["6-8"], settings: {}, today: "2026-09-23" };
+  const m = R.runRateModel(res, opt);
+  const s0 = m.series[0];
+  const wk = (k) => s0.points.findIndex((p) => p.key === k);
+  check("the same week last year is 52 weeks back, Monday to Monday (Sep 14 2026 <- Sep 15 2025)",
+    s0.lastYear[wk("2026-09-14")].from === "2025-09-15" && s0.lastYear[wk("2026-09-14")].value === 90);
+  check("this year's week reads 92.0%, last year's same week 90.0%", s0.points[wk("2026-09-14")].value === 92);
+  check("last year's own points have no 'last year' (there is no 2024-25 on the chart)",
+    s0.points.filter((p) => p.yearid === 35).every((p) => s0.lastYear[s0.points.indexOf(p)] === null));
+  check("the plain comparison: better in 5 of 5, 2 points higher on average",
+    s0.vsLastYear.n === 5 && s0.vsLastYear.better === 5 && s0.vsLastYear.avgDiff === 2, JSON.stringify(s0.vsLastYear));
+  // A week with no school at the same point last year gets NO comparison.
+  const gapRes = { days: rows.filter((r) => !(r.yearid === 35 && r.date >= "2025-09-15" && r.date <= "2025-09-19")), months: [], baselines: [], annotations: [] };
+  const g2 = R.runRateModel(gapRes, opt).series[0];
+  check("a week whose match last year had no school gets no comparison, not an invented one",
+    g2.lastYear[g2.points.findIndex((p) => p.key === "2026-09-14")] === null && g2.vsLastYear.n === 4);
+  check("for days absent and the chronic share, LOWER is better",
+    R.runVsLastYear([{ value: 1.5 }], [{ value: 2 }], "monthlyAvgAbsent").better === 1
+      && R.runVsLastYear([{ value: 40 }], [{ value: 30 }], "monthlyChronic").worse === 1);
+  const mm = R.runLastYearMonthly(
+    [{ yearid: 35, month: "2025-09", band: "6-8", students: 100, memberDays: 2000, fullDayAbsences: 150, chronicStudents: 20 },
+     { yearid: 36, month: "2026-09", band: "6-8", students: 100, memberDays: 2000, fullDayAbsences: 100, chronicStudents: 10 }],
+    "6-8", "monthlyChronic", [{ key: "2026-09", yearid: 36, x: 0, value: 10 }], null, "2026-10-05");
+  check("by month: this September against last September", mm[0] && mm[0].value === 20);
+  // Like against like: a month flagged short on either side is not compared,
+  // and days absent is put on this month's footing.
+  const dayRowsFor = (yearid, month, n, members, perDay) => schoolDates(month + "-01", n).filter((d) => d.startsWith(month))
+    .map((d) => row(yearid, d, "6-8", members, perDay));
+  const lyDays = dayRowsFor(35, "2025-10", 21, 100, 5), tyDays = dayRowsFor(36, "2026-10", 20, 100, 5);
+  const mRows2 = [
+    { yearid: 35, month: "2025-10", band: "6-8", students: 100, memberDays: 100 * lyDays.length, fullDayAbsences: 5 * lyDays.length, chronicStudents: 30 },
+    { yearid: 36, month: "2026-10", band: "6-8", students: 100, memberDays: 100 * tyDays.length, fullDayAbsences: 5 * tyDays.length, chronicStudents: 30 },
+  ];
+  const thisOct = R.runMonthly(mRows2, "6-8", "avgAbsent", "merge", "2026-11-05", lyDays.concat(tyDays)).filter((p) => p.yearid === 36);
+  thisOct.forEach((p) => { p.x = 0; });
+  const cmp = R.runLastYearMonthly(mRows2, "6-8", "monthlyAvgAbsent", thisOct, lyDays.concat(tyDays), "2026-11-05", 36);
+  check("the SAME daily absence in a " + lyDays.length + "-day and a " + tyDays.length + "-day October compares as equal, not 'worse'",
+    cmp[0] && cmp[0].value === thisOct[0].value && cmp[0].adjusted === true, JSON.stringify([cmp[0], thisOct[0] && thisOct[0].value]));
+  const shortAug = R.runLastYearMonthly(
+    [{ yearid: 35, month: "2025-08", band: "6-8", students: 100, memberDays: 1200, fullDayAbsences: 60, chronicStudents: 10 },
+     { yearid: 36, month: "2026-08", band: "6-8", students: 100, memberDays: 1400, fullDayAbsences: 70, chronicStudents: 10 }],
+    "6-8", "monthlyChronic", [{ key: "2026-08", yearid: 36, x: 0, value: 10, flag: "short" }], null, "2026-09-24", 36);
+  check("a short month (August) is not compared with anything", shortAug[0] === null);
+
+  // OPTION C: while nothing is frozen, only this school year is read.
+  check("the median is this year's alone (92.0%), not both years mixed", s0.analysis.median === 92 && s0.analysis.notTested === 12);
+  check("last year's points are drawn but not tested, and it says which year is read",
+    s0.analysis.scope === "year" && m.newestYear === 36);
+  // THE TEETH: last year can NEVER raise a warning. Make last year wild --
+  // a crash, a climb, a freak week -- and this year's reading must not move.
+  const wild = rows.map((r) => r.yearid === 35 ? Object.assign({}, r, { fullDaysStrict: (Number(r.date.slice(8)) * 3) % 50, absentDays: (Number(r.date.slice(8)) * 3) % 50 }) : r);
+  const w = R.runRateModel(Object.assign({}, res, { days: wild }), opt).series[0];
+  check("changing last year changes NOTHING this year's warnings read (median, shifts, trends, runs, astronomical)",
+    w.analysis.median === s0.analysis.median && JSON.stringify(w.analysis.shifts) === JSON.stringify(s0.analysis.shifts)
+      && JSON.stringify(w.analysis.trends) === JSON.stringify(s0.analysis.trends) && w.analysis.runs === s0.analysis.runs
+      && JSON.stringify(w.analysis.astronomical) === JSON.stringify(s0.analysis.astronomical));
+  check("...while the comparison line DOES change with it (it is drawn from last year)",
+    JSON.stringify(w.lastYear) !== JSON.stringify(s0.lastYear));
+  // SECOND REVIEW (2026-09-24). AUGUST: the new year has days but no
+  // finished week. "This year" must stay the new year -- nothing tested yet --
+  // and never fall back to last year.
+  const aug = rows.filter((r) => r.yearid === 35).concat(["2026-08-12", "2026-08-13", "2026-08-14"].map((d) => row(36, d, "6-8", 100, 8)));
+  const am = R.runRateModel({ days: aug, months: [], baselines: [], annotations: [] }, Object.assign({}, opt, { today: "2026-08-17" }));
+  check("in August, with no finished week yet, 'this year' is still the new year (not last year)", am.newestYear === 36);
+  check("...and NOTHING is tested: no median, no warnings from last year",
+    am.series[0].analysis.median === null && am.series[0].analysis.notTested === am.series[0].points.length
+      && am.series[0].analysis.shifts.length === 0 && am.series[0].analysis.trends.length === 0);
+  // THREE YEARS: only the newest year is compared with the year before it.
+  const three = rows.concat(["2027-08-16", "2027-08-23"].flatMap((mo) => schoolDates(mo, 5).map((d) => row(37, d, "6-8", 100, 5))));
+  const tm = R.runRateModel({ days: three, months: [], baselines: [], annotations: [] }, Object.assign({}, opt, { today: "2027-09-01" })).series[0];
+  check("with three years on the chart, only the newest is compared (2 weeks, not 2 + 5)",
+    tm.vsLastYear.n === 2 && tm.points.filter((p) => p.yearid === 36).every((p) => tm.lastYear[tm.points.indexOf(p)] === null),
+    JSON.stringify(tm.vsLastYear));
+  // A deliberate, frozen baseline still wins over the year scope.
+  const fz = R.runRateModel(Object.assign({}, res, { baselines: [{ measure: "weeklyRate", series: "6-8", from: "2025-08-18", to: "2025-11-10", median: 88 }] }), opt).series[0];
+  check("a frozen baseline (even one from last year) is read from its own start, not from this year's",
+    fz.analysis.frozen && fz.analysis.notTested === 0 && fz.analysis.median === 88);
+}
+
+// ---------------------------------------------------------------------------
 console.log("\nTHE SERVER: WHO MAY CHANGE IT, AND WHAT IT REFUSES\n");
 {
   const body = (name) => dataSrc.slice(dataSrc.indexOf("export const " + name), dataSrc.indexOf("export const", dataSrc.indexOf("export const " + name) + 10) >>> 0 || undefined);
@@ -554,6 +643,10 @@ console.log("\nTHE SCREEN\n");
     ${["arSeriesInfo", "arYearLabel", "arPeriodLabel", "arFmt", "arDefaultRange", "renderAttendanceRateBody"].map(liftFn).join("\n")}
     return renderAttendanceRateBody;`)(R);
   const asOf = new Function(liftFn("arAsOf") + "\nreturn arAsOf;")();
+  const defRange = new Function(liftFn("arDefaultRange") + "\nreturn arDefaultRange;")();
+  check("the default baseline range is THIS school year (option C), even before it has 10 weeks",
+    JSON.stringify(defRange([{ yearid: 35, from: "2025-08-18" }, { yearid: 35, from: "2025-08-25" }, { yearid: 36, from: "2026-08-17" }, { yearid: 36, from: "2026-08-24" }]))
+      === JSON.stringify({ from: "2026-08-17", to: "2026-08-24" }));
   check("'today' is the day of the newest build when that is earlier (a tab left open over a weekend)",
     asOf({ days: [{ syncedAt: "2026-09-25T10:15:00.000Z" }] }, "2026-09-27") === "2026-09-25");
   check("...and the real date when the data is fresh", asOf({ days: [{ syncedAt: "2026-09-27T10:15:00.000Z" }] }, "2026-09-27") === "2026-09-27");
@@ -579,6 +672,64 @@ console.log("\nTHE SCREEN\n");
   check("a frozen median is drawn solid over its baseline and dashed after", /wc-ar-frozen/.test(fr.html) && /wc-ar-extended/.test(fr.html));
   const empty = body({ allowed: true, days: [], months: [], baselines: [], annotations: [] }, R, st);
   check("nothing yet: says the history is built overnight rather than drawing an empty chart", /built overnight/.test(empty.html));
+  // Option C on screen: this year with 5 weeks, last year for comparison.
+  const cRows = [];
+  let cm = "2025-08-18";
+  for (let w = 0; w < 12; w++) { schoolDates(cm, 5).forEach((d) => cRows.push(row(35, d, "6-8", 300, 10 + (w % 3)))); cm = new Date(Date.parse(cm + "T00:00:00Z") + 7 * 86400000).toISOString().slice(0, 10); }
+  ["2026-08-17", "2026-08-24", "2026-08-31", "2026-09-07", "2026-09-14"].forEach((mo) => schoolDates(mo, 5).forEach((d) => cRows.push(row(36, d, "6-8", 300, 9))));
+  const cOut = body({ allowed: true, days: cRows, months: [], baselines: [], annotations: [] }, R,
+    Object.assign({}, st, { ghost: true, shown: { all: true, "6-8": false, "9-12": false } }));
+  check("the countdown says how many weeks this year has and how many more it needs",
+    /2026\u201327 has 5 finished weeks\. Its own normal can be frozen at 10: about 5 more/.test(cOut.html), (cOut.html.match(/wc-ar-countdown">([^<]+)/) || [])[1]);
+  check("the comparison line is drawn, and said to be for looking at only",
+    /class="wc-ar-ghost wc-ar-all"/.test(cOut.html) && /no warning is read from it/.test(cOut.html));
+  check("the plain sentence compares this year with the same weeks last year",
+    /Against the same weeks last year: better in 5 of 5/.test(cOut.html));
+  check("the screen says only this year is being read", /Read on 2026\u201327 only/.test(cOut.html));
+  const noGhost = body({ allowed: true, days: cRows, months: [], baselines: [], annotations: [] }, R,
+    Object.assign({}, st, { ghost: false, shown: { all: true, "6-8": false, "9-12": false } }));
+  check("switching the comparison off hides the line AND the sentence",
+    !/class="wc-ar-ghost /.test(noGhost.html) && !/Against the same weeks last year/.test(noGhost.html));
+  check("...and the hover text reads the same switch", /const g = _arGhost && gi >= 0/.test(script));
+  // One line frozen: the countdown stays for the lines still waiting.
+  const part = body({ allowed: true, days: cRows.concat(cRows.map((r) => Object.assign({}, r, { band: "9-12" }))), months: [], annotations: [],
+    baselines: [{ id: "b", measure: "weeklyRate", series: "6-8", from: "2026-08-17", to: "2026-09-14", median: 97, points: 10, frozenAt: "2026-09-24", frozenBy: "x" }] }, R,
+    Object.assign({}, st, { ghost: true, shown: { all: true, "6-8": true, "9-12": false } }));
+  check("with one line frozen, the countdown stays and names the line still waiting",
+    /wc-ar-countdown">[^<]*\(for Whole school\)/.test(part.html), (part.html.match(/wc-ar-countdown">([^<]+)/) || [])[1]);
+  // August on screen: no finished week, nothing offered to freeze.
+  const augOut = body({ allowed: true, days: cRows.filter((r) => r.yearid === 35).concat(["2026-08-12", "2026-08-13"].map((d) => row(36, d, "6-8", 300, 9))),
+    months: [], baselines: [], annotations: [] }, R, Object.assign({}, st, { today: "2026-08-14", ghost: true }));
+  check("in August the countdown says this year has no finished weeks yet, and last year is not offered to freeze",
+    /2026\u201327 has no finished weeks yet/.test(augOut.html) && !/Freeze this median/.test(augOut.html),
+    (augOut.html.match(/wc-ar-countdown">([^<]+)/) || [])[1]);
+  // MONTHS, SHORT ONES LEFT OFF: last year gave only 5 full months, so the
+  // countdown must not promise a tenth (it used to print a date).
+  const mDays = [], mRowsY = [];
+  const monthDays = { "2025-08": 12, "2025-09": 21, "2025-10": 23, "2025-11": 14, "2025-12": 14, "2026-01": 16, "2026-02": 19,
+    "2026-03": 16, "2026-04": 20, "2026-05": 20, "2026-06": 7 };
+  Object.entries(monthDays).forEach(([mo, n]) => {
+    const ds = schoolDates(mo + "-01", 31).filter((d) => d.startsWith(mo)).slice(0, n);
+    ds.forEach((d) => mDays.push(row(35, d, "6-8", 100, 5)));
+    mRowsY.push({ yearid: 35, month: mo, band: "6-8", students: 100, memberDays: 100 * ds.length, fullDayAbsences: 5 * ds.length, chronicStudents: 30 });
+  });
+  const aug26 = schoolDates("2026-08-12", 14).filter((d) => d.startsWith("2026-08"));
+  aug26.forEach((d) => mDays.push(row(36, d, "6-8", 100, 5)));
+  mRowsY.push({ yearid: 36, month: "2026-08", band: "6-8", students: 100, memberDays: 100 * aug26.length, fullDayAbsences: 5 * aug26.length, chronicStudents: 30 });
+  const mOut = body({ allowed: true, days: mDays, months: mRowsY, baselines: [], annotations: [] }, R,
+    Object.assign({}, st, { measure: "monthlyChronic", policy: "drop", ghost: true, shown: { all: true, "6-8": false, "9-12": false } }));
+  check("months with short ones left off: the countdown says 10 will probably not come, and gives no date",
+    /with short months left off last year had only 5, so this year will probably not reach 10/.test(mOut.html)
+      && !/around (June|July)/.test(mOut.html), (mOut.html.match(/wc-ar-countdown">([^<]+)/) || [])[1]);
+
+  // "0.0 points higher, which is better" must never be printed.
+  const tiny = cRows.map((r) => r.yearid === 36 && r.date === "2026-08-17" ? Object.assign({}, r, { fullDaysStrict: 8, absentDays: 8 }) : r);
+  const tinyRows = tiny.map((r) => r.yearid === 35 ? Object.assign({}, r, { fullDaysStrict: 9, absentDays: 9 }) : r);
+  const tOut = body({ allowed: true, days: tinyRows, months: [], baselines: [], annotations: [] }, R,
+    Object.assign({}, st, { ghost: true, shown: { all: true, "6-8": false, "9-12": false } }));
+  check("a difference that rounds to 0.0 reads 'no different', never 'higher, which is better'",
+    /no different on average/.test(tOut.html) && !/0\.0 points/.test(tOut.html), (tOut.html.match(/wc-ar-vs">([^<]+)/) || [])[1]);
+
   // Axis labels keep the decimals the step needs.
   const labels = [...out.html.matchAll(/class="wc-rc-ylab">([^<]+)</g)].map((m) => m[1]);
   check("axis labels are exact for the step (no '88%' standing for 87.5%)",
