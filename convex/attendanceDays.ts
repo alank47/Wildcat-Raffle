@@ -32,14 +32,14 @@ import { addAbsenceDay, emptyAbsenceSplit, type AbsenceSplit } from "./absenceDa
  * without a deploy.
  */
 
-const MAX_PAGES = 400;
-const PAGE = 100;
+export const MAX_PAGES = 400;
+export const PAGE = 100;
 
 function basic(input: string): string {
   return Buffer.from(input, "utf8").toString("base64");
 }
 
-async function token(host: string, id: string, secret: string): Promise<string> {
+export async function token(host: string, id: string, secret: string): Promise<string> {
   const res = await fetch(`https://${host}/oauth/access_token`, {
     method: "POST",
     headers: {
@@ -61,7 +61,7 @@ async function token(host: string, id: string, secret: string): Promise<string> 
  * short and look complete, which is the failure that broke clearRoster and the
  * grade sync.
  */
-async function readTable(
+export async function readTable(
   host: string, tok: string, table: string, q: string, projection: string,
 ): Promise<{ rows: any[]; pages: number; pagedOut: boolean }> {
   const rows: any[] = [];

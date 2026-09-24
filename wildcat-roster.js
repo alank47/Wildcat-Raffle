@@ -919,7 +919,10 @@
       .sort(function (a, b) { return a - b; });
     if (!v.length) return null;
     var mid = Math.floor(v.length / 2);
-    return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
+    // ROUNDED to nine places: the average of two one-decimal values is not
+    // exact in binary -- (87.1 + 87.3) / 2 is 87.19999999999999 -- and a
+    // point of exactly 87.2 must count as ON the median, not above it.
+    return v.length % 2 ? v[mid] : Math.round((v[mid - 1] + v[mid]) / 2 * 1e9) / 1e9;
   }
 
   /**
@@ -950,7 +953,7 @@
    * published rule: it is on neither side, so it neither extends nor breaks a
    * run. It is NOT skipped for the trend rule, which reads the raw sequence.
    */
-  function runChartSignals(points) {
+  function runChartSignals(points, opts) {
     var pts = (points || []).filter(function (p) {
       return p && isFinite(Number(p.value));
     }).map(function (p) {
@@ -964,7 +967,12 @@
     };
     if (pts.length < 2) return out;
 
-    var med = runChartMedian(pts.map(function (p) { return p.value; }));
+    // A FROZEN MEDIAN, when one is given (the attendance-rate run chart). It is
+    // used as is and never recalculated from these points -- see
+    // runChartAnalysis for why that is the method and not a bug. Without one,
+    // the median of the points themselves, as the daily chart has always used.
+    var fixed = opts && opts.median !== null && opts.median !== undefined && isFinite(Number(opts.median));
+    var med = fixed ? Number(opts.median) : runChartMedian(pts.map(function (p) { return p.value; }));
     out.median = med;
 
     // --- runs, and the shift rule, over points off the median -------------
@@ -994,6 +1002,20 @@
     out.runs = runs;
 
     var lim = RUNS_LIMITS[out.usefulObservations];
+    if (!lim && out.usefulObservations > 40) {
+      // BEYOND THE TABLE, THE FORMULA IT WAS BUILT FROM. The published table
+      // stops at 40; past it the runs count is judged with the Swed-Eisenhart
+      // normal approximation, mean +/- 1.96 standard deviations from the
+      // actual counts above and below. It reproduces the table's own limits
+      // at 40 (15 to 27 for 20 and 20). A year of weekly points passes 40, and
+      // saying "not enough data" there would be the opposite of the truth.
+      var up = sides.filter(function (x) { return x.side > 0; }).length;
+      var dn = sides.length - up, nn = sides.length;
+      var mean = 1 + 2 * up * dn / nn;
+      var sd = Math.sqrt(2 * up * dn * (2 * up * dn - nn) / (nn * nn * (nn - 1)));
+      if (isFinite(sd) && sd > 0) lim = [Math.ceil(mean - 1.96 * sd), Math.floor(mean + 1.96 * sd)];
+      out.runsApproximate = !!lim;
+    }
     if (lim) {
       out.runsLimits = { low: lim[0], high: lim[1] };
       out.runsVerdict = runs < lim[0] ? 'too few'
@@ -1605,6 +1627,481 @@
     return { rows: rows, counts: counts, schoolDays: days, window: win };
   }
 
+  // =====================================================================
+  // THE ATTENDANCE-RATE RUN CHART (2026-09-23)
+  //
+  // The daily chart above plots absence COUNTS. This one plots a RATE that
+  // resets every period -- a week, or a month -- against a MEDIAN, per the
+  // owner's spec (Provost & Murray, The Health Care Data Guide, ch. 3):
+  //
+  //   weekly attendance rate  = 1 - whole days out / student-days enrolled
+  //   monthly days absent     = whole days out / students enrolled that month
+  //   monthly chronic rate    = share of students out 10%+ of THEIR days that month
+  //
+  // WHY A RATE THAT RESETS: the year-to-date chronic figure cannot be charted.
+  // Each week's cumulative number contains nearly all of the week before (the
+  // points are not independent, and every rule below assumes they are), and
+  // its threshold moves under it -- 10% of days elapsed is 1 absence one week
+  // and 2 the next, so students change status with no change in behaviour.
+  //
+  // The rows come from attendanceRunChartData:series: one per school day per
+  // grade band, `members` enrolled that day and the components of their
+  // absences. The whole-day threshold is applied HERE, the same way every
+  // other screen applies it (absenceSplit).
+  // =====================================================================
+
+  /**
+   * Whole days out on one day row, at the screen's misrecord threshold --
+   * through absenceSplit, the one rule every other screen uses, so this chart
+   * can never disagree with the list below it about what a whole day is.
+   */
+  function runDayFull(row, settings) {
+    var sp = absenceSplit(row, settings);
+    return sp ? sp.fullDays : 0;
+  }
+
+  /** The Monday of a date's week, "YYYY-MM-DD". */
+  function weekOf(iso) {
+    var d = dayFrom(iso);
+    if (!d) return null;
+    return shiftDays(isoOf(d), -((d.getUTCDay() + 6) % 7));
+  }
+
+  /**
+   * The day rows for one series, summed per date. 'all' adds the bands.
+   * Returns [{ date, yearid, members, full }] in date order.
+   */
+  function runSeriesDays(rows, series, settings) {
+    var byDate = {};
+    (rows || []).forEach(function (r) {
+      if (!r || !r.date) return;
+      if (series !== 'all' && r.band !== series) return;
+      var k = r.date;
+      if (!byDate[k]) byDate[k] = { date: k, yearid: r.yearid, members: 0, full: 0, estimated: false };
+      byDate[k].members += Number(r.members) || 0;
+      byDate[k].full += runDayFull(r, settings);
+      if (r.gradeEstimated) byDate[k].estimated = true;
+    });
+    return Object.keys(byDate).sort().map(function (k) { return byDate[k]; });
+  }
+
+  /**
+   * THE WEEKS, and which of them are merged.
+   *
+   * DENOMINATOR CHECK (the owner's rule): a week whose student-days enrolled
+   * is more than 25% off the average week of its school year is flagged. A
+   * three-day week is noisier for no real reason -- fewer days, not a change.
+   *
+   * WHAT TO DO WITH ONE is the owner's choice, and the default was chosen for
+   * them on 2026-09-23 with reasons: MERGE it into the week after (the week
+   * before, if it is the last of its year). Dropping throws away exactly the
+   * holiday weeks the baseline exists to capture; deciding week by week
+   * invites cherry-picking. `policy` 'separate' keeps them apart and flagged,
+   * 'drop' leaves them out.
+   *
+   * DECIDED ON THE WHOLE-SCHOOL SERIES and applied to every band, so the lines
+   * on one chart are the same periods and stay aligned in time. Never merged
+   * across school years: the summer is not a week.
+   */
+  function runWeekGroups(allDays, policy, today) {
+    var weeks = [];
+    var byKey = {};
+    // THE WEEK IN PROGRESS IS LEFT OFF. On a Wednesday it holds two days, so
+    // it would read as a short week and be merged into last week -- changing
+    // a point that was already settled. It joins the chart once it is over.
+    var t = dayFrom(today);
+    var openWeek = t && t.getUTCDay() >= 1 && t.getUTCDay() <= 5 ? weekOf(today) : null;
+    (allDays || []).forEach(function (d) {
+      if (openWeek && weekOf(d.date) >= openWeek) return;
+      var k = weekOf(d.date) + '|' + d.yearid;
+      if (!byKey[k]) { byKey[k] = { week: weekOf(d.date), yearid: d.yearid, dates: [], memberDays: 0 }; weeks.push(byKey[k]); }
+      byKey[k].dates.push(d.date);
+      byKey[k].memberDays += d.members;
+    });
+    weeks.sort(function (a, b) { return a.week < b.week ? -1 : a.week > b.week ? 1 : 0; });
+    // THE YARDSTICK IS A FULL WEEK, and it does not move. The first version
+    // measured each week against the average week so far, which is dragged
+    // down by the holiday weeks themselves and changes every week -- so a
+    // week near the line could be merged in October and un-merged in March,
+    // rewriting points already read. A full week is five school days of the
+    // year's typical enrolment (the median of its daily counts), which only
+    // moves as enrolment does. Per school year, so a year with more students
+    // is never measured against the other's.
+    var full = runYardsticks(allDays);
+    weeks.forEach(function (w) {
+      var expect = 5 * (full[w.yearid] || 0);
+      w.offBy = expect ? (w.memberDays - expect) / expect : 0;
+      w.flag = Math.abs(w.offBy) > 0.25 ? (w.offBy < 0 ? 'short' : 'long') : null;
+    });
+    var lastYear = weeks.reduce(function (m, w) { return w.yearid > m ? w.yearid : m; }, -Infinity);
+    var p = policy === 'separate' || policy === 'drop' ? policy : 'merge';
+    var groups = [];
+    for (var i = 0; i < weeks.length; i++) {
+      var w = weeks[i];
+      if (w.flag && p === 'drop') continue;
+      if (w.flag === 'short' && p === 'merge') {
+        var next = weeks[i + 1];
+        if (next && next.yearid === w.yearid) {
+          // Carried into the next week: that week's group will start here.
+          next._carry = (next._carry || []).concat(w._carry || [], [w]);
+          continue;
+        }
+        // THE NEWEST SHORT WEEK OF A YEAR STILL RUNNING WAITS for the week
+        // after it. Merged backward now, it would change last week's settled
+        // point for a week and then jump forward (found in review: a
+        // Thanksgiving week did exactly that). Only a year that is over --
+        // a later year is on the chart -- merges its last week backward.
+        if (w.yearid === lastYear) { groups.pending = (groups.pending || 0) + 1 + (w._carry || []).length; continue; }
+        var prev = groups[groups.length - 1];
+        if (prev && prev.yearid === w.yearid) {
+          prev.weeks = prev.weeks.concat(w._carry || [], [w]);
+          prev.merged = true;
+          continue;
+        }
+      }
+      var members = (w._carry || []).concat([w]);
+      groups.push({ yearid: w.yearid, weeks: members, merged: members.length > 1,
+                    flag: members.length > 1 ? null : w.flag });
+    }
+    weeks.forEach(function (w) { delete w._carry; });
+    var pending = groups.pending || 0;
+    var out = groups.map(function (g) {
+      var dates = [];
+      g.weeks.forEach(function (w) { dates = dates.concat(w.dates); });
+      dates.sort();
+      return { key: g.weeks[0].week, yearid: g.yearid, from: dates[0], to: dates[dates.length - 1],
+               dates: dates, merged: g.merged, flag: g.flag,
+               parts: g.weeks.map(function (w) { return { week: w.week, days: w.dates.length, flag: w.flag, offBy: w.offBy }; }) };
+    });
+    out.pending = pending;
+    return out;
+  }
+
+  /**
+   * A school year's typical enrolment per school day: the MEDIAN of its daily
+   * counts, from the whole-school days. The yardstick the denominator check
+   * measures a week or a month against. { yearid: members }.
+   */
+  function runYardsticks(allDays) {
+    var by = {};
+    (allDays || []).forEach(function (d) { (by[d.yearid] = by[d.yearid] || []).push(d.members); });
+    var out = {};
+    Object.keys(by).forEach(function (y) { out[y] = runChartMedian(by[y]) || 0; });
+    return out;
+  }
+
+  /** Monday-to-Friday days in a "YYYY-MM" month. */
+  function weekdaysInMonth(month) {
+    var d = dayFrom(month + '-01');
+    if (!d) return 0;
+    var n = 0, m = d.getUTCMonth();
+    while (d.getUTCMonth() === m) { var wd = d.getUTCDay(); if (wd >= 1 && wd <= 5) n++; d.setUTCDate(d.getUTCDate() + 1); }
+    return n;
+  }
+
+  /**
+   * The weekly attendance rate for one series, over the given week groups.
+   * Each point: { key, from, to, yearid, schoolDays, memberDays, full, value, merged, flag }.
+   * `value` is a percentage (0-100), to one decimal.
+   */
+  function runWeeklyRate(rows, series, groups, settings) {
+    var days = runSeriesDays(rows, series, settings);
+    var byDate = {};
+    days.forEach(function (d) { byDate[d.date] = d; });
+    return (groups || []).map(function (g) {
+      var md = 0, full = 0, n = 0, est = false;
+      g.dates.forEach(function (dt) {
+        var d = byDate[dt];
+        if (!d) return;
+        md += d.members; full += d.full; n++;
+        if (d.estimated) est = true;
+      });
+      return { key: g.key, from: g.from, to: g.to, yearid: g.yearid, schoolDays: n, memberDays: md, full: full,
+               value: md ? Math.round((1 - full / md) * 1000) / 10 : null,
+               merged: g.merged, flag: g.flag, parts: g.parts || [], estimated: est };
+    }).filter(function (p) { return p.value !== null; });
+  }
+
+  /**
+   * The two monthly measures for one series. `measure` is 'avgAbsent' (whole
+   * days out per student) or 'chronic' (% of students out 10%+ of their days).
+   * Months whose student-days are more than 25% off their year's average are
+   * FLAGGED, and never merged, for a reason in the numbers: a student's month
+   * is counted on its own, so "chronic in August" and "chronic in September"
+   * cannot be added into one figure -- the same student would be in both.
+   * `policy` 'drop' leaves flagged months out; otherwise they stay, marked.
+   */
+  function runMonthly(months, series, measure, policy, today, dayRows) {
+    var by = {};
+    // THE MONTH IN PROGRESS IS LEFT OFF, as the week is: a chronic rate over
+    // the first six days of a month is a different measure from a month's.
+    var openMonth = dayFrom(today) ? String(today).slice(0, 7) : null;
+    (months || []).forEach(function (m) {
+      if (!m || !m.month) return;
+      if (openMonth && m.month >= openMonth) return;
+      if (series !== 'all' && m.band !== series) return;
+      var k = m.month + '|' + m.yearid;
+      if (!by[k]) by[k] = { key: m.month, yearid: m.yearid, students: 0, memberDays: 0, full: 0, chronic: 0, estimated: false };
+      by[k].students += Number(m.students) || 0;
+      by[k].memberDays += Number(m.memberDays) || 0;
+      by[k].full += Number(m.fullDayAbsences) || 0;
+      by[k].chronic += Number(m.chronicStudents) || 0;
+      if (m.gradeEstimated) by[k].estimated = true;
+    });
+    var pts = Object.keys(by).map(function (k) { return by[k]; })
+      .sort(function (a, b) { return a.key < b.key ? -1 : a.key > b.key ? 1 : 0; });
+    // THE YARDSTICK, as for weeks: a month's weekdays at the year's typical
+    // enrolment, from this series' own days -- fixed, so a month's flag does
+    // not change as later months arrive. Without day rows (a caller that has
+    // only the month totals), the year's average month instead.
+    var sticks = dayRows ? runYardsticks(runSeriesDays(dayRows, series, null)) : null;
+    var avg = {};
+    pts.forEach(function (p) { var a = avg[p.yearid] || (avg[p.yearid] = { sum: 0, n: 0 }); a.sum += p.memberDays; a.n++; });
+    return pts.map(function (p) {
+      var a = avg[p.yearid];
+      var mean = sticks ? (sticks[p.yearid] || 0) * weekdaysInMonth(p.key) : (a.n ? a.sum / a.n : 0);
+      var off = mean ? (p.memberDays - mean) / mean : 0;
+      var value = !p.students ? null : measure === 'chronic'
+        ? Math.round(p.chronic / p.students * 1000) / 10
+        : Math.round(p.full / p.students * 100) / 100;
+      return { key: p.key, from: p.key + '-01', to: lastDayOfMonth(p.key + '-01'), yearid: p.yearid, students: p.students,
+               memberDays: p.memberDays, full: p.full, chronic: p.chronic, offBy: off, value: value, flag: Math.abs(off) > 0.25 ? (off < 0 ? 'short' : 'long') : null,
+               merged: false, estimated: p.estimated };
+    }).filter(function (p) { return p.value !== null && !(policy === 'drop' && p.flag); });
+  }
+
+  /** Median absolute deviation, for the astronomical-point prompt. */
+  function medianAbsDev(values, med) {
+    return runChartMedian((values || []).map(function (v) { return Math.abs(v - med); }));
+  }
+
+  /**
+   * THE READING OF ONE SERIES, against a frozen or a provisional median.
+   *
+   * WHY A FROZEN MEDIAN IS NEVER RECALCULATED. This will look like a bug: new
+   * points arrive and the median line does not move. It is the method. Once a
+   * baseline of 10+ points shows no signal, its median is frozen and extended
+   * forward, so every later point is judged against how things WERE. A median
+   * recomputed from every point drifts toward any real change -- after enough
+   * weeks of better attendance it sits in the middle of them -- and quietly
+   * erases the very shift it exists to reveal. To move it, freeze a new
+   * baseline on purpose (the old one is kept, with who and why). Do not "fix"
+   * this by recomputing the median from `points`.
+   *
+   * `baseline` is { from, to, median } or null. With it: shift and trend are
+   * read over ALL points against the frozen median, and the runs test over the
+   * BASELINE points only -- it asks whether the baseline was stable, which is
+   * what makes it fit to freeze. Without it: a PROVISIONAL median of every
+   * point, said as such; below 10 points nothing is frozen-grade.
+   *
+   * ASTRONOMICAL POINT: a prompt for judgment, not a rule. Every data set has
+   * a highest and a lowest point, and being one of them proves nothing. A
+   * point is only offered for a second look when it sits far outside the rest
+   * (a robust distance of more than 3.5 median absolute deviations, the
+   * Iglewicz-Hoaglin cut-off), and the screen says to ask what happened that
+   * week before believing it.
+   *
+   * `candidate` (optional) is a range someone is thinking of freezing: the
+   * answer then says whether THOSE points are signal-free, which is the
+   * condition for freezing them.
+   */
+  function runChartAnalysis(points, baseline) {
+    if (baseline && !isFinite(Number(baseline.median))) baseline = null;
+    var pts = (points || []).filter(function (p) { return p && isFinite(Number(p.value)); });
+    var frozen = !!(baseline && isFinite(Number(baseline.median)));
+    // A POINT BELONGS TO THE BASELINE BY THE DAY IT STARTS. Dates, not keys:
+    // a month's key is "2025-10" and would sort before "2025-10-01". And the
+    // start alone, so a short week merged one way or the other does not slip
+    // a point in or out of a frozen baseline.
+    var base = frozen
+      ? pts.filter(function (p) { return p.from >= baseline.from && p.from <= baseline.to; })
+      : pts;
+    var median = frozen ? Number(baseline.median) : runChartMedian(pts.map(function (p) { return p.value; }));
+    // A FROZEN MEDIAN IS CARRIED FORWARD, NEVER BACK. Points before the
+    // baseline began are drawn for context but not tested against it: after
+    // a re-baseline on a better year, the old year would otherwise read as a
+    // "shift below" that is only the reason the baseline was moved.
+    var start = 0;
+    if (frozen) { start = pts.findIndex(function (p) { return p.from >= baseline.from; }); if (start < 0) start = pts.length; }
+    var series = pts.slice(start).map(function (p) { return { date: p.key, value: Number(p.value) }; });
+    var all = runChartSignals(series, { median: median });
+    var shift = function (sp) { return Object.assign({}, sp, { from: sp.from + start, to: sp.to + start }); };
+    all.shifts = all.shifts.map(shift);
+    all.trends = all.trends.map(shift);
+    var runsOn = frozen ? runChartSignals(base.map(function (p) { return { date: p.key, value: Number(p.value) }; }), { median: median }) : all;
+
+    // Against the points' OWN centre, not the frozen median: the question is
+    // "far from the rest", and a real, lasting improvement would otherwise
+    // make every later point look like a freak.
+    var vals = pts.map(function (p) { return Number(p.value); });
+    var centre = runChartMedian(vals);
+    var mad = medianAbsDev(vals, centre);
+    var astronomical = [];
+    if (mad && mad > 0) {
+      pts.forEach(function (p, i) {
+        if (Math.abs(0.6745 * (Number(p.value) - centre) / mad) > 3.5) astronomical.push(i);
+      });
+    }
+    var signals = all.signals.filter(function (s) { return s.rule !== 'runs'; });
+    if (runsOn.runsVerdict === 'too few' || runsOn.runsVerdict === 'too many') {
+      signals = signals.concat(runsOn.signals.filter(function (s) { return s.rule === 'runs'; }).map(function (s) {
+        return { rule: 'runs', text: (frozen ? 'In the baseline: ' : '') + s.text };
+      }));
+    }
+    astronomical.forEach(function (i) {
+      signals.push({ rule: 'astronomical', text: 'The point for ' + pts[i].key + ' is far outside the rest. '
+        + 'Every chart has a highest and a lowest point, so this alone proves nothing: ask what happened that period before believing it.' });
+    });
+    var flagged = pts.map(function (p, i) { return p.flag ? i : -1; }).filter(function (i) { return i >= 0; });
+    return {
+      median: median, frozen: frozen,
+      status: frozen ? 'frozen' : (pts.length >= 10 ? 'provisional' : 'too-few'),
+      baselinePoints: base.length, beforeBaseline: start,
+      shifts: all.shifts, trends: all.trends, astronomical: astronomical, flaggedDenominator: flagged,
+      runs: runsOn.runs, runsLimits: runsOn.runsLimits, runsVerdict: runsOn.runsVerdict,
+      runsApproximate: runsOn.runsApproximate === true,
+      usefulObservations: runsOn.usefulObservations, signals: signals, n: pts.length
+    };
+  }
+
+  var RATE_MEASURES = {
+    weeklyRate:       { label: 'Weekly attendance rate', unit: '%', higherIsBetter: true, period: 'week' },
+    monthlyAvgAbsent: { label: 'Whole days absent per student, by month', unit: ' days', higherIsBetter: false, period: 'month' },
+    monthlyChronic:   { label: 'Out 10% or more of that month', unit: '%', higherIsBetter: false, period: 'month' }
+  };
+  var RATE_SERIES = ['all', '6-8', '9-12'];
+
+  /**
+   * EVERYTHING THE ATTENDANCE-RATE SCREEN DRAWS, from the server's rows, as
+   * plain data -- so the screen only draws and every number is tested here.
+   *
+   * `res`  what attendanceRunChartData:series returned
+   * `opts` { measure, policy, series: [...], settings, today, candidate: {from, to} | null }
+   *
+   * `candidate` is a range someone is considering as a baseline: each series
+   * reports whether THOSE points are signal-free, which is the condition for
+   * freezing them (the owner's spec: freeze once the baseline shows no signal).
+   */
+  function runRateModel(res, opts) {
+    var o = opts || {};
+    var measure = RATE_MEASURES[o.measure] ? o.measure : 'weeklyRate';
+    var policy = o.policy === 'separate' || o.policy === 'drop' ? o.policy : 'merge';
+    var shown = (o.series || RATE_SERIES).filter(function (x) { return RATE_SERIES.indexOf(x) !== -1; });
+    var days = (res && res.days) || [];
+    var months = (res && res.months) || [];
+    var groups = null;
+    if (measure === 'weeklyRate') {
+      groups = runWeekGroups(runSeriesDays(days, 'all', o.settings), policy, o.today);
+    }
+    var pointsOf = function (sr) {
+      return measure === 'weeklyRate'
+        ? runWeeklyRate(days, sr, groups, o.settings)
+        : runMonthly(months, sr, measure === 'monthlyChronic' ? 'chronic' : 'avgAbsent', policy, o.today, days);
+    };
+
+    // ONE TIME AXIS for every line, so a week sits at the same x on all three.
+    var keyset = {};
+    var series = shown.map(function (sr) {
+      var pts = pointsOf(sr);
+      pts.forEach(function (p) { keyset[p.key] = { key: p.key, from: p.from, to: p.to, yearid: p.yearid }; });
+      var baseline = null;
+      ((res && res.baselines) || []).forEach(function (b) {
+        if (b && b.measure === measure && b.series === sr) baseline = b;
+      });
+      var analysis = runChartAnalysis(pts, baseline);
+      var cand = null;
+      if (o.candidate && o.candidate.from && o.candidate.to) {
+        var cpts = pts.filter(function (p) { return p.from >= o.candidate.from && p.from <= o.candidate.to; });
+        var ca = runChartAnalysis(cpts, null);
+        var blocking = ca.signals.filter(function (x) { return x.rule === 'shift' || x.rule === 'trend' || x.rule === 'runs'; });
+        cand = {
+          from: cpts.length ? cpts[0].from : null, to: cpts.length ? cpts[cpts.length - 1].from : null,
+          n: cpts.length, median: ca.median, blocking: blocking, astronomical: ca.astronomical.length,
+          // THE RULE FOR FREEZING, the owner's spec: ten or more points, and
+          // no shift, trend or runs signal among them. An astronomical point
+          // does not block -- it is a prompt to look -- but it is said.
+          canFreeze: cpts.length >= 10 && !blocking.length && ca.median !== null,
+          why: cpts.length < 10 ? 'A baseline needs at least 10 points; this range has ' + cpts.length + '.'
+            : blocking.length ? 'These points already show a signal, so they are not ordinary variation and cannot be a baseline.'
+            : null
+        };
+      }
+      return { series: sr, points: pts, baseline: baseline, analysis: analysis, candidate: cand };
+    });
+    var axis = Object.keys(keyset).map(function (k) { return keyset[k]; })
+      .sort(function (a, b) { return a.from < b.from ? -1 : a.from > b.from ? 1 : 0; });
+    var indexOf = {};
+    axis.forEach(function (a, i) { indexOf[a.key] = i; });
+    series.forEach(function (s) { s.points.forEach(function (p) { p.x = indexOf[p.key]; }); });
+
+    // WHERE A SCHOOL YEAR TURNS OVER: drawn as a line, because the summer is
+    // not on the chart and two adjacent points can be ten weeks apart.
+    var yearBreaks = [];
+    for (var i = 1; i < axis.length; i++) if (axis[i].yearid !== axis[i - 1].yearid) yearBreaks.push(i);
+
+    // A NOTE LANDS ON THE POINT WHOSE PERIOD HOLDS ITS DATE, or the next point
+    // when the date fell between them (a weekend, a holiday, the summer).
+    var notes = ((res && res.annotations) || []).map(function (n) {
+      var at = -1;
+      for (var j = 0; j < axis.length; j++) {
+        // The Sunday that closes the point's last week, so a note on a
+        // weekend lands on the week it ended rather than the next one.
+        var end = measure === 'weeklyRate' ? shiftDays(weekOf(axis[j].to), 6) : axis[j].to;
+        if (n.date <= end) { at = j; break; }
+      }
+      return { id: n.id, date: n.date, label: n.label, note: n.note, createdBy: n.createdBy, x: at };
+    });
+
+    var ref = series[0] ? series[0].points : [];
+    // HOW MANY PERIODS FAILED THE DENOMINATOR CHECK, whatever was then done
+    // with them -- so the screen can say "3 short weeks were merged" rather
+    // than leaving a merge or a drop invisible.
+    var shortPeriods = measure === 'weeklyRate'
+      ? runWeekGroups(runSeriesDays(days, 'all', o.settings), 'separate', o.today).filter(function (g) { return g.flag; }).length
+      : runMonthly(months, 'all', 'avgAbsent', 'merge', o.today, days).filter(function (p) { return p.flag; }).length;
+    // A MONTH WITH NO ROWS inside a year's span is a build that failed (or has
+    // not run): named, so the line drawn across it is not read as data.
+    var monthsBy = {};
+    days.forEach(function (d) { if (d && d.date) (monthsBy[d.yearid] = monthsBy[d.yearid] || {})[d.date.slice(0, 7)] = true; });
+    var missingMonths = [];
+    Object.keys(monthsBy).forEach(function (y) {
+      var have = Object.keys(monthsBy[y]).sort();
+      for (var mo = have[0]; mo && mo < have[have.length - 1];) {
+        var pp = mo.split('-').map(Number);
+        mo = pp[1] === 12 ? (pp[0] + 1) + '-01' : pp[0] + '-' + String(pp[1] + 1).padStart(2, '0');
+        if (!monthsBy[y][mo] && mo.slice(5) !== '07') missingMonths.push(mo);
+      }
+    });
+    return {
+      shortPeriods: shortPeriods, missingMonths: missingMonths,
+      pendingWeeks: groups ? (groups.pending || 0) : 0,
+      measure: measure, meta: RATE_MEASURES[measure], policy: policy,
+      axis: axis, series: series, yearBreaks: yearBreaks, notes: notes,
+      flagged: ref.filter(function (p) { return p.flag; }).length,
+      merged: ref.filter(function (p) { return p.merged; }).length,
+      estimated: ref.some(function (p) { return p.estimated; })
+    };
+  }
+
+  /**
+   * WHAT A SIGNAL ON THIS CHART LIKELY MEANS, in words a person can act on.
+   * Kept apart from the rules for the reason absenceSignalBlurb is: a run
+   * chart says that something CHANGED and never why, so each reading names
+   * what to check, the dull explanation first.
+   */
+  function rateSignalReading(kind, dirUp, measure) {
+    var m = RATE_MEASURES[measure] || RATE_MEASURES.weeklyRate;
+    var better = m.higherIsBetter ? dirUp : !dirUp;
+    if (kind === 'shift' || kind === 'trend') {
+      return better
+        ? 'Attendance is better than it was. Before crediting anything, check the calendar: a stretch with no holidays or testing weeks can do this on its own.'
+        : 'Attendance is worse than it was. Check the calendar and illness first (a holiday run, flu season), then whether absences started being recorded differently.';
+    }
+    if (kind === 'runs-few') return 'The measure is drifting rather than bouncing: look for something slow, such as enrolment changing or a policy settling in.';
+    if (kind === 'runs-many') return 'Something alternates, which usually means two groups or two recording habits are mixed in one line.';
+    return '';
+  }
+
   root.WildcatRoster = {
     CASH_NOTE_MIN: CASH_NOTE_MIN,
     cashNoteVerdict: cashNoteVerdict,
@@ -1622,6 +2119,16 @@
     absenceSplit: absenceSplit,
     runChartMedian: runChartMedian,
     runChartSignals: runChartSignals,
+    runDayFull: runDayFull,
+    weekOf: weekOf,
+    runSeriesDays: runSeriesDays,
+    runWeekGroups: runWeekGroups,
+    runWeeklyRate: runWeeklyRate,
+    runMonthly: runMonthly,
+    runChartAnalysis: runChartAnalysis,
+    RATE_MEASURES: RATE_MEASURES,
+    runRateModel: runRateModel,
+    rateSignalReading: rateSignalReading,
     absenceSeriesValues: absenceSeriesValues,
     absenceSignalBlurb: absenceSignalBlurb,
     perfectWindows: perfectWindows,

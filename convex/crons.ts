@@ -50,6 +50,17 @@ crons.daily(
   {},
 );
 
+// THE ATTENDANCE RUN CHART'S DAILY TOTALS, at 03:15 Los Angeles (10:15 UTC;
+// 02:15 in winter), when yesterday's registers are finished and nobody is
+// using PowerSchool. Reads this month (and in a month's first week, the one
+// just ended) straight from PowerSchool; see attendanceRunChart.ts.
+crons.daily(
+  "attendance run chart (nightly)",
+  { hourUTC: 10, minuteUTC: 15 },
+  internal.attendanceRunChart.refreshCurrent,
+  {},
+);
+
 // Refresh the Entra directory mirror nightly.
 //
 // Nightly rather than hourly because the thing it tracks, who works here,

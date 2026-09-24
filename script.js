@@ -5979,6 +5979,8 @@
                             // The week/month split reads the same per-date
                             // rows, rebuilt on the same schedule.
                             if (typeof _attWinCache !== 'undefined') _attWinCache.clear();
+                            // The attendance-rate chart is rebuilt nightly.
+                            _arCache = null;
                             if (typeof pullLiveActivity === 'function') pullLiveActivity('idle');
                             
                             // DON'T call updateAllDisplays() - it redraws everything and is disruptive
@@ -30633,9 +30635,10 @@
         const ATT_VIEW_SUBTITLES = {
             watch: 'Chronic absence and tardiness, worst first',
             perfect: 'Students with no absences and no tardies',
-            subgroup: 'Chronic absence by student group, against the school\'s own rate'
+            subgroup: 'Chronic absence by student group, against the school\'s own rate',
+            rate: 'Attendance rate by week and month, against its median'
         };
-        const ATT_VIEWS = ['watch', 'perfect', 'subgroup'];
+        const ATT_VIEWS = ['watch', 'perfect', 'subgroup', 'rate'];
 
         function setAttendanceView(view) {
             _attView = ATT_VIEWS.indexOf(view) === -1 ? 'watch' : view;
@@ -30643,6 +30646,7 @@
             const watchEl = document.getElementById('attWatchView');
             const perfectEl = document.getElementById('attPerfectView');
             const subgroupEl = document.getElementById('attSubgroupView');
+            const rateEl = document.getElementById('attRateView');
             // `hidden` rather than a display rule, and on a wrapper with no
             // class of its own: an author `display` declaration outranks the
             // user-agent `[hidden] { display: none }`, which is exactly how a
@@ -30650,6 +30654,7 @@
             if (watchEl) watchEl.hidden = (_attView !== 'watch');
             if (perfectEl) perfectEl.hidden = (_attView !== 'perfect');
             if (subgroupEl) subgroupEl.hidden = (_attView !== 'subgroup');
+            if (rateEl) rateEl.hidden = (_attView !== 'rate');
 
             document.querySelectorAll('#attViewSwitch [data-attview]').forEach(b => {
                 const on = b.getAttribute('data-attview') === _attView;
@@ -30667,6 +30672,7 @@
             // opened is fetched the moment it is.
             if (_attView === 'perfect') renderPerfectAttendance();
             else if (_attView === 'subgroup') renderAttendanceSubgroups();
+            else if (_attView === 'rate') renderAttendanceRate();
             else { renderAttendanceWatch(); renderAbsenceRunChart(); }
         }
 
@@ -30674,6 +30680,7 @@
         function refreshAttendanceView() {
             if (_attView === 'perfect') renderPerfectAttendance(true);
             else if (_attView === 'subgroup') renderAttendanceSubgroups(true);
+            else if (_attView === 'rate') renderAttendanceRate(true);
             else { renderAttendanceWatch(true); renderAbsenceRunChart(true); }
         }
 
@@ -31313,6 +31320,793 @@
             if (notes.length) html += '<p class="wc-att-foot">' + notes.join(' ') + '</p>';
 
             body.innerHTML = html;
+        }
+
+        // ========================================
+        // ATTENDANCE RATE OVER TIME (2026-09-23)
+        //
+        // The owner's run chart: a weekly attendance rate and two monthly
+        // measures, each against a MEDIAN that can be FROZEN once a baseline
+        // shows no signal, with the grade bands as separate lines and dates
+        // marked by staff. Every number is made by WildcatRoster.runRateModel
+        // and tested there; this section fetches, draws, and wires the three
+        // things a person does here: choose what to look at, freeze or
+        // unfreeze a baseline, and mark a date.
+        //
+        // NOT THE TREND CHART ON "WHO IS MISSING". That one plots absence
+        // COUNTS for the last thirty school days, because it has no per-day
+        // enrolment. This one has enrolment for every school day of both
+        // years, so it can plot a RATE -- and only a rate can be compared
+        // across a year in which the school grew by half.
+        //
+        // THREE LINES, THREE MEDIANS. The trend chart keeps one series at a
+        // time so nobody wonders which median a signal was read against. Here
+        // the owner asked for the bands side by side, so each line carries its
+        // own median in its own colour, and every signal is listed under the
+        // line it belongs to -- the rules never mix two series.
+        // ========================================
+
+        let _arCache = null;
+        let _arCacheAt = 0;
+        let _arBusy = false;
+        // A refresh asked for while one is loading is REMEMBERED, not dropped:
+        // a save followed by its refresh must never leave the old screen up.
+        let _arAgain = false;
+        // One change at a time: a double click on "Mark this date" saved twice.
+        let _arSaving = false;
+        let _arMeasure = 'weeklyRate';
+        let _arPolicy = 'merge';
+        // Months have their own choice: they can be kept (flagged) or left
+        // off, never merged -- see runMonthly for why.
+        let _arMonthDrop = false;
+        let _arShown = { all: true, '6-8': true, '9-12': true };
+        // The range offered as a baseline, { from, to } as period start dates.
+        // null means "the default": all of last school year when it has ten
+        // points, otherwise everything on the chart.
+        let _arCand = null;
+        // The model last drawn, which the hover readout reads from rather than
+        // from a dozen data attributes per column.
+        let _arModel = null;
+
+        const AR_SERIES = [
+            { key: 'all', label: 'Whole school', cls: 'wc-ar-all' },
+            { key: '6-8', label: 'Grades 6–8', cls: 'wc-ar-ms' },
+            { key: '9-12', label: 'Grades 9–12', cls: 'wc-ar-hs' }
+        ];
+        const AR_POLICY_WORDS = {
+            merge: 'merged into the week after',
+            separate: 'kept separate and flagged',
+            drop: 'left off the chart'
+        };
+
+        function arSeriesInfo(key) {
+            return AR_SERIES.find(s => s.key === key) || AR_SERIES[0];
+        }
+
+        /** "2025–26" from a PowerSchool yearid (35 is the year that started in 2025). */
+        function arYearLabel(yearid) {
+            const y = 1990 + Number(yearid);
+            return isFinite(y) ? y + '–' + String(y + 1).slice(2) : '';
+        }
+
+        /** A period's name: "week of Sep 14, 2026", or "Oct 2025". */
+        function arPeriodLabel(p, measure, short) {
+            if (!p) return '';
+            // NOON, never bare: new Date('2026-09-14') is midnight UTC, which in
+            // Los Angeles is the evening before.
+            const d = new Date(String(p.from) + 'T12:00:00');
+            if (isNaN(d.getTime())) return String(p.key || '');
+            if (measure !== 'weeklyRate') {
+                return d.toLocaleDateString(undefined, { month: short ? 'short' : 'long', year: 'numeric' });
+            }
+            const day = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: short ? undefined : 'numeric' });
+            return short ? day : 'week of ' + day;
+        }
+
+        function arFmt(v, measure) {
+            if (v === null || v === undefined || !isFinite(Number(v))) return '—';
+            const n = Number(v);
+            return measure === 'monthlyAvgAbsent' ? n.toFixed(2) + ' days' : n.toFixed(1) + '%';
+        }
+
+        function setAttendanceRateMeasure(m) {
+            const R = window.WildcatRoster;
+            _arMeasure = (R && R.RATE_MEASURES && R.RATE_MEASURES[m]) ? m : 'weeklyRate';
+            // A range of weeks means nothing on a chart of months.
+            _arCand = null;
+            document.querySelectorAll('#attRateMeasure [data-armeasure]').forEach(b => {
+                const on = b.getAttribute('data-armeasure') === _arMeasure;
+                b.classList.toggle('active', on);
+                b.setAttribute('aria-pressed', on ? 'true' : 'false');
+            });
+            renderAttendanceRate();
+        }
+
+        function setAttendanceRatePolicy(p) {
+            _arPolicy = (p === 'separate' || p === 'drop') ? p : 'merge';
+            renderAttendanceRate();
+        }
+
+        function setAttendanceRateMonthPolicy(v) {
+            _arMonthDrop = (v === 'drop');
+            renderAttendanceRate();
+        }
+
+        function toggleAttendanceRateSeries(key) {
+            if (!Object.prototype.hasOwnProperty.call(_arShown, key)) return;
+            _arShown[key] = !_arShown[key];
+            // Never zero lines: an empty chart reads as a broken one.
+            if (!AR_SERIES.some(s => _arShown[s.key])) _arShown[key] = true;
+            renderAttendanceRate();
+        }
+
+        function setAttendanceRateCandidate(end, value) {
+            const cur = _arCand || (_arModel && _arModel.candidateRange) || {};
+            const next = { from: cur.from || null, to: cur.to || null };
+            next[end === 'to' ? 'to' : 'from'] = String(value || '');
+            // Picked backwards, swapped rather than refused.
+            if (next.from && next.to && next.from > next.to) { const t = next.from; next.from = next.to; next.to = t; }
+            _arCand = next;
+            renderAttendanceRate();
+        }
+
+        async function loadAttendanceRate(force) {
+            if (_arCache && !force) return _arCache;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) {
+                return { allowed: false, reason: 'The attendance rate comes from the SIS, which needs a Microsoft sign-in.' };
+            }
+            try {
+                const res = await auth.convexQuery('attendanceRunChartData:series', {}, session.idToken);
+                _arCache = res;
+                _arCacheAt = Date.now();
+                return res;
+            } catch (e) {
+                const msg = (e && e.message) || String(e);
+                if (/\b401\b|unauthor/i.test(msg)) {
+                    return { allowed: false, reason: 'Your sign-in expired. Sign in again to load the chart.' };
+                }
+                return { allowed: false, reason: 'The chart could not be loaded: ' + msg };
+            }
+        }
+
+        /**
+         * THE DAY THE DATA IS AS OF, which is not always today. The chart holds
+         * completed days up to the night it was built; a tab left open over a
+         * weekend, or a Saturday before the 03:15 build, would otherwise judge
+         * the week complete while Friday is missing, and draw a two-day week
+         * as a finished one. So "today", for deciding what is complete, is the
+         * earlier of the real date and the day of the newest build.
+         */
+        function arAsOf(res, realToday) {
+            let newest = '';
+            ((res && res.days) || []).forEach(d => { if (d && d.syncedAt && d.syncedAt > newest) newest = d.syncedAt; });
+            if (!newest) return realToday;
+            const t = new Date(newest);
+            if (isNaN(t.getTime())) return realToday;
+            // The build's own calendar day in Los Angeles is the first day it
+            // could not have included.
+            const built = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles',
+                year: 'numeric', month: '2-digit', day: '2-digit' }).format(t);
+            return built < realToday ? built : realToday;
+        }
+
+        /**
+         * The default baseline range: all of the earliest school year on the
+         * chart when it has ten points, otherwise every point.
+         *
+         * WHY LAST YEAR. A baseline should describe how things were before
+         * whatever is being judged, and it should contain a whole year's
+         * ordinary ups and downs -- the holiday weeks, the spring slump -- so
+         * that none of them is later mistaken for a change.
+         */
+        function arDefaultRange(axis) {
+            if (!axis || !axis.length) return null;
+            const first = axis[0].yearid;
+            const year = axis.filter(a => a.yearid === first);
+            const pick = year.length >= 10 ? year : axis;
+            return { from: pick[0].from, to: pick[pick.length - 1].from };
+        }
+
+        /**
+         * The whole panel. PURE: the server's answer, the rules module and the
+         * screen's choices in; markup and the model out. A test runs it with no
+         * DOM and no network.
+         */
+        function renderAttendanceRateBody(res, R, st) {
+            if (!res || res.allowed === false) {
+                return { html: '<p class="wc-att-basis-note">' +
+                    escapeHtml((res && res.reason) || 'Not available to your access level.') + '</p>', model: null };
+            }
+            const measure = st.measure;
+            const shownKeys = AR_SERIES.filter(s => st.shown[s.key]).map(s => s.key);
+            const base = { measure: measure, policy: st.policy, series: shownKeys, settings: st.settings, today: st.today };
+            const first = R.runRateModel(res, Object.assign({}, base, { candidate: null }));
+            const cand = st.cand && st.cand.from && st.cand.to ? st.cand : arDefaultRange(first.axis);
+            const model = R.runRateModel(res, Object.assign({}, base, { candidate: cand }));
+            model.candidateRange = cand;
+            const meta = model.meta;
+            const axis = model.axis;
+
+            // --- the controls ---------------------------------------------
+            let html = '<div class="wc-ar-controls">'
+                + '<div class="wc-ar-lines" role="group" aria-label="Which lines to show">'
+                + AR_SERIES.map(s => '<label class="wc-ar-toggle"><input type="checkbox"'
+                    + (st.shown[s.key] ? ' checked' : '')
+                    + ' onchange="toggleAttendanceRateSeries(\'' + s.key + '\')">'
+                    + '<span class="wc-ar-swatch ' + s.cls + '"></span>' + escapeHtml(s.label) + '</label>').join('')
+                + '</div>';
+            if (measure === 'weeklyRate') {
+                html += '<label class="wc-ar-policy">Short weeks '
+                    + '<select onchange="setAttendanceRatePolicy(this.value)" aria-label="What to do with short weeks">'
+                    + ['merge', 'separate', 'drop'].map(p => '<option value="' + p + '"' + (st.policy === p ? ' selected' : '') + '>'
+                        + escapeHtml(p === 'merge' ? 'Merge into the next week (recommended)'
+                            : p === 'separate' ? 'Keep separate, flagged' : 'Leave off the chart') + '</option>').join('')
+                    + '</select></label>';
+            } else {
+                html += '<label class="wc-ar-policy">Short months '
+                    + '<select onchange="setAttendanceRateMonthPolicy(this.value)" aria-label="What to do with short months">'
+                    + '<option value="keep"' + (st.policy !== 'drop' ? ' selected' : '') + '>Keep, flagged (recommended)</option>'
+                    + '<option value="drop"' + (st.policy === 'drop' ? ' selected' : '') + '>Leave off the chart</option>'
+                    + '</select></label>';
+            }
+            html += '</div>';
+
+            if (axis.length < 2) {
+                html += '<p class="wc-att-basis-note">' + escapeHtml(axis.length
+                    ? 'Only one finished ' + meta.period + ' so far. The chart fills in as ' + meta.period + 's finish.'
+                    : 'Nothing to chart yet. The history is built overnight from PowerSchool; check back tomorrow morning.')
+                    + '</p>';
+                return { html: html, model: model };
+            }
+
+            // --- the scale ------------------------------------------------
+            // THE AXIS FOLLOWS THE DATA for the two percentages, and the ticks
+            // are labelled so that is never hidden. Weekly attendance lives
+            // between about 84% and 94% here; on a 0-100 axis a three-point
+            // fall is a hairline, and the rules below do not depend on the
+            // axis at all. Days absent per student keeps its floor at zero,
+            // where it naturally sits.
+            const vals = [];
+            model.series.forEach(s => {
+                s.points.forEach(p => vals.push(Number(p.value)));
+                if (s.analysis.median !== null) vals.push(Number(s.analysis.median));
+            });
+            let lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+            const unitPad = measure === 'monthlyAvgAbsent' ? 0.1 : 1;
+            const pad = Math.max(unitPad, (hi - lo) * 0.12);
+            let yMin = measure === 'monthlyAvgAbsent' ? 0 : Math.max(0, lo - pad);
+            let yMax = hi + pad;
+            if (measure !== 'monthlyAvgAbsent') yMax = Math.min(100, yMax);
+            if (yMax <= yMin) yMax = yMin + unitPad;
+            const raw = (yMax - yMin) / 4;
+            const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+            const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(v => v >= raw) || raw;
+            yMin = Math.floor(yMin / step) * step;
+            yMax = Math.ceil(yMax / step) * step;
+
+            const W = 760, H = 300, L = 48, Rr = 14, T = 22, B = 48;
+            const pw = W - L - Rr, ph = H - T - B;
+            const n = axis.length;
+            const x = i => L + (n === 1 ? pw / 2 : (pw * i) / (n - 1));
+            const y = v => T + ph - (ph * (Number(v) - yMin)) / (yMax - yMin);
+            const f1 = v => v.toFixed(1);
+
+            let svg = '';
+            // gridlines and their labels
+            // AS MANY DECIMALS AS THE STEP NEEDS, never rounded away: a 2.5
+            // step labelled "88%" at 87.5 misplaces every point read off it.
+            let dec = 0;
+            while (dec < 3 && Math.abs(Math.round(step * Math.pow(10, dec)) - step * Math.pow(10, dec)) > 1e-6) dec++;
+            for (let k = 0, t = yMin; t <= yMax + step / 2; k++, t = yMin + k * step) {
+                const ty = y(t);
+                svg += '<line x1="' + L + '" y1="' + f1(ty) + '" x2="' + (W - Rr) + '" y2="' + f1(ty) + '" class="wc-ar-grid"/>'
+                    + '<text x="' + (L - 6) + '" y="' + f1(ty + 3.5) + '" class="wc-rc-ylab">'
+                    + escapeHtml(t.toFixed(dec) + (measure === 'monthlyAvgAbsent' ? '' : '%'))
+                    + '</text>';
+            }
+            // the school years, and the summer between them
+            const yearStarts = [0].concat(model.yearBreaks);
+            model.yearBreaks.forEach(i => {
+                const bx = (x(i - 1) + x(i)) / 2;
+                svg += '<line x1="' + f1(bx) + '" y1="' + T + '" x2="' + f1(bx) + '" y2="' + (T + ph) + '" class="wc-ar-year"/>';
+            });
+            // THE YEAR NAMES HAVE THEIR OWN ROW, under the dates and centred
+            // under each year's points. At the top they collided with the
+            // divider: a year with one point so far sits at the right edge,
+            // and its name landed on the wrong side of the line.
+            yearStarts.forEach((i, k) => {
+                const last = (k + 1 < yearStarts.length ? yearStarts[k + 1] : n) - 1;
+                const mid = (x(i) + x(last)) / 2;
+                const cx = Math.max(L + 22, Math.min(W - Rr - 22, mid));
+                svg += '<text x="' + f1(cx) + '" y="' + (H - 4) + '" class="wc-ar-yearlab">'
+                    + escapeHtml(arYearLabel(axis[i].yearid)) + '</text>';
+            });
+            // dates marked by staff
+            model.notes.forEach((nt, k) => {
+                if (nt.x < 0) return;
+                const nx = x(nt.x);
+                svg += '<line x1="' + f1(nx) + '" y1="' + (T - 6) + '" x2="' + f1(nx) + '" y2="' + (T + ph) + '" class="wc-ar-note"/>'
+                    + '<circle cx="' + f1(nx) + '" cy="' + (T - 12) + '" r="8" class="wc-ar-note-dot"/>'
+                    + '<text x="' + f1(nx) + '" y="' + (T - 8.5) + '" class="wc-ar-note-num">' + (k + 1) + '</text>';
+            });
+
+            // each line: its median, its path, its points
+            model.series.forEach(s => {
+                const info = arSeriesInfo(s.series);
+                const a = s.analysis;
+                if (a.median !== null) {
+                    const my = f1(y(a.median));
+                    if (a.frozen && s.baseline) {
+                        // SOLID OVER THE BASELINE, DASHED AFTER IT: the published
+                        // convention, and the one visual cue that says "this
+                        // line was set by those points and is not moving".
+                        const inBase = s.points.filter(p => p.from >= s.baseline.from && p.from <= s.baseline.to);
+                        const bx0 = inBase.length ? x(inBase[0].x) : L;
+                        const bx1 = inBase.length ? x(inBase[inBase.length - 1].x) : L;
+                        svg += '<line x1="' + f1(bx0) + '" y1="' + my + '" x2="' + f1(bx1) + '" y2="' + my + '" class="wc-ar-median wc-ar-frozen ' + info.cls + '"/>'
+                            + '<line x1="' + f1(bx1) + '" y1="' + my + '" x2="' + (W - Rr) + '" y2="' + my + '" class="wc-ar-median wc-ar-extended ' + info.cls + '"/>';
+                    } else {
+                        svg += '<line x1="' + L + '" y1="' + my + '" x2="' + (W - Rr) + '" y2="' + my + '" class="wc-ar-median wc-ar-provisional ' + info.cls + '"/>';
+                    }
+                }
+                // THE LINE BREAKS OVER THE SUMMER: the two points either side
+                // are ten weeks apart, and joining them would draw a change
+                // across time nobody measured.
+                let d = '';
+                s.points.forEach((p, i) => {
+                    const prev = s.points[i - 1];
+                    const jump = !prev || prev.yearid !== p.yearid;
+                    d += (jump ? 'M' : 'L') + f1(x(p.x)) + ' ' + f1(y(p.value)) + ' ';
+                });
+                svg += '<path d="' + d.trim() + '" class="wc-ar-line ' + info.cls + '"/>';
+
+                const inSignal = {};
+                (a.shifts || []).concat(a.trends || []).forEach(sp => {
+                    for (let i = sp.from; i <= sp.to; i++) inSignal[i] = true;
+                });
+                const astro = {};
+                (a.astronomical || []).forEach(i => { astro[i] = true; });
+                s.points.forEach((p, i) => {
+                    const cx = f1(x(p.x)), cy = f1(y(p.value));
+                    // A SIGNAL IS A HALO IN THE LINE'S OWN COLOUR, not a red
+                    // ring: red is too close to the 9-12 line's orange to tell
+                    // a marked point from an ordinary one.
+                    if (inSignal[i]) svg += '<circle cx="' + cx + '" cy="' + cy + '" r="7" class="wc-ar-halo ' + info.cls + '"/>';
+                    if (astro[i]) svg += '<circle cx="' + cx + '" cy="' + cy + '" r="9" class="wc-ar-astro"/>';
+                    svg += '<circle cx="' + cx + '" cy="' + cy + '" r="' + (inSignal[i] ? 4 : 3) + '" class="wc-ar-dot ' + info.cls
+                        + (inSignal[i] ? ' wc-ar-sig' : '') + (p.flag ? ' wc-ar-flagged' : '') + '"/>';
+                });
+            });
+
+            // DATE LABELS THAT CANNOT OVERLAP. The first period of each school
+            // year is placed first, then every few periods where there is
+            // room; a label that would touch one already placed is skipped.
+            // A label at the right edge ends there rather than running off.
+            const every = Math.max(1, Math.ceil(n / 8));
+            const labelW = measure === 'weeklyRate' ? 40 : 54;
+            const placed = [];
+            const order = yearStarts.concat(axis.map((p, i) => i).filter(i => yearStarts.indexOf(i) === -1 && i % every === 0));
+            order.forEach(i => {
+                let cx = x(i), x0 = cx - labelW / 2, x1 = cx + labelW / 2, style = '';
+                if (x1 > W - 2) { cx = W - 2; x0 = cx - labelW; x1 = cx; style = ' style="text-anchor:end"'; }
+                if (placed.some(b => x0 < b[1] + 6 && x1 > b[0] - 6)) return;
+                placed.push([x0, x1]);
+                svg += '<text x="' + f1(cx) + '" y="' + (H - 20) + '" class="wc-rc-xlab"' + style + '>'
+                    + escapeHtml(arPeriodLabel(axis[i], measure, true)) + '</text>';
+            });
+            // one invisible column per period: the hover and keyboard target
+            const colW = n === 1 ? pw : pw / (n - 1);
+            axis.forEach((p, i) => {
+                svg += '<rect x="' + f1(x(i) - colW / 2) + '" y="' + T + '" width="' + f1(colW) + '" height="' + ph + '"'
+                    + ' class="wc-ar-col" tabindex="0" role="img" data-ar-i="' + i + '"'
+                    + ' aria-label="' + escapeHtml(arPeriodLabel(p, measure, false) + ': '
+                        + model.series.map(s => {
+                            const pt = s.points.find(q => q.x === i);
+                            return arSeriesInfo(s.series).label + ' ' + (pt ? arFmt(pt.value, measure) : 'no value');
+                        }).join(', ')) + '"/>';
+            });
+
+            html += '<div class="wc-rc-plot wc-ar-plot"><svg viewBox="0 0 ' + W + ' ' + H + '" class="wc-rc-svg" role="img" aria-label="'
+                + escapeHtml(meta.label + ' run chart') + '">' + svg + '</svg>'
+                + '<div class="wc-rc-tip" role="status" aria-live="polite" hidden></div></div>';
+
+            // --- the legend, which carries each median ---------------------
+            html += '<ul class="wc-ar-legend">' + model.series.map(s => {
+                const info = arSeriesInfo(s.series);
+                const a = s.analysis;
+                const how = a.frozen ? 'frozen median'
+                    : a.status === 'provisional' ? 'median so far (not frozen)'
+                    : 'median so far, from fewer than 10 points';
+                return '<li><span class="wc-ar-swatch ' + info.cls + '"></span><strong>' + escapeHtml(info.label)
+                    + '</strong> ' + escapeHtml(how + ' ' + arFmt(a.median, measure)) + '</li>';
+            }).join('') + '<li class="wc-ar-legend-key">' + escapeHtml(
+                'Haloed points: part of a signal. Gold ring: far from the rest. Hollow: a short '
+                + meta.period + '. Numbers at the top: dates marked below.') + '</li></ul>';
+
+            // --- what the chart says, line by line -------------------------
+            html += '<h4 class="wc-ar-h">What the chart says</h4>';
+            model.series.forEach(s => {
+                const info = arSeriesInfo(s.series);
+                const a = s.analysis;
+                const items = [];
+                const span = (sp) => arPeriodLabel(s.points[sp.from], measure, false) + ' to '
+                    + arPeriodLabel(s.points[sp.to], measure, false);
+                (a.shifts || []).forEach(sp => {
+                    const up = sp.side === 'above';
+                    items.push({ rule: 'shift',
+                        text: sp.length + ' ' + meta.period + 's in a row ' + sp.side + ' the median (' + span(sp) + ').',
+                        why: R.rateSignalReading('shift', up, measure) });
+                });
+                (a.trends || []).forEach(sp => {
+                    const up = sp.direction === 'up';
+                    items.push({ rule: 'trend',
+                        text: sp.length + ' ' + meta.period + 's in a row going ' + sp.direction + ' (' + span(sp) + ').',
+                        why: R.rateSignalReading('trend', up, measure) });
+                });
+                if (a.runsVerdict === 'too few' || a.runsVerdict === 'too many') {
+                    items.push({ rule: 'runs',
+                        text: (a.frozen ? 'In the baseline: ' : '') + a.runs + ' runs, where ' + a.runsLimits.low + ' to '
+                            + a.runsLimits.high + ' would be expected from ' + a.usefulObservations + ' points.',
+                        why: R.rateSignalReading(a.runsVerdict === 'too few' ? 'runs-few' : 'runs-many', false, measure) });
+                }
+                (a.astronomical || []).forEach(i => {
+                    items.push({ rule: 'astro',
+                        text: arPeriodLabel(s.points[i], measure, false) + ' (' + arFmt(s.points[i].value, measure) + ') is far from the rest.',
+                        why: 'Every chart has a highest and a lowest point, so this alone proves nothing. Ask what happened that '
+                            + meta.period + ' before believing it.' });
+                });
+                html += '<div class="wc-ar-read"><div class="wc-ar-read-h"><span class="wc-ar-swatch ' + info.cls + '"></span>'
+                    + escapeHtml(info.label) + '</div>';
+                if (a.frozen && a.beforeBaseline) {
+                    html += '<p class="wc-att-basis-note">' + escapeHtml(a.beforeBaseline + ' ' + meta.period
+                        + (a.beforeBaseline === 1 ? '' : 's') + ' before the baseline began are shown for context and not tested '
+                        + 'against it: a frozen median is carried forward, never back.') + '</p>';
+                }
+                if (items.length) {
+                    html += '<ul class="wc-rc-signals">' + items.map(it =>
+                        '<li class="wc-rc-signal wc-rc-' + (it.rule === 'runs' || it.rule === 'astro' ? 'runs' : escapeHtml(it.rule)) + '">'
+                        + '<span class="wc-rc-rule">' + escapeHtml(it.text) + '</span>'
+                        + (it.why ? '<span class="wc-rc-why">' + escapeHtml(it.why) + '</span>' : '') + '</li>').join('') + '</ul>';
+                } else {
+                    html += '<p class="wc-rc-none">' + escapeHtml('No signal: ordinary variation, not a change. '
+                        + (a.runsVerdict === 'not enough data'
+                            ? 'Fewer than 10 points off the median, too few for the runs test yet.'
+                            : a.runs + ' runs, as ' + a.usefulObservations + ' points would be expected to produce.')) + '</p>';
+                }
+                html += '</div>';
+            });
+
+            // --- the baseline ------------------------------------------------
+            html += '<h4 class="wc-ar-h">Baseline median</h4>'
+                + '<p class="wc-att-basis-note">' + escapeHtml(
+                    'Once a stretch of at least 10 ' + meta.period + 's shows no signal, its median can be frozen. '
+                    + 'A frozen median does not move when new ' + meta.period + 's arrive, and that is deliberate: later '
+                    + meta.period + 's are judged against how things were. A median recalculated every time would drift '
+                    + 'toward any real change and hide it. A frozen median can be replaced or unfrozen, and the old one '
+                    + 'is kept on record with who changed it and why.') + '</p>';
+            // THE PICKERS SHOW THE PERIOD ACTUALLY IN RANGE. Changing how short
+            // weeks are handled moves where a merged week starts, so a stored
+            // date may no longer begin a point; showing the first option in
+            // that case would misstate the range being tested.
+            const fromShown = cand ? (axis.find(p => p.from >= cand.from) || axis[axis.length - 1]).from : null;
+            const inTo = cand ? axis.filter(p => p.from <= cand.to) : [];
+            const toShown = inTo.length ? inTo[inTo.length - 1].from : (axis[0] && axis[0].from);
+            const opts = (sel) => axis.map(p => '<option value="' + escapeHtml(p.from) + '"' + (p.from === sel ? ' selected' : '') + '>'
+                + escapeHtml(arPeriodLabel(p, measure, false)) + '</option>').join('');
+            html += '<div class="wc-ar-range">'
+                + '<label>From <select onchange="setAttendanceRateCandidate(\'from\', this.value)">' + opts(fromShown) + '</select></label>'
+                + '<label>to <select onchange="setAttendanceRateCandidate(\'to\', this.value)">' + opts(toShown) + '</select></label>'
+                + '</div>';
+            html += '<ul class="wc-ar-bases">' + model.series.map(s => {
+                const info = arSeriesInfo(s.series);
+                const b = s.baseline;
+                const c = s.candidate;
+                let row = '<li><span class="wc-ar-swatch ' + info.cls + '"></span><strong>' + escapeHtml(info.label) + '</strong> ';
+                if (b) {
+                    const at = String(b.frozenAt || '').slice(0, 10);
+                    row += escapeHtml('frozen at ' + arFmt(b.median, measure) + ' from ' + b.points + ' ' + meta.period
+                        + 's (' + b.from + ' to ' + b.to + '), by ' + (b.frozenBy || 'unknown') + (at ? ' on ' + at : '') + '.'
+                        + (b.note ? ' ' + b.note : ''))
+                        + ' <button type="button" class="analytics-tab wc-ar-btn" onclick="retireAttendanceBaseline(\''
+                        + s.series + '\')">Unfreeze&hellip;</button>';
+                } else {
+                    row += escapeHtml('not frozen.');
+                }
+                if (c) {
+                    row += '<div class="wc-ar-cand">' + escapeHtml('The range above: ' + c.n + ' ' + meta.period + 's'
+                        + (c.median !== null ? ', median ' + arFmt(c.median, measure) : '') + '. '
+                        + (c.canFreeze ? 'No signal in it' + (c.astronomical ? ' (one or more points far from the rest; worth a look first).' : '.')
+                            : c.why));
+                    if (c.canFreeze) {
+                        row += ' <button type="button" class="analytics-tab wc-ar-btn" onclick="freezeAttendanceBaseline(\''
+                            + s.series + '\')">' + (b ? 'Replace with this median' : 'Freeze this median') + '</button>';
+                    }
+                    row += '</div>';
+                }
+                return row + '</li>';
+            }).join('') + '</ul>';
+
+            // --- dates marked --------------------------------------------------
+            html += '<h4 class="wc-ar-h">Dates marked on the chart</h4>';
+            if (model.notes.length) {
+                html += '<ol class="wc-ar-notes">' + model.notes.map(nt =>
+                    '<li><strong>' + escapeHtml(nt.date) + '</strong> ' + escapeHtml(nt.label)
+                    + (nt.note ? '<span class="wc-sub"> — ' + escapeHtml(nt.note) + '</span>' : '')
+                    + '<span class="wc-sub"> (' + escapeHtml(nt.createdBy || '') + ')</span>'
+                    + (nt.x < 0 ? '<span class="wc-sub"> not on this chart yet</span>' : '')
+                    + ' <button type="button" class="analytics-tab wc-ar-btn" onclick="removeAttendanceRateNote(\''
+                    + escapeHtml(String(nt.id)) + '\')">Remove</button></li>').join('') + '</ol>';
+            } else {
+                html += '<p class="wc-att-basis-note">None yet. Mark the day something changed — a new incentive, '
+                    + 'a schedule change — so a signal after it can be read against it.</p>';
+            }
+            html += '<div class="wc-ar-addnote">'
+                + '<input type="date" id="arNoteDate" value="' + escapeHtml(st.realToday || st.today || '') + '" aria-label="Date to mark">'
+                + '<input type="text" id="arNoteLabel" maxlength="80" placeholder="What happened (e.g. attendance raffle started)" aria-label="What happened">'
+                + '<input type="text" id="arNoteText" maxlength="500" placeholder="Details (optional)" aria-label="Details">'
+                + '<button type="button" class="analytics-tab wc-ar-btn" onclick="addAttendanceRateNote()">Mark this date</button>'
+                + '</div>';
+
+            // --- how it is counted ----------------------------------------------
+            const foot = [];
+            if (measure === 'weeklyRate') {
+                foot.push('Attendance rate: 1 minus whole days absent, divided by the student-days enrolled that week. '
+                    + 'A day missing only some periods counts as attended; it is on the "Who is missing" tab.');
+            } else if (measure === 'monthlyAvgAbsent') {
+                foot.push('Whole days absent that month, divided by the students enrolled at any point in it.');
+            } else {
+                foot.push('The share of students who missed 10% or more of the days THEY were enrolled that month. '
+                    + 'It resets every month, which is what lets it go on a run chart; the year-to-date figure cannot.');
+            }
+            foot.push('A student counts as enrolled on a day when scheduled in at least one class that met.');
+            if (model.shortPeriods) {
+                // THE DENOMINATOR CHECK, SAID: which periods are more than 25%
+                // off their year's average, and what was done with them.
+                const k = model.shortPeriods;
+                const what = measure === 'weeklyRate'
+                    ? (st.policy === 'drop' ? 'left off the chart'
+                        : st.policy === 'separate' ? 'kept as their own points, drawn hollow'
+                        : 'merged into the week after (the week before, at the end of a year)')
+                    : (st.policy === 'drop' ? 'left off the chart' : 'kept, drawn hollow');
+                foot.push(k + ' ' + meta.period + (k === 1 ? ' has' : 's have') + ' more than 25% fewer or more student-days '
+                    + 'than the average ' + meta.period + ' of its year (holidays, the first and last weeks), and '
+                    + (k === 1 ? 'was ' : 'were ') + what + '.');
+            }
+            if (model.estimated) {
+                foot.push('Last year’s grade bands are estimated: a student still enrolled after it ended is placed one grade '
+                    + 'below today’s. Wrong only for a student who repeated a grade. The whole-school line does not depend on it.');
+            }
+            if (model.pendingWeeks) {
+                foot.push('The newest short week waits for the week after it to finish, then joins it.');
+            }
+            if (model.series.some(s => s.analysis.runsApproximate)) {
+                foot.push('With more than 40 points the runs test uses the formula the published table comes from.');
+            }
+            foot.push('The ' + meta.period + ' in progress joins the chart once it is over. Updated nightly.');
+            if (model.missingMonths && model.missingMonths.length) {
+                foot.push('No data for ' + model.missingMonths.join(', ') + ': that month did not build, and the line '
+                    + 'is drawn across it. The nightly update tries it again.');
+            }
+            if (res.truncated) foot.push('There is more history than this screen reads; tell an administrator.');
+            html += '<p class="wc-att-basis-note">' + escapeHtml(foot.join(' ')) + '</p>';
+            return { html: html, model: model };
+        }
+
+        /**
+         * The hover and keyboard readout: every line's value for the period
+         * under the pointer. ONE DELEGATED LISTENER ON THE HOST, attached once,
+         * for the reason wireRunChartHover gives: the host survives every
+         * re-render and the chart inside it does not.
+         */
+        function wireAttendanceRateHover() {
+            const host = document.getElementById('attRateBody');
+            if (!host || host.getAttribute('data-hover-wired') === '1') return;
+            host.setAttribute('data-hover-wired', '1');
+            const tipOf = () => host.querySelector('.wc-rc-tip');
+            const hide = () => { const t = tipOf(); if (t) { t.hidden = true; t.innerHTML = ''; } };
+            const show = (col) => {
+                const tip = tipOf();
+                const plot = host.querySelector('.wc-ar-plot');
+                const m = _arModel;
+                if (!tip || !plot || !col || !m) return;
+                const i = Number(col.getAttribute('data-ar-i'));
+                const p0 = m.axis[i];
+                if (!p0) return;
+                const measure = m.measure;
+                const rows = m.series.map(s => {
+                    const pt = s.points.find(q => q.x === i);
+                    const a = s.analysis;
+                    let side = '';
+                    if (pt && a.median !== null) {
+                        side = pt.value > a.median ? 'above' : pt.value < a.median ? 'below' : 'on';
+                    }
+                    const detail = !pt ? '' : measure === 'weeklyRate'
+                        ? (pt.full + ' whole days out of ' + pt.memberDays + ' student-days')
+                        : measure === 'monthlyChronic'
+                            ? (pt.chronic + ' of ' + pt.students + ' students')
+                            : (pt.full + ' whole days, ' + pt.students + ' students');
+                    return '<tr><th><span class="wc-ar-swatch ' + arSeriesInfo(s.series).cls + '"></span>'
+                        + escapeHtml(arSeriesInfo(s.series).label) + '</th><td>'
+                        + escapeHtml(pt ? arFmt(pt.value, measure) : '—') + '</td></tr>'
+                        + (pt ? '<tr class="wc-ar-tip-sub"><td colspan="2">' + escapeHtml(detail
+                            + (side ? ', ' + (side === 'on' ? 'on' : side) + ' the median' : '')) + '</td></tr>' : '');
+                }).join('');
+                const ref = (m.series[0] && m.series[0].points.find(q => q.x === i)) || null;
+                const extra = [];
+                if (ref && measure === 'weeklyRate') {
+                    extra.push(ref.schoolDays + ' school day' + (ref.schoolDays === 1 ? '' : 's') + ', ' + ref.from + ' to ' + ref.to);
+                    if (ref.merged && ref.parts && ref.parts.length > 1) {
+                        extra.push('Includes the short week of ' + ref.parts.filter(pp => pp.flag).map(pp => pp.week).join(', ')
+                            + ', merged in');
+                    }
+                }
+                if (ref && ref.flag) extra.push('Flagged: ' + (ref.flag === 'short' ? 'fewer' : 'more')
+                    + ' student-days than usual by more than 25%');
+                if (ref && ref.estimated && m.series.some(s => s.series !== 'all')) extra.push('Grade bands estimated');
+                const notes = m.notes.filter(nt => nt.x === i);
+                notes.forEach(nt => extra.push('Marked: ' + nt.label + ' (' + nt.date + ')'));
+                tip.innerHTML = '<div class="wc-rc-tip-when">' + escapeHtml(arPeriodLabel(p0, measure, false)) + '</div>'
+                    + '<table class="wc-rc-tip-rows">' + rows + '</table>'
+                    + (extra.length ? '<div class="wc-rc-tip-side">' + extra.map(escapeHtml).join('<br>') + '</div>' : '');
+                tip.hidden = false;
+                const hr = col.getBoundingClientRect();
+                const pr = plot.getBoundingClientRect();
+                const tr = tip.getBoundingClientRect();
+                // scrollLeft: on a phone the plot scrolls inside its card, and
+                // the readout is positioned in the scrolled content.
+                const sl = plot.scrollLeft || 0;
+                let left = (hr.left - pr.left) + hr.width / 2 + 12;
+                if (left + tr.width > pr.width - 4) left = (hr.left - pr.left) + hr.width / 2 - tr.width - 12;
+                left = Math.max(4, left) + sl;
+                tip.style.left = Math.round(left) + 'px';
+                tip.style.top = '8px';
+            };
+            const colOf = (e) => {
+                const t = e && e.target;
+                return (t && t.getAttribute && t.getAttribute('data-ar-i') !== null) ? t : null;
+            };
+            host.addEventListener('mouseover', (e) => { const c = colOf(e); if (c) show(c); });
+            host.addEventListener('mouseout', (e) => { if (colOf(e)) hide(); });
+            host.addEventListener('focusin', (e) => { const c = colOf(e); if (c) show(c); });
+            host.addEventListener('focusout', (e) => { if (colOf(e)) hide(); });
+            host.addEventListener('keydown', (e) => { if (e && e.key === 'Escape') hide(); });
+        }
+
+        async function renderAttendanceRate(force) {
+            const host = document.getElementById('attRateBody');
+            if (!host) return;
+            const R = window.WildcatRoster;
+            if (!R || typeof R.runRateModel !== 'function') {
+                host.innerHTML = '<p class="wc-att-basis-note">The chart rules did not load yet. They arrive with the next update.</p>';
+                return;
+            }
+            // Half an hour at most, on top of the idle drop: the chart changes
+            // once a night, and a tab open across that night must not keep
+            // yesterday's weeks.
+            if (_arCache && Date.now() - _arCacheAt > 30 * 60 * 1000) force = true;
+            let res = _arCache;
+            if (!res || force) {
+                if (_arBusy) { _arAgain = true; return; }
+                _arBusy = true;
+                host.innerHTML = '<p class="wc-att-basis-note">Loading the attendance rate&hellip;</p>';
+                try { res = await loadAttendanceRate(true); }
+                finally { _arBusy = false; }
+                if (_arAgain) { _arAgain = false; return renderAttendanceRate(true); }
+            }
+            const realToday = wcIsoDay(new Date());
+            const out = renderAttendanceRateBody(res, R, {
+                measure: _arMeasure,
+                policy: _arMeasure === 'weeklyRate' ? _arPolicy : (_arMonthDrop ? 'drop' : 'merge'),
+                shown: _arShown, cand: _arCand,
+                settings: riskSettings, today: arAsOf(res, realToday), realToday: realToday
+            });
+            _arModel = out.model;
+            host.innerHTML = out.html;
+            wireAttendanceRateHover();
+        }
+
+        /**
+         * Every change here goes through one door, and says what happened.
+         * `send()` makes the request; each caller declares its own session and
+         * names its server function in full where it is used.
+         *
+         * ONE AT A TIME. A second click while a change is saving is ignored
+         * rather than saved twice.
+         */
+        async function arMutate(send, done) {
+            if (_arSaving) return false;
+            _arSaving = true;
+            try {
+                await send();
+            } catch (e) {
+                showAlert('❌ That did not save: ' + ((e && e.message) || e));
+                return false;
+            } finally {
+                _arSaving = false;
+            }
+            if (done) showToast(done, 'success');
+            await renderAttendanceRate(true);
+            return true;
+        }
+
+        function arSignedOut() {
+            showAlert('⚠️ Sign in again to change the chart.');
+        }
+
+        async function freezeAttendanceBaseline(seriesKey) {
+            const m = _arModel;
+            const s = m && m.series.find(x => x.series === seriesKey);
+            const c = s && s.candidate;
+            if (!c || !c.canFreeze) return;
+            const info = arSeriesInfo(seriesKey);
+            const note = await showPrompt(
+                'Freeze the ' + info.label.toLowerCase() + ' median at ' + arFmt(c.median, m.measure) + '?\n'
+                + 'From ' + c.n + ' ' + m.meta.period + 's, ' + c.from + ' to ' + c.to + '. This line will stop moving as new '
+                + m.meta.period + 's arrive, so they are judged against this stretch. It can be unfrozen later.',
+                { placeholder: 'Why this range (optional), e.g. all of 2025–26', confirmLabel: 'Freeze' });
+            if (note === null || note === false || note === undefined) return;
+            const basis = m.measure === 'weeklyRate' ? ' [short weeks ' + AR_POLICY_WORDS[m.policy] + ']' : '';
+            const args = {
+                measure: m.measure, series: seriesKey, from: c.from, to: c.to,
+                median: Number(c.median), points: c.n, note: (String(note).trim() + basis).trim().slice(0, 300)
+            };
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) { arSignedOut(); return; }
+            await arMutate(() => auth.convexMutation('attendanceRunChartData:freezeBaseline', args, session.idToken),
+                'Median frozen.');
+        }
+
+        async function retireAttendanceBaseline(seriesKey) {
+            const m = _arModel;
+            if (!m) return;
+            const why = await showPrompt('Unfreeze this median? The line goes back to a median of every point until a new '
+                + 'baseline is frozen. The old one stays on record.',
+                { placeholder: 'Why (required), e.g. the baseline included a data error', confirmLabel: 'Unfreeze' });
+            if (why === null || why === false || why === undefined) return;          // cancelled
+            const cleaned = String(why).trim();
+            if (!cleaned) {
+                // SAID, not swallowed: OK with an empty box used to do nothing.
+                showAlert('⚠️ A reason is needed to unfreeze a median. Nothing was changed.');
+                return;
+            }
+            const args = { measure: m.measure, series: seriesKey, why: cleaned };
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) { arSignedOut(); return; }
+            await arMutate(() => auth.convexMutation('attendanceRunChartData:retireBaseline', args, session.idToken),
+                'Median unfrozen.');
+        }
+
+        async function addAttendanceRateNote() {
+            const dateEl = document.getElementById('arNoteDate');
+            const labelEl = document.getElementById('arNoteLabel');
+            const textEl = document.getElementById('arNoteText');
+            const date = dateEl ? String(dateEl.value || '') : '';
+            const label = labelEl ? String(labelEl.value || '').trim() : '';
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !label) {
+                showAlert('⚠️ Pick a date and say in a few words what happened.');
+                return;
+            }
+            const note = textEl ? String(textEl.value || '').trim() : '';
+            const args = note ? { date: date, label: label, note: note } : { date: date, label: label };
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) { arSignedOut(); return; }
+            await arMutate(() => auth.convexMutation('attendanceRunChartData:addAnnotation', args, session.idToken),
+                'Date marked.');
+        }
+
+        async function removeAttendanceRateNote(id) {
+            const ok = await showConfirm('Take this mark off the chart? It stays on record.', { confirmLabel: 'Remove' });
+            if (!ok) return;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) { arSignedOut(); return; }
+            await arMutate(() => auth.convexMutation('attendanceRunChartData:removeAnnotation', { id: String(id) }, session.idToken),
+                'Mark removed.');
         }
 
         async function loadPerfectMarks(force) {

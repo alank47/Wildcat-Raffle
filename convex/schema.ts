@@ -688,6 +688,85 @@ export default defineSchema({
    * at all, and plotting them as zero-absence days would invent two
    * spectacularly good days and drag the median down.
    */
+  /**
+   * THE ATTENDANCE RUN CHART'S DAILY TOTALS, per grade band (2026-09-23).
+   *
+   * One row per SCHOOL DAY per band (6-8, 9-12), for this year and last:
+   * `members` is how many students were enrolled that day (scheduled in at
+   * least one class that met), the rest how many of them had an absent
+   * period, split with the app's one whole-day rule (absenceDayRules.ts).
+   * Built by attendanceRunChart:buildMonth straight from PowerSchool's period
+   * records -- including students who have since LEFT, whose enrolled days
+   * belong in the weeks they were here.
+   *
+   * WHY DAILY TOTALS AND NOT PER-STUDENT ROWS: two years of per-student rows
+   * would pass Convex's read limit by spring; this is ~360 rows a year, so the
+   * chart stays one cheap read forever. Only COMPLETED days are ever written.
+   * `gradeEstimated`: last year's band comes from today's grade minus one for
+   * students still enrolled after last year ended (enrolment history is not
+   * readable); the chart says so.
+   */
+  attendanceRunDays: defineTable({
+    yearid: v.number(),
+    date: v.string(),
+    band: v.string(),
+    members: v.number(),
+    absentDays: v.number(),
+    fullDaysStrict: v.number(),
+    misrecordDaysByGap: v.array(v.number()),
+    partialDays: v.number(),
+    assumedPresentDays: v.number(),
+    gradeEstimated: v.boolean(),
+    syncedAt: v.string(),
+  }).index("by_yearid_date", ["yearid", "date"]),
+
+  /** Per month per band: the measures a daily total cannot give (see runChartDays.ts). */
+  attendanceRunMonths: defineTable({
+    yearid: v.number(),
+    month: v.string(),
+    band: v.string(),
+    students: v.number(),
+    memberDays: v.number(),
+    fullDayAbsences: v.number(),
+    chronicStudents: v.number(),
+    gradeEstimated: v.boolean(),
+    syncedAt: v.string(),
+  }).index("by_yearid_month", ["yearid", "month"]),
+
+  /**
+   * A FROZEN RUN CHART MEDIAN. Once a baseline of 10+ points is signal-free,
+   * its median is frozen and extended forward, and is NOT recalculated as new
+   * points arrive -- that is the method (Provost & Murray, ch. 3), not a bug:
+   * a median that moved with the data would slowly absorb any real change and
+   * hide the very shift it exists to reveal. A new baseline RETIRES the old one
+   * (kept, with who and why) rather than overwriting it.
+   */
+  runChartBaselines: defineTable({
+    measure: v.string(),
+    series: v.string(),
+    from: v.string(),
+    to: v.string(),
+    median: v.number(),
+    points: v.number(),
+    frozenAt: v.string(),
+    frozenBy: v.string(),
+    note: v.optional(v.string()),
+    retiredAt: v.optional(v.string()),
+    retiredBy: v.optional(v.string()),
+    retiredWhy: v.optional(v.string()),
+  }).index("by_measure_series", ["measure", "series"]),
+
+  /** "We started X on this date": marks on the run chart, by admins and PBIS. */
+  runChartAnnotations: defineTable({
+    date: v.string(),
+    label: v.string(),
+    note: v.optional(v.string()),
+    createdBy: v.string(),
+    createdAt: v.string(),
+    removedAt: v.optional(v.string()),
+    removedBy: v.optional(v.string()),
+  }).index("by_date", ["date"]),
+
   psAbsenceDayTotals: defineTable({
     /** "YYYY-MM-DD", exactly as ATTENDANCE.ATT_DATE returns it. */
     date: v.string(),

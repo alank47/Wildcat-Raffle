@@ -9729,6 +9729,62 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 .wc-rc-rule { display: block; font-weight: 600; }
 .wc-rc-why { display: block; margin-top: 4px; font-weight: 400; color: var(--wc-gray-text, #4b5563); }
 
+/* THE ATTENDANCE-RATE RUN CHART. Three lines, each with its own median in its
+   own colour; the chart furniture above is reused where it fits. The colours
+   differ in lightness as well as hue, so they separate in greyscale too. */
+.wc-ar-all { --ar: #1e3a8a; }
+.wc-ar-ms { --ar: #0f766e; }
+.wc-ar-hs { --ar: #c2410c; }
+.wc-ar-controls { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin: 4px 0 10px; font-size: 13px; }
+.wc-ar-lines { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.wc-ar-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.wc-ar-policy select, .wc-ar-range select { margin-left: 6px; font-size: 13px; max-width: 100%; }
+.wc-ar-swatch { display: inline-block; width: 14px; height: 4px; border-radius: 2px; background: var(--ar, #1e3a8a); vertical-align: middle; margin-right: 6px; }
+.wc-ar-grid { stroke: var(--wc-line, #e5e7eb); stroke-width: 1; }
+.wc-ar-year { stroke: var(--wc-gray-text, #9ca3af); stroke-width: 1; stroke-dasharray: 2 3; }
+.wc-ar-yearlab { font-size: 10.5px; font-weight: 700; fill: var(--wc-gray-text, #4b5563); text-anchor: middle; }
+.wc-ar-line { fill: none; stroke: var(--ar); stroke-width: 2; }
+.wc-ar-all.wc-ar-line { stroke-width: 2.5; }
+.wc-ar-median { stroke: var(--ar); stroke-width: 1.25; opacity: .8; }
+/* Solid over the frozen baseline, dashed where it is carried forward, dotted
+   while it is only provisional: three states a reader has to tell apart. */
+.wc-ar-frozen { stroke-width: 1.75; }
+.wc-ar-extended { stroke-dasharray: 6 4; }
+.wc-ar-provisional { stroke-dasharray: 2 3; }
+.wc-ar-dot { fill: var(--ar); }
+.wc-ar-dot.wc-ar-flagged { fill: var(--wc-surface, #fff); stroke: var(--ar); stroke-width: 1.5; }
+.wc-ar-halo { fill: var(--ar); opacity: .25; }
+.wc-ar-astro { fill: none; stroke: #ca8a04; stroke-width: 2; }
+.wc-ar-note { stroke: #7c3aed; stroke-width: 1; stroke-dasharray: 3 3; }
+.wc-ar-note-dot { fill: #7c3aed; }
+.wc-ar-note-num { font-size: 10px; font-weight: 700; fill: #fff; text-anchor: middle; }
+.wc-ar-col { fill: transparent; cursor: crosshair; }
+.wc-ar-col:focus { outline: none; }
+.wc-ar-col:focus-visible { fill: rgba(37, 99, 235, .08); }
+.wc-ar-col:hover { fill: rgba(17, 24, 39, .04); }
+.wc-ar-legend { list-style: none; margin: 8px 0 0; padding: 0; font-size: 13px; line-height: 1.6; color: var(--wc-ink, #111827); }
+.wc-ar-legend-key { color: var(--wc-gray-text, #6b7280); font-size: 12px; }
+.wc-ar-h { margin: 16px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--wc-gray-text, #6b7280); }
+.wc-ar-read { margin-bottom: 10px; }
+.wc-ar-read-h { font-size: 13px; font-weight: 700; margin-bottom: 2px; }
+.wc-ar-range { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; margin: 6px 0; }
+.wc-ar-bases, .wc-ar-notes { margin: 6px 0 0; padding-left: 0; list-style: none; font-size: 13px; line-height: 1.5; }
+.wc-ar-notes { list-style: decimal; padding-left: 22px; }
+.wc-ar-bases li, .wc-ar-notes li { margin-bottom: 8px; }
+.wc-ar-cand { margin-top: 3px; color: var(--wc-gray-text, #4b5563); }
+.wc-ar-btn { margin-left: 6px; padding: 3px 10px; font-size: 12px; }
+.wc-ar-addnote { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.wc-ar-addnote input { font-size: 13px; padding: 5px 8px; min-width: 0; }
+.wc-ar-addnote input[type="text"] { flex: 1 1 200px; }
+.wc-ar-tip-sub td { font-weight: 400; font-size: 11px; color: var(--wc-gray-text, #6b7280); text-align: left; padding-bottom: 3px; }
+.wc-ar-card .wc-sub { color: var(--wc-gray-text, #6b7280); }
+/* ON A PHONE THE CHART KEEPS A READABLE SIZE and scrolls inside its own card:
+   squeezed to 340px its labels are 4px tall. The PAGE never scrolls sideways. */
+@media (max-width: 640px) {
+  .wc-ar-plot { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .wc-ar-plot .wc-rc-svg { min-width: 620px; }
+}
+
 /* ---------------------------------------------------------------------------
    PERFECT ATTENDANCE
 

@@ -343,7 +343,9 @@ console.log("\nTHE SCREEN\n");
   check("the switch button says what it shows",
     /setAttendanceView\('subgroup'\)">By student group</.test(htmlSrc));
   check("all three views are known to the switch",
-    /ATT_VIEWS = \['watch', 'perfect', 'subgroup'\]/.test(scriptSrc));
+    // A PREFIX, not the whole list: the attendance-rate view (2026-09-23)
+    // was added after these three, and a fourth view must not fail this one.
+    /ATT_VIEWS = \['watch', 'perfect', 'subgroup'[,\]]/.test(scriptSrc));
   check("an unknown view still falls back to the absence list",
     /ATT_VIEWS\.indexOf\(view\) === -1 \? 'watch' : view/.test(scriptSrc));
   check("all three halves are toggled, so two cannot show at once",
