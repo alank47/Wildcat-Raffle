@@ -956,3 +956,173 @@ export const socioEconomicProbe = internalAction({
     return { ok: true, candidates: out };
   },
 });
+
+/**
+ * CAN THE RUN CHART HAVE LAST YEAR? Asked 2026-09-23 before any of it is built.
+ *
+ * The owner wants a weekly attendance-rate run chart (whole days out count as
+ * absent) with a baseline backfilled from LAST year's daily records, a
+ * denominator of the students actually enrolled each day, and separate lines
+ * for grades 6-8 and 9-12. Nothing from last year is stored in the app, and
+ * this year's rebuild reads only currently enrolled students. So this asks
+ * PowerSchool, read-only, whether each ingredient is reachable through the
+ * table endpoint without a plugin change:
+ *
+ *   - last year's dates: terms (first and last day) and calendar_day (in session)
+ *   - last year's period attendance rows (the same table this year's rebuild reads)
+ *   - last year's schedules (cc), which turn a period record into a block
+ *   - enrolment spans: students (every status, entry and exit dates, grade)
+ *     and reenrollments (one row per enrolment spell, with the grade that year)
+ *   - PowerSchool's own daily attendance/membership view, if it is exposed
+ *
+ * COUNTS AND FIELD NAMES ONLY. No student number, name or id leaves here.
+ * internalAction, CLI only, writes nothing.
+ */
+export const runChartHistoryProbe = internalAction({
+  args: {},
+  handler: async (): Promise<Record<string, any>> => {
+    const host = process.env.PS_HOST, id = process.env.PS_CLIENT_ID;
+    const secret = process.env.PS_CLIENT_SECRET, schoolid = process.env.PS_SCHOOL_ID;
+    const yearid = Number(process.env.PS_YEAR_ID);
+    if (!host || !id || !secret || !schoolid || !Number.isFinite(yearid)) {
+      return { ok: false, reason: "PowerSchool settings are not all present." };
+    }
+    const lastYear = yearid - 1;
+    const tok = await token(host, id, secret);
+    const H = { Authorization: `Bearer ${tok}`, Accept: "application/json" };
+    const say = async (res: Response) => { try { return (await res.text()).slice(0, 220); } catch { return "(unreadable)"; } };
+
+    const page = async (table: string, q: string, projection: string, pagesize = 100, pageNo = 1) => {
+      const url = `https://${host}/ws/schema/table/${table}?q=${encodeURIComponent(q)}`
+        + `&projection=${encodeURIComponent(projection)}&pagesize=${Math.min(100, pagesize)}&page=${pageNo}`;
+      const res = await fetch(url, { headers: H });
+      if (!res.ok) return { http: res.status, error: await say(res), rows: [] as any[] };
+      const b: any = await res.json();
+      return { http: 200, error: null as string | null, rows: (b?.record ?? []).map((r: any) => r.tables?.[table] ?? r) };
+    };
+    const count = async (table: string, q: string) => {
+      const res = await fetch(`https://${host}/ws/schema/table/${table}/count?q=${encodeURIComponent(q)}`, { headers: H });
+      if (!res.ok) return { http: res.status, error: await say(res), count: null as number | null };
+      const b: any = await res.json();
+      return { http: 200, error: null as string | null, count: Number(b?.count ?? b?.resource?.count ?? NaN) };
+    };
+    const keysOf = (rows: any[]) => Object.keys(rows[0] ?? {}).sort();
+    const tally = (rows: any[], f: (r: any) => string) => {
+      const o: Record<string, number> = {};
+      for (const r of rows) { const k = f(r); o[k] = (o[k] || 0) + 1; }
+      return o;
+    };
+
+    const out: Record<string, any> = { ok: true, yearid, lastYear };
+
+    // 1. Last year's dates.
+    const terms = await page("terms", `schoolid==${schoolid};yearid==${lastYear}`, "id,firstday,lastday,isyearrec,abbreviation", 50);
+    out.lastYearTerms = { http: terms.http, error: terms.error, fields: keysOf(terms.rows),
+      terms: terms.rows.map((t: any) => ({ id: t.id, first: String(t.firstday ?? "").slice(0, 10),
+        last: String(t.lastday ?? "").slice(0, 10), year: t.isyearrec, abbr: t.abbreviation })) };
+    const yearTerm = terms.rows.find((t: any) => String(t.isyearrec) === "1") ?? terms.rows[0];
+    const lyFirst = yearTerm ? String(yearTerm.firstday ?? "").slice(0, 10) : "2025-08-01";
+    const lyLast = yearTerm ? String(yearTerm.lastday ?? "").slice(0, 10) : "2026-06-30";
+    out.lastYearRange = { first: lyFirst, last: lyLast };
+
+    const cal = await count("calendar_day", `schoolid==${schoolid};date_value=ge=${lyFirst};date_value=le=${lyLast};insession==1`);
+    const calSample = await page("calendar_day", `schoolid==${schoolid};date_value=ge=${lyFirst};date_value=le=${lyLast}`, "date_value,insession,membershipvalue", 5);
+    out.calendarLastYear = { inSessionDays: cal, sampleFields: keysOf(calSample.rows), sampleError: calSample.error };
+    const calThis = await count("calendar_day", `schoolid==${schoolid};date_value=ge=2026-08-01;date_value=le=2026-09-23;insession==1`);
+    out.calendarThisYearToDate = calThis;
+
+    // 2. Last year's period attendance rows.
+    out.attendanceLastYear = {
+      byYearid: await count("attendance", `schoolid==${schoolid};yearid==${lastYear}`),
+      byDateRange: await count("attendance", `schoolid==${schoolid};att_date=ge=${lyFirst};att_date=le=${lyLast}`),
+    };
+    const attSample = await page("attendance", `schoolid==${schoolid};yearid==${lastYear}`, "att_date,periodid,attendance_codeid,ccid,att_mode_code", 100);
+    out.attendanceLastYear.sample = { http: attSample.http, error: attSample.error, rows: attSample.rows.length,
+      fields: keysOf(attSample.rows), modes: tally(attSample.rows, (r) => String(r.att_mode_code ?? "(null)")),
+      withCcid: attSample.rows.filter((r: any) => r.ccid != null && String(r.ccid) !== "0").length,
+      months: tally(attSample.rows, (r) => String(r.att_date ?? "").slice(0, 7)) };
+    const codesLY = await page("attendance_code", `schoolid==${schoolid};yearid==${lastYear}`, "id,att_code,presence_status_cd", 100);
+    out.attendanceCodesLastYear = { http: codesLY.http, error: codesLY.error, count: codesLY.rows.length,
+      absentStatusCodes: codesLY.rows.filter((c: any) => String(c.presence_status_cd) === "Absent").length };
+
+    // 3. Last year's schedules.
+    const lyTermBase = lastYear * 100;
+    out.ccLastYear = await count("cc", `schoolid==${schoolid};termid=ge=${lyTermBase};termid=le=${lyTermBase + 99}`);
+    out.ccThisYear = await count("cc", `schoolid==${schoolid};termid=ge=${yearid * 100};termid=le=${yearid * 100 + 99}`);
+
+    // 4. Enrolment spans.
+    const studAll = await page("students", `schoolid==${schoolid}`, "enroll_status,entrydate,exitdate,grade_level", 100);
+    out.studentsFirstPage = { http: studAll.http, error: studAll.error, fields: keysOf(studAll.rows),
+      byStatus: tally(studAll.rows, (r) => String(r.enroll_status)),
+      withExitDate: studAll.rows.filter((r: any) => String(r.exitdate ?? "").length >= 10).length };
+    out.studentsCounts = {
+      enrolled: await count("students", `schoolid==${schoolid};enroll_status==0`),
+      transferredOut: await count("students", `schoolid==${schoolid};enroll_status==2`),
+      graduated: await count("students", `schoolid==${schoolid};enroll_status==3`),
+      leftThisYear: await count("students", `schoolid==${schoolid};exitdate=ge=2026-08-12;exitdate=le=2026-09-23;enroll_status!=0`),
+    };
+    const re = await page("reenrollments", `schoolid==${schoolid}`, "entrydate,exitdate,grade_level,schoolid", 100);
+    out.reenrollments = { http: re.http, error: re.error, rowsOnFirstPage: re.rows.length, fields: keysOf(re.rows),
+      total: await count("reenrollments", `schoolid==${schoolid}`),
+      coveringLastYear: await count("reenrollments", `schoolid==${schoolid};entrydate=le=${lyLast};exitdate=ge=${lyFirst}`),
+      grades: tally(re.rows, (r) => String(r.grade_level)) };
+
+    // 5. PowerSchool's own daily attendance / membership, if exposed.
+    for (const t of ["ps_adaadm_daily_ctod", "ps_adaadm_meeting_ptod", "ps_membership_reg"]) {
+      const r = await page(t, `schoolid==${schoolid}`, "calendardate,attendancevalue,membershipvalue,grade_level", 5);
+      out[t] = { http: r.http, error: r.error, fields: keysOf(r.rows) };
+    }
+    return out;
+  },
+});
+
+/**
+ * THE MISSING INGREDIENT: who was enrolled on each day LAST year, and in which
+ * grade. reenrollments answered NoAccess (2026-09-23), so this asks whether
+ * the schedule records carry the dates instead -- cc.dateenrolled/dateleft are
+ * how PowerSchool itself derives membership for period attendance -- and what
+ * the students table says about a continuing student's entry date. Field
+ * availability and month tallies only; nothing identifying leaves here.
+ */
+export const runChartEnrolmentProbe = internalAction({
+  args: {},
+  handler: async (): Promise<Record<string, any>> => {
+    const host = process.env.PS_HOST, id = process.env.PS_CLIENT_ID;
+    const secret = process.env.PS_CLIENT_SECRET, schoolid = process.env.PS_SCHOOL_ID;
+    const yearid = Number(process.env.PS_YEAR_ID);
+    if (!host || !id || !secret || !schoolid || !Number.isFinite(yearid)) return { ok: false };
+    const tok = await token(host, id, secret);
+    const H = { Authorization: `Bearer ${tok}`, Accept: "application/json" };
+    const tryProj = async (table: string, q: string, projection: string) => {
+      const url = `https://${host}/ws/schema/table/${table}?q=${encodeURIComponent(q)}`
+        + `&projection=${encodeURIComponent(projection)}&pagesize=100`;
+      const res = await fetch(url, { headers: H });
+      if (!res.ok) return { projection, http: res.status, error: (await res.text()).slice(0, 200) };
+      const b: any = await res.json();
+      const rows = (b?.record ?? []).map((r: any) => r.tables?.[table] ?? r);
+      const months = (f: string) => {
+        const o: Record<string, number> = {};
+        for (const r of rows) { const k = String(r[f] ?? "").slice(0, 7) || "(none)"; o[k] = (o[k] || 0) + 1; }
+        return o;
+      };
+      return { projection, http: 200, rows: rows.length, fields: Object.keys(rows[0] ?? {}).sort(),
+        dateenrolledMonths: rows[0] && "dateenrolled" in rows[0] ? months("dateenrolled") : undefined,
+        dateleftMonths: rows[0] && "dateleft" in rows[0] ? months("dateleft") : undefined };
+    };
+    const lyBase = (yearid - 1) * 100;
+    const out: Record<string, any> = { ok: true };
+    out.ccLastYear = [];
+    for (const p of ["studentid,termid,dateenrolled,dateleft", "studentid,dateenrolled,dateleft", "dateenrolled,dateleft", "studentid,termid"]) {
+      const r = await tryProj("cc", `schoolid==${schoolid};termid=ge=${lyBase};termid=le=${lyBase + 99}`, p);
+      out.ccLastYear.push(r);
+      if (r.http === 200) break;
+    }
+    // A continuing student: enrolled now. Does students.entrydate say this
+    // year (their current spell) or when they first came?
+    const cur = await tryProj("students", `schoolid==${schoolid};enroll_status==0`, "entrydate,grade_level");
+    out.enrolledNow = cur;
+    const gone = await tryProj("students", `schoolid==${schoolid};enroll_status==2;exitdate=ge=2025-08-14;exitdate=le=2026-06-30`, "entrydate,exitdate,grade_level");
+    out.leftDuringLastYear = gone;
+    return out;
+  },
+});
