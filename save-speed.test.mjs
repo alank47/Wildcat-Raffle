@@ -61,8 +61,10 @@ console.log("\nA write that did not land is never recorded as one");
   t.forget("k");
   check("forget makes it dirty again", t.changed("k", rows) === true);
 
+  // `sent`: the copy taken when the request starts, so a change made while it
+  // is in flight is not recorded as written (2026-09-24, behaviors-persist).
   check("the code marks written only INSIDE .then, after it resolves",
-    /\.then\(r => \{ saveDirty\.markWritten\('secondary:' \+ key, value\); return r; \}\)/.test(code));
+    /\.then\(r => \{ saveDirty\.markWritten\('secondary:' \+ key, sent\); return r; \}\)/.test(code));
   check("and for ticket history, only after the await",
     /await mergeLegacySlice\(docName, 'histories', outgoing, 'entryId'\);\s*saveDirty\.markWritten\('hist:' \+ docName, outgoing\);/.test(code));
   check("nothing is marked before its write is issued",

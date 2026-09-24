@@ -140,6 +140,166 @@
     return next;
   }
 
+  // ---------------------------------------------------------------------
+  // Cash behaviours: the list staff award from and deduct against
+  //
+  // THE REWARD BUG, A SECOND TIME, found 2026-09-24. An admin added a
+  // behaviour in Cash Settings, was told it saved, and nobody else ever saw
+  // it. wildcatCashBehaviors was a hardcoded list that no save carried and no
+  // load read: an addition lived only in the tab that made it and was gone
+  // on its next load. It is now saved beside the rewards, merged by id, and
+  // these rules decide what a stored behaviour may look like.
+  //
+  // RETIRED, NEVER DELETED, for the reason rewards are: the server unions by
+  // id, so a behaviour deleted in one tab came straight back from any other
+  // tab's next save. A retired one leaves every menu and stays on record, and
+  // past awards keep the name they were given under.
+  // ---------------------------------------------------------------------
+
+  // An id goes into an onclick attribute on the settings screen, and every
+  // behaviour now comes back from the server as data another person wrote --
+  // so only a plain token is accepted as an id.
+  var BEHAVIOR_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+  // The server refuses any single cash movement larger than this
+  // (convex/appDataShape.ts MAX_CASH_DELTA). A behaviour worth more could be
+  // created but never awarded: every award would be held, re-sent and never
+  // land. Kept equal to the server's number; if that cap is lifted, lift this.
+  var BEHAVIOR_MAX_AMOUNT = 5000;
+
+  function validateBehavior(patch) {
+    var errors = [];
+    var name = trimmed(patch && patch.name);
+    if (!name) errors.push('Please enter a behavior name.');
+    if (name.length > 60) errors.push('The name must be 60 characters or fewer.');
+    var type = patch && patch.type;
+    if (type !== 'positive' && type !== 'negative') errors.push('Choose positive or negative.');
+    var points = patch && patch.points;
+    if (!isFiniteNumber(points) || Math.floor(points) !== points || points === 0) {
+      errors.push('Enter a whole-dollar amount (not zero).');
+    } else if (Math.abs(points) > BEHAVIOR_MAX_AMOUNT) {
+      errors.push('A single award or deduction cannot be more than $' + BEHAVIOR_MAX_AMOUNT
+        + ' right now: the server refuses bigger ones.');
+    }
+    return { ok: errors.length === 0, errors: errors };
+  }
+
+  /**
+   * Fill in every field the rest of the code reads, without mutating input.
+   * Returns null for a row that cannot be a behaviour (no usable id, no
+   * name, or no amount), which the merge drops rather than guesses at.
+   * The sign always follows the type: an award is never negative.
+   */
+  function normalizeBehavior(raw, now, actor) {
+    var r = raw || {};
+    var id = trimmed(r.id);
+    var name = trimmed(r.name);
+    var pts = Number(r.points);
+    if (!BEHAVIOR_ID.test(id) || !name || !isFiniteNumber(pts) || pts === 0) return null;
+    var type = r.type === 'positive' || r.type === 'negative' ? r.type : (pts > 0 ? 'positive' : 'negative');
+    var actorName = trimmed(actor && (actor.name || actor.username)) || 'system';
+    return {
+      id: id,
+      name: name.slice(0, 60),
+      points: type === 'negative' ? -Math.abs(pts) : Math.abs(pts),
+      type: type,
+      active: r.active !== false && !r.retiredAt,
+      custom: r.custom === true,
+      // NOT MINTED when absent. A fresh "now" here made every merge produce a
+      // different list, so every idle pull looked like a change and re-sent the
+      // whole list (found in review). The caller that creates one stamps it.
+      createdAt: r.createdAt || null,
+      createdBy: r.createdBy || (actor ? actorName : null),
+      updatedAt: r.updatedAt || null,
+      updatedBy: r.updatedBy || null,
+      retiredAt: r.retiredAt || null,
+      retiredBy: r.retiredBy || null
+    };
+  }
+
+  /**
+   * Retire a behaviour. updatedAt TOO: the server keeps whichever copy of a
+   * row has the newer updatedAt, and a retirement that did not move it would
+   * tie with the stored active copy and lose (the reward lesson, retireReward).
+   */
+  function retireBehavior(b, now, actor) {
+    var next = normalizeBehavior(b, now, actor);
+    if (!next) return null;
+    var stamp = new Date(now).toISOString();
+    var who = trimmed(actor && (actor.name || actor.username)) || 'system';
+    next.active = false;
+    next.retiredAt = stamp;
+    next.retiredBy = who;
+    // ALWAYS NEWER THAN THE COPY BEING RETIRED, whatever this device's clock
+    // says. A Chromebook running five minutes slow stamped a retirement older
+    // than the stored active copy, the server kept the active one, and the
+    // behaviour came back while the admin was told it was removed.
+    var prev = behaviorTouched(b);
+    next.updatedAt = new Date(Math.max(now, prev + 1)).toISOString();
+    next.updatedBy = who;
+    return next;
+  }
+
+  function behaviorTouched(b) {
+    var t = b && b.updatedAt ? Date.parse(b.updatedAt) : NaN;
+    return isFinite(t) ? t : 0;
+  }
+
+  /**
+   * The list a tab should hold, from what it has and what the server has.
+   *
+   * THE SAME RULE AS THE SERVER'S MERGE, so a tab and the database never
+   * disagree about which copy of a behaviour wins: union by id, and where
+   * both hold one, the server's copy unless this tab's was changed later.
+   * A behaviour only this tab knows (added, save not yet landed) is kept.
+   *
+   * THE CORE BEHAVIOURS ARE ALWAYS THERE AND ALWAYS ACTIVE -- the four "Be"
+   * awards and their four deductions, which the settings screen offers no way
+   * to remove -- so a partial or damaged server list can never take away the
+   * buttons every teacher uses.
+   *
+   * Order: the core list in its own order, then the school's own additions
+   * oldest first, so the award menus do not reshuffle between loads.
+   */
+  function mergeBehaviorLists(local, server, core, now) {
+    var byId = {};
+    var order = [];
+    var take = function (raw, fromServer) {
+      var b = normalizeBehavior(raw, now, null);
+      if (!b) return;
+      var have = byId[b.id];
+      if (!have) { byId[b.id] = { b: b, server: fromServer }; order.push(b.id); return; }
+      if (fromServer) {
+        if (behaviorTouched(have.b) > behaviorTouched(b)) return;   // this tab's is newer
+        byId[b.id] = { b: b, server: true };
+      } else if (behaviorTouched(b) > behaviorTouched(have.b)) {
+        byId[b.id] = { b: b, server: false };
+      }
+    };
+    (server || []).forEach(function (r) { take(r, true); });
+    (local || []).forEach(function (r) { take(r, false); });
+
+    var out = [];
+    var coreIds = {};
+    (core || []).forEach(function (c) {
+      // THE CORE EIGHT COME FROM THE CODE, entirely. Their name, amount and
+      // type are never taken from a stored copy, so no saved row -- damaged,
+      // stale, or edited by hand -- can change "Be Present" for every
+      // teacher, and a core behaviour can never be retired.
+      var base = normalizeBehavior(c, now, null);
+      if (!base) return;
+      coreIds[base.id] = true;
+      base.active = true;
+      base.custom = false;
+      out.push(base);
+    });
+    var extras = order.filter(function (id) { return !coreIds[id]; }).map(function (id) { return byId[id].b; });
+    extras.sort(function (a, b) {
+      return String(a.createdAt) < String(b.createdAt) ? -1 : String(a.createdAt) > String(b.createdAt) ? 1 : 0;
+    });
+    return out.concat(extras);
+  }
+
   function isRewardPurchasable(reward) {
     if (!reward) return false;
     if (reward.retiredAt) return false;
@@ -685,6 +845,10 @@
     applyRewardEdit: applyRewardEdit,
     retireReward: retireReward,
     isRewardPurchasable: isRewardPurchasable,
+    validateBehavior: validateBehavior,
+    normalizeBehavior: normalizeBehavior,
+    retireBehavior: retireBehavior,
+    mergeBehaviorLists: mergeBehaviorLists,
     canPurchase: canPurchase,
     buildPurchase: buildPurchase,
     canFulfill: canFulfill,

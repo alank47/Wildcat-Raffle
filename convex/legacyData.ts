@@ -71,6 +71,34 @@ import { notifyNewReferrals } from "./referralMail";
  * not there" lead to different code, and collapsing them writes a fresh
  * document over a missing one without anybody deciding to.
  */
+/**
+ * ONE SMALL LIST, read on its own, for the idle refresh.
+ *
+ * A behaviour an admin adds has to reach the other forty open tabs without
+ * anyone reloading, and loadDoc('secondary') would read every pass, login and
+ * detention to deliver it. So this reads exactly one named slice, and only
+ * the slices listed here: it is a narrow door, not a general one. Staff only,
+ * the same as loadDoc.
+ */
+const SLICES_READABLE_ALONE: Record<string, string[]> = {
+  secondary: ["wildcatCashBehaviors"],
+};
+
+export const loadSlice = query({
+  args: { doc: v.string(), collection: v.string() },
+  handler: async (ctx, { doc, collection }) => {
+    await requireStaff(ctx);
+    if (!(SLICES_READABLE_ALONE[doc] || []).includes(collection)) {
+      throw new Error(`${doc}.${collection} cannot be read on its own.`);
+    }
+    const rows = await ctx.db
+      .query("legacyMirror")
+      .withIndex("by_doc_collection", (q) => q.eq("doc", doc).eq("collection", collection))
+      .take(500);
+    return rows.map((r) => r.payload);
+  },
+});
+
 export const loadDoc = query({
   args: { doc: v.string() },
   handler: async (ctx, { doc }) => {

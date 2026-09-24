@@ -2426,7 +2426,11 @@
         // Login Activity Tracking
         let loginHistory = []; // Array of login records
         
-        let wildcatCashBehaviors = [
+        // THE CORE BEHAVIOURS: always present, cannot be retired from the
+        // screen. The school's own additions are saved beside the rewards
+        // (secondary.wildcatCashBehaviors) and merged onto these on load --
+        // see WildcatStore.mergeBehaviorLists.
+        const CORE_CASH_BEHAVIORS = [
             // Core Positive Behaviors (cannot be deleted)
             { id: 'wc1', name: 'Be Present', points: 100, type: 'positive' },
             { id: 'wc2', name: 'Be Respectful', points: 100, type: 'positive' },
@@ -2438,6 +2442,7 @@
             { id: 'wc7', name: 'Not Being Responsible', points: -100, type: 'negative' },
             { id: 'wc8', name: 'Not Being Safe', points: -100, type: 'negative' }
         ];
+        let wildcatCashBehaviors = CORE_CASH_BEHAVIORS.map(b => Object.assign({}, b));
         let wildcatCashRewards = [
             { id: 'reward1', name: 'Homework Pass', cost: 1000, available: true },
             { id: 'reward2', name: 'Dress Down Day', cost: 1500, available: true },
@@ -3749,6 +3754,17 @@
                             });
                         }
 
+                        // THE BEHAVIOUR LIST, the same way and for the same
+                        // reason (2026-09-24: an added behaviour was never
+                        // saved). Merged rather than replaced, so the core
+                        // eight are always there and a behaviour this tab has
+                        // not finished saving is not dropped.
+                        const serverBehaviors = secondaryData.wildcatCashBehaviors;
+                        if (Array.isArray(serverBehaviors) && serverBehaviors.length) {
+                            wildcatCashBehaviors = window.WildcatStore.mergeBehaviorLists(
+                                wildcatCashBehaviors, serverBehaviors, CORE_CASH_BEHAVIORS, Date.now());
+                        }
+
                         // Receipts merge by id, the same union-by-id shape the
                         // rest of this loader uses, so a receipt raised on one
                         // device is not dropped by a save from another.
@@ -3903,6 +3919,10 @@
                 if (Array.isArray(data.wildcatCashRewards) && data.wildcatCashRewards.length) {
                     wildcatCashRewards = data.wildcatCashRewards.map(r =>
                         window.WildcatStore.normalizeReward(r, Date.now(), currentUser || {}));
+                }
+                if (Array.isArray(data.wildcatCashBehaviors) && data.wildcatCashBehaviors.length) {
+                    wildcatCashBehaviors = window.WildcatStore.mergeBehaviorLists(
+                        wildcatCashBehaviors, data.wildcatCashBehaviors, CORE_CASH_BEHAVIORS, Date.now());
                 }
                 cashReceipts = data.cashReceipts || [];
                 cashYearArchives = data.cashYearArchives || [];
@@ -5443,6 +5463,12 @@
                                 // survive. The settings row is a whole-value replace,
                                 // where the last tab to save would win the lot.
                                 wildcatCashRewards,
+                                // THE BEHAVIOUR LIST, which had the same bug and
+                                // was missed (found 2026-09-24): no save carried
+                                // it, so an admin's addition lived only in the
+                                // tab that made it. Ids, merged by id, retired
+                                // rather than deleted -- the rewards' rules.
+                                wildcatCashBehaviors,
                             };
                             // TEN SEQUENTIAL ROUND TRIPS, AWAITED ONE AT A TIME.
                             //
@@ -5464,9 +5490,18 @@
                                 const value = secondaryLists[key] || [];
                                 if (!saveDirty.changed('secondary:' + key, value)) continue;
                                 secondaryNames.push(key);
+                                // WHAT WAS SENT is what gets marked written -- a
+                                // copy taken now, not the live list. The request
+                                // is serialised the moment it starts; marking the
+                                // live list when it FINISHED recorded anything
+                                // added in between as saved, so the next save
+                                // skipped it and it never reached the server
+                                // while the screen said "added" (found in review
+                                // 2026-09-24, with a behaviour).
+                                const sent = JSON.parse(JSON.stringify(value));
                                 secondaryWrites.push(
-                                    mergeLegacySlice('secondary', key, value, 'id')
-                                        .then(r => { saveDirty.markWritten('secondary:' + key, value); return r; }));
+                                    mergeLegacySlice('secondary', key, sent, 'id')
+                                        .then(r => { saveDirty.markWritten('secondary:' + key, sent); return r; }));
                             }
 
                             const secondaryWholeValue = {
@@ -5481,9 +5516,11 @@
                                 const value = secondaryWholeValue[key] || [];
                                 if (!saveDirty.changed('secondary:' + key, value)) continue;
                                 secondaryNames.push(key);
+                                // The same: mark the copy that was sent.
+                                const sent = JSON.parse(JSON.stringify(value));
                                 secondaryWrites.push(
-                                    saveLegacySlice('secondary', key, value)
-                                        .then(r => { saveDirty.markWritten('secondary:' + key, value); return r; }));
+                                    saveLegacySlice('secondary', key, sent)
+                                        .then(r => { saveDirty.markWritten('secondary:' + key, sent); return r; }));
                             }
 
                             // allSettled, not all: one slice failing must not
@@ -5520,6 +5557,11 @@
                                 preventionGroups = mergedSecondary.preventionGroups;
                                 cashReceipts = mergedSecondary.cashReceipts;
                                 wildcatCashRewards = mergedSecondary.wildcatCashRewards;
+                                // The behaviour list is NOT taken back here: it
+                                // is the same array this tab already holds, and
+                                // if a refresh swapped in a newer one while the
+                                // save ran, putting the old one back would undo
+                                // it -- and drop anything added to the new one.
                                 detentionIdCounter = mergedSecondary.detentionIdCounter;
                             }
                             console.log(
@@ -5565,6 +5607,8 @@
                             // added, and every price they edited, lived only
                             // until the next page load.
                             wildcatCashRewards,
+                            // And the behaviour list, missed the same way.
+                            wildcatCashBehaviors,
                             cashReceipts,
                             cashYearArchives,
                             loginHistory,
@@ -5631,6 +5675,7 @@
                             // school back to the five hardcoded defaults at the
                             // exact moment it was relying on the cache.
                             wildcatCashRewards,
+                            wildcatCashBehaviors,
                             // AND SO DOES THE MONEY, for exactly the same
                             // reason and at exactly the same cost. The primary
                             // blob above carries cashTransactions and
@@ -5763,6 +5808,7 @@
                 cashTransactions,
                 cashReceipts,
                 wildcatCashRewards,
+                wildcatCashBehaviors,
                 cashYearArchives,
 
                 backupDate: new Date().toISOString(),
@@ -5923,6 +5969,10 @@
             const isOnTicketsTab = ticketsTab && !ticketsTab.classList.contains('hidden');
             
             if (binId && !isSyncing && (currentUser || currentStudent) && timeSinceActivity > AUTO_REFRESH_DELAY && !isOnTicketsTab) {
+                // The behaviour list does not ride the roster refresh below,
+                // and does not wait for "the server has newer data": a
+                // behaviour saves into its own list without moving that stamp.
+                pullCashBehaviors();
                 // SAFETY CHECK: Only refresh if Firebase has NEWER data than local
                 try {
                     // MOVED OFF FIRESTORE 2026-08-31. Same rule: only pull a
@@ -28755,7 +28805,9 @@
             // corrected mistake is counted twice -- once as the thing that did
             // not happen and once as the correction.
             const _behaviourReversedIds = reversedCashIds();
-            const behaviorFreq = {};
+            // No prototype: a behaviour named "__proto__" otherwise wrote
+            // count and total onto every object in the page (found in review).
+            const behaviorFreq = Object.create(null);
             cashTransactions.forEach(txn => {
                 if (!isCashBehaviourRow(txn, _behaviourReversedIds)) return;
                 if (!behaviorFreq[txn.behaviorName]) {
@@ -28778,7 +28830,7 @@
                     const color = data.total > 0 ? '#2E7D52' : '#B3392F';
                     behaviorHTML += `
                         <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e0e0e0;">
-                            <span style="color: #333; font-weight: 600;">${name}</span>
+                            <span style="color: #333; font-weight: 600;">${escapeHtml(String(name))}</span>
                             <span style="color: ${color};">${data.count} times (${data.total > 0 ? '+' : ''}$${data.total})</span>
                         </div>
                     `;
@@ -28801,46 +28853,106 @@
             document.getElementById('newBehaviorPoints').value = '10';
         }
 
-        function addNewBehavior() {
+        /**
+         * SAVE THE BEHAVIOUR LIST AND SAY WHETHER IT LANDED.
+         *
+         * "Behavior added successfully!" used to follow an un-awaited save of
+         * a list no save carried -- a green message for nothing (2026-09-24).
+         * This waits for the save and then asks the one question that matters:
+         * is the list the server holds now the list this tab holds? The save's
+         * own fingerprint answers it -- it is only marked written when that
+         * exact content was accepted.
+         */
+        async function saveBehaviorListTruthfully(expect) {
+            let ok = false;
+            try { ok = await saveData(); } catch (e) { ok = false; }
+            // THIS LIST'S OWN FINGERPRINT, not saveData's overall answer: an
+            // unrelated write failing (the audit log, a cash week) made the
+            // whole save "false" while this list had landed, and the admin was
+            // told it had not (found in review).
+            if (window.WildcatDirty) {
+                if (saveDirty.changed('secondary:wildcatCashBehaviors', wildcatCashBehaviors)) return false;
+            } else if (ok === false) {
+                return false;
+            }
+            // AND THE SERVER'S OWN WORD. An accepted write can still have been
+            // outranked -- the server keeps the stored copy unless ours is newer
+            // -- so the one row that changed is read back and checked.
+            if (!expect || !expect.id) return true;
+            const row = await behaviorOnServer(expect.id);
+            if (row === undefined) return true;      // could not ask; the write itself was accepted
+            return !!row && (row.active !== false && !row.retiredAt) === expect.active;
+        }
+
+        /** One behaviour as the server holds it: the row, null if absent, undefined if it could not be asked. */
+        async function behaviorOnServer(id) {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) return undefined;
+            try {
+                const rows = await auth.convexQuery('legacyData:loadSlice',
+                    { doc: 'secondary', collection: 'wildcatCashBehaviors' }, session.idToken);
+                if (!Array.isArray(rows)) return undefined;
+                return rows.find(r => r && r.id === id) || null;
+            } catch (e) {
+                return undefined;
+            }
+        }
+
+        let _behaviorSaving = false;
+
+        async function addNewBehavior() {
+            if (_behaviorSaving) return;              // a double click saves once
+            const S = window.WildcatStore;
             const name = document.getElementById('newBehaviorName').value.trim();
             const type = document.getElementById('newBehaviorType').value;
-            const points = parseInt(document.getElementById('newBehaviorPoints').value);
-            
-            if (!name) {
-                alert('Please enter a behavior name');
+            const points = Math.abs(parseInt(document.getElementById('newBehaviorPoints').value, 10));
+
+            const check = S.validateBehavior({ name: name, type: type, points: points });
+            if (!check.ok) { showAlert('⚠️ ' + check.errors.join('\n')); return; }
+            // The same name twice would be two buttons nobody can tell apart.
+            if (wildcatCashBehaviors.some(b => b.active !== false && b.name.toLowerCase() === name.toLowerCase())) {
+                showAlert('⚠️ A behavior called "' + name + '" already exists.');
                 return;
             }
-            
-            if (isNaN(points) || points === 0) {
-                alert('Please enter a valid point value (cannot be zero)');
-                return;
-            }
-            
-            // Create new behavior
-            const behavior = {
-                id: 'wc_custom_' + Date.now(),
+
+            const now = Date.now();
+            const behavior = S.normalizeBehavior({
+                id: 'wc_custom_' + now,
                 name: name,
-                points: type === 'negative' ? -Math.abs(points) : Math.abs(points),
+                points: points,
                 type: type,
                 active: true,
-                custom: true
-            };
-            
+                custom: true,
+                createdAt: new Date(now).toISOString(),
+                updatedAt: new Date(now).toISOString()
+            }, now, currentUser || {});
+
             wildcatCashBehaviors.push(behavior);
-            saveData();
-            
             closeAddBehaviorModal();
             updateBehaviorsList();
-            alert('✅ Behavior added successfully!');
+
+            _behaviorSaving = true;
+            let landed = false;
+            try { landed = await saveBehaviorListTruthfully({ id: behavior.id, active: true }); }
+            finally { _behaviorSaving = false; }
+            if (landed) {
+                showToast('✅ "' + name + '" added. Staff will see it within a few minutes.', 'success');
+            } else {
+                showAlert('❌ "' + name + '" was NOT saved to the server, so other staff will not see it yet. '
+                    + 'It will try again with the next save; if this keeps happening, check your connection and sign-in.');
+            }
         }
 
         function updateBehaviorsList() {
             const container = document.getElementById('behaviorsList');
+            if (!container) return;
             container.innerHTML = '';
             
-            // Group by type
-            const positive = wildcatCashBehaviors.filter(b => b.type === 'positive');
-            const negative = wildcatCashBehaviors.filter(b => b.type === 'negative');
+            // Group by type. Retired behaviours are kept on record, not shown.
+            const live = wildcatCashBehaviors.filter(b => b.active !== false);
+            const positive = live.filter(b => b.type === 'positive');
+            const negative = live.filter(b => b.type === 'negative');
             
             const renderBehaviors = (behaviors, title, color) => {
                 const section = document.createElement('div');
@@ -28850,13 +28962,15 @@
                 behaviors.forEach(behavior => {
                     const div = document.createElement('div');
                     div.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 10px; background: #f9f9f9; border-radius: 6px; margin-bottom: 8px;';
+                    // ESCAPED: a behaviour's name is now saved and shown on
+                    // every staff member's screen, so it is text, never markup.
                     div.innerHTML = `
                         <div>
-                            <span style="font-weight: 600;">${behavior.name}</span>
-                            <span style="color: ${color}; margin-left: 10px;">${behavior.points > 0 ? '+' : ''}$${behavior.points}</span>
+                            <span style="font-weight: 600;">${escapeHtml(String(behavior.name || ''))}</span>
+                            <span style="color: ${color}; margin-left: 10px;">${behavior.points > 0 ? '+' : ''}$${escapeHtml(String(behavior.points))}</span>
                         </div>
                         <div>
-                            ${behavior.custom ? `<button class="btn-secondary" onclick="deleteBehavior('${behavior.id}')" style="padding: 6px 12px; font-size: 13px;">🗑️ Delete</button>` : ''}
+                            ${behavior.custom ? `<button class="btn-secondary" onclick="deleteBehavior('${escapeHtml(String(behavior.id))}')" style="padding: 6px 12px; font-size: 13px;">🗑️ Remove</button>` : ''}
                         </div>
                     `;
                     section.appendChild(div);
@@ -28869,15 +28983,62 @@
             renderBehaviors(negative, '❌ Negative Behaviors', '#B3392F');
         }
 
+        /**
+         * RETIRED, NOT DELETED. The server keeps every behaviour it has seen
+         * (merged by id), so one spliced out of this tab's list came straight
+         * back from any other tab's next save. Retiring stamps it, takes it off
+         * every menu, and keeps the record; past awards keep their names.
+         */
         async function deleteBehavior(behaviorId) {
-            if (!await showConfirm('Are you sure you want to delete this behavior?')) return;
-            
+            if (_behaviorSaving) return;
             const index = wildcatCashBehaviors.findIndex(b => b.id === behaviorId);
-            if (index !== -1) {
-                wildcatCashBehaviors.splice(index, 1);
-                saveData();
-                updateBehaviorsList();
-                alert('Behavior deleted successfully');
+            if (index === -1 || !wildcatCashBehaviors[index].custom) return;
+            const name = wildcatCashBehaviors[index].name;
+            if (!await showConfirm('Remove "' + name + '"?\n\nIt stops appearing when staff award or deduct. '
+                + 'Past awards keep their records.', { confirmLabel: 'Remove' })) return;
+
+            const retired = window.WildcatStore.retireBehavior(wildcatCashBehaviors[index], Date.now(), currentUser || {});
+            if (!retired) return;
+            wildcatCashBehaviors[index] = retired;
+            updateBehaviorsList();
+
+            _behaviorSaving = true;
+            let landed = false;
+            try { landed = await saveBehaviorListTruthfully({ id: retired.id, active: false }); }
+            finally { _behaviorSaving = false; }
+            if (landed) showToast('"' + name + '" removed.', 'success');
+            else showAlert('❌ Removing "' + name + '" was NOT saved to the server yet. It will try again with the next save.');
+        }
+
+        /**
+         * THE OTHER FORTY TABS. The idle refresh reloads the roster, not this
+         * list, and a full load only happens when a new version ships -- so a
+         * behaviour added this morning would not reach a teacher's open tab
+         * until next week. Read on its own (legacyData:loadSlice, a narrow
+         * read of this one list), at most every five minutes, staff only, and
+         * merged by the same rule as everywhere else.
+         */
+        let _behaviorsPulledAt = 0;
+        async function pullCashBehaviors() {
+            if (!currentUser || Date.now() - _behaviorsPulledAt < 5 * 60 * 1000) return;
+            // Not while a save is running: the next idle tick will do.
+            if (typeof isSyncing !== 'undefined' && isSyncing) return;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session || !window.WildcatStore) return;
+            _behaviorsPulledAt = Date.now();
+            try {
+                const server = await auth.convexQuery('legacyData:loadSlice',
+                    { doc: 'secondary', collection: 'wildcatCashBehaviors' }, session.idToken);
+                if (!Array.isArray(server) || !server.length) return;
+                wildcatCashBehaviors = window.WildcatStore.mergeBehaviorLists(
+                    wildcatCashBehaviors, server, CORE_CASH_BEHAVIORS, Date.now());
+                // Redrawn only if the settings list is open; the award menus
+                // are built from the list each time they open.
+                const list = document.getElementById('behaviorsList');
+                if (list && list.offsetParent !== null) updateBehaviorsList();
+            } catch (e) {
+                console.warn('Behaviour list refresh skipped:', (e && e.message) || e);
             }
         }
 

@@ -37,7 +37,9 @@ console.log("\n-- the catalogue is saved, in the list that merges by id --");
   // Merged by id, not replaced wholesale: two admins editing different rewards
   // must both survive.
   check("secondaryLists is written with mergeLegacySlice on 'id'",
-    /mergeLegacySlice\('secondary', key, value, 'id'\)/.test(script));
+    // `sent`, a copy taken when the request starts (2026-09-24): marking the
+    // live list recorded mid-flight changes as written. See behaviors-persist.
+    /mergeLegacySlice\('secondary', key, sent, 'id'\)/.test(script));
   check("the merged result is adopted back onto the global",
     /wildcatCashRewards = mergedSecondary\.wildcatCashRewards;/.test(script));
 }

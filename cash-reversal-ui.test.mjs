@@ -121,7 +121,9 @@ console.log("\n3. The intervention table cannot flag a withdrawn deduction");
 
 console.log("\n4. Most Common Behaviors counts behaviours");
 {
-  const fn = code.slice(code.indexOf("const behaviorFreq = {}"),
+  // "const behaviorFreq = " -- it became Object.create(null) on 2026-09-24,
+  // so a behaviour named __proto__ cannot poison the page (behaviors-persist).
+  const fn = code.slice(code.indexOf("const behaviorFreq = "),
                         code.indexOf("const sortedBehaviors"));
   check("bookkeeping rows are skipped",
     /if \(!isCashBehaviourRow\(txn, _behaviourReversedIds\)\) return;/.test(fn));
