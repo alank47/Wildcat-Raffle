@@ -481,6 +481,42 @@
          * Reload if this is a free moment. Re-evaluated often, because the
          * free moment usually arrives a little after the update does.
          */
+        /**
+         * Pending movements the server's last answer held as 'capped' (over
+         * MAX_CASH_DELTA). A retry sends the same list and is capped again, so
+         * holding an update for them protects nothing and only pins the tab to
+         * an old build -- they are left out of the update hold (review,
+         * 2026-09-25).
+         */
+        const _cashLastHeldCapped = new Set();
+
+        /** Pending movements that DO hold an update: all but the capped ones. */
+        function unconfirmedCashForUpdate() {
+            const out = [];
+            _pendingCashMovements.forEach(list => (list || []).forEach(m => {
+                if (!m || !m.id) return;
+                if (_cashLastHeldCapped.has(String(m.id))) return;
+                out.push(m);
+            }));
+            // Forget capped ids that have left the list.
+            if (_cashLastHeldCapped.size) {
+                const live = new Set();
+                _pendingCashMovements.forEach(list => (list || []).forEach(m => { if (m && m.id) live.add(String(m.id)); }));
+                [..._cashLastHeldCapped].forEach(id => { if (!live.has(id)) _cashLastHeldCapped.delete(id); });
+            }
+            return out;
+        }
+
+        /** How long ago the oldest movement that holds an update was made (0 if none). */
+        function oldestUnconfirmedCashAgeMs() {
+            let oldest = Infinity;
+            unconfirmedCashForUpdate().forEach(m => {
+                const t = Date.parse(m && m.at);
+                if (isFinite(t) && t < oldest) oldest = t;
+            });
+            return isFinite(oldest) ? Math.max(0, Date.now() - oldest) : 0;
+        }
+
         async function maybeApplyUpdate() {
             if (!pendingUpdateVersion || !window.WildcatUpdate) return;
 
@@ -513,6 +549,13 @@
                     ? _saveQueue.isPending() : false)
                     || (typeof isSyncing !== 'undefined' && isSyncing === true),
                 busy: screenHasUnfinishedWork(),
+                // MONEY THIS TAB HOLDS THAT THE SERVER HAS NOT CONFIRMED -- the
+                // pending list, which a page reload empties. Unlike `busy`, the
+                // busy deadline does not override it (2026-09-24: a hidden tab
+                // that could not save all morning was reloaded at the deadline
+                // and nine awards never reached a balance).
+                unconfirmedMoney: unconfirmedCashForUpdate().length > 0,
+                unconfirmedMoneyAgeMs: oldestUnconfirmedCashAgeMs(),
                 hidden: document.visibilityState === 'hidden',
                 // How long this tab has known it is out of date. After the
                 // deadline, unfinished SCREEN work stops holding the update
@@ -4904,6 +4947,15 @@
                                 const { heldMovements, heldWhy } = heldFromAnswer(result);
                                 const refusedForGood = settleSaveAnswerCash(changedStudents, sentCounters, sentMovements, heldMovements, heldWhy);
                                 onCashHeld(refusedForGood, heldMovements, heldWhy);
+                                // Which pending movements the server last held
+                                // as 'capped': no retry lands them, so they
+                                // must not hold an update (see
+                                // oldestUnconfirmedCashAgeMs). A later answer
+                                // that applies or holds them otherwise clears it.
+                                heldWhy.forEach((why, id) => {
+                                    if (why === 'capped') _cashLastHeldCapped.add(String(id));
+                                    else _cashLastHeldCapped.delete(String(id));
+                                });
                                 if (heldMovements.size) {
                                     console.warn('[save] the server held ' + heldMovements.size +
                                         ' cash movement(s) and they are still pending:',

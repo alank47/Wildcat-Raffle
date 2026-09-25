@@ -381,6 +381,42 @@ console.log("\n-- the busy deadline: a weekend tab cannot hold write access fore
   const HOUR = 3600000;
   const at = (s) => U.shouldAutoReload({ hasUpdate: true, newVersion: "NEW", now: 1e9, ...s });
 
+  // UNCONFIRMED MONEY (2026-09-25). A hidden tab that could not save all
+  // morning was reloaded at the busy deadline and nine awards were lost.
+  check("unconfirmed money blocks an update even on a hidden tab past the busy deadline",
+    at({ unconfirmedMoney: true, unconfirmedMoneyAgeMs: 3 * HOUR, busy: true, hidden: true, pendingForMs: 99 * HOUR }).reload === false);
+  check("...and says why", /cash the server has not confirmed/.test(at({ unconfirmedMoney: true, hidden: true }).reason));
+  check("...and on an idle visible tab too", at({ unconfirmedMoney: true, unconfirmedMoneyAgeMs: 60000, idleMs: 999999 }).reload === false);
+  check("but money stuck for a day is a fault, and the update goes ahead",
+    at({ unconfirmedMoney: true, unconfirmedMoneyAgeMs: 25 * HOUR, hidden: true }).reload === true
+      && U.MONEY_HOLD_MAX_MS === 24 * HOUR);
+  check("no unconfirmed money: the ordinary rules, unchanged", at({ unconfirmedMoney: false, hidden: true }).reload === true);
+  check("TEETH: the hold must be checked before the busy deadline's override",
+    src.indexOf("if (s.unconfirmedMoney)") < src.indexOf("if (s.busy && !(s.hidden && overdue))"));
+  // A movement the server held as 'capped' can never land on a retry, so it
+  // must not pin the tab to an old build for a day (review, 2026-09-25).
+  {
+    const lift = (name) => {
+      const i = script.indexOf("function " + name + "(");
+      let d = 0, k = script.indexOf("{", i);
+      for (; k < script.length; k++) { if (script[k] === "{") d++; else if (script[k] === "}") { d--; if (d === 0) break; } }
+      return script.slice(i, k + 1);
+    };
+    const f = new Function("_pendingCashMovements", "_cashLastHeldCapped",
+      lift("unconfirmedCashForUpdate") + "\n" + lift("oldestUnconfirmedCashAgeMs") + "\nreturn { unconfirmedCashForUpdate, oldestUnconfirmedCashAgeMs };");
+    const pending = new Map([["12101", [{ id: "txn_big", at: new Date(Date.now() - 3 * HOUR).toISOString(), amount: -6000, kind: "redeem" }]]]);
+    const capped = new Set(["txn_big"]);
+    const api = f(pending, capped);
+    check("a movement last held as 'capped' does NOT hold the update", api.unconfirmedCashForUpdate().length === 0);
+    const api2 = f(pending, new Set());
+    check("...while the same movement NOT capped does", api2.unconfirmedCashForUpdate().length === 1 && api2.oldestUnconfirmedCashAgeMs() >= 3 * HOUR - 1000);
+    check("the save records which held movements were capped, and clears any the server answered otherwise",
+      /heldWhy\.forEach\(\(why, id\) => \{\s*if \(why === 'capped'\) _cashLastHeldCapped\.add\(String\(id\)\);\s*else _cashLastHeldCapped\.delete\(String\(id\)\);/.test(script));
+  }
+  check("the tab passes its pending list, not a screen flag",
+    /unconfirmedMoney: unconfirmedCashForUpdate\(\)\.length > 0,/.test(script)
+      && /unconfirmedMoneyAgeMs: oldestUnconfirmedCashAgeMs\(\),/.test(script));
+
   // UNCHANGED: politeness while somebody is actually looking at the screen.
   check("busy and visible still waits, however long it has waited",
     at({ busy: true, hidden: false, pendingForMs: 99 * HOUR }).reload === false);

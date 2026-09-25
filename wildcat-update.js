@@ -73,6 +73,25 @@
   var BUSY_DEADLINE_MS = 7200000;
 
   /**
+   * How long money this tab holds, unconfirmed, may hold an update back.
+   *
+   * WHY IT HOLDS AT ALL (2026-09-25). A tab that could not save from 10:01 to
+   * 12:16 kept its awards' money only in memory -- the pending list a PAGE
+   * reload empties. It sat hidden while the 11:56 release waited, and two
+   * hours and twelve minutes later, at 14:08, the busy deadline above let the
+   * update reload it: nine awards, recorded in the ledger, never reached the
+   * balances. `savePending` covers a save IN FLIGHT, not money whose saves had
+   * failed; the comment above promised "unsaved work still blocks forever",
+   * and for money it did not.
+   *
+   * WHY A LIMIT AT ALL. A movement stuck for a day is not a slow save, it is
+   * a fault, and a tab that never updates keeps whatever else is wrong with
+   * it. After this long the update goes ahead and the nightly drift check is
+   * what finds anything lost.
+   */
+  var MONEY_HOLD_MAX_MS = 86400000;
+
+  /**
    * Should this tab reload itself right now?
    *
    * Returns a reason either way. The reason is logged rather than discarded,
@@ -106,6 +125,17 @@
     // NEVER OVER UNSAVED WORK. This is the failure that got automatic reloads
     // removed the first time.
     if (s.savePending) return { reload: false, reason: 'a save is still pending' };
+
+    // NOR OVER MONEY THE SERVER HAS NOT CONFIRMED -- not even on a hidden tab
+    // past the busy deadline, which is exactly how nine awards were lost on
+    // 2026-09-24. See MONEY_HOLD_MAX_MS for the one way past it.
+    var moneyAge = Number(s.unconfirmedMoneyAgeMs);
+    if (s.unconfirmedMoney) {
+      var moneyMax = typeof s.moneyHoldMaxMs === 'number' ? s.moneyHoldMaxMs : MONEY_HOLD_MAX_MS;
+      if (!(isFinite(moneyAge) && moneyAge >= moneyMax)) {
+        return { reload: false, reason: 'this tab holds cash the server has not confirmed yet' };
+      }
+    }
 
     // A dialog, a half-typed referral, students ticked ready to award. All are
     // work that exists only on screen -- which is why it stops mattering once
@@ -218,6 +248,7 @@
     IDLE_MS: IDLE_MS,
     RETRY_MS: RETRY_MS,
     RESUME_MAX_AGE_MS: RESUME_MAX_AGE_MS,
+    MONEY_HOLD_MAX_MS: MONEY_HOLD_MAX_MS,
     shouldAutoReload: shouldAutoReload,
     reloadUrl: reloadUrl,
     cleanUrl: cleanUrl,
