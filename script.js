@@ -28376,6 +28376,23 @@
         // handed all 754 records, including the 139 who have left -- two
         // screens about the same students disagreeing about who the students
         // are.
+        /**
+         * THE ORDER OF THE ACCOUNTS SCREEN (2026-09-25: "sort by balances
+         * highest to lowest"). Name A-Z by default, as it always was; or by
+         * balance either way, with a tie kept in name order so the same list
+         * never reshuffles between two looks. A balance that is not a number
+         * counts as $0 rather than sorting unpredictably. Sorts in place.
+         */
+        function sortStudentAccounts(list, mode) {
+            const byName = (a, b) =>
+                `${a.lastName}, ${a.firstName}`.toLowerCase()
+                    .localeCompare(`${b.lastName}, ${b.firstName}`.toLowerCase());
+            const bal = (st) => { const n = Number(st && st.wildcatCashBalance); return isFinite(n) ? n : 0; };
+            if (mode === 'balanceDesc') return list.sort((a, b) => (bal(b) - bal(a)) || byName(a, b));
+            if (mode === 'balanceAsc') return list.sort((a, b) => (bal(a) - bal(b)) || byName(a, b));
+            return list.sort(byName);
+        }
+
         function updateStudentAccounts() {
             const container = document.getElementById('studentAccountsGrid');
             if (!container) return;
@@ -28406,9 +28423,7 @@
                     String(st.id).toLowerCase().includes(searchTerm));
             }
 
-            list.sort((a, b) =>
-                `${a.lastName}, ${a.firstName}`.toLowerCase()
-                    .localeCompare(`${b.lastName}, ${b.firstName}`.toLowerCase()));
+            sortStudentAccounts(list, document.getElementById('accountSort')?.value || 'name');
 
             container.innerHTML = '';
 

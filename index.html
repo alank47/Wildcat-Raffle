@@ -4546,6 +4546,18 @@
                         </select>
                     </div>
                     
+                    <!-- SORT, asked for 2026-09-25: "sort by balances highest
+                         to lowest". Name stays the default so the screen opens
+                         as it always has. -->
+                    <div style="flex: 1; min-width: 200px; max-width: 300px;">
+                        <label for="accountSort" style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-sliders"></use></svg> Sort by:</label>
+                        <select id="accountSort" onchange="filterStudentAccounts()" class="wc-select">
+                            <option value="name">Name (A–Z)</option>
+                            <option value="balanceDesc">Balance: highest to lowest</option>
+                            <option value="balanceAsc">Balance: lowest to highest</option>
+                        </select>
+                    </div>
+
                     <div style="flex: 1; min-width: 300px;">
                         <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-search"></use></svg> Search Students:</label>
                         <input type="text" id="accountSearch" placeholder="Search by name or ID..." onkeyup="filterStudentAccounts()" class="wc-input">
