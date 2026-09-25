@@ -443,6 +443,26 @@
          * from cache the tab comes back just as stale, refuses again, and
          * reloads again -- a loop on every affected teacher's screen at once.
          */
+        /**
+         * THE APP IS LEAVING THE PAGE ON PURPOSE -- its own automatic update or
+         * a forced refresh -- so the "Leave site?" warning for unsaved cash
+         * must not fire. Nobody asked for that reload, so a prompt would
+         * appear from nowhere and hold up a reload the app needs. A reload a
+         * PERSON starts (a button, F5, closing the tab) leaves this false.
+         */
+        let _wcLeavingOnPurpose = false;
+        /**
+         * Mark the next few seconds as the app's own reload. RESET, not left
+         * on: if the reload is cancelled -- a teacher answers the referral
+         * warning with "Stay" -- the cash warning must come back. The browser
+         * decides on the warning as the navigation starts, so seconds are
+         * ample.
+         */
+        function leavingOnPurpose() {
+            _wcLeavingOnPurpose = true;
+            setTimeout(() => { _wcLeavingOnPurpose = false; }, 5000);
+        }
+
         function wcForceReload(reason) {
             const KEY = 'wcForceReloadAt';
             try {
@@ -473,6 +493,7 @@
             const v = pendingUpdateVersion || ('force-' + Date.now());
             const target = (window.WildcatUpdate && window.WildcatUpdate.reloadUrl)
                 ? window.WildcatUpdate.reloadUrl(location.href, v) : null;
+            leavingOnPurpose();
             if (target) location.replace(target); else location.reload();
             return true;
         }
@@ -596,6 +617,7 @@
             } catch (e) {}
 
             const target = window.WildcatUpdate.reloadUrl(location.href, pendingUpdateVersion);
+            leavingOnPurpose();
             if (target) location.replace(target); else location.reload();
         }
 
@@ -36563,12 +36585,29 @@
 
         // The last line of defence. A teacher closing a laptop on an unsaved
         // referral gets the browser's own "leave site?" prompt.
-        window.addEventListener('beforeunload', function (e) {
-            if (!_unsavedReferrals.size) return;
+        //
+        // AND ON UNSAVED CASH (2026-09-25, the owner's choice). A page reload
+        // empties the list of money the server has not confirmed yet -- that
+        // is how ten awards were lost on 2026-09-24 -- so refreshing or
+        // closing a tab that still holds some now asks first. Not for the
+        // app's own reloads (_wcLeavingOnPurpose): the automatic update
+        // already waits for the money, and a forced refresh means the server
+        // refused it. Not for a movement held 'capped' either: no retry lands
+        // it, so warning about it would only nag (unconfirmedCashForUpdate).
+        // The referral warning is unchanged and still fires in every case.
+        //
+        // THE BROWSER WRITES THE WORDS ("Leave site? Changes you made may not
+        // be saved"); no page may choose them. iPads do not reliably show it
+        // at all, which is why the on-screen "not saved yet" bar exists too.
+        function wcBeforeUnload(e) {
+            const cash = !_wcLeavingOnPurpose && typeof unconfirmedCashForUpdate === 'function'
+                && unconfirmedCashForUpdate().length > 0;
+            if (!_unsavedReferrals.size && !cash) return;
             e.preventDefault();
             e.returnValue = '';
             return '';
-        });
+        }
+        window.addEventListener('beforeunload', wcBeforeUnload);
 
         // Closure action list — mirrors the "Closing the Loop Options" checklist.
         // DETENTION_CLOSING_ACTION is wired to auto-create a Detention Tracker

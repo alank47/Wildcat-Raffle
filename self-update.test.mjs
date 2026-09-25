@@ -196,7 +196,9 @@ console.log("\nIt comes back to the same place");
   check("and a negative or missing position", U.resumeFrom(JSON.stringify({ v: "x", y: -4, at: NOW }), { now: NOW }) === null);
 
   check("the snapshot is stashed AFTER the flush and BEFORE the reload",
-    /await flushSaves\(\);[\s\S]{0,600}sessionStorage\.setItem\('wcResume'[\s\S]{0,400}location\.replace\(target\)/.test(code));
+    // 400 -> 500 on 2026-09-25: leavingOnPurpose() now sits just before the
+    // navigation (cash-leave-warning.test.mjs), and nothing else moved.
+    /await flushSaves\(\);[\s\S]{0,600}sessionStorage\.setItem\('wcResume'[\s\S]{0,500}location\.replace\(target\)/.test(code));
   check("boot restores it after the tab, since the tab decides the page height",
     /wcRestoreTab\(\);[\s\S]{0,300}wcRestoreScroll\(\);/.test(code));
   const restore = code.slice(code.indexOf("function wcRestoreScroll()"), code.indexOf("function wcRestoreScroll()") + 1500);
@@ -288,7 +290,9 @@ console.log("\nThe module is served, on the same version as the app");
   // path is the only reload, and it has always gone through reloadUrl.
   check("there is no Reload button left to go through the cache", !/wc-update-reload/.test(script));
   check("the one reload path goes through reloadUrl and falls back to a plain reload",
-    /const target = window\.WildcatUpdate\.reloadUrl\(location\.href, pendingUpdateVersion\);\s*if \(target\) location\.replace\(target\); else location\.reload\(\);/.test(script));
+    // leavingOnPurpose() first, so the unsaved-cash "Leave site?" warning does
+    // not fire on the app's own reload (2026-09-25).
+    /const target = window\.WildcatUpdate\.reloadUrl\(location\.href, pendingUpdateVersion\);\s*leavingOnPurpose\(\);\s*if \(target\) location\.replace\(target\); else location\.reload\(\);/.test(script));
 
   // reloadUrl is what makes any of this cache-proof: a new query parameter is
   // a URL the browser cache has never seen, so max-age cannot answer it.

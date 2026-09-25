@@ -82,11 +82,14 @@ console.log("\n-- an unsaved referral is impossible to miss --");
 
 console.log("\n-- closing the tab is guarded --");
 {
-  const guard = script.slice(script.indexOf("window.addEventListener('beforeunload'"), script.indexOf("window.addEventListener('beforeunload'") + 400);
-  check("a beforeunload handler exists", guard.length > 50);
-  check("it only fires when something is actually unsaved", /if \(!_unsavedReferrals\.size\) return;/.test(guard));
+  // A named handler since 2026-09-25, when unsaved CASH joined it
+  // (cash-leave-warning.test.mjs runs it); the referral half is unchanged.
+  const guard = script.slice(script.indexOf("function wcBeforeUnload("), script.indexOf("function wcBeforeUnload(") + 700);
+  check("a beforeunload handler exists", guard.length > 50
+    && /window\.addEventListener\('beforeunload', wcBeforeUnload\);/.test(script));
+  check("it only fires when something is actually unsaved", /if \(!_unsavedReferrals\.size && !cash\) return;/.test(guard));
   // A page that always prompts on close trains people to click through it.
-  check("it does NOT prompt when everything is saved", /_unsavedReferrals\.size\) return/.test(guard));
+  check("it does NOT prompt when everything is saved", /_unsavedReferrals\.size && !cash\) return/.test(guard));
 }
 
 console.log("\n-- every element these functions touch exists --");
