@@ -900,6 +900,12 @@ export type SavePlan = {
   countersIgnored: string[];
   /** Movements whose effect this save applied for the first time. */
   movementsApplied: number;
+  /**
+   * The same, named: which movements this save applied first. An award or
+   * deduction here is one the award command did not deliver -- the fallback
+   * the 2026-09-27 investigation counts (cashFallbackLog).
+   */
+  movementsAppliedList: Array<{ key: string; id: string; amount: number; kind: string }>;
   /** Movement ids already registered -- a re-send, correctly absorbed. */
   movementsAbsorbed: string[];
   /**
@@ -945,6 +951,7 @@ export function planSave(
   const skipped: string[] = [];
   const countersIgnored: string[] = [];
   let movementsApplied = 0;
+  const movementsAppliedList: Array<{ key: string; id: string; amount: number; kind: string }> = [];
   const movementsAbsorbed: string[] = [];
   const movementsRefused: Array<{ key: string; id: string; why: string }> = [];
   const unkeyedResidual: string[] = [];
@@ -976,6 +983,9 @@ export function planSave(
         maxDelta: MAX_CASH_DELTA,
       });
       movementsApplied += mv.applied.length;
+      mv.applied.forEach((m: any) => movementsAppliedList.push({
+        key, id: String(m?.id ?? ""), amount: Number(m?.amount) || 0, kind: String(m?.kind ?? ""),
+      }));
       mv.absorbed.forEach((id) => movementsAbsorbed.push(id));
       mv.refused.forEach((r) => movementsRefused.push({ key, id: r.id, why: r.why }));
       if (mv.hasResidual) {
@@ -992,6 +1002,6 @@ export function planSave(
   }
   return {
     patches, skipped, countersIgnored,
-    movementsApplied, movementsAbsorbed, movementsRefused, unkeyedResidual,
+    movementsApplied, movementsAppliedList, movementsAbsorbed, movementsRefused, unkeyedResidual,
   };
 }

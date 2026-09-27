@@ -389,6 +389,175 @@ export const configure = internalMutation({
  * during a rollout watch was weeks stale and the counts were silently partial.
  */
 const STATUS_MAX_ROWS = 2000;
+/**
+ * THE BROWSER SAYS WHY ITS AWARD COMMAND DID NOT LAND (2026-09-27).
+ *
+ * Staff only; the actor is the token, never the payload. Everything else is
+ * the browser's word and is stored as such, trimmed: a reason code, a short
+ * detail, the receipt ids, how long it waited, whether it thought it was
+ * online, and its build. Nothing here moves money or changes a record -- it
+ * is a diagnostic the owner asked for before deciding on a bigger fix.
+ */
+export const reportFailure = mutation({
+  args: {
+    reports: v.array(v.object({
+      reason: v.string(),
+      detail: v.optional(v.string()),
+      ids: v.array(v.string()),
+      clientAt: v.optional(v.string()),
+      elapsedMs: v.optional(v.number()),
+      online: v.optional(v.boolean()),
+      clientVersion: v.optional(v.union(v.string(), v.null())),
+      reportId: v.optional(v.string()),
+    })),
+  },
+  handler: async (ctx, { reports }) => {
+    const me = await requireStaff(ctx);
+    const email = String((me as any)?.email ?? "") || undefined;
+    const at = new Date().toISOString();
+    let stored = 0, duplicates = 0;
+    for (const r of reports.slice(0, 30)) {
+      const reportId = r.reportId ? String(r.reportId).slice(0, 64) : undefined;
+      // ONCE, however many times it is sent: an answer lost on the way back
+      // makes the browser send the same report again.
+      if (reportId) {
+        const seen = await ctx.db.query("cashFallbackLog")
+          .withIndex("by_reportId", (q) => q.eq("reportId", reportId)).first();
+        if (seen) { duplicates++; continue; }
+      }
+      await ctx.db.insert("cashFallbackLog", {
+        at, via: "client", actorEmail: email,
+        clientVersion: r.clientVersion ? String(r.clientVersion).slice(0, 40) : undefined,
+        reason: String(r.reason || "unknown").slice(0, 40),
+        detail: r.detail ? String(r.detail).slice(0, 300) : undefined,
+        count: r.ids.length,
+        ids: r.ids.slice(0, 60).map((x) => String(x).slice(0, 64)),
+        clientAt: r.clientAt ? String(r.clientAt).slice(0, 40) : undefined,
+        elapsedMs: typeof r.elapsedMs === "number" && Number.isFinite(r.elapsedMs) ? Math.round(r.elapsedMs) : undefined,
+        online: typeof r.online === "boolean" ? r.online : undefined,
+        reportId,
+      });
+      stored++;
+    }
+    return { ok: true, stored, duplicates };
+  },
+});
+
+/** Per-id lookups one readout may make: two reads an id, well under Convex's 4,096. */
+const FALLBACK_LOOKUPS_MAX = 2800;
+
+/**
+ * THE READOUT: why awards missed the command, joined up.
+ *
+ * Every award the ordinary save applied first (a "save" row) is checked:
+ *   - its command DID arrive later (cashAwardCommands has it): a race the
+ *     save won, not a miss;
+ *   - it has no award-screen audit entry ('a_' + receipt): not an award-screen
+ *     award at all -- a store refund or RESET ALL CASH, which never use the
+ *     command, so not a miss either;
+ *   - otherwise a true miss, broken down by the reason the browser gave for
+ *     that receipt ("no_browser_report" when it gave none -- an old build, or
+ *     a report still queued).
+ * And every receipt the browser reported is checked for whether its command
+ * landed anyway (a timeout just before a late answer).
+ *
+ * Counts are of distinct receipts, per source. Stops at FALLBACK_LOOKUPS_MAX
+ * lookups and says how many it did not check. Defaults to the last 7 days.
+ *
+ *   npx convex run cashAward:fallbacks '{"sinceIso":"2026-09-28T14:00:00Z"}'
+ */
+export const fallbacks = internalQuery({
+  args: { sinceIso: v.optional(v.string()) },
+  handler: async (ctx, { sinceIso }) => {
+    const since = sinceIso ?? new Date(Date.now() - 7 * 86400000).toISOString();
+    const rows = await ctx.db.query("cashFallbackLog")
+      .withIndex("by_at", (q) => q.gte("at", since)).order("desc").take(1200);
+    const sw = await readSwitch(ctx);
+
+    // The browser's reasons, one per receipt, duplicates dropped.
+    const clientReason = new Map<string, string>();
+    const clientIds = new Set<string>();
+    const seenReports = new Set<string>();
+    let duplicateReports = 0;
+    const byReason: Record<string, number> = {};
+    const byVersionClient: Record<string, number> = {};
+    const byActor: Record<string, { save: number; client: number }> = {};
+    for (const r of rows) {
+      if (r.via !== "client") continue;
+      const k = r.reportId || `${r.actorEmail}|${r.clientAt}|${r.reason}|${r.ids.join(",")}`;
+      if (seenReports.has(k)) { duplicateReports++; continue; }
+      seenReports.add(k);
+      const who = r.actorEmail || "(unknown)";
+      for (const id of r.ids) {
+        if (!clientReason.has(id)) clientReason.set(id, r.reason);
+        if (clientIds.has(id)) continue;
+        // Distinct receipts, counted once however many reports name them.
+        clientIds.add(id);
+        byReason[r.reason] = (byReason[r.reason] || 0) + 1;
+        byActor[who] = byActor[who] || { save: 0, client: 0 };
+        byActor[who].client++;
+        if (r.clientVersion) byVersionClient[r.clientVersion] = (byVersionClient[r.clientVersion] || 0) + 1;
+      }
+    }
+
+    let lookups = 0, unchecked = 0;
+    const cmdOf = new Map<string, any>();
+    const lookCmd = async (id: string) => {
+      if (cmdOf.has(id)) return cmdOf.get(id);
+      lookups++;
+      const c = await ctx.db.query("cashAwardCommands").withIndex("by_txnId", (q) => q.eq("txnId", id)).first();
+      cmdOf.set(id, c ?? null);
+      return c ?? null;
+    };
+
+    const saveIds = new Set<string>();
+    const byVersionSave: Record<string, number> = {};
+    const save = { saves: 0, receipts: 0, commandArrivedLater: 0, notAwardScreen: 0,
+      missedByReason: {} as Record<string, number> };
+    for (const r of rows) {
+      if (r.via !== "save") continue;
+      save.saves++;
+      const who = r.actorEmail || "(unknown)";
+      byActor[who] = byActor[who] || { save: 0, client: 0 };
+      for (const id of r.ids) {
+        if (saveIds.has(id)) continue;
+        saveIds.add(id);
+        save.receipts++;
+        byActor[who].save++;
+        if (r.clientVersion) byVersionSave[r.clientVersion] = (byVersionSave[r.clientVersion] || 0) + 1;
+        if (lookups + 2 > FALLBACK_LOOKUPS_MAX) { unchecked++; continue; }
+        if (await lookCmd(id)) { save.commandArrivedLater++; continue; }
+        lookups++;
+        const audit = await ctx.db.query("appAuditLog").withIndex("by_entryId", (q) => q.eq("entryId", "a_" + id)).first();
+        if (!audit) { save.notAwardScreen++; continue; }
+        const why = clientReason.get(id) || "no_browser_report";
+        save.missedByReason[why] = (save.missedByReason[why] || 0) + 1;
+      }
+    }
+
+    const client = { reports: seenReports.size, duplicateReports, receipts: clientIds.size, byReason, landedAnyway: 0 };
+    for (const id of clientIds) {
+      if (lookups + 1 > FALLBACK_LOOKUPS_MAX) { unchecked++; continue; }
+      const c = await lookCmd(id);
+      if (c && c.status === "applied") client.landedAnyway++;
+    }
+
+    return {
+      since, rows: rows.length, rowsCapped: rows.length === 1200,
+      // Whether the command was even on: with it off (or a pilot list), every
+      // award goes by the save and none of that is a miss.
+      switch: sw,
+      save, client,
+      byVersion: { save: byVersionSave, client: byVersionClient },
+      byActor,
+      lookups, unchecked, lookupsCapped: unchecked > 0,
+      recent: rows.slice(0, 15).map((r) => ({ at: r.at, via: r.via, who: r.actorEmail, reason: r.reason,
+        detail: r.detail, count: r.count, version: r.clientVersion, elapsedMs: r.elapsedMs, online: r.online,
+        ids: r.ids.slice(0, 10) })),
+    };
+  },
+});
+
 export const status = internalQuery({
   args: { sinceIso: v.optional(v.string()) },
   handler: async (ctx, { sinceIso }) => {

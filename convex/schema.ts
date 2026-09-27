@@ -1097,6 +1097,40 @@ export default defineSchema({
    *
    * Student NUMBERS only, never names, and at most five of them.
    */
+  /**
+   * WHY AN AWARD DID NOT GO THROUGH THE AWARD COMMAND (2026-09-27).
+   *
+   * The owner asked to find the cause before building more. On 2026-09-25,
+   * 23 of 176 awards reached the server through the ordinary save instead of
+   * cashAward:award, from tabs that were using the command minutes earlier --
+   * and the ordinary save is the path a page reload can lose money on. Two
+   * kinds of row, both insert-only, numbers and ids only:
+   *
+   *   via "save"    the SERVER saw appData:save apply an award or deduction
+   *                 the command had not (written in that save's own
+   *                 transaction, so it needs nothing from the browser).
+   *   via "client"  the BROWSER says why its command did not land: timed
+   *                 out, threw, refused, or never sent (signed out, offline).
+   *                 Kept in localStorage and sent later if it cannot be sent
+   *                 at the time.
+   */
+  cashFallbackLog: defineTable({
+    at: v.string(),
+    via: v.string(),
+    actorEmail: v.optional(v.string()),
+    clientVersion: v.optional(v.string()),
+    reason: v.string(),
+    detail: v.optional(v.string()),
+    count: v.number(),
+    ids: v.array(v.string()),
+    clientAt: v.optional(v.string()),
+    elapsedMs: v.optional(v.number()),
+    online: v.optional(v.boolean()),
+    // Browser reports only: minted when queued, so a report sent twice (a
+    // lost answer, two tabs sharing the queue) is stored once.
+    reportId: v.optional(v.string()),
+  }).index("by_at", ["at"]).index("by_reportId", ["reportId"]),
+
   cashRefusalLog: defineTable({
     at: v.string(),
     actorEmail: v.optional(v.string()),

@@ -35136,6 +35136,83 @@
         /** The audit entry id for an award, derived exactly as the server does. */
         function cashAwardAuditId(txnId) { return 'a_' + String(txnId); }
 
+        // =====================================================================
+        // WHY AN AWARD MISSED THE COMMAND (2026-09-27)
+        //
+        // The owner asked to find the cause before building more. On
+        // 2026-09-25, 23 of 176 awards reached the server by the ordinary save
+        // instead of this command, from tabs that had used it minutes earlier,
+        // and the ordinary save is the path a page reload can lose money on.
+        // The server keeps only about 90 seconds of logs, so nothing said why.
+        //
+        // So the browser says: the reason the command did not land, the
+        // receipts, how long it waited, whether it thought it was online, and
+        // its build -- written to cashFallbackLog through
+        // cashAward:reportFailure. Kept in localStorage first, because the
+        // commonest reasons (signed out, offline) are exactly the moments a
+        // report cannot be sent; the queue is sent with the next one that can.
+        //
+        // A DIAGNOSTIC ONLY. It never moves money, never marks anything sent,
+        // never throws into the award screen, and never delays it.
+        // =====================================================================
+        const CASH_FALLBACK_REPORTS_KEY = 'cashAwardFallbackReports_v1';
+        const CASH_FALLBACK_REPORTS_MAX = 30;
+        let _cashFallbackFlushing = false;
+
+        function reportCashAwardFallback(reason, detail, ids, elapsedMs) {
+            try {
+                let queue = [];
+                try { queue = JSON.parse(localStorage.getItem(CASH_FALLBACK_REPORTS_KEY) || '[]') || []; } catch (e) { queue = []; }
+                if (!Array.isArray(queue)) queue = [];
+                queue.push({
+                    // Minted once, so a report sent twice is stored once.
+                    reportId: 'r_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10),
+                    reason: String(reason || 'unknown').slice(0, 40),
+                    detail: detail ? String(detail).slice(0, 300) : undefined,
+                    ids: (ids || []).map(String).slice(0, 60),
+                    clientAt: new Date().toISOString(),
+                    elapsedMs: (typeof elapsedMs === 'number' && isFinite(elapsedMs)) ? Math.round(elapsedMs) : undefined,
+                    online: (typeof navigator !== 'undefined' && typeof navigator.onLine === 'boolean') ? navigator.onLine : undefined,
+                    clientVersion: (typeof APP_VERSION !== 'undefined' && APP_VERSION) ? String(APP_VERSION) : null,
+                });
+                // The newest are kept: an old batch nobody could send says less
+                // than today's.
+                if (queue.length > CASH_FALLBACK_REPORTS_MAX) queue = queue.slice(-CASH_FALLBACK_REPORTS_MAX);
+                try { localStorage.setItem(CASH_FALLBACK_REPORTS_KEY, JSON.stringify(queue)); } catch (e) {}
+            } catch (e) { /* a diagnostic must never break an award */ }
+            flushCashAwardFallbackReports();
+        }
+
+        /** Send any queued reports. Fire and forget; never throws. */
+        async function flushCashAwardFallbackReports() {
+            if (_cashFallbackFlushing) return;
+            let queue = [];
+            try { queue = JSON.parse(localStorage.getItem(CASH_FALLBACK_REPORTS_KEY) || '[]') || []; } catch (e) { return; }
+            if (!Array.isArray(queue) || !queue.length) return;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session || typeof auth.convexMutation !== 'function') return;   // kept for later
+            _cashFallbackFlushing = true;
+            try {
+                const batch = queue.slice(0, CASH_FALLBACK_REPORTS_MAX);
+                await auth.convexMutation('cashAward:reportFailure', { reports: batch }, session.idToken);
+                // Only what was sent leaves: a report queued meanwhile stays.
+                let now = [];
+                try { now = JSON.parse(localStorage.getItem(CASH_FALLBACK_REPORTS_KEY) || '[]') || []; } catch (e) { now = []; }
+                const keyOf = r => r.reportId || (r.clientAt + '|' + r.reason + '|' + (r.ids || []).join(','));
+                const sent = new Set(batch.map(keyOf));
+                const keep = (Array.isArray(now) ? now : []).filter(r => !sent.has(keyOf(r)));
+                try {
+                    if (keep.length) localStorage.setItem(CASH_FALLBACK_REPORTS_KEY, JSON.stringify(keep));
+                    else localStorage.removeItem(CASH_FALLBACK_REPORTS_KEY);
+                } catch (e) {}
+            } catch (e) {
+                // Kept; the next report or the next landed award sends it.
+            } finally {
+                _cashFallbackFlushing = false;
+            }
+        }
+
         /**
          * Send awards as one server command. `items` is [{ tx, entryId }].
          *
@@ -35147,6 +35224,15 @@
          * leave the ledger short, which is the failure all of this exists to end.
          */
         async function sendCashAwardCommand(items) {
+            const t0 = Date.now();
+            const idsOf = () => (items || []).map(it => String(it && it.tx && it.tx.id));
+            // See WHY AN AWARD MISSED THE COMMAND. Guarded by typeof so a
+            // harness that lifts this function alone still runs it.
+            const note = (reason, detail, ids) => {
+                if (typeof reportCashAwardFallback === 'function') {
+                    reportCashAwardFallback(reason, detail, ids || idsOf(), Date.now() - t0);
+                }
+            };
             try {
                 if (!items || !items.length) return null;
                 // PREVIEWING AS A TEACHER IS READ-ONLY. saveData refuses in that
@@ -35155,7 +35241,10 @@
                 if (typeof isPreviewingTeacher === 'function' && isPreviewingTeacher()) return null;
                 const auth = window.WildcatAuth;
                 const session = auth && auth.getSession && auth.getSession();
-                if (!auth || !session || typeof auth.convexMutation !== 'function') return null;
+                if (!auth || !session || typeof auth.convexMutation !== 'function') {
+                    note(!session ? 'not_sent_signed_out' : 'not_sent_no_client');
+                    return null;
+                }
 
                 const awards = items.map(({ tx }) => ({
                     studentId: String(tx.studentId),
@@ -35179,7 +35268,25 @@
                     // save carries the same receipt and will be absorbed.
                     new Promise(resolve => setTimeout(() => resolve(TIMED_OUT), CASH_AWARD_TIMEOUT_MS)),
                 ]);
-                if (res === TIMED_OUT || !res || res.ok !== true) return (res === TIMED_OUT) ? null : (res || null);
+                if (res === TIMED_OUT || !res || res.ok !== true) {
+                    // 'disabled' is the switch, not a failure.
+                    if (res === TIMED_OUT) note('timeout', 'no answer in ' + CASH_AWARD_TIMEOUT_MS + 'ms');
+                    else if (!res) note('empty_answer');
+                    else if (res.code !== 'disabled') note('not_ok:' + String(res.code || '?'), res.reason);
+                    return (res === TIMED_OUT) ? null : (res || null);
+                }
+                // Awards the server refused one by one (a clock off by more
+                // than 15 minutes, an award over 30 minutes old): the ordinary
+                // save carries them, and why is worth knowing.
+                {
+                    const byCode = new Map();
+                    (res.results || []).forEach(r => {
+                        if (!r || r.status !== 'refused') return;
+                        const k = String(r.code || '?');
+                        byCode.set(k, (byCode.get(k) || []).concat([String(r.txnId)]));
+                    });
+                    byCode.forEach((ids, code) => note('refused:' + code, null, ids));
+                }
 
                 // SETS, NOT ARRAYS. Both prune functions call `.has()`, as every
                 // other caller's argument does. The first build of this passed
@@ -35209,10 +35316,13 @@
                 } catch (e) {
                     console.warn('[cash] award landed; tidying the local outbox failed:', (e && e.message) || e);
                 }
+                // A command landed, so the line is up: send anything queued.
+                if (typeof flushCashAwardFallbackReports === 'function') flushCashAwardFallbackReports();
                 return res;
             } catch (e) {
                 console.warn('[cash] award command did not complete; the ordinary save will deliver it:',
                     (e && e.message) || e);
+                note('error', (e && e.message) || String(e));
                 return null;
             }
         }

@@ -354,6 +354,9 @@ async function lookupTeachers(ctx: MutationCtx, incoming: Array<Record<string, a
   return [...found.values()];
 }
 
+/** How many movement ids one fallback row keeps: a class award, with room. */
+const FALLBACK_IDS_MAX = 60;
+
 export const save = mutation({
   args: {
     students: v.optional(v.array(v.any())),
@@ -385,6 +388,7 @@ export const save = mutation({
     let skipped: string[] = [];
     let countersIgnored: string[] = [];
     let movementsApplied = 0;
+    let movementsAppliedList: Array<{ key: string; id: string; amount: number; kind: string }> = [];
     let movementsAbsorbed: string[] = [];
     let movementsRefused: Array<{ key: string; id: string; why: string }> = [];
     let unkeyedResidual: string[] = [];
@@ -420,6 +424,7 @@ export const save = mutation({
       skipped = plan.skipped;
       countersIgnored = plan.countersIgnored;
       movementsApplied = plan.movementsApplied;
+      movementsAppliedList = plan.movementsAppliedList || [];
       movementsAbsorbed = plan.movementsAbsorbed;
       movementsRefused = plan.movementsRefused;
       unkeyedResidual = plan.unkeyedResidual;
@@ -434,6 +439,23 @@ export const save = mutation({
           clientVersion: args.clientVersion ?? undefined,
           students: unkeyedResidual.length,
           sample: unkeyedResidual.slice(0, 5).map(String),
+        });
+      }
+      // AN AWARD THE COMMAND DID NOT DELIVER (2026-09-27). This save applied
+      // an award or deduction first, so cashAward:award had not -- it failed,
+      // timed out, was never sent, or is simply slower than this save (then it
+      // shows up in cashAwardCommands as "absorbed", which cashAward:fallbacks
+      // tells apart). One row per save, ids only.
+      const viaSave = movementsAppliedList.filter((m) => m.kind === "award" || m.kind === "deduct");
+      if (viaSave.length) {
+        await ctx.db.insert("cashFallbackLog", {
+          at: new Date().toISOString(),
+          via: "save",
+          actorEmail: String((me as any)?.email ?? "") || undefined,
+          clientVersion: args.clientVersion ?? undefined,
+          reason: "applied_by_save",
+          count: viaSave.length,
+          ids: viaSave.slice(0, FALLBACK_IDS_MAX).map((m) => m.id),
         });
       }
       // A NAMED MOVEMENT HELD, logged too (2026-09-23). A save that lists a

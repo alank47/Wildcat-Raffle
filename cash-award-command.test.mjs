@@ -603,7 +603,8 @@ function liftFn(name) {
     const b = src.replace(/new Set\(\)/g, "[]").replace(/Confirmed\.add\(/g, "Confirmed.push(")
       .replace(/Confirmed\.size/g, "Confirmed.length")
       .replace(/try \{\n(\s*if \(cashConfirmed[^\n]*\n\s*if \(auditConfirmed[^\n]*\n)\s*\} catch \(e\) \{\n[^\n]*\n\s*\}/, "$1");
-    if (!/pruneCashOutbox\(cashConfirmed\);\n\s*if \(auditConfirmed\.length\) pruneAuditOutbox\(auditConfirmed\);\n\s*return res;/.test(b)) {
+    // The fallback-report flush (2026-09-27) sits between the tidy and the return.
+    if (!/pruneCashOutbox\(cashConfirmed\);\n\s*if \(auditConfirmed\.length\) pruneAuditOutbox\(auditConfirmed\);\n(?:\s*\/\/[^\n]*\n)?(?:\s*if \(typeof flushCashAwardFallbackReports[^\n]*\n)?\s*return res;/.test(b)) {
       throw new Error("teeth first build: anchor moved");
     }
     return b; } });
