@@ -142,8 +142,11 @@ console.log("\n-- buying: one token per press, and no price from the browser --"
   // file: wpBoardPanel is at ~17785 and this handler at ~17995, so slicing
   // between them produced an empty string and thirteen assertions "failed"
   // against nothing. A slice whose end precedes its start is not a test.
+  // To the END of the listener, not a fixed width: the handler grew on
+  // 2026-09-28 (retry with the same token, the receipt dialog) and a fixed
+  // window silently stopped reaching the finally block.
   const buyAt = code.indexOf("let _wpBuyInFlight");
-  const buy = code.slice(buyAt, buyAt + 4000);
+  const buy = code.slice(buyAt, code.indexOf("function wpDashboard(", buyAt));
   // THE BUTTON MUST LOOK PRESSABLE ON A WHITE CARD. .wp-btn is the wallet's
   // button -- rgba(255,255,255,0.16) with color:inherit -- which on the light
   // desk view is dark text on white with no chrome at all: the word "Buy",
@@ -201,18 +204,65 @@ console.log("\n-- buying: one token per press, and no price from the browser --"
   // returns the first receipt rather than charging twice.
   check("an attempt token is minted per press", /const attemptId =/.test(buy));
   check("preferring crypto.randomUUID", /crypto\.randomUUID/.test(buy));
-  check("the mutation gets the reward, a quantity and the token",
-    /\{ rewardId: id, quantity: 1, attemptId: attemptId \}/.test(buy));
+  // And the price the button SHOWED, which the server only ever uses to
+  // refuse (price_changed) -- never to charge. See studentStoreRules.
+  check("the mutation gets the reward, a quantity, the token and the price it showed",
+    /\{ rewardId: id, quantity: 1, attemptId: attemptId, seenPrice: seenPrice \}/.test(buy));
+  check("a retry after no answer reuses the same token",
+    /_wpPendingBuy && _wpPendingBuy\.rewardId === id\)\s*\?\s*_wpPendingBuy\.attemptId/.test(buy)
+    && /kind === 'unknown'/.test(buy));
+  check("an expired sign-in is told so, and that nothing was charged",
+    /kind === 'signin'[\s\S]{0,300}Nothing was charged/.test(buy));
+  check("the receipt stays on screen in a dialog, not a toast",
+    /wpShowPurchaseReceipt\(res\);/.test(buy) && /_wcDialog\(\{/.test(buy));
   check("and NO cost, total or balance",
-    !/cost:/.test(buy.slice(buy.indexOf("convexMutation"), buy.indexOf("convexMutation") + 260))
-    && !/total:/.test(buy.slice(buy.indexOf("convexMutation"), buy.indexOf("convexMutation") + 260)));
+    !/\bcost:/.test(buy.slice(buy.indexOf("convexMutation"), buy.indexOf("convexMutation") + 260))
+    && !/total:/.test(buy.slice(buy.indexOf("convexMutation"), buy.indexOf("convexMutation") + 260))
+    && !/balance:/i.test(buy.slice(buy.indexOf("convexMutation"), buy.indexOf("convexMutation") + 260)));
 
   check("an already-bought answer reads as done, not failed", /res\.alreadyBought/.test(buy));
   check("a refusal is shown rather than swallowed", /res\.ok !== true/.test(buy) && /showAlert/.test(buy));
   check("the receipt code is shown, since that is what they take to the office",
     /res\.receiptId/.test(buy));
+  // loadStudentPortal, NOT wpPollPassOnce. The poll only redraws when the HALL
+  // PASS changed, so after a purchase nothing redrew: the button sat on
+  // "Buying..." and the balance and stock stayed as they were.
   check("and the portal re-renders through its one drawing path",
-    /wpPollPassOnce\(true\)/.test(buy));
+    /\} finally \{[\s\S]{0,400}await loadStudentPortal\(\);/.test(buy)
+    && !/wpPollPassOnce\(true\)/.test(buy));
+}
+
+console.log("\n-- what the review found (2026-09-28) --");
+{
+  const buyAt = code.indexOf("let _wpBuyInFlight");
+  const buy = code.slice(buyAt, code.indexOf("function wpDashboard(", buyAt));
+  check("a retry token is forgotten on sign-out, so the next child cannot send it",
+    /wpStoreOpenSeen = null;[\s\S]{0,120}_wpPendingBuy = null;/.test(code));
+  check("a button the redraw did not replace is put back, not left on 'Buying'",
+    /if \(btn && btn\.isConnected\) \{\s*btn\.disabled = false;\s*btn\.textContent = 'Buy';/.test(buy));
+  check("Convex's 560 (the function ran and threw) means nothing was charged",
+    /if \(\/Convex HTTP 560\\b\/\.test\(msg\)\) return 'refused';/.test(buy)
+    && buy.indexOf("Convex HTTP 560") < buy.indexOf("Convex HTTP 5\\d\\d"));
+  check("a failed load is retried by the poll instead of leaving a blank page",
+    /if \(_wpLoadFailed\) \{\s*await loadStudentPortal\(\);/.test(code) && /_wpLoadFailed = true;/.test(code));
+  const panel = code.slice(code.indexOf("function wpStorePanel()"), code.indexOf("let _wpBuyInFlight"));
+  check("their purchases are listed whether the store is open or closed",
+    /_wpStore\.myPurchases/.test(panel) && /'<\/p>' \+ heldHtml\)/.test(panel) && /'<\/ul>' \+ heldHtml\)/.test(panel));
+  check("and every code and name in it is escaped",
+    /wpEsc\(String\(p\.id\)\)/.test(panel) && /wpEsc\(String\(p\.rewardName\)\)/.test(panel));
+  check("a dry-run tester is told it is a test", /_wpStore\.testing/.test(panel) && /Test mode/.test(panel));
+}
+
+console.log("\n-- the second review (2026-09-28) --");
+{
+  const buyAt = code.indexOf("let _wpBuyInFlight");
+  const buy = code.slice(buyAt, code.indexOf("function wpDashboard(", buyAt));
+  check("after a network failure the portal is NOT fully reloaded, which would blank the cards",
+    /let redrawAfter = true;/.test(buy) && /kind === 'unknown'\) \{[\s\S]{0,600}redrawAfter = false;/.test(buy)
+    && /if \(redrawAfter && typeof loadStudentPortal === 'function'\) await loadStudentPortal\(\);/.test(buy));
+  const panel = code.slice(code.indexOf("function wpStorePanel()"), code.indexOf("let _wpBuyInFlight"));
+  check("their purchases show even when nothing is for sale",
+    /if \(!forSale\.length\) \{[\s\S]{0,400}\+ heldHtml\);/.test(panel));
 }
 
 console.log("\n-- the dialog has to out-rank every view --");
@@ -259,7 +309,10 @@ console.log("\n-- the server side a student can reach --");
                              server.indexOf("handler", server.indexOf("export const purchase = mutation({")));
   check("and it accepts no student id, so nobody can buy as somebody else",
     !/studentNumber|studentId/.test(pArgs), pArgs.replace(/\s+/g, " "));
-  check("nor a price", !/cost|total|balance/i.test(pArgs));
+  // seenPrice is the one number allowed through, and it can only REFUSE: the
+  // charge is always the catalogue's cost (student-store-sale.test.mjs runs
+  // the purchase and proves the seen price is never what is charged).
+  check("nor a price", !/cost|total|balance/i.test(pArgs.replace(/seenPrice/g, "")));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

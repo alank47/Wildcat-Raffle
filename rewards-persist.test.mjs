@@ -40,8 +40,14 @@ console.log("\n-- the catalogue is saved, in the list that merges by id --");
     // `sent`, a copy taken when the request starts (2026-09-24): marking the
     // live list recorded mid-flight changes as written. See behaviors-persist.
     /mergeLegacySlice\('secondary', key, sent, 'id'\)/.test(script));
-  check("the merged result is adopted back onto the global",
-    /wildcatCashRewards = mergedSecondary\.wildcatCashRewards;/.test(script));
+  // The server's copy is adopted on load and by the store screens' refresh --
+  // and NOT by putting the save's own snapshot back afterwards, which undid a
+  // refresh that landed mid-save (removed 2026-09-28).
+  check("the server's catalogue is adopted onto the global",
+    /wildcatCashRewards = serverRewards\.map\(/.test(script)
+    && /wildcatCashRewards = window\.WildcatMerge\.mergeById\(normalized, wildcatCashRewards\);/.test(script));
+  check("and a save never puts its own old snapshot back",
+    !/wildcatCashRewards = mergedSecondary\.wildcatCashRewards;/.test(script));
 }
 
 console.log("\n-- and restored on load --");
@@ -91,9 +97,19 @@ console.log("\n-- what must NOT have changed --");
   // would let the last tab to save win the lot.
   check("the catalogue did NOT go into the settings blob",
     !/settings: \{[\s\S]{0,900}wildcatCashRewards/.test(script));
-  // No Convex change at all: mergeLegacySlice is generic over (doc, collection).
+  // mergeLegacySlice is generic over (doc, collection). ONE reward-specific
+  // rule joined it on 2026-09-28 and only one: a student-store reward keeps
+  // the server's stock count unless a person set a newer one (keepServerStock),
+  // because studentStore:purchase decrements that count on the server. The
+  // other mention is the read allowlist. Anything else is new and should be
+  // looked at, which is what this is for.
   const convexRewards = readFileSync(new URL("./convex/legacyData.ts", import.meta.url), "utf8");
-  check("legacyData needed no reward-specific code", !/wildcatCashRewards/.test(convexRewards));
+  const code = convexRewards.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const mentions = (code.match(/wildcatCashRewards/g) || []).length;
+  check("legacyData's only reward-specific code is the stock guard and the read allowlist",
+    mentions === 2 && /if \(collection !== "wildcatCashRewards"\) return merged;/.test(code)
+    && /secondary: \["wildcatCashBehaviors", "wildcatCashRewards", "cashReceipts"\]/.test(code),
+    String(mentions));
   check("the hardcoded defaults are still there as the seed",
     /let wildcatCashRewards = \[/.test(script) && /Homework Pass/.test(script));
   // BOTH localStorage branches carry it. The error-fallback blob is the one

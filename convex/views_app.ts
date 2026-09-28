@@ -6,6 +6,7 @@ import { sisNumberKey, sisEmailKey, gradeCell } from "./studentPortalRules";
 import { teacherRosterEmail } from "./rosterEmail";
 import { studentView } from "./views";
 import { projectGrade } from "./gradeProjection";
+import { storeIsOpen } from "./studentStore";
 
 /**
  * The three reads the app actually needs.
@@ -325,7 +326,7 @@ export const teacherRosterFor = query({
 export const myDataVersion = query({
   args: {},
   handler: async (ctx) => {
-    await requireStudentSelf(ctx);
+    const me = await requireStudentSelf(ctx);
     const latest = await ctx.db.query("syncRuns").withIndex("by_at").order("desc").first();
     return {
       // null, not "", when no sync has ever run. The client treats an absent
@@ -333,6 +334,11 @@ export const myDataVersion = query({
       // reloading on every poll because there is no answer is worse than not
       // reloading at all.
       syncedAt: latest?.at ?? null,
+      // Whether the student store is open. Carried here, on the call every
+      // portal already makes every 15 seconds, so a child who opened the page
+      // before the store opened sees it open without reloading -- and without
+      // 620 portals each adding a third request per poll to learn one boolean.
+      storeOpen: await storeIsOpen(ctx, me),
     };
   },
 });

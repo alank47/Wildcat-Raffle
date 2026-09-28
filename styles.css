@@ -7335,6 +7335,25 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     background: var(--wu-hair, #E7ECF2); overflow: hidden;
 }
 .wp-store-bar > span { display: block; height: 100%; background: #2E7D52; }
+/* "You bought this. Receipt WC-XXXXXX" -- the code outlives the dialog that
+   first showed it, because it is what the child takes to the office. */
+.wp-store-owned { margin-top: 8px; font-size: 13px; font-weight: 600; color: #2E7D52; overflow-wrap: anywhere; }
+.wp-store-owned strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .05em; }
+/* "Your purchases": every code they hold, drawn open or closed. */
+.wp-store-held { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--wu-hair, #E7ECF2); font-size: 13px; }
+.wp-store-held-title { font-weight: 700; margin-bottom: 4px; }
+.wp-store-held ul { margin: 0; padding-left: 18px; }
+.wp-store-held li { margin: 3px 0; overflow-wrap: anywhere; }
+.wp-store-held strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .05em; }
+/* The receipt dialog after a purchase. The code is the only thing that has to
+   be readable at arm's length, so it is the only thing set large. */
+.wp-receipt { text-align: center; }
+.wp-receipt-code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 30px; font-weight: 700; letter-spacing: .09em;
+    color: #1E5A3A; background: #F4FBF7;
+    border-radius: 12px; padding: 14px 10px; margin: 4px 0 10px;
+}
 
 /* FULL WIDTH IN THE DASH GRID, like .wp-tiles already is. A list of rewards
    with prices and progress bars is the widest thing on this page; leaving it in
@@ -9923,4 +9942,60 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     .wc-sg-baseline { gap: 10px; }
     .wc-sg-base-n { font-size: 28px; }
     .wc-sg-figs { min-width: 88px; }
+}
+
+
+/* ---------- The student store switch (Rewards Store screen) ---------- */
+.store-switch {
+    display: block; margin: 0 0 18px; padding: 14px 16px;
+    border: 1px solid var(--wc-hair, #E3E8EF); border-radius: 12px; background: #fff;
+}
+.store-switch[hidden] { display: none !important; }
+.store-switch-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 15px; }
+.store-switch-dot { width: 10px; height: 10px; border-radius: 50%; background: #B3392F; flex: 0 0 auto; }
+.store-switch-dot.is-open { background: #2E7D52; }
+.store-switch-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.store-switch-form { display: grid; gap: 10px; margin-top: 12px; max-width: 460px; }
+.store-switch-form label { display: grid; gap: 4px; font-size: 13px; font-weight: 600; }
+
+/* Who can buy a reward, on its card. */
+.reward-tags { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+.reward-tag {
+    font-size: 11.5px; font-weight: 700; padding: 3px 8px; border-radius: 999px;
+    background: var(--wc-blue-mist, #EEF4FB); color: var(--wc-blue-deep, #1F4E79);
+}
+
+/* ---------- The purchase list: on screen as a sheet, on paper as pages ----------
+   Above every modal (10000) and BELOW the dialog (10050), so a confirm can
+   still open over it. */
+.print-sheet {
+    position: fixed; inset: 0; z-index: 10020;
+    background: #fff; overflow: auto; padding: 20px 24px 40px;
+}
+.print-toolbar {
+    position: sticky; top: -20px; background: #fff; padding: 8px 0 12px;
+    border-bottom: 1px solid #E3E8EF; margin-bottom: 16px;
+}
+.print-toolbar-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.print-toolbar-row strong { font-size: 18px; margin-right: auto; }
+.print-picks { display: flex; gap: 14px; flex-wrap: wrap; margin: 10px 0 4px; font-size: 14px; }
+.print-page { margin-bottom: 36px; }
+.print-page h2 { margin: 0 0 4px; font-size: 20px; }
+.print-sub { margin: 0 0 10px; font-size: 12.5px; color: #555; }
+.print-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.print-table th, .print-table td { border: 1px solid #BFC7D1; padding: 5px 7px; text-align: left; vertical-align: top; }
+.print-table th { background: #F1F4F8; font-size: 11.5px; }
+.print-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; white-space: nowrap; }
+.print-check { width: 52px; }
+.print-note { color: #666; font-size: 11px; }
+.print-empty { color: #777; font-style: italic; }
+
+@media print {
+    body.wc-printing > *:not(#wcPrintSheet) { display: none !important; }
+    body.wc-printing #wcPrintSheet { position: static; overflow: visible; padding: 0; inset: auto; }
+    body.wc-printing .print-toolbar { display: none !important; }
+    body.wc-printing .print-page { break-after: page; page-break-after: always; margin: 0; }
+    body.wc-printing .print-page:last-child { break-after: auto; page-break-after: auto; }
+    body.wc-printing .print-table tr { break-inside: avoid; page-break-inside: avoid; }
+    body.wc-printing .print-table thead { display: table-header-group; }
 }

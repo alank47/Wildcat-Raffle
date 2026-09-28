@@ -93,6 +93,9 @@ const moduleScopeTs = [
   // defined" -- the same way cash-ledger.test.mjs died when
   // reconcileCashLedger gained a dependency.
   liftDecl("function mergeRowFields("),
+  // Added 2026-09-28: a student-store reward keeps the server's stock unless
+  // an admin deliberately set a new one. Called by the update path.
+  liftDecl("function keepServerStock("),
 ].join("\n");
 const touchedJs = ts.transpileModule(moduleScopeTs, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
@@ -493,6 +496,64 @@ console.log("\n-- an update keeps fields the client never sent --");
   check("a non-object row passes straight through", merge("a", "b") === "b");
   check("and so does an array", Array.isArray(merge([1], [2])) && merge([1], [2])[0] === 2);
   check("a null stored row does not crash", merge(null, { id: "x" }).id === "x");
+}
+
+console.log("\n-- a student-store reward keeps the server's stock --");
+{
+  // THE POWER-UP PASS, 2026-09-29. studentStore:purchase decrements stock on
+  // the stored row. An admin who fixes a typo in the pass's description from a
+  // tab that loaded at 7am -- 75 left -- re-sends the whole row, and without
+  // this the 40 sold since then go back on the shelf. Run through the SHIPPED
+  // handler, not a copy.
+  const T0 = "2026-09-28T20:00:00.000Z";   // an admin set stock to 75
+  const T2 = "2026-09-29T15:00:00.000Z";   // the server's last decrement
+  const T3 = "2026-09-29T16:00:00.000Z";   // the admin's edit, later still
+  const storedPass = { id: "p_ms", name: "Power-Up Pass (Middle School)", cost: 1500,
+    stock: 35, stockSetAt: T0, studentPurchasable: true, updatedAt: T2, description: "old" };
+  const final = async (incoming, stored = storedPass, collection = "wildcatCashRewards") =>
+    (await runBoth({ existing: [row(stored)], rows: [row(incoming)], dedupeField: "id",
+                     doc: "secondary", collection })).final[0].payload;
+
+  const typo = await final({ ...storedPass, stock: 75, description: "new", updatedAt: T3 });
+  check("an edit that did not touch stock keeps the server's count", typo.stock === 35);
+  check("and the rest of the edit still lands", typo.description === "new");
+
+  const oldClient = { ...storedPass, stock: 75, description: "new", updatedAt: T3 };
+  delete oldClient.stockSetAt;
+  check("a tab from before stockSetAt existed cannot restock it either",
+    (await final(oldClient)).stock === 35);
+
+  const deliberate = await final({ ...storedPass, stock: 100, stockSetAt: T3, updatedAt: T3 });
+  check("an admin who typed a new stock number gets it", deliberate.stock === 100);
+  check("and the stamp moves with it, so the next stale copy loses", deliberate.stockSetAt === T3);
+
+  const sameStamp = await final({ ...storedPass, stock: 75, stockSetAt: T0, updatedAt: T3 });
+  check("re-sending the SAME stamp is not a new decision", sameStamp.stock === 35);
+
+  // AN EDIT MADE DURING THE SALE LANDS. A purchase no longer moves updatedAt
+  // (it writes stockMovedAt), so the admin's edit, stamped after the last
+  // HUMAN edit, is newer -- even though children bought since.
+  const T1 = "2026-09-29T15:30:00.000Z";
+  const selling = { ...storedPass, updatedAt: T0, stockMovedAt: T2 };
+  const repriced = await final({ ...storedPass, cost: 1200, available: false, stock: 75,
+    updatedAt: T1, stockMovedAt: undefined }, selling);
+  check("an admin's price change during the sale is not thrown away",
+    repriced.cost === 1200 && repriced.available === false);
+  check("and the count stays the server's", repriced.stock === 35);
+
+  // Staff-sold rewards are untouched: nothing on the server moves their stock,
+  // so the tab's decrement is still the truth.
+  const staffItem = { ...storedPass, studentPurchasable: false };
+  check("a reward staff sell by hand still takes the tab's stock",
+    (await final({ ...staffItem, stock: 34, updatedAt: T3 }, staffItem)).stock === 34);
+  check("and other collections are not touched at all",
+    (await final({ ...storedPass, stock: 75, updatedAt: T3 }, storedPass, "c")).stock === 75);
+
+  // An unticked flag in the same edit: the STORED copy decides, so the count
+  // the server holds is not dropped on the way out of the student store.
+  const unticked = await final({ ...storedPass, stock: 75, studentPurchasable: false, updatedAt: T3 });
+  check("unticking 'students can buy' does not restock it on the way out",
+    unticked.stock === 35 && unticked.studentPurchasable === false);
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

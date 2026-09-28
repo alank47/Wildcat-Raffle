@@ -208,7 +208,9 @@ console.log("\n-- the other forty tabs, without anyone reloading --");
   const q = legacy.slice(legacy.indexOf("export const loadSlice"), legacy.indexOf("export const loadDoc"));
   check("the server read is staff only", /await requireStaff\(ctx\)/.test(q));
   check("and a narrow door: only the slices it lists", /SLICES_READABLE_ALONE\[doc\] \|\| \[\]\)\.includes\(collection\)/.test(q)
-    && /secondary: \["wildcatCashBehaviors"\]/.test(legacy));
+    // Three small lists now (2026-09-28): the Receipts desk and the reward
+    // editor re-read theirs while a sale is on. Still named one by one.
+    && /secondary: \["wildcatCashBehaviors", "wildcatCashRewards", "cashReceipts"\]/.test(legacy));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

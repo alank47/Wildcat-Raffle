@@ -5629,13 +5629,18 @@
                                 detentions = mergedSecondary.detentions;
                                 hallPasses = mergedSecondary.hallPasses;
                                 preventionGroups = mergedSecondary.preventionGroups;
-                                cashReceipts = mergedSecondary.cashReceipts;
-                                wildcatCashRewards = mergedSecondary.wildcatCashRewards;
-                                // The behaviour list is NOT taken back here: it
+                                // The receipts, the reward catalogue and the
+                                // behaviour list are NOT taken back here. Each
                                 // is the same array this tab already holds, and
-                                // if a refresh swapped in a newer one while the
-                                // save ran, putting the old one back would undo
-                                // it -- and drop anything added to the new one.
+                                // a refresh can swap in a newer one while the
+                                // save runs (pullStoreSlices every 20 seconds on
+                                // the store screens, 2026-09-28). Putting the
+                                // old one back undid whatever landed in the new
+                                // one -- a handover at the desk, a price change
+                                // -- and because the save had already marked
+                                // the old copy as written, it was never re-sent.
+                                // A cancel lost that way kept its refund and
+                                // left the receipt open to cancel again.
                                 detentionIdCounter = mergedSecondary.detentionIdCounter;
                             }
                             console.log(
@@ -17693,8 +17698,12 @@
                 updateCashLeaderboards();
             } else if (tabName === 'rewardsStore') {
                 updateRewardsStore();
+                // Then again from the server's lists: children buy from their
+                // own Chromebooks now, and this tab would not otherwise know.
+                openStoreTab('rewardsStore');
             } else if (tabName === 'receipts') {
                 updateReceiptsTable();
+                openStoreTab('receipts');
             } else if (tabName === 'studentAccounts') {
                 // Paint from cache, then fetch the roster and repaint -- the
                 // same two-step Award Cash uses, so the class filter is
@@ -19307,44 +19316,86 @@
                 return wpPanel('Wildcat Cash', 'Student Rewards Store', '',
                     wpEmpty('Loading the store\u2026'));
             }
+            // WHAT THEY HOLD, whether the store is open or not. Built from the
+            // server's receipts, not from the catalogue, so a code survives the
+            // sale closing -- the moment they most need it.
+            const held = Array.isArray(_wpStore.myPurchases) ? _wpStore.myPurchases : [];
+            const heldHtml = held.length
+                ? '<div class="wp-store-held"><div class="wp-store-held-title">Your purchases</div><ul>' +
+                  held.map(function (p) {
+                      return '<li><strong>' + wpEsc(String(p.id)) + '</strong> ' + wpEsc(String(p.rewardName)) +
+                          (p.quantity > 1 ? ' \u00D7' + wpEsc(String(p.quantity)) : '') +
+                          (p.status === 'fulfilled' ? ' <span class="wp-stock">collected</span>'
+                                                    : ' <span class="wp-stock">show this code to collect it</span>') +
+                          '</li>';
+                  }).join('') + '</ul></div>'
+                : '';
             if (!_wpStore.storeOpen) {
-                return wpPanel('Wildcat Cash', 'Student Rewards Store', 'Not open yet',
+                return wpPanel('Wildcat Cash', 'Student Rewards Store', held.length ? 'Closed' : 'Not open yet',
                     '<p class="wp-soon">' + wpEsc(_wpStore.closedReason ||
                         'You\u2019ll be able to use your Wildcat Cash to purchase rewards here soon.') +
-                    '</p>');
+                    '</p>' + heldHtml);
             }
 
             const items = Array.isArray(_wpStore.items) ? _wpStore.items : [];
             const forSale = items.filter(function (it) { return it.inStudentStore; });
+            // A DRY-RUN TESTER is told so: this is the rehearsal, not the sale.
+            const testing = _wpStore.testing
+                ? '<p class="wp-soon">Test mode: the store is closed to everyone else. Real Wildcat Cash moves.</p>'
+                : '';
             if (!forSale.length) {
-                return wpPanel('Wildcat Cash', 'Student Rewards Store', 'Nothing yet',
-                    wpEmpty('No rewards are in the student store yet. Your teachers can ' +
-                            'still buy things for you at the office.'));
+                return wpPanel('Wildcat Cash', 'Student Rewards Store', held.length ? 'Nothing for sale' : 'Nothing yet',
+                    testing + wpEmpty(held.length
+                        ? 'Nothing is for sale right now.'
+                        : 'No rewards are in the student store yet. Your teachers can ' +
+                          'still buy things for you at the office.') + heldHtml);
             }
 
             const rows = forSale.map(function (it) {
                 // The bar is the honest part of this panel for most students.
                 const pct = Math.round(Math.max(0, Math.min(1, it.progress == null ? 0 : it.progress)) * 100);
+                // THEIR RECEIPT, ON THE CARD. The dialog that announced the
+                // purchase is gone the moment they tap Done; the code is what
+                // they take to the office, so it stays here for as long as the
+                // pass is theirs.
+                const mine = Array.isArray(it.myReceipts) ? it.myReceipts : [];
+                const owned = mine.length
+                    ? '<div class="wp-store-owned">\u2713 You bought this. Receipt ' +
+                      mine.map(function (r) {
+                          return '<strong>' + wpEsc(String(r.id)) + '</strong>' +
+                              (r.status === 'fulfilled' ? ' (collected)' : '');
+                      }).join(', ') + '</div>'
+                    : '';
                 const action = it.canBuy
                     ? '<button type="button" class="wp-buy"' +
                       ' data-wp-buy="' + wpEsc(String(it.id)) + '"' +
                       ' data-wp-buy-name="' + wpEsc(String(it.name)) + '"' +
                       ' data-wp-buy-cost="' + wpEsc(String(it.cost)) + '">Buy</button>'
-                    : '<span class="wp-buy-why">' + wpEsc(String(it.why || '')) + '</span>';
+                    // Already theirs: the line above says so, and repeating
+                    // "you already have this one" beside it is noise.
+                    : (it.code === 'limit_reached' && mine.length)
+                        ? ''
+                        : '<span class="wp-buy-why">' + wpEsc(String(it.why || '')) + '</span>';
                 const stock = (it.stock == null)
                     ? ''
                     : '<span class="wp-stock">' + wpEsc(String(it.stock)) + ' left</span>';
+                const limit = (typeof it.limitPerStudent === 'number' && it.limitPerStudent > 0)
+                    ? '<span class="wp-stock">' + (it.limitPerStudent === 1
+                        ? 'One per student'
+                        : 'Up to ' + wpEsc(String(it.limitPerStudent)) + ' each') + '</span>'
+                    : '';
                 // The cost and the action share one line UNDER the name, not
                 // columns beside it: a .wp-dash panel is about 270px wide, and
                 // three columns in there left the reward name running down the
                 // card one word per line.
                 return '<li class="wp-store-row' + (it.canBuy ? ' is-afford' : '') + '">' +
                     '<div class="wp-store-main">' +
-                        '<div class="wp-store-name">' + wpEsc(String(it.name)) + stock + '</div>' +
+                        '<div class="wp-store-name">' + wpEsc(String(it.name)) + stock + limit + '</div>' +
                         (it.description
                             ? '<div class="wp-store-desc">' + wpEsc(String(it.description)) + '</div>'
                             : '') +
-                        '<div class="wp-store-bar"><span style="width:' + pct + '%"></span></div>' +
+                        owned +
+                        (owned ? '' : '<div class="wp-store-bar"><span style="width:' + pct + '%"></span></div>') +
                     '</div>' +
                     '<div class="wp-store-foot">' +
                         '<div class="wp-store-cost">$' + wpEsc(String(it.cost)) + '</div>' +
@@ -19355,7 +19406,7 @@
 
             return wpPanel('Wildcat Cash', 'Student Rewards Store',
                 '$' + wpEsc(String(_wpStore.balance == null ? 0 : _wpStore.balance)) + ' to spend',
-                '<ul class="wp-store">' + rows + '</ul>');
+                testing + '<ul class="wp-store">' + rows + '</ul>' + heldHtml);
         }
 
         /**
@@ -19368,6 +19419,64 @@
          * buying two of something is a thing a child is allowed to do.
          */
         let _wpBuyInFlight = false;
+        /**
+         * The press whose answer never arrived: { rewardId, attemptId }.
+         * Reused by the next press on the same reward, so a retry after a
+         * dropped connection is the SAME purchase, never a second one.
+         */
+        let _wpPendingBuy = null;
+
+        /**
+         * Why a purchase call threw, in the three ways that change what the
+         * child should be told:
+         *   'signin'  -- refused before it ran (401). Nothing was charged.
+         *   'unknown' -- the connection failed or the server fell over; the
+         *                purchase may have landed. Retry with the same token.
+         *   'refused' -- the server ran it and threw, so it rolled back.
+         * wildcat-auth throws "Convex HTTP <status>" for a non-2xx and the
+         * server's own message for a function error; fetch itself throws a
+         * TypeError when the network is down.
+         */
+        function wpBuyFailureKind(e) {
+            const msg = String((e && (e.message || e.code)) || e || '');
+            if (/\b401\b|unauthor|not authenticated/i.test(msg)) return 'signin';
+            // 560 IS CONVEX SAYING THE FUNCTION RAN AND THREW, so its
+            // transaction rolled back and nothing was charged -- including a
+            // purchase that lost a race with others and ran out of retries.
+            // (The official client treats 560 as "the function returned an
+            // error"; wildcat-auth reports it as "Convex HTTP 560".)
+            if (/Convex HTTP 560\b/.test(msg)) return 'refused';
+            if ((e && e.name === 'TypeError') || /Convex HTTP 5\d\d|Convex HTTP 429|failed to fetch|networkerror|load failed|network/i.test(msg)) {
+                return 'unknown';
+            }
+            if (/Convex HTTP/i.test(msg)) return 'unknown';
+            return 'refused';
+        }
+
+        /** The receipt, in a dialog that stays until they close it. */
+        function wpShowPurchaseReceipt(res) {
+            const body =
+                '<div class="wp-receipt">' +
+                    '<div class="wp-receipt-code">' + wpEsc(String(res.receiptId || '')) + '</div>' +
+                    '<p>' + wpEsc(String(res.rewardName || '')) +
+                        (res.totalCost != null ? ' \u2014 $' + wpEsc(String(res.totalCost)) : '') + '</p>' +
+                    (res.balanceAfter != null
+                        ? '<p>You have $' + wpEsc(String(res.balanceAfter)) + ' left.</p>'
+                        : '') +
+                    '<p>Show this code to collect it. It stays on your store card too.</p>' +
+                '</div>';
+            try {
+                _wcDialog({
+                    kind: 'success',
+                    title: res.alreadyBought ? 'You already bought this' : 'You bought it!',
+                    body: body,
+                    buttons: [{ label: 'Done', value: true, cls: 'wc-btn-primary' }],
+                });
+            } catch (e) {
+                // No dialog: say it in a toast rather than not at all.
+                showSuccessToast('Bought ' + res.rewardName + ' \u2014 show ' + res.receiptId + ' at the office');
+            }
+        }
 
         // GUARDED, because this region is EVALUATED BY A TEST.
         // student-dashboard.test.mjs lifts the portal's rendering functions and
@@ -19428,6 +19537,9 @@
             ev.stopPropagation();
             if (_wpBuyInFlight) return;
             _wpBuyInFlight = true;
+            // Whether the portal is redrawn once this press is settled. False
+            // only when the network failed: see the 'unknown' branch.
+            let redrawAfter = true;
             try {
             try {
                 const id = btn.getAttribute('data-wp-buy');
@@ -19441,7 +19553,11 @@
                 // guessed at again.
                 console.log('[store] buy clicked:', name, '$' + cost, 'id=' + id);
 
-                const ok = await showConfirm('Buy ' + name + ' for $' + cost + '?');
+                // The price the button showed, sent so the server can REFUSE
+                // if it moved since the card loaded. Never used to charge.
+                const seenPrice = Number(cost);
+                const ok = await showConfirm('Buy ' + name + ' for $' + cost + '?' +
+                    '\nThe money comes out of your Wildcat Cash as soon as you confirm.');
                 console.log('[store] confirm returned:', ok);
                 // A plain cancel. The double-ask that briefly lived here was a
                 // workaround for a confirm resolving without being seen -- the
@@ -19452,40 +19568,73 @@
 
                 const auth = window.WildcatAuth;
                 const session = auth && auth.getSession();
-                if (!session) { showAlert('\u274C You are not signed in.'); return; }
+                if (!session) {
+                    showAlert('\u274C You are not signed in.\nSign in again, then press Buy. Nothing was charged.');
+                    return;
+                }
 
                 btn.disabled = true;
                 btn.textContent = 'Buying\u2026';
-                // One token per press. Crypto where available; the fallback is
-                // only ever a per-press value, not a secret.
-                const attemptId = (window.crypto && window.crypto.randomUUID)
-                    ? window.crypto.randomUUID()
-                    : 'a' + Date.now() + Math.random().toString(36).slice(2, 10);
+                // One token per press, AND THE SAME ONE AGAIN after a press
+                // whose answer never arrived. The server keys idempotency on
+                // it, so pressing Buy again after "we could not reach the
+                // store" either finishes that purchase or returns its receipt
+                // -- it can never charge twice. A fresh token there would be
+                // a second purchase if the first one had in fact landed.
+                const attemptId = (_wpPendingBuy && _wpPendingBuy.rewardId === id)
+                    ? _wpPendingBuy.attemptId
+                    : ((window.crypto && window.crypto.randomUUID)
+                        ? window.crypto.randomUUID()
+                        : 'a' + Date.now() + Math.random().toString(36).slice(2, 10));
+                _wpPendingBuy = { rewardId: id, attemptId: attemptId };
 
                 let res;
                 try {
                     res = await auth.convexMutation('studentStore:purchase',
-                        { rewardId: id, quantity: 1, attemptId: attemptId }, session.idToken);
+                        { rewardId: id, quantity: 1, attemptId: attemptId, seenPrice: seenPrice },
+                        session.idToken);
                 } catch (e) {
                     // NOT AWAITED. A dialog that fails to resolve must never be
                     // able to hold this handler open again.
                     console.error('[store] purchase call failed:', e);
-                    showAlert('\u274C That did not go through: ' +
-                        ((e && e.message) ? e.message : e));
+                    const kind = wpBuyFailureKind(e);
+                    if (kind === 'signin') {
+                        // Refused at the door: the mutation never ran.
+                        _wpPendingBuy = null;
+                        showAlert('\u274C Your sign-in has expired.\n' +
+                            'Sign in again, then press Buy. Nothing was charged.');
+                    } else if (kind === 'unknown') {
+                        // The request may or may not have arrived. The token is
+                        // kept, so the next press is the same purchase. And NO
+                        // full redraw below: the connection that just failed
+                        // would fail the reload too, and a failed reload
+                        // blanks their cards behind this message.
+                        redrawAfter = false;
+                        showAlert('\u26A0\uFE0F We could not reach the store.\n' +
+                            'We cannot tell yet whether that went through. Press Buy again: ' +
+                            'you will never be charged twice for the same purchase.');
+                    } else {
+                        // The server answered with a refusal: it ran and rolled
+                        // back, so nothing moved.
+                        _wpPendingBuy = null;
+                        showAlert('\u274C That did not go through, and nothing was charged.\n' +
+                            'Press Buy to try again. If it keeps happening, tell a teacher.');
+                    }
                     return;
                 }
 
+                // AN ANSWER ARRIVED, so this press is settled either way.
+                _wpPendingBuy = null;
                 if (!res || res.ok !== true) {
                     console.warn('[store] refused:', res && res.code, res && res.reason);
-                    showAlert('\u26A0\uFE0F ' + ((res && res.reason) || 'That could not be bought.'));
+                    showAlert('\u26A0\uFE0F ' + ((res && res.reason) || 'That could not be bought.') +
+                        '\nNothing was charged.');
                     return;
                 }
-                if (res.alreadyBought) {
-                    showSuccessToast('Already bought \u2014 receipt ' + res.receiptId);
-                } else {
-                    showSuccessToast('Bought ' + res.rewardName + ' for $' + res.totalCost +
-                        ' \u2014 show ' + res.receiptId + ' at the office');
-                }
+                // A DIALOG THAT STAYS, not a toast that fades. The receipt code
+                // is what they take to the office, and a toast gone in four
+                // seconds was the only place it appeared. Not awaited.
+                wpShowPurchaseReceipt(res);
                 console.log('[store] purchased:', res.receiptId, res.rewardName,
                     '$' + res.totalCost, 'balance now $' + res.balanceAfter);
             } catch (e) {
@@ -19500,19 +19649,28 @@
             }
             } finally {
                 _wpBuyInFlight = false;
-                // RE-RENDERED HERE, NOT ON THE SUCCESS PATH. The purchase of
-                // WC-A68031 landed correctly -- $100 off the balance, receipt
-                // issued -- and the student was never told, because the handler
-                // then sat on `await showAlert(...)` and the button stayed on
-                // "Buying...". A modal that failed to resolve froze the screen
-                // on a transaction that had already succeeded: the money moved
-                // and the child had no idea.
+                // REDRAWN HERE, NOT ON THE SUCCESS PATH, and through the one
+                // path the portal is drawn by. The purchase of WC-A68031
+                // landed correctly and the student was never told: the button
+                // sat on "Buying..." because this used to call wpPollPassOnce,
+                // which only redraws when the HALL PASS changed -- so after a
+                // purchase nothing redrew at all, and the balance, the stock
+                // and the button all stayed as they were before the money
+                // moved. loadStudentPortal re-reads the store and the balance.
                 //
                 // In the finally, so it runs on success, on refusal, on a
-                // network error and on a throw.
+                // network error and on a throw. The card they are on is kept.
                 try {
-                    if (typeof wpPollPassOnce === 'function') await wpPollPassOnce(true);
+                    if (redrawAfter && typeof loadStudentPortal === 'function') await loadStudentPortal();
                 } catch (e) { console.warn('[store] refresh after buy failed:', e); }
+                // STILL ON SCREEN means the redraw did not happen (the network
+                // that failed the purchase failed the reload too). Put the
+                // button back, or it sits on "Buying..." beside an alert that
+                // says to press it again.
+                if (btn && btn.isConnected) {
+                    btn.disabled = false;
+                    btn.textContent = 'Buy';
+                }
             }
         }, true);
         }
@@ -20934,6 +21092,15 @@
         // first poll records it and never reloads on it, or every student would
         // get a reload the moment they opened the portal.
         let wpSyncVersion = null;
+        // Whether the student store was open the last time this portal drew it.
+        // Watched on the same 15-second poll as the sync version, so a child
+        // who opened the page at 6:40 sees the store open at 6:45 by itself.
+        // Null until the portal has drawn a store it can compare against.
+        let wpStoreOpenSeen = null;
+        // True while the last portal load could not draw the cards. The poll
+        // retries the load on its next good answer, instead of leaving a
+        // blanked page until a sync or a pass change happens to redraw it.
+        let _wpLoadFailed = false;
         const WP_WATCH_MS = 15000;
 
         /**
@@ -21582,6 +21749,13 @@
                         .catch(function () { return null; }),
                 ]);
 
+                // The last load failed and left the page blank; this poll just
+                // worked, so the network is back. Draw it again.
+                if (_wpLoadFailed) {
+                    await loadStudentPortal();
+                    return;
+                }
+
                 // TWO THINGS ARE WATCHED, AND THEY LAND DIFFERENTLY.
                 //
                 // The hall pass is why the phone is in their hand, so a change
@@ -21598,6 +21772,22 @@
                     // preferIndex undefined keeps the card they are on.
                     await loadStudentPortal();
                     return;
+                }
+
+                // THE STORE OPENING OR CLOSING. Carried on the same cheap call
+                // (views_app:myDataVersion), so it costs no extra request. On a
+                // change the portal redraws where they are, the same way a sync
+                // does: the store is news, not a reason to move their card.
+                const nextStore = (version && typeof version.storeOpen === 'boolean')
+                    ? version.storeOpen : null;
+                if (nextStore !== null) {
+                    if (wpStoreOpenSeen === null) {
+                        wpStoreOpenSeen = nextStore;
+                    } else if (nextStore !== wpStoreOpenSeen) {
+                        wpStoreOpenSeen = nextStore;
+                        await loadStudentPortal();
+                        return;
+                    }
                 }
 
                 const next = wpPassSignature(card && card.hallPass);
@@ -21629,6 +21819,12 @@
             // machine inherits this one's last-seen sync and gets a spurious
             // reload on their first poll.
             wpSyncVersion = null;
+            wpStoreOpenSeen = null;
+            _wpLoadFailed = false;
+            // A retry token belongs to the child who pressed Buy. The next
+            // child on a shared machine must not send it (the server refuses
+            // it anyway: attempt_mismatch).
+            _wpPendingBuy = null;
             const view = wpById('studentPassView');
             if (view) { view.classList.add('hidden'); view.scrollTop = 0; }
             const tap = wpById('tapResultView');
@@ -21730,14 +21926,20 @@
             // Wire the Buy buttons here rather than at load. Idempotent, and
             // this is the one path the portal is ever drawn by.
             wpWireBuyButtons();
+            // The poll compares against what was DRAWN, not against its own
+            // first answer: a store that opened between this load and the
+            // first poll would otherwise become the baseline and never redraw.
+            if (_wpStore && typeof _wpStore.storeOpen === 'boolean') wpStoreOpenSeen = _wpStore.storeOpen;
 
             if (!pass) {
+                _wpLoadFailed = true;
                 const stack = wpById('wpStack');
                 if (stack) { stack.innerHTML = ''; stack.style.height = '0px'; }
                 if (err) err.textContent = (results[0].reason && results[0].reason.message) ||
                     'Your cards could not be loaded.';
                 return;
             }
+            _wpLoadFailed = false;
 
             const s = pass.student || {};
             const nameEl = wpById('wpName');
@@ -28316,6 +28518,26 @@
                     const stockLabel = reward.stock == null
                         ? 'Unlimited'
                         : `${reward.stock} left`;
+                    // WHO CAN BUY IT, said on the card, so nobody has to open
+                    // the editor to find out why a child cannot see it.
+                    const selfServe = reward.studentPurchasable === true;
+                    const campus = window.WildcatStore.rewardCampusOf(reward);
+                    const limit = window.WildcatStore.rewardLimitOf(reward);
+                    const tags = [
+                        selfServe ? 'Student store' : 'Sold by staff',
+                        campus === 'middle' ? 'Middle School only'
+                            : campus === 'high' ? 'High School only'
+                            : campus === null ? 'Campus setting invalid' : '',
+                        typeof limit === 'number' ? `${limit} per student` : '',
+                    ].filter(Boolean);
+                    // A STUDENT-STORE REWARD IS BOUGHT BY THE STUDENT. Selling it
+                    // here would move stock from this tab's copy, which is the
+                    // one number the server keeps for itself while the sale is
+                    // on -- so the button says where it is bought instead.
+                    const purchaseBtn = selfServe
+                        ? `<span class="receipt-meta">Students buy this on their Chromebook</span>`
+                        : `<button class="btn" onclick="openRedeemRewardModal('${reward.id}')"
+                                    ${paused || outOfStock ? 'disabled' : ''}>Purchase for student</button>`;
                     return `
                     <div class="wc-card reward-card${paused || outOfStock ? ' is-unavailable' : ''}">
                         <div class="reward-card-head">
@@ -28325,11 +28547,11 @@
                         ${reward.description ? `<p class="reward-desc">${escapeHtml(reward.description)}</p>` : ''}
                         <div class="reward-cost">$${reward.cost}</div>
                         <div class="reward-category">${escapeHtml(reward.category || 'General')}</div>
+                        <div class="reward-tags">${tags.map(t => `<span class="reward-tag">${escapeHtml(t)}</span>`).join('')}</div>
                         ${paused ? '<div class="reward-flag">Paused: not purchasable</div>' : ''}
                         ${outOfStock && !paused ? '<div class="reward-flag">Out of stock</div>' : ''}
                         <div class="reward-actions">
-                            <button class="btn" onclick="openRedeemRewardModal('${reward.id}')"
-                                    ${paused || outOfStock ? 'disabled' : ''}>Purchase for student</button>
+                            ${purchaseBtn}
                             <button class="btn btn-secondary btn-sm" onclick="openEditRewardModal('${reward.id}')">Edit</button>
                             <button class="btn btn-secondary btn-sm" onclick="retireRewardById('${reward.id}')">Retire</button>
                         </div>
@@ -29131,6 +29353,368 @@
             }
         }
 
+        // ============================================================
+        // THE STORE, LIVE (2026-09-28, for the first real sale)
+        //
+        // Children buy from their own Chromebooks now, straight into the
+        // server. A staff tab only learned about those purchases on a full
+        // reload, so the Receipts desk showed a list from 7am all day, and an
+        // admin editing a pass started from a stock count hours out of date.
+        //
+        // So the two small lists this screen is about -- the catalogue and the
+        // receipts -- are re-read on their own while either store tab is on
+        // screen, and before anything that changes them. legacyData:loadSlice
+        // reads exactly one list; it is not a reload and moves nobody's page.
+        // ============================================================
+        let _storePullInFlight = null;
+        let _storeDeskTimer = null;
+        const STORE_DESK_REFRESH_MS = 20000;
+
+        /** Newest copy of each row wins; rows only this tab has are kept. */
+        function mergeStoreLists(serverRewards, serverReceipts) {
+            if (Array.isArray(serverRewards) && serverRewards.length) {
+                const normalized = serverRewards.map(function (r) {
+                    return window.WildcatStore.normalizeReward(r, Date.now(), {});
+                });
+                wildcatCashRewards = window.WildcatMerge.mergeById(normalized, wildcatCashRewards);
+            }
+            if (Array.isArray(serverReceipts)) {
+                cashReceipts = window.WildcatMerge.mergeById(serverReceipts, cashReceipts)
+                    .sort((a, b) => new Date(a.purchasedAt) - new Date(b.purchasedAt));
+            }
+        }
+
+        async function pullStoreSlicesNow() {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session || !window.WildcatStore || !window.WildcatMerge) return false;
+            try {
+                const both = await Promise.all([
+                    auth.convexQuery('legacyData:loadSlice',
+                        { doc: 'secondary', collection: 'wildcatCashRewards' }, session.idToken),
+                    auth.convexQuery('legacyData:loadSlice',
+                        { doc: 'secondary', collection: 'cashReceipts' }, session.idToken),
+                ]);
+                mergeStoreLists(both[0], both[1]);
+                return true;
+            } catch (e) {
+                console.warn('Store refresh skipped:', (e && e.message) || e);
+                return false;
+            }
+        }
+
+        /** One read at a time, however many callers ask. */
+        function pullStoreSlices() {
+            if (!_storePullInFlight) {
+                _storePullInFlight = pullStoreSlicesNow()
+                    .finally(function () { _storePullInFlight = null; });
+            }
+            return _storePullInFlight;
+        }
+
+        /**
+         * Pull, but never wait longer than `ms`. Used before an edit or a
+         * handover: a slow network must not freeze the button, and the server
+         * holds its own guards (stock, receipt state) either way.
+         */
+        function storePullWithin(ms) {
+            return Promise.race([
+                pullStoreSlices(),
+                new Promise(function (resolve) { setTimeout(function () { resolve(false); }, ms); }),
+            ]);
+        }
+
+        function storeTabOnScreen(id) {
+            const el = document.getElementById(id);
+            return !!(el && el.classList.contains('active') && el.offsetParent !== null);
+        }
+
+        /** Start refreshing while a store tab is open; stops itself after. */
+        function startStoreDeskRefresh() {
+            if (_storeDeskTimer) return;
+            _storeDeskTimer = setInterval(async function () {
+                const onRewards = storeTabOnScreen('rewardsStoreTab');
+                const onReceipts = storeTabOnScreen('receiptsTab');
+                if (!onRewards && !onReceipts) {
+                    clearInterval(_storeDeskTimer);
+                    _storeDeskTimer = null;
+                    return;
+                }
+                if (document.hidden) return;
+                const ok = await pullStoreSlices();
+                if (ok && onRewards && storeTabOnScreen('rewardsStoreTab')) updateRewardsStore();
+                if (ok && onReceipts && storeTabOnScreen('receiptsTab')) updateReceiptsTable();
+                // NOT while the schedule form is open: the redraw rebuilt its
+                // four boxes from the server's values every 20 seconds,
+                // wiping whatever the admin was halfway through typing.
+                if (onRewards && !_storeSwitchFormOpen) refreshStoreSwitch();
+            }, STORE_DESK_REFRESH_MS);
+        }
+
+        /** Called when a store tab is opened: redraw now from fresh lists. */
+        async function openStoreTab(which) {
+            startStoreDeskRefresh();
+            if (which === 'rewardsStore') refreshStoreSwitch();
+            const ok = await pullStoreSlices();
+            if (!ok) return;
+            if (which === 'rewardsStore' && storeTabOnScreen('rewardsStoreTab')) updateRewardsStore();
+            if (which === 'receipts' && storeTabOnScreen('receiptsTab')) updateReceiptsTable();
+        }
+
+        // ============================================================
+        // THE STUDENT STORE SWITCH, on the Rewards Store screen
+        //
+        // Open, closed, or on a timer. Staff can see which; only an admin gets
+        // the buttons, and the server checks that again (studentStore:setStore
+        // calls requireAdmin), because a hidden button is not a permission.
+        // ============================================================
+        let _storeSwitchState = null;
+        let _storeSwitchFormOpen = false;
+
+        function fmtStoreTime(iso) {
+            if (!iso) return '';
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return String(iso);
+            return d.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric',
+                                          hour: 'numeric', minute: '2-digit' });
+        }
+
+        /** An ISO time as the value a datetime-local box wants, in local time. */
+        function toLocalInputValue(iso) {
+            if (!iso) return '';
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return '';
+            const pad = (n) => String(n).padStart(2, '0');
+            return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+                'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+        }
+
+        async function refreshStoreSwitch() {
+            const panel = document.getElementById('storeSwitchPanel');
+            if (!panel) return;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) { panel.hidden = true; return; }
+            try {
+                _storeSwitchState = await auth.convexQuery('studentStore:storeStatus', {}, session.idToken);
+            } catch (e) {
+                _storeSwitchState = { error: (e && e.message) || String(e) };
+            }
+            renderStoreSwitch();
+        }
+
+        function renderStoreSwitch() {
+            const panel = document.getElementById('storeSwitchPanel');
+            if (!panel) return;
+            const st = _storeSwitchState;
+            if (!st) { panel.hidden = true; return; }
+            panel.hidden = false;
+            if (st.error) {
+                panel.innerHTML = '<div class="store-switch-line">Could not read the student store switch: ' +
+                    escapeHtml(st.error) + '</div>';
+                return;
+            }
+            const admin = correctionIsAdmin();
+            let line = st.open
+                ? '<span class="store-switch-dot is-open"></span><strong>Student store is OPEN</strong>' +
+                  (st.closesAt ? ' until ' + escapeHtml(fmtStoreTime(st.closesAt)) : '')
+                : '<span class="store-switch-dot"></span><strong>Student store is CLOSED</strong>' +
+                  (st.opensAt ? ' \u2014 opens ' + escapeHtml(fmtStoreTime(st.opensAt)) : '');
+            const seen = !st.open && st.shownWhileClosed
+                ? '<div class="receipt-meta">Students see: \u201C' + escapeHtml(st.shownWhileClosed) + '\u201D</div>'
+                : '';
+            const who = st.changedAt
+                ? '<div class="receipt-meta">Last changed ' + escapeHtml(fmtStoreTime(st.changedAt)) +
+                  (st.changedBy ? ' by ' + escapeHtml(st.changedBy) : '') + '</div>'
+                : '';
+            let buttons = '';
+            if (admin) {
+                buttons = '<div class="store-switch-actions">' +
+                    (st.open
+                        ? '<button type="button" class="btn btn-secondary btn-sm" onclick="storeSwitchAction(\'close\')">Close now</button>'
+                        : '<button type="button" class="btn btn-sm" onclick="storeSwitchAction(\'open\')">Open now</button>') +
+                    // A PENDING OPENING CAN BE CALLED OFF. "Close now" only
+                    // shows while open, and a blank "Opens at" keeps the time,
+                    // so without this the only way to cancel was to reschedule.
+                    (!st.open && st.opensAt
+                        ? '<button type="button" class="btn btn-secondary btn-sm" onclick="storeSwitchAction(\'close\')">Cancel the scheduled opening</button>'
+                        : '') +
+                    '<button type="button" class="btn btn-secondary btn-sm" onclick="toggleStoreScheduleForm()">' +
+                        (_storeSwitchFormOpen ? 'Hide schedule' : 'Schedule\u2026') + '</button>' +
+                    '</div>';
+            }
+            let form = '';
+            if (admin && _storeSwitchFormOpen) {
+                form = '<div class="store-switch-form">' +
+                    '<label>Opens at <input type="datetime-local" id="storeOpensAt" class="wc-input" value="' +
+                        escapeHtml(toLocalInputValue(st.opensAt)) + '"></label>' +
+                    '<label>Closes at <input type="datetime-local" id="storeClosesAt" class="wc-input" value="' +
+                        escapeHtml(toLocalInputValue(st.closesAt)) + '"></label>' +
+                    '<label>Message before it opens <input type="text" id="storeReason" class="wc-input" maxlength="200" ' +
+                        'placeholder="The store is closed right now." value="' + escapeHtml(st.reason || '') + '"></label>' +
+                    '<label>Message after it closes <input type="text" id="storeEndedReason" class="wc-input" maxlength="200" ' +
+                        'placeholder="The store is closed right now." value="' + escapeHtml(st.endedReason || '') + '"></label>' +
+                    '<button type="button" class="btn btn-sm" onclick="saveStoreSchedule()">Save schedule</button>' +
+                    '<p class="receipt-meta">Leave "Opens at" blank to keep it as it is now. A blank "Closes at" means it stays open until someone closes it.</p>' +
+                    '</div>';
+            }
+            // THE DRY-RUN LIST, when there is one: who can buy while it is
+            // shut, and until when. It lapses on its own after three hours.
+            const testerUntilMs = st.testersUntil ? Date.parse(st.testersUntil) : NaN;
+            const testersLive = Array.isArray(st.testers) && st.testers.length &&
+                isFinite(testerUntilMs) && testerUntilMs > Date.now();
+            const testersLine = testersLive
+                ? '<div class="receipt-meta"><strong>Dry run:</strong> student ' +
+                  st.testers.map(escapeHtml).join(', ') + ' can buy while it is closed, until ' +
+                  escapeHtml(fmtStoreTime(st.testersUntil)) + '.</div>'
+                : '';
+            const testersForm = (admin && _storeSwitchFormOpen)
+                ? '<div class="store-switch-form">' +
+                    '<label>Dry-run testers (student numbers, separated by commas) ' +
+                    '<input type="text" id="storeTesters" class="wc-input" maxlength="120" placeholder="e.g. 12101, 11645" value="' +
+                        escapeHtml(testersLive ? st.testers.join(', ') : '') + '"></label>' +
+                    '<button type="button" class="btn btn-secondary btn-sm" onclick="saveStoreTesters()">Save testers</button>' +
+                    '<p class="receipt-meta">Testers can buy while the store is closed to everyone else, for the next 3 hours. ' +
+                    'Leave it empty and save to remove them.</p>' +
+                  '</div>'
+                : '';
+            // WHAT THE ADMIN HAS TYPED SURVIVES A REDRAW. Saving testers,
+            // opening, closing and the tab's own refresh all redraw this panel;
+            // the boxes are rebuilt from the server's values, so anything typed
+            // and not yet saved is carried across by hand.
+            const typed = {};
+            if (_storeSwitchFormOpen) {
+                ['storeOpensAt', 'storeClosesAt', 'storeReason', 'storeEndedReason', 'storeTesters'].forEach(function (id) {
+                    const el = document.getElementById(id);
+                    if (el && el.dataset.touched === '1') typed[id] = el.value;
+                });
+            }
+            panel.innerHTML = '<div class="store-switch-line">' + line + '</div>' + seen + who + testersLine +
+                buttons + form + testersForm;
+            Object.keys(typed).forEach(function (id) {
+                const el = document.getElementById(id);
+                if (el) { el.value = typed[id]; el.dataset.touched = '1'; }
+            });
+            panel.querySelectorAll('.store-switch-form input').forEach(function (el) {
+                el.addEventListener('input', function () { el.dataset.touched = '1'; });
+            });
+        }
+
+        async function saveStoreTesters() {
+            if (!correctionIsAdmin()) { showAlert('\u26A0\uFE0F Only an admin can set dry-run testers.'); return; }
+            const el = document.getElementById('storeTesters');
+            const raw = el ? String(el.value || '') : '';
+            const list = raw.split(/[\s,]+/).map(function (x) { return x.trim(); }).filter(Boolean);
+            const bad = list.filter(function (x) { return !/^\d{3,10}$/.test(x); });
+            if (bad.length) { showAlert('\u26A0\uFE0F These are not student numbers: ' + bad.join(', ')); return; }
+            if (list.length > 10) { showAlert('\u26A0\uFE0F A dry run is for a handful of testers: 10 at most.'); return; }
+            const ok = await showConfirm(list.length
+                ? 'Let these students buy while the store is closed?\n' + list.join(', ') +
+                  '\nIt lasts 3 hours. Real money moves: cancel their test purchases afterwards, ' +
+                  'and remember a cancel does NOT put an item back in stock.'
+                : 'Remove all dry-run testers?', { confirmLabel: list.length ? 'Save testers' : 'Remove' });
+            if (!ok) return;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) { showAlert('\u274C You are not signed in.'); return; }
+            try {
+                _storeSwitchState = await auth.convexMutation('studentStore:setStore',
+                    { change: 'testers', testers: list }, session.idToken);
+                renderStoreSwitch();
+                showToast(list.length ? 'Testers saved' : 'Testers removed', 'success');
+            } catch (e) {
+                showAlert('\u274C The testers were not saved.\n' + ((e && e.message) || e));
+            }
+        }
+
+        function toggleStoreScheduleForm() {
+            _storeSwitchFormOpen = !_storeSwitchFormOpen;
+            renderStoreSwitch();
+        }
+
+        async function storeSwitchAction(action) {
+            if (!correctionIsAdmin()) { showAlert('\u26A0\uFE0F Only an admin can open or close the student store.'); return; }
+            const st = _storeSwitchState || {};
+            const ok = await showConfirm(action === 'open'
+                ? 'Open the student store now?\nStudents can start buying straight away.' +
+                  (st.opensAt ? '\nThis replaces the scheduled opening (' + fmtStoreTime(st.opensAt) + ').' : '') +
+                  (st.closesAt ? '\nIt will still close at ' + fmtStoreTime(st.closesAt) + '.' : '\nIt stays open until someone closes it.')
+                : 'Close the student store now?\nNobody can buy until it is opened again. Any schedule is cancelled.',
+                { confirmLabel: action === 'open' ? 'Open it' : 'Close it', danger: action !== 'open' });
+            if (!ok) return;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) { showAlert('\u274C You are not signed in.'); return; }
+            try {
+                _storeSwitchState = await auth.convexMutation('studentStore:setStore', { change: action }, session.idToken);
+                renderStoreSwitch();
+                showToast(action === 'open' ? 'Student store opened' : 'Student store closed', 'success');
+            } catch (e) {
+                showAlert('\u274C That did not work.\n' + ((e && e.message) || e));
+            }
+        }
+
+        async function saveStoreSchedule() {
+            if (!correctionIsAdmin()) { showAlert('\u26A0\uFE0F Only an admin can schedule the student store.'); return; }
+            const val = (id) => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+            // datetime-local is the admin's own clock; new Date() reads it as
+            // local time, and toISOString() is what the server stores.
+            const asIso = (v) => { if (!v) return null; const d = new Date(v); return isNaN(d.getTime()) ? 'bad' : d.toISOString(); };
+            // ALL FOUR READ NOW, before the question: the boxes can be
+            // redrawn while a confirm is open, and what is saved must be what
+            // the admin typed and was shown.
+            const opensAt = asIso(val('storeOpensAt'));
+            const closesAt = asIso(val('storeClosesAt'));
+            const reason = val('storeReason') || null;
+            const endedReason = val('storeEndedReason') || null;
+            if (opensAt === 'bad' || closesAt === 'bad') { showAlert('\u26A0\uFE0F One of those times is not a date and time.'); return; }
+            if (!opensAt && !closesAt) { showAlert('\u26A0\uFE0F Give an opening time, a closing time, or both.'); return; }
+            // CHECKED HERE TOO, so the admin reads a sentence rather than the
+            // "Convex HTTP 560" the server's own refusal arrives as.
+            const st0 = _storeSwitchState || {};
+            const effOpens = opensAt || st0.opensAt || null;
+            if (closesAt && Date.parse(closesAt) <= Date.now()) {
+                showAlert('\u26A0\uFE0F That closing time has already passed.'); return;
+            }
+            if (closesAt && effOpens && Date.parse(closesAt) <= Date.parse(effOpens)) {
+                showAlert('\u26A0\uFE0F The store has to open before it closes.\nIt opens ' + fmtStoreTime(effOpens) + '.'); return;
+            }
+            // AN OPENING TIME ALREADY PAST OPENS IT NOW. Said plainly, because
+            // a wrong day in the date picker would otherwise open the real
+            // store with a line that reads like a schedule.
+            const opensNow = opensAt && Date.parse(opensAt) <= Date.now() + 60000;
+            // AND A FUTURE OPENING SHUTS AN OPEN STORE UNTIL THEN. Just as
+            // plainly: this is how a live sale gets ended by a schedule save.
+            const closesNow = !!(opensAt && !opensNow && st0.open);
+            const summary = (opensAt
+                    ? (opensNow ? 'THIS OPENS THE STORE NOW (' + fmtStoreTime(opensAt) + ' has already passed).'
+                       : closesNow ? 'THIS CLOSES THE STORE NOW, until ' + fmtStoreTime(opensAt) + '.'
+                       : 'Opens ' + fmtStoreTime(opensAt))
+                    : 'Opening: as it is now') + '\n' +
+                (closesAt ? 'Closes ' + fmtStoreTime(closesAt) : 'No closing time');
+            const ok = await showConfirm('Save this schedule for the student store?\n' + summary,
+                { confirmLabel: opensNow ? 'Open it now' : closesNow ? 'Close it and schedule' : 'Save schedule',
+                  danger: !!(opensNow || closesNow) });
+            if (!ok) return;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) { showAlert('\u274C You are not signed in.'); return; }
+            try {
+                _storeSwitchState = await auth.convexMutation('studentStore:setStore', {
+                    change: 'schedule',
+                    opensAt: opensAt,
+                    closesAt: closesAt,
+                    reason: reason,
+                    endedReason: endedReason,
+                }, session.idToken);
+                _storeSwitchFormOpen = false;
+                renderStoreSwitch();
+                showToast('Schedule saved', 'success');
+            } catch (e) {
+                showAlert('\u274C The schedule was not saved.\n' + ((e && e.message) || e));
+            }
+        }
+
         // Reward Management
         function showAddRewardModal() {
             document.getElementById('addRewardModal').classList.remove('hidden');
@@ -29140,6 +29724,7 @@
             document.getElementById('addRewardModal').classList.add('hidden');
             document.getElementById('newRewardName').value = '';
             document.getElementById('newRewardCost').value = '50';
+            fillRewardStoreFields('new', null);
         }
 
         // ============================================================
@@ -29154,6 +29739,10 @@
             const el = id => document.getElementById(id);
             const stockRaw = (el(prefix + 'RewardStock') || {}).value;
             const stockTrimmed = String(stockRaw == null ? '' : stockRaw).trim();
+            const limitRaw = String(((el(prefix + 'RewardLimit') || {}).value) == null
+                ? '' : (el(prefix + 'RewardLimit') || {}).value).trim();
+            const selfServe = el(prefix + 'RewardStudentPurchasable');
+            const campus = el(prefix + 'RewardCampus');
             return {
                 name: ((el(prefix + 'RewardName') || {}).value || '').trim(),
                 cost: parseInt((el(prefix + 'RewardCost') || {}).value, 10),
@@ -29161,8 +29750,28 @@
                 category: ((el(prefix + 'RewardCategory') || {}).value || '').trim(),
                 // Blank means unlimited. Without this an empty box would parse
                 // to NaN and be rejected as invalid stock.
-                stock: stockTrimmed === '' ? null : parseInt(stockTrimmed, 10)
+                stock: stockTrimmed === '' ? null : parseInt(stockTrimmed, 10),
+                // The student store settings. Number(), not parseInt: "1.5"
+                // must reach validateReward as 1.5 and be refused, not quietly
+                // become 1.
+                studentPurchasable: !!(selfServe && selfServe.checked),
+                campus: campus ? campus.value : 'all',
+                limitPerStudent: limitRaw === '' ? null : Number(limitRaw)
             };
+        }
+
+        /** Put a reward's student-store settings into a form. */
+        function fillRewardStoreFields(prefix, reward) {
+            const r = reward || {};
+            const selfServe = document.getElementById(prefix + 'RewardStudentPurchasable');
+            if (selfServe) selfServe.checked = r.studentPurchasable === true;
+            const campus = document.getElementById(prefix + 'RewardCampus');
+            if (campus) {
+                const c = window.WildcatStore.rewardCampusOf(r);
+                campus.value = c || 'all';
+            }
+            const limit = document.getElementById(prefix + 'RewardLimit');
+            if (limit) limit.value = r.limitPerStudent == null ? '' : r.limitPerStudent;
         }
 
         function addNewReward() {
@@ -29170,8 +29779,11 @@
             const check = window.WildcatStore.validateReward(patch);
             if (!check.ok) { alert('⚠️ ' + check.errors.join('\n')); return; }
 
+            // stockSetAt: a person typed this number, so it is the count the
+            // server starts from. See keepServerStock in convex/legacyData.ts.
             wildcatCashRewards.push(window.WildcatStore.normalizeReward(
-                Object.assign({ id: 'reward_custom_' + Date.now() }, patch),
+                Object.assign({ id: 'reward_custom_' + Date.now(),
+                                stockSetAt: new Date().toISOString() }, patch),
                 Date.now(), currentUser || {}
             ));
             saveData();
@@ -29180,10 +29792,19 @@
             showToast('✅ Reward added', 'success');
         }
 
-        function openEditRewardModal(rewardId) {
+        async function openEditRewardModal(rewardId) {
+            // TODAY'S COPY FIRST. A pass on sale loses stock every few seconds
+            // on the server; the form must show that number, not the one this
+            // tab loaded at 7am. Bounded, so a slow network opens the form
+            // anyway -- the server keeps its own count regardless.
+            await storePullWithin(4000);
             const reward = wildcatCashRewards.find(r => r.id === rewardId);
             if (!reward) return;
             window.currentEditRewardId = rewardId;
+            // What the stock box SHOWED. Unchanged on save means "I did not
+            // touch stock", and then stock is left out of the edit entirely.
+            window.currentEditRewardStockShown = reward.stock == null ? '' : String(reward.stock);
+            fillRewardStoreFields('edit', reward);
             const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
             set('editRewardName', reward.name);
             set('editRewardCost', reward.cost);
@@ -29200,15 +29821,55 @@
             const modal = document.getElementById('editRewardModal');
             if (modal) modal.classList.add('hidden');
             window.currentEditRewardId = null;
+            window.currentEditRewardStockShown = undefined;
         }
 
-        function saveRewardEdit() {
-            const idx = wildcatCashRewards.findIndex(r => r.id === window.currentEditRewardId);
-            if (idx === -1) { alert('⚠️ Reward not found'); return; }
+        let _rewardSaveInFlight = false;
 
+        async function saveRewardEdit() {
+            // ONE SAVE AT A TIME, and everything this save depends on is read
+            // BEFORE it waits. A second click during the pull used to find the
+            // form already closed, read "stock shown" as undefined, and send the
+            // old stock number as if an admin had typed it -- putting sold
+            // passes back on sale (review, 2026-09-28).
+            if (_rewardSaveInFlight) return;
+            const editingId = window.currentEditRewardId;
+            const stockShown = window.currentEditRewardStockShown;
+            if (!editingId) return;
             const patch = readRewardForm('edit');
             const availEl = document.getElementById('editRewardAvailable');
             if (availEl) patch.available = availEl.checked;
+            const stockBox = document.getElementById('editRewardStock');
+            const stockNow = stockBox ? String(stockBox.value == null ? '' : stockBox.value).trim() : '';
+            const saveBtn = document.querySelector('#editRewardModal .btn:not(.btn-secondary)');
+            _rewardSaveInFlight = true;
+            if (saveBtn) { saveBtn.disabled = true; saveBtn.dataset.label = saveBtn.textContent; saveBtn.textContent = 'Saving\u2026'; }
+            try {
+                // Pulled again: purchases kept landing while the form was open.
+                await storePullWithin(4000);
+                // Closed or switched to another reward while we waited: the
+                // person has moved on, so this save is theirs no longer.
+                if (window.currentEditRewardId !== editingId) return;
+                await applyRewardEditFromForm(editingId, patch, stockShown, stockNow);
+            } finally {
+                _rewardSaveInFlight = false;
+                if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = saveBtn.dataset.label || 'Save changes'; }
+            }
+        }
+
+        async function applyRewardEditFromForm(editingId, patch, stockShown, stockNow) {
+            const idx = wildcatCashRewards.findIndex(r => r.id === editingId);
+            if (idx === -1) { alert('⚠️ Reward not found'); return; }
+
+            // STOCK ONLY IF THEY CHANGED IT. The box was filled from the copy
+            // pulled when the form opened; if it still says that, the person
+            // did not mean to set stock, and sending it would overrule every
+            // purchase made since. applyRewardEdit leaves stock alone when the
+            // patch does not carry it. An unknown "shown" value is treated as
+            // unchanged -- the safe side, since the server keeps its count.
+            if (stockShown === undefined || stockNow === stockShown) {
+                delete patch.stock;
+            }
 
             const check = window.WildcatStore.validateReward(patch);
             if (!check.ok) { alert('⚠️ ' + check.errors.join('\n')); return; }
@@ -29225,6 +29886,7 @@
         }
 
         async function retireRewardById(rewardId) {
+            await storePullWithin(4000);
             const idx = wildcatCashRewards.findIndex(r => r.id === rewardId);
             if (idx === -1) return;
             const reward = wildcatCashRewards[idx];
@@ -29238,7 +29900,12 @@
             );
             if (!ok) return;
 
-            wildcatCashRewards[idx] = window.WildcatStore.retireReward(reward, Date.now(), currentUser || {});
+            // Found AGAIN after the dialog: the store screens refresh every 20
+            // seconds, and a refresh replaces the list, so the index read
+            // before the question may now point at a different reward.
+            const at = wildcatCashRewards.findIndex(r => r.id === rewardId);
+            if (at === -1) return;
+            wildcatCashRewards[at] = window.WildcatStore.retireReward(wildcatCashRewards[at], Date.now(), currentUser || {});
             saveData();
             updateRewardsStore();
             showToast('Reward retired', 'success');
@@ -29276,6 +29943,10 @@
         }
 
         async function fulfillReceipt(receiptId) {
+            // THE SERVER'S COPY FIRST. Two adults at two desks can both see a
+            // receipt as waiting; re-reading it here is what lets the second
+            // one be told "already handed over" instead of handing over twice.
+            await storePullWithin(5000);
             const idx = cashReceipts.findIndex(r => r.id === receiptId);
             if (idx === -1) { alert('⚠️ Receipt not found'); return; }
 
@@ -29294,6 +29965,14 @@
         }
 
         async function cancelReceipt(receiptId) {
+            // ADMINS ONLY (the owner's call, 2026-09-27). A cancel hands money
+            // back, and on a one-per-student item it also hands the child
+            // their chance to buy again.
+            if (!correctionIsAdmin()) {
+                showAlert('\u26A0\uFE0F Only an admin can cancel a purchase.');
+                return;
+            }
+            await storePullWithin(5000);
             const idx = cashReceipts.findIndex(r => r.id === receiptId);
             if (idx === -1) { alert('⚠️ Receipt not found'); return; }
             const receipt = cashReceipts[idx];
@@ -29316,6 +29995,15 @@
                 `Reason:`);
             if (reason === null) return;
 
+            // AGAIN, after the question: another desk may have handed it over
+            // or cancelled it while this prompt was open, and the 20-second
+            // refresh may have replaced the list. Decided on the fresh copy.
+            await storePullWithin(5000);
+            const idxNow = cashReceipts.findIndex(r => r.id === receiptId);
+            if (idxNow === -1) { alert('⚠️ Receipt not found'); return; }
+            const recheck = window.WildcatStore.canCancel(cashReceipts[idxNow]);
+            if (!recheck.allowed) { alert('⚠️ ' + recheck.reason); return; }
+
             const student = students.find(s => s.id === receipt.studentId);
             const res = window.WildcatStore.buildCancel({
                 receipt, student, reason, refund: true,
@@ -29330,7 +30018,7 @@
                 const refundTx = recordCashTransaction(res.transactionRequest);
                 if (refundTx) res.receipt.refundTxId = refundTx.id;
             }
-            cashReceipts[idx] = res.receipt;
+            cashReceipts[idxNow] = res.receipt;
 
             addToAuditLog('reward_cancelled', receipt.studentId, 'Wildcat Cash',
                 receipt.totalCost,
@@ -29417,6 +30105,8 @@
                 return;
             }
 
+            // Cancelling refunds money, so the button is an admin's only.
+            const canCancelHere = correctionIsAdmin();
             tbody.innerHTML = rows.map(r => {
                 const when = new Date(r.purchasedAt);
                 const badge = r.status === 'issued'
@@ -29425,8 +30115,10 @@
                         ? '<span class="receipt-badge is-done">Fulfilled</span>'
                         : '<span class="receipt-badge is-void">Cancelled</span>';
                 const actions = r.status === 'issued'
-                    ? `<button class="btn btn-sm" onclick="fulfillReceipt('${r.id}')">Fulfill</button>
-                       <button class="btn btn-sm btn-secondary" onclick="cancelReceipt('${r.id}')">Cancel</button>`
+                    ? `<button class="btn btn-sm" onclick="fulfillReceipt('${r.id}')">Fulfill</button>` +
+                      (canCancelHere
+                        ? `<button class="btn btn-sm btn-secondary" onclick="cancelReceipt('${r.id}')">Cancel</button>`
+                        : '')
                     : r.status === 'fulfilled'
                         ? `<span class="receipt-meta">by ${escapeHtml(r.fulfilledBy || '')}</span>`
                         : `<span class="receipt-meta">${escapeHtml(r.cancelReason || '')}</span>`;
@@ -29441,6 +30133,218 @@
                         <td>${actions}</td>
                     </tr>`;
             }).join('');
+        }
+
+        // ============================================================
+        // THE PURCHASE LIST, TO PRINT OR SAVE AS A PDF
+        //
+        // Asked for 2026-09-27: "I need to be able to create a printable pdf of
+        // who purchased the pass after the store closes." One page per item,
+        // so each campus's list can go to whoever hands that campus's passes
+        // out; sorted by grade then surname, which is how a list gets walked
+        // down a hallway; and a blank "Given" box to tick on paper.
+        //
+        // The browser's own print dialog does the PDF: every browser this
+        // school uses offers "Save as PDF" as a destination. No library, no
+        // file generated here, and nothing leaves the page.
+        // ============================================================
+        let _purchaseListPicks = null;
+
+        /**
+         * The pages, as data. Pure, so a test can hand it receipts and read
+         * back exactly what would print.
+         *
+         * Cancelled receipts are LEFT OUT and counted, because a list that
+         * hands out a refunded pass is wrong in the one way that matters, and
+         * a list that silently drops one invites the question "where did the
+         * 43rd go".
+         */
+        function buildPurchaseListPages(receiptList, rewardList, studentList, rewardIds) {
+            const wanted = (rewardIds || []).map(String);
+            const byStudent = new Map((studentList || []).map(function (st) { return [String(st.id), st]; }));
+            const byReward = new Map((rewardList || []).map(function (rw) { return [String(rw.id), rw]; }));
+            return wanted.map(function (rid) {
+                const reward = byReward.get(rid);
+                const mine = (receiptList || []).filter(function (r) { return r && String(r.rewardId) === rid; });
+                const live = mine.filter(function (r) { return r.status !== 'cancelled'; });
+                const rows = live.map(function (r) {
+                    const st = byStudent.get(String(r.studentId));
+                    const parts = String(r.studentName || '').trim().split(/\s+/);
+                    const last = st ? String(st.lastName || '') : (parts.length > 1 ? parts[parts.length - 1] : parts[0] || '');
+                    const first = st ? String(st.firstName || '') : (parts.length > 1 ? parts.slice(0, -1).join(' ') : '');
+                    return {
+                        last: last, first: first,
+                        grade: String((st && st.grade) || r.studentGrade || ''),
+                        studentNumber: String((st && (st.studentNumber || '')) || ''),
+                        receipt: String(r.id || ''),
+                        purchasedAt: r.purchasedAt || null,
+                        status: r.status === 'fulfilled' ? 'Collected' : 'Awaiting pickup',
+                        quantity: Number(r.quantity) > 1 ? Number(r.quantity) : 1,
+                        byStaff: r.channel !== 'student'
+                    };
+                }).sort(function (a, b) {
+                    const ga = parseInt(a.grade, 10), gb = parseInt(b.grade, 10);
+                    const gd = (isFinite(ga) ? ga : 99) - (isFinite(gb) ? gb : 99);
+                    if (gd) return gd;
+                    return (a.last + ' ' + a.first).toLowerCase().localeCompare((b.last + ' ' + b.first).toLowerCase());
+                });
+                return {
+                    rewardId: rid,
+                    rewardName: (reward && reward.name) || (mine[0] && mine[0].rewardName) || rid,
+                    rows: rows,
+                    units: rows.reduce(function (n, r) { return n + r.quantity; }, 0),
+                    cancelled: mine.length - live.length
+                };
+            });
+        }
+
+        /** Every reward that has ever sold, student-store ones first. */
+        function purchaseListChoices() {
+            const sold = new Map();
+            (cashReceipts || []).forEach(function (r) {
+                if (!r || !r.rewardId) return;
+                const id = String(r.rewardId);
+                sold.set(id, (sold.get(id) || 0) + (r.status === 'cancelled' ? 0 : 1));
+            });
+            return Array.from(sold.keys()).map(function (id) {
+                const rw = wildcatCashRewards.find(function (x) { return String(x.id) === id; });
+                const any = (cashReceipts || []).find(function (r) { return String(r.rewardId) === id; });
+                return {
+                    id: id,
+                    name: (rw && rw.name) || (any && any.rewardName) || id,
+                    selfServe: !!(rw && rw.studentPurchasable === true),
+                    retired: !!(rw && rw.retiredAt),
+                    count: sold.get(id)
+                };
+            }).sort(function (a, b) {
+                if (a.selfServe !== b.selfServe) return a.selfServe ? -1 : 1;
+                return a.name.localeCompare(b.name);
+            });
+        }
+
+        async function openPurchaseListSheet() {
+            // TODAY'S RECEIPTS. The list is printed after the store closes,
+            // from purchases children made on their own Chromebooks; a tab
+            // that has not re-read them would print the morning's list.
+            await storePullWithin(8000);
+            const choices = purchaseListChoices();
+            if (!choices.length) { showAlert('\u2139\uFE0F Nothing has been bought yet, so there is no list to print.'); return; }
+            if (!_purchaseListPicks) {
+                // Default: the student-store items that are still on sale --
+                // on the first sale day, exactly the two Power-Up Passes.
+                const live = choices.filter(function (c) { return c.selfServe && !c.retired; });
+                _purchaseListPicks = new Set((live.length ? live : choices).map(function (c) { return c.id; }));
+            }
+            let sheet = document.getElementById('wcPrintSheet');
+            if (!sheet) {
+                sheet = document.createElement('div');
+                sheet.id = 'wcPrintSheet';
+                sheet.className = 'print-sheet';
+                sheet.setAttribute('role', 'dialog');
+                sheet.setAttribute('aria-label', 'Purchase list');
+                document.body.appendChild(sheet);
+            }
+            renderPurchaseListSheet();
+        }
+
+        /** The choices as last DRAWN, so a click means the box it was on. */
+        let _purchaseListChoicesShown = [];
+
+        function togglePurchaseListPickAt(i) {
+            const c = _purchaseListChoicesShown[i];
+            if (c) togglePurchaseListPick(c.id);
+        }
+
+        function togglePurchaseListPick(id) {
+            if (!_purchaseListPicks) _purchaseListPicks = new Set();
+            if (_purchaseListPicks.has(id)) _purchaseListPicks.delete(id); else _purchaseListPicks.add(id);
+            renderPurchaseListSheet();
+        }
+
+        function renderPurchaseListSheet() {
+            const sheet = document.getElementById('wcPrintSheet');
+            if (!sheet) return;
+            const choices = purchaseListChoices();
+            _purchaseListChoicesShown = choices;
+            const picks = choices.filter(function (c) { return _purchaseListPicks && _purchaseListPicks.has(c.id); })
+                .map(function (c) { return c.id; });
+            const pages = buildPurchaseListPages(cashReceipts, wildcatCashRewards, students, picks);
+            const printedAt = new Date().toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric',
+                                                              hour: 'numeric', minute: '2-digit' });
+            const toolbar =
+                '<div class="print-toolbar">' +
+                    '<div class="print-toolbar-row">' +
+                        '<strong>Purchase list</strong>' +
+                        '<button type="button" class="btn" onclick="printPurchaseList()"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-printer"></use></svg> Print or save as PDF</button>' +
+                        '<button type="button" class="btn btn-secondary" onclick="closePurchaseListSheet()">Close</button>' +
+                    '</div>' +
+                    // BY POSITION, not by id: an id pasted into a JS string
+                    // inside an HTML attribute is two escaping rules deep, and
+                    // escapeHtml only handles one of them.
+                    '<div class="print-picks">' + choices.map(function (c, i) {
+                        return '<label><input type="checkbox" ' + (_purchaseListPicks.has(c.id) ? 'checked ' : '') +
+                            'onchange="togglePurchaseListPickAt(' + i + ')"> ' +
+                            escapeHtml(c.name) + ' <span class="receipt-meta">(' + c.count + ')</span></label>';
+                    }).join('') + '</div>' +
+                    '<p class="receipt-meta">To get a PDF: press Print, then choose \u201CSave as PDF\u201D as the destination. ' +
+                    'Each item prints on its own page.</p>' +
+                '</div>';
+            const body = pages.length
+                ? pages.map(function (pg) {
+                    const rows = pg.rows.length
+                        ? pg.rows.map(function (r, i) {
+                            const when = r.purchasedAt ? new Date(r.purchasedAt) : null;
+                            const whenText = when && !isNaN(when.getTime())
+                                ? when.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+                                : '';
+                            return '<tr>' +
+                                '<td>' + (i + 1) + '</td>' +
+                                '<td>' + escapeHtml(r.last) + (r.first ? ', ' + escapeHtml(r.first) : '') +
+                                    (r.quantity > 1 ? ' <strong>\u00D7' + r.quantity + '</strong>' : '') +
+                                    (r.byStaff ? ' <span class="print-note">(office)</span>' : '') + '</td>' +
+                                '<td>' + escapeHtml(r.grade) + '</td>' +
+                                '<td>' + escapeHtml(r.studentNumber) + '</td>' +
+                                '<td class="print-code">' + escapeHtml(r.receipt) + '</td>' +
+                                '<td>' + escapeHtml(whenText) + '</td>' +
+                                '<td>' + escapeHtml(r.status) + '</td>' +
+                                '<td class="print-check"></td>' +
+                            '</tr>';
+                        }).join('')
+                        : '<tr><td colspan="8" class="print-empty">Nobody has bought this yet.</td></tr>';
+                    return '<section class="print-page">' +
+                        '<h2>' + escapeHtml(pg.rewardName) + '</h2>' +
+                        '<p class="print-sub">' + pg.rows.length + ' student' + (pg.rows.length === 1 ? '' : 's') +
+                            (pg.units !== pg.rows.length ? ' (' + pg.units + ' items)' : '') +
+                            ' \u00B7 printed ' + escapeHtml(printedAt) +
+                            (pg.cancelled ? ' \u00B7 ' + pg.cancelled + ' cancelled, not listed' : '') + '</p>' +
+                        '<table class="print-table"><thead><tr>' +
+                            '<th>#</th><th>Student</th><th>Grade</th><th>Student #</th><th>Receipt</th>' +
+                            '<th>Bought</th><th>Status</th><th>Given</th>' +
+                        '</tr></thead><tbody>' + rows + '</tbody></table>' +
+                    '</section>';
+                }).join('')
+                : '<p class="print-empty">Tick at least one item above.</p>';
+            sheet.innerHTML = toolbar + '<div class="print-pages">' + body + '</div>';
+        }
+
+        function printPurchaseList() {
+            // PRINTS ONLY THE SHEET. The class hides every other child of
+            // <body> under @media print; removed again once the dialog closes,
+            // or after a minute if the browser never says it did.
+            document.body.classList.add('wc-printing');
+            const done = function () {
+                document.body.classList.remove('wc-printing');
+                window.removeEventListener('afterprint', done);
+            };
+            window.addEventListener('afterprint', done);
+            setTimeout(done, 60000);
+            window.print();
+        }
+
+        function closePurchaseListSheet() {
+            const sheet = document.getElementById('wcPrintSheet');
+            if (sheet) sheet.remove();
+            document.body.classList.remove('wc-printing');
         }
 
         // ============================================================
@@ -29641,7 +30545,7 @@
                 return;
             }
 
-            const verdict = window.WildcatStore.canPurchase({ student, reward, quantity: qty });
+            const verdict = window.WildcatStore.canPurchase({ student, reward, quantity: qty, receipts: cashReceipts });
             el.className = 'redeem-total' + (verdict.allowed ? '' : ' is-blocked');
             el.innerHTML = verdict.allowed
                 ? `<span>Total</span><strong>$${total}</strong>
@@ -29697,8 +30601,17 @@
             const student = students.find(s => s.id === studentId);
             const reward = wildcatCashRewards.find(r => r.id === rewardId);
 
+            // Student-store rewards are sold by the SERVER, which owns their
+            // stock while a sale is on. See the note on the reward card.
+            if (reward && reward.studentPurchasable === true && options.channel !== 'student') {
+                return { ok: false, reason: 'Students buy ' + reward.name + ' themselves in the student store. ' +
+                    'To sell it here instead, edit it and untick "Students can buy this themselves".' };
+            }
+
             const built = window.WildcatStore.buildPurchase({
                 student, reward,
+                // Every receipt this tab knows about, for the per-student limit.
+                receipts: cashReceipts,
                 quantity: quantity || 1,
                 actor: currentUser || {},
                 channel: options.channel || 'staff',
@@ -29719,6 +30632,9 @@
             // and must stay null rather than becoming NaN.
             if (built.stockAfter !== null) {
                 reward.stock = built.stockAfter;
+                // A staff sale sets the count deliberately, the same as typing
+                // it: see keepServerStock in convex/legacyData.ts.
+                reward.stockSetAt = new Date().toISOString();
                 // STAMPED, or the decrement does not survive the trip.
                 // legacyData.touchedAt reads updatedAt and three closing fields
                 // when deciding which copy of a row wins a merge; a bare stock

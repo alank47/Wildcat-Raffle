@@ -63,7 +63,149 @@ export type StoreReward = {
    * must not become self-serve the moment the code ships.
    */
   studentPurchasable?: boolean;
+  /**
+   * Which campus may buy it: "all", "middle" (grades 6-8) or "high" (9-12).
+   * Absent means "all", which is every reward written before this existed.
+   * Anything else is a typo, and a typo is refused rather than guessed at.
+   */
+  campus?: string | null;
+  /**
+   * The most one student may ever hold, counting every receipt that was not
+   * cancelled. Null or absent means no limit.
+   */
+  limitPerStudent?: number | null;
 };
+
+/** The campuses a reward can be restricted to. "all" is the absence of one. */
+export const CAMPUSES = ["all", "middle", "high"] as const;
+export type Campus = (typeof CAMPUSES)[number];
+
+/**
+ * Which campus a reward is for, or null when the field holds something that
+ * is not a campus.
+ *
+ * NULL IS A REFUSAL, NOT "EVERYONE". Reading an unrecognised value as "all"
+ * would turn a mistyped "Middle " into a pass the whole school can buy, which
+ * is the one outcome the owner asked this to prevent ("we dont want to sort
+ * through the data as to who bought").
+ */
+export function rewardCampus(reward: StoreReward | null | undefined): Campus | null {
+  const raw = reward?.campus;
+  if (raw === undefined || raw === null || raw === "") return "all";
+  const v = String(raw).trim().toLowerCase();
+  return (CAMPUSES as readonly string[]).includes(v) ? (v as Campus) : null;
+}
+
+/**
+ * The campus a grade belongs to. The school is 6-12 and every enrolled record
+ * holds a bare number (measured 2026-09-27: 763 students, grades 6 to 12, no
+ * other values), so anything outside that range is unknown rather than
+ * rounded to the nearer campus.
+ */
+export function studentCampus(grade: unknown): "middle" | "high" | null {
+  const n = parseInt(String(grade ?? "").trim(), 10);
+  if (!Number.isFinite(n)) return null;
+  if (n >= 9 && n <= 12) return "high";
+  if (n >= 6 && n <= 8) return "middle";
+  return null;
+}
+
+/** "Middle School" / "High School", for the words a child reads. */
+export function campusLabel(c: Campus | "middle" | "high"): string {
+  return c === "high" ? "High School" : c === "middle" ? "Middle School" : "everyone";
+}
+
+/**
+ * The per-student limit, or null for none. Undefined when the field holds
+ * something that is not a whole number of one or more -- refused, like a
+ * campus typo, because reading "0" or "one" as "no limit" is the wrong way to
+ * be wrong.
+ */
+export function rewardLimit(reward: StoreReward | null | undefined): number | null | undefined {
+  const raw = reward?.limitPerStudent;
+  if (raw === undefined || raw === null || (raw as unknown) === "") return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || Math.floor(n) !== n || n < 1) return undefined;
+  return n;
+}
+
+/**
+ * How many of one reward a student already holds: every unit on a receipt
+ * that was not cancelled, bought by them or for them by an adult.
+ *
+ * Counted from RECEIPTS, not from the purchase register, because the register
+ * only knows about self-serve buys. A pass an adult bought for a child at the
+ * office is still a pass that child holds. A cancelled receipt does not count,
+ * so a refunded purchase gives the child their chance back.
+ */
+export function ownedUnits(
+  receipts: Array<Record<string, any> | null | undefined>,
+  studentAppId: string,
+  rewardId: string,
+): number {
+  const who = String(studentAppId ?? "");
+  const what = String(rewardId ?? "");
+  if (!who || !what) return 0;
+  let n = 0;
+  for (const r of receipts || []) {
+    if (!r || String(r.studentId ?? "") !== who || String(r.rewardId ?? "") !== what) continue;
+    if (r.status === "cancelled") continue;
+    const q = Number(r.quantity);
+    n += Number.isFinite(q) && q > 0 ? q : 1;
+  }
+  return n;
+}
+
+/** How long a dry-run testers list lasts before it lapses on its own. */
+export const TESTERS_TTL_MS = 3 * 60 * 60 * 1000;
+
+/**
+ * Whether the store is open at `nowMs`, from the stored switch.
+ *
+ * THE CLOSING TIME IS CHECKED HERE AS WELL AS BY THE SCHEDULER. The scheduler
+ * flips the switch at the time, which is what tells every cached query the
+ * answer changed. But a purchase is a mutation, never cached, and it must not
+ * depend on a scheduled job having run: a sale that "closes at 11:59" and
+ * keeps selling because a job was delayed is a promise broken to the other
+ * campus. So a purchase reads the clock too.
+ *
+ * The OPENING time is deliberately NOT read from the clock. If the scheduled
+ * opening failed to run, the store stays shut -- the safe way to fail -- and
+ * the admin panel says it has not opened.
+ */
+export function effectiveStoreState(
+  value: Record<string, unknown> | null | undefined,
+  nowMs: number,
+  /** The student asking, if any: a dry-run tester may buy while it is shut. */
+  studentNumber?: string | null,
+): { open: boolean; reason: string; opensAt: string | null; closesAt: string | null; testing: boolean } {
+  const v = (value ?? {}) as Record<string, unknown>;
+  const closesAt = typeof v.closesAt === "string" && v.closesAt ? v.closesAt : null;
+  const opensAt = typeof v.opensAt === "string" && v.opensAt ? v.opensAt : null;
+  const closeMs = closesAt ? Date.parse(closesAt) : NaN;
+  const pastClose = Number.isFinite(closeMs) && nowMs >= closeMs;
+  // Past the close but before the scheduled job has run: the "has ended"
+  // message, not the "opens Tuesday" one it was showing beforehand.
+  const ended = typeof v.endedReason === "string" && v.endedReason ? v.endedReason : null;
+  const before = typeof v.reason === "string" && v.reason ? v.reason : null;
+  const reason = (pastClose ? ended : before) || STORE_CLOSED_DEFAULT;
+  const everyone = v.open === true && !pastClose;
+  // A DRY-RUN TESTER sees the store open while it is shut to everybody else --
+  // but only until testersUntil, so a list nobody remembered to clear cannot
+  // keep a back door open after the rehearsal.
+  const untilMs = typeof v.testersUntil === "string" ? Date.parse(v.testersUntil) : NaN;
+  const who = String(studentNumber ?? "").trim();
+  const testing = !everyone && !!who && Array.isArray(v.testers) &&
+    (v.testers as unknown[]).map(String).includes(who) &&
+    Number.isFinite(untilMs) && nowMs < untilMs;
+  return {
+    open: everyone || testing,
+    reason,
+    opensAt,
+    closesAt,
+    testing,
+  };
+}
 
 export type StoreStudent = {
   id?: string;
@@ -110,6 +252,15 @@ export function studentPurchaseVerdict(opts: {
   quantity?: unknown;
   storeOpen: boolean;
   closedReason?: string;
+  /** Units of this reward the student already holds. See ownedUnits. */
+  alreadyOwned?: number;
+  /**
+   * The price the child was SHOWN. Never used to charge -- the charge is
+   * always the catalogue's cost -- only to refuse when the two differ, so a
+   * repricing between the card loading and the tap cannot take more than the
+   * button said. Absent means the caller did not say, which is allowed.
+   */
+  seenPrice?: unknown;
 }): Verdict {
   const { student, reward, storeOpen, closedReason } = opts;
 
@@ -149,6 +300,34 @@ export function studentPurchaseVerdict(opts: {
     };
   }
 
+  // THE CAMPUS. Before quantity and price, because "that one is for the other
+  // campus" is the true answer and "you need $300 more" would be a false one.
+  const forCampus = rewardCampus(reward);
+  if (forCampus === null) {
+    return {
+      allowed: false,
+      code: "bad_campus",
+      reason: "That one is not set up properly yet. Please tell a teacher.",
+    };
+  }
+  if (forCampus !== "all") {
+    const mine = studentCampus(student.grade);
+    if (mine === null) {
+      return {
+        allowed: false,
+        code: "unknown_campus",
+        reason: "We could not tell which campus you are on. Please ask in the office.",
+      };
+    }
+    if (mine !== forCampus) {
+      return {
+        allowed: false,
+        code: "wrong_campus",
+        reason: `That one is only for ${campusLabel(forCampus)} students.`,
+      };
+    }
+  }
+
   const quantity = normalizeQuantity(opts.quantity ?? 1);
   if (quantity === null) {
     return {
@@ -156,6 +335,36 @@ export function studentPurchaseVerdict(opts: {
       code: "bad_quantity",
       reason: `Choose between 1 and ${MAX_STUDENT_QUANTITY}.`,
     };
+  }
+
+  // THE PER-STUDENT LIMIT. Counted from every live receipt, so buying one at
+  // the office and one on a Chromebook is still two.
+  const limit = rewardLimit(reward);
+  if (limit === undefined) {
+    return {
+      allowed: false,
+      code: "bad_limit",
+      reason: "That one is not set up properly yet. Please tell a teacher.",
+    };
+  }
+  if (limit !== null) {
+    const owned = Math.max(0, Number(opts.alreadyOwned) || 0);
+    if (owned >= limit) {
+      return {
+        allowed: false,
+        code: "limit_reached",
+        reason: limit === 1
+          ? "You already have this one. It is limited to one per student."
+          : `You already have ${owned}. It is limited to ${limit} per student.`,
+      };
+    }
+    if (owned + quantity > limit) {
+      return {
+        allowed: false,
+        code: "limit_reached",
+        reason: `You can buy ${limit - owned} more of these.`,
+      };
+    }
   }
 
   const cost = Number(reward.cost);
@@ -168,6 +377,19 @@ export function studentPurchaseVerdict(opts: {
       code: "no_price",
       reason: "That reward has no price set. Please tell a teacher.",
     };
+  }
+
+  // THE PRICE THEY SAW. Prices are set on demand and can move while a card is
+  // on screen; the button said one number, and the child agreed to that one.
+  if (opts.seenPrice !== undefined && opts.seenPrice !== null) {
+    const seen = Number(opts.seenPrice);
+    if (!Number.isFinite(seen) || seen !== cost) {
+      return {
+        allowed: false,
+        code: "price_changed",
+        reason: `The price just changed to $${cost}. Check it and press Buy again if you still want it.`,
+      };
+    }
   }
 
   // STOCK IS CHECKED HERE AND AGAIN IN THE MUTATION, inside the transaction.

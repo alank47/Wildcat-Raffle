@@ -82,7 +82,74 @@
         errors.push('Stock must be a whole number of zero or more, or left blank for unlimited.');
       }
     }
+    if (patch && 'campus' in patch && patch.campus != null && patch.campus !== '' &&
+        rewardCampusOf({ campus: patch.campus }) === null) {
+      errors.push('Campus must be everyone, Middle School or High School.');
+    }
+    if (patch && patch.limitPerStudent != null && patch.limitPerStudent !== '') {
+      var lim = patch.limitPerStudent;
+      if (!isFiniteNumber(lim) || lim < 1 || Math.floor(lim) !== lim) {
+        errors.push('Limit per student must be a whole number of 1 or more, or left blank for no limit.');
+      }
+    }
     return { ok: errors.length === 0, errors: errors };
+  }
+
+  // ---------------------------------------------------------------------
+  // Campus and per-student limits
+  //
+  // THE SAME RULES AS convex/studentStoreRules.ts (rewardCampus, studentCampus,
+  // rewardLimit, ownedUnits), duplicated because there is no bundler, and
+  // pinned against each other by convex/studentStore.test.mjs section 7.
+  // Asked for on 2026-09-27 for the Power-Up Pass: "Middle school should only
+  // be able to buy Middle school", and one per student.
+  // ---------------------------------------------------------------------
+  var CAMPUSES = ['all', 'middle', 'high'];
+
+  /** 'all' | 'middle' | 'high', or null for a value that is not a campus. */
+  function rewardCampusOf(reward) {
+    var raw = reward && reward.campus;
+    if (raw === undefined || raw === null || raw === '') return 'all';
+    var v = String(raw).trim().toLowerCase();
+    return CAMPUSES.indexOf(v) !== -1 ? v : null;
+  }
+
+  /** Grades 6-8 are the middle school, 9-12 the high school; else unknown. */
+  function studentCampusOf(grade) {
+    var n = parseInt(String(grade == null ? '' : grade).trim(), 10);
+    if (!isFinite(n)) return null;
+    if (n >= 9 && n <= 12) return 'high';
+    if (n >= 6 && n <= 8) return 'middle';
+    return null;
+  }
+
+  /** The limit, null for none, or undefined for a value that is not one. */
+  function rewardLimitOf(reward) {
+    var raw = reward && reward.limitPerStudent;
+    if (raw === undefined || raw === null || raw === '') return null;
+    var n = Number(raw);
+    if (!isFinite(n) || Math.floor(n) !== n || n < 1) return undefined;
+    return n;
+  }
+
+  /** Units of a reward a student holds on receipts that were not cancelled. */
+  function ownedUnits(receipts, studentId, rewardId) {
+    var who = String(studentId == null ? '' : studentId);
+    var what = String(rewardId == null ? '' : rewardId);
+    if (!who || !what) return 0;
+    var n = 0;
+    (receipts || []).forEach(function (r) {
+      if (!r || String(r.studentId == null ? '' : r.studentId) !== who) return;
+      if (String(r.rewardId == null ? '' : r.rewardId) !== what) return;
+      if (r.status === 'cancelled') return;
+      var q = Number(r.quantity);
+      n += isFinite(q) && q > 0 ? q : 1;
+    });
+    return n;
+  }
+
+  function campusName(c) {
+    return c === 'high' ? 'High School' : c === 'middle' ? 'Middle School' : 'everyone';
   }
 
   /** Fill in every field the rest of the code assumes, without mutating input. */
@@ -99,6 +166,18 @@
       // this is not collapsed with a falsy check anywhere below.
       stock: isFiniteNumber(r.stock) ? r.stock : null,
       available: r.available !== false,
+      // Whether a STUDENT may buy it themselves. Absent is false, the same
+      // default as the server's: nothing becomes self-serve by accident.
+      studentPurchasable: r.studentPurchasable === true,
+      // Stored as the normalised word, or kept as-is when it is not a campus
+      // so the server refuses it loudly instead of this quietly "fixing" it.
+      campus: rewardCampusOf(r) === null ? r.campus : rewardCampusOf(r),
+      limitPerStudent: rewardLimitOf(r) === undefined ? r.limitPerStudent : rewardLimitOf(r),
+      // WHEN A PERSON LAST TYPED A STOCK NUMBER. The server keeps its own
+      // count for a student-store reward unless this is newer than what it
+      // holds (legacyData keepServerStock), so an edit from a tab that loaded
+      // hours ago cannot put sold passes back on the shelf.
+      stockSetAt: r.stockSetAt || null,
       createdAt: r.createdAt || new Date(now).toISOString(),
       createdBy: r.createdBy || actorName,
       updatedAt: r.updatedAt || null,
@@ -118,8 +197,22 @@
     if (patch && 'cost' in patch) next.cost = patch.cost;
     if (patch && 'description' in patch) next.description = trimmed(patch.description);
     if (patch && 'category' in patch) next.category = trimmed(patch.category) || 'General';
-    if (patch && 'stock' in patch) next.stock = patch.stock == null ? null : patch.stock;
+    // STOCK ONLY WHEN THE PATCH CARRIES IT, and then it is stamped as a
+    // deliberate number. A caller that did not change stock must leave it out
+    // of the patch, or it will overrule the server's count. See stockSetAt.
+    if (patch && 'stock' in patch) {
+      next.stock = patch.stock == null ? null : patch.stock;
+      next.stockSetAt = new Date(now).toISOString();
+    }
     if (patch && 'available' in patch) next.available = patch.available !== false;
+    if (patch && 'studentPurchasable' in patch) next.studentPurchasable = patch.studentPurchasable === true;
+    if (patch && 'campus' in patch) {
+      next.campus = (patch.campus == null || patch.campus === '') ? 'all' : String(patch.campus).trim().toLowerCase();
+    }
+    if (patch && 'limitPerStudent' in patch) {
+      next.limitPerStudent = (patch.limitPerStudent == null || patch.limitPerStudent === '')
+        ? null : patch.limitPerStudent;
+    }
 
     next.updatedAt = new Date(now).toISOString();
     next.updatedBy = trimmed(actor && (actor.name || actor.username)) || 'system';
@@ -334,6 +427,41 @@
     if (reward.available === false) {
       return { allowed: false, reason: 'That reward is not currently available.' };
     }
+
+    // THE CAMPUS AND THE LIMIT, the same rules the student store enforces on
+    // the server, so buying it at the office is not a way around either.
+    var forCampus = rewardCampusOf(reward);
+    if (forCampus === null) {
+      return { allowed: false, reason: 'That reward\'s campus setting is not valid. Edit the reward first.' };
+    }
+    if (forCampus !== 'all') {
+      var theirs = studentCampusOf(student.grade);
+      if (theirs === null) {
+        return { allowed: false, reason: 'That reward is for ' + campusName(forCampus) +
+          ' only, and this student\'s grade does not say which campus they are on.' };
+      }
+      if (theirs !== forCampus) {
+        return { allowed: false, reason: 'That reward is for ' + campusName(forCampus) +
+          ' students only. This student is in grade ' + trimmed(student.grade) + '.' };
+      }
+    }
+    var limit = rewardLimitOf(reward);
+    if (limit === undefined) {
+      return { allowed: false, reason: 'That reward\'s per-student limit is not valid. Edit the reward first.' };
+    }
+    if (limit !== null) {
+      var owned = ownedUnits(o.receipts, student.id, reward.id);
+      if (owned + quantity > limit) {
+        return {
+          allowed: false,
+          reason: owned >= limit
+            ? 'This student already has ' + (owned === 1 ? 'one' : owned) + '. The limit is ' +
+              limit + ' per student.'
+            : 'The limit is ' + limit + ' per student; they can have ' + (limit - owned) + ' more.'
+        };
+      }
+    }
+
     if (reward.stock != null && reward.stock < quantity) {
       return {
         allowed: false,
@@ -849,6 +977,11 @@
     normalizeBehavior: normalizeBehavior,
     retireBehavior: retireBehavior,
     mergeBehaviorLists: mergeBehaviorLists,
+    rewardCampusOf: rewardCampusOf,
+    studentCampusOf: studentCampusOf,
+    rewardLimitOf: rewardLimitOf,
+    ownedUnits: ownedUnits,
+    campusName: campusName,
     canPurchase: canPurchase,
     buildPurchase: buildPurchase,
     canFulfill: canFulfill,

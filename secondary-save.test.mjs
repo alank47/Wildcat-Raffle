@@ -79,8 +79,13 @@ console.log("\nReceipts reach Firestore at all, which is new");
     /const secondaryLists = \{[\s\S]{0,200}cashReceipts,/.test(script));
   // The regression that hid for the whole feature's life: written to
   // localStorage, read from Firestore, so always empty on load.
+  // Read back from the SERVER on load, and on the store screens' refresh. It
+  // used to be checked through the save's restore line (mergedSecondary.
+  // cashReceipts), which was removed on 2026-09-28: putting the list back
+  // after a save undid any handover a refresh had brought in meanwhile.
   check("and it is no longer localStorage-only",
-    /mergedSecondary\.cashReceipts/.test(script));
+    /const serverReceipts = secondaryData\.cashReceipts/.test(script)
+    && /collection: 'cashReceipts' \}, session\.idToken\)/.test(script));
 
   const stored = [rcpt("WC-AAA111"), rcpt("WC-BBB222")];
   const merged = M.mergeById(stored, [rcpt("WC-AAA111")], { stampFields: RCPT_STAMPS });

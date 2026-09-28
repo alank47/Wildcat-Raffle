@@ -81,8 +81,20 @@ import { notifyNewReferrals } from "./referralMail";
  * the same as loadDoc.
  */
 const SLICES_READABLE_ALONE: Record<string, string[]> = {
-  secondary: ["wildcatCashBehaviors"],
+  // The reward catalogue and the receipts joined on 2026-09-28, for the first
+  // real sale: the Receipts desk has to see a purchase a child made a minute
+  // ago, and an admin editing a pass has to start from today's stock, not the
+  // stock their tab loaded at 7am. Both are small (one row per reward, one per
+  // purchase) and staff already load both inside loadDoc('secondary').
+  secondary: ["wildcatCashBehaviors", "wildcatCashRewards", "cashReceipts"],
 };
+
+/**
+ * How many rows one slice read returns. Was 500 for everything; receipts grow
+ * by one per purchase all year, and a desk that silently stops showing the
+ * newest ones past 500 is worse than one that is a little slower to load.
+ */
+const SLICE_READ_CAP = 2000;
 
 export const loadSlice = query({
   args: { doc: v.string(), collection: v.string() },
@@ -94,7 +106,7 @@ export const loadSlice = query({
     const rows = await ctx.db
       .query("legacyMirror")
       .withIndex("by_doc_collection", (q) => q.eq("doc", doc).eq("collection", collection))
-      .take(500);
+      .take(SLICE_READ_CAP);
     return rows.map((r) => r.payload);
   },
 });
@@ -349,6 +361,44 @@ function mergeRowFields(stored: unknown, incoming: unknown): unknown {
   return { ...(stored as Record<string, unknown>), ...(incoming as Record<string, unknown>) };
 }
 
+/**
+ * A STUDENT-STORE REWARD'S STOCK IS THE SERVER'S, unless an admin set it.
+ *
+ * studentStore:purchase decrements stock inside its own transaction, on the
+ * stored row. A staff tab's copy of that row is only as fresh as its last
+ * load, and the rewards list is saved whole-row: so an admin fixing a typo in
+ * the Power-Up Pass description at 9am, from a tab that loaded at 7am with 75
+ * left, would have put all 75 back on the shelf after 40 had been sold. Every
+ * child who then bought one would hold a receipt for a pass the school does
+ * not have.
+ *
+ * So for a reward the STORED copy marks as student-purchasable, an incoming
+ * stock is taken only when it carries a `stockSetAt` newer than the stored
+ * one -- which the client stamps only when a person deliberately typed a new
+ * stock number. Anything else the edit changed still lands; only the count is
+ * kept. Rewards staff sell by hand are untouched by this: nothing on the
+ * server moves their stock, so the tab's number is still the truth.
+ */
+function keepServerStock(
+  collection: string, stored: unknown, merged: unknown, incoming: unknown,
+): unknown {
+  if (collection !== "wildcatCashRewards") return merged;
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) return merged;
+  if (!merged || typeof merged !== "object" || Array.isArray(merged)) return merged;
+  const s = stored as Record<string, unknown>;
+  if (s.studentPurchasable !== true) return merged;
+  const inc = (incoming && typeof incoming === "object" ? incoming : {}) as Record<string, unknown>;
+  const when = (x: unknown) => (typeof x === "string" ? Date.parse(x) : NaN);
+  const inSet = when(inc.stockSetAt);
+  const storedSet = when(s.stockSetAt);
+  if (Number.isFinite(inSet) && (!Number.isFinite(storedSet) || inSet > storedSet)) return merged;
+  return {
+    ...(merged as Record<string, unknown>),
+    stock: s.stock === undefined ? null : s.stock,
+    stockSetAt: s.stockSetAt === undefined ? null : s.stockSetAt,
+  };
+}
+
 export const mergeSlice = mutation({
   args: {
     doc: v.string(),
@@ -465,7 +515,11 @@ export const mergeSlice = mutation({
         // Stored wins, unless the incoming copy is the same row touched later.
         const stored = storedByToken.get(token);
         if (stored && touchedAt(r.payload) > touchedAt(stored.payload)) {
-          toUpdate.push({ id: stored._id, payload: mergeRowFields(stored.payload, r.payload) });
+          toUpdate.push({
+            id: stored._id,
+            payload: keepServerStock(collection, stored.payload,
+              mergeRowFields(stored.payload, r.payload), r.payload),
+          });
         }
         continue;
       }

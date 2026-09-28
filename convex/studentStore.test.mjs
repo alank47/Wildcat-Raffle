@@ -22,6 +22,11 @@ import {
   studentPurchaseVerdict,
   MAX_STUDENT_QUANTITY,
   STORE_CLOSED_DEFAULT,
+  effectiveStoreState,
+  ownedUnits,
+  rewardCampus,
+  rewardLimit,
+  studentCampus,
 } from "./studentStoreRules.ts";
 import { readFileSync } from "node:fs";
 
@@ -61,10 +66,13 @@ console.log("\n1. The store is shut until somebody opens it");
       closedReason: "Opens Monday at lunch." }).reason === "Opens Monday at lunch.");
   // ONE default, exported, so the message cannot depend on which code path
   // noticed the store was shut. There were briefly two.
+  // The server reads the switch ONLY through effectiveStoreState, which is
+  // where the one default lives now (2026-09-28, with the timed open/close).
   check("and there is a single shared default when it is not",
     studentPurchaseVerdict({ student: KID, reward: ITEM, storeOpen: false }).reason
       === STORE_CLOSED_DEFAULT
-    && /STORE_CLOSED_DEFAULT/.test(readFileSync(
+    && effectiveStoreState(undefined, Date.now()).reason === STORE_CLOSED_DEFAULT
+    && /effectiveStoreState\(/.test(readFileSync(
         new URL("./studentStore.ts", import.meta.url), "utf8")));
 }
 
@@ -227,6 +235,12 @@ console.log("\n7. These rules agree with the staff store's, which is in producti
   const staff = new Function(
     "function isFiniteNumber(v){return typeof v==='number'&&isFinite(v);}\n" +
     "function balanceOf(s){var b=Number(s&&s.wildcatCashBalance);return isFinite(b)?b:0;}\n" +
+    "function trimmed(s){return String(s==null?'':s).trim();}\n" +
+    "var CAMPUSES = ['all', 'middle', 'high'];\n" +
+    // The campus and limit helpers joined canPurchase on 2026-09-28. Lifted,
+    // not re-typed, so this runs the staff store's own copies.
+    lift("rewardCampusOf") + lift("studentCampusOf") + lift("rewardLimitOf") +
+    lift("ownedUnits") + lift("campusName") +
     lift("canPurchase") + "\nreturn canPurchase;")();
 
   // On the cases the two SHARE -- an enrolled student, an open store, a
@@ -242,10 +256,28 @@ console.log("\n7. These rules agree with the staff store's, which is in producti
     { student: KID, reward: { ...ITEM, retiredAt: "2026-01-01" }, quantity: 1 },
     { student: KID, reward: { ...ITEM, available: false }, quantity: 1 },
     { student: { ...KID, wildcatCashBalance: 5000 }, reward: { ...ITEM, cost: 2500 }, quantity: 2 },
+    // THE CAMPUS AND THE LIMIT (2026-09-28). Buying it at the office must not
+    // be a way around either rule.
+    { student: { ...KID, grade: "7" }, reward: { ...ITEM, campus: "middle" }, quantity: 1 },
+    { student: { ...KID, grade: "7" }, reward: { ...ITEM, campus: "high" }, quantity: 1 },
+    { student: { ...KID, grade: "11" }, reward: { ...ITEM, campus: "high" }, quantity: 1 },
+    { student: { ...KID, grade: "11" }, reward: { ...ITEM, campus: "middle" }, quantity: 1 },
+    { student: { ...KID, grade: "" }, reward: { ...ITEM, campus: "middle" }, quantity: 1 },
+    { student: KID, reward: { ...ITEM, campus: "Middle School" }, quantity: 1 },
+    { student: KID, reward: { ...ITEM, limitPerStudent: 1 }, quantity: 1, receipts: [] },
+    { student: KID, reward: { ...ITEM, limitPerStudent: 1 }, quantity: 2, receipts: [] },
+    { student: KID, reward: { ...ITEM, limitPerStudent: 1 }, quantity: 1,
+      receipts: [{ studentId: "S1", rewardId: "r1", quantity: 1, status: "issued" }] },
+    { student: KID, reward: { ...ITEM, limitPerStudent: 1 }, quantity: 1,
+      receipts: [{ studentId: "S1", rewardId: "r1", quantity: 1, status: "cancelled" }] },
+    { student: KID, reward: { ...ITEM, limitPerStudent: 1 }, quantity: 1,
+      receipts: [{ studentId: "S2", rewardId: "r1", quantity: 1, status: "issued" }] },
+    { student: KID, reward: { ...ITEM, limitPerStudent: 0 }, quantity: 1 },
   ];
   const disagreements = [];
   for (const c of cases) {
-    const mine = studentPurchaseVerdict({ ...c, ...OPEN });
+    const alreadyOwned = ownedUnits(c.receipts || [], c.student.id, c.reward.id);
+    const mine = studentPurchaseVerdict({ ...c, ...OPEN, alreadyOwned });
     const theirs = staff(c);
     if (mine.allowed !== theirs.allowed) {
       disagreements.push(`${c.reward.name} x${c.quantity} @$${c.student.wildcatCashBalance}: ` +
@@ -285,7 +317,9 @@ console.log("\n8. What the mutation refuses to be told");
   check("both public entry points resolve the student from their own token",
     (code.match(/requireStudentSelf\(ctx\)/g) || []).length >= 2);
   check("and the store still defaults to CLOSED, so shipping changed nothing",
-    /open: val\.open === true/.test(code));
+    effectiveStoreState(undefined, Date.now()).open === false
+    && effectiveStoreState({ open: "true" }, Date.now()).open === false
+    && /const s = effectiveStoreState\(row\?\.value/.test(code));
 }
 
 console.log("\n9. Two children tapping the last one");
@@ -316,7 +350,13 @@ console.log("\n9. Two children tapping the last one");
     /alreadyBought: true/.test(code));
   check("the register is written before the money moves",
     code.indexOf('insert("studentPurchases"') < code.indexOf("ctx.db.patch(student._id"));
-  check("the receipt code is minted server-side", /const receiptId = "WC-"/.test(code));
+  // Minted from the server's own randomness and checked against every code
+  // already issued. It used to be the last six of the browser's attempt token,
+  // which let a child choose their own code -- or somebody else's.
+  check("the receipt code is minted server-side",
+    /const receiptId = mintReceiptCode\(new Set\(receipts\.map/.test(code)
+    && /const code = "WC-" \+ out;/.test(code)
+    && !/receiptId = [^;]*attemptId/.test(code));
   check("counters move by adding the delta to what is stored",
     /patch\[field\] = \(Number\.isFinite\(base\) \? base : 0\) \+ d;/.test(code));
   check("and the student's own copy of the row is written, for their wallet",
@@ -363,6 +403,124 @@ console.log("\n10. The purchase log has what an export needs");
     /RECEIPTS_COLLECTION/.test(log) && !/cash_tx_/.test(log));
   check("the student number comes from the live record",
     /studentNumber: st\?\.studentNumber/.test(log));
+}
+
+console.log("\n11. Which campus a reward is for, and which a child is on");
+{
+  check("absent is everyone", rewardCampus({}) === "all" && rewardCampus({ campus: null }) === "all"
+    && rewardCampus({ campus: "" }) === "all");
+  check("the three campus words, whatever their case",
+    rewardCampus({ campus: "middle" }) === "middle" && rewardCampus({ campus: " HIGH " }) === "high"
+    && rewardCampus({ campus: "All" }) === "all");
+  // A TYPO IS NOT "EVERYONE". Reading "Middle School" as all would sell the
+  // middle school pass to the high school, the one thing asked for.
+  check("anything else is null, which the verdict refuses",
+    rewardCampus({ campus: "Middle School" }) === null && rewardCampus({ campus: "ms" }) === null);
+  check("grades 6 to 8 are the middle school",
+    ["6", "7", "8", "06", 7].every((g) => studentCampus(g) === "middle"));
+  check("grades 9 to 12 are the high school",
+    ["9", "10", "11", "12"].every((g) => studentCampus(g) === "high"));
+  check("anything else is unknown, not rounded to the nearer campus",
+    ["", "5", "13", "K", null, undefined, "Grade 7"].every((g) => studentCampus(g) === null));
+
+  const MS = { ...ITEM, campus: "middle" }, HS = { ...ITEM, campus: "high" };
+  const seventh = { ...KID, grade: "7" }, tenth = { ...KID, grade: "10" };
+  check("a middle schooler may buy a middle school item",
+    studentPurchaseVerdict({ student: seventh, reward: MS, ...OPEN }).allowed);
+  const wrong = studentPurchaseVerdict({ student: seventh, reward: HS, ...OPEN });
+  check("but not a high school one", !wrong.allowed && wrong.code === "wrong_campus");
+  check("and is told whose it is", /High School/.test(wrong.reason));
+  check("the reverse holds", studentPurchaseVerdict({ student: tenth, reward: MS, ...OPEN }).code === "wrong_campus");
+  check("an everyone item is for everyone",
+    studentPurchaseVerdict({ student: tenth, reward: ITEM, ...OPEN }).allowed);
+  check("the campus answer comes before the money answer",
+    studentPurchaseVerdict({ student: { ...seventh, wildcatCashBalance: 0 }, reward: HS, ...OPEN }).code === "wrong_campus");
+  check("but after the store being shut",
+    studentPurchaseVerdict({ student: seventh, reward: HS, storeOpen: false }).code === "store_closed");
+  check("an unreadable grade is sent to the office",
+    studentPurchaseVerdict({ student: { ...KID, grade: "" }, reward: MS, ...OPEN }).code === "unknown_campus");
+  check("and does not matter for an everyone item",
+    studentPurchaseVerdict({ student: { ...KID, grade: "" }, reward: ITEM, ...OPEN }).allowed);
+  check("a campus typo is refused rather than sold to everyone",
+    studentPurchaseVerdict({ student: seventh, reward: { ...ITEM, campus: "Middle School" }, ...OPEN }).code === "bad_campus");
+}
+
+console.log("\n12. One per student");
+{
+  check("no limit is null", rewardLimit({}) === null && rewardLimit({ limitPerStudent: null }) === null);
+  check("a whole number of one or more is the limit", rewardLimit({ limitPerStudent: 1 }) === 1
+    && rewardLimit({ limitPerStudent: "3" }) === 3);
+  check("anything else is undefined, which the verdict refuses",
+    [0, -1, 1.5, "one", NaN].every((x) => rewardLimit({ limitPerStudent: x }) === undefined));
+
+  const ONE = { ...ITEM, limitPerStudent: 1 };
+  check("the first is allowed", studentPurchaseVerdict({ student: KID, reward: ONE, ...OPEN, alreadyOwned: 0 }).allowed);
+  const second = studentPurchaseVerdict({ student: KID, reward: ONE, ...OPEN, alreadyOwned: 1 });
+  check("the second is refused", !second.allowed && second.code === "limit_reached");
+  check("in words a child can read", /already have this one/.test(second.reason));
+  check("two at once when one is allowed is refused",
+    studentPurchaseVerdict({ student: KID, reward: ONE, ...OPEN, quantity: 2 }).code === "limit_reached");
+  check("a limit of three leaves room for the rest",
+    /1 more/.test(studentPurchaseVerdict({ student: { ...KID, wildcatCashBalance: 9999 },
+      reward: { ...ITEM, limitPerStudent: 3 }, ...OPEN, alreadyOwned: 2, quantity: 2 }).reason));
+  check("no limit ignores what they hold",
+    studentPurchaseVerdict({ student: KID, reward: ITEM, ...OPEN, alreadyOwned: 40 }).allowed);
+  check("a broken limit is refused, not read as no limit",
+    studentPurchaseVerdict({ student: KID, reward: { ...ITEM, limitPerStudent: 0 }, ...OPEN }).code === "bad_limit");
+  check("already holding one is the answer even when they are broke",
+    studentPurchaseVerdict({ student: { ...KID, wildcatCashBalance: 0 }, reward: ONE, ...OPEN,
+      alreadyOwned: 1 }).code === "limit_reached");
+
+  const R = [
+    { studentId: "S1", rewardId: "r1", quantity: 1, status: "issued" },
+    { studentId: "S1", rewardId: "r1", quantity: 2, status: "fulfilled" },
+    { studentId: "S1", rewardId: "r1", quantity: 1, status: "cancelled" },
+    { studentId: "S1", rewardId: "r2", quantity: 1, status: "issued" },
+    { studentId: "S2", rewardId: "r1", quantity: 1, status: "issued" },
+    { studentId: "S1", rewardId: "r1", status: "issued" },
+    null,
+  ];
+  check("owned counts units on every live receipt, fulfilled or not", ownedUnits(R, "S1", "r1") === 4);
+  check("a cancelled receipt is not held", ownedUnits([R[2]], "S1", "r1") === 0);
+  check("another reward or another child is not counted", ownedUnits(R, "S2", "r1") === 1
+    && ownedUnits(R, "S1", "r2") === 1);
+  check("an empty id owns nothing, rather than matching every blank",
+    ownedUnits([{ studentId: "", rewardId: "", status: "issued" }], "", "") === 0);
+}
+
+console.log("\n13. The price the child saw");
+{
+  check("the same price goes through",
+    studentPurchaseVerdict({ student: KID, reward: ITEM, ...OPEN, seenPrice: 500 }).allowed);
+  const moved = studentPurchaseVerdict({ student: KID, reward: ITEM, ...OPEN, seenPrice: 400 });
+  check("a different one is refused, naming the new price", moved.code === "price_changed" && /\$500/.test(moved.reason));
+  check("not saying is allowed", studentPurchaseVerdict({ student: KID, reward: ITEM, ...OPEN }).allowed);
+  check("junk is a mismatch", studentPurchaseVerdict({ student: KID, reward: ITEM, ...OPEN, seenPrice: "cheap" }).code === "price_changed");
+  check("and the total is always the catalogue's, never the one sent",
+    studentPurchaseVerdict({ student: KID, reward: ITEM, ...OPEN, seenPrice: 500 }).total === 500);
+}
+
+console.log("\n14. The switch, the clock and the closing time");
+{
+  const now = Date.parse("2026-09-29T15:00:00Z");
+  check("nothing stored is shut", effectiveStoreState(undefined, now).open === false);
+  check("open is open", effectiveStoreState({ open: true }, now).open === true);
+  check("open with a closing time ahead is open",
+    effectiveStoreState({ open: true, closesAt: "2026-09-30T06:59:00Z" }, now).open === true);
+  const past = effectiveStoreState({ open: true, closesAt: "2026-09-29T14:59:59Z",
+    reason: "Opens Tuesday.", endedReason: "Sales have ended." }, now);
+  check("open past the closing time is SHUT, whether or not the job ran", past.open === false);
+  check("and says it has ended, not that it opens Tuesday", past.reason === "Sales have ended.");
+  check("with no ended message, the plain default",
+    effectiveStoreState({ open: true, closesAt: "2026-09-29T14:00:00Z", reason: "Opens Tuesday." }, now).reason
+      === STORE_CLOSED_DEFAULT);
+  check("before it opens, the before message",
+    effectiveStoreState({ open: false, opensAt: "2026-09-29T16:00:00Z", reason: "Opens Tuesday." }, now).reason
+      === "Opens Tuesday.");
+  // THE OPENING TIME IS NOT READ FROM THE CLOCK: a failed opening job leaves
+  // the store shut, which is the safe way to fail.
+  check("an opening time that has passed does not open a shut store by itself",
+    effectiveStoreState({ open: false, opensAt: "2026-09-29T14:00:00Z" }, now).open === false);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
