@@ -19539,8 +19539,13 @@
             if (!store.storeOpen) {
                 // The admin's own words when they wrote some; his line only
                 // when they did not, or "Keep earning!" is said twice.
-                return { pose: 1, say: (store.closedReason
-                        ? wpEsc(store.closedReason)
+                // A sentence of his own is only added after one that ENDS:
+                // "Power-Up Pass sales have ended" (no full stop, as the admin
+                // typed it) ran straight into "Your purchases are saved below".
+                const said = String(store.closedReason || '').trim();
+                const ended = said && !/[.!?\u2026)]$/.test(said) ? said + '.' : said;
+                return { pose: 1, say: (said
+                        ? wpEsc(held.length ? ended : said)
                         : 'The store is closed right now. Keep earning and come back soon!') +
                     (held.length ? ' Your purchases are saved below.' : '') };
             }

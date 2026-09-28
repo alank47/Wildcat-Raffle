@@ -315,6 +315,15 @@ console.log("\n-- the Wildcat Digital Store (the shop scene, 2026-09-28) --");
   const soldOut = draw({ storeOpen: false, opensSoon: false, closedReason: "Ended.", balance: 50,
     items: [item({ canBuy: false, code: "store_closed", stock: 0 })], myPurchases: [] }, null);
   check("a sold-out item says Sold Out even once the store is shut", /disabled>Sold Out</.test(soldOut));
+  // The owner's after-close message has no full stop; the clerk's own
+  // sentence after it must not run into it.
+  const endedHeld = draw({ storeOpen: false, opensSoon: false, closedReason: "Power-Up Pass sales have ended", balance: 50,
+    items: [], myPurchases: [{ id: "WC-7KQ2MX", rewardName: "Power-Up Pass (MS)", status: "issued" }] }, null);
+  check("an admin message with no full stop gets one before the clerk adds his",
+    /Power-Up Pass sales have ended\. Your purchases are saved below\./.test(endedHeld));
+  const endedDot = draw({ storeOpen: false, opensSoon: false, closedReason: "All done!", balance: 50,
+    items: [], myPurchases: [{ id: "WC-7KQ2MX", rewardName: "X", status: "issued" }] }, null);
+  check("and one that already ends is left alone", /All done! Your purchases/.test(endedDot));
   const again = draw({ storeOpen: true, balance: 5000, items: [item({ limitPerStudent: 3, canBuy: true,
     myReceipts: [{ id: "WC-AAAAAA", status: "issued" }] })], myPurchases: [] }, null);
   check("an item they may buy again keeps its Buy button, with the code they hold",
