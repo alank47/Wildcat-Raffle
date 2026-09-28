@@ -265,6 +265,108 @@ console.log("\n-- the second review (2026-09-28) --");
     /if \(!forSale\.length\) \{[\s\S]{0,400}\+ heldHtml\);/.test(panel));
 }
 
+console.log("\n-- the buyer message (2026-09-28) --");
+{
+  const multiline = new Function(
+    code.slice(code.indexOf("function wpEsc("), code.indexOf("}", code.indexOf("function wpEsc(")) + 1) + "\n" +
+    code.slice(code.indexOf("function wpMultiline("), code.indexOf("}", code.indexOf("function wpMultiline(")) + 1) +
+    "\nreturn wpMultiline;")();
+  const out = multiline('Gym <b>door</b>\nOct 1 & lunch');
+  check("the message is escaped and keeps its line breaks",
+    out === 'Gym &lt;b&gt;door&lt;/b&gt;<br>Oct 1 &amp; lunch', out);
+  const buyAt = code.indexOf("let _wpBuyInFlight");
+  const buy = code.slice(buyAt, code.indexOf("function wpDashboard(", buyAt));
+  check("the receipt dialog shows it", /res\.purchaseMessage[\s\S]{0,120}wpMultiline\(res\.purchaseMessage\)/.test(buy));
+  const panel = code.slice(code.indexOf("function wpStorePanel()"), code.indexOf("let _wpBuyInFlight"));
+  check("and 'Your purchases' keeps it under the code", /p\.message \? '<div class="wp-store-held-msg">' \+ wpMultiline\(p\.message\)/.test(panel));
+}
+
+console.log("\n-- the Wildcat Digital Store (the shop scene, 2026-09-28) --");
+{
+  const lift = (name) => {
+    const i = raw.indexOf("function " + name + "(");
+    let d = 0, k = raw.indexOf("{", i);
+    for (; k < raw.length; k++) { if (raw[k] === "{") d++; else if (raw[k] === "}") { d--; if (d === 0) break; } }
+    return raw.slice(i, k + 1);
+  };
+  const shopSrc = ["wpEsc", "wpMultiline", "wdsMoney", "wdsTileState", "wdsBuyAttrs", "wdsTile", "wdsRow", "wdsMood", "wdsShopHtml"]
+    .map(lift).join("\n");
+  const draw = new Function("_wpStore", "_wpStoreError", shopSrc + "\nreturn wdsShopHtml();");
+  const EVIL = '<img src=x onerror=alert(1)>';
+  const item = (o) => Object.assign({ id: "pup_ms", name: "Power-Up Pass (Middle School)", cost: 1500, stock: 75,
+    inStudentStore: true, campus: "middle", limitPerStudent: 1, myReceipts: [], canBuy: true, code: "ok", progress: 1 }, o);
+  const open = draw({ storeOpen: true, balance: 1850, items: [item({})], myPurchases: [] }, null);
+  check("a buyable pass gets a Buy button with the SAME attributes the panel uses, so one handler buys",
+    /class="wds-buy" data-wp-buy="pup_ms" data-wp-buy-name="Power-Up Pass \(Middle School\)" data-wp-buy-cost="1500">Buy</.test(open));
+  check("the shop has a way out", /data-wp-shop-close>Leave store</.test(open));
+  check("the clerk is the presenting pose when something can be bought", /assets\/wildcat-clerk-2\.png/.test(open));
+  check("it goes on the middle shelf, at eye level", /wds-row-2">[^]*?data-wp-buy="pup_ms"/.test(open)
+    && !/wds-row-1"><div class="wds-item/.test(open));
+
+  const short = draw({ storeOpen: true, balance: 600, items: [item({ canBuy: false, code: "cannot_afford", shortfall: 900, progress: 0.4 })], myPurchases: [] }, null);
+  check("not enough yet: no Buy attribute anywhere, and how much more", !/data-wp-buy=/.test(short) && /\$900 more/.test(short));
+  const other = draw({ storeOpen: true, balance: 5000, items: [item({ canBuy: false, code: "wrong_campus", otherCampus: true, campus: "high" })], myPurchases: [] }, null);
+  check("the other campus's pass says so and cannot be bought", /High School Only/.test(other) && !/data-wp-buy=/.test(other));
+  const closed = draw({ storeOpen: false, opensSoon: true, closedReason: "Opens Tuesday. Keep earning!", balance: 50,
+    items: [item({ canBuy: false, code: "store_closed" })], myPurchases: [] }, null);
+  const ended = draw({ storeOpen: false, opensSoon: false, closedReason: "Power-Up Pass sales have ended.", balance: 50,
+    items: [item({ canBuy: false, code: "store_closed" })], myPurchases: [] }, null);
+  check("after the sale the shelf says Closed, not Opens Soon", /disabled>Closed</.test(ended) && !/Opens Soon/.test(ended));
+  const soldOut = draw({ storeOpen: false, opensSoon: false, closedReason: "Ended.", balance: 50,
+    items: [item({ canBuy: false, code: "store_closed", stock: 0 })], myPurchases: [] }, null);
+  check("a sold-out item says Sold Out even once the store is shut", /disabled>Sold Out</.test(soldOut));
+  const again = draw({ storeOpen: true, balance: 5000, items: [item({ limitPerStudent: 3, canBuy: true,
+    myReceipts: [{ id: "WC-AAAAAA", status: "issued" }] })], myPurchases: [] }, null);
+  check("an item they may buy again keeps its Buy button, with the code they hold",
+    /data-wp-buy="pup_ms"/.test(again) && /WC-AAAAAA/.test(again));
+  check("before it opens: 'Opens Soon', the admin's words, said once", /Opens Soon/.test(closed)
+    && (closed.match(/Keep earning/g) || []).length === 2 /* scene bubble + phone bubble */ && !/data-wp-buy=/.test(closed));
+  const owned = draw({ storeOpen: true, balance: 350, items: [item({ canBuy: false, code: "limit_reached",
+    myReceipts: [{ id: "WC-7KQ2MX", status: "issued" }] })],
+    myPurchases: [{ id: "WC-7KQ2MX", rewardName: "Power-Up Pass (Middle School)", status: "issued", message: "Gym\nlunch" }] }, null);
+  check("after buying: the code on the shelf, thumbs up, and their purchase with the message below",
+    /WC-7KQ2MX/.test(owned) && /wildcat-clerk-4\.png/.test(owned) && /wds-held-msg">Gym<br>lunch</.test(owned));
+
+  const nasty = draw({ storeOpen: false, closedReason: EVIL, balance: 1, items: [item({ name: EVIL, id: '"><x', canBuy: true })],
+    myPurchases: [{ id: EVIL, rewardName: EVIL, status: "issued", message: EVIL }] }, null);
+  check("nothing an admin or a receipt can hold is drawn as markup", !/<img src=x/.test(nasty) && !/"><x/.test(nasty));
+  check("an unloaded store says so, not an empty shop", /Loading the store/.test(draw(null, null))
+    && /could not be loaded/.test(draw(null, "boom")));
+
+  const panel = code.slice(code.indexOf("function wpStorePanel()"), code.indexOf("let _wpBuyInFlight"));
+  check("the door is in the store panel unless the look is plain",
+    /_wpStore\.look === 'plain' \? '' :/.test(panel) && /data-wp-shop-open/.test(panel));
+  const wire = code.slice(code.indexOf("function wpWireBuyButtons()"), code.indexOf("function wpDashboard("));
+  check("the doors are wired on the capture phase, beside Buy",
+    /closest\('\[data-wp-shop-open\]'\)\) \{ ev\.preventDefault\(\); wpOpenShop\(\);/.test(wire)
+    && /closest\('\[data-wp-shop-close\]'\)\) \{ ev\.preventDefault\(\); wpCloseShop\(\);/.test(wire));
+  check("Escape leaves the shop, but not while a dialog is open over it",
+    /ev\.key === 'Escape' && _wpShopOpen && !document\.getElementById\('wcDialogBackdrop'\)/.test(wire));
+  // As soon as the store answer lands -- BEFORE the early return on a failed
+  // pass card, so a partly failed reload cannot leave a stale Buy in the shop.
+  const loadAt = code.indexOf("async function loadStudentPortal(");
+  const load = code.slice(loadAt, code.indexOf("\n        }\n", code.indexOf("dash.innerHTML = wpDashboard(mine", loadAt)));
+  check("the shop redraws after every portal load, so a purchase shows at once",
+    /if \(_wpShopOpen\) wpRenderShop\(\);/.test(load)
+    && load.indexOf("if (_wpShopOpen) wpRenderShop();") < load.indexOf("if (!pass) {"));
+  check("switching to the plain list reaches open pages, and sees a student out of the shop",
+    /version\.storeLook === 'scene' \|\| version\.storeLook === 'plain'/.test(code)
+    && /nextLook !== wpStoreLookSeen\) \{\s*wpStoreLookSeen = nextLook;\s*await loadStudentPortal\(\);/.test(code)
+    && /if \(_wpStore && _wpStore\.look === 'plain'\) \{ wpCloseShop\(\); return; \}/.test(code));
+  check("a running hall pass closes the shop, so it is never hidden behind it",
+    /if \(typeof _wpShopOpen !== 'undefined' && _wpShopOpen\) wpCloseShop\(\);\s*full\.hidden = false;/.test(code));
+  check("the page behind is out of reach while the shop is open, and focus returns to the door",
+    /behind\.inert = true;/.test(code) && /behind\.inert = false;/.test(code)
+    && /querySelector\('\[data-wp-shop-open\]'\);\s*if \(door && door\.focus\) door\.focus\(\);/.test(code));
+  check("and closes on sign-out, so the next child does not walk into it",
+    /_wpLoadFailed = false;\s*wpCloseShop\(\);/.test(code));
+  const zRoot = Number((css.match(/\.wds-root \{[^}]*z-index: (\d+)/) || [])[1]);
+  check("the shop sits over the portal and under the dialog", zRoot > 9500 && zRoot < 10050, String(zRoot));
+  check("the art ships with the site", ["store-bg.jpg", "store-register.png", "wildcat-clerk-1.png",
+    "wildcat-clerk-2.png", "wildcat-clerk-3.png", "wildcat-clerk-4.png"]
+    .every((f) => { try { return readFileSync(new URL("./assets/" + f, import.meta.url)).length > 1000; } catch { return false; } }));
+}
+
 console.log("\n-- the dialog has to out-rank every view --");
 {
   // THE ACTUAL CAUSE of "clicking buy does nothing", found after four rounds of

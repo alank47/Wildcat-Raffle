@@ -18707,6 +18707,9 @@
                   '<button type="button" class="wp-btn wp-btn-ghost wp-full-cards" onclick="wpDismissFull()">' +
                   'Show my other cards</button>' +
                 '</div>';
+            // A RUNNING PASS OWNS THE SCREEN, the shop included: it sits on
+            // <body> above the portal, so it would otherwise hide the pass.
+            if (typeof _wpShopOpen !== 'undefined' && _wpShopOpen) wpCloseShop();
             full.hidden = false;
             full.scrollTop = 0;
             view.classList.add('wp-is-full');
@@ -19323,16 +19326,25 @@
             const heldHtml = held.length
                 ? '<div class="wp-store-held"><div class="wp-store-held-title">Your purchases</div><ul>' +
                   held.map(function (p) {
-                      return '<li><strong>' + wpEsc(String(p.id)) + '</strong> ' + wpEsc(String(p.rewardName)) +
-                          (p.quantity > 1 ? ' \u00D7' + wpEsc(String(p.quantity)) : '') +
-                          (p.status === 'fulfilled' ? ' <span class="wp-stock">collected</span>'
-                                                    : ' <span class="wp-stock">show this code to collect it</span>') +
+                      return '<li><div><strong>' + wpEsc(String(p.id)) + '</strong> ' + wpEsc(String(p.rewardName)) +
+                          (p.quantity > 1 ? ' \u00D7' + wpEsc(String(p.quantity)) : '') + '</div>' +
+                          '<div class="wp-stock">' + (p.status === 'fulfilled'
+                              ? 'Collected' : 'Show this code to collect it') + '</div>' +
+                          (p.message ? '<div class="wp-store-held-msg">' + wpMultiline(p.message) + '</div>' : '') +
                           '</li>';
                   }).join('') + '</ul></div>'
                 : '';
+            // THE WAY INTO THE WILDCAT DIGITAL STORE (the shop scene), unless an
+            // admin switched the look to plain. The panel below it still lists
+            // everything, so the scene is a nicer door, never the only one.
+            const enter = _wpStore.look === 'plain' ? '' :
+                '<button type="button" class="wds-enter" data-wp-shop-open>' +
+                    '<span class="wds-enter-title">Wildcat Digital Store</span>' +
+                    '<span class="wds-enter-go">' + (_wpStore.storeOpen ? 'Step inside \u2192' : 'Take a look \u2192') + '</span>' +
+                '</button>';
             if (!_wpStore.storeOpen) {
                 return wpPanel('Wildcat Cash', 'Student Rewards Store', held.length ? 'Closed' : 'Not open yet',
-                    '<p class="wp-soon">' + wpEsc(_wpStore.closedReason ||
+                    enter + '<p class="wp-soon">' + wpEsc(_wpStore.closedReason ||
                         'You\u2019ll be able to use your Wildcat Cash to purchase rewards here soon.') +
                     '</p>' + heldHtml);
             }
@@ -19345,7 +19357,7 @@
                 : '';
             if (!forSale.length) {
                 return wpPanel('Wildcat Cash', 'Student Rewards Store', held.length ? 'Nothing for sale' : 'Nothing yet',
-                    testing + wpEmpty(held.length
+                    enter + testing + wpEmpty(held.length
                         ? 'Nothing is for sale right now.'
                         : 'No rewards are in the student store yet. Your teachers can ' +
                           'still buy things for you at the office.') + heldHtml);
@@ -19395,7 +19407,11 @@
                             ? '<div class="wp-store-desc">' + wpEsc(String(it.description)) + '</div>'
                             : '') +
                         owned +
-                        (owned ? '' : '<div class="wp-store-bar"><span style="width:' + pct + '%"></span></div>') +
+                        // No bar once it is theirs, and none on the other
+                        // campus's item: a full bar reads "you are ready" on a
+                        // thing they cannot buy.
+                        ((owned || it.otherCampus || it.code === 'wrong_campus') ? ''
+                            : '<div class="wp-store-bar"><span style="width:' + pct + '%"></span></div>') +
                     '</div>' +
                     '<div class="wp-store-foot">' +
                         '<div class="wp-store-cost">$' + wpEsc(String(it.cost)) + '</div>' +
@@ -19406,7 +19422,7 @@
 
             return wpPanel('Wildcat Cash', 'Student Rewards Store',
                 '$' + wpEsc(String(_wpStore.balance == null ? 0 : _wpStore.balance)) + ' to spend',
-                testing + '<ul class="wp-store">' + rows + '</ul>' + heldHtml);
+                enter + testing + '<ul class="wp-store">' + rows + '</ul>' + heldHtml);
         }
 
         /**
@@ -19418,6 +19434,242 @@
          * again. Keyed on the press rather than on (student, reward) because
          * buying two of something is a thing a child is allowed to do.
          */
+        // =====================================================================
+        // THE WILDCAT DIGITAL STORE (the shop scene)
+        //
+        // The pop-up shop the owner approved as a layout mock on 2026-09-17:
+        // the wildcat clerk behind the register, the stock on the shelves, and
+        // a speech bubble. Asked for as the real store on 2026-09-28 ("we had a
+        // store mockup with a wildcat image"). The geometry below is the
+        // mock's, measured off the art in its own 1376x768 pixel space.
+        //
+        // IT ONLY DRAWS. Every tile's Buy button carries the same data-wp-buy
+        // attributes the plain panel's does, so a purchase goes through the
+        // one capture listener in wpWireBuyButtons -- the same confirm, the
+        // same token, the same receipt dialog, the same server rules. The
+        // shop cannot sell anything the panel could not.
+        //
+        // Drawn from _wpStore, so it is redrawn whenever the portal reloads
+        // (after a purchase, when the store opens). Below 900px the scene
+        // becomes a list, as in the mock: the tiles collide at that width.
+        // =====================================================================
+        let _wpShopOpen = false;
+
+        function wdsMoney(n) {
+            const v = Number(n);
+            return '$' + (isFinite(v) ? v.toLocaleString('en-US') : '0');
+        }
+
+        /** What a tile says instead of Buy, in a few words. */
+        function wdsTileState(it) {
+            const mine = Array.isArray(it.myReceipts) ? it.myReceipts : [];
+            const codes = mine.map(function (r) { return r.id; }).join(', ');
+            // Buyable first: an item they may buy again still gets its Buy
+            // button, with the codes they already hold shown on the tile.
+            if (it.canBuy) return { kind: 'buy', label: 'Buy', note: codes };
+            if (mine.length) return { kind: 'owned', label: 'Yours', note: codes };
+            if (it.otherCampus || it.code === 'wrong_campus') {
+                return { kind: 'locked', label: it.campus === 'high' ? 'High School Only'
+                    : it.campus === 'middle' ? 'Middle School Only' : 'Not for You' };
+            }
+            if (it.code === 'out_of_stock' || (it.stock != null && Number(it.stock) <= 0)) return { kind: 'locked', label: 'Sold Out' };
+            // "Opens Soon" only when an opening is actually scheduled; after
+            // the sale, or shut with no plan, the shelf just says Closed.
+            if (it.code === 'store_closed') return { kind: 'locked', label: (_wpStore && _wpStore.opensSoon) ? 'Opens Soon' : 'Closed' };
+            if (it.code === 'cannot_afford') return { kind: 'short', label: 'Locked', note: wdsMoney(it.shortfall) + ' more' };
+            if (it.code === 'limit_reached') return { kind: 'locked', label: 'Limit Reached' };
+            return { kind: 'locked', label: 'Ask the Office' };
+        }
+
+        function wdsBuyAttrs(it) {
+            return ' data-wp-buy="' + wpEsc(String(it.id)) + '"' +
+                ' data-wp-buy-name="' + wpEsc(String(it.name)) + '"' +
+                ' data-wp-buy-cost="' + wpEsc(String(it.cost)) + '"';
+        }
+
+        function wdsTile(it) {
+            const st = wdsTileState(it);
+            const pct = Math.round(Math.max(0, Math.min(1, it.progress == null ? 0 : it.progress)) * 100);
+            const meta = [
+                it.stock == null ? '' : wpEsc(String(it.stock)) + ' left',
+                (typeof it.limitPerStudent === 'number' && it.limitPerStudent === 1) ? 'one each' : '',
+            ].filter(Boolean).join(' · ');
+            return '<div class="wds-item is-' + st.kind + '" title="' + wpEsc(String(it.why || it.name || '')) + '">' +
+                '<div class="wds-nm">' + wpEsc(String(it.name)) + '</div>' +
+                (meta ? '<div class="wds-meta">' + meta + '</div>' : '') +
+                (st.kind === 'short'
+                    ? '<div><div class="wds-need">' + wpEsc(st.note) + '</div>' +
+                      '<div class="wds-bar-p"><i style="width:' + pct + '%"></i></div></div>'
+                    : '') +
+                (st.note && (st.kind === 'owned' || st.kind === 'buy') ? '<div class="wds-own">✓ ' + wpEsc(st.note) + '</div>' : '') +
+                '<div class="wds-price">' + wpEsc(wdsMoney(it.cost)) + '</div>' +
+                (st.kind === 'buy'
+                    ? '<button type="button" class="wds-buy"' + wdsBuyAttrs(it) + '>Buy</button>'
+                    : '<button type="button" class="wds-buy" disabled>' + wpEsc(st.label) + '</button>') +
+            '</div>';
+        }
+
+        function wdsRow(it) {
+            const st = wdsTileState(it);
+            const sub = st.kind === 'owned' ? '✓ Yours — ' + st.note
+                : st.kind === 'short' ? st.note + ' to go'
+                : st.kind === 'buy' ? (it.stock == null ? '' : it.stock + ' left')
+                : String(it.why || st.label);
+            return '<div class="wds-rw is-' + st.kind + '">' +
+                '<div class="wds-rw-l"><div class="wds-nm2">' + wpEsc(String(it.name)) + '</div>' +
+                    (sub ? '<div class="wds-need2">' + wpEsc(sub) + '</div>' : '') +
+                    (st.kind === 'short'
+                        ? '<div class="wds-bar-p"><i style="width:' + Math.round(Math.max(0, Math.min(1, it.progress || 0)) * 100) + '%"></i></div>'
+                        : '') +
+                '</div>' +
+                '<span class="wds-pr">' + wpEsc(wdsMoney(it.cost)) + '</span>' +
+                (st.kind === 'buy'
+                    ? '<button type="button" class="wds-rw-buy"' + wdsBuyAttrs(it) + '>Buy</button>'
+                    : '<button type="button" class="wds-rw-buy" disabled>' + wpEsc(st.label) + '</button>') +
+            '</div>';
+        }
+
+        /**
+         * The clerk's pose and what he says. Text only; every piece of data in
+         * it is escaped, and <b> is the one tag added here.
+         */
+        function wdsMood(store, items) {
+            const b = function (t) { return '<b>' + wpEsc(String(t)) + '</b>'; };
+            const held = Array.isArray(store.myPurchases) ? store.myPurchases : [];
+            if (!store.storeOpen) {
+                // The admin's own words when they wrote some; his line only
+                // when they did not, or "Keep earning!" is said twice.
+                return { pose: 1, say: (store.closedReason
+                        ? wpEsc(store.closedReason)
+                        : 'The store is closed right now. Keep earning and come back soon!') +
+                    (held.length ? ' Your purchases are saved below.' : '') };
+            }
+            const ownedHere = items.filter(function (it) { return Array.isArray(it.myReceipts) && it.myReceipts.length; });
+            const canBuy = items.filter(function (it) { return it.canBuy; });
+            if (canBuy.length) {
+                const it = canBuy[0];
+                return { pose: 2, say: 'Welcome in! You have ' + b(wdsMoney(store.balance)) + ' in Wildcat Cash. The ' +
+                    b(it.name) + ' is yours for ' + b(wdsMoney(it.cost)) + '. Tap Buy when you’re ready.' };
+            }
+            if (ownedHere.length) {
+                const code = ownedHere[0].myReceipts[0].id;
+                return { pose: 4, say: 'You’re all set! Your code is ' + b(code) +
+                    '. It’s saved below — show it to collect.' };
+            }
+            const short = items.filter(function (it) { return it.code === 'cannot_afford' && !it.otherCampus; })
+                .sort(function (x, y) { return (x.shortfall || 0) - (y.shortfall || 0); });
+            if (short.length) {
+                return { pose: 1, say: 'Welcome in! The ' + b(short[0].name) + ' is ' + b(wdsMoney(short[0].shortfall)) +
+                    ' away. Keep earning Wildcat Cash and come see me!' };
+            }
+            if (items.length && items.every(function (it) { return wdsTileState(it).label === 'Sold Out' || it.otherCampus; })) {
+                return { pose: 3, say: 'Sold out! Every one is gone. Thanks for shopping!' };
+            }
+            if (!items.length) return { pose: 1, say: 'The shelves are empty right now. Check back soon!' };
+            return { pose: 1, say: 'Welcome in! Have a look around.' };
+        }
+
+        function wdsShopHtml() {
+            const store = _wpStore;
+            const bar = function (right) {
+                return '<div class="wds-bar"><span class="wds-title">Wildcat Digital Store</span>' +
+                    '<span class="wds-spacer"></span>' + (right || '') +
+                    '<button type="button" class="wds-leave" data-wp-shop-close>Leave store</button></div>';
+            };
+            if (!store) {
+                return '<div class="wds-page">' + bar('') +
+                    '<div class="wds-rows"><p class="wds-empty">' +
+                    wpEsc(_wpStoreError ? 'The store could not be loaded just now. Leave and try again in a moment.'
+                                        : 'Loading the store…') + '</p></div></div>';
+            }
+            const all = Array.isArray(store.items) ? store.items : [];
+            const items = all.filter(function (it) { return it.inStudentStore; });
+            const mood = wdsMood(store, items);
+            const onShelf = items.slice(0, 9);
+            // The middle shelf first: it is at eye level, and with one or two
+            // things for sale that is where they belong.
+            const eyeLevel = onShelf.slice(0, 3), lower = onShelf.slice(3, 6), top = onShelf.slice(6, 9);
+            const shelf = function (list) { return list.map(wdsTile).join(''); };
+            const clerk = 'assets/wildcat-clerk-' + mood.pose + '.png';
+            const held = Array.isArray(store.myPurchases) ? store.myPurchases : [];
+            const heldHtml = held.length
+                ? '<div class="wds-held"><div class="wds-held-title">Your purchases</div><ul>' +
+                  held.map(function (p) {
+                      return '<li><div><strong>' + wpEsc(String(p.id)) + '</strong> ' + wpEsc(String(p.rewardName)) +
+                          (p.quantity > 1 ? ' ×' + wpEsc(String(p.quantity)) : '') + '</div>' +
+                          '<div class="wds-held-status">' + (p.status === 'fulfilled' ? 'Collected' : 'Show this code to collect it') + '</div>' +
+                          (p.message ? '<div class="wds-held-msg">' + wpMultiline(p.message) + '</div>' : '') +
+                          '</li>';
+                  }).join('') + '</ul></div>'
+                : '';
+            return '<div class="wds-page">' +
+                bar('<span class="wds-chip">' + wpEsc(wdsMoney(store.balance)) + ' to spend</span>') +
+                (store.testing ? '<div class="wds-testing">Test mode: the store is closed to everyone else. Real Wildcat Cash moves.</div>' : '') +
+                '<div class="wds-shop">' +
+                    '<div class="wds-slot wds-row-1">' + shelf(top) + '</div>' +
+                    '<div class="wds-slot wds-row-2">' + shelf(eyeLevel) + '</div>' +
+                    '<div class="wds-slot wds-row-3">' + shelf(lower) + '</div>' +
+                    '<img class="wds-clerk" src="' + clerk + '" alt="" decoding="async">' +
+                    '<div class="wds-fg-counter"></div>' +
+                    '<img class="wds-fg-register" src="assets/store-register.png" alt="" decoding="async">' +
+                    '<div class="wds-say" role="status">' + mood.say + '</div>' +
+                '</div>' +
+                '<div class="wds-compact">' +
+                    '<div class="wds-compact-top"><img src="' + clerk + '" alt="" decoding="async">' +
+                        '<div class="wds-compact-say">' + mood.say + '</div></div>' +
+                    '<div class="wds-rows">' + (items.length ? items.map(wdsRow).join('')
+                        : '<p class="wds-empty">Nothing is for sale right now.</p>') + '</div>' +
+                '</div>' +
+                (items.length > 9 ? '<p class="wds-more">More items are in the store list on your page.</p>' : '') +
+                heldHtml +
+            '</div>';
+        }
+
+        function wpRenderShop() {
+            if (!_wpShopOpen) return;
+            // Switched to the plain list while they were inside: see them out.
+            if (_wpStore && _wpStore.look === 'plain') { wpCloseShop(); return; }
+            const el = wpById('wpShop');
+            if (el) el.innerHTML = wdsShopHtml();
+        }
+
+        function wpOpenShop() {
+            let el = wpById('wpShop');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'wpShop';
+                el.className = 'wds-root';
+                el.setAttribute('role', 'dialog');
+                el.setAttribute('aria-modal', 'true');
+                el.setAttribute('aria-label', 'Wildcat Digital Store');
+                document.body.appendChild(el);
+            }
+            _wpShopOpen = true;
+            el.hidden = false;
+            // THE PAGE BEHIND IS OUT OF REACH while the shop is open: Tab
+            // cannot wander onto buttons the shop is covering. Dialogs are
+            // appended to <body>, outside it, so they still work.
+            const behind = wpById('studentPassView');
+            if (behind) behind.inert = true;
+            wpRenderShop();
+            const leave = el.querySelector('[data-wp-shop-close]');
+            if (leave && leave.focus) leave.focus();
+        }
+
+        function wpCloseShop() {
+            const wasOpen = _wpShopOpen;
+            _wpShopOpen = false;
+            const el = wpById('wpShop');
+            if (el) { el.hidden = true; el.innerHTML = ''; }
+            const behind = wpById('studentPassView');
+            if (behind) behind.inert = false;
+            // Back to the door they came in by, so the keyboard is not lost.
+            if (wasOpen) {
+                const door = document.querySelector('[data-wp-shop-open]');
+                if (door && door.focus) door.focus();
+            }
+        }
+
         let _wpBuyInFlight = false;
         /**
          * The press whose answer never arrived: { rewardId, attemptId }.
@@ -19453,6 +19705,11 @@
             return 'refused';
         }
 
+        /** Escaped, with the admin's line breaks kept. */
+        function wpMultiline(text) {
+            return wpEsc(String(text == null ? '' : text)).replace(/\r?\n/g, '<br>');
+        }
+
         /** The receipt, in a dialog that stays until they close it. */
         function wpShowPurchaseReceipt(res) {
             const body =
@@ -19462,6 +19719,12 @@
                         (res.totalCost != null ? ' \u2014 $' + wpEsc(String(res.totalCost)) : '') + '</p>' +
                     (res.balanceAfter != null
                         ? '<p>You have $' + wpEsc(String(res.balanceAfter)) + ' left.</p>'
+                        : '') +
+                    // THE ADMIN'S MESSAGE FOR BUYERS: where to go, when, what
+                    // to bring. Set on the reward form; kept under "Your
+                    // purchases" too, so it can be read again later.
+                    (res.purchaseMessage
+                        ? '<div class="wp-receipt-msg">' + wpMultiline(res.purchaseMessage) + '</div>'
                         : '') +
                     '<p>Show this code to collect it. It stays on your store card too.</p>' +
                 '</div>';
@@ -19514,6 +19777,19 @@
             if (typeof document === 'undefined' || !document.addEventListener) return;
             _wpBuyWired = true;
             console.log('[store] buy buttons wired');
+            // THE SHOP'S DOORS, on the same capture phase and for the same
+            // reason as Buy below: nothing on the card shell can swallow them.
+            document.addEventListener('click', function (ev) {
+                const t = ev.target && ev.target.closest;
+                if (!t) return;
+                if (ev.target.closest('[data-wp-shop-open]')) { ev.preventDefault(); wpOpenShop(); return; }
+                if (ev.target.closest('[data-wp-shop-close]')) { ev.preventDefault(); wpCloseShop(); }
+            }, true);
+            document.addEventListener('keydown', function (ev) {
+                // Escape leaves the shop -- unless a dialog is open, which
+                // Escape closes first.
+                if (ev.key === 'Escape' && _wpShopOpen && !document.getElementById('wcDialogBackdrop')) wpCloseShop();
+            });
         // CAPTURE PHASE, and a visible failure.
         //
         // Reported 2026-09-16: "clicking buy does nothing". The button and its
@@ -21097,6 +21373,8 @@
         // who opened the page at 6:40 sees the store open at 6:45 by itself.
         // Null until the portal has drawn a store it can compare against.
         let wpStoreOpenSeen = null;
+        // The store's look as last drawn ('scene' or 'plain'), watched the same way.
+        let wpStoreLookSeen = null;
         // True while the last portal load could not draw the cards. The poll
         // retries the load on its next good answer, instead of leaving a
         // blanked page until a sync or a pass change happens to redraw it.
@@ -21789,6 +22067,19 @@
                         return;
                     }
                 }
+                // And the LOOK: an admin switching to the plain list reaches
+                // a page that is already open, and closes a shop in use.
+                const nextLook = (version && (version.storeLook === 'scene' || version.storeLook === 'plain'))
+                    ? version.storeLook : null;
+                if (nextLook !== null) {
+                    if (wpStoreLookSeen === null) {
+                        wpStoreLookSeen = nextLook;
+                    } else if (nextLook !== wpStoreLookSeen) {
+                        wpStoreLookSeen = nextLook;
+                        await loadStudentPortal();
+                        return;
+                    }
+                }
 
                 const next = wpPassSignature(card && card.hallPass);
                 if (wpWatchSignature === null) { wpWatchSignature = next; return; }
@@ -21820,7 +22111,10 @@
             // reload on their first poll.
             wpSyncVersion = null;
             wpStoreOpenSeen = null;
+            wpStoreLookSeen = null;
             _wpLoadFailed = false;
+            // The next child on a shared machine must not walk into this one's shop.
+            wpCloseShop();
             // A retry token belongs to the child who pressed Buy. The next
             // child on a shared machine must not send it (the server refuses
             // it anyway: attempt_mismatch).
@@ -21930,6 +22224,11 @@
             // first answer: a store that opened between this load and the
             // first poll would otherwise become the baseline and never redraw.
             if (_wpStore && typeof _wpStore.storeOpen === 'boolean') wpStoreOpenSeen = _wpStore.storeOpen;
+            if (_wpStore && (_wpStore.look === 'scene' || _wpStore.look === 'plain')) wpStoreLookSeen = _wpStore.look;
+            // THE SHOP FOLLOWS THE STORE'S ANSWER AT ONCE, before anything
+            // below can return early: a reload that fails on the pass card
+            // must not leave a stale Buy and the old balance in the shop.
+            if (_wpShopOpen) wpRenderShop();
 
             if (!pass) {
                 _wpLoadFailed = true;
@@ -28529,15 +28828,23 @@
                             : campus === 'high' ? 'High School only'
                             : campus === null ? 'Campus setting invalid' : '',
                         typeof limit === 'number' ? `${limit} per student` : '',
+                        (campus === 'middle' || campus === 'high') && reward.showOtherCampus === true
+                            ? 'Other campus can see it' : '',
+                        reward.purchaseMessage ? 'Has a buyer message' : '',
                     ].filter(Boolean);
                     // A STUDENT-STORE REWARD IS BOUGHT BY THE STUDENT. Selling it
                     // here would move stock from this tab's copy, which is the
                     // one number the server keeps for itself while the sale is
                     // on -- so the button says where it is bought instead.
                     const purchaseBtn = selfServe
-                        ? `<span class="receipt-meta">Students buy this on their Chromebook</span>`
+                        ? ''
                         : `<button class="btn" onclick="openRedeemRewardModal('${reward.id}')"
                                     ${paused || outOfStock ? 'disabled' : ''}>Purchase for student</button>`;
+                    // On its own line: squeezed into the button row it pushed
+                    // Retire onto a line of its own.
+                    const selfServeNote = selfServe
+                        ? `<p class="reward-selfserve-note">Students buy this on their Chromebook</p>`
+                        : '';
                     return `
                     <div class="wc-card reward-card${paused || outOfStock ? ' is-unavailable' : ''}">
                         <div class="reward-card-head">
@@ -28550,6 +28857,10 @@
                         <div class="reward-tags">${tags.map(t => `<span class="reward-tag">${escapeHtml(t)}</span>`).join('')}</div>
                         ${paused ? '<div class="reward-flag">Paused: not purchasable</div>' : ''}
                         ${outOfStock && !paused ? '<div class="reward-flag">Out of stock</div>' : ''}
+                        ${selfServeNote}
+                        ${reward.purchaseMessage
+                            ? `<div class="reward-buyer-msg"><span class="receipt-meta">Buyers are told:</span> ${escapeHtml(reward.purchaseMessage).replace(/\r?\n/g, '<br>')}</div>`
+                            : ''}
                         <div class="reward-actions">
                             ${purchaseBtn}
                             <button class="btn btn-secondary btn-sm" onclick="openEditRewardModal('${reward.id}')">Edit</button>
@@ -29589,7 +29900,16 @@
                     if (el && el.dataset.touched === '1') typed[id] = el.value;
                 });
             }
-            panel.innerHTML = '<div class="store-switch-line">' + line + '</div>' + seen + who + testersLine +
+            // HOW IT LOOKS TO STUDENTS: the Wildcat Digital Store scene, or the
+            // plain list. One click either way, and it changes nothing about
+            // what can be bought.
+            const plain = st.look === 'plain';
+            const lookLine = '<div class="receipt-meta">Students see: <strong>' +
+                (plain ? 'the plain list' : 'the Wildcat Digital Store (the shop with the clerk)') + '</strong>' +
+                (admin ? ' <button type="button" class="btn btn-secondary btn-sm store-look-btn" onclick="storeLookAction(\'' +
+                    (plain ? 'scene' : 'plain') + '\')">' + (plain ? 'Use the Wildcat shop' : 'Use the plain list') + '</button>' : '') +
+                '</div>';
+            panel.innerHTML = '<div class="store-switch-line">' + line + '</div>' + seen + who + lookLine + testersLine +
                 buttons + form + testersForm;
             Object.keys(typed).forEach(function (id) {
                 const el = document.getElementById(id);
@@ -29598,6 +29918,27 @@
             panel.querySelectorAll('.store-switch-form input').forEach(function (el) {
                 el.addEventListener('input', function () { el.dataset.touched = '1'; });
             });
+        }
+
+        async function storeLookAction(look) {
+            if (!correctionIsAdmin()) { showAlert('\u26A0\uFE0F Only an admin can change how the store looks.'); return; }
+            if (look !== 'scene' && look !== 'plain') return;
+            const ok = await showConfirm(look === 'scene'
+                ? 'Show students the Wildcat Digital Store?\nThey get a button into the shop with the clerk. Buying works exactly the same.'
+                : 'Show students the plain list instead?\nThe shop button disappears. Buying works exactly the same.',
+                { confirmLabel: look === 'scene' ? 'Use the Wildcat shop' : 'Use the plain list' });
+            if (!ok) return;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) { showAlert('\u274C You are not signed in.'); return; }
+            try {
+                _storeSwitchState = await auth.convexMutation('studentStore:setStore',
+                    { change: 'look', look: look }, session.idToken);
+                renderStoreSwitch();
+                showToast(look === 'scene' ? 'Students now see the Wildcat shop' : 'Students now see the plain list', 'success');
+            } catch (e) {
+                showAlert('\u274C That did not change.\n' + ((e && e.message) || e));
+            }
         }
 
         async function saveStoreTesters() {
@@ -29718,6 +30059,7 @@
         // Reward Management
         function showAddRewardModal() {
             document.getElementById('addRewardModal').classList.remove('hidden');
+            syncRewardStoreFields('new');
         }
 
         function closeAddRewardModal() {
@@ -29743,6 +30085,8 @@
                 ? '' : (el(prefix + 'RewardLimit') || {}).value).trim();
             const selfServe = el(prefix + 'RewardStudentPurchasable');
             const campus = el(prefix + 'RewardCampus');
+            const seeIt = el(prefix + 'RewardShowOtherCampus');
+            const message = el(prefix + 'RewardMessage');
             return {
                 name: ((el(prefix + 'RewardName') || {}).value || '').trim(),
                 cost: parseInt((el(prefix + 'RewardCost') || {}).value, 10),
@@ -29756,7 +30100,11 @@
                 // become 1.
                 studentPurchasable: !!(selfServe && selfServe.checked),
                 campus: campus ? campus.value : 'all',
-                limitPerStudent: limitRaw === '' ? null : Number(limitRaw)
+                limitPerStudent: limitRaw === '' ? null : Number(limitRaw),
+                // Meaningless for an Everyone item, so never saved as on for
+                // one: it would switch itself on later if the campus changed.
+                showOtherCampus: !!(seeIt && seeIt.checked) && !!campus && campus.value !== 'all',
+                purchaseMessage: message ? String(message.value || '') : ''
             };
         }
 
@@ -29772,6 +30120,33 @@
             }
             const limit = document.getElementById(prefix + 'RewardLimit');
             if (limit) limit.value = r.limitPerStudent == null ? '' : r.limitPerStudent;
+            const seeIt = document.getElementById(prefix + 'RewardShowOtherCampus');
+            if (seeIt) seeIt.checked = r.showOtherCampus === true;
+            const message = document.getElementById(prefix + 'RewardMessage');
+            if (message) message.value = r.purchaseMessage || '';
+            syncRewardStoreFields(prefix);
+        }
+
+        /**
+         * Keep the form honest as it is filled in: "let the other campus see
+         * it" is greyed out for an Everyone item, and the message box counts
+         * its characters -- the box stops at 500, and a paste that ran past it
+         * used to lose its tail (often the date or the room) without a word.
+         */
+        function syncRewardStoreFields(prefix) {
+            const campus = document.getElementById(prefix + 'RewardCampus');
+            const seeIt = document.getElementById(prefix + 'RewardShowOtherCampus');
+            if (campus && seeIt) {
+                const everyone = campus.value === 'all';
+                seeIt.disabled = everyone;
+                if (everyone) seeIt.checked = false;
+            }
+            const message = document.getElementById(prefix + 'RewardMessage');
+            const count = document.getElementById(prefix + 'RewardMessageCount');
+            if (message && count) {
+                const n = String(message.value || '').length;
+                count.textContent = n + ' / 500' + (n >= 500 ? ' \u2014 that is the limit; anything past it was cut off' : '');
+            }
         }
 
         function addNewReward() {

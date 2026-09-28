@@ -129,7 +129,8 @@ console.log("\nTHE OFFICE CANNOT SELL AROUND THE RULES\n");
 
   const card = script.slice(script.indexOf("function updateRewardsStore()"), script.indexOf("function updateRedemptionHistory()"));
   check("the card says where a student-store item is bought, instead of a sell button",
-    /const purchaseBtn = selfServe\s*\?\s*`<span class="receipt-meta">Students buy this on their Chromebook<\/span>`/.test(card));
+    /const purchaseBtn = selfServe\s*\?\s*''/.test(card)
+    && /const selfServeNote = selfServe\s*\?\s*`<p class="reward-selfserve-note">Students buy this on their Chromebook<\/p>`/.test(card));
   check("and shows who may buy it", /Middle School only/.test(card) && /High School only/.test(card) && /per student/.test(card));
 }
 
@@ -209,8 +210,9 @@ console.log("\nTHE STUDENT STORE SWITCH\n");
 console.log("\nA STUDENT'S PAGE NOTICES THE STORE OPENING\n");
 {
   // For THIS student: a dry-run tester sees it open while everyone else does not.
-  check("the cheap poll carries whether the store is open, for this student",
-    /const me = await requireStudentSelf\(ctx\);/.test(views) && /storeOpen: await storeIsOpen\(ctx, me\),/.test(views));
+  check("the cheap poll carries whether the store is open, and its look, for this student",
+    /const me = await requireStudentSelf\(ctx\);/.test(views) && /const store = await storeSignal\(ctx, me\);/.test(views)
+    && /storeOpen: store\.open,/.test(views) && /storeLook: store\.look,/.test(views));
   const poll = lift("wpPollPassOnce");
   check("the portal redraws when it changes",
     /nextStore !== wpStoreOpenSeen\) \{\s*wpStoreOpenSeen = nextStore;\s*await loadStudentPortal\(\);/.test(poll));
@@ -349,6 +351,65 @@ console.log("\nTHE SECOND REVIEW (2026-09-28)\n");
   check("a print-list click means the box it was on, not a list rebuilt since",
     /const c = _purchaseListChoicesShown\[i\];/.test(lift("togglePurchaseListPickAt"))
     && /_purchaseListChoicesShown = choices;/.test(lift("renderPurchaseListSheet")));
+}
+
+console.log("\nTHE TWO NEW SETTINGS ON THE FORM (2026-09-28)\n");
+{
+  check("both forms have 'let the other campus see it' and the buyer message",
+    ["new", "edit"].every((p) => html.includes(`id="${p}RewardShowOtherCampus"`)
+      && new RegExp(`<textarea id="${p}RewardMessage"[^>]*maxlength="500"`).test(html)));
+  const read = lift("readRewardForm");
+  check("the form reads both", /showOtherCampus: !!\(seeIt && seeIt\.checked\)/.test(read)
+    && /purchaseMessage: message \? String\(message\.value \|\| ''\) : ''/.test(read));
+  const fill = lift("fillRewardStoreFields");
+  check("and fills both back in when editing", /seeIt\.checked = r\.showOtherCampus === true/.test(fill)
+    && /message\.value = r\.purchaseMessage \|\| ''/.test(fill));
+
+  const r = WS.normalizeReward({ id: "p", name: "P", cost: 1, showOtherCampus: true,
+    purchaseMessage: "  Gym, Oct 1\nat lunch  " }, 0, {});
+  check("a saved reward keeps both", r.showOtherCampus === true && r.purchaseMessage === "Gym, Oct 1\nat lunch");
+  const old = WS.normalizeReward({ id: "x", name: "X", cost: 1 }, 0, {});
+  check("an older reward has neither", old.showOtherCampus === false && old.purchaseMessage === null);
+  const cleared = WS.applyRewardEdit(r, { showOtherCampus: false, purchaseMessage: "   " }, 0, {});
+  check("both can be turned off by an edit", cleared.showOtherCampus === false && cleared.purchaseMessage === null);
+  const kept = WS.applyRewardEdit(r, { description: "x" }, 0, {});
+  check("an edit that does not mention them leaves them alone",
+    kept.showOtherCampus === true && kept.purchaseMessage === "Gym, Oct 1\nat lunch");
+  check("a message over 500 characters is refused",
+    !WS.validateReward({ name: "X", cost: 1, purchaseMessage: "y".repeat(501) }).ok
+    && WS.validateReward({ name: "X", cost: 1, purchaseMessage: "y".repeat(500) }).ok);
+  const card = script.slice(script.indexOf("function updateRewardsStore()"), script.indexOf("function updateRedemptionHistory()"));
+  check("the item's card says when the other campus can see it, and when it has a message",
+    /'Other campus can see it'/.test(card) && /'Has a buyer message'/.test(card));
+}
+
+console.log("\nTHE FORM HELPS (review, 2026-09-28)\n");
+{
+  const sync = lift("syncRewardStoreFields");
+  check("'let the other campus see it' is greyed out and cleared for an Everyone item",
+    /seeIt\.disabled = everyone;\s*if \(everyone\) seeIt\.checked = false;/.test(sync));
+  check("and never saved as on for one", /campus\.value !== 'all',/.test(lift("readRewardForm")));
+  check("the message box counts to 500, and says when a paste was cut off",
+    /n \+ ' \/ 500'/.test(sync) && /anything past it was cut off/.test(sync)
+    && ["new", "edit"].every((p) => html.includes(`id="${p}RewardMessageCount"`)
+      && html.includes(`oninput="syncRewardStoreFields('${p}')"`)
+      && html.includes(`onchange="syncRewardStoreFields('${p}')"`)));
+  check("the add form starts in step", /syncRewardStoreFields\('new'\);/.test(lift("showAddRewardModal")));
+  const card = script.slice(script.indexOf("function updateRewardsStore()"), script.indexOf("function updateRedemptionHistory()"));
+  check("the item's card shows the buyer message itself, escaped",
+    /Buyers are told:<\/span> \$\{escapeHtml\(reward\.purchaseMessage\)\.replace/.test(card));
+}
+
+console.log("\nTHE LOOK SWITCH ON THE PANEL (2026-09-28)\n");
+{
+  const render = lift("renderStoreSwitch");
+  check("the panel says which look students get", /the Wildcat Digital Store \(the shop with the clerk\)/.test(render)
+    && /the plain list/.test(render));
+  check("with a one-click switch, for admins only", /\(admin \? ' <button[^']*store-look-btn" onclick="storeLookAction/.test(render));
+  const act = lift("storeLookAction");
+  check("which asks first and goes through the admin-only mutation",
+    /correctionIsAdmin\(\)/.test(act) && /await showConfirm\(/.test(act)
+    && /'studentStore:setStore',\s*\{ change: 'look', look: look \}/.test(act));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

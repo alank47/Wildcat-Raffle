@@ -553,6 +553,119 @@ console.log("\nA CHILD'S RECEIPT OUTLIVES THE SALE\n");
   M.who.student = null;
 }
 
+console.log("\nLETTING THE OTHER CAMPUS SEE IT (2026-09-28, a switch the owner asked for)\n");
+{
+  const d = makeDb(seed());
+  M.who.student = "st_7001";
+  const hidden = (await S.myStore.handler(d.ctx, {})).items.map((i) => i.id);
+  check("switched off (the default), a middle schooler does not see the high school pass", !hidden.includes("pup_hs"));
+  reward(d, "pup_hs").showOtherCampus = true;
+  const shown = (await S.myStore.handler(d.ctx, {})).items.find((i) => i.id === "pup_hs");
+  check("switched on, they see it", !!shown);
+  check("but cannot buy it, and are told whose it is",
+    shown.canBuy === false && shown.code === "wrong_campus" && /High School/.test(shown.why));
+  const tried = await S.purchase.handler(d.ctx, { rewardId: "pup_hs", attemptId: "see-not-buy" });
+  check("and the server still refuses the purchase", tried.ok === false && tried.code === "wrong_campus"
+    && student(d, "7001").wildcatCashBalance === 2000);
+  check("the pass for their own campus is still listed first, as the one they can buy",
+    (await S.myStore.handler(d.ctx, {})).items[0].id === "pup_ms");
+  // THE TIE THE REVIEW FOUND: a child who cannot afford either pass, with
+  // the HIGH school pass saved first, used to see the other campus's pass on
+  // top. Both switched on, the catalogue in the unlucky order.
+  const hsFirst = makeDb(seed({ legacyMirror: [rewardRow({ ...HS_PASS, showOtherCampus: true }),
+    rewardRow({ ...MS_PASS, showOtherCampus: true }), rewardRow({ ...HOMEWORK, cost: 50 })] }));
+  M.who.student = "st_7003";
+  const poor = (await S.myStore.handler(hsFirst.ctx, {})).items.map((i) => i.id);
+  check("a child who can afford neither still sees their own pass above the other campus's",
+    poor.indexOf("pup_ms") < poor.indexOf("pup_hs"), poor.join(","));
+  const cheapOther = makeDb(seed({ legacyMirror: [rewardRow({ ...HS_PASS, cost: 50, showOtherCampus: true }),
+    rewardRow({ ...MS_PASS })] }));
+  const cheap = (await S.myStore.handler(cheapOther.ctx, {})).items;
+  check("and a cheap other-campus item is never the first thing they see",
+    cheap[0].id !== "pup_hs" && cheap.find((i) => i.id === "pup_hs").otherCampus === true, cheap.map((i) => i.id).join(","));
+  M.who.student = "st_7001";
+  M.who.student = null;
+}
+
+console.log("\nTHE MESSAGE A BUYER IS TOLD (2026-09-28)\n");
+{
+  const d = makeDb(seed());
+  reward(d, "pup_ms").purchaseMessage = "  Show this code at the gym door\non Oct 1 at lunch.  ";
+  M.who.student = "st_7001";
+  const beforeView = await S.myStore.handler(d.ctx, {});
+  check("it is not shown before they buy, anywhere in their store",
+    !JSON.stringify(beforeView).includes("gym door"));
+  const r = await S.purchase.handler(d.ctx, { rewardId: "pup_ms", attemptId: "msg-1" });
+  check("the purchase answer carries it, trimmed, line break kept",
+    r.ok === true && r.purchaseMessage === "Show this code at the gym door\non Oct 1 at lunch.");
+  const again = await S.purchase.handler(d.ctx, { rewardId: "pup_ms", attemptId: "msg-1" });
+  check("a repeat of the same press carries it too", again.alreadyBought === true && again.purchaseMessage === r.purchaseMessage);
+  reward(d, "pup_ms").purchaseMessage = "Moved to Thursday at lunch.";
+  const after = await S.myStore.handler(d.ctx, {});
+  check("'Your purchases' shows the item's CURRENT message, so a changed pickup reaches every buyer",
+    after.myPurchases[0].message === "Moved to Thursday at lunch.");
+  check("the catalogue itself does not carry it: 'Your purchases' is where it is drawn",
+    after.items.find((i) => i.id === "pup_ms").purchaseMessage === undefined);
+  reward(d, "pup_ms").retiredAt = PAST(1);
+  check("still there after the item is retired",
+    (await S.myStore.handler(d.ctx, {})).myPurchases[0].message === "Moved to Thursday at lunch.");
+  reward(d, "pup_ms").purchaseMessage = "x".repeat(900);
+  check("and never longer than 500 characters, whatever was saved",
+    (await S.myStore.handler(d.ctx, {})).myPurchases[0].message.length === 500);
+  reward(d, "pup_ms").purchaseMessage = "   ";
+  check("a blank message is no message", (await S.myStore.handler(d.ctx, {})).myPurchases[0].message === null);
+  M.who.student = null;
+  const none = await buyAs(makeDb(seed()), "9001", "pup_hs");
+  check("an item with no message answers null, not an empty box", none.ok === true && none.purchaseMessage === null);
+}
+
+console.log("\nHOW THE STORE LOOKS (2026-09-28)\n");
+{
+  const d = makeDb(seed({ appState: [] }));
+  M.who.student = "st_7001";
+  check("the Wildcat shop is the look unless someone chose plain", (await S.myStore.handler(d.ctx, {})).look === "scene");
+  await S.scheduleStore.handler(d.ctx, { opensAt: FUTURE(9), closesAt: FUTURE(17) });
+  const token = d.tables.appState[0].value.token;
+  const st = await S.setStore.handler(d.ctx, { change: "look", look: "plain" });
+  check("an admin can switch to the plain list", st.look === "plain" && (await S.myStore.handler(d.ctx, {})).look === "plain");
+  check("without touching the schedule or its jobs",
+    d.tables.appState[0].value.token === token && d.tables.appState[0].value.opensAt !== null);
+  let bad = false;
+  try { await S.setStore.handler(d.ctx, { change: "look", look: "neon" }); } catch { bad = true; }
+  check("only the two looks exist", bad);
+  M.who.adminOk = false;
+  let refused = false;
+  try { await S.setStore.handler(d.ctx, { change: "look", look: "scene" }); } catch { refused = true; }
+  M.who.adminOk = true;
+  check("and only an admin can change it", refused);
+  await S.setStoreLook.handler(d.ctx, { look: "scene" });
+  check("the CLI can switch it back", (await S.storeOpenState.handler(d.ctx, {})).look === "scene");
+
+  // THE REVIEW FOUND IT: open, close and schedule rebuilt the switch without
+  // the look, so "plain" quietly became the shop again.
+  const d2 = makeDb(seed({ appState: [] }));
+  await S.setStore.handler(d2.ctx, { change: "look", look: "plain" });
+  await S.setStore.handler(d2.ctx, { change: "open" });
+  check("'Open now' keeps the plain list", (await S.myStore.handler(d2.ctx, {})).look === "plain");
+  await S.setStore.handler(d2.ctx, { change: "close" });
+  check("'Close now' keeps it", (await S.myStore.handler(d2.ctx, {})).look === "plain");
+  await S.setStore.handler(d2.ctx, { change: "schedule", opensAt: FUTURE(2), closesAt: FUTURE(5) });
+  check("a schedule keeps it", (await S.myStore.handler(d2.ctx, {})).look === "plain");
+  await S.setStoreOpen.handler(d2.ctx, { open: true });
+  await S.scheduleStore.handler(d2.ctx, { closesAt: FUTURE(4) });
+  check("and so do the CLI switches", (await S.myStore.handler(d2.ctx, {})).look === "plain");
+
+  // "Opens Soon" is only true when an opening is scheduled.
+  const d3 = makeDb(seed({ appState: [] }));
+  await S.scheduleStore.handler(d3.ctx, { opensAt: FUTURE(3) });
+  check("shut with an opening ahead: opens soon", (await S.myStore.handler(d3.ctx, {})).opensSoon === true);
+  await S.setStore.handler(d3.ctx, { change: "close" });
+  check("shut with no plan: not 'opens soon'", (await S.myStore.handler(d3.ctx, {})).opensSoon === false);
+  await S.setStore.handler(d3.ctx, { change: "open" });
+  check("open: not 'opens soon'", (await S.myStore.handler(d3.ctx, {})).opensSoon === false);
+  M.who.student = null;
+}
+
 console.log("\nTHE TEETH: re-break the shipped code, and these must fail\n");
 {
   const broken = (key, from, to) => {

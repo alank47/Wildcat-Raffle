@@ -86,6 +86,10 @@
         rewardCampusOf({ campus: patch.campus }) === null) {
       errors.push('Campus must be everyone, Middle School or High School.');
     }
+    if (patch && typeof patch.purchaseMessage === 'string' &&
+        patch.purchaseMessage.trim().length > PURCHASE_MESSAGE_MAX) {
+      errors.push('The purchase message must be ' + PURCHASE_MESSAGE_MAX + ' characters or fewer.');
+    }
     if (patch && patch.limitPerStudent != null && patch.limitPerStudent !== '') {
       var lim = patch.limitPerStudent;
       if (!isFiniteNumber(lim) || lim < 1 || Math.floor(lim) !== lim) {
@@ -105,6 +109,9 @@
   // be able to buy Middle school", and one per student.
   // ---------------------------------------------------------------------
   var CAMPUSES = ['all', 'middle', 'high'];
+
+  /** Same cap as convex/studentStoreRules.ts PURCHASE_MESSAGE_MAX. */
+  var PURCHASE_MESSAGE_MAX = 500;
 
   /** 'all' | 'middle' | 'high', or null for a value that is not a campus. */
   function rewardCampusOf(reward) {
@@ -173,6 +180,11 @@
       // so the server refuses it loudly instead of this quietly "fixing" it.
       campus: rewardCampusOf(r) === null ? r.campus : rewardCampusOf(r),
       limitPerStudent: rewardLimitOf(r) === undefined ? r.limitPerStudent : rewardLimitOf(r),
+      // Whether the other campus may SEE a campus-only reward (never buy it).
+      showOtherCampus: r.showOtherCampus === true,
+      // What a buyer is told after buying. Null when there is none.
+      purchaseMessage: (typeof r.purchaseMessage === 'string' && r.purchaseMessage.trim())
+        ? r.purchaseMessage.trim() : null,
       // WHEN A PERSON LAST TYPED A STOCK NUMBER. The server keeps its own
       // count for a student-store reward unless this is newer than what it
       // holds (legacyData keepServerStock), so an edit from a tab that loaded
@@ -208,6 +220,11 @@
     if (patch && 'studentPurchasable' in patch) next.studentPurchasable = patch.studentPurchasable === true;
     if (patch && 'campus' in patch) {
       next.campus = (patch.campus == null || patch.campus === '') ? 'all' : String(patch.campus).trim().toLowerCase();
+    }
+    if (patch && 'showOtherCampus' in patch) next.showOtherCampus = patch.showOtherCampus === true;
+    if (patch && 'purchaseMessage' in patch) {
+      next.purchaseMessage = (typeof patch.purchaseMessage === 'string' && patch.purchaseMessage.trim())
+        ? patch.purchaseMessage.trim() : null;
     }
     if (patch && 'limitPerStudent' in patch) {
       next.limitPerStudent = (patch.limitPerStudent == null || patch.limitPerStudent === '')
@@ -982,6 +999,7 @@
     rewardLimitOf: rewardLimitOf,
     ownedUnits: ownedUnits,
     campusName: campusName,
+    PURCHASE_MESSAGE_MAX: PURCHASE_MESSAGE_MAX,
     canPurchase: canPurchase,
     buildPurchase: buildPurchase,
     canFulfill: canFulfill,

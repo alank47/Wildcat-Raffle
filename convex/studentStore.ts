@@ -9,6 +9,7 @@ import {
   normalizeQuantity,
   ownedUnits,
   purchaseCounterDelta,
+  purchaseMessageOf,
   rewardCampus,
   rewardLimit,
   studentCampus,
@@ -73,25 +74,46 @@ async function storeRow(ctx: any) {
     .unique();
 }
 
-async function storeState(ctx: any, student?: any): Promise<{ open: boolean; reason: string; testing: boolean }> {
+async function storeState(ctx: any, student?: any): Promise<{
+  open: boolean; reason: string; testing: boolean; look: "scene" | "plain"; opensSoon: boolean;
+}> {
   const row = await storeRow(ctx);
-  const s = effectiveStoreState(row?.value as Record<string, unknown> | undefined, Date.now(),
+  const nowMs = Date.now();
+  const s = effectiveStoreState(row?.value as Record<string, unknown> | undefined, nowMs,
     student ? String(student.studentNumber ?? "") : null);
-  return { open: s.open, reason: s.reason, testing: s.testing };
+  return {
+    open: s.open, reason: s.reason, testing: s.testing, look: storeLookOf(row?.value),
+    // Shut, with an opening still ahead: "Opens Soon" is true. Shut after a
+    // sale, or shut with no plan, it is not -- the shelf just says Closed.
+    opensSoon: !s.open && !!s.opensAt && Date.parse(s.opensAt) > nowMs,
+  };
 }
 
 /**
- * Whether the student store is open, for the portal's cheap 15-second poll.
- *
- * EXPORTED FOR views_app:myDataVersion, which every open portal already asks
- * four times a minute. Riding that call is what lets a student who opened the
- * page at 6:40 see the store open at 6:45 without reloading, and it costs no
- * extra request -- 620 portals polling a third query would be ~2,500 more
- * calls a minute for one boolean.
+ * Whether the store is open and how it looks, for the portal's cheap 15-second
+ * poll. EXPORTED FOR views_app:myDataVersion, which every open portal already
+ * asks four times a minute: riding that call lets a student who opened the
+ * page at 6:40 see the store open at 6:45 (or an admin's switch to the plain
+ * list) without reloading, at no extra request.
  */
-export async function storeIsOpen(ctx: any, student?: any): Promise<boolean> {
-  return (await storeState(ctx, student)).open;
+export async function storeSignal(ctx: any, student?: any): Promise<{ open: boolean; look: "scene" | "plain" }> {
+  const st = await storeState(ctx, student);
+  return { open: st.open, look: st.look };
 }
+
+/**
+ * HOW THE STORE LOOKS TO A STUDENT: the Wildcat Digital Store scene (the
+ * clerk behind the counter, stock on the shelves) or the plain list panel.
+ * Only the look -- buying, the campus lock and the limit are the same code
+ * either way. Absent means the scene, which the owner chose for the first
+ * sale (2026-09-28: "Yes, build it for Tuesday"); "plain" is the one-click
+ * way back if it looks wrong on the day.
+ */
+function storeLookOf(value: unknown): "scene" | "plain" {
+  const v = (value ?? {}) as Record<string, unknown>;
+  return v.look === "plain" ? "plain" : "scene";
+}
+
 
 /** Every reward row in the catalogue, with the mirror row that holds it. */
 async function rewardRows(ctx: any) {
@@ -194,8 +216,12 @@ async function storeForStudent(ctx: any, student: any) {
   const receipts = student ? await receiptPayloads(ctx) : [];
   const mine = appId ? receipts.filter((r) => String(r.studentId ?? "") === appId) : [];
 
-  const rewards = (await rewardRows(ctx))
-    .map((r: any) => r.payload as StoreReward)
+  const allRewards = (await rewardRows(ctx)).map((r: any) => r.payload as StoreReward);
+  // Every reward by id, retired ones included, so a purchase can still show
+  // the message its item carries after the item has left the store.
+  const rewardById = new Map<string, StoreReward>(
+    allRewards.filter(Boolean).map((r: StoreReward) => [String(r.id ?? ""), r] as [string, StoreReward]));
+  const rewards = allRewards
     .filter((r: StoreReward) => r && !r.retiredAt && r.available !== false)
     // THE OTHER CAMPUS'S ITEMS ARE NOT SHOWN AT ALL. The owner's words: "Middle
     // school should only be able to buy Middle school." A card a child can see
@@ -207,7 +233,10 @@ async function storeForStudent(ctx: any, student: any) {
     .filter((r: StoreReward) => {
       const c = rewardCampus(r);
       if (c === null) return false;
-      return c === "all" || myCampus === null || c === myCampus;
+      // An admin can let the other campus SEE it (showOtherCampus). They still
+      // cannot buy it: the purchase refuses with "only for High School
+      // students", and that is what their card says instead of a Buy button.
+      return c === "all" || myCampus === null || c === myCampus || r.showOtherCampus === true;
     });
 
   const balance = Number(student?.wildcatCashBalance) || 0;
@@ -233,6 +262,10 @@ async function storeForStudent(ctx: any, student: any) {
         campus: rewardCampus(reward),
         limitPerStudent: typeof limit === "number" ? limit : null,
         owned,
+        // THE OTHER CAMPUS'S ITEM, shown because an admin let them see it.
+        // Named here so the portal and the sort do not have to infer it
+        // from a refusal code that earlier refusals can mask.
+        otherCampus: rewardCampus(reward) !== "all" && myCampus !== null && rewardCampus(reward) !== myCampus,
         // Their own receipt codes for this reward, newest first, so the card
         // can say "you bought this, show WC-XXXXXX" long after the dialog that
         // announced it has gone. The code is what they take to the office.
@@ -254,12 +287,17 @@ async function storeForStudent(ctx: any, student: any) {
     // being told the wrong thing first.
     .sort((a: any, b: any) => {
       if (a.canBuy !== b.canBuy) return a.canBuy ? -1 : 1;
+      // The other campus's item last, always: it can never be theirs, and a
+      // tie on price would otherwise put it above their own pass.
+      if (a.otherCampus !== b.otherCampus) return a.otherCampus ? 1 : -1;
       if (a.inStudentStore !== b.inStudentStore) return a.inStudentStore ? -1 : 1;
       return (a.shortfall ?? 0) - (b.shortfall ?? 0);
     });
 
   return {
     storeOpen: state.open,
+    look: state.look,
+    opensSoon: state.opensSoon,
     // True only for a dry-run tester seeing a store that is shut to everyone
     // else, so their screen can say so rather than look like the real sale.
     testing: state.testing,
@@ -282,6 +320,9 @@ async function storeForStudent(ctx: any, student: any) {
         quantity: Number(r.quantity) > 1 ? Number(r.quantity) : 1,
         status: String(r.status ?? "issued"),
         purchasedAt: r.purchasedAt ?? null,
+        // The item's CURRENT message, not a copy taken at purchase: if the
+        // pickup moves to Thursday, every buyer should read Thursday.
+        message: purchaseMessageOf(rewardById.get(String(r.rewardId ?? ""))),
       })),
   };
 }
@@ -375,6 +416,9 @@ async function doPurchase(
       return { ok: false, code: "attempt_mismatch",
                reason: "That did not go through. Nothing was charged. Press Buy again." };
     }
+    const priorReward = ((await rewardRows(ctx)) as any[])
+      .map((r) => r.payload as StoreReward)
+      .find((r) => String(r?.id ?? "") === String(prior.rewardId ?? ""));
     return {
       ok: true,
       alreadyBought: true,
@@ -382,6 +426,7 @@ async function doPurchase(
       rewardName: prior.rewardName,
       totalCost: prior.totalCost,
       purchasedAt: prior.purchasedAt,
+      purchaseMessage: purchaseMessageOf(priorReward),
     };
   }
 
@@ -559,6 +604,8 @@ async function doPurchase(
     balanceAfter,
     stockAfter: liveStock == null ? null : Number(liveStock) - quantity,
     purchasedAt: nowIso,
+    // What the admin wants every buyer told. Shown in the receipt dialog.
+    purchaseMessage: purchaseMessageOf(reward),
   };
 }
 
@@ -597,7 +644,9 @@ export const purchaseFor = internalMutation({
  * effectiveStoreState), so a late-running job cannot sell past the close.
  */
 type StoreChange = {
-  action: "open" | "close" | "schedule" | "testers";
+  action: "open" | "close" | "schedule" | "testers" | "look";
+  /** For action "look": the scene or the plain list. */
+  look?: string | null;
   /** Student numbers who may buy while the store is closed, for a dry run. */
   testers?: string[] | null;
   reason?: string | null;
@@ -656,6 +705,9 @@ async function applyStoreChange(ctx: any, change: StoreChange, by: string | null
     closesAt: typeof prev.closesAt === "string" ? prev.closesAt : null,
     testers: Array.isArray(prev.testers) ? prev.testers : [],
     testersUntil: typeof prev.testersUntil === "string" ? prev.testersUntil : null,
+    // CARRIED, or "Open now" / "Close now" / a schedule would quietly put the
+    // shop back after an admin chose the plain list (review, 2026-09-28).
+    look: storeLookOf(prev),
   };
   if (change.reason !== undefined) next.reason = cleanText(change.reason);
   if (change.endedReason !== undefined) next.endedReason = cleanText(change.endedReason);
@@ -666,6 +718,15 @@ async function applyStoreChange(ctx: any, change: StoreChange, by: string | null
   const closeStillAhead = (iso: unknown) =>
     typeof iso === "string" && Date.parse(iso) > nowMs ? iso : null;
 
+  if (change.action === "look") {
+    // Only the look changes: open/closed, the schedule, its token and the
+    // testers all stay exactly as they are.
+    if (change.look !== "scene" && change.look !== "plain") throw new Error("The look is 'scene' or 'plain'.");
+    const value: Record<string, unknown> = { ...prev, look: change.look, changedAt: nowIso, changedBy: by };
+    if (row) await ctx.db.patch(row._id, { value, mirroredAt: nowIso });
+    else await ctx.db.insert("appState", { key: STORE_FLAG_KEY, value: { open: false, ...value }, mirroredAt: nowIso });
+    return statusOf(value);
+  }
   if (change.action === "testers") {
     // Only the dry-run list changes. Open/closed and any schedule stay as
     // they are, and so does the token, so queued jobs still run.
@@ -765,6 +826,7 @@ function statusOf(value: Record<string, unknown> | null | undefined) {
     changedBy: typeof v.changedBy === "string" ? v.changedBy : null,
     testers: Array.isArray(v.testers) ? (v.testers as unknown[]).map(String) : [],
     testersUntil: typeof v.testersUntil === "string" ? v.testersUntil : null,
+    look: storeLookOf(v),
   };
 }
 
@@ -840,6 +902,12 @@ export const lapseStoreTesters = internalMutation({
   },
 });
 
+/** The store's look: "scene" (the Wildcat Digital Store) or "plain". CLI. */
+export const setStoreLook = internalMutation({
+  args: { look: v.union(v.literal("scene"), v.literal("plain")) },
+  handler: async (ctx, { look }) => await applyStoreChange(ctx, { action: "look", look }, "CLI"),
+});
+
 /** The dry-run list. CLI. Pass [] to clear it. */
 export const setStoreTesters = internalMutation({
   args: { testers: v.array(v.string()) },
@@ -870,8 +938,9 @@ export const setStore = mutation({
   args: {
     // "change", not "action": the app's audit vocabulary is written as
     // `action: '...'`, and this is a switch position, not an audit entry.
-    change: v.union(v.literal("open"), v.literal("close"), v.literal("schedule"), v.literal("testers")),
+    change: v.union(v.literal("open"), v.literal("close"), v.literal("schedule"), v.literal("testers"), v.literal("look")),
     testers: v.optional(v.union(v.array(v.string()), v.null())),
+    look: v.optional(v.union(v.literal("scene"), v.literal("plain"))),
     reason: v.optional(v.union(v.string(), v.null())),
     endedReason: v.optional(v.union(v.string(), v.null())),
     opensAt: v.optional(v.union(v.string(), v.null())),

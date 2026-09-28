@@ -7343,8 +7343,15 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 .wp-store-held { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--wu-hair, #E7ECF2); font-size: 13px; }
 .wp-store-held-title { font-weight: 700; margin-bottom: 4px; }
 .wp-store-held ul { margin: 0; padding-left: 18px; }
-.wp-store-held li { margin: 3px 0; overflow-wrap: anywhere; }
+.wp-store-held li { margin: 6px 0; overflow-wrap: anywhere; }
 .wp-store-held strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .05em; }
+/* The admin's message for buyers, in the receipt dialog and under each code. */
+.wp-store-held-msg { margin: 3px 0 6px; color: #3E4752; line-height: 1.4; }
+.wp-receipt-msg {
+    text-align: left; margin: 0 0 12px; padding: 10px 12px;
+    background: #FFF8E6; border-left: 3px solid #D9A21B; border-radius: 8px;
+    color: #3A2E0B; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere;
+}
 /* The receipt dialog after a purchase. The code is the only thing that has to
    be readable at arm's length, so it is the only thing set large. */
 .wp-receipt { text-align: center; }
@@ -9960,6 +9967,12 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 
 /* Who can buy a reward, on its card. */
 .reward-tags { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+.reward-selfserve-note { margin: 6px 0 0; font-size: 13px; color: var(--wc-gray-text, #5B6573); }
+.reward-buyer-msg {
+    margin: 8px 0 0; padding: 8px 10px; font-size: 13px; line-height: 1.4;
+    background: #FFF8E6; border-left: 3px solid #D9A21B; border-radius: 8px; color: #3A2E0B;
+    overflow-wrap: anywhere;
+}
 .reward-tag {
     font-size: 11.5px; font-weight: 700; padding: 3px 8px; border-radius: 999px;
     background: var(--wc-blue-mist, #EEF4FB); color: var(--wc-blue-deep, #1F4E79);
@@ -9999,3 +10012,191 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     body.wc-printing .print-table tr { break-inside: avoid; page-break-inside: avoid; }
     body.wc-printing .print-table thead { display: table-header-group; }
 }
+
+/* =====================================================================
+   THE WILDCAT DIGITAL STORE (the shop scene), 2026-09-28
+   The layout mock approved on 2026-09-17, made real. Every position is the
+   mock's, measured off the background art in its own 1376x768 pixel space
+   and written as % so the scene scales. The notes on WHY each number is what
+   it is live in the mock (claude.ai artifact "Wildcat Digital Store"); the
+   short version:
+     shelf boards      lower edges y 98 | 248 | 397
+     counter surface   far edge y 745 at x=0 falling to y 625 at x=1375
+     register sprite   x 787-1263, y 439-746, its own transparent PNG
+     clerk             956x565 at x 420-1376, head-anchored across poses
+   Above the student portal (9000/9500) and below the dialog (10050), so the
+   confirm and the receipt open over the shop.
+   ===================================================================== */
+.wds-root {
+    position: fixed; inset: 0; z-index: 9800;
+    overflow: auto; -webkit-overflow-scrolling: touch;
+    background: #eceef1; color: #1a2230;
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    padding: 20px 0 32px;
+}
+.wds-root[hidden] { display: none !important; }
+.wds-page { max-width: 1376px; margin: 0 auto; padding: 0 16px; }
+
+/* ---- the header strip ---- */
+.wds-bar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: #16293f; color: #fff; border-radius: 14px 14px 0 0; padding: 9px 14px;
+}
+.wds-title { font-weight: 800; font-size: 15px; }
+.wds-spacer { flex: 1 1 auto; }
+.wds-chip {
+    display: inline-flex; align-items: center; background: #f0b429; color: #2a1e00;
+    font-weight: 900; font-size: 14px; padding: .4em .8em; border-radius: 999px; white-space: nowrap;
+}
+.wds-leave {
+    background: rgba(255,255,255,.14); color: #fff; border: 1px solid rgba(255,255,255,.3);
+    border-radius: 999px; cursor: pointer; font-weight: 800; font-size: 13px; padding: .4em .85em; white-space: nowrap;
+}
+.wds-leave:focus-visible { outline: 2px solid #f0b429; outline-offset: 2px; }
+.wds-testing {
+    background: #fff3cd; color: #5c4100; font-weight: 700; font-size: 13px; padding: 8px 14px;
+}
+
+/* ---- the scene (900px and up) ---- */
+.wds-shop {
+    position: relative; width: 100%; aspect-ratio: 1376 / 768;
+    background: #d8d4cf url('assets/store-bg.jpg') center/cover no-repeat;
+    border-radius: 0 0 14px 14px; overflow: hidden;
+    box-shadow: 0 14px 40px rgba(0,0,0,.35);
+    container-type: inline-size;
+}
+/* Stock: up to 3x3, all LEFT of the clerk, each row resting on a board. A
+   tile is a third of the row whether the row holds one or three, so a single
+   pass looks like a thing on a shelf rather than a banner across it. */
+.wds-slot { position: absolute; left: 2.54%; width: 51.27%; display: flex; gap: 1.31%; z-index: 3; }
+.wds-row-1 { bottom: 87.24%; height: 12.24%; }
+.wds-row-2 { bottom: 67.71%; height: 18.23%; }
+.wds-row-3 { bottom: 48.31%; height: 18.23%; }
+.wds-item {
+    flex: 0 0 32.46%; min-width: 0;
+    display: flex; flex-direction: column; justify-content: space-between;
+    background: linear-gradient(170deg, #fdfdfc, #eceae4); color: #16293f; text-align: left;
+    border-radius: 8px; padding: .45em .5em; border: 1px solid rgba(0,0,0,.22);
+    box-shadow: 0 4px 0 -1px rgba(0,0,0,.28), 0 8px 13px rgba(0,0,0,.32);
+    overflow: hidden; gap: .2em;
+}
+/* ONE LINE, on every shelf. The tile has a fixed height (it rests on a board),
+   and a name wrapping to two lines at 1280px pushed the Locked and Yours
+   buttons out of the bottom of it. The full name is in the tile's title. */
+.wds-nm {
+    font-weight: 800; line-height: 1.1; font-size: clamp(9px, 1.06cqw, 14px);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.wds-meta { font-size: clamp(8px, .86cqw, 11px); font-weight: 700; color: #8a5510; }
+.wds-own { font-size: clamp(8px, .92cqw, 12px); font-weight: 800; color: #157f3d; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.wds-price { font-weight: 900; color: #157f3d; font-size: clamp(11px, 1.36cqw, 18px); white-space: nowrap; }
+.wds-buy {
+    display: block; width: 100%; background: #157f3d; color: #fff; border: 0; border-radius: 5px;
+    cursor: pointer; font-weight: 800; font-size: clamp(9px, 1.02cqw, 13px); padding: .42em 0;
+    letter-spacing: .02em; box-shadow: 0 2px 0 rgba(0,0,0,.32);
+}
+.wds-buy:active { transform: translateY(1px); box-shadow: none; }
+.wds-buy:focus-visible { outline: 2px solid #16293f; outline-offset: 2px; }
+.wds-buy[disabled] { background: #b0aca6; cursor: not-allowed; box-shadow: none; }
+.wds-item.is-locked, .wds-item.is-short { background: linear-gradient(170deg, #e7e5e1, #d5d2cd); color: #5c5e62; }
+.wds-item.is-locked .wds-price, .wds-item.is-short .wds-price { color: #6a6d72; }
+.wds-item.is-owned .wds-buy[disabled] { background: #157f3d; opacity: .75; }
+.wds-need { font-size: clamp(8px, .92cqw, 12px); font-weight: 800; color: #8a5510; }
+.wds-bar-p { height: .34em; border-radius: 999px; background: rgba(0,0,0,.16); overflow: hidden; margin-top: .2em; }
+.wds-bar-p > i { display: block; height: 100%; background: #f0b429; }
+/* Row 1 sits on the top board with the frame above it: 94px, not 140. */
+.wds-row-1 .wds-need, .wds-row-1 .wds-bar-p, .wds-row-1 .wds-meta { display: none; }
+/* A locked or owned tile carries two extra lines (how far to go, or the
+   code), so it drops the stock line to keep its button inside the tile. */
+.wds-item.is-short .wds-meta, .wds-item.is-owned .wds-meta { display: none; }
+.wds-row-1 .wds-item { padding: .3em .45em; gap: .15em; }
+.wds-row-1 .wds-nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: clamp(9px, .98cqw, 13px); }
+
+/* The clerk, behind the counter and behind the register. */
+.wds-clerk {
+    position: absolute; left: 30.52%; bottom: 7.77%; height: 73.57%; width: auto; z-index: 4;
+    filter: drop-shadow(0 10px 16px rgba(0,0,0,.4)); pointer-events: none;
+}
+/* The same background again, clipped to the counter surface, so the counter
+   hides his lower half. */
+.wds-fg-counter {
+    position: absolute; inset: 0; background: url('assets/store-bg.jpg') center/cover no-repeat;
+    clip-path: polygon(0% 97.01%, 100% 81.38%, 100% 100%, 0% 100%);
+    z-index: 5; pointer-events: none;
+}
+.wds-fg-register {
+    position: absolute; left: 57.19%; top: 57.16%; width: 34.59%; height: 39.97%;
+    z-index: 6; pointer-events: none;
+}
+/* His voice, above his head, with the tail pointing down at him. */
+.wds-say {
+    position: absolute; left: 55.96%; bottom: 82.42%; width: 33.43%; z-index: 8;
+    background: #fff; color: #17202b; border-radius: 13px; padding: .8em 1em;
+    font-size: clamp(10px, 1.26cqw, 17px); font-weight: 650; line-height: 1.32;
+    box-shadow: 0 10px 26px rgba(0,0,0,.5);
+}
+.wds-say::after {
+    content: ''; position: absolute; left: 50%; bottom: -11px;
+    border: 8px solid transparent; border-top-color: #fff; border-bottom: 0;
+}
+.wds-say b { color: #1f3a5f; }
+
+/* ---- the list (under 900px) ---- */
+.wds-compact { display: none; }
+.wds-compact-top {
+    display: flex; align-items: flex-end; gap: 10px;
+    background: #cfd3d6 url('assets/store-bg.jpg') right 30% / cover no-repeat; padding: 12px 12px 0;
+}
+.wds-compact-top img { width: 116px; height: auto; flex: 0 0 auto; filter: drop-shadow(0 6px 10px rgba(0,0,0,.4)); }
+.wds-compact-say {
+    background: #fff; color: #17202b; border-radius: 12px; padding: .7em .85em;
+    font-size: 13.5px; font-weight: 650; line-height: 1.34; margin-bottom: 12px;
+    box-shadow: 0 6px 18px rgba(0,0,0,.4);
+}
+.wds-compact-say b { color: #1f3a5f; }
+.wds-rows { background: #fff; border-radius: 0 0 14px 14px; border: 1px solid rgba(0,0,0,.14); border-top: 0; overflow: hidden; }
+.wds-rw { display: flex; align-items: center; gap: 10px; padding: 11px 13px; border-top: 1px solid rgba(0,0,0,.14); }
+.wds-rw:first-child { border-top: 0; }
+.wds-rw-l { min-width: 0; flex: 1 1 auto; }
+.wds-nm2 { font-weight: 800; font-size: 14.5px; }
+.wds-need2 { font-size: 12px; font-weight: 700; color: #a06a12; margin-top: 2px; overflow-wrap: anywhere; }
+.wds-pr { font-weight: 900; color: #1f3a5f; font-size: 15px; white-space: nowrap; }
+.wds-rw-buy {
+    background: #157f3d; color: #fff; border: 0; border-radius: 7px; padding: .5em .9em;
+    font-weight: 800; font-size: 13px; cursor: pointer; white-space: nowrap;
+}
+.wds-rw-buy[disabled] { background: #9aa0a8; cursor: not-allowed; }
+.wds-empty { padding: 16px; margin: 0; color: #5d6673; }
+@media (max-width: 899px) {
+    .wds-shop { display: none; }
+    .wds-compact { display: block; }
+}
+
+/* ---- under the scene: every code they hold, with the admin's message ---- */
+.wds-more { color: #5d6673; font-size: 13px; margin: 10px 2px 0; }
+.wds-held {
+    margin-top: 16px; background: #fff; border-radius: 14px; padding: 14px 16px;
+    border: 1px solid rgba(0,0,0,.12); font-size: 14px;
+}
+.wds-held-title { font-weight: 800; margin-bottom: 6px; }
+.wds-held ul { margin: 0; padding-left: 18px; }
+.wds-held li { margin: 8px 0; overflow-wrap: anywhere; }
+.wds-held strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .05em; }
+.wds-held-status { font-size: 12.5px; font-weight: 700; color: #8a5510; }
+.wds-held-msg {
+    margin-top: 4px; padding: 8px 10px; background: #FFF8E6; border-left: 3px solid #D9A21B;
+    border-radius: 8px; color: #3A2E0B; line-height: 1.4;
+}
+
+/* ---- the door, inside the store panel on the student's page ---- */
+.wds-enter {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    width: 100%; margin: 0 0 12px; padding: 14px 16px; border: 0; border-radius: 12px; cursor: pointer;
+    background: linear-gradient(120deg, #16293f, #1f3a5f); color: #fff; text-align: left;
+    box-shadow: 0 6px 16px rgba(22,41,63,.25);
+}
+.wds-enter:hover { background: linear-gradient(120deg, #1a3150, #24466f); }
+.wds-enter:focus-visible { outline: 2px solid #f0b429; outline-offset: 2px; }
+.wds-enter-title { font-weight: 800; font-size: 15px; }
+.wds-enter-go { font-weight: 800; font-size: 13px; color: #f0b429; white-space: nowrap; }
+.store-look-btn { margin-left: 8px; }

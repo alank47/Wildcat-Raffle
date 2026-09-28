@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20260928a">
-    <link rel="icon" href="favicon.ico?v=20260928a" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260928a" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260928a" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20260928b">
+    <link rel="icon" href="favicon.ico?v=20260928b" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20260928b" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20260928b" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260928a">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20260928b">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20260928a">
+    <link rel="stylesheet" href="styles.css?v=20260928b">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20260928a">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20260928b">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20260928a">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20260928b">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20260928a" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20260928b" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -184,7 +184,7 @@
                      asset, so there is one logo to replace when the school
                      changes it. -->
                 <div class="wp-brand">
-                    <img src="assets/westbrook-logo.png?v=20260928a"
+                    <img src="assets/westbrook-logo.png?v=20260928b"
                          alt="Westbrook Academy" class="wp-brandlogo" id="wpBrandLogo">
                     <!-- The product's name, which appeared nowhere on the
                          student's screen while the teacher's topbar has said
@@ -412,7 +412,7 @@
         <header class="app-topbar">
             <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-menu"></use></svg></button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20260928a" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20260928b" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -5856,7 +5856,7 @@
                     </div>
                     <div class="form-group">
                         <label for="newRewardCampus">Who can buy it</label>
-                        <select id="newRewardCampus" class="wc-input">
+                        <select id="newRewardCampus" class="wc-input" onchange="syncRewardStoreFields('new')">
                             <option value="all">Everyone</option>
                             <option value="middle">Middle School only (grades 6&ndash;8)</option>
                             <option value="high">High School only (grades 9&ndash;12)</option>
@@ -5865,6 +5865,20 @@
                     <div class="form-group">
                         <label>Limit per student <span class="receipt-meta">(blank = no limit)</span></label>
                         <input type="number" id="newRewardLimit" placeholder="No limit" min="1" step="1">
+                    </div>
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:8px;">
+                            <input type="checkbox" id="newRewardShowOtherCampus" style="width:auto;">
+                            Let the other campus see it (they still can't buy it)
+                        </label>
+                        <span class="receipt-meta">Only matters for a Middle School or High School item. Unticked, the other campus doesn't see it at all.</span>
+                    </div>
+                    <div class="form-group">
+                        <label for="newRewardMessage">Message students see after they buy it <span class="receipt-meta">(optional)</span></label>
+                        <textarea id="newRewardMessage" class="wc-input" rows="3" maxlength="500"
+                                  oninput="syncRewardStoreFields('new')"
+                                  placeholder="e.g. Show this code at the gym door on Oct 1 at lunch."></textarea>
+                        <span class="receipt-meta" id="newRewardMessageCount">0 / 500</span>
                     </div>
                     <div style="display: flex; gap: 10px; margin-top: 20px;">
                         <button class="btn" onclick="addNewReward()" style="flex: 1;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-save"></use></svg> Add Reward</button>
@@ -5960,7 +5974,7 @@
                     </div>
                     <div class="form-group">
                         <label for="editRewardCampus">Who can buy it</label>
-                        <select id="editRewardCampus" class="wc-input">
+                        <select id="editRewardCampus" class="wc-input" onchange="syncRewardStoreFields('edit')">
                             <option value="all">Everyone</option>
                             <option value="middle">Middle School only (grades 6&ndash;8)</option>
                             <option value="high">High School only (grades 9&ndash;12)</option>
@@ -5969,6 +5983,20 @@
                     <div class="form-group">
                         <label>Limit per student <span class="receipt-meta">(blank = no limit)</span></label>
                         <input type="number" id="editRewardLimit" placeholder="No limit" min="1" step="1">
+                    </div>
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:8px;">
+                            <input type="checkbox" id="editRewardShowOtherCampus" style="width:auto;">
+                            Let the other campus see it (they still can't buy it)
+                        </label>
+                        <span class="receipt-meta">Only matters for a Middle School or High School item. Unticked, the other campus doesn't see it at all.</span>
+                    </div>
+                    <div class="form-group">
+                        <label for="editRewardMessage">Message students see after they buy it <span class="receipt-meta">(optional)</span></label>
+                        <textarea id="editRewardMessage" class="wc-input" rows="3" maxlength="500"
+                                  oninput="syncRewardStoreFields('edit')"
+                                  placeholder="e.g. Show this code at the gym door on Oct 1 at lunch."></textarea>
+                        <span class="receipt-meta" id="editRewardMessageCount">0 / 500</span>
                     </div>
                     <div style="display: flex; gap: 10px; margin-top: 20px;">
                         <button class="btn" onclick="saveRewardEdit()" style="flex: 1;">💾 Save changes</button>
@@ -6131,24 +6159,24 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20260928a"></script>
+    <script src="wildcat-auth.js?v=20260928b"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
     <!-- The icon sprite. Injected at load, before anything renders, so an
          icon is never a blank square for a frame. -->
-    <script src="wildcat-icons.js?v=20260928a"></script>
-    <script src="wildcat-motion.js?v=20260928a"></script>
-    <script src="wildcat-discipline.js?v=20260928a"></script>
-    <script src="wildcat-audit.js?v=20260928a"></script>
-    <script src="wildcat-cashaudit.js?v=20260928a"></script>
-    <script src="wildcat-dirty.js?v=20260928a"></script>
-    <script src="wildcat-update.js?v=20260928a"></script>
-    <script src="wildcat-modes.js?v=20260928a"></script>
-    <script src="wildcat-merge.js?v=20260928a"></script>
-    <script src="wildcat-savequeue.js?v=20260928a"></script>
-    <script src="wildcat-roster.js?v=20260928a"></script>
-    <script src="wildcat-store.js?v=20260928a"></script>
-    <script src="script.js?v=20260928a"></script>
+    <script src="wildcat-icons.js?v=20260928b"></script>
+    <script src="wildcat-motion.js?v=20260928b"></script>
+    <script src="wildcat-discipline.js?v=20260928b"></script>
+    <script src="wildcat-audit.js?v=20260928b"></script>
+    <script src="wildcat-cashaudit.js?v=20260928b"></script>
+    <script src="wildcat-dirty.js?v=20260928b"></script>
+    <script src="wildcat-update.js?v=20260928b"></script>
+    <script src="wildcat-modes.js?v=20260928b"></script>
+    <script src="wildcat-merge.js?v=20260928b"></script>
+    <script src="wildcat-savequeue.js?v=20260928b"></script>
+    <script src="wildcat-roster.js?v=20260928b"></script>
+    <script src="wildcat-store.js?v=20260928b"></script>
+    <script src="script.js?v=20260928b"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -6158,7 +6186,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20260928a').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20260928b').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {

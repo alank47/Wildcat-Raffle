@@ -6,7 +6,7 @@ import { sisNumberKey, sisEmailKey, gradeCell } from "./studentPortalRules";
 import { teacherRosterEmail } from "./rosterEmail";
 import { studentView } from "./views";
 import { projectGrade } from "./gradeProjection";
-import { storeIsOpen } from "./studentStore";
+import { storeSignal } from "./studentStore";
 
 /**
  * The three reads the app actually needs.
@@ -328,6 +328,7 @@ export const myDataVersion = query({
   handler: async (ctx) => {
     const me = await requireStudentSelf(ctx);
     const latest = await ctx.db.query("syncRuns").withIndex("by_at").order("desc").first();
+    const store = await storeSignal(ctx, me);
     return {
       // null, not "", when no sync has ever run. The client treats an absent
       // version as "nothing to compare" and does not reload, which is right:
@@ -338,7 +339,10 @@ export const myDataVersion = query({
       // portal already makes every 15 seconds, so a child who opened the page
       // before the store opened sees it open without reloading -- and without
       // 620 portals each adding a third request per poll to learn one boolean.
-      storeOpen: await storeIsOpen(ctx, me),
+      storeOpen: store.open,
+      // The look too: an admin switching to the plain list has to reach
+      // portals that are already open, the same way the store opening does.
+      storeLook: store.look,
     };
   },
 });

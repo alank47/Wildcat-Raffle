@@ -74,7 +74,36 @@ export type StoreReward = {
    * cancelled. Null or absent means no limit.
    */
   limitPerStudent?: number | null;
+  /**
+   * Whether the OTHER campus may see a campus-only reward (they still cannot
+   * buy it). Absent or false hides it, which is how the first sale ran. The
+   * owner asked for this to be a switch (2026-09-28): "is middle schoolers only
+   * seeing middle school pass a feature that i can click on/off?"
+   */
+  showOtherCampus?: boolean;
+  /**
+   * What the child is told once they have bought it -- where to go, when, what
+   * to bring. Shown in the receipt dialog and kept beside the receipt code in
+   * "Your purchases". Asked for 2026-09-28: "Id like to convey information to
+   * students when they purchase the pass."
+   */
+  purchaseMessage?: string | null;
 };
+
+/** The longest purchase message an admin may write. A dialog, not a letter. */
+export const PURCHASE_MESSAGE_MAX = 500;
+
+/**
+ * The reward's purchase message, trimmed, or null when there is none. Capped
+ * here as well as in the form, so a message saved some other way cannot turn
+ * a receipt into a wall of text.
+ */
+export function purchaseMessageOf(reward: StoreReward | null | undefined): string | null {
+  const raw = reward?.purchaseMessage;
+  if (typeof raw !== "string") return null;
+  const t = raw.trim();
+  return t ? t.slice(0, PURCHASE_MESSAGE_MAX) : null;
+}
 
 /** The campuses a reward can be restricted to. "all" is the absence of one. */
 export const CAMPUSES = ["all", "middle", "high"] as const;
