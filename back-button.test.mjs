@@ -57,8 +57,11 @@ console.log("\nMSAL does not add a history entry it does not need");
 
 console.log("\nBack closes a dialog rather than leaving the app");
 {
+  // Still one entry; since 2026-09-28 it also says whether the student shop
+  // was open underneath (overShop), which the shop's Back handling reads.
   check("a dialog pushes one history entry when it opens",
-    /history\.pushState\(\{ wcDialogOpen: true \}/.test(script));
+    /history\.pushState\(\{ wcDialogOpen: true,\s*overShop:/.test(script)
+    && (script.match(/history\.pushState\(\{ wcDialogOpen: true/g) || []).length === 1);
   check("closing it normally consumes that entry again",
     /if \(history\.state && history\.state\.wcDialogOpen\) \{/.test(script) &&
     /history\.back\(\);/.test(script));

@@ -411,6 +411,9 @@
         function screenHasUnfinishedWork() {
             try {
                 if (_unsavedReferrals.size || _unsavedCash.size) return true;
+                // A student inside the Wildcat Digital Store: an update reload
+                // now would strand the shop's history entry behind the new page.
+                if (typeof _wpShopOpen !== 'undefined' && _wpShopOpen) return true;
                 if (document.querySelector('.modal:not(.hidden)')) return true;
                 const dlg = document.getElementById('wcDialogRoot');
                 if (dlg && dlg.childElementCount > 0) return true;
@@ -19454,6 +19457,14 @@
         // becomes a list, as in the mock: the tiles collide at that width.
         // =====================================================================
         let _wpShopOpen = false;
+        /** Back presses we caused ourselves (leaving by the button), to ignore. */
+        let _wdsSelfBack = 0;
+        /**
+         * The shop was closed while a dialog's entry sat above its own (a hall
+         * pass took the screen, the look switched to plain), so its entry
+         * could not be spent then. Spent as soon as a Back lands back on it.
+         */
+        let _wdsOwed = false;
 
         function wdsMoney(n) {
             const v = Number(n);
@@ -19649,6 +19660,22 @@
                 el.setAttribute('aria-label', 'Wildcat Digital Store');
                 document.body.appendChild(el);
             }
+            // THE BACK BUTTON TAKES THEM OUT OF THE SHOP, not out of Wildcat
+            // Hub (asked 2026-09-28). The shop gets its own history entry,
+            // the way a dialog does, so Back has something of ours to land
+            // on. Not twice: a second click on the door is not a second entry.
+            if (!_wpShopOpen) {
+                _wdsOwed = false;
+                try {
+                    // Already on the shop's entry (a Leave-store back() still in
+                    // flight): not pushed here. When that back() lands,
+                    // wpShopOnPopstate sees the shop open again and pushes it a
+                    // fresh entry, in whatever order the browser settles them.
+                    if (!(history.state && history.state.wdsShop)) {
+                        history.pushState({ wdsShop: true }, document.title, location.href);
+                    }
+                } catch (e) { /* no history: Leave store still works */ }
+            }
             _wpShopOpen = true;
             el.hidden = false;
             // THE PAGE BEHIND IS OUT OF REACH while the shop is open: Tab
@@ -19661,9 +19688,83 @@
             if (leave && leave.focus) leave.focus();
         }
 
-        function wpCloseShop() {
+        /**
+         * Back, while the shop is open. The dialog code has its own listener
+         * (backClosesDialogs) and runs first: with a confirm or a receipt open
+         * over the shop, Back closes THAT and the student stays in the shop --
+         * the entry the event lands on is still the shop's, so this leaves it
+         * alone. Only a Back that lands below the shop's entry closes it.
+         */
+        function wpShopOnPopstate(ev) {
+            const st = ev && ev.state;
+            const handled = !!(ev && ev.wcDialogHandled);
+            // Our own back(). A dialog's own back() is marked by the dialog
+            // code, which runs first, and is never counted as ours.
+            if (_wdsSelfBack > 0 && !handled) {
+                _wdsSelfBack--;
+                // Reopened while that back() was in flight: the browser has now
+                // left the shop's entry, so give the open shop a fresh one.
+                if (_wpShopOpen && !(st && st.wdsShop)) {
+                    try { history.pushState({ wdsShop: true }, document.title, location.href); } catch (e) { /* no history */ }
+                }
+                return;
+            }
+            // Back on the entry of a shop that closed under a dialog: spend it
+            // now, so the next Back is not a dead press.
+            if (_wdsOwed && !_wpShopOpen && st && st.wdsShop) {
+                _wdsOwed = false;
+                try { _wdsSelfBack++; history.back(); } catch (e) { _wdsSelfBack--; }
+                return;
+            }
+            // A dialog's Back (its own button, or Back closing it): not ours.
+            if (handled) return;
+            // FORWARD onto an entry that is already spent -- the shop's, after
+            // it closed, or a dialog's that was over it -- steps straight back
+            // off it. Forward cannot reopen anything here, and leaving the
+            // student on a spent entry costs them a dead Back later.
+            const dialogOpen = typeof _wcDialogDismiss !== 'undefined' && !!_wcDialogDismiss;
+            const spentShop = !_wpShopOpen && st && st.wdsShop;
+            const spentDialog = st && st.wcDialogOpen && st.overShop && !dialogOpen;
+            if (spentShop || spentDialog) {
+                try { _wdsSelfBack++; history.back(); } catch (e) { _wdsSelfBack--; }
+                return;
+            }
+            if (!_wpShopOpen) return;
+            // Still on the shop's own entry: stay in the shop.
+            if (st && st.wdsShop) return;
+            wpCloseShop({ fromHistory: true });
+        }
+
+        /**
+         * A reload keeps whatever entry the tab was on. If that was a dialog's
+         * or the shop's, it is stale now -- nothing is open -- and its marker
+         * must not be reused: the shop would take it for its own entry and
+         * never push one. This relabels only the CURRENT entry; older ones from
+         * before a reload the student started are left as the browser has
+         * them. (An update reload waits while the shop is open, see
+         * screenHasUnfinishedWork.) Called once, when the portal wires up.
+         */
+        function wpForgetStaleHistory() {
+            try {
+                const s0 = history.state;
+                if (s0 && (s0.wcDialogOpen || s0.wdsShop)) history.replaceState(null, document.title, location.href);
+            } catch (e) { /* no history: nothing to forget */ }
+        }
+
+        function wpCloseShop(how) {
             const wasOpen = _wpShopOpen;
             _wpShopOpen = false;
+            // Leaving by the button (or Escape, a hall pass, signing out)
+            // spends the entry the shop pushed, so the next Back does what a
+            // student expects instead of landing on a shop that is already
+            // shut. Skipped when Back itself is what closed us: that press
+            // already spent it.
+            if (wasOpen && !(how && how.fromHistory)) {
+                try {
+                    if (history.state && history.state.wdsShop) { _wdsSelfBack++; history.back(); }
+                    else if (history.state && history.state.wcDialogOpen) _wdsOwed = true;
+                } catch (e) { /* no history: nothing to spend */ }
+            }
             const el = wpById('wpShop');
             if (el) { el.hidden = true; el.innerHTML = ''; }
             const behind = wpById('studentPassView');
@@ -19795,6 +19896,9 @@
                 // Escape closes first.
                 if (ev.key === 'Escape' && _wpShopOpen && !document.getElementById('wcDialogBackdrop')) wpCloseShop();
             });
+            // And the browser's Back button: out of the shop, not out of the app.
+            wpForgetStaleHistory();
+            window.addEventListener('popstate', wpShopOnPopstate);
         // CAPTURE PHASE, and a visible failure.
         //
         // Reported 2026-09-16: "clicking buy does nothing". The button and its
@@ -22837,7 +22941,9 @@
             wcNativeTapSlug = null;
             const url = new URL(window.location.href);
             url.searchParams.delete('tap');
-            window.history.replaceState({}, '', url.toString());
+            // The entry's STATE is kept: it may be the shop's or a dialog's,
+            // and wiping it would leave that entry unspendable (a dead Back).
+            window.history.replaceState(window.history.state, '', url.toString());
         }
 
         /**
@@ -37112,14 +37218,29 @@
         let _wcDialogSelfBack = 0;
 
         (function backClosesDialogs() {
-            window.addEventListener('popstate', function () {
-                if (_wcDialogSelfBack > 0) { _wcDialogSelfBack--; return; }
+            window.addEventListener('popstate', function (ev) {
+                // MARKED WHEN HANDLED, so the student shop's own listener (it
+                // runs after this one) knows this Back was a dialog's and does
+                // not also act on it. It used to guess from the entry landed
+                // on, and guessed wrong: after one dialog was closed with Back,
+                // the next dialog closed by its button closed the shop too.
+                if (_wcDialogSelfBack > 0) { _wcDialogSelfBack--; if (ev) ev.wcDialogHandled = true; return; }
+                // The student shop's own back() (Leave store, a hall pass) is
+                // not a Back at this dialog: it must not cancel one that opened
+                // while that back() was still in flight. Left for the shop.
+                if (typeof _wdsSelfBack !== 'undefined' && _wdsSelfBack > 0) return;
                 const dismiss = _wcDialogDismiss;
                 if (!dismiss) return;                    // nothing to absorb
                 // Resolves the dialog's promise as a cancel, rather than only
                 // taking it off the screen. The history entry has already been
                 // consumed by this very event, so finish must not spend another.
                 dismiss({ historyAlreadyConsumed: true });
+                if (ev) ev.wcDialogHandled = true;
+                // Landed on the student shop's entry: that entry already holds
+                // Back inside the app, and a re-pushed one on top of it would
+                // leave the shop's entry buried -- Leave store could not spend
+                // it and Back would need extra presses.
+                if (ev && ev.state && ev.state.wdsShop) return;
                 // Put back the entry the browser just consumed, so the dialog
                 // cost one Back press and the stack is where it was.
                 try { history.pushState({ wcDialogClosed: true }, document.title, location.href); }
@@ -37210,7 +37331,14 @@
                 // One history entry per dialog, so the Back button has
                 // something of ours to land on rather than the entry before it
                 // -- which after a redirect sign-in is Microsoft's.
-                try { history.pushState({ wcDialogOpen: true }, document.title, location.href); }
+                // overShop: pushed while the student shop is open, so a Forward
+                // onto this entry after the dialog is gone is still "in the
+                // shop" (see wpShopOnPopstate). Always false on the staff side.
+                try {
+                    history.pushState({ wcDialogOpen: true,
+                        overShop: typeof _wpShopOpen !== 'undefined' && _wpShopOpen === true },
+                        document.title, location.href);
+                }
                 catch (e) { /* history unavailable; the dialog still works */ }
 
                 const backdrop = document.getElementById('wcDialogBackdrop');

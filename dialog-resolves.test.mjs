@@ -95,8 +95,10 @@ console.log("\n3. A dialog chain still works");
   // the SECOND dialog. Counted, so it is ignored.
   check("our own back() is counted", /_wcDialogSelfBack\+\+/.test(dlg));
   const handler = code(fn("(function backClosesDialogs() {"));
+  // It also MARKS the event it ignored (2026-09-28), so the student shop's
+  // listener, which runs after it, does not act on a Back that was a dialog's.
   check("and the handler ignores exactly that many events",
-    /if \(_wcDialogSelfBack > 0\) \{ _wcDialogSelfBack--; return; \}/.test(handler));
+    /if \(_wcDialogSelfBack > 0\) \{ _wcDialogSelfBack--; if \(ev\) ev\.wcDialogHandled = true; return; \}/.test(handler));
   const ignoreAt = handler.indexOf("_wcDialogSelfBack");
   const dismissAt = handler.indexOf("dismiss");
   check("the ignore check comes first", ignoreAt !== -1 && ignoreAt < dismissAt);
