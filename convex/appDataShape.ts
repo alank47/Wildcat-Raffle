@@ -123,6 +123,10 @@ export function toAppTeacher(row: Record<string, any>): AppTeacher {
     role: row.role,
     ticketsAwarded: row.ticketsAwarded ?? 0,
     sections: row.sections,
+    // FOR DISPLAY ONLY (the Teachers table and the Edit dialog). Scoping never
+    // reads this copy -- it reads the roster payload the server builds -- and
+    // it is NOT in TEACHER_WRITABLE, so no save can carry it back.
+    gradeScope: row.gradeScope ?? null,
   };
 }
 

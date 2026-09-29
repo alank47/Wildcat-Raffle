@@ -1,6 +1,7 @@
 import { internalMutation } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
 import { normalizeEmail } from "./identityRules";
+import { roleWritePatch } from "./roleChangeRules";
 
 /**
  * Seed staff records from the existing Firestore data.
@@ -287,7 +288,8 @@ export const setStaffRole = internalMutation({
       return { outcome: "unchanged", email: target, role, previousRole };
     }
 
-    await ctx.db.patch(teacher._id, { role });
+    // Through roleWritePatch: a role change clears any grade scope.
+    await ctx.db.patch(teacher._id, roleWritePatch(teacher, role));
 
     // A superadmin count of zero locks everyone out of the settings that only a
     // superadmin can reach, and a count of one means a single person leaving

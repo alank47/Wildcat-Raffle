@@ -119,3 +119,73 @@ export function roleChangeVerdict(req: RoleChangeRequest): RoleChangeVerdict {
 
   return { ok: true, newRole: newRole as AssignableRole };
 }
+
+
+// ---------------------------------------------------------------------------
+// GRADE SCOPE: which EXTRA students a teacher may see (2026-09-29, "Can we get
+// Eric Pichler access to all Middle School students?"). Set only by an admin,
+// through staffInvites:setStaffGradeScope. The access side lives in
+// accessRules.ts (GRADE_SCOPES); this list is kept in step with it by
+// convex/gradeScope.test.mjs.
+// ---------------------------------------------------------------------------
+
+/** The scopes an admin may grant. Anything else is refused, not coerced. */
+export const GRADE_SCOPE_KEYS = ["middle"] as const;
+
+export type GradeScopeRequest = {
+  actorEmail: string;
+  actorRole: string;
+  targetEmail: string;
+  targetRole: string;
+  /** The scope the target has now, or null. */
+  current: string | null;
+  /** What was asked for: a key, or null / "" to clear. */
+  requested: unknown;
+};
+
+export type GradeScopeVerdict =
+  | { ok: true; scope: string | null }
+  | { ok: false; reason: string };
+
+export function gradeScopeVerdict(req: GradeScopeRequest): GradeScopeVerdict {
+  if (!canChangeRoles(req.actorRole)) {
+    return { ok: false, reason: "Only administrators can change which students a staff member can see." };
+  }
+  const actor = norm(req.actorEmail);
+  const target = norm(req.targetEmail);
+  if (!target) return { ok: false, reason: "No staff member named." };
+  if (actor && actor === target) {
+    return { ok: false, reason: "You cannot change your own student access. Ask another administrator." };
+  }
+  const raw = req.requested === null || req.requested === undefined ? "" : norm(req.requested);
+  const scope = raw === "" ? null : raw;
+  if (scope !== null && !(GRADE_SCOPE_KEYS as readonly string[]).includes(scope)) {
+    return { ok: false, reason: `"${String(req.requested)}" is not a student access setting.` };
+  }
+  if (scope !== null && norm(req.targetRole) !== "teacher") {
+    return { ok: false, reason: "Campus aides, PBIS and admins already see every student." };
+  }
+  if ((req.current ?? null) === scope) {
+    return { ok: false, reason: "Nothing to change: that is already their student access." };
+  }
+  return { ok: true, scope };
+}
+
+/**
+ * The patch for a ROLE write. A role change CLEARS the grade scope, so a
+ * teacher who was given Middle School access, promoted, and later set back to
+ * teacher does not quietly get it back. Every place that writes `role` goes
+ * through this.
+ */
+export function roleWritePatch(
+  row: { role?: unknown; gradeScope?: unknown } | null | undefined,
+  newRole: string,
+): Record<string, unknown> {
+  const patch: Record<string, unknown> = { role: newRole };
+  if (row && row.gradeScope && norm(row.role) !== norm(newRole)) {
+    patch.gradeScope = undefined;
+    patch.gradeScopeSetBy = undefined;
+    patch.gradeScopeSetAt = undefined;
+  }
+  return patch;
+}

@@ -79,9 +79,11 @@ export const get = query({
       .withIndex("by_studentNumber", (q) => q.eq("studentNumber", asked))
       .collect();
 
+    // The grade scope from the VERIFIED staff row, never from an argument;
+    // the grade from this student's CURRENT roster rows, never students.grade.
     const verdict = canViewStudent(
-      { email: teacher.email, role: teacher.role },
-      rows.map((r) => ({ teacherEmail: r.teacherEmail })),
+      { email: teacher.email, role: teacher.role, gradeScope: (teacher as any).gradeScope ?? null },
+      rows.map((r) => ({ teacherEmail: r.teacherEmail, gradeLevel: r.gradeLevel ?? null })),
     );
     if (!verdict.allowed) throw new ConvexError(verdict.reason);
 

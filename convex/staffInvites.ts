@@ -1,6 +1,6 @@
 import { query, mutation, internalMutation, internalQuery } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
-import { roleChangeVerdict } from "./roleChangeRules";
+import { roleChangeVerdict, gradeScopeVerdict, roleWritePatch } from "./roleChangeRules";
 import { requireStaff, requireAdmin } from "./identity";
 import { normalizeEmail } from "./identityRules";
 
@@ -140,7 +140,8 @@ export const inviteStaff = mutation({
       if (existing.role === role) {
         return { outcome: "unchanged", email: target, role };
       }
-      await ctx.db.patch(existing._id, { role });
+      // Through roleWritePatch: a role change clears any grade scope.
+      await ctx.db.patch(existing._id, roleWritePatch(existing, role));
       return { outcome: "role-changed", email: target, role, previousRole: existing.role };
     }
 
@@ -326,7 +327,7 @@ export const inviteStaffFromCli = internalMutation({
         return { outcome: "unchanged", email: target, role, name: existing.name };
       }
       const previousRole = existing.role;
-      await ctx.db.patch(existing._id, { role });
+      await ctx.db.patch(existing._id, roleWritePatch(existing, role));
 
       // WRITTEN DOWN HERE TOO. setStaffRole below says it out loud -- a change
       // to who can see the school's record has to be answerable months later,
@@ -416,7 +417,10 @@ export const setStaffRole = mutation({
     if (!verdict.ok) throw new ConvexError(verdict.reason);
 
     const previousRole = targetRow.role;
-    await ctx.db.patch(targetRow._id, { role: verdict.newRole });
+    // A role change CLEARS a grade scope (roleWritePatch), so a scope cannot
+    // quietly come back after a promotion and a demotion.
+    const scopeCleared = Boolean((targetRow as any).gradeScope) && previousRole !== verdict.newRole;
+    await ctx.db.patch(targetRow._id, roleWritePatch(targetRow, verdict.newRole));
 
     // WRITTEN DOWN, ALWAYS. A change to who can see the school's discipline
     // record is exactly the kind of thing that has to be answerable months
@@ -449,8 +453,10 @@ export const setStaffRole = mutation({
         // carry `reason` and the audit tables render that; `details` is what
         // this mutation wrote first, and it showed as a blank cell. Writing
         // one and hoping is how a role change becomes an unexplained row.
-        details: `${targetRow.name || target}: ${previousRole} \u2192 ${verdict.newRole}`,
-        reason: `${targetRow.name || target}: ${previousRole} \u2192 ${verdict.newRole}`,
+        details: `${targetRow.name || target}: ${previousRole} \u2192 ${verdict.newRole}` +
+          (scopeCleared ? " (Middle School access removed)" : ""),
+        reason: `${targetRow.name || target}: ${previousRole} \u2192 ${verdict.newRole}` +
+          (scopeCleared ? " (Middle School access removed)" : ""),
         userId: actor.email,
         timestamp: now,
       },
@@ -461,8 +467,91 @@ export const setStaffRole = mutation({
       name: targetRow.name || target,
       previousRole,
       role: verdict.newRole,
+      gradeScopeCleared: scopeCleared,
     };
   },
+});
+
+/** Words for an audit line: what a staff member's student access is. */
+function accessWords(scope: string | null): string {
+  return scope === "middle" ? "own classes + Middle School (grades 6-8)" : "own classes only";
+}
+
+/**
+ * Give a TEACHER every Middle School student (grades 6-8) on top of their own
+ * classes, or take it away (scope: null). Asked for 2026-09-29 for Eric
+ * Pichler. Admin only, never your own record, and written to the audit log --
+ * the same rules as a role change, decided by gradeScopeVerdict.
+ */
+async function applyGradeScope(
+  ctx: any, actor: { email: string; role: string; name?: string | null },
+  email: string, requested: unknown,
+) {
+  const target = normalizeEmail(email);
+  const targetRow = await ctx.db
+    .query("teachers")
+    .withIndex("by_email", (q: any) => q.eq("email", target))
+    .unique();
+  if (!targetRow) throw new ConvexError(`No staff record for ${target}.`);
+
+  const previous = (targetRow as any).gradeScope ?? null;
+  const verdict = gradeScopeVerdict({
+    actorEmail: actor.email,
+    actorRole: actor.role,
+    targetEmail: target,
+    targetRole: targetRow.role,
+    current: previous,
+    requested,
+  });
+  if (!verdict.ok) throw new ConvexError(verdict.reason);
+
+  const now = new Date().toISOString();
+  await ctx.db.patch(targetRow._id, {
+    gradeScope: verdict.scope ?? undefined,
+    gradeScopeSetBy: actor.email,
+    gradeScopeSetAt: now,
+  });
+
+  const entryId = `gscope_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+  const line = `${targetRow.name || target}: ${accessWords(previous)} \u2192 ${accessWords(verdict.scope)}`;
+  await ctx.db.insert("appAuditLog", {
+    entryId,
+    timestamp: now,
+    payload: {
+      entryId,
+      action: "Changed student access",
+      teacher: actor.name || actor.email,
+      teacherName: actor.name || actor.email,
+      details: line,
+      reason: line,
+      userId: actor.email,
+      timestamp: now,
+    },
+  });
+  console.log(`[gradeScope] ${actor.email} set ${target}: ${previous ?? "none"} -> ${verdict.scope ?? "none"}`);
+  return { email: target, name: targetRow.name || target, previous, scope: verdict.scope };
+}
+
+export const setStaffGradeScope = mutation({
+  args: { email: v.string(), scope: v.union(v.string(), v.null()) },
+  handler: async (ctx, { email, scope }) => {
+    // requireStaff, then the verdict decides: only admin/superadmin pass.
+    const actor = await requireStaff(ctx);
+    return await applyGradeScope(ctx, actor, email, scope);
+  },
+});
+
+/**
+ * The same, from a terminal, for when the change is wanted before anyone opens
+ * the staff screen:
+ *   npx convex run staffInvites:setStaffGradeScopeFromCli \
+ *     '{"email":"ericp@lapromisefund.org","scope":"middle"}'
+ * Pass "scope": null to take it away.
+ */
+export const setStaffGradeScopeFromCli = internalMutation({
+  args: { email: v.string(), scope: v.union(v.string(), v.null()) },
+  handler: async (ctx, { email, scope }) =>
+    await applyGradeScope(ctx, { email: "command line", role: "admin", name: "command line" }, email, scope),
 });
 
 /**

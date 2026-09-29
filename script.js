@@ -9831,11 +9831,39 @@
                     : 'This person has no email on record, so their access level cannot be changed here.';
                 roleHint.style.color = '';
             }
+            const scopeSel = document.getElementById('editTeacherGradeScope');
+            if (scopeSel) scopeSel.value = teacher.gradeScope === 'middle' ? 'middle' : '';
+            syncGradeScopeControl();
+            const roleSel = document.getElementById('editTeacherRole');
+            if (roleSel) roleSel.onchange = syncGradeScopeControl;
             
             // Show modal
             document.getElementById('editTeacherModal').classList.remove('hidden');
         }
         
+        /**
+         * "Student access" only means something for a Teacher: the other roles
+         * already see every student. Greyed out otherwise, and only an admin
+         * may change it at all (the server checks that again).
+         */
+        function syncGradeScopeControl() {
+            const sel = document.getElementById('editTeacherGradeScope');
+            const hint = document.getElementById('editTeacherGradeScopeHint');
+            const role = (document.getElementById('editTeacherRole') || {}).value;
+            const admin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin');
+            if (!sel) return;
+            const teacherRole = role === 'teacher';
+            sel.disabled = !teacherRole || !admin;
+            if (hint) {
+                hint.style.color = '';
+                hint.textContent = !admin
+                    ? 'Only an admin can change which students a staff member can see.'
+                    : !teacherRole
+                        ? 'This role already sees every student.'
+                        : 'Middle School access adds every student in grades 6-8. It applies the next time they load the app.';
+            }
+        }
+
         function closeEditTeacherModal() {
             document.getElementById('editTeacherModal').classList.add('hidden');
             editingTeacherId = null;
@@ -9916,9 +9944,44 @@
                 }
             }
 
+            // STUDENT ACCESS (grade scope), through its own admin-gated
+            // mutation for the same reason as the role: it is not in
+            // TEACHER_WRITABLE, and the value shown is only ever the server's
+            // answer. Skipped when the role just changed away from Teacher --
+            // the server cleared it with the role change.
+            let scopeResult = null;
+            let scopeError = null;
+            const scopeSel = document.getElementById('editTeacherGradeScope');
+            const wantedScope = scopeSel && !scopeSel.disabled ? (scopeSel.value || null) : undefined;
+            if (roleResult && roleResult.gradeScopeCleared) teacher.gradeScope = null;
+            if (!roleError && wantedScope !== undefined && teacher.role === 'teacher'
+                && (wantedScope || null) !== (teacher.gradeScope || null)) {
+                const auth = window.WildcatAuth;
+                const session = auth && auth.getSession && auth.getSession();
+                if (!auth || !session) {
+                    scopeError = 'Student access is stored on the server, which needs a Microsoft sign-in.';
+                } else {
+                    try {
+                        scopeResult = await auth.convexMutation('staffInvites:setStaffGradeScope',
+                            { email: teacher.email || '', scope: wantedScope }, session.idToken);
+                        teacher.gradeScope = scopeResult.scope || null;
+                    } catch (e) {
+                        scopeError = (e && e.message) || String(e);
+                    }
+                }
+            }
+
             saveData();
             updateTeachersTable();
             updateAllDisplays(); // Refresh all displays including period filter
+
+            if (scopeError) {
+                const hint = document.getElementById('editTeacherGradeScopeHint');
+                if (hint) { hint.textContent = scopeError; hint.style.color = '#b91c1c'; }
+                if (scopeSel) scopeSel.value = teacher.gradeScope === 'middle' ? 'middle' : '';
+                alert(`Saved, but their student access did NOT change.\n\n${scopeError}`);
+                return;
+            }
 
             if (roleError) {
                 // NOT closed, so the admin is looking at the dialog whose change
@@ -9927,6 +9990,12 @@
                 const hint = document.getElementById('editTeacherRoleHint');
                 if (hint) { hint.textContent = roleError; hint.style.color = '#b91c1c'; }
                 document.getElementById('editTeacherRole').value = previousRole;
+                // Setting .value does not fire onchange, so the Student access
+                // control would stay greyed out for the role that failed, and a
+                // second Save would skip the scope it still showed. Put it back
+                // to what the server holds (it was not sent) and re-sync.
+                if (scopeSel) scopeSel.value = teacher.gradeScope === 'middle' ? 'middle' : '';
+                syncGradeScopeControl();
                 alert(`Name and email saved, but the access level did NOT change.\n\n${roleError}`);
                 return;
             }
@@ -9935,7 +10004,13 @@
             alert(roleResult
                 ? `✅ ${roleResult.name} is now ${getFriendlyRoleName(roleResult.role)}.\n\n` +
                   `They need to sign out and back in for it to take effect.`
-                : `✅ Teacher updated!\n\n${name}'s information has been saved.`);
+                : scopeResult
+                    ? `✅ ${scopeResult.name} now sees ` +
+                      (scopeResult.scope === 'middle'
+                          ? 'their own classes plus every Middle School student (grades 6-8).'
+                          : 'their own classes only.') +
+                      `\n\nIt applies the next time they load the app.`
+                    : `✅ Teacher updated!\n\n${name}'s information has been saved.`);
         }
 
         async function deleteTeacher(teacherId) {
@@ -13383,7 +13458,9 @@
                         <td class="wc-name">${escapeHtml(t.name || 'Unknown')}</td>
                         <td class="cell-muted">${username}</td>
                         <td class="cell-muted">${email}</td>
-                        <td><span class="wu-chip ${roleClass}">${escapeHtml(roleLabel)}</span></td>
+                        <td><span class="wu-chip ${roleClass}">${escapeHtml(roleLabel)}</span>${t.gradeScope === 'middle' && t.role === 'teacher'
+                            ? ' <span class="wu-chip" title="Sees every student in grades 6-8 as well as their own classes">+ Middle School</span>'
+                            : ''}</td>
                         <td class="wc-money">${awarded}</td>
                         <td>
                             <div class="wc-row-actions">
@@ -15725,8 +15802,16 @@
          * dropdown now says which of the three it is, so the next report names
          * a cause instead of a symptom.
          */
-        function periodFilterNote(sections) {
+        function periodFilterNote(sections, roster) {
             if (sections && sections.length) return '';
+            // No classes, but Middle School access: say what "All students"
+            // is showing rather than "No classes", which would read as broken.
+            const block = window.WildcatRoster && window.WildcatRoster.gradeBlockOf
+                ? window.WildcatRoster.gradeBlockOf(roster) : null;
+            if (block) {
+                return '<option value="" disabled>No classes in PowerSchool; showing ' +
+                    escapeHtml(block.label) + '</option>';
+            }
             if (sisRosterState === 'loading') {
                 return '<option value="" disabled>Loading your classes…</option>';
             }
@@ -15808,9 +15893,12 @@
                 // no way to narrow to their own. scopeStudents already honours
                 // a chosen section for every role, so the only thing missing
                 // was offering it.
+                const gradeBlock = window.WildcatRoster.gradeBlockOf(activeTeacherRoster());
                 periodFilter.innerHTML =
-                    `<option value="">All Students (${totalStudents})</option>` +
-                    periodFilterNote(sections);
+                    (gradeBlock
+                        ? `<option value="">All my students (${escapeHtml(gradeBlock.label)})</option>`
+                        : `<option value="">All Students (${totalStudents})</option>`) +
+                    periodFilterNote(sections, activeTeacherRoster());
 
                 // sectionsFrom already classifies and labels each block, so the
                 // list reads "Promise Time" and "Period 3" rather than raw
@@ -18132,6 +18220,10 @@
             safely(window.updateCashTable);
             safely(window.updateTicketsTable);
             safely(window.populateReferralStudentDropdown);
+            // Accounts too: its class filter and its list both come from the
+            // roster, and a grade scope arrives with it.
+            safely(window.updateAccountPeriodFilter);
+            safely(window.updateStudentAccounts);
         }
 
         /**
@@ -28454,6 +28546,11 @@
                     const periodInfo = filteredStudents[0].sections?.find(s => s.period === periodFilter);
                     titleText = `Period ${periodFilter}${periodInfo ? ' - ' + periodInfo.className : ''}`;
                     subtitleText = `${filteredStudents.length} students in this class`;
+                } else if (funnel.scope === 'grade-scope') {
+                    // Middle School access: the header says so, so nobody
+                    // mistakes 337 children for "the whole school".
+                    titleText = window.WildcatRoster.scopeLabel({ scope: 'grade-scope' }, activeTeacherRoster(), null);
+                    subtitleText = `${filteredStudents.length} students`;
                 } else {
                     titleText = 'All Students';
                     subtitleText = `${filteredStudents.length} students total`;
@@ -28765,8 +28862,11 @@
 
             // Same rule as the raffle picker, so the two cannot disagree:
             // everyone gets the whole school AND their own classes.
-            select.innerHTML = '<option value="">All students</option>'
-                + periodFilterNote(sections);
+            const gradeBlock = window.WildcatRoster.gradeBlockOf(activeTeacherRoster());
+            select.innerHTML = (gradeBlock
+                    ? '<option value="">All my students (' + escapeHtml(gradeBlock.label) + ')</option>'
+                    : '<option value="">All students</option>')
+                + periodFilterNote(sections, activeTeacherRoster());
 
             // sectionsFrom classifies and labels each block, so the dropdown
             // shows "Promise Time" rather than "Period 1 - Promise Time". At
@@ -29180,7 +29280,11 @@
             if (!select) return;
             const keep = select.value;
             const sections = window.WildcatRoster.sectionsFrom(activeTeacherRoster());
-            select.innerHTML = '<option value="">All students</option>' + periodFilterNote(sections);
+            const gradeBlock = window.WildcatRoster.gradeBlockOf(activeTeacherRoster());
+            select.innerHTML = (gradeBlock
+                    ? '<option value="">All my students (' + escapeHtml(gradeBlock.label) + ')</option>'
+                    : '<option value="">All students</option>')
+                + periodFilterNote(sections, activeTeacherRoster());
             sections.forEach(sec => {
                 const o = document.createElement('option');
                 o.value = sec.sectionId;
@@ -40751,6 +40855,12 @@
             const all = (typeof enrolledStudents === 'function') ? enrolledStudents() : [];
             if (!currentUser) return null;
             if (currentUser.role !== 'teacher') return all;
+            // Middle School access: the students the roster filter allows.
+            if (window.WildcatRoster && window.WildcatRoster.gradeBlockOf(activeTeacherRoster())) {
+                return window.WildcatRoster.scopeStudents({
+                    students: all, role: currentUser.role, roster: activeTeacherRoster()
+                }).students;
+            }
             const sections = Array.isArray(currentUser.sections) ? currentUser.sections : [];
             // A teacher with no sections is not a teacher with zero students.
             // It means the SIS has not matched them yet, and "0" would be a

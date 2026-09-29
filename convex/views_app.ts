@@ -7,6 +7,7 @@ import { teacherRosterEmail } from "./rosterEmail";
 import { studentView } from "./views";
 import { projectGrade } from "./gradeProjection";
 import { storeSignal } from "./studentStore";
+import { readGradeScopeBlock } from "./gradeScopeRead";
 
 /**
  * The three reads the app actually needs.
@@ -144,6 +145,11 @@ export const teacherRoster = query({
       rosterEmail: lookup.email,
       rosterVia: lookup.via,
       rosterViaRefused: lookup.refused,
+      // EXTRA students from a grade scope ("middle" = grades 6-8), as student
+      // numbers, or null. Separate from `sections` on purpose: it is not a
+      // class, and dealing it in as one would fill the period dropdowns and
+      // the hall-pass picker with a fake "period" of 337 children.
+      gradeScope: await readGradeScopeBlock(ctx, teacher),
       restricted: {
         // Told plainly rather than silently omitted, so a teacher knows data
         // exists and is withheld rather than assuming it is missing.
@@ -192,6 +198,7 @@ export const teacherRosterFor = query({
         sectionCount: 0, studentCount: 0, sections: [],
         restricted: { visibleToYou: policy.allowed, withheld: policy.denied },
         viewedBy: { role: admin.role },
+        gradeScope: null,
         reason: "No email given for the staff member to look at.",
       };
     }
@@ -272,6 +279,9 @@ export const teacherRosterFor = query({
       // Recorded so the browser can label the view honestly: an admin looked,
       // and the server answered as an admin.
       viewedBy: { role: admin.role },
+      // What THAT staff member's grade scope adds, so an admin previewing them
+      // sees what they see.
+      gradeScope: staffRow ? await readGradeScopeBlock(ctx, staffRow) : null,
       // A staff member with no roster rows is not an error. It is the usual
       // reason a teacher reports empty class periods, and it is the answer
       // teacher view exists to give.

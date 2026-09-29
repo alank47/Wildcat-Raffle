@@ -242,6 +242,20 @@
   }
 
   /**
+   * The grade-scope block on a roster payload ("middle" = every student in
+   * grades 6-8, on top of a teacher's own classes; convex/gradeScopeRead.ts),
+   * or null. Anything malformed is ignored rather than guessed at: the block
+   * is a list of student NUMBERS the server worked out, and this never parses
+   * a grade.
+   */
+  function gradeBlockOf(roster) {
+    var b = roster && roster.gradeScope;
+    if (!b || typeof b !== 'object') return null;
+    if (!Array.isArray(b.studentNumbers) || typeof b.label !== 'string' || !b.label) return null;
+    return b;
+  }
+
+  /**
    * Filter an app student list to what this person should see.
    *
    * Returns { students, scope, reason }. `reason` is populated only when the
@@ -290,8 +304,11 @@
     }
 
     // A teacher with no roster is NOT shown everyone. Absent data is absent,
-    // not permission. This is the failure the old code had backwards.
-    if (!roster || !(roster.sections || []).length) {
+    // not permission. This is the failure the old code had backwards. A grade
+    // scope counts as a roster: a teacher with no classes but Middle School
+    // access sees the Middle School.
+    var block = gradeBlockOf(roster);
+    if (!roster || (!(roster.sections || []).length && !block)) {
       return {
         students: [],
         scope: 'none',
@@ -302,13 +319,31 @@
     }
 
     var allowed = studentNumbersFor(roster, null);
+    if (block) {
+      block.studentNumbers.forEach(function (num) {
+        var n = trimmed(num);
+        if (n) allowed[n] = true;
+      });
+    }
     var scoped = all.filter(function (s) {
       var n = trimmed(s && s.studentNumber);
       return n && allowed[n] === true;
     });
+    var scopeName = block ? 'grade-scope' : 'my-roster';
 
     if (scoped.length) {
-      return { students: scoped, scope: 'my-roster', reason: null };
+      return { students: scoped, scope: scopeName, reason: null };
+    }
+
+    if (block) {
+      return {
+        students: [],
+        scope: scopeName,
+        reason: !block.studentNumbers.length && !Object.keys(studentNumbersFor(roster, null)).length
+          ? 'PowerSchool lists no students in ' + block.label + ' right now.'
+          : 'The ' + block.label + ' students have no records in the app yet. ' +
+            'They should appear after the next sync.'
+      };
     }
 
     // Distinguish "your roster is empty" from "none of your students have app
@@ -328,6 +363,10 @@
     if (!result) return '';
     if (result.scope === 'all') return 'All students';
     if (result.scope === 'none') return 'No roster';
+    if (result.scope === 'grade-scope' && !sectionId) {
+      var gb = gradeBlockOf(roster);
+      if (gb) return ((roster && (roster.sections || []).length) ? 'My classes + ' : '') + gb.label;
+    }
     if (sectionId) {
       var hit = sectionsFrom(roster).filter(function (s) {
         return trimmed(s.sectionId) === trimmed(sectionId);
@@ -2268,6 +2307,7 @@
     sectionsFrom: sectionsFrom,
     studentNumbersFor: studentNumbersFor,
     scopeStudents: scopeStudents,
-    scopeLabel: scopeLabel
+    scopeLabel: scopeLabel,
+    gradeBlockOf: gradeBlockOf
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

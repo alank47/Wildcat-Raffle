@@ -43,6 +43,7 @@ import type * as earlyWarningProfile from "../earlyWarningProfile.js";
 import type * as entraProbe from "../entraProbe.js";
 import type * as entraSync from "../entraSync.js";
 import type * as gradeProjection from "../gradeProjection.js";
+import type * as gradeScopeRead from "../gradeScopeRead.js";
 import type * as hallPassRules from "../hallPassRules.js";
 import type * as hallPasses from "../hallPasses.js";
 import type * as historyProbe from "../historyProbe.js";
@@ -142,6 +143,7 @@ declare const fullApi: ApiFromModules<{
   entraProbe: typeof entraProbe;
   entraSync: typeof entraSync;
   gradeProjection: typeof gradeProjection;
+  gradeScopeRead: typeof gradeScopeRead;
   hallPassRules: typeof hallPassRules;
   hallPasses: typeof hallPasses;
   historyProbe: typeof historyProbe;

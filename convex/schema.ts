@@ -49,6 +49,19 @@ export default defineSchema({
      * teacher's roster. Clear it once the SIS is corrected.
      */
     psEmail: v.optional(v.string()),
+    /**
+     * EXTRA students a TEACHER may see: "middle" = every student in grades
+     * 6-8, on top of their own classes (2026-09-29, for Eric Pichler).
+     *
+     * Like psEmail, never used for authentication and never an admin power.
+     * Honoured only when role is "teacher" (accessRules.activeGradeScope).
+     * Set ONLY by staffInvites:setStaffGradeScope (admin) or its CLI twin --
+     * it is not in TEACHER_WRITABLE, so no browser save can carry it -- and
+     * cleared by any role change (roleChangeRules.roleWritePatch).
+     */
+    gradeScope: v.optional(v.literal("middle")),
+    gradeScopeSetBy: v.optional(v.string()),
+    gradeScopeSetAt: v.optional(v.string()),
     // NOTE: no `password` field, deliberately. The cleartext password column is
     // what this whole migration exists to delete. Do not carry it across.
   })
