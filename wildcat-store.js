@@ -825,6 +825,63 @@
     });
   }
 
+  /**
+   * The newest purchases for the Rewards Store's "Recent Redemptions" box,
+   * newest first.
+   *
+   * FROM THE RECEIPTS, which every sale writes -- office and student store
+   * alike. The box used to read each student's wildcatCashRewardsRedeemed,
+   * which only an office sale writes (studentStore.ts never has), so on
+   * 2026-09-29 it showed none of the 25 Power-Up Pass sales and read as
+   * though they had not gone through. Older office sales that predate
+   * receipts still appear, from that list, when no receipt carries the same
+   * id. Cancelled receipts stay, marked refunded or NOT refunded, because
+   * that is part of what happened.
+   */
+  function recentRedemptions(receipts, students, limit) {
+    var max = isFiniteNumber(limit) && limit > 0 ? limit : 20;
+    var out = [];
+    var seen = {};
+    (receipts || []).forEach(function (r) {
+      if (!r || !r.id) return;
+      seen[r.id] = true;
+      out.push({
+        id: r.id,
+        studentName: r.studentName || '',
+        rewardName: r.rewardName || '',
+        quantity: isFiniteNumber(r.quantity) ? r.quantity : 1,
+        cost: isFiniteNumber(r.totalCost) ? r.totalCost : 0,
+        at: r.purchasedAt || '',
+        by: r.channel === 'student' ? 'Student store' : ((r.purchasedBy && r.purchasedBy.name) || ''),
+        cancelled: r.status === 'cancelled',
+        // A cancel does not always refund (before a reset, undated, no
+        // matching student, or a refund later withdrawn), and refundTxId is
+        // the only thing that says one happened.
+        refunded: r.status === 'cancelled' && !!r.refundTxId
+      });
+    });
+    (students || []).forEach(function (s) {
+      var list = s && Array.isArray(s.wildcatCashRewardsRedeemed) ? s.wildcatCashRewardsRedeemed : [];
+      list.forEach(function (x) {
+        if (!x || (x.receiptId && seen[x.receiptId])) return;
+        out.push({
+          id: x.receiptId || '',
+          studentName: ((s.firstName || '') + ' ' + (s.lastName || '')).trim(),
+          rewardName: x.rewardName || '',
+          quantity: isFiniteNumber(x.quantity) ? x.quantity : 1,
+          cost: isFiniteNumber(x.cost) ? x.cost : 0,
+          at: x.timestamp || '',
+          by: x.redeemedBy || '',
+          cancelled: false,
+          refunded: false
+        });
+      });
+    });
+    var time = function (e) { var t = Date.parse(e.at); return isFinite(t) ? t : 0; };
+    out.sort(function (a, b) { return time(b) - time(a); });
+    return out.slice(0, max);
+  }
+
   /** Everything a fulfillment desk needs in one pass over the receipts. */
   function receiptSummary(receipts) {
     var out = { total: 0, issued: 0, fulfilled: 0, cancelled: 0, outstandingValue: 0, spentValue: 0 };
@@ -1008,6 +1065,7 @@
     buildCancel: buildCancel,
     cancelRefundVerdict: cancelRefundVerdict,
     rewardPopularity: rewardPopularity,
+    recentRedemptions: recentRedemptions,
     receiptSummary: receiptSummary,
     findReceipt: findReceipt
   };

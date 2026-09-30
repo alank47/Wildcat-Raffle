@@ -29096,40 +29096,36 @@
 
         function updateRedemptionHistory() {
             const container = document.getElementById('redemptionHistory');
-            
-            // Get recent redemptions
-            const redemptions = [];
-            students.forEach(student => {
-                if (student.wildcatCashRewardsRedeemed && student.wildcatCashRewardsRedeemed.length > 0) {
-                    student.wildcatCashRewardsRedeemed.forEach(redemption => {
-                        redemptions.push({
-                            ...redemption,
-                            studentName: `${student.firstName} ${student.lastName}`
-                        });
-                    });
-                }
-            });
-            
-            // Sort by timestamp
-            redemptions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-            
+            if (!container) return;
+
+            // FROM THE RECEIPTS (WildcatStore.recentRedemptions), which every
+            // sale writes. This read students' wildcatCashRewardsRedeemed,
+            // which the student store never writes, so on 2026-09-29 the box
+            // showed none of the 25 Power-Up Pass sales and looked as though
+            // they had not gone through. "What sells" beside it always read
+            // the receipts, which is why the two disagreed.
+            const redemptions = window.WildcatStore.recentRedemptions(cashReceipts, students, 20);
+
             if (redemptions.length === 0) {
                 container.innerHTML = '<p style="text-align: center; color: #999; padding: 20px;">No redemptions yet</p>';
                 return;
             }
-            
+
             container.innerHTML = '';
-            redemptions.slice(0, 20).forEach(redemption => {
-                const date = new Date(redemption.timestamp).toLocaleString();
+            redemptions.forEach(redemption => {
+                const when = new Date(redemption.at);
+                const date = isNaN(when.getTime()) ? '' : when.toLocaleString();
+                const what = redemption.rewardName + (redemption.quantity > 1 ? ' x' + redemption.quantity : '');
                 const card = document.createElement('div');
-                card.style.cssText = 'background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;';
+                card.style.cssText = 'background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;' +
+                    (redemption.cancelled ? ' opacity: 0.6;' : '');
                 card.innerHTML = `
                     <div>
-                        <div style="font-weight: 600; color: #333;">${redemption.studentName}</div>
-                        <div style="color: #666; font-size: 14px;">${redemption.rewardName}</div>
-                        <div style="color: #999; font-size: 13px;">${date}</div>
+                        <div style="font-weight: 600; color: #333;">${escapeHtml(redemption.studentName)}</div>
+                        <div style="color: #666; font-size: 14px;">${escapeHtml(what)}${redemption.cancelled ? (redemption.refunded ? ' <strong>(cancelled, refunded)</strong>' : ' <strong>(cancelled, NOT refunded)</strong>') : ''}</div>
+                        <div style="color: #999; font-size: 13px;">${escapeHtml(date)}${redemption.by ? ' &middot; ' + escapeHtml(redemption.by) : ''}</div>
                     </div>
-                    <div style="font-size: 20px; font-weight: 700; color: #f5576c;">-$${redemption.cost}</div>
+                    <div style="font-size: 20px; font-weight: 700; color: #f5576c;${redemption.refunded ? ' text-decoration: line-through;' : ''}">-$${Number(redemption.cost) || 0}</div>
                 `;
                 container.appendChild(card);
             });
