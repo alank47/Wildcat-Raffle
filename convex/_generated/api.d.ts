@@ -60,6 +60,7 @@ import type * as mealPins from "../mealPins.js";
 import type * as migrate from "../migrate.js";
 import type * as mirror from "../mirror.js";
 import type * as passCard from "../passCard.js";
+import type * as promiseTime from "../promiseTime.js";
 import type * as psBehavior from "../psBehavior.js";
 import type * as psSync from "../psSync.js";
 import type * as push from "../push.js";
@@ -160,6 +161,7 @@ declare const fullApi: ApiFromModules<{
   migrate: typeof migrate;
   mirror: typeof mirror;
   passCard: typeof passCard;
+  promiseTime: typeof promiseTime;
   psBehavior: typeof psBehavior;
   psSync: typeof psSync;
   push: typeof push;

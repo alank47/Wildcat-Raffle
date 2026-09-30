@@ -265,6 +265,54 @@ console.log("\nTHE PURCHASE LIST\n");
   check("TEETH: without the cancelled filter a refunded pass WOULD print",
     teethless(receipts, rewards, students, ["pup_ms"])[0].rows.some((r) => r.receipt === "WC-XXX"));
 
+  // PROMISE TIME (AM), 2026-09-30: "Promise Time is when we distribute any
+  // items". The column comes from PowerSchool by student number.
+  const promise = { "7001": { teacher: "Melissa Romero", course: "Promise Time 7A" },
+                    "6001": { teacher: "Arnold Huddlin", course: "Promise Time 6B" } };
+  const withPt = build(receipts, rewards, students, ["pup_ms"], promise)[0];
+  check("each row carries its Promise Time (AM) teacher and class",
+    withPt.rows.find((r) => r.receipt === "WC-AAA").promise.teacher === "Melissa Romero"
+    && withPt.rows.find((r) => r.receipt === "WC-AAA").promise.course === "Promise Time 7A");
+  check("a student with none in PowerSchool gets null, not someone else's",
+    withPt.rows.find((r) => r.receipt === "WC-CCC").promise === null);
+  check("the default order is unchanged: grade, then surname",
+    withPt.rows.map((r) => r.last).join(",") === "Zamora,Alvarez,Reyes");
+  const byPt = build(receipts, rewards, students, ["pup_ms"], promise, "promise")[0];
+  check("ordered by Promise Time, each room's students sit together, the unmatched last",
+    byPt.rows.map((r) => r.last).join(",") === "Zamora,Reyes,Alvarez", byPt.rows.map((r) => r.last).join(","));
+  const tens = build([rc("WC-T1", "7001", "pup_ms"), rc("WC-T2", "6001", "pup_ms")], rewards, students, ["pup_ms"],
+    { "7001": { teacher: "Zed", course: "Promise Time 10A" }, "6001": { teacher: "Amy", course: "Promise Time 9A" } }, "promise")[0];
+  check("...by class name, numerically: 9A before 10A", tens.rows.map((r) => r.promise.course).join(",") === "Promise Time 9A,Promise Time 10A");
+  check("no Promise Time data at all still builds the list", build(receipts, rewards, students, ["pup_ms"], null, "promise")[0].rows.length === 3);
+  const sheetFn = lift("renderPurchaseListSheet");
+  check("the printed table has a Promise Time (AM) column", /<th>Promise Time \(AM\)<\/th>/.test(sheetFn) && /promiseCell\(r\)/.test(sheetFn));
+  check("it says when Promise Time did not load, rather than a blank",
+    /not loaded/.test(sheetFn) && /none in PowerSchool/.test(sheetFn));
+  check("the sheet asks PowerSchool when it opens", /loadPurchaseListPromise\(\)\.then\(renderPurchaseListSheet/.test(lift("openPurchaseListSheet")));
+  const pt = readFileSync(new URL("./convex/promiseTime.ts", import.meta.url), "utf8");
+  const isAm = new Function(pt.slice(pt.indexOf("export function isPromiseTimeAm"), pt.indexOf("export const promiseTimeAm"))
+    .replace("export function", "function").replace("(period: unknown): boolean", "(period)") + "\nreturn isPromiseTimeAm;")();
+  check("AM is slot 1 -- '1(A-E)' is AM", isAm("1(A-E)") && isAm(" 1(A) "));
+  check("...and slot 10, the PM block with the SAME course name, is not", !isAm("10(A-E)") && !isAm("11(A-E)") && !isAm(""));
+  check("the lookup is staff only", /await requireStaff\(ctx\);/.test(pt));
+  // Review finding 2026-09-30: a classroom teacher is limited to their own
+  // roster everywhere else, so they must not read every child's morning room.
+  const mayRead = new Function(pt.slice(pt.indexOf("export const PROMISE_TIME_ROLES"), pt.indexOf("const MAX_NUMBERS"))
+    .replace(/export /g, "").replace("(role: unknown): boolean", "(role)") + "\nreturn mayReadPromiseTime;")();
+  check("only roles that already see every student may read it",
+    ["admin", "superadmin", "campusaide", "pbis"].every(mayRead) && !["teacher", "", "janitor"].some(mayRead));
+  check("...and the query refuses anyone else", /if \(!mayReadPromiseTime\(\(me as any\)\.role\)\) \{\s*throw new ConvexError/.test(pt));
+  const openFn = lift("openPurchaseListSheet");
+  check("an earlier open's answer is cleared before the list is drawn",
+    /_purchaseListPromise = null;\s*_purchaseListPromiseAsked = new Set\(\);\s*_purchaseListPromiseState = 'loading';\s*renderPurchaseListSheet\(\);/.test(openFn));
+  const loadFn = lift("loadPurchaseListPromise");
+  check("an older answer landing late is ignored (both success and failure)",
+    (loadFn.match(/if \(seq !== _purchaseListPromiseSeq\) return;/g) || []).length === 2);
+  check("'none in PowerSchool' only for a student PowerSchool was asked about",
+    /_purchaseListPromiseAsked\.has\(r\.studentNumber\)\s*\? '<td class="print-note">none in PowerSchool<\/td>'/.test(sheetFn));
+  check("a buyer who arrives while the sheet is open is looked up",
+    /purchaseListBuyerNumbers\(\)\.some\(function \(n\) \{ return !_purchaseListPromiseAsked\.has\(n\); \}\)/.test(sheetFn));
+
   check("the Receipts screen has the button", /onclick="openPurchaseListSheet\(\)"/.test(html)
     && html.indexOf("openPurchaseListSheet()") > html.indexOf('id="receiptsTab"'));
   const open = lift("openPurchaseListSheet");

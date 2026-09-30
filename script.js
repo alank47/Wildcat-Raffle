@@ -30745,8 +30745,12 @@
          * a list that silently drops one invites the question "where did the
          * 43rd go".
          */
-        function buildPurchaseListPages(receiptList, rewardList, studentList, rewardIds) {
+        function buildPurchaseListPages(receiptList, rewardList, studentList, rewardIds, promiseByNumber, order) {
             const wanted = (rewardIds || []).map(String);
+            const promiseOf = function (num) {
+                const p = promiseByNumber && num ? promiseByNumber[num] : null;
+                return p && (p.teacher || p.course) ? { teacher: String(p.teacher || ''), course: String(p.course || '') } : null;
+            };
             const byStudent = new Map((studentList || []).map(function (st) { return [String(st.id), st]; }));
             const byReward = new Map((rewardList || []).map(function (rw) { return [String(rw.id), rw]; }));
             return wanted.map(function (rid) {
@@ -30766,9 +30770,22 @@
                         purchasedAt: r.purchasedAt || null,
                         status: r.status === 'fulfilled' ? 'Collected' : 'Awaiting pickup',
                         quantity: Number(r.quantity) > 1 ? Number(r.quantity) : 1,
-                        byStaff: r.channel !== 'student'
+                        byStaff: r.channel !== 'student',
+                        promise: promiseOf(String((st && (st.studentNumber || '')) || ''))
                     };
                 }).sort(function (a, b) {
+                    // BY PROMISE TIME, when asked: items are handed out in
+                    // Promise Time, so each room's students sit together.
+                    // Nobody without one sorts last, never first.
+                    if (order === 'promise') {
+                        // By the class name ("Promise Time 9A"), numerically,
+                        // so 10A follows 9A; then the teacher.
+                        const pa = a.promise ? (a.promise.course + ' \u0001' + a.promise.teacher) : '\uffff';
+                        const pb = b.promise ? (b.promise.course + ' \u0001' + b.promise.teacher) : '\uffff';
+                        const pd = pa.localeCompare(pb, undefined, { numeric: true, sensitivity: 'base' });
+                        if (pd) return pd;
+                        return (a.last + ' ' + a.first).toLowerCase().localeCompare((b.last + ' ' + b.first).toLowerCase());
+                    }
                     const ga = parseInt(a.grade, 10), gb = parseInt(b.grade, 10);
                     const gd = (isFinite(ga) ? ga : 99) - (isFinite(gb) ? gb : 99);
                     if (gd) return gd;
@@ -30808,6 +30825,55 @@
             });
         }
 
+        /**
+         * PROMISE TIME (AM) FOR THE LIST (2026-09-30: "Promise Time is when we
+         * distribute any items"). From PowerSchool via promiseTime:promiseTimeAm,
+         * for the buyers only. The list draws at once and fills this in when it
+         * arrives; a failure says so in the column rather than blanking it.
+         */
+        let _purchaseListPromise = null;          // { number: {teacher, course} }
+        let _purchaseListPromiseState = 'idle';   // idle | loading | ready | failed
+        let _purchaseListPromiseAsked = new Set(); // numbers the last answer covers
+        let _purchaseListPromiseSeq = 0;          // only the newest answer counts
+        let _purchaseListOrder = 'grade';         // grade | promise
+
+        /** Every buyer's student number, from the receipts as they are now. */
+        function purchaseListBuyerNumbers() {
+            const byId = new Map((students || []).map(function (st) { return [String(st.id), st]; }));
+            return Array.from(new Set((cashReceipts || [])
+                .filter(function (r) { return r && r.status !== 'cancelled'; })
+                .map(function (r) { const st = byId.get(String(r.studentId)); return st ? String(st.studentNumber || '') : ''; })
+                .filter(Boolean)));
+        }
+
+        async function loadPurchaseListPromise() {
+            // A SEQUENCE, so an older answer landing late never replaces a
+            // newer one (review finding, 2026-09-30).
+            const seq = ++_purchaseListPromiseSeq;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            const numbers = purchaseListBuyerNumbers();
+            if (!numbers.length) { _purchaseListPromiseAsked = new Set(); _purchaseListPromiseState = 'ready'; return; }
+            if (!auth || !session) { _purchaseListPromiseState = 'failed'; return; }
+            _purchaseListPromiseState = 'loading';
+            try {
+                const res = await auth.convexQuery('promiseTime:promiseTimeAm', { studentNumbers: numbers }, session.idToken);
+                if (seq !== _purchaseListPromiseSeq) return;
+                _purchaseListPromise = (res && res.byNumber) || {};
+                _purchaseListPromiseAsked = new Set(numbers);
+                _purchaseListPromiseState = 'ready';
+            } catch (e) {
+                if (seq !== _purchaseListPromiseSeq) return;
+                console.warn('[purchase list] Promise Time did not load:', e && e.message);
+                _purchaseListPromiseState = 'failed';
+            }
+        }
+
+        function setPurchaseListOrder(order) {
+            _purchaseListOrder = order === 'promise' ? 'promise' : 'grade';
+            renderPurchaseListSheet();
+        }
+
         async function openPurchaseListSheet() {
             // TODAY'S RECEIPTS. The list is printed after the store closes,
             // from purchases children made on their own Chromebooks; a tab
@@ -30830,7 +30896,15 @@
                 sheet.setAttribute('aria-label', 'Purchase list');
                 document.body.appendChild(sheet);
             }
+            // NOTHING FROM AN EARLIER OPEN IS SHOWN AS CURRENT: students may
+            // have bought since, and "none in PowerSchool" would be wrong
+            // for every one of them.
+            _purchaseListPromise = null;
+            _purchaseListPromiseAsked = new Set();
+            _purchaseListPromiseState = 'loading';
             renderPurchaseListSheet();
+            // Filled in when PowerSchool answers; the sheet is already usable.
+            loadPurchaseListPromise().then(renderPurchaseListSheet, renderPurchaseListSheet);
         }
 
         /** The choices as last DRAWN, so a click means the box it was on. */
@@ -30854,7 +30928,29 @@
             _purchaseListChoicesShown = choices;
             const picks = choices.filter(function (c) { return _purchaseListPicks && _purchaseListPicks.has(c.id); })
                 .map(function (c) { return c.id; });
-            const pages = buildPurchaseListPages(cashReceipts, wildcatCashRewards, students, picks);
+            const pages = buildPurchaseListPages(cashReceipts, wildcatCashRewards, students, picks,
+                _purchaseListPromise, _purchaseListOrder);
+            const promiseCell = function (r) {
+                if (r.promise) {
+                    return '<td>' + escapeHtml(r.promise.teacher || '') +
+                        (r.promise.course ? '<div class="print-note">' + escapeHtml(r.promise.course) + '</div>' : '') + '</td>';
+                }
+                if (_purchaseListPromiseState === 'loading' || _purchaseListPromiseState === 'idle') return '<td class="print-note">loading\u2026</td>';
+                if (_purchaseListPromiseState === 'failed') return '<td class="print-note">not loaded</td>';
+                // "None" only for a student PowerSchool was actually asked
+                // about; a buyer who arrived since is still being looked up.
+                return _purchaseListPromiseAsked.has(r.studentNumber)
+                    ? '<td class="print-note">none in PowerSchool</td>'
+                    : '<td class="print-note">loading\u2026</td>';
+            };
+            // Receipts keep arriving while the sheet is open (the desk pulls
+            // every 20 seconds). A buyer the last answer did not cover is
+            // looked up; the sheet redraws when it comes back.
+            if (_purchaseListPromiseState === 'ready' &&
+                purchaseListBuyerNumbers().some(function (n) { return !_purchaseListPromiseAsked.has(n); })) {
+                _purchaseListPromiseState = 'loading';
+                loadPurchaseListPromise().then(renderPurchaseListSheet, renderPurchaseListSheet);
+            }
             const printedAt = new Date().toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric',
                                                               hour: 'numeric', minute: '2-digit' });
             const toolbar =
@@ -30872,6 +30968,13 @@
                             'onchange="togglePurchaseListPickAt(' + i + ')"> ' +
                             escapeHtml(c.name) + ' <span class="receipt-meta">(' + c.count + ')</span></label>';
                     }).join('') + '</div>' +
+                    '<div class="print-picks"><label>Order: <select onchange="setPurchaseListOrder(this.value)">' +
+                        '<option value="grade"' + (_purchaseListOrder === 'grade' ? ' selected' : '') + '>Grade, then name</option>' +
+                        '<option value="promise"' + (_purchaseListOrder === 'promise' ? ' selected' : '') + '>Promise Time (AM), then name</option>' +
+                    '</select></label>' +
+                    (_purchaseListPromiseState === 'failed'
+                        ? ' <span class="receipt-meta">Promise Time could not be loaded from PowerSchool; close and reopen to try again.</span>' : '') +
+                    '</div>' +
                     '<p class="receipt-meta">To get a PDF: press Print, then choose \u201CSave as PDF\u201D as the destination. ' +
                     'Each item prints on its own page.</p>' +
                 '</div>';
@@ -30889,6 +30992,7 @@
                                     (r.quantity > 1 ? ' <strong>\u00D7' + r.quantity + '</strong>' : '') +
                                     (r.byStaff ? ' <span class="print-note">(office)</span>' : '') + '</td>' +
                                 '<td>' + escapeHtml(r.grade) + '</td>' +
+                                promiseCell(r) +
                                 '<td>' + escapeHtml(r.studentNumber) + '</td>' +
                                 '<td class="print-code">' + escapeHtml(r.receipt) + '</td>' +
                                 '<td>' + escapeHtml(whenText) + '</td>' +
@@ -30896,7 +31000,7 @@
                                 '<td class="print-check"></td>' +
                             '</tr>';
                         }).join('')
-                        : '<tr><td colspan="8" class="print-empty">Nobody has bought this yet.</td></tr>';
+                        : '<tr><td colspan="9" class="print-empty">Nobody has bought this yet.</td></tr>';
                     return '<section class="print-page">' +
                         '<h2>' + escapeHtml(pg.rewardName) + '</h2>' +
                         '<p class="print-sub">' + pg.rows.length + ' student' + (pg.rows.length === 1 ? '' : 's') +
@@ -30904,7 +31008,7 @@
                             ' \u00B7 printed ' + escapeHtml(printedAt) +
                             (pg.cancelled ? ' \u00B7 ' + pg.cancelled + ' cancelled, not listed' : '') + '</p>' +
                         '<table class="print-table"><thead><tr>' +
-                            '<th>#</th><th>Student</th><th>Grade</th><th>Student #</th><th>Receipt</th>' +
+                            '<th>#</th><th>Student</th><th>Grade</th><th>Promise Time (AM)</th><th>Student #</th><th>Receipt</th>' +
                             '<th>Bought</th><th>Status</th><th>Given</th>' +
                         '</tr></thead><tbody>' + rows + '</tbody></table>' +
                     '</section>';
