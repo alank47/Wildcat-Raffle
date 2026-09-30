@@ -127,6 +127,10 @@ export function toAppTeacher(row: Record<string, any>): AppTeacher {
     // reads this copy -- it reads the roster payload the server builds -- and
     // it is NOT in TEACHER_WRITABLE, so no save can carry it back.
     gradeScope: row.gradeScope ?? null,
+    // Display and screen gating only (which Discipline tabs to draw); the
+    // server decides access itself (accessRules.canReadInsights). Not in
+    // TEACHER_WRITABLE, so no save can carry it back.
+    attendanceWatch: row.attendanceWatch === true,
   };
 }
 

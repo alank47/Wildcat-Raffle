@@ -28,6 +28,14 @@ const schemaSrc = readFileSync(new URL("./convex/schema.ts", import.meta.url), "
 const htmlSrc = readFileSync(new URL("./index.html", import.meta.url), "utf8");
 const scriptSrc = readFileSync(new URL("./script.js", import.meta.url), "utf8");
 const cssSrc = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+const accessSrc = readFileSync(new URL("./convex/accessRules.ts", import.meta.url), "utf8");
+
+// The shipped access rules, loaded for real (the file is pure: no imports), so
+// the query below is gated by the same canReadInsights that ships, not a copy.
+const accessRules = await import("data:text/javascript," + encodeURIComponent(
+  ts.transpileModule(accessSrc, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+  }).outputText));
 
 let pass = 0, fail = 0;
 const check = (n, c, why) => {
@@ -253,6 +261,10 @@ console.log("\nTHE SERVER SIDE\n");
   // The shipped query, run against an in-memory database.
   function loadQuery(transform) {
     let body = listSrc
+      // What the file imports from ./accessRules comes from the REAL module
+      // (loaded above); every other import is stubbed below.
+      .replace(/^import\s*\{([^}]*)\}\s*from\s*"\.\/accessRules";[ \t]*\n/gm,
+        (_, names) => `const {${names.split(",").filter((n) => !/^\s*type\s/.test(n)).join(",")}} = __accessRules;\n`)
       .replace(/^import[\s\S]*?from\s*"[^"]*";[ \t]*\n/gm, "")
       .replace(/^export const /gm, "const ");
     if (transform) body = transform(body);
@@ -267,7 +279,7 @@ console.log("\nTHE SERVER SIDE\n");
     const js = ts.transpileModule(stubs + body, {
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
     }).outputText;
-    return new Function(`${js}\nreturn { attendanceMarks, setMe };`)();
+    return new Function("__accessRules", `${js}\nreturn { attendanceMarks, setMe };`)(accessRules);
   }
 
   const marksRows = [
@@ -304,8 +316,38 @@ console.log("\nTHE SERVER SIDE\n");
     check(`...and no row leaks with the refusal`, res.rows.length === 0);
   }
 
-  check("the gate is the SAME list the absence ranking uses",
-    /const ATTENDANCE_ROLES = \["admin", "superadmin", "pbis"\]/.test(listSrc));
+  // THE PER-PERSON GRANT (2026-09-30, Attendance Watch for one campus aide).
+  // Without it the roles above stay refused. It must be exactly `true`: a
+  // string or a number left on a record by mistake widens nothing.
+  for (const role of ["teacher", "campusaide"]) {
+    for (const [label, grant] of [["false", false], ['the string "true"', "true"], ["1", 1], ["null", null]]) {
+      Q.setMe({ role, attendanceWatch: grant });
+      const res = await Q.attendanceMarks.handler(ctx, {});
+      check(`${role} with attendanceWatch ${label} is still refused, with no rows`,
+        res.allowed === false && res.rows.length === 0);
+    }
+    Q.setMe({ role, attendanceWatch: true });
+    const res = await Q.attendanceMarks.handler(ctx, {});
+    check(`${role} GIVEN Attendance Watch may read it`,
+      res.allowed === true && res.rows.length === 2);
+  }
+
+  // The gate is the SAME check the absence ranking uses. Since 2026-09-30 that
+  // check is canReadInsights (the three roles, or the per-person grant) rather
+  // than the file's own role list, so pin it on both handlers, and pin the
+  // roles behind it so the list cannot quietly widen.
+  const handlerOf = (name) => {
+    const i = listSrc.indexOf(`export const ${name} = query(`);
+    const j = listSrc.indexOf("\nexport const ", i + 1);
+    return i < 0 ? "" : listSrc.slice(i, j < 0 ? undefined : j);
+  };
+  check("the gate is the SAME check the absence ranking uses",
+    /^import \{ canReadInsights \} from "\.\/accessRules";/m.test(listSrc) &&
+    /if \(!canReadInsights\(staff\)\)/.test(handlerOf("schoolAttendance")) &&
+    /if \(!canReadInsights\(staff\)\)/.test(handlerOf("attendanceMarks")));
+  check("...and the roles behind that check are still exactly admin, superadmin and PBIS",
+    JSON.stringify(accessRules.INSIGHT_ROLES) === JSON.stringify(["admin", "superadmin", "pbis"]),
+    JSON.stringify(accessRules.INSIGHT_ROLES));
 }
 
 console.log("\nTHE PIPELINE THAT FILLS IT\n");

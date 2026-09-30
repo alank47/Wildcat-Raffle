@@ -1,6 +1,7 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
 import { requireStaff } from "./identity";
+import { canReadInsights } from "./accessRules";
 import { dayCount } from "./views";
 import { addAbsenceDay, emptyAbsenceSplit, type AbsenceSplit } from "./absenceDayRules";
 
@@ -27,9 +28,13 @@ import { addAbsenceDay, emptyAbsenceSplit, type AbsenceSplit } from "./absenceDa
  * record: it names the children the school is most worried about, and a
  * teacher who may only file a referral about their own class has no business
  * with it. Campus aides are excluded for the same reason they are excluded
- * from the referral history.
+ * from the referral history -- unless an admin has given that one person
+ * Attendance Watch access (2026-09-30; accessRules.ts canReadInsights).
  */
 const ATTENDANCE_ROLES = ["admin", "superadmin", "pbis"];
+// Kept as the role list the tests pin; the check itself is canReadInsights,
+// which is these roles plus the per-person grant.
+void ATTENDANCE_ROLES;
 
 /**
  * Ceiling on rows read, well above the ~671 the school actually has.
@@ -45,12 +50,12 @@ export const schoolAttendance = query({
   args: {},
   handler: async (ctx) => {
     const staff = await requireStaff(ctx);
-    if (!ATTENDANCE_ROLES.includes(staff.role)) {
+    if (!canReadInsights(staff)) {
       return {
         allowed: false,
         reason:
-          "The attendance list is limited to administrators and the PBIS team. " +
-          "Ask an administrator to set your access level to PBIS Team.",
+          "The attendance list is limited to administrators, the PBIS team and staff an " +
+          "administrator has given Attendance Watch access.",
         rows: [],
         truncated: false,
         termFirstDay: null as string | null,
@@ -158,7 +163,7 @@ export const studentPeriods = query({
   args: { studentNumber: v.string() },
   handler: async (ctx, { studentNumber }) => {
     const staff = await requireStaff(ctx);
-    if (!ATTENDANCE_ROLES.includes(staff.role)) {
+    if (!canReadInsights(staff)) {
       return {
         allowed: false as const,
         reason:
@@ -281,7 +286,7 @@ export const dailyAbsenceSeries = query({
   },
   handler: async (ctx, { today, days }) => {
     const staff = await requireStaff(ctx);
-    if (!ATTENDANCE_ROLES.includes(staff.role)) {
+    if (!canReadInsights(staff)) {
       return {
         allowed: false as const,
         reason:
@@ -381,7 +386,7 @@ export const absenceWindow = query({
       schoolDays: [] as string[], rows: [] as Array<{ studentNumber: string; split: AbsenceSplit }>,
       truncated: false, lastSyncedAt: null as string | null,
     });
-    if (!ATTENDANCE_ROLES.includes(staff.role)) {
+    if (!canReadInsights(staff)) {
       return refuse(
         "The attendance list is limited to administrators and the PBIS team. " +
         "Ask an administrator to set your access level to PBIS Team.");
@@ -480,7 +485,7 @@ export const attendanceMarks = query({
   args: {},
   handler: async (ctx) => {
     const staff = await requireStaff(ctx);
-    if (!ATTENDANCE_ROLES.includes(staff.role)) {
+    if (!canReadInsights(staff)) {
       return {
         allowed: false,
         reason:

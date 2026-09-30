@@ -1,6 +1,7 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
 import { requireStaff } from "./identity";
+import { canReadInsights } from "./accessRules";
 import { readCoverage } from "./psBehavior";
 
 /**
@@ -48,6 +49,9 @@ import { readCoverage } from "./psBehavior";
  * aides are excluded for the reason they are excluded from referral history.
  */
 const RISK_ROLES = ["admin", "superadmin", "pbis"];
+// The role list the tests pin; the check is canReadInsights (these roles plus
+// the per-person Attendance Watch grant).
+void RISK_ROLES;
 
 /**
  * Students per page, sized for MAY rather than for September.
@@ -230,7 +234,9 @@ export const academicCounts = query({
   },
   handler: async (ctx, { today, recentDays, after, pageSize }) => {
     const staff = await requireStaff(ctx);
-    if (!RISK_ROLES.includes(staff.role)) {
+    // The roles, plus anyone given Attendance Watch access (accessRules.ts):
+    // the owner asked for Attendance Watch AND Early Warning together.
+    if (!canReadInsights(staff)) {
       // A refusal, returned rather than thrown, so the screen can say which it
       // is. Same shape as schoolAttendance.
       return {

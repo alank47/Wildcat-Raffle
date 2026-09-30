@@ -226,14 +226,32 @@
    * worried about this week. convex/earlyWarning.ts refuses the other roles
    * independently, so this list and that one have to agree.
    */
-  function disciplineTabsFor(role) {
-    return seesAllReferrals(role)
-      ? ['submit', 'review', 'closed', 'detention', 'attendance', 'earlyWarning', 'uniform', 'history', 'analytics']
-      : ['submit', 'review', 'closed'];
+  function disciplineTabsFor(role, user) {
+    if (seesAllReferrals(role)) {
+      return ['submit', 'review', 'closed', 'detention', 'attendance', 'earlyWarning', 'uniform', 'history', 'analytics'];
+    }
+    // ATTENDANCE WATCH ACCESS, per person (2026-09-30, "Attendance Watch and
+    // Early Warning for Avalos"). Those two tabs and nothing else: the
+    // referral history, analytics, detention and uniform stay with the role.
+    // convex/accessRules.ts canReadInsights is the real check; this only
+    // decides which buttons to draw.
+    if (user && user.attendanceWatch === true) {
+      return ['submit', 'review', 'closed', 'attendance', 'earlyWarning'];
+    }
+    return ['submit', 'review', 'closed'];
   }
 
-  function canOpenDisciplineTab(role, subtab) {
-    return disciplineTabsFor(role).indexOf(trimmed(subtab)) !== -1;
+  function canOpenDisciplineTab(role, subtab, user) {
+    return disciplineTabsFor(role, user).indexOf(trimmed(subtab)) !== -1;
+  }
+
+  /**
+   * Who may CHANGE the school-wide settings on Attendance Watch and Early
+   * Warning (thresholds, run-chart baselines and notes): the roles only. A
+   * per-person Attendance Watch grant is read only.
+   */
+  function canEditInsightSettings(role) {
+    return seesAllReferrals(role);
   }
 
   /**
@@ -1200,6 +1218,7 @@
     seesAllReferrals: seesAllReferrals,
     disciplineTabsFor: disciplineTabsFor,
     canOpenDisciplineTab: canOpenDisciplineTab,
+    canEditInsightSettings: canEditInsightSettings,
     ownsReferral: ownsReferral,
     visibleReferrals: visibleReferrals,
     valueOf: valueOf,

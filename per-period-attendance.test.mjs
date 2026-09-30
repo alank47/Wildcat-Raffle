@@ -252,8 +252,18 @@ const studentPeriodsSrc = exportAt(listSrc, "studentPeriods");
 check("the per-student query exists", /export const studentPeriods = query\(/.test(listSrc));
 check("...and this test found its body, rather than silently checking nothing",
   studentPeriodsSrc.length > 200, String(studentPeriodsSrc.length));
-check("it is gated to the same three roles as the ranking",
-  /ATTENDANCE_ROLES\.includes\(staff\.role\)/.test(studentPeriodsSrc));
+// THE GATE, since 2026-09-30. It used to read ATTENDANCE_ROLES.includes(
+// staff.role); it is now accessRules.canReadInsights(staff), which is those
+// same three roles PLUS one staff member an admin has given Attendance Watch
+// (teachers.attendanceWatch). The text check pins that the refusal is the
+// first thing the handler does; the handler RUNS below, with the real
+// accessRules module, prove what the rule actually lets through.
+const insightGate = /const staff = await requireStaff\(ctx\);\s*if \(!canReadInsights\(staff\)\) \{\s*return \{\s*allowed: false/;
+check("it is gated to the same rule as the ranking (three roles, or the per-person grant)",
+  insightGate.test(studentPeriodsSrc) && insightGate.test(exportAt(listSrc, "schoolAttendance")));
+check("and that rule is the shared one from accessRules, not a local copy that could drift",
+  /import \{ canReadInsights \} from "\.\/accessRules";/.test(listSrc)
+  && !/(function|const|let|var) canReadInsights\b/.test(listSrc));
 check("it never queries an empty student key",
   /const key = String\(studentNumber \|\| ""\)\.trim\(\);[\s\S]{0,200}if \(!key\)/.test(listSrc));
 check("it sends no name, grade or demographic",
@@ -272,8 +282,8 @@ for (const name of queryNames) {
   check(`${name} sends no name or grade either`,
     !/firstName|lastName|studentName|gradeLevel|raceCodes/.test(exportAt(listSrc, name)));
 }
-check("the one exception is gated to the privileged roles",
-  /ATTENDANCE_ROLES\.includes\(staff\.role\)/.test(exportAt(listSrc, "attendanceMarks")),
+check("the one exception is gated to the privileged roles (or the per-person grant)",
+  insightGate.test(exportAt(listSrc, "attendanceMarks")),
   "a query that returns names has nothing else protecting it");
 check("it returns no rate or percentage", !/percent|rate/i.test(
   studentPeriodsSrc.replace(/\/\*[\s\S]*?\*\//g, "")));
@@ -282,6 +292,139 @@ check("attendanceRows crosses the wire, so never-taken stays distinguishable",
 check("a missing figure is null via dayCount, never 0",
   /daysAbsent: dayCount\(r\.daysAbsent\)/.test(listSrc));
 check("reads are capped", /\.take\(40\)/.test(studentPeriodsSrc));
+
+console.log("\nthe gate, RUN with the real access rule");
+
+// WHO GETS IN is decided by accessRules.canReadInsights, so this loads the REAL
+// module (it is pure and imports nothing) rather than a fake -- a stub here
+// would only test the stub. attendanceList.ts is transpiled and its handlers
+// are called with a fake staff row and a fake database that records every
+// table it is asked for, so a refusal can be shown to happen BEFORE a read.
+{
+  const tsx = (src) => ts.transpileModule(src, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  }).outputText;
+  const load = (src, stubs) => {
+    const m = { exports: {} };
+    new Function("require", "module", "exports", tsx(src))(
+      (n) => { if (!(n in stubs)) throw new Error("unstubbed import " + n); return stubs[n]; }, m, m.exports);
+    return m.exports;
+  };
+  const access = load(js("./convex/accessRules.ts"), {});
+  let currentStaff = null;
+  const list = load(listSrc, {
+    "./_generated/server": { query: (def) => def },
+    "convex/values": { v: new Proxy({}, { get: () => () => ({}) }) },
+    "./identity": { requireStaff: async () => currentStaff },
+    "./accessRules": access,
+    "./views": load(js("./convex/views.ts"), {}),
+    "./absenceDayRules": load(js("./convex/absenceDayRules.ts"), {}),
+  });
+
+  // The list's own role constant, read from the file, so the shared rule is
+  // held to exactly the roles this screen always had and cannot quietly grow.
+  const listRoles = JSON.parse((listSrc.match(/const ATTENDANCE_ROLES = (\[[^\]]*\]);/) || [])[1] || "null");
+  check("the shared rule's roles are exactly the three this list always had",
+    Array.isArray(access.INSIGHT_ROLES) && Array.isArray(listRoles)
+    && JSON.stringify([...access.INSIGHT_ROLES].sort()) === JSON.stringify([...listRoles].sort())
+    && JSON.stringify([...listRoles].sort()) === JSON.stringify(["admin", "pbis", "superadmin"]),
+    JSON.stringify({ shared: access.INSIGHT_ROLES, list: listRoles }));
+  check("no staff row at all is refused", access.canReadInsights(null) === false && access.canReadInsights(undefined) === false);
+
+  // One enrolled child, with a name, so a leak through the gate would show.
+  const tables = {
+    psAttendanceMarks: [{ studentNumber: "1001", firstName: "Ana", lastName: "Ruiz", gradeLevel: "7",
+      entryDate: "2026-08-12", absentDates: ["2026-09-18"], syncedAt: "2026-09-29T13:00:00Z" }],
+    psAttendanceBySection: [{ studentNumber: "1001", sectionExpression: "1(A-E)", courseName: "Promise Time 7A",
+      sectionNumber: "1", daysAbsent: 3, daysTardy: 0, attendanceRows: 20, syncedAt: "2026-09-29T13:00:00Z" }],
+    psAttendance: [{ studentNumber: "1001", daysAbsentYtd: 3, daysAbsentTerm: 3, daysTardyTerm: 0, syncedAt: "2026-09-29T13:00:00Z" }],
+    psAttendanceDays: [],
+  };
+  const run = async (name, staff, args) => {
+    currentStaff = staff;
+    const reads = [];
+    const db = {
+      query(table) {
+        reads.push(table);
+        const rows = (tables[table] || []).slice();
+        const q = { eq: () => q, gte: () => q, lte: () => q, gt: () => q, lt: () => q };
+        const chain = {
+          withIndex(_i, fn) { if (fn) fn(q); return chain; },
+          order() { return chain; },
+          filter() { return chain; },
+          take: async (n) => rows.slice(0, n),
+          first: async () => rows[0] ?? null,
+          collect: async () => rows,
+          paginate: async () => ({ page: rows, isDone: true, continueCursor: "" }),
+        };
+        return chain;
+      },
+    };
+    const res = await list[name].handler({ db }, args || {});
+    return { res, reads };
+  };
+  const who = (s) => `${s.role}${"attendanceWatch" in s ? " attendanceWatch=" + JSON.stringify(s.attendanceWatch) : ""}`;
+
+  // (a) STILL REFUSED. A campus aide or teacher without the grant, one whose
+  // grant is explicitly off, and one whose grant is anything but a real true.
+  const refused = [
+    { role: "campusaide", email: "aide@school.test" },
+    { role: "teacher", email: "t@school.test" },
+    { role: "campusaide", email: "aide@school.test", attendanceWatch: false },
+    { role: "teacher", email: "t@school.test", attendanceWatch: false },
+    { role: "campusaide", email: "aide@school.test", attendanceWatch: "true" },
+    { role: "teacher", email: "t@school.test", attendanceWatch: 1 },
+  ];
+  // (b) LET IN. The three roles, unchanged, and the per-person grant on the two
+  // roles it exists for.
+  const allowed = [
+    { role: "admin", email: "a@school.test" },
+    { role: "superadmin", email: "s@school.test" },
+    { role: "pbis", email: "p@school.test" },
+    { role: "campusaide", email: "gabby@school.test", attendanceWatch: true },
+    { role: "teacher", email: "t@school.test", attendanceWatch: true },
+  ];
+
+  for (const s of refused) {
+    const sp = await run("studentPeriods", s, { studentNumber: "1001" });
+    check(`studentPeriods REFUSES ${who(s)}, before reading anything`,
+      sp.res.allowed === false && sp.res.rows.length === 0 && sp.res.day === null && sp.reads.length === 0,
+      JSON.stringify({ allowed: sp.res.allowed, reads: sp.reads }));
+    const am = await run("attendanceMarks", s, {});
+    check(`attendanceMarks REFUSES ${who(s)}, and sends no name`,
+      am.res.allowed === false && am.res.rows.length === 0 && am.reads.length === 0
+      && !/Ana|Ruiz/.test(JSON.stringify(am.res)),
+      JSON.stringify({ allowed: am.res.allowed, reads: am.reads }));
+  }
+  for (const s of allowed) {
+    const sp = await run("studentPeriods", s, { studentNumber: "1001" });
+    check(`studentPeriods lets in ${who(s)}`,
+      sp.res.allowed === true && sp.res.studentNumber === "1001" && sp.res.rows.length === 1
+      && sp.res.day && sp.res.day.daysAbsentYtd === 3,
+      JSON.stringify(sp.res).slice(0, 200));
+    const am = await run("attendanceMarks", s, {});
+    check(`attendanceMarks lets in ${who(s)}`,
+      am.res.allowed === true && am.res.rows.length === 1 && am.res.rows[0].lastName === "Ruiz",
+      JSON.stringify(am.res).slice(0, 200));
+  }
+
+  // THE SWEEP, run rather than read: every query in this file turns away a
+  // campus aide without the grant before it touches a table, so a query added
+  // later with a weaker gate (or none) fails here by name.
+  const aide = { role: "campusaide", email: "aide@school.test" };
+  const sweepArgs = {
+    dailyAbsenceSeries: { today: "2026-09-30", days: 30 },
+    absenceWindow: { from: "2026-09-21", to: "2026-09-29", today: "2026-09-30" },
+    studentPeriods: { studentNumber: "1001" },
+  };
+  for (const name of queryNames) {
+    let r = null, threw = null;
+    try { r = await run(name, aide, sweepArgs[name] || {}); } catch (e) { threw = e; }
+    check(`${name} refuses a campus aide without the grant, before any read`,
+      !threw && r.res && r.res.allowed === false && r.reads.length === 0,
+      threw ? String(threw.message || threw) : JSON.stringify({ allowed: r.res && r.res.allowed, reads: r.reads }));
+  }
+}
 
 check("the table is declared with a by_studentNumber index",
   /psAttendanceBySection: defineTable\(/.test(schemaSrc)

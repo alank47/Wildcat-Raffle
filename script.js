@@ -3692,7 +3692,12 @@
                                 return {
                                     ...serverTeacher,
                                     ...localTeacher,
-                                    ticketsAwarded: Math.max(localTeacher.ticketsAwarded || 0, serverTeacher.ticketsAwarded || 0)
+                                    ticketsAwarded: Math.max(localTeacher.ticketsAwarded || 0, serverTeacher.ticketsAwarded || 0),
+                                    // SERVER-OWNED, never a local edit: set only by an admin's
+                                    // mutation. A cached copy from before the grant must not
+                                    // hide what the server now says (review finding, 2026-09-30).
+                                    attendanceWatch: serverTeacher.attendanceWatch === true,
+                                    gradeScope: serverTeacher.gradeScope ?? null
                                 };
                             });
                             
@@ -9834,8 +9839,11 @@
             const scopeSel = document.getElementById('editTeacherGradeScope');
             if (scopeSel) scopeSel.value = teacher.gradeScope === 'middle' ? 'middle' : '';
             syncGradeScopeControl();
+            const watchBox = document.getElementById('editTeacherAttendanceWatch');
+            if (watchBox) watchBox.checked = teacher.attendanceWatch === true;
+            syncAttendanceWatchControl();
             const roleSel = document.getElementById('editTeacherRole');
-            if (roleSel) roleSel.onchange = syncGradeScopeControl;
+            if (roleSel) roleSel.onchange = function () { syncGradeScopeControl(); syncAttendanceWatchControl(); };
             
             // Show modal
             document.getElementById('editTeacherModal').classList.remove('hidden');
@@ -9861,6 +9869,29 @@
                     : !teacherRole
                         ? 'This role already sees every student.'
                         : 'Middle School access adds every student in grades 6-8. It applies the next time they load the app.';
+            }
+        }
+
+        /**
+         * "Attendance Watch + Early Warning" only means something for a role
+         * that does not already have it (admins and PBIS do). Greyed out
+         * otherwise, and only an admin may change it (the server checks again).
+         */
+        function syncAttendanceWatchControl() {
+            const box = document.getElementById('editTeacherAttendanceWatch');
+            const hint = document.getElementById('editTeacherAttendanceWatchHint');
+            const role = (document.getElementById('editTeacherRole') || {}).value;
+            const admin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin');
+            if (!box) return;
+            const already = role === 'admin' || role === 'superadmin' || role === 'pbis';
+            box.disabled = already || !admin;
+            if (hint) {
+                hint.style.color = '';
+                hint.textContent = !admin
+                    ? 'Only an admin can change who sees Attendance Watch.'
+                    : already
+                        ? 'This role already sees Attendance Watch and Early Warning.'
+                        : 'Lets them view Attendance Watch and Early Warning, but not change their settings. It applies the next time they load the app.';
             }
         }
 
@@ -9971,15 +10002,54 @@
                 }
             }
 
+            // ATTENDANCE WATCH, through its own admin-gated mutation, same
+            // reasons as the grade scope above. Skipped when the role just
+            // changed (the server cleared it with the role change) or the
+            // role already has it.
+            let watchResult = null;
+            let watchError = null;
+            const watchBox = document.getElementById('editTeacherAttendanceWatch');
+            const wantedWatch = watchBox && !watchBox.disabled ? watchBox.checked === true : undefined;
+            if (roleResult && roleResult.attendanceWatchCleared) teacher.attendanceWatch = false;
+            if (!roleError && !scopeError && wantedWatch !== undefined
+                && wantedWatch !== (teacher.attendanceWatch === true)) {
+                const auth = window.WildcatAuth;
+                const session = auth && auth.getSession && auth.getSession();
+                if (!auth || !session) {
+                    watchError = 'Attendance Watch access is stored on the server, which needs a Microsoft sign-in.';
+                } else {
+                    try {
+                        watchResult = await auth.convexMutation('staffInvites:setStaffAttendanceWatch',
+                            { email: teacher.email || '', on: wantedWatch }, session.idToken);
+                        teacher.attendanceWatch = watchResult.on === true;
+                    } catch (e) {
+                        watchError = (e && e.message) || String(e);
+                    }
+                }
+            }
+
             saveData();
             updateTeachersTable();
             updateAllDisplays(); // Refresh all displays including period filter
+
+            if (watchError) {
+                const hint = document.getElementById('editTeacherAttendanceWatchHint');
+                if (hint) { hint.textContent = watchError; hint.style.color = '#b91c1c'; }
+                if (watchBox) watchBox.checked = teacher.attendanceWatch === true;
+                alert(`Saved, but their Attendance Watch access did NOT change.\n\n${watchError}`);
+                return;
+            }
 
             if (scopeError) {
                 const hint = document.getElementById('editTeacherGradeScopeHint');
                 if (hint) { hint.textContent = scopeError; hint.style.color = '#b91c1c'; }
                 if (scopeSel) scopeSel.value = teacher.gradeScope === 'middle' ? 'middle' : '';
-                alert(`Saved, but their student access did NOT change.\n\n${scopeError}`);
+                // The Attendance Watch change was not sent either (it waits
+                // for the student access to succeed); put the box back.
+                if (watchBox) watchBox.checked = teacher.attendanceWatch === true;
+                alert(`Saved, but their student access did NOT change` +
+                    (wantedWatch !== undefined && wantedWatch !== (teacher.attendanceWatch === true) ? ', and neither did their Attendance Watch access' : '') +
+                    `.\n\n${scopeError}`);
                 return;
             }
 
@@ -9996,6 +10066,8 @@
                 // to what the server holds (it was not sent) and re-sync.
                 if (scopeSel) scopeSel.value = teacher.gradeScope === 'middle' ? 'middle' : '';
                 syncGradeScopeControl();
+                if (watchBox) watchBox.checked = teacher.attendanceWatch === true;
+                syncAttendanceWatchControl();
                 alert(`Name and email saved, but the access level did NOT change.\n\n${roleError}`);
                 return;
             }
@@ -10010,7 +10082,12 @@
                           ? 'their own classes plus every Middle School student (grades 6-8).'
                           : 'their own classes only.') +
                       `\n\nIt applies the next time they load the app.`
-                    : `✅ Teacher updated!\n\n${name}'s information has been saved.`);
+                    : watchResult
+                        ? `✅ ${watchResult.name} ` + (watchResult.on
+                            ? 'can now view Attendance Watch and Early Warning.'
+                            : 'no longer sees Attendance Watch and Early Warning.') +
+                          `\n\nIt applies the next time they load the app.`
+                        : `✅ Teacher updated!\n\n${name}'s information has been saved.`);
         }
 
         async function deleteTeacher(teacherId) {
@@ -13460,6 +13537,8 @@
                         <td class="cell-muted">${email}</td>
                         <td><span class="wu-chip ${roleClass}">${escapeHtml(roleLabel)}</span>${t.gradeScope === 'middle' && t.role === 'teacher'
                             ? ' <span class="wu-chip" title="Sees every student in grades 6-8 as well as their own classes">+ Middle School</span>'
+                            : ''}${t.attendanceWatch === true && t.role !== 'admin' && t.role !== 'superadmin' && t.role !== 'pbis'
+                            ? ' <span class="wu-chip" title="Can view Attendance Watch and Early Warning (view only)">+ Attendance</span>'
                             : ''}</td>
                         <td class="wc-money">${awarded}</td>
                         <td>
@@ -17914,8 +17993,16 @@
                     const fresh = teachers.find(t => String(t.id) === String(currentUser.id));
                     if (fresh) {
                         const before = currentUser.role;
+                        const watchBefore = currentUser.attendanceWatch === true;
                         currentUser = fresh;
                         if (typeof saveSession === 'function') saveSession();
+                        // The Discipline tabs are drawn from the role and the
+                        // Attendance Watch grant; redraw them when either changed,
+                        // so a grant reaches the page without a second reload.
+                        if ((before !== fresh.role || watchBefore !== (fresh.attendanceWatch === true))
+                            && typeof renderModeSubnav === 'function' && disciplineModeEnabled === true) {
+                            renderModeSubnav('discipline');
+                        }
                         if (before !== fresh.role) {
                             console.log(`✅ Your access level changed: ${before} -> ${fresh.role}. Reload to apply it everywhere.`);
                         }
@@ -27073,7 +27160,7 @@
             // open and closed referrals, nothing else. Hiding the buttons is
             // the courtesy; switchDisciplineTab refuses the pane as well.
             if (mode === 'discipline') {
-                const allowed = window.WildcatDiscipline.disciplineTabsFor(currentUser && currentUser.role);
+                const allowed = window.WildcatDiscipline.disciplineTabsFor(currentUser && currentUser.role, currentUser);
                 items = items.filter(it => allowed.indexOf(it.id) !== -1);
             }
             subNav.innerHTML = items.map((it, idx) => `
@@ -32382,7 +32469,7 @@
             // teacher. Demographics lives inside Analytics, so this is the
             // check that keeps a child's grade, sex and race breakdown away
             // from someone who may only file referrals.
-            if (!window.WildcatDiscipline.canOpenDisciplineTab(currentUser && currentUser.role, subtab)) {
+            if (!window.WildcatDiscipline.canOpenDisciplineTab(currentUser && currentUser.role, subtab, currentUser)) {
                 console.warn(`[discipline] ${subtab} is not available to your access level.`);
                 switchDisciplineTab('submit');
                 return;
@@ -32498,6 +32585,13 @@
 
         function setAttendanceView(view) {
             _attView = ATT_VIEWS.indexOf(view) === -1 ? 'watch' : view;
+            // "By student group" is a race/ethnicity breakdown, limited to
+            // admin, superadmin and PBIS by the approval record; a per-person
+            // Attendance Watch grant does not include it (the server refuses
+            // it too, convex/attendanceSubgroups.ts).
+            const groupsOk = window.WildcatDiscipline.canEditInsightSettings(currentUser && currentUser.role);
+            if (_attView === 'subgroup' && !groupsOk) _attView = 'watch';
+            document.querySelectorAll('#attViewSwitch [data-attview="subgroup"]').forEach(b => { b.hidden = !groupsOk; });
 
             const watchEl = document.getElementById('attWatchView');
             const perfectEl = document.getElementById('attPerfectView');
@@ -33768,6 +33862,10 @@
                 + '<label>From <select onchange="setAttendanceRateCandidate(\'from\', this.value)">' + opts(fromShown) + '</select></label>'
                 + '<label>to <select onchange="setAttendanceRateCandidate(\'to\', this.value)">' + opts(toShown) + '</select></label>'
                 + '</div>';
+            // Read-only for a per-person Attendance Watch grant: the server
+            // refuses these changes to anyone but the roles, so the buttons
+            // are not drawn rather than failing when pressed.
+            const arCanEdit = window.WildcatDiscipline.canEditInsightSettings(currentUser && currentUser.role);
             html += '<ul class="wc-ar-bases">' + model.series.map(s => {
                 const info = arSeriesInfo(s.series);
                 const b = s.baseline;
@@ -33778,8 +33876,8 @@
                     row += escapeHtml('frozen at ' + arFmt(b.median, measure) + ' from ' + b.points + ' ' + meta.period
                         + 's (' + b.from + ' to ' + b.to + '), by ' + (b.frozenBy || 'unknown') + (at ? ' on ' + at : '') + '.'
                         + (b.note ? ' ' + b.note : ''))
-                        + ' <button type="button" class="analytics-tab wc-ar-btn" onclick="retireAttendanceBaseline(\''
-                        + s.series + '\')">Unfreeze&hellip;</button>';
+                        + (arCanEdit ? ' <button type="button" class="analytics-tab wc-ar-btn" onclick="retireAttendanceBaseline(\''
+                        + s.series + '\')">Unfreeze&hellip;</button>' : '');
                 } else {
                     row += escapeHtml('not frozen.');
                 }
@@ -33788,7 +33886,7 @@
                         + (c.median !== null ? ', median ' + arFmt(c.median, measure) : '') + '. '
                         + (c.canFreeze ? 'No signal in it' + (c.astronomical ? ' (one or more points far from the rest; worth a look first).' : '.')
                             : c.why));
-                    if (c.canFreeze) {
+                    if (c.canFreeze && arCanEdit) {
                         row += ' <button type="button" class="analytics-tab wc-ar-btn" onclick="freezeAttendanceBaseline(\''
                             + s.series + '\')">' + (b ? 'Replace with this median' : 'Freeze this median') + '</button>';
                     }
@@ -33805,18 +33903,19 @@
                     + (nt.note ? '<span class="wc-sub"> — ' + escapeHtml(nt.note) + '</span>' : '')
                     + '<span class="wc-sub"> (' + escapeHtml(nt.createdBy || '') + ')</span>'
                     + (nt.x < 0 ? '<span class="wc-sub"> not on this chart yet</span>' : '')
-                    + ' <button type="button" class="analytics-tab wc-ar-btn" onclick="removeAttendanceRateNote(\''
-                    + escapeHtml(String(nt.id)) + '\')">Remove</button></li>').join('') + '</ol>';
+                    + (arCanEdit ? ' <button type="button" class="analytics-tab wc-ar-btn" onclick="removeAttendanceRateNote(\''
+                    + escapeHtml(String(nt.id)) + '\')">Remove</button>' : '') + '</li>').join('') + '</ol>';
             } else {
                 html += '<p class="wc-att-basis-note">None yet. Mark the day something changed — a new incentive, '
                     + 'a schedule change — so a signal after it can be read against it.</p>';
             }
-            html += '<div class="wc-ar-addnote">'
+            html += arCanEdit ? ('<div class="wc-ar-addnote">'
                 + '<input type="date" id="arNoteDate" value="' + escapeHtml(st.realToday || st.today || '') + '" aria-label="Date to mark">'
                 + '<input type="text" id="arNoteLabel" maxlength="80" placeholder="What happened (e.g. attendance raffle started)" aria-label="What happened">'
                 + '<input type="text" id="arNoteText" maxlength="500" placeholder="Details (optional)" aria-label="Details">'
                 + '<button type="button" class="analytics-tab wc-ar-btn" onclick="addAttendanceRateNote()">Mark this date</button>'
-                + '</div>';
+                + '</div>')
+                : '<p class="wc-att-basis-note">Baselines and marked dates are set by administrators and the PBIS team.</p>';
 
             // --- how it is counted ----------------------------------------------
             const foot = [];
@@ -35190,15 +35289,36 @@
          *  re-render, so an unsaved edit is not reverted under the admin. */
         function hydrateRiskSettingsInputs(settings) {
             const s = window.WildcatDiscipline.riskSettingsOrDefault(settings || riskSettings);
+            // THRESHOLDS ARE THE SCHOOL'S, set by admins and PBIS. Someone with
+            // a per-person Attendance Watch grant sees them, greyed out.
+            const canEdit = window.WildcatDiscipline.canEditInsightSettings(currentUser && currentUser.role);
             [['ewActAt', 'actAt'], ['ewWatchAt', 'watchAt'], ['ewRecentDays', 'recentDays'],
              ['ewFailManyAt', 'failManyAt'], ['ewMissManyAt', 'missManyAt'],
              ['ewTardyManyAt', 'tardyManyAt']].forEach(pair => {
                 const el = document.getElementById(pair[0]);
                 if (!el) return;
                 el.value = s[pair[1]];
+                el.disabled = !canEdit;
             });
+            applyRiskSettingsLock();
             _ewSettingsHydrated = true;
         }
+
+        /**
+         * Thresholds editable only by admins and PBIS. Applied on EVERY render,
+         * not with the one-time value hydrate, so previewing a grant holder
+         * in teacher view does not leave an admin's own inputs locked.
+         */
+        function applyRiskSettingsLock() {
+            const canEdit = window.WildcatDiscipline.canEditInsightSettings(currentUser && currentUser.role);
+            ['ewActAt', 'ewWatchAt', 'ewRecentDays', 'ewFailManyAt', 'ewMissManyAt', 'ewTardyManyAt'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = !canEdit;
+            });
+            const saveBtn = document.querySelector('button[onclick="saveRiskSettings()"]');
+            if (saveBtn) saveBtn.style.display = canEdit ? '' : 'none';
+        }
+
 
         function setEarlyWarningTierFilter(which) {
             _ewTierFilter = String(which || 'actWatch');
@@ -35418,6 +35538,7 @@
             // filled when the pane first draws and after a successful save,
             // and are the admin's until then.
             if (!_ewSettingsHydrated) hydrateRiskSettingsInputs(settings);
+            applyRiskSettingsLock();
             // The SAME denominator Attendance Watch uses, read from the same
             // two inputs, so one child cannot be chronic on one screen and
             // fine on the other.
@@ -35649,6 +35770,7 @@
          * broken. The same shape as saveUniformSettings.
          */
         async function saveRiskSettings() {
+            if (!window.WildcatDiscipline.canEditInsightSettings(currentUser && currentUser.role)) return;
             const read = (id, fallback) => {
                 const el = document.getElementById(id);
                 const v = el ? Number(el.value) : NaN;

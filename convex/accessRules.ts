@@ -67,6 +67,24 @@ export function studentInScope(key: string, gradeLevels: unknown[]): boolean {
     gradeLevels.every((g) => gradeInScope(key, g));
 }
 
+/**
+ * ATTENDANCE WATCH AND EARLY WARNING: who may READ them.
+ *
+ * The roles that always could (admin, superadmin, PBIS), plus any staff member
+ * an admin has given `attendanceWatch` (2026-09-30, for Gabby Avalos, a campus
+ * aide: "Attendance Watch and Early Warning for Avalos"). Reading only: the
+ * school-wide settings on those screens (Early Warning thresholds, run-chart
+ * baselines and notes) stay with the three roles.
+ *
+ * The grant never widens anything else. Referrals, analytics, history and
+ * uniform stay where the role puts them.
+ */
+export const INSIGHT_ROLES = ["admin", "superadmin", "pbis"];
+export function canReadInsights(row: { role?: unknown; attendanceWatch?: unknown } | null | undefined): boolean {
+  if (!row) return false;
+  return INSIGHT_ROLES.includes(String(row.role ?? "")) || row.attendanceWatch === true;
+}
+
 const ADMIN_ROLES = ["admin", "superadmin"];
 
 /**

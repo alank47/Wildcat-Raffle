@@ -52,6 +52,7 @@ const SEVERE = 0.20;
 /** Same three roles as the attendance ranking and the discipline breakdowns. */
 const SUBGROUP_ROLES = ["admin", "superadmin", "pbis"];
 
+
 /** Reporting order: the groups the question named first, then the rest. */
 const RACE_ORDER = [
   HISPANIC_LABEL,
@@ -119,6 +120,11 @@ export const chronicBySubgroup = query({
   },
   handler: async (ctx, { schoolDays }) => {
     const staff = await requireStaff(ctx);
+    // THE ROLES ONLY, NOT the per-person Attendance Watch grant (review
+    // finding, 2026-09-30). This breakdown is by federal race/ethnicity
+    // rollup, and docs/field-sourcing-approval.md records who may see a race
+    // aggregate: admin, superadmin, pbis. Extending it to a grant holder is
+    // the owner's decision, not a side effect.
     if (!SUBGROUP_ROLES.includes(staff.role)) {
       return {
         allowed: false,

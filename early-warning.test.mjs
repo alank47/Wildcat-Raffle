@@ -205,23 +205,51 @@ console.log("\nthe ranking is stable and honest");
 
 console.log("\nthe server query, transpiled and invoked");
 
-// The shipped handler, with Convex's wrappers and its two imports stubbed.
+// WHO MAY READ IS DECIDED IN accessRules.ts, NOT HERE. The handler asks
+// canReadInsights(staff): the three roles, or a per-person Attendance Watch
+// grant. That module is pure (it imports nothing), so the REAL one is loaded
+// and handed to the handler. A fake here would test the fake.
+const accessSrc = js("./convex/accessRules.ts");
+check("accessRules.ts imports nothing, so loading it on its own is the real thing",
+  !/^import /m.test(accessSrc));
+const access = (() => {
+  const m = { exports: {} };
+  const out = ts.transpileModule(accessSrc, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  new Function("module", "exports", out)(m, m.exports);
+  return m.exports;
+})();
+// Exactly what the server imports from it, so the harness binds the names the
+// shipped file binds and nothing the test made up.
+const accessImport = serverSrc.match(/^import \{([^}]+)\} from "\.\/accessRules";$/m);
+const accessNames = accessImport ? accessImport[1].split(",").map((s) => s.trim()).filter(Boolean) : [];
+check("the server takes its read gate from accessRules.ts", accessNames.includes("canReadInsights"),
+  accessImport ? accessImport[0] : "no import from ./accessRules");
+check("and every name it imports from there is real",
+  accessNames.length > 0 && accessNames.every((n) => access[n] !== undefined), accessNames.join(","));
+
+// The shipped handler, with Convex's wrappers and its other imports stubbed.
+// `staff` is the teachers row requireStaff returns; attendanceWatch lives on it.
 function loadServer(opts) {
   const o = opts || {};
+  const staff = { role: o.role || "admin", email: "x@y.z", ...(o.staff || {}) };
   let body = serverSrc.replace(/^import[^\n]*\n/gm, "").replace(/^export (const|function|async function) /gm, "$1 ");
   const stubs = `
     const query = (d) => d;
     const v = new Proxy({}, { get: () => (...a) => ({ _v: true, a }) });
-    const requireStaff = async () => ({ role: ${JSON.stringify(o.role || "admin")}, email: "x@y.z" });
+    const requireStaff = async () => (${JSON.stringify(staff)});
     // PARENTHESISED. Without them an object literal is parsed as a function
     // block and the stub silently returns undefined, which reads exactly like
     // "behaviour is dark" and would have made the covered case untestable.
     const readCoverage = async () => (${JSON.stringify(o.coverage || null)});
+    // The REAL accessRules exports, under the names the server imports.
+    const { ${accessNames.join(", ")} } = __accessRules;
   `;
   const out = ts.transpileModule(stubs + body, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
   }).outputText;
-  return new Function(out + "\nreturn { academicCounts, countsForStudent, recencyCutoff };")();
+  return new Function("__accessRules", out + "\nreturn { academicCounts, countsForStudent, recencyCutoff };")(access);
 }
 
 function makeDb(tables) {
@@ -267,12 +295,33 @@ for (const role of ["teacher", "campusaide"]) {
   const out = await m.academicCounts.handler(db.ctx, { today: "2026-09-21" });
   check(`a ${role} is REFUSED`, out.allowed === false && out.rows.length === 0);
   check(`and the ${role} refusal is returned, not thrown, with a reason`, typeof out.reason === "string" && out.reason.length > 20);
+  check(`and the ${role} is refused before a single student row is read`, db.stats().reads === 0, String(db.stats().reads));
 }
 for (const role of ["pbis", "admin", "superadmin"]) {
   const m = loadServer({ role });
   const db = makeDb({ psAttendance: [att("1")] });
   const out = await m.academicCounts.handler(db.ctx, { today: "2026-09-21" });
   check(`${role} is allowed`, out.allowed === true);
+}
+
+// THE PER-PERSON GRANT (2026-09-30, Gabby Avalos, a campus aide). An admin can
+// give one named person Attendance Watch and Early Warning. Only the boolean
+// true on their own staff row opens it: not the absence of a flag, not false,
+// and not something that merely looks true.
+for (const role of ["teacher", "campusaide"]) {
+  for (const [label, val] of [["false", false], ["the string \"true\"", "true"], ["1", 1], ["null", null]]) {
+    const m = loadServer({ role, staff: { attendanceWatch: val } });
+    const db = makeDb({ psAttendance: [att("1")] });
+    const out = await m.academicCounts.handler(db.ctx, { today: "2026-09-21" });
+    check(`a ${role} with attendanceWatch ${label} is still REFUSED`,
+      out.allowed === false && out.rows.length === 0 && db.stats().reads === 0);
+  }
+  const m = loadServer({ role, staff: { attendanceWatch: true } });
+  const db = makeDb({ psAttendance: [att("1")] });
+  const out = await m.academicCounts.handler(db.ctx, { today: "2026-09-21" });
+  check(`a ${role} GIVEN Attendance Watch is allowed`, out.allowed === true);
+  check(`and the granted ${role} gets the real rows, not an empty allowed list`,
+    out.rows.length === 1 && out.rows[0].studentNumber === "1", JSON.stringify(out.rows));
 }
 
 {
@@ -434,8 +483,50 @@ for (const r of ["pbis", "admin", "superadmin"]) check(`${r} may open the tab`, 
 for (const r of ["teacher", "campusaide"]) check(`${r} may NOT open the tab`, D.canOpenDisciplineTab(r, "earlyWarning") === false);
 check("a teacher's tabs are still exactly the three they were",
   D.disciplineTabsFor("teacher").join() === "submit,review,closed");
-check("the client gate and the server gate name the same three roles",
-  /RISK_ROLES = \["admin", "superadmin", "pbis"\]/.test(serverSrc));
+// script.js passes the signed-in user as well as the role, so the client
+// cases below are called the way the app calls them.
+for (const r of ["teacher", "campusaide"]) {
+  for (const [label, val] of [["no", undefined], ["false", false], ["the string \"true\"", "true"], ["1", 1]]) {
+    const u = { role: r, attendanceWatch: val };
+    check(`a ${r} with ${label} Attendance Watch flag may NOT open the tab`,
+      D.canOpenDisciplineTab(r, "earlyWarning", u) === false && D.canOpenDisciplineTab(r, "attendance", u) === false);
+    check(`and that ${r}'s tabs are still exactly the three`, D.disciplineTabsFor(r, u).join() === "submit,review,closed");
+  }
+  const g = { role: r, attendanceWatch: true };
+  check(`a ${r} GIVEN Attendance Watch may open Early Warning and Attendance`,
+    D.canOpenDisciplineTab(r, "earlyWarning", g) === true && D.canOpenDisciplineTab(r, "attendance", g) === true);
+  // The grant is those two screens. Referral history, analytics (which holds
+  // the demographic breakdown), detention and uniform stay with the role.
+  check(`and NOTHING else the privileged roles get`,
+    ["history", "analytics", "detention", "uniform"].every((t) => D.canOpenDisciplineTab(r, t, g) === false),
+    D.disciplineTabsFor(r, g).join());
+  check(`so a granted ${r}'s tabs are exactly five`,
+    D.disciplineTabsFor(r, g).join() === "submit,review,closed,attendance,earlyWarning", D.disciplineTabsFor(r, g).join());
+  check(`and the granted ${r} may NOT change the thresholds`, D.canEditInsightSettings(r) === false);
+}
+for (const r of ["pbis", "admin", "superadmin"]) {
+  check(`${r} may change the thresholds`, D.canEditInsightSettings(r) === true);
+}
+// THE CLIENT GATE AND THE SERVER GATE MUST AGREE, now checked by running both
+// rather than by reading a constant. The server's list is INSIGHT_ROLES in
+// accessRules.ts (the handler asks canReadInsights, not a list of its own).
+check("the server gate's roles are exactly the three",
+  Array.isArray(access.INSIGHT_ROLES) && access.INSIGHT_ROLES.slice().sort().join() === "admin,pbis,superadmin",
+  String(access.INSIGHT_ROLES));
+check("and the handler asks it, on the staff row requireStaff returned",
+  /const staff = await requireStaff\(ctx\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(!canReadInsights\(staff\)\) \{/.test(serverSrc));
+{
+  const disagree = [];
+  for (const role of ["admin", "superadmin", "pbis", "teacher", "campusaide"]) {
+    for (const val of [undefined, false, true, "true", 1, null]) {
+      const u = { role, attendanceWatch: val };
+      const client = D.canOpenDisciplineTab(role, "earlyWarning", u);
+      const server = access.canReadInsights(u);
+      if (client !== server) disagree.push(`${role}/${String(val)}: client ${client} server ${server}`);
+    }
+  }
+  check("for every role, with and without the grant, the tab and the server agree", disagree.length === 0, disagree.join("; "));
+}
 
 // CHECKLIST 04 + 05: the registry and the pane map, which must agree or the
 // click is silently dead. This is the exact bug that shipped on 2026-09-20.
@@ -554,9 +645,24 @@ console.log("\nthe renderer, actually executed against a fake DOM");
    "ewGradeFilter", "ewSearch", "ewTierFilter", "ewActAt", "ewWatchAt", "ewRecentDays",
    "ewFailManyAt", "ewMissManyAt", "ewTardyManyAt"].forEach(mkEl);
 
+  // The Save thresholds button, reached by selector rather than by id. It
+  // resolves ONLY if the pane's markup really has a button with that onclick,
+  // so a renamed handler shows up as a hide that never happens.
+  const saveBtn = { style: { display: "" } };
+  const ewPaneHtml = html.slice(html.indexOf('id="behaviorEarlyWarning"'), html.indexOf("<!-- Uniform Violations Subtab"));
+  const querySelector = (sel) => {
+    const m = /^button\[onclick="([^"]+)"\]$/.exec(sel);
+    if (!m) return null;
+    const esc = m[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp('<button[^>]*onclick="' + esc + '"').test(ewPaneHtml) ? saveBtn : null;
+  };
+
   const sandbox = {
-    document: { getElementById: (id) => els[id] || null, activeElement: null },
+    document: { getElementById: (id) => els[id] || null, querySelector, activeElement: null },
     window: { WildcatDiscipline: D },
+    // Who is looking. An admin unless a case says otherwise, which is who every
+    // assertion below this was written for.
+    currentUser: { role: "admin", email: "a@x.z" },
     console,
     escapeHtml: (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"),
     students: [
@@ -581,7 +687,7 @@ console.log("\nthe renderer, actually executed against a fake DOM");
 
   const build = (payload, settings, attCache) => new Function(
     "document", "window", "console", "escapeHtml", "students", "attendanceSchoolDays",
-    "riskSettings", "loadEarlyWarningRows", "_ewCacheIn", "filters", "_attCacheIn",
+    "riskSettings", "loadEarlyWarningRows", "_ewCacheIn", "filters", "_attCacheIn", "currentUser",
     `let _ewCache = _ewCacheIn, _ewBusy = false, _ewSettingsHydrated = false;
      let _attCache = _attCacheIn;
      let _ewTierFilter = filters.tier, _ewGradeFilter = filters.grade;
@@ -589,7 +695,7 @@ console.log("\nthe renderer, actually executed against a fake DOM");
      return renderEarlyWarning().then(() => ({ cache: _ewCache, hydrated: _ewSettingsHydrated }));`
   )(sandbox.document, sandbox.window, sandbox.console, sandbox.escapeHtml, sandbox.students,
     sandbox.attendanceSchoolDays, settings || {}, async () => payload, payload,
-    { tier: filters.tier, grade: filters.grade }, attCache === undefined ? null : attCache);
+    { tier: filters.tier, grade: filters.grade }, attCache === undefined ? null : attCache, sandbox.currentUser);
 
   let filters = { tier: "actWatch", grade: "all" };
   // The ACADEMIC half, exactly as convex/earlyWarning.ts returns it.
@@ -776,7 +882,7 @@ console.log("\nthe renderer, actually executed against a fake DOM");
     els.ewActAt.value = "6";
     const again = new Function(
       "document", "window", "console", "escapeHtml", "students", "attendanceSchoolDays",
-      "riskSettings", "loadEarlyWarningRows", "_ewCacheIn", "filters", "_attCacheIn", "hydratedIn",
+      "riskSettings", "loadEarlyWarningRows", "_ewCacheIn", "filters", "_attCacheIn", "hydratedIn", "currentUser",
       `let _ewCache = _ewCacheIn, _ewBusy = false, _ewSettingsHydrated = hydratedIn;
        let _attCache = _attCacheIn;
        let _ewTierFilter = filters.tier, _ewGradeFilter = filters.grade;
@@ -785,9 +891,74 @@ console.log("\nthe renderer, actually executed against a fake DOM");
     );
     await again(sandbox.document, sandbox.window, sandbox.console, sandbox.escapeHtml, sandbox.students,
       sandbox.attendanceSchoolDays, {}, async () => payload, payload,
-      { tier: "all", grade: "all" }, attCache, true);
+      { tier: "all", grade: "all" }, attCache, true, sandbox.currentUser);
     check("A RE-RENDER DOES NOT REVERT AN UNSAVED EDIT", String(els.ewActAt.value) === "6",
       "an every-render hydrate is what made Save store the old number");
+  }
+
+  // THE PER-PERSON GRANT IS READ ONLY. Someone an admin gave Attendance Watch
+  // (2026-09-30, Gabby Avalos) sees the list, but the thresholds are the
+  // school's and stay with admins and PBIS: the inputs are greyed out and Save
+  // is not drawn. Each case starts from the opposite state, so a hydrate that
+  // stopped touching them could not pass by leaving the last case's values.
+  {
+    const inputs = ["ewActAt", "ewWatchAt", "ewRecentDays", "ewFailManyAt", "ewMissManyAt", "ewTardyManyAt"];
+    const saved = sandbox.currentUser;
+    filters = { tier: "all", grade: "all" };
+    check("the Save thresholds button the hide reaches for is in the pane",
+      querySelector('button[onclick="saveRiskSettings()"]') === saveBtn);
+    for (const role of ["admin", "superadmin", "pbis"]) {
+      sandbox.currentUser = { role, email: "a@x.z" };
+      inputs.forEach((id) => { els[id].disabled = true; });
+      saveBtn.style.display = "none";
+      let t = null;
+      try { await build(payload, {}, attCache); } catch (e) { t = e; }
+      check(`${role}: the thresholds are editable`, t === null && inputs.every((id) => els[id].disabled === false),
+        t ? (t.message || String(t)) : inputs.filter((id) => els[id].disabled !== false).join(","));
+      check(`${role}: Save thresholds is shown`, saveBtn.style.display === "");
+    }
+    for (const role of ["campusaide", "teacher"]) {
+      sandbox.currentUser = { role, email: "g@x.z", attendanceWatch: true };
+      inputs.forEach((id) => { els[id].disabled = false; });
+      saveBtn.style.display = "";
+      els.earlyWarningList.innerHTML = "";
+      let t = null;
+      try { await build(payload, {}, attCache); } catch (e) { t = e; }
+      check(`a ${role} GIVEN Attendance Watch sees the list`,
+        t === null && /A One/.test(els.earlyWarningList.innerHTML), t && (t.message || String(t)));
+      check(`but every threshold input is read-only for that ${role}`,
+        inputs.every((id) => els[id].disabled === true),
+        inputs.filter((id) => els[id].disabled !== true).join(","));
+      check(`and Save thresholds is not drawn for that ${role}`, saveBtn.style.display === "none");
+    }
+    sandbox.currentUser = saved;
+  }
+
+  // AND SAVE ITSELF REFUSES, not just the button. saveRiskSettings is lifted
+  // and run: for a granted aide nothing is sent and nothing in memory moves.
+  {
+    const saveSrc = lift("async function saveRiskSettings()", "\n        // ========================================\n        // UNIFORM VIOLATIONS");
+    const runSave = (user) => new Function(
+      "document", "window", "currentUser",
+      `let riskSettings = { actAt: 7, watchAt: 6 };
+       let _ewCache = { sentinel: true };
+       const sent = [];
+       const requestSave = async (what) => { sent.push(what); return true; };
+       const showToast = () => {};
+       const hydrateRiskSettingsInputs = () => {};
+       const renderEarlyWarning = async () => {};
+       ${saveSrc}
+       return saveRiskSettings().then(() => ({ sent, riskSettings }));`
+    )(sandbox.document, sandbox.window, user);
+    const saved = els.ewActAt.value;
+    els.ewActAt.value = "8";
+    const granted = await runSave({ role: "campusaide", email: "g@x.z", attendanceWatch: true });
+    check("a granted aide's Save sends NOTHING", granted.sent.length === 0, JSON.stringify(granted.sent));
+    check("and leaves the thresholds in memory as they were", granted.riskSettings.actAt === 7);
+    const admin = await runSave({ role: "admin", email: "a@x.z" });
+    check("an admin's Save does send (so the refusal above is the gate, not a broken save)",
+      admin.sent.length === 1 && admin.riskSettings.actAt === 8, JSON.stringify(admin));
+    els.ewActAt.value = saved;
   }
 
   // Every filter must render. A filter that throws is a dead button.

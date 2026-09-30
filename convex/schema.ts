@@ -62,6 +62,17 @@ export default defineSchema({
     gradeScope: v.optional(v.literal("middle")),
     gradeScopeSetBy: v.optional(v.string()),
     gradeScopeSetAt: v.optional(v.string()),
+    /**
+     * ATTENDANCE WATCH + EARLY WARNING, READ ONLY, for one staff member whose
+     * role would not otherwise reach them (2026-09-30, for Gabby Avalos, a
+     * campus aide). Honoured by accessRules.canReadInsights. Set only by
+     * staffInvites:setStaffAttendanceWatch (admin) or its CLI twin, never by a
+     * browser save (not in TEACHER_WRITABLE), and cleared by any role change
+     * (roleChangeRules.roleWritePatch).
+     */
+    attendanceWatch: v.optional(v.boolean()),
+    attendanceWatchSetBy: v.optional(v.string()),
+    attendanceWatchSetAt: v.optional(v.string()),
     // NOTE: no `password` field, deliberately. The cleartext password column is
     // what this whole migration exists to delete. Do not carry it across.
   })

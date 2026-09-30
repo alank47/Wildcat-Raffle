@@ -1,6 +1,6 @@
 import { query, mutation, internalMutation, internalQuery } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
-import { roleChangeVerdict, gradeScopeVerdict, roleWritePatch } from "./roleChangeRules";
+import { roleChangeVerdict, gradeScopeVerdict, attendanceWatchVerdict, roleWritePatch } from "./roleChangeRules";
 import { requireStaff, requireAdmin } from "./identity";
 import { normalizeEmail } from "./identityRules";
 
@@ -420,6 +420,7 @@ export const setStaffRole = mutation({
     // A role change CLEARS a grade scope (roleWritePatch), so a scope cannot
     // quietly come back after a promotion and a demotion.
     const scopeCleared = Boolean((targetRow as any).gradeScope) && previousRole !== verdict.newRole;
+    const watchCleared = (targetRow as any).attendanceWatch === true && previousRole !== verdict.newRole;
     await ctx.db.patch(targetRow._id, roleWritePatch(targetRow, verdict.newRole));
 
     // WRITTEN DOWN, ALWAYS. A change to who can see the school's discipline
@@ -454,9 +455,11 @@ export const setStaffRole = mutation({
         // this mutation wrote first, and it showed as a blank cell. Writing
         // one and hoping is how a role change becomes an unexplained row.
         details: `${targetRow.name || target}: ${previousRole} \u2192 ${verdict.newRole}` +
-          (scopeCleared ? " (Middle School access removed)" : ""),
+          (scopeCleared ? " (Middle School access removed)" : "") +
+          (watchCleared ? " (Attendance Watch access removed)" : ""),
         reason: `${targetRow.name || target}: ${previousRole} \u2192 ${verdict.newRole}` +
-          (scopeCleared ? " (Middle School access removed)" : ""),
+          (scopeCleared ? " (Middle School access removed)" : "") +
+          (watchCleared ? " (Attendance Watch access removed)" : ""),
         userId: actor.email,
         timestamp: now,
       },
@@ -468,6 +471,7 @@ export const setStaffRole = mutation({
       previousRole,
       role: verdict.newRole,
       gradeScopeCleared: scopeCleared,
+      attendanceWatchCleared: watchCleared,
     };
   },
 });
@@ -552,6 +556,77 @@ export const setStaffGradeScopeFromCli = internalMutation({
   args: { email: v.string(), scope: v.union(v.string(), v.null()) },
   handler: async (ctx, { email, scope }) =>
     await applyGradeScope(ctx, { email: "command line", role: "admin", name: "command line" }, email, scope),
+});
+
+/**
+ * Give a staff member READ access to Attendance Watch and Early Warning, or
+ * take it away (2026-09-30, for Gabby Avalos). Admin only, never your own
+ * record, written to the audit log -- decided by attendanceWatchVerdict.
+ */
+async function applyAttendanceWatch(
+  ctx: any, actor: { email: string; role: string; name?: string | null },
+  email: string, requested: unknown,
+) {
+  const target = normalizeEmail(email);
+  const targetRow = await ctx.db
+    .query("teachers")
+    .withIndex("by_email", (q: any) => q.eq("email", target))
+    .unique();
+  if (!targetRow) throw new ConvexError(`No staff record for ${target}.`);
+
+  const previous = (targetRow as any).attendanceWatch === true;
+  const verdict = attendanceWatchVerdict({
+    actorEmail: actor.email, actorRole: actor.role,
+    targetEmail: target, targetRole: targetRow.role,
+    current: previous, requested,
+  });
+  if (!verdict.ok) throw new ConvexError(verdict.reason);
+
+  const now = new Date().toISOString();
+  await ctx.db.patch(targetRow._id, {
+    attendanceWatch: verdict.on ? true : undefined,
+    attendanceWatchSetBy: actor.email,
+    attendanceWatchSetAt: now,
+  });
+
+  const entryId = `awatch_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+  const line = `${targetRow.name || target}: Attendance Watch + Early Warning ${verdict.on ? "given (read only)" : "removed"}`;
+  await ctx.db.insert("appAuditLog", {
+    entryId,
+    timestamp: now,
+    payload: {
+      entryId,
+      action: "Changed attendance access",
+      teacher: actor.name || actor.email,
+      teacherName: actor.name || actor.email,
+      details: line,
+      reason: line,
+      userId: actor.email,
+      timestamp: now,
+    },
+  });
+  console.log(`[attendanceWatch] ${actor.email} set ${target}: ${previous} -> ${verdict.on}`);
+  return { email: target, name: targetRow.name || target, previous, on: verdict.on };
+}
+
+export const setStaffAttendanceWatch = mutation({
+  args: { email: v.string(), on: v.boolean() },
+  handler: async (ctx, { email, on }) => {
+    // requireStaff, then the verdict decides: only admin/superadmin pass.
+    const actor = await requireStaff(ctx);
+    return await applyAttendanceWatch(ctx, actor, email, on);
+  },
+});
+
+/**
+ * The same, from a terminal:
+ *   npx convex run staffInvites:setStaffAttendanceWatchFromCli \
+ *     '{"email":"gabriela@lapromisefund.org","on":true}'
+ */
+export const setStaffAttendanceWatchFromCli = internalMutation({
+  args: { email: v.string(), on: v.boolean() },
+  handler: async (ctx, { email, on }) =>
+    await applyAttendanceWatch(ctx, { email: "command line", role: "admin", name: "command line" }, email, on),
 });
 
 /**

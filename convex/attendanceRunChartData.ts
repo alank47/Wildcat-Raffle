@@ -1,6 +1,7 @@
 import { query, mutation, internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { requireStaff } from "./identity";
+import { canReadInsights } from "./accessRules";
 
 /**
  * The attendance run chart's stored data, and the two things people do to it:
@@ -84,8 +85,10 @@ export const series = query({
   args: {},
   handler: async (ctx) => {
     const staff = await requireStaff(ctx);
-    if (!ROLES.includes(staff.role)) {
-      return { allowed: false as const, reason: "The attendance run chart is limited to administrators and the PBIS team.",
+    // READING the chart: the roles plus anyone given Attendance Watch access.
+    // Changing baselines and notes stays with the roles (gate() above).
+    if (!canReadInsights(staff)) {
+      return { allowed: false as const, reason: "The attendance run chart is limited to administrators, the PBIS team and staff given Attendance Watch access.",
                days: [], months: [], baselines: [], annotations: [], truncated: false };
     }
     // ~360 day rows a school year (180 days x 2 bands), so 3000 is about

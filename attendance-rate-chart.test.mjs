@@ -30,6 +30,11 @@ const schemaSrc = readFileSync(new URL("./convex/schema.ts", import.meta.url), "
 const cronSrc = readFileSync(new URL("./convex/crons.ts", import.meta.url), "utf8");
 const htmlSrc = readFileSync(new URL("./index.html", import.meta.url), "utf8");
 const script = readFileSync(new URL("./script.js", import.meta.url), "utf8");
+// WHO MAY READ AND WHO MAY CHANGE (2026-09-30, the per-person Attendance
+// Watch grant). The real rule and the real client module, never stand-ins:
+// a fake canReadInsights would let this file pass with the rule broken.
+const accessSrc = readFileSync(new URL("./convex/accessRules.ts", import.meta.url), "utf8");
+const disciplineSrc = readFileSync(new URL("./wildcat-discipline.js", import.meta.url), "utf8");
 
 let pass = 0, fail = 0;
 const check = (n, c, why) => {
@@ -53,6 +58,13 @@ const load = (src, deps = {}) => {
 };
 const rulesMod = load(rulesSrc);
 const D = load(daysSrc, { "./absenceDayRules": rulesMod });
+const access = load(accessSrc);                 // pure: no imports of its own
+const discSandbox = {};
+new Function("globalThis", disciplineSrc).call(discSandbox, discSandbox);
+const WD = discSandbox.WildcatDiscipline;
+// The server's own refusal, read from the real handler below, so the screen's
+// "told why" check shows what the server really says.
+let serverRefusal = null;
 
 // ---------------------------------------------------------------------------
 console.log("\nGRADE BANDS AND LAST YEAR'S GRADE\n");
@@ -570,10 +582,76 @@ console.log("\nOPTION C, AND THE SAME WEEK LAST YEAR (the owner, 2026-09-24)\n")
 console.log("\nTHE SERVER: WHO MAY CHANGE IT, AND WHAT IT REFUSES\n");
 {
   const body = (name) => dataSrc.slice(dataSrc.indexOf("export const " + name), dataSrc.indexOf("export const", dataSrc.indexOf("export const " + name) + 10) >>> 0 || undefined);
-  check("reads and changes are limited to admin, superadmin and PBIS", /const ROLES = \["admin", "superadmin", "pbis"\]/.test(dataSrc));
-  check("the chart's read checks the role", /export const series = query[\s\S]*?ROLES\.includes\(staff\.role\)/.test(dataSrc));
+  // CHANGES: the three roles, and only the roles.
+  check("changes are limited to admin, superadmin and PBIS", /const ROLES = \["admin", "superadmin", "pbis"\]/.test(dataSrc));
+  const gateAt = dataSrc.indexOf("async function gate(");
+  const gateSrc = gateAt < 0 ? "" : dataSrc.slice(gateAt, dataSrc.indexOf("\n}\n", gateAt));
+  check("the change gate checks the ROLE list, and never the per-person Attendance Watch grant",
+    /if \(!ROLES\.includes\(staff\.role\)\)\s*\{\s*throw/.test(gateSrc) && !/canReadInsights|attendanceWatch/.test(gateSrc));
   ["freezeBaseline", "retireBaseline", "addAnnotation", "removeAnnotation"].forEach((n) =>
     check(`${n} goes through the role gate`, new RegExp("export const " + n + " = mutation[\\s\\S]*?await gate\\(ctx\\)").test(dataSrc)));
+  // READS: the roles, or the grant, through the ONE shared rule. Sliced to
+  // the series body alone (a pattern running on to the next function would
+  // find gate()'s role check and pass with the read left open).
+  const seriesSrc = body("series");
+  check("the chart's read checks canReadInsights(staff) before it reads a single table",
+    /if \(!canReadInsights\(staff\)\)/.test(seriesSrc) && seriesSrc.indexOf("canReadInsights(staff)") < seriesSrc.indexOf("ctx.db"));
+  check("...the rule imported from accessRules.ts, not a local copy that could drift",
+    /import \{[^}]*\bcanReadInsights\b[^}]*\} from "\.\/accessRules"/.test(dataSrc) && !/function canReadInsights/.test(dataSrc));
+  check("the read rule's roles are the same three (admin, superadmin, PBIS)",
+    JSON.stringify(access.INSIGHT_ROLES) === JSON.stringify(["admin", "superadmin", "pbis"]));
+
+  // THE HANDLERS THEMSELVES, run with the REAL accessRules and a fake staff
+  // row. Refused means: allowed false, no rows, and no table read at all.
+  const vStub = new Proxy({}, { get: () => () => ({}) });
+  const S = load(dataSrc, {
+    "./_generated/server": { query: (d) => d, mutation: (d) => d, internalMutation: (d) => d, internalQuery: (d) => d },
+    "convex/values": { v: vStub },
+    "./identity": { requireStaff: async (ctx) => ctx.staff },
+    "./accessRules": access,
+  });
+  const ctxFor = (staff) => {
+    const reads = [], writes = [];
+    const tables = { attendanceRunDays: [{ yearid: 36, date: "2026-09-14", band: "6-8", members: 300, absentDays: 9, fullDaysStrict: 9,
+      misrecordDaysByGap: [], partialDays: 0, gradeEstimated: false, syncedAt: "2026-09-15T10:15:00.000Z" }] };
+    const query = (name) => { reads.push(name); const chain = { withIndex: () => chain, take: async () => tables[name] || [] }; return chain; };
+    return { staff, reads, writes, db: { query, get: async () => null,
+      insert: async (t) => { writes.push(t); return "new-id"; }, patch: async (id) => { writes.push(id); }, delete: async () => {} } };
+  };
+  const readAs = async (staff) => { const c = ctxFor(staff); return { r: await S.series.handler(c, {}), reads: c.reads.length }; };
+  const refused = async (staff) => { const { r, reads } = await readAs(staff); return r.allowed === false && r.days.length === 0 && reads === 0; };
+  const allowed = async (staff) => { const { r } = await readAs(staff); return r.allowed === true && r.days.length === 1; };
+  check("a campus aide WITHOUT the grant is refused the chart, and nothing is read",
+    await refused({ role: "campusaide", email: "aide@x" }));
+  check("a teacher without the grant is refused (attendanceWatch absent, or false)",
+    await refused({ role: "teacher", email: "t@x" }) && await refused({ role: "teacher", email: "t@x", attendanceWatch: false }));
+  check("the grant is a real true, not anything truthy (\"true\" or 1 is refused)",
+    await refused({ role: "campusaide", email: "aide@x", attendanceWatch: "true" }) && await refused({ role: "teacher", email: "t@x", attendanceWatch: 1 }));
+  check("a campus aide WITH the grant (attendanceWatch: true) reads the chart",
+    await allowed({ role: "campusaide", email: "aide@x", attendanceWatch: true }));
+  check("...and so does a teacher given it", await allowed({ role: "teacher", email: "t@x", attendanceWatch: true }));
+  check("admin, superadmin and PBIS still read it without any grant",
+    (await Promise.all(["admin", "superadmin", "pbis"].map((role) => allowed({ role, email: role + "@x" })))).every(Boolean));
+  serverRefusal = (await readAs({ role: "campusaide", email: "aide@x" })).r.reason;
+
+  // The grant is READ ONLY: every change is still refused to its holder.
+  const W = {
+    freezeBaseline: { measure: "weeklyRate", series: "all", from: "2025-09-08", to: "2025-11-24", median: 95, points: 12 },
+    retireBaseline: { measure: "weeklyRate", series: "all", why: "a reason" },
+    addAnnotation: { date: "2026-09-14", label: "incentive started" },
+    removeAnnotation: { id: "n1" },
+  };
+  const tryWrite = async (name, staff) => {
+    const c = ctxFor(staff);
+    try { await S[name].handler(c, W[name]); return { ok: true, writes: c.writes.length }; }
+    catch (e) { return { ok: false, msg: String(e && e.message), writes: c.writes.length }; }
+  };
+  for (const n of Object.keys(W)) {
+    const g = await tryWrite(n, { role: "campusaide", email: "aide@x", attendanceWatch: true });
+    const p = await tryWrite(n, { role: "pbis", email: "pbis@x" });
+    check(`${n}: refused to a campus aide WITH the grant (nothing written), allowed to PBIS`,
+      !g.ok && /limited to administrators/.test(g.msg) && g.writes === 0 && p.ok, JSON.stringify([g, p]));
+  }
   check("a baseline under 10 points is refused by the server too", /a\.points >= 10/.test(body("freezeBaseline")));
   check("freezing RETIRES the old baseline rather than deleting it", /retiredWhy: "replaced by a new baseline"/.test(dataSrc) && !/db\.delete/.test(body("freezeBaseline")));
   check("unfreezing needs a reason", /Say why the baseline is being retired/.test(dataSrc));
@@ -636,12 +714,18 @@ console.log("\nTHE SCREEN\n");
     }
     return "";
   };
-  const body = new Function("R", `
+  // The renderer asks the REAL WildcatDiscipline whether the signed-in user
+  // may change baselines and notes, so it runs as someone: an admin by default
+  // (the checks below were written for the person who freezes medians).
+  const screen = new Function("R", "window", `
+    let currentUser = null;
     ${liftFn("escapeHtml")}
     ${liftConst("AR_SERIES")}
     ${liftConst("AR_POLICY_WORDS")}
     ${["arSeriesInfo", "arYearLabel", "arPeriodLabel", "arFmt", "arDefaultRange", "renderAttendanceRateBody"].map(liftFn).join("\n")}
-    return renderAttendanceRateBody;`)(R);
+    return { render: renderAttendanceRateBody, signIn: (u) => { currentUser = u; } };`)(R, { WildcatDiscipline: WD });
+  const bodyAs = (user) => (res, r, st) => { screen.signIn(user); return screen.render(res, r, st); };
+  const body = bodyAs({ role: "admin", email: "admin@x" });
   const asOf = new Function(liftFn("arAsOf") + "\nreturn arAsOf;")();
   const defRange = new Function(liftFn("arDefaultRange") + "\nreturn arDefaultRange;")();
   check("the default baseline range is THIS school year (option C), even before it has 10 weeks",
@@ -664,11 +748,29 @@ console.log("\nTHE SCREEN\n");
   check("offers to freeze a signal-free default range (last year, 14 weeks)", /Freeze this median/.test(out.html) && out.model.candidateRange.from === "2025-09-08");
   check("a staff-typed note is ESCAPED, never run", !out.html.includes("<img src=x") && out.html.includes("&lt;img src=x"));
   check("says how a short week was handled and what 'enrolled' means", /at least one class that met/.test(out.html));
-  const denied = body({ allowed: false, reason: "The attendance run chart is limited to administrators and the PBIS team." }, R, st);
-  check("someone outside the roles is told why, not shown an empty chart", /limited to administrators/.test(denied.html) && denied.model === null);
+  const denied = bodyAs({ role: "campusaide", email: "aide@x" })({ allowed: false, reason: serverRefusal }, R, st);
+  check("someone outside the roles, without the grant, is told why (the server's own words), not shown an empty chart",
+    typeof serverRefusal === "string" && /limited to administrators/.test(denied.html) && denied.model === null);
   const frozenRes = Object.assign({}, res, { baselines: [{ id: "b", measure: "weeklyRate", series: "all", from: "2025-09-08", to: "2025-11-24", median: 95.5, points: 12, frozenAt: "2026-09-23T10:00:00Z", frozenBy: "admin@x", note: null }] });
   const fr = body(frozenRes, R, st);
   check("a frozen line says so, who froze it, and offers to unfreeze", /frozen at 95\.5%/.test(fr.html) && /admin@x/.test(fr.html) && /Unfreeze/.test(fr.html));
+
+  // THE GRANT ON SCREEN: the chart, read only. The server refuses changes to
+  // anyone outside the three roles, so no button is drawn that would fail.
+  const EDIT = [/Freeze this median/, /Unfreeze/, />Remove</, /Mark this date/];
+  check("an admin is drawn every change button (so the checks below are not vacuous)",
+    EDIT.every((re) => re.test(out.html + fr.html)));
+  check("PBIS and superadmin are drawn them too: the same three roles as the server's change gate",
+    ["pbis", "superadmin"].every((role) => { const as = bodyAs({ role, email: role + "@x" }); const h = as(res, R, st).html + as(frozenRes, R, st).html;
+      return EDIT.every((re) => re.test(h)); }));
+  for (const who of [{ role: "campusaide", email: "aide@x", attendanceWatch: true }, { role: "teacher", email: "t@x", attendanceWatch: true }]) {
+    const as = bodyAs(who);
+    const g = as(res, R, st), gf = as(frozenRes, R, st);
+    check(`a ${who.role} WITH the grant sees the same chart as an admin`,
+      /<svg/.test(g.html) && g.model && g.model.candidateRange.from === out.model.candidateRange.from && /frozen at 95\.5%/.test(gf.html));
+    check(`...but no Freeze, Unfreeze, Remove or Mark-a-date button, and is told who sets them`,
+      EDIT.every((re) => !re.test(g.html) && !re.test(gf.html)) && /set by administrators and the PBIS team/.test(g.html));
+  }
   check("a frozen median is drawn solid over its baseline and dashed after", /wc-ar-frozen/.test(fr.html) && /wc-ar-extended/.test(fr.html));
   const empty = body({ allowed: true, days: [], months: [], baselines: [], annotations: [] }, R, st);
   check("nothing yet: says the history is built overnight rather than drawing an empty chart", /built overnight/.test(empty.html));

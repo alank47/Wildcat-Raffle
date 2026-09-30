@@ -11,6 +11,7 @@
 // limits reproduced in the source, so it is asserted on behaviour at the
 // boundaries rather than on the table being beyond question.
 import { readFileSync } from "node:fs";
+import ts from "typescript";
 
 const js = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
 const script = js("./script.js");
@@ -226,8 +227,134 @@ check("every class the chart renders is defined in the stylesheet",
 console.log("\nthe server side");
 
 check("the series query exists", /export const dailyAbsenceSeries = query\(/.test(conv));
-check("gated to the same three roles as the ranking",
-  /ATTENDANCE_ROLES\.includes\(staff\.role\)/.test(conv.slice(conv.indexOf("dailyAbsenceSeries"))));
+
+// WHO MAY READ THE SERIES. It used to be pinned as
+// `ATTENDANCE_ROLES.includes(staff.role)`. Since 2026-09-30 the gate is
+// canReadInsights(staff) from accessRules.ts: those same three roles, OR one
+// person an admin has given `attendanceWatch` (asked for Gabriela Avalos, a
+// campus aide). The protection is unchanged in kind -- the whole-school series
+// is refused to anyone who is neither in the roles nor granted -- so it is
+// pinned three ways: the text of THIS export (not the file from here to the
+// end, which a later query could satisfy), the real accessRules module, and
+// the real handler run against a fake staff record.
+const exportSrc = (name) => {
+  const i = conv.indexOf("export const " + name + " = ");
+  if (i < 0) return "";
+  const next = conv.indexOf("\nexport const ", i + 1);
+  return conv.slice(i, next < 0 ? conv.length : next);
+};
+{
+  const series = exportSrc("dailyAbsenceSeries");
+  const ranking = exportSrc("schoolAttendance");
+  const gate = /const staff = await requireStaff\(ctx\);\s*if \(!canReadInsights\(staff\)\) \{\s*return \{\s*allowed: false/;
+  check("gated to the same rule as the ranking: refused unless canReadInsights(staff)",
+    gate.test(series) && gate.test(ranking),
+    "the series and schoolAttendance must share one gate, checked first, refusing with allowed: false");
+  check("and the gate comes before the per-day table is read",
+    series.indexOf("canReadInsights(staff)") > 0 &&
+    series.indexOf("canReadInsights(staff)") < series.indexOf('ctx.db.query("psAbsenceDayTotals")'));
+  check("canReadInsights is the shared one from accessRules, not a local copy",
+    /import \{[^}]*\bcanReadInsights\b[^}]*\} from "\.\/accessRules";/.test(conv) &&
+    !/(function|const|let|var)\s+canReadInsights\b/.test(conv));
+}
+
+// THE RULE ITSELF, from the shipped accessRules.ts (pure, no imports).
+const tsx = (src) => ts.transpileModule(src, {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText;
+const load = (src, deps = {}) => {
+  const m = { exports: {} };
+  new Function("module", "exports", "require", tsx(src))(m, m.exports, (p) => {
+    if (p in deps) return deps[p];
+    throw new Error("unexpected import " + p);
+  });
+  return m.exports;
+};
+const access = load(js("./convex/accessRules.ts"));
+{
+  const listRoles = (() => {
+    const m = conv.match(/const ATTENDANCE_ROLES = (\[[^\]]*\]);/);
+    return m ? JSON.parse(m[1]) : null;
+  })();
+  check("the roles are still exactly admin, superadmin and PBIS",
+    JSON.stringify([...access.INSIGHT_ROLES].sort()) === JSON.stringify(["admin", "pbis", "superadmin"]),
+    JSON.stringify(access.INSIGHT_ROLES));
+  check("and the same three the attendance list names",
+    listRoles && JSON.stringify([...listRoles].sort()) === JSON.stringify([...access.INSIGHT_ROLES].sort()),
+    JSON.stringify(listRoles));
+}
+
+// THE REAL HANDLER, with the real accessRules. Only the Convex runtime and
+// requireStaff are stood in for: requireStaff returns the caller's own
+// `teachers` row, which is where an admin sets attendanceWatch.
+{
+  const vAny = new Proxy({}, { get: () => (...a) => ({ a }) });
+  let staffRow = null;
+  let reads = 0;
+  const L = load(conv, {
+    "./_generated/server": { query: (def) => def },
+    "convex/values": { v: vAny },
+    "./identity": { requireStaff: async () => staffRow },
+    "./accessRules": access,
+    "./views": load(js("./convex/views.ts")),
+    "./absenceDayRules": load(js("./convex/absenceDayRules.ts")),
+  });
+  const table = [
+    { date: "2026-09-28", studentsAbsent: 40, fullDaysStrict: 20, misrecordDaysByGap: [0, 0, 0], partialDays: 20, syncedAt: "x" },
+    { date: "2026-09-29", studentsAbsent: 41, fullDaysStrict: 21, misrecordDaysByGap: [0, 0, 0], partialDays: 20, syncedAt: "x" },
+  ];
+  const ctx = { db: { query: (t) => {
+    if (t !== "psAbsenceDayTotals") throw new Error("unexpected table " + t);
+    return { take: async () => { reads++; return table; } };
+  } } };
+  const run = async (row, args = { today: "2026-09-30" }) => {
+    staffRow = row; reads = 0;
+    const res = await L.dailyAbsenceSeries.handler(ctx, args);
+    return { res, reads };
+  };
+  const refused = ({ res, reads }) =>
+    res.allowed === false && Array.isArray(res.points) && res.points.length === 0 && reads === 0;
+  const admitted = ({ res, reads }) =>
+    res.allowed === true && res.points.length === table.length && reads === 1;
+
+  const email = (r) => r + "@example.test";
+  const aide = { email: email("aide"), role: "campusaide" };
+  const teacher = { email: email("teacher"), role: "teacher" };
+
+  check("the handler was found and is the real one",
+    typeof (L.dailyAbsenceSeries && L.dailyAbsenceSeries.handler) === "function");
+  check("a campus aide WITHOUT the grant is refused, and nothing is read",
+    refused(await run(aide)));
+  check("a teacher WITHOUT the grant is refused, and nothing is read",
+    refused(await run(teacher)));
+  check("a grant set to false is no grant",
+    refused(await run({ ...aide, attendanceWatch: false })) &&
+    refused(await run({ ...teacher, attendanceWatch: false })));
+  check("only a real true grants it: \"true\", 1 or \"yes\" do not",
+    refused(await run({ ...aide, attendanceWatch: "true" })) &&
+    refused(await run({ ...aide, attendanceWatch: 1 })) &&
+    refused(await run({ ...teacher, attendanceWatch: "yes" })));
+  check("the grant comes from the staff record, never the request",
+    refused(await run(aide, { today: "2026-09-30", attendanceWatch: true, role: "admin" })));
+  check("a record with no role, or an unknown one, is refused",
+    refused(await run({ email: email("x") })) && refused(await run({ email: email("y"), role: "student" })));
+  check("a campus aide WITH attendanceWatch: true is allowed",
+    admitted(await run({ ...aide, attendanceWatch: true })));
+  check("a teacher WITH attendanceWatch: true is allowed",
+    admitted(await run({ ...teacher, attendanceWatch: true })));
+  check("admin, superadmin and PBIS need no grant",
+    admitted(await run({ email: email("a"), role: "admin" })) &&
+    admitted(await run({ email: email("s"), role: "superadmin" })) &&
+    admitted(await run({ email: email("p"), role: "pbis" })));
+  {
+    const { res } = await run({ ...aide, attendanceWatch: true });
+    check("what a granted aide receives is still counts, no names",
+      res.points.every((p) => Object.keys(p).every((k) =>
+        ["date", "studentsAbsent", "fullDaysStrict", "misrecordDaysByGap", "partialDays"].includes(k))),
+      JSON.stringify(res.points[0]));
+  }
+}
+
 check("FUTURE DATES ARE EXCLUDED: two students carry absences dated to 2026-10-09",
   /d <= day/.test(conv));
 check("today comes from the browser, never a server clock",

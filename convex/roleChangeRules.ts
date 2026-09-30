@@ -187,5 +187,52 @@ export function roleWritePatch(
     patch.gradeScopeSetBy = undefined;
     patch.gradeScopeSetAt = undefined;
   }
+  // Attendance Watch access is cleared by a role change for the same reason.
+  if (row && (row as any).attendanceWatch && norm(row.role) !== norm(newRole)) {
+    patch.attendanceWatch = undefined;
+    patch.attendanceWatchSetBy = undefined;
+    patch.attendanceWatchSetAt = undefined;
+  }
   return patch;
+}
+
+// ---------------------------------------------------------------------------
+// ATTENDANCE WATCH ACCESS (2026-09-30, "Attendance Watch and Early Warning for
+// Avalos"): read access to Attendance Watch and Early Warning for one staff
+// member whose role does not include it. Admin only; never your own record;
+// pointless (refused) for admin, superadmin and PBIS, who already have it.
+// ---------------------------------------------------------------------------
+
+export type AttendanceWatchRequest = {
+  actorEmail: string;
+  actorRole: string;
+  targetEmail: string;
+  targetRole: string;
+  current: boolean;
+  requested: unknown;
+};
+
+export function attendanceWatchVerdict(req: AttendanceWatchRequest):
+  { ok: true; on: boolean } | { ok: false; reason: string } {
+  if (!canChangeRoles(req.actorRole)) {
+    return { ok: false, reason: "Only administrators can change who sees Attendance Watch." };
+  }
+  const actor = norm(req.actorEmail);
+  const target = norm(req.targetEmail);
+  if (!target) return { ok: false, reason: "No staff member named." };
+  if (actor && actor === target) {
+    return { ok: false, reason: "You cannot change your own access. Ask another administrator." };
+  }
+  if (typeof req.requested !== "boolean") {
+    return { ok: false, reason: "Attendance Watch access is on or off." };
+  }
+  const on = req.requested;
+  const already = ["admin", "superadmin", "pbis"].includes(norm(req.targetRole));
+  if (on && already) {
+    return { ok: false, reason: "Admins and the PBIS team already see Attendance Watch and Early Warning." };
+  }
+  if (req.current === on) {
+    return { ok: false, reason: on ? "They already have Attendance Watch access." : "They do not have Attendance Watch access." };
+  }
+  return { ok: true, on };
 }

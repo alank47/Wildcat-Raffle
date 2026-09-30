@@ -10,6 +10,10 @@
 //   teacher     submit a referral, and see their OWN open and closed ones
 //   admin/PBIS  every referral, plus history, detention and analytics
 //
+// Added 2026-09-30: a per-person Attendance Watch grant (teachers.attendanceWatch,
+// set by an admin) adds the Attendance Watch and Early Warning tabs, read only,
+// and nothing else. convex/accessRules.ts canReadInsights is the real check.
+//
 // Run: npm test
 
 import { readFileSync } from "node:fs";
@@ -96,12 +100,77 @@ console.log("\nDemographics is unreachable for a teacher");
   // child's race, sex and grade breakdown away from someone who may only file.
   check("analytics is not in a teacher's tabs",
     !D.disciplineTabsFor("teacher").includes("analytics"));
+  // The calls now also pass currentUser so a per-person Attendance Watch grant
+  // is seen; the role is still the first argument, so a teacher without the
+  // grant gets exactly the three tabs pinned above.
   check("the pane refuses as well as the button being hidden",
-    /canOpenDisciplineTab\(currentUser && currentUser\.role, subtab\)/.test(script));
+    /canOpenDisciplineTab\(currentUser && currentUser\.role, subtab, currentUser\)/.test(script));
   check("and it falls back to submit rather than a blank screen",
     /switchDisciplineTab\('submit'\);\s*\n\s*return;/.test(script));
   check("the sidebar filters the buttons too",
-    /disciplineTabsFor\(currentUser && currentUser\.role\)/.test(script));
+    /disciplineTabsFor\(currentUser && currentUser\.role, currentUser\)/.test(script));
+  check("analytics stays closed to a teacher even with the Attendance Watch grant",
+    !D.disciplineTabsFor("teacher", { role: "teacher", attendanceWatch: true }).includes("analytics") &&
+    D.canOpenDisciplineTab("teacher", "analytics", { role: "teacher", attendanceWatch: true }) === false);
+}
+
+console.log("\nA per-person Attendance Watch grant opens two tabs, read only");
+{
+  const granted = { ...teacher, attendanceWatch: true };
+  const aide = { role: "campusaide", email: "aide@westbrook.org" };
+  const grantedAide = { ...aide, attendanceWatch: true };
+
+  // (a) Without the grant nothing changed: teacher and campus aide are refused.
+  ["attendance", "earlyWarning"].forEach((t) => {
+    check(`a teacher without the grant cannot open ${t}`,
+      D.canOpenDisciplineTab("teacher", t, teacher) === false);
+    check(`nor with the grant explicitly off (${t})`,
+      D.canOpenDisciplineTab("teacher", t, { ...teacher, attendanceWatch: false }) === false);
+    check(`a campus aide without the grant cannot open ${t}`,
+      D.canOpenDisciplineTab("campusaide", t, aide) === false);
+    check(`nor with no user record at all (${t})`,
+      D.canOpenDisciplineTab("teacher", t, null) === false);
+  });
+  check("a teacher without the grant still gets exactly three tabs",
+    D.disciplineTabsFor("teacher", teacher).join(",") === "submit,review,closed");
+  // Only a real boolean true grants; a stray string or number does not.
+  check("a truthy non-boolean is not a grant",
+    D.canOpenDisciplineTab("teacher", "attendance", { ...teacher, attendanceWatch: "true" }) === false &&
+    D.canOpenDisciplineTab("teacher", "attendance", { ...teacher, attendanceWatch: 1 }) === false);
+
+  // (b) With attendanceWatch:true those two tabs open, for a teacher or an aide.
+  ["attendance", "earlyWarning"].forEach((t) => {
+    check(`a teacher with the grant can open ${t}`,
+      D.canOpenDisciplineTab("teacher", t, granted) === true);
+    check(`a campus aide with the grant can open ${t}`,
+      D.canOpenDisciplineTab("campusaide", t, grantedAide) === true);
+  });
+  check("the grant adds exactly those two tabs",
+    D.disciplineTabsFor("teacher", granted).join(",") === "submit,review,closed,attendance,earlyWarning");
+
+  // And nothing else: referral history, analytics, detention and uniform stay
+  // with the role, and the teacher still sees only their own referrals.
+  ["detention", "uniform", "history", "analytics"].forEach((t) => {
+    check(`the grant does not open ${t}`,
+      D.canOpenDisciplineTab("teacher", t, granted) === false &&
+      D.canOpenDisciplineTab("campusaide", t, grantedAide) === false);
+  });
+  check("the grant does not widen the referral list",
+    D.visibleReferrals(ALL, granted).length === 3);
+
+  // Read only: the settings on those tabs stay with admin, superadmin and PBIS.
+  check("the roles may change the insight settings",
+    D.canEditInsightSettings("admin") && D.canEditInsightSettings("superadmin") &&
+    D.canEditInsightSettings("pbis"));
+  check("a teacher may not, grant or no grant",
+    D.canEditInsightSettings("teacher") === false &&
+    D.canEditInsightSettings("teacher", granted) === false &&
+    D.canEditInsightSettings("campusaide", grantedAide) === false);
+  // The app decides editing from the role alone, never from the user record.
+  const editCalls = script.match(/canEditInsightSettings\([^)]*\)/g) || [];
+  check("every settings gate in the app passes the role only",
+    editCalls.length >= 3 &&
+    editCalls.every((c) => c === "canEditInsightSettings(currentUser && currentUser.role)"));
 }
 
 console.log("\nThe app routes every referral table through one scope");

@@ -46,6 +46,10 @@ const tsx = (src) => ts.transpileModule(src, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText;
 const rulesMod = (() => { const m = { exports: {} }; new Function("module", "exports", tsx(rulesSrc))(m, m.exports); return m.exports; })();
+// THE REAL ACCESS RULE, not a stand-in: who may read the whole-school lists is
+// decided by accessRules.ts canReadInsights, and a fake here would test the fake.
+const accessSrc = readFileSync(new URL("./convex/accessRules.ts", import.meta.url), "utf8");
+const accessMod = (() => { const m = { exports: {} }; new Function("module", "exports", tsx(accessSrc))(m, m.exports); return m.exports; })();
 
 console.log("\nWHICH DATES MAKE A WEEK AND A MONTH\n");
 {
@@ -168,6 +172,7 @@ console.log("\nTHE SERVER'S WINDOW QUERY\n");
     "./identity": { requireStaff: async () => me },
     "./views": { dayCount: (n) => (typeof n === "number" ? n : null) },
     "./absenceDayRules": rulesMod,
+    "./accessRules": accessMod,
   };
   const mod = { exports: {} };
   new Function("require", "module", "exports", tsx(listSrc))((n) => { if (!stubs[n]) throw new Error("no " + n); return stubs[n]; }, mod, mod.exports);
@@ -228,8 +233,39 @@ console.log("\nTHE SERVER'S WINDOW QUERY\n");
   check("numbers only: no names cross the wire", res.rows.every((r) => Object.keys(r).join() === "studentNumber,split"));
 
   me = { role: "teacher" };
-  const refused = await q.handler({ db: makeDb(tables, []) }, { from: "2026-09-21", to: "2026-09-25", today: "2026-09-23" });
+  const refusedReads = [];
+  const refused = await q.handler({ db: makeDb(tables, refusedReads) }, { from: "2026-09-21", to: "2026-09-25", today: "2026-09-23" });
   check("a teacher is refused, as the year list refuses them", refused.allowed === false && refused.rows.length === 0);
+  check("...before a single attendance row is read", refusedReads.length === 0, JSON.stringify(refusedReads));
+
+  // THE PER-PERSON GRANT (2026-09-30, Attendance Watch for one campus aide).
+  // It opens this list to the ONE person an admin marked, and to nobody else
+  // of that role: an aide or teacher without it is refused exactly as before.
+  const askAs = async (who) => {
+    me = who;
+    const rd = [];
+    const r = await q.handler({ db: makeDb(tables, rd) }, { from: "2026-09-21", to: "2026-09-25", today: "2026-09-24" });
+    return { r, rd };
+  };
+  const aide = await askAs({ role: "campusaide" });
+  check("a campus aide WITHOUT the grant is refused, and nothing is read",
+    aide.r.allowed === false && aide.r.rows.length === 0 && aide.r.schoolDays.length === 0 && aide.rd.length === 0);
+  const aideOff = await askAs({ role: "campusaide", attendanceWatch: false });
+  check("...and one whose grant was switched off is refused too", aideOff.r.allowed === false && aideOff.r.rows.length === 0 && aideOff.rd.length === 0);
+  const aideStr = await askAs({ role: "campusaide", attendanceWatch: "true" });
+  check("...and only a real true opens it: the string \"true\" does not", aideStr.r.allowed === false && aideStr.r.rows.length === 0 && aideStr.rd.length === 0);
+  const teachOff = await askAs({ role: "teacher", attendanceWatch: false });
+  check("a teacher without the grant is still refused", teachOff.r.allowed === false && teachOff.r.rows.length === 0 && teachOff.rd.length === 0);
+  const aideOn = await askAs({ role: "campusaide", attendanceWatch: true });
+  check("a campus aide WITH the grant gets the window, the same answer PBIS got",
+    aideOn.r.allowed === true && aideOn.r.rows.length > 0 && JSON.stringify(aideOn.r) === JSON.stringify(res),
+    JSON.stringify(aideOn.r).slice(0, 160));
+  const teachOn = await askAs({ role: "teacher", attendanceWatch: true });
+  check("a teacher WITH the grant gets it too, the same answer PBIS got",
+    teachOn.r.allowed === true && JSON.stringify(teachOn.r) === JSON.stringify(res));
+  check("the query asks the shared rule, not its own role list",
+    /if \(!canReadInsights\(staff\)\)/.test(listSrc.split("export const absenceWindow")[1].split("export const ")[0])
+    && /import \{ canReadInsights \} from "\.\/accessRules";/.test(listSrc));
   me = { role: "admin" };
   const future = await q.handler({ db: makeDb(tables, []) }, { from: "2026-09-28", to: "2026-10-02", today: "2026-09-23" });
   check("a window that has not started is empty, not an error", future.allowed === true && future.rows.length === 0 && future.schoolDays.length === 0);

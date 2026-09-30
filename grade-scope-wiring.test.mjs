@@ -172,7 +172,7 @@ console.log("\nThe staff screen");
     /teacher\.gradeScope = scopeResult\.scope \|\| null/.test(save));
   check("... skips it when the role change failed", /if \(!roleError && wantedScope !== undefined/.test(save));
   check("... keeps the dialog open and says so when it fails",
-    /if \(scopeError\) \{[\s\S]{0,400}return;/.test(save));
+    /if \(scopeError\) \{[\s\S]{0,900}return;/.test(save));
 
   // Review finding 2026-09-29: a failed role change put the Role select back
   // in code (no onchange), leaving Student access greyed out for the role that

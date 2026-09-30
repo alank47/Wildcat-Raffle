@@ -19,6 +19,7 @@
 // Run: npm test
 
 import { readFileSync } from "node:fs";
+import ts from "typescript";
 
 const src = readFileSync(new URL("./wildcat-roster.js", import.meta.url), "utf8");
 new Function(src)();
@@ -29,12 +30,21 @@ const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
 const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 const disc = readFileSync(new URL("./wildcat-discipline.js", import.meta.url), "utf8");
 const conv = readFileSync(new URL("./convex/attendanceList.ts", import.meta.url), "utf8");
+// WHO MAY READ is decided in accessRules.ts (canReadInsights: admin,
+// superadmin, PBIS, plus the per-person Attendance Watch grant of 2026-09-30).
+// It and the two helpers the query imports are pure, so they are transpiled
+// and loaded for real below: a stand-in would only test the stand-in.
+const accessSrc = readFileSync(new URL("./convex/accessRules.ts", import.meta.url), "utf8");
+const viewsSrc = readFileSync(new URL("./convex/views.ts", import.meta.url), "utf8");
+const dayRulesSrc = readFileSync(new URL("./convex/absenceDayRules.ts", import.meta.url), "utf8");
 
 new Function(disc)();
 const D = globalThis.WildcatDiscipline;
 
 let pass = 0, fail = 0;
-const check = (n, c) => { c ? (pass++, console.log(`  PASS  ${n}`)) : (fail++, console.log(`  FAIL  ${n}`)); };
+const check = (n, c, why) => {
+  c ? (pass++, console.log(`  PASS  ${n}`)) : (fail++, console.log(`  FAIL  ${n}${why ? "  (" + why + ")" : ""}`));
+};
 
 const S = (id, last) => ({ id: String(id), studentNumber: "N" + id, firstName: "S" + id, lastName: last || "X" });
 const row = (id, abs, tardy) => ({ student: S(id), daysAbsent: abs, daysTardy: tardy });
@@ -141,18 +151,158 @@ console.log("\n-- who may open it --");
   check("teacher does NOT get the tab", !R2(disc, "teacher"));
   check("campusaide does NOT get the tab", !R2(disc, "campusaide"));
 
+  // THE PER-PERSON GRANT (2026-09-30). An admin can give ONE staff member
+  // Attendance Watch; everyone else of that role is exactly where they were.
+  check("a campus aide an admin gave Attendance Watch gets the tab",
+    R2(disc, "campusaide", { attendanceWatch: true }));
+  check("a teacher an admin gave Attendance Watch gets the tab",
+    R2(disc, "teacher", { attendanceWatch: true }));
+  check("a campus aide whose grant is switched off does NOT",
+    !R2(disc, "campusaide", { attendanceWatch: false }));
+  check("only a real true opens it: the string \"true\" does NOT",
+    !R2(disc, "campusaide", { attendanceWatch: "true" }));
+  check("the grant opens Attendance Watch, not the referral history or analytics",
+    ["history", "analytics", "detention", "uniform"].every((t) =>
+      D.disciplineTabsFor("campusaide", { attendanceWatch: true }).indexOf(t) === -1));
+
   // The server refuses independently. Hiding a button is a courtesy, not a
   // permission -- anyone can call the query straight from a console.
-  check("the Convex query gates on role, not just the UI",
-    /ATTENDANCE_ROLES/.test(conv) && /!ATTENDANCE_ROLES\.includes\(staff\.role\)/.test(conv));
-  check("and it gates on staff identity first", /requireStaff\(ctx\)/.test(conv));
+  // Since 2026-09-30 the check is the shared rule in accessRules.ts rather than
+  // a role list local to this file, so what is pinned is: the rule is
+  // imported, and EVERY query in the file asks it, after identity and before
+  // any read.
+  const handlers = conv.split(/^export const /m).slice(1);
+  check("the Convex query gates on the shared access rule, not just the UI",
+    /^import \{ canReadInsights \} from "\.\/accessRules";/m.test(conv)
+    && handlers.length >= 5
+    && handlers.every((h) => /if \(!canReadInsights\(staff\)\)/.test(h)),
+    handlers.map((h) => h.slice(0, h.indexOf(" "))).join(","));
+  check("and it gates on staff identity first",
+    handlers.every((h) => {
+      const who = h.indexOf("const staff = await requireStaff(ctx)");
+      const gate = h.indexOf("!canReadInsights(staff)");
+      const read = h.indexOf("ctx.db");
+      return who !== -1 && gate > who && (read === -1 || gate < read);
+    }));
+
+  // The real rule, evaluated. INSIGHT_ROLES is the list the server now uses.
+  const A = loadCjs(accessSrc);
   check("teacher is not in the server's allowed roles",
-    /const ATTENDANCE_ROLES = \["admin", "superadmin", "pbis"\]/.test(conv));
+    JSON.stringify(A.INSIGHT_ROLES) === JSON.stringify(["admin", "superadmin", "pbis"]),
+    JSON.stringify(A.INSIGHT_ROLES));
+  // attendanceList.ts still declares its old list; if it does, it must not
+  // disagree with the one that decides.
+  const local = conv.match(/const ATTENDANCE_ROLES = (\[[^\]]*\])/);
+  check("the role list left in attendanceList.ts agrees with INSIGHT_ROLES",
+    !local || JSON.stringify(JSON.parse(local[1])) === JSON.stringify(A.INSIGHT_ROLES));
+  check("the rule refuses a teacher and a campus aide without the grant",
+    !A.canReadInsights({ role: "teacher" }) && !A.canReadInsights({ role: "campusaide" })
+    && !A.canReadInsights({ role: "campusaide", attendanceWatch: false })
+    && !A.canReadInsights({ role: "campusaide", attendanceWatch: "true" })
+    && !A.canReadInsights(null) && !A.canReadInsights({}));
+  check("the rule allows the three roles, and a person given the grant",
+    ["admin", "superadmin", "pbis"].every((r) => A.canReadInsights({ role: r }))
+    && A.canReadInsights({ role: "campusaide", attendanceWatch: true })
+    && A.canReadInsights({ role: "teacher", attendanceWatch: true }));
 }
 
-function R2(_source, role) {
+console.log("\n-- the server's year list, run as each kind of staff --");
+{
+  // The shipped schoolAttendance handler, with the REAL accessRules, views and
+  // absenceDayRules. Only the Convex runtime and the signed-in identity are
+  // faked. The db records every table it is asked for, so a refusal can be
+  // shown to have read nothing.
+  const tables = {
+    psAttendance: [
+      { studentNumber: "1001", daysAbsentYtd: 4, daysTardyTerm: 1, termFirstDay: "2026-08-12", syncedAt: "2026-09-29T12:00:00Z" },
+      { studentNumber: "1002", daysAbsentYtd: 0, daysTardyTerm: 0, syncedAt: "2026-09-29T12:05:00Z" },
+    ],
+    psAbsenceTotals: [
+      { studentNumber: "1001", absentDays: 4, fullDaysStrict: 1, misrecordDaysByGap: 0, partialDays: 3, assumedPresentDays: 0 },
+    ],
+  };
+  const makeDb = (reads) => ({
+    query: (name) => { reads.push(name); return { take: async () => (tables[name] || []).slice() }; },
+  });
+  const load = (access) => {
+    let me = { role: "admin" };
+    const stubs = {
+      "./_generated/server": { query: (d) => d },
+      "convex/values": { v: new Proxy({}, { get: () => (...a) => ({ _v: true, a }) }) },
+      "./identity": { requireStaff: async () => me },
+      "./accessRules": access,
+      "./views": loadCjs(viewsSrc),
+      "./absenceDayRules": loadCjs(dayRulesSrc),
+    };
+    const mod = { exports: {} };
+    new Function("require", "module", "exports", tsx(conv))(
+      (n) => { if (!stubs[n]) throw new Error("unexpected import " + n); return stubs[n]; }, mod, mod.exports);
+    return async (who) => {
+      me = who;
+      const reads = [];
+      const r = await mod.exports.schoolAttendance.handler({ db: makeDb(reads) });
+      return { r, reads };
+    };
+  };
+  const ask = load(loadCjs(accessSrc));
+
+  const admin = await ask({ role: "admin" });
+  check("an admin gets the list (so a refusal below is the gate, not a broken harness)",
+    admin.r.allowed === true && admin.r.rows.length === 2 && admin.reads.length > 0,
+    JSON.stringify(admin.r).slice(0, 160));
+  const pbis = await ask({ role: "pbis" });
+  check("PBIS gets the same list", pbis.r.allowed === true && JSON.stringify(pbis.r) === JSON.stringify(admin.r));
+
+  const refused = (x) => x.r.allowed === false && x.r.rows.length === 0 && x.reads.length === 0;
+  const teacher = await ask({ role: "teacher", email: "t@school.org" });
+  check("a teacher WITHOUT the grant is refused, before a single row is read", refused(teacher),
+    JSON.stringify(teacher));
+  const aide = await ask({ role: "campusaide", email: "a@school.org" });
+  check("a campus aide WITHOUT the grant is refused, before a single row is read", refused(aide),
+    JSON.stringify(aide));
+  check("...and one whose grant was switched off is refused too",
+    refused(await ask({ role: "campusaide", attendanceWatch: false })));
+  check("...and only a real true opens it: the string \"true\" does not",
+    refused(await ask({ role: "campusaide", attendanceWatch: "true" })));
+  check("...and neither does a grant field on some other key",
+    refused(await ask({ role: "campusaide", attendance: true, watch: true })));
+
+  const aideOn = await ask({ role: "campusaide", email: "a@school.org", attendanceWatch: true });
+  check("a campus aide WITH the grant gets the list, the same answer an admin gets",
+    aideOn.r.allowed === true && JSON.stringify(aideOn.r) === JSON.stringify(admin.r),
+    JSON.stringify(aideOn.r).slice(0, 160));
+  const teachOn = await ask({ role: "teacher", attendanceWatch: true });
+  check("a teacher WITH the grant gets it too",
+    teachOn.r.allowed === true && JSON.stringify(teachOn.r) === JSON.stringify(admin.r));
+  check("the grant still sends numbers only: no name crosses the wire",
+    aideOn.r.rows.every((r) => Object.keys(r).join() === "studentNumber,daysAbsent,daysTardy,split"),
+    aideOn.r.rows.map((r) => Object.keys(r).join()).join(" | "));
+
+  // TEETH: the handler really consults the imported rule. With a rule that
+  // refuses everyone, even an admin is refused -- so the refusals above come
+  // from canReadInsights and not from something incidental in the harness.
+  const shut = load({ ...loadCjs(accessSrc), canReadInsights: () => false });
+  check("with a rule that refuses everyone, even an admin is refused (the gate is the shared rule)",
+    refused(await shut({ role: "admin" })));
+}
+
+function R2(_source, role, user) {
   // The real disciplineTabsFor, evaluated -- not a string match on the file.
-  return D.disciplineTabsFor(role).indexOf("attendance") !== -1;
+  return D.disciplineTabsFor(role, user).indexOf("attendance") !== -1;
+}
+
+/** Transpile one convex/*.ts file to CommonJS. */
+function tsx(source) {
+  return ts.transpileModule(source, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+}
+
+/** Load a pure convex/*.ts module (one that imports nothing) for real. */
+function loadCjs(source) {
+  const m = { exports: {} };
+  new Function("module", "exports", tsx(source))(m, m.exports);
+  return m.exports;
 }
 
 console.log("\n-- no names cross the wire --");
