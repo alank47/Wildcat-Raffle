@@ -971,8 +971,12 @@ console.log("\nTHE WIRING\n");
   check("the new test runs right after the old one in npm test",
     /node perfect-attendance\.test\.mjs && node perfect-attendance-month\.test\.mjs/.test(pkg.scripts.test));
   const stamps = [...htmlSrc.matchAll(/\?v=([0-9a-z]+)/g)].map((m) => m[1]);
-  check("every cache stamp moved to 20261001p, so browsers load the new files",
-    stamps.length === 26 && stamps.every((s) => s === "20261001p"), [...new Set(stamps)].join(","));
+  // NOT PINNED TO ONE VALUE (2026-10-01): every later publish bumps the stamp
+  // again. What matters is that all 26 move together and none is from before
+  // this feature (20260930c), or a browser keeps the old file.
+  check("every cache stamp moved together, past the one before this feature",
+    stamps.length === 26 && new Set(stamps).size === 1 && stamps[0] !== "20260930c" && stamps[0] >= "20261001p",
+    [...new Set(stamps)].join(","));
 }
 
 console.log("\nDO THE ASSERTIONS HAVE TEETH?\n");

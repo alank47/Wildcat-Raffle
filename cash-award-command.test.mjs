@@ -472,7 +472,9 @@ console.log("\nDO THE ASSERTIONS HAVE TEETH?\n");
 {
   // 7. Drop the age check -> an old receipt arrives as a command.
   const broken = load({ cashAwardRules: (c) => {
-    const b = c.replace("if (atMs < opts.nowMs - CASH_AWARD_MAX_AGE_MS) {", "if (false) {");
+    // The age now reads through maxAgeMs (the arrival credit passes a longer
+    // one; the command passes none and keeps CASH_AWARD_MAX_AGE_MS).
+    const b = c.replace("if (atMs < opts.nowMs - maxAgeMs) {", "if (false) {");
     if (b === c) throw new Error("teeth 7: anchor moved"); return b; } });
   const oldIso = new Date(NOW - 2 * 3600_000).toISOString();
   const d = makeDb(seed());

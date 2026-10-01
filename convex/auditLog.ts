@@ -1,6 +1,7 @@
 import { query, mutation, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { requireStaff } from "./identity";
+import { raiseZeroPoint } from "./cashArrival";
 
 /**
  * The audit log, as a table.
@@ -64,7 +65,7 @@ export const append = mutation({
     })),
   },
   handler: async (ctx, { entries }) => {
-    await requireStaff(ctx);
+    const me = await requireStaff(ctx);
 
     if (entries.length > MAX_APPEND) {
       throw new Error(
@@ -108,6 +109,17 @@ export const append = mutation({
         timestamp: String(e.timestamp ?? ""),
         payload: e.payload,
       });
+      // A RESET or a YEAR ROLLOVER moves the arrival credit's zero point, so a
+      // late award row from before it is never paid into the new balances
+      // (cashArrivalRules.ts). By the entry's own time, so an old entry
+      // re-sent by a stale tab cannot drag it forward; raised, never lowered.
+      const action = String((e.payload as any)?.action ?? "");
+      // An admin's only: any staff token can append an entry with any action.
+      const role = String((me as any)?.role ?? "");
+      if ((role === "admin" || role === "superadmin") &&
+          (action === "reset_all_student_cash" || action === "school_year_rollover")) {
+        await raiseZeroPoint(ctx, String(e.timestamp ?? ""), action);
+      }
       inserted++;
       storedIds.push(id);
     }

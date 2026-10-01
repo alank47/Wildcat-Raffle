@@ -104,6 +104,11 @@ const touchedJs = ts.transpileModule(moduleScopeTs, {
 const runNew = new Function("ctx", "doc", "collection", "rows", "dedupeField",
   "MAX_ROWS_PER_SLICE", "notifyNewReferrals",
   touchedJs +
+  // The arrival credit (2026-09-30) runs inside mergeSlice after the inserts.
+  // Stubbed as its switch-OFF behaviour, so this file still proves the MERGE
+  // is row-for-row what it always was; cash-arrival-credit.test.mjs runs the
+  // real one.
+  "const noteArrivedCash = async () => null;\n" +
   "return (async () => {" + js +
   "\nreturn { inserted: toInsert.length, updated: toUpdate.length, deleted, refusedAsHistory };" +
   "})();");

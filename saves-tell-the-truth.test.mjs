@@ -472,7 +472,10 @@ console.log("\nA refused save renews its own token before telling anyone");
   check("there is a renewal path", /function renewSessionAfterRefusal\(reason\)/.test(code));
   check("it asks for a FORCED resume, which is the only kind that replaces a live-but-dead session",
     /auth\.resumeSession\(\{ force: true \}\)/.test(code));
-  check("only one renewal runs at a time", /if \(_renewAfterRefusalInFlight\) return;/.test(code));
+  // 2026-09-30: a second caller now gets the renewal already running, so the
+  // award command can wait on it (award-retry-401.test.mjs runs this).
+  check("only one renewal runs at a time",
+    /if \(_renewAfterRefusalInFlight\) return _renewAfterRefusalInFlight;/.test(code));
   check("a successful renewal re-sends rather than waiting on the queue",
     /requestSave\('after token renewal'\)/.test(code));
   check("and clears the bar it may have already raised",

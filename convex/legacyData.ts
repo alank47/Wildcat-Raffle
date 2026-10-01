@@ -2,6 +2,7 @@ import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import { requireStaff } from "./identity";
 import { notifyNewReferrals } from "./referralMail";
+import { noteArrivedCash } from "./cashArrival";
 
 /**
  * The app-facing half of the legacy mirror.
@@ -579,6 +580,20 @@ export const mergeSlice = mutation({
       await ctx.db.patch(u.id, { payload: u.payload, mirroredAt });
     }
 
+    // AWARDS THAT ARRIVE WITHOUT THEIR MONEY (2026-09-30), noted on INSERT
+    // only, for the same reason the referral email below is: toInsert is the
+    // only place that knows a cash row is new to its week. A row no payer has
+    // paid (the tab reloaded after its command and save both failed with an
+    // expired sign-in) is RECORDED for an admin to fix the same day. It moves
+    // no money and never throws. See cashArrival.ts.
+    const cashArrival = await noteArrivedCash(ctx, {
+      doc, collection, dedupeField, keyed,
+      stored: keptStored, inserted: toInsert, cutoffMs: cutoff,
+      actorEmail: String((me as any)?.email ?? ""),
+      actorRole: String((me as any)?.role ?? ""),
+      actorTeacherId: String((me as any)?.legacyId ?? (me as any)?._id ?? ""),
+    });
+
     // EMAIL ON A NEW REFERRAL, AND ONLY HERE.
     //
     // toInsert is the only place in this system that knows a referral is NEW.
@@ -606,6 +621,9 @@ export const mergeSlice = mutation({
       // build older than the cutoff and is re-sending last term; it is not an
       // error and nothing was lost, because the rows were deleted on purpose.
       refusedAsHistory,
+      // What the arrival note recorded (null when it did not run). Browsers
+      // ignore it; it is here for the tests and a curious reader.
+      cashArrival,
     };
 
   },

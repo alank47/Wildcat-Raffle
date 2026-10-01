@@ -163,7 +163,108 @@
       .join(' ').toLowerCase();
   }
 
+  // =====================================================================
+  // THE "AWARDS THAT ARRIVED WITHOUT THEIR MONEY" LIST: which rows are
+  // ticked, and which "given again" warnings the admin has acknowledged.
+  // Pure, so the rules are tested by running them, not by reading them.
+  //
+  // THE RULE THE SECOND REVIEW (2026-09-30) FORCED: an acknowledgement is
+  // made by a CLICK, while the warning is on screen, and is bound to the
+  // exact set of candidates shown (candidateSig). A default tick is never an
+  // acknowledgement, and when the candidates change the tick and the
+  // acknowledgement are both dropped, so the admin has to look again.
+  // =====================================================================
+
+  function arrivalPlain(a) {
+    if (!a || a.paidMeanwhile || !a.found || a.blocked) return false;
+    if (a.kind === 'deduct') return false;
+    if (a.candidates && a.candidates.length) return false;
+    var worry = ['delivered_by_other', 'twin', 'late', 'unchecked', 'later_similar'];
+    return !(a.flags || []).some(function (f) { return worry.indexOf(f) !== -1; });
+  }
+
+  /**
+   * The picks after a (re)load. state = { picks: {id:true}, seen: {id: sig},
+   * acks: {id: sig} }; returns a new state. Kept for a row already seen with
+   * the SAME candidates; dropped when its candidates changed, when it became
+   * paid or blocked; a new row is ticked only when plain.
+   */
+  function arrivalReload(state, list) {
+    var st = state || {};
+    var picks = {}, seen = {}, acks = {}, hand = {};
+    (list || []).forEach(function (a) {
+      if (!a || !a.id) return;
+      var sig = str(a.candidateSig);
+      var before = st.seen ? st.seen[a.id] : undefined;
+      seen[a.id] = sig;
+      if (a.paidMeanwhile) return;
+      if (before === undefined) {
+        if (arrivalPlain(a)) picks[a.id] = true;
+        return;
+      }
+      if (before !== sig) return;                 // new candidates: look again
+      if (st.picks && st.picks[a.id]) picks[a.id] = true;
+      if (st.acks && st.acks[a.id] === sig && sig) acks[a.id] = sig;
+      if (st.hand && st.hand[a.id] && picks[a.id]) hand[a.id] = true;
+    });
+    return { picks: picks, seen: seen, acks: acks, hand: hand };
+  }
+
+  /**
+   * A row the app cannot check -- too old for the register, or for the panel
+   * -- is left for the cash recount, which compares the whole ledger with the
+   * counters (final re-review, 2026-10-01). Neither button acts on it, so it
+   * cannot be ticked. Must match LEFT_FOR_THE_RECOUNT in convex/cashArrival.ts.
+   */
+  function arrivalLeftForRecount(a) {
+    return Boolean(a && (a.blocked === 'coverage_lost' || a.blocked === 'stale' || a.blocked === 'before_reset'));
+  }
+
+  /** A click on one row. Ticking a warned row acknowledges what it shows. */
+  function arrivalToggle(state, a) {
+    if (arrivalLeftForRecount(a)) return state;
+    var picks = Object.assign({}, state.picks), acks = Object.assign({}, state.acks);
+    var hand = Object.assign({}, state.hand);
+    if (picks[a.id]) { delete picks[a.id]; delete acks[a.id]; delete hand[a.id]; }
+    else {
+      picks[a.id] = true;
+      hand[a.id] = true;
+      if (str(a.candidateSig)) acks[a.id] = str(a.candidateSig);
+    }
+    return { picks: picks, seen: state.seen, acks: acks, hand: hand };
+  }
+
+  /**
+   * What Dismiss acts on: ONLY rows the admin ticked by hand (final review,
+   * 2026-10-01). Plain lost awards arrive pre-ticked for Give back; a Dismiss
+   * aimed at one warned row must never take them along with it.
+   */
+  function arrivalDismissRequest(state, list) {
+    var ids = [];
+    (list || []).forEach(function (a) {
+      if (a && state.hand && state.hand[a.id] && state.picks[a.id] && !a.paidMeanwhile && !arrivalLeftForRecount(a)) ids.push(a.id);
+    });
+    return ids;
+  }
+
+  /** What Give back sends: payable picks, and the acknowledgements for them. */
+  function arrivalFixRequest(state, list) {
+    var ids = [], acknowledged = [];
+    (list || []).forEach(function (a) {
+      if (!state.picks[a.id] || a.paidMeanwhile || a.blocked) return;
+      ids.push(a.id);
+      if (state.acks[a.id]) acknowledged.push({ id: a.id, sig: state.acks[a.id] });
+    });
+    return { ids: ids, acknowledged: acknowledged };
+  }
+
   root.WildcatCashAudit = {
+    arrivalPlain: arrivalPlain,
+    arrivalReload: arrivalReload,
+    arrivalToggle: arrivalToggle,
+    arrivalFixRequest: arrivalFixRequest,
+    arrivalDismissRequest: arrivalDismissRequest,
+    arrivalLeftForRecount: arrivalLeftForRecount,
     CASH_ACTIONS: CASH_ACTIONS.slice(),
     isCashEntry: isCashEntry,
     behaviorAndNotes: behaviorAndNotes,

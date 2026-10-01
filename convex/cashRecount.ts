@@ -1,6 +1,8 @@
 import { internalQuery, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { deriveCounters, recountVerdict } from "./cashRecountRules";
+import { ringPush } from "./appDataShape";
+import { laterCandidates, ZERO_POINT_SLACK_MS } from "./cashArrivalRules";
 
 /**
  * Putting the four cash counters back in agreement with the ledger.
@@ -119,6 +121,23 @@ async function findStudent(ctx: any, studentId: string) {
 }
 
 /**
+ * The latest reset row EXACTLY as deriveCounters reads one (behaviorId
+ * "system_reset", no prefix match), or -Infinity; Infinity if one is undated.
+ * Kept identical so the doubtful hold and the derivation agree on which rows
+ * a reset wipes (fourth re-review, 2026-10-01).
+ */
+function derivationResetMs(rows: any[]): number {
+  let best = -Infinity;
+  for (const r of rows || []) {
+    if (String(r && r.behaviorId ? r.behaviorId : "") !== "system_reset") continue;
+    const t = Date.parse(String(r && r.timestamp ? r.timestamp : ""));
+    if (!Number.isFinite(t)) return Infinity;
+    if (t > best) best = t;
+  }
+  return best;
+}
+
+/**
  * Recount one slice of students. DRY RUN unless `apply` is true.
  *
  * Idempotent by construction: it writes a value derived from history, so a
@@ -155,11 +174,26 @@ export const recountStudents = internalMutation({
       }
       const name = `${(student as any).firstName ?? ""} ${(student as any).lastName ?? ""}`.trim();
 
+      // A LOST AWARD AN ADMIN DISMISSED is not counted (second review,
+      // 2026-09-30): "do not give this back" has to survive the recount, or
+      // the next morning's repair pays exactly what a person decided not to.
+      // Left out of BOTH witnesses so they still agree, and reported.
+      //
+      // Only a row the app COULD check is ever dismissed: one it cannot check
+      // stays open and is this recount's to settle (final re-review,
+      // 2026-10-01), counted against the ledger like any other row.
+      const dismissed = new Set((await ctx.db.query("cashArrivalAlerts")
+        .withIndex("by_student_status", (q: any) => q.eq("studentId", entry.studentId).eq("status", "dismissed"))
+        .take(200)).map((a: any) => a.txnId));
+      const keep = (r: any) => !dismissed.has(String(r?.id ?? ""));
+      const ledgerRows = dismissed.size ? entry.rows.filter(keep) : entry.rows;
+
       // WITNESS 1: the weekly ledger, as the driver read it.
-      const fromLedger = deriveCounters(entry.rows, deltas);
+      const fromLedger = deriveCounters(ledgerRows, deltas);
       // WITNESS 2: the student record's own copy of the same history.
-      const cache = Array.isArray((student as any).wildcatCashTransactions)
+      const cacheAll = Array.isArray((student as any).wildcatCashTransactions)
         ? (student as any).wildcatCashTransactions : [];
+      const cache = dismissed.size ? cacheAll.filter(keep) : cacheAll;
       const fromCache = deriveCounters(cache, deltas);
 
       const disagree = ["wildcatCashBalance", "wildcatCashEarned", "wildcatCashSpent", "wildcatCashDeducted"]
@@ -180,8 +214,61 @@ export const recountStudents = internalMutation({
         maxChange: args.maxChange,
       });
 
+      // AWARDS WAITING FOR AN ADMIN'S "GIVE BACK" THAT THIS COUNT INCLUDES
+      // (review finding, 2026-09-30). Once the counters equal the ledger, a
+      // lost award whose row is in that ledger is paid -- by this recount, or
+      // it already was. Its open alert is settled and its id REGISTERED, in
+      // the same patch, so neither Give back nor a late save can pay it again.
+      // (The recount never registered what it paid before; for these rows it
+      // now does.)
+      const rowIds = new Set(ledgerRows.map((r: any) => String(r?.id ?? "")));
+      const waiting = (await ctx.db.query("cashArrivalAlerts")
+        .withIndex("by_student_status", (q: any) => q.eq("studentId", entry.studentId).eq("status", "open"))
+        .take(200)).filter((a: any) => rowIds.has(a.txnId));
+      const settleWaiting = async () => {
+        if (!apply || !waiting.length) return;
+        const at = new Date().toISOString();
+        for (const a of waiting) {
+          await ctx.db.patch(a._id, { status: "settled", resolvedAt: at, resolvedBy: "recount", resolution: "counted by the recount" });
+        }
+      };
+      const registerWaiting = (cur: any) => ringPush(cur ?? null, waiting.map((a: any) => ({ id: a.txnId, at: a.at, amount: a.amount, kind: a.kind })));
+      // A WAITING AWARD THAT MAY HAVE BEEN GIVEN AGAIN IS A PERSON'S CALL
+      // (final review, 2026-10-01). If a similar award was given later, paying
+      // this one could pay the child twice. So the recount holds the child
+      // back rather than paying and settling it out of sight, and names the
+      // alerts; cashArrival:resolveForRecount records the person's decision.
+      //
+      // Re-reviews, same day:
+      //   - a DISMISSED row is not a re-entry (it was never paid), so the
+      //     candidates come from the copies with dismissed rows left out;
+      //   - a row at or before the latest RESET ROW holds nothing: the
+      //     derivation starts again at the reset, so it cannot change this
+      //     count (an undated reset reads as Infinity and exempts nothing; an
+      //     unreadable time is never exempt);
+      //   - a row dated within the slack AFTER a reset may really be from
+      //     before it (a fast clock), which is why the panel calls it
+      //     "before a cash reset": a person decides, never this count;
+      //   - a person's "count" is honoured only while nothing similar is
+      //     dated after that decision: a re-entry made since is new doubt.
+      const resetMs = Math.max(derivationResetMs(cacheAll), derivationResetMs(entry.rows));
+      const candidatesOf = (a: any) => laterCandidates([...cache, ...ledgerRows], a.row ?? {});
+      const doubtful = waiting.filter((a: any) => {
+        const at = Date.parse(a.at);
+        if (resetMs !== Infinity && at <= resetMs) return false;
+        const decided = a.recountDecision && a.recountDecision.decision === "count"
+          ? Date.parse(String(a.recountDecision.at ?? "")) : NaN;
+        if (Number.isFinite(decided)) return candidatesOf(a).some((c: any) => !(Date.parse(c.at) <= decided));
+        if (Number.isFinite(resetMs) && !(at > resetMs + ZERO_POINT_SLACK_MS)) return true;
+        return candidatesOf(a).length > 0;
+      });
+
       if (verdict.action === "already correct") {
         alreadyCorrect++;
+        if (apply && waiting.length) {
+          await ctx.db.patch((student as any)._id, { cashApplied: registerWaiting((student as any).cashApplied) });
+          await settleWaiting();
+        }
         // The excluded rows travel even here. A student whose counters happen
         // to be right can still have a row the derivation refused to count --
         // Nadia Almendares-Castaneda is exactly that -- and reporting it only
@@ -190,6 +277,16 @@ export const recountStudents = internalMutation({
         out.push({
           studentId: entry.studentId, name, action: "already correct",
           ...(fromLedger.excluded.length ? { excluded: fromLedger.excluded } : {}),
+        });
+        continue;
+      }
+      if (doubtful.length) {
+        heldBack++;
+        out.push({
+          studentId: entry.studentId, name, action: "held back",
+          why: `${doubtful.length} lost award${doubtful.length === 1 ? " is" : "s are"} waiting for a person: a similar award was given later (possibly given again), or it is dated just after a cash reset (possibly from before it). Decide with cashArrival:resolveForRecount, "count" or "leave_out"`,
+          alerts: doubtful.map((a: any) => ({ id: String(a._id), txnId: a.txnId, amount: a.amount, at: a.at })),
+          changes: verdict.changes,
         });
         continue;
       }
@@ -202,7 +299,12 @@ export const recountStudents = internalMutation({
         continue;
       }
 
-      if (apply) await ctx.db.patch((student as any)._id, verdict.patch);
+      if (apply) {
+        await ctx.db.patch((student as any)._id, waiting.length
+          ? { ...verdict.patch, cashApplied: registerWaiting((student as any).cashApplied) }
+          : verdict.patch);
+        await settleWaiting();
+      }
       repaired++;
       verdict.changes.forEach((c: any) => {
         if (c.field === "wildcatCashBalance") balanceMoved += c.delta;
@@ -333,6 +435,11 @@ export const appliedRegisterFor = internalQuery({
           ? ids.map((x) => Number(x?.at ?? 0)).sort((a, b) => b - a)[0]
           : null,
         registeredIds: ids.map((x) => String(x?.i ?? "")).filter(Boolean),
+        // Registered on purpose with NO money moved: an admin dismissed them
+        // (2026-10-01). Not a server fault, though they look like one here.
+        dismissedIds: (await ctx.db.query("cashArrivalAlerts")
+          .withIndex("by_student_status", (q: any) => q.eq("studentId", num).eq("status", "dismissed"))
+          .take(200)).map((a: any) => a.txnId),
       });
     }
     return { rows: out, studentsRead: all.length };

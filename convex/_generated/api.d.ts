@@ -27,6 +27,8 @@ import type * as auditMigrate from "../auditMigrate.js";
 import type * as auditMigrateRead from "../auditMigrateRead.js";
 import type * as authEvents from "../authEvents.js";
 import type * as bellSchedules from "../bellSchedules.js";
+import type * as cashArrival from "../cashArrival.js";
+import type * as cashArrivalRules from "../cashArrivalRules.js";
 import type * as cashAward from "../cashAward.js";
 import type * as cashAwardRules from "../cashAwardRules.js";
 import type * as cashDriftCheck from "../cashDriftCheck.js";
@@ -128,6 +130,8 @@ declare const fullApi: ApiFromModules<{
   auditMigrateRead: typeof auditMigrateRead;
   authEvents: typeof authEvents;
   bellSchedules: typeof bellSchedules;
+  cashArrival: typeof cashArrival;
+  cashArrivalRules: typeof cashArrivalRules;
   cashAward: typeof cashAward;
   cashAwardRules: typeof cashAwardRules;
   cashDriftCheck: typeof cashDriftCheck;

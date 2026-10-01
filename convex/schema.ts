@@ -1138,6 +1138,41 @@ export default defineSchema({
    *                 Kept in localStorage and sent later if it cannot be sent
    *                 at the time.
    */
+  /**
+   * AWARDS THAT ARRIVED WITHOUT THEIR MONEY (2026-09-30, the owner's option
+   * "A + C"). A ledger row reached the server through legacyData:mergeSlice,
+   * but no payer (the award command, the save) had paid it -- the tab's sign-in
+   * expired and the page reloaded. Recorded here; an ADMIN reviews and fixes
+   * or dismisses it the same day (cashArrival:fixAlerts / dismissAlerts).
+   * Nothing is ever paid from here automatically. Student ids and staff names
+   * only: the free-text note is the teacher's own, as in the ledger.
+   */
+  cashArrivalAlerts: defineTable({
+    txnId: v.string(),
+    studentId: v.string(),
+    studentName: v.optional(v.string()),
+    amount: v.number(),
+    kind: v.string(),
+    at: v.string(),
+    arrivedAt: v.string(),
+    doc: v.string(),
+    teacherName: v.optional(v.string()),
+    behaviorName: v.optional(v.string()),
+    notes: v.optional(v.string()),
+    deliveredBy: v.optional(v.string()),
+    status: v.string(),
+    flags: v.array(v.string()),
+    later: v.optional(v.any()),
+    resolvedAt: v.optional(v.string()),
+    resolvedBy: v.optional(v.string()),
+    resolution: v.optional(v.string()),
+    // A person's decision on a row the recount held (resolveForRecount).
+    recountDecision: v.optional(v.any()),
+    // The row as it arrived, so a Fix pays exactly what was recorded.
+    row: v.any(),
+  }).index("by_status", ["status"]).index("by_txnId", ["txnId"])
+    .index("by_student_status", ["studentId", "status"]),
+
   cashFallbackLog: defineTable({
     at: v.string(),
     via: v.string(),

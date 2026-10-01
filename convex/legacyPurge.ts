@@ -5,6 +5,7 @@ import { isUnratedCohort, isSupportBlock } from "./courseSubject";
 // reverseRefund DERIVES the counters from remaining history rather than
 // decrementing them. See the note on it for why that distinction cost $1,000.
 import { deriveCounters } from "./cashRecountRules";
+import { raiseZeroPoint } from "./cashArrival";
 import { courseCell } from "./academicsRules";
 
 /**
@@ -3827,6 +3828,10 @@ export const zeroAllStudentCash = internalMutation({
     onlyNotEnrolled: v.optional(v.boolean()),
   },
   handler: async (ctx, { apply, onlyNotEnrolled }) => {
+    // Zeroing the school moves the arrival credit's zero point in the same
+    // transaction, so a late award row from before it is never paid into the
+    // new balances (cashArrivalRules.ts). Not for the leavers-only variant.
+    if (apply && !onlyNotEnrolled) await raiseZeroPoint(ctx, new Date().toISOString(), "zeroAllStudentCash");
     const roster = await ctx.db.query("psRoster").take(8000);
     const enrolled = new Set(
       (roster as any[]).map((r) => String(r.studentNumber ?? "").trim()).filter(Boolean),
@@ -3857,6 +3862,19 @@ export const zeroAllStudentCash = internalMutation({
       if (Array.isArray(rr) && rr.length) patch.wildcatCashRewardsRedeemed = [];
 
       if (!Object.keys(patch).length) continue;
+      // THE REGISTER'S WATERMARK MOVES TO NOW (2026-09-30), so no payer -- the
+      // award command, the save, or the arrival credit -- can pay a movement
+      // from before this zeroing into the zeroed account. Emptying the history
+      // above erases the reset markers the arrival credit would otherwise
+      // read, and the leavers-only variant does not move the school-wide zero
+      // point, so this per-child line is what stops a lost award to a leaver
+      // coming back. `since` only ever moves forward, as ringPush's does.
+      const curApplied = s.cashApplied && typeof s.cashApplied === "object" ? s.cashApplied : null;
+      const zeroedAt = new Date().toISOString();
+      patch.cashApplied = {
+        ids: Array.isArray(curApplied?.ids) ? curApplied.ids : [],
+        since: typeof curApplied?.since === "string" && curApplied.since > zeroedAt ? curApplied.since : zeroedAt,
+      };
       touched++;
       if (patch.wildcatCashBalance !== undefined) {
         balanceCleared += Number(s.wildcatCashBalance) || 0;
@@ -4029,6 +4047,9 @@ export const exportCashRemnants = internalQuery({
 export const clearCashRemnants = internalMutation({
   args: { apply: v.optional(v.boolean()), limit: v.optional(v.number()) },
   handler: async (ctx, { apply, limit }) => {
+    // Clearing the ledger moves the arrival credit's zero point, or a stale
+    // tab's copy of a cleared row would be new again and be paid.
+    if (apply) await raiseZeroPoint(ctx, new Date().toISOString(), "clearCashRemnants");
     const cap = Math.max(1, Math.min(1200, limit ?? 800));
     const want = new Set(CASH_AUDIT_ACTIONS);
 
@@ -4568,6 +4589,8 @@ export const clearLedgerBefore = internalMutation({
   handler: async (ctx, { cutoffIso, apply }) => {
     const cut = Date.parse(cutoffIso);
     if (!Number.isFinite(cut)) throw new Error("cutoffIso did not parse; refusing to guess");
+    // A cleared row re-sent later must not be paid by the arrival credit.
+    if (apply) await raiseZeroPoint(ctx, new Date(cut).toISOString(), "clearLedgerBefore");
     const mirror = await ctx.db.query("legacyMirror").withIndex("by_doc").collect();
     const all = (mirror as any[]).filter((r) => String(r.doc ?? "").startsWith("cash_tx_"));
     const doomed: any[] = [];
@@ -5163,6 +5186,8 @@ export const clearCashHistoryBefore = internalMutation({
   handler: async (ctx, { cutoffIso, apply }) => {
     const cut = Date.parse(cutoffIso);
     if (!Number.isFinite(cut)) throw new Error("cutoffIso did not parse; refusing to guess");
+    // A cleared row re-sent later must not be paid by the arrival credit.
+    if (apply) await raiseZeroPoint(ctx, new Date(cut).toISOString(), "clearCashHistoryBefore");
     const old = (t: unknown) => {
       const ts = Date.parse(String(t ?? ""));
       return Number.isFinite(ts) && ts < cut;

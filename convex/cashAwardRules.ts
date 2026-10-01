@@ -145,7 +145,7 @@ export type Refusal = { ok: false; code: string; reason: string };
  */
 export function validateAward(
   a: Partial<AwardInput> | null | undefined,
-  opts: { nowMs: number; cutoffMs: number | null },
+  opts: { nowMs: number; cutoffMs: number | null; maxAgeMs?: number },
 ): { ok: true; award: AwardInput } | Refusal {
   const r = a ?? {};
   const txnId = String(r.txnId ?? "");
@@ -191,7 +191,10 @@ export function validateAward(
   if (opts.cutoffMs !== null && Number.isFinite(opts.cutoffMs) && atMs < opts.cutoffMs - CASH_AWARD_CUTOFF_SLACK_MS) {
     return { ok: false, code: "before_cutoff", reason: "The award is dated before the cash history was reset." };
   }
-  if (atMs < opts.nowMs - CASH_AWARD_MAX_AGE_MS) {
+  // The command's 30 minutes unless a caller says otherwise. Only the
+  // arrival credit (cashArrivalRules.ts) does, for rows that arrive late.
+  const maxAgeMs = typeof opts.maxAgeMs === "number" && opts.maxAgeMs > 0 ? opts.maxAgeMs : CASH_AWARD_MAX_AGE_MS;
+  if (atMs < opts.nowMs - maxAgeMs) {
     return { ok: false, code: "stale", reason: "The award is too old to arrive as a command; the ordinary save delivers it." };
   }
   if (!(Math.abs(txnIdMs(txnId) - atMs) <= CASH_AWARD_ID_SKEW_MS)) {

@@ -2220,20 +2220,28 @@
          * save does is renew its own token and let the queue's existing retry
          * land the write. Only if that fails does anyone get told anything, and
          * then it is the bar with its one button, never a console.
+         *
+         * IT NOW ANSWERS, AND THE ANSWER IS SHARED (2026-09-30). The award
+         * command waits for this renewal and sends the award once more with
+         * the new token (sendCashAwardCommand), so this returns the renewal it
+         * started -- or the one already running -- resolving to the fresh
+         * session or null. A save's 401 and an award's 401 arriving together
+         * still make ONE renewal, not two. Callers that ignore the answer, as
+         * the save does, behave exactly as before.
          */
         function renewSessionAfterRefusal(reason) {
             const auth = window.WildcatAuth;
             if (!auth || typeof auth.resumeSession !== 'function') {
                 reportSessionLost(reason, true);
-                return;
+                return Promise.resolve(null);
             }
-            if (_renewAfterRefusalInFlight) return;
+            if (_renewAfterRefusalInFlight) return _renewAfterRefusalInFlight;
             _renewAfterRefusalInFlight = Promise.resolve()
                 .then(() => auth.resumeSession({ force: true }))
                 .then(fresh => {
                     if (!fresh) {
                         reportSessionLost(reason, true);
-                        return;
+                        return null;
                     }
                     console.log('[session] token renewed silently after a 401; re-sending.');
                     const bar = document.getElementById('wcSessionLost');
@@ -2241,12 +2249,15 @@
                     _sessionLostShown = false;
                     // Do not rely on the queue still having a retry left.
                     if (typeof requestSave === 'function') requestSave('after token renewal');
+                    return fresh;
                 })
                 .catch(err => {
                     console.error('[session] silent renewal failed:', err && err.message);
                     reportSessionLost(reason, true);
+                    return null;
                 })
                 .finally(() => { _renewAfterRefusalInFlight = null; });
+            return _renewAfterRefusalInFlight;
         }
 
         /** A write refused for want of a valid token, rather than a real error. */
@@ -2766,8 +2777,47 @@
                 'Anything awarded since then is saved on this device only, and will be sent ' +
                 'once you sign in again. Do not close this tab first.</span>' +
                 '<button type="button" class="wc-session-signin">Sign in again</button>';
-            bar.querySelector('.wc-session-signin').addEventListener('click', function () {
-                if (typeof signInWithMicrosoft === 'function') signInWithMicrosoft();
+            // ONE PRESS AT A TIME (2026-09-30). The button used to stay live, so
+            // a second press -- or a third, while nothing seemed to happen --
+            // started another renewal and could start another redirect. It now
+            // says "Signing in…" until the first press settles. A renewal that
+            // could not reach Microsoft keeps the page and says so here, in one
+            // plain line, and the button comes back for another try. A redirect
+            // never answers (it leaves the page); if the page is somehow still
+            // here after 30 seconds, the button comes back too.
+            const signInBtn = bar.querySelector('.wc-session-signin');
+            signInBtn.addEventListener('click', function () {
+                if (signInBtn.disabled) return;
+                signInBtn.disabled = true;
+                signInBtn.textContent = 'Signing in…';
+                const settle = (out) => {
+                    signInBtn.disabled = false;
+                    signInBtn.textContent = 'Sign in again';
+                    // Signed back in: send what is waiting now, as a silent
+                    // renewal does, rather than leave it for the next change.
+                    if (out && out.ok === true && typeof requestSave === 'function') {
+                        requestSave('after sign in again');
+                    }
+                    // Any refusal with words, not only a kept page: in the app a
+                    // wrong account picked in the sheet is refused, and the form
+                    // that would show why sits behind this screen.
+                    if (out && out.ok === false && out.message) {
+                        let note = bar.querySelector('.wc-session-note');
+                        if (!note) {
+                            note = document.createElement('span');
+                            note.className = 'wc-session-note';
+                            note.setAttribute('role', 'status');
+                            bar.insertBefore(note, signInBtn);
+                        }
+                        note.textContent = out.message;
+                    }
+                };
+                let pressed = null;
+                try {
+                    if (typeof signInWithMicrosoft === 'function') pressed = signInWithMicrosoft();
+                } catch (e) { pressed = null; }
+                Promise.race([Promise.resolve(pressed), new Promise(r => setTimeout(() => r(null), 30000))])
+                    .then(settle, () => settle(null));
             });
             document.body.appendChild(bar);
         }
@@ -9725,6 +9775,7 @@
         }
 
         function updateCashAuditLogTable(keepPage) {
+            if (!keepPage) loadCashArrivalAlerts();   // throttled inside
             renderCashDriftPanel();
             const tbody = document.getElementById('cashAuditLogTable');
             const CA = window.WildcatCashAudit;
@@ -37300,6 +37351,84 @@
             }
         }
 
+        // =====================================================================
+        // SENT AGAIN AFTER A 401 (2026-09-30)
+        //
+        // What the diagnostic above found. On 2026-09-29, about 92 of ~613
+        // awards missed this command, each 3-33 seconds from a token renewal,
+        // and every browser report said "Convex HTTP 401". A Microsoft id
+        // token lasts about an hour; when it has expired the command is
+        // refused, and it was never tried again. The award then
+        // waited for the ordinary save -- which is refused by the same dead
+        // token until the save's own 401 renews it -- and if the page reloaded
+        // in between (the "Sign in again" redirect does exactly that), the
+        // money held in memory went with it. 67 awards were lost that way on
+        // 9/29-9/30; only their ledger rows survived, in the outbox.
+        //
+        // So a 401 now renews the session silently -- the SAME renewal the save
+        // uses (renewSessionAfterRefusal), so the two share one -- and the
+        // command is sent ONCE more, with the new token. The owner's choice:
+        // make the loss happen less often ("option C").
+        //
+        // WHY IT CANNOT PAY TWICE. A 401 is a refusal at the door: the token
+        // was not accepted, so the award did not run as anybody. And the
+        // retry is the same call -- the same awards under the same receipts
+        // (txnId). convex/cashAward.ts answers a receipt already in its
+        // register (cashAwardCommands, read by index on txnId) or already in
+        // the child's cashApplied list as "alreadyApplied" and moves nothing,
+        // so even an answer lost on the way back cannot be paid again. The
+        // ordinary save carries the same receipt and is absorbed the same way.
+        //
+        // WHAT IT DOES NOT DO: retry anything that is not a 401, retry more than
+        // once, or retry after a timeout (an unknown outcome is left to the
+        // ordinary save, as before). If the renewal cannot produce a NEW token,
+        // nothing is re-sent: sending the refused token again only earns the
+        // same refusal. And it never re-sends money after a reload; that was
+        // tried on 2026-09-25 and review proved it could pay twice.
+        // =====================================================================
+
+        /**
+         * The token to send a refused award again with, or null.
+         *
+         * `refused` is the session the award was sent with. Waits at most
+         * CASH_AWARD_TIMEOUT_MS for the renewal: a slower one keeps going on
+         * its own and re-sends the save when it lands, and the award screen
+         * is not held for it.
+         */
+        async function freshTokenAfterAwardRefusal(refused) {
+            try {
+                const auth = window.WildcatAuth;
+                const refusedToken = String((refused && refused.idToken) || '');
+                const who = s => String((s && s.me && s.me.email) || '').trim().toLowerCase();
+                const held = () => (auth && auth.getSession && auth.getSession()) || null;
+                // A NEW TOKEN, FOR THE SAME PERSON, OR NOTHING. A renewal that
+                // failed leaves the refused token in the session (finishSignIn
+                // stores only a token the server has just accepted, via
+                // me:get), and sending that again earns the same refusal. And
+                // the server records the award as whoever the TOKEN is, so a
+                // session that now belongs to somebody else is not used.
+                const usable = () => {
+                    const s = held();
+                    if (!s || !s.idToken || String(s.idToken) === refusedToken) return null;
+                    return who(s) === who(refused) ? String(s.idToken) : null;
+                };
+                const now = held();
+                // Signed out meanwhile: that was a decision, not ours to undo.
+                if (!now) return null;
+                // RENEWED ALREADY, while this award was on its way: a save's 401
+                // got there first. Nothing to renew; use what it got.
+                if (String(now.idToken || '') !== refusedToken) return usable();
+                if (typeof renewSessionAfterRefusal !== 'function') return null;
+                await Promise.race([
+                    Promise.resolve(renewSessionAfterRefusal('the award command was refused: 401')),
+                    new Promise(resolve => setTimeout(resolve, CASH_AWARD_TIMEOUT_MS)),
+                ]);
+                return usable();
+            } catch (e) {
+                return null;   // the ordinary save delivers it, as before
+            }
+        }
+
         /**
          * Send awards as one server command. `items` is [{ tx, entryId }].
          *
@@ -37320,6 +37449,9 @@
                     reportCashAwardFallback(reason, detail, ids || idsOf(), Date.now() - t0);
                 }
             };
+            // Appended to an error's report, so the log says whether a 401 was
+            // retried or could not be, without a new reason to count.
+            let retryNote = '';
             try {
                 if (!items || !items.length) return null;
                 // PREVIEWING AS A TEACHER IS READ-ONLY. saveData refuses in that
@@ -37343,18 +37475,41 @@
                     behaviorName: String(tx.behaviorName || ''),
                     notes: String(tx.notes || ''),
                 }));
+                // Built ONCE, so a retry sends these very awards under these
+                // very receipts. See SENT AGAIN AFTER A 401 below.
+                const args = {
+                    awards,
+                    week: (typeof currentWeek === 'number') ? currentWeek : null,
+                    cycle: (typeof getCurrentCycleNumber === 'function') ? getCurrentCycleNumber() : null,
+                };
                 const TIMED_OUT = {};
-                const res = await Promise.race([
-                    auth.convexMutation('cashAward:award', {
-                        awards,
-                        week: (typeof currentWeek === 'number') ? currentWeek : null,
-                        cycle: (typeof getCurrentCycleNumber === 'function') ? getCurrentCycleNumber() : null,
-                    }, session.idToken),
+                const attempt = (idToken) => Promise.race([
+                    auth.convexMutation('cashAward:award', args, idToken),
                     // A TIMEOUT IS "UNKNOWN", NOT "FAILED". The award may well
                     // have landed. That is safe precisely because the ordinary
                     // save carries the same receipt and will be absorbed.
                     new Promise(resolve => setTimeout(() => resolve(TIMED_OUT), CASH_AWARD_TIMEOUT_MS)),
                 ]);
+                let res;
+                try {
+                    res = await attempt(session.idToken);
+                } catch (e) {
+                    // SENT AGAIN AFTER A 401 (2026-09-30). See
+                    // freshTokenAfterAwardRefusal. Anything that is not a 401
+                    // -- and a timeout, which is not an error at all -- goes
+                    // on exactly as before.
+                    if (!(typeof isUnauthorized === 'function' && isUnauthorized(e))) throw e;
+                    const fresh = await freshTokenAfterAwardRefusal(session);
+                    if (!fresh) {
+                        retryNote = ' (no new token; not retried)';
+                        throw e;
+                    }
+                    retryNote = ' (after a silent renewal; retried once)';
+                    console.log('[cash] award command refused for its token; sending it once more with the renewed one.');
+                    // ONCE. If this is refused too, the catch below reports it
+                    // and the ordinary save delivers the award, as it always has.
+                    res = await attempt(fresh);
+                }
                 if (res === TIMED_OUT || !res || res.ok !== true) {
                     // 'disabled' is the switch, not a failure.
                     if (res === TIMED_OUT) note('timeout', 'no answer in ' + CASH_AWARD_TIMEOUT_MS + 'ms');
@@ -37409,7 +37564,7 @@
             } catch (e) {
                 console.warn('[cash] award command did not complete; the ordinary save will deliver it:',
                     (e && e.message) || e);
-                note('error', (e && e.message) || String(e));
+                note('error', ((e && e.message) || String(e)) + retryNote);
                 return null;
             }
         }
@@ -41460,6 +41615,202 @@
          * switch. The re-render on arrival is what puts it on screen without
          * making the first paint wait for a network answer.
          */
+        /**
+         * AWARDS THAT ARRIVED WITHOUT THEIR MONEY (2026-09-30, the owner's
+         * "A + C"). The server records them (cashArrival.ts); an admin sees
+         * the count on the dashboard and fixes or dismisses them on the Cash
+         * Audit Log tab. Admins only: the server refuses everyone else.
+         * Re-asked at most every two minutes.
+         */
+        let _cashArrivalSummary = null;
+        let _cashArrivalAskedAt = 0;
+        async function fetchCashArrivalSummary(force) {
+            const admin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin');
+            if (!admin) return;
+            if (force !== true && Date.now() - _cashArrivalAskedAt < 120000) return;
+            _cashArrivalAskedAt = Date.now();
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+            if (!session) return;
+            try {
+                const before = _cashArrivalSummary ? _cashArrivalSummary.waiting : null;
+                _cashArrivalSummary = await auth.convexQuery('cashArrival:alertSummary', {}, session.idToken);
+                if (_cashArrivalSummary && _cashArrivalSummary.waiting !== before && typeof updateDashboard === 'function') updateDashboard();
+            } catch (e) {
+                console.warn('[dash] could not read lost-award alerts:', e && e.message);
+            }
+        }
+
+        let _cashArrivalList = null;
+        // Ticks and acknowledgements, kept by the pure rules in
+        // wildcat-cashaudit.js (arrivalReload / arrivalToggle /
+        // arrivalFixRequest), which the tests run directly.
+        let _cashArrivalState = { picks: {}, seen: {}, acks: {}, hand: {} };
+        let _cashArrivalBusy = false;
+        let _cashArrivalLoadedAt = 0;
+
+        async function loadCashArrivalAlerts(force) {
+            const admin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin');
+            const host = document.getElementById('cashArrivalPanel');
+            if (!host) return;
+            if (!admin) { host.innerHTML = ''; return; }
+            // Not on every keystroke in the search box or every live tick:
+            // at most every 20 seconds unless something was just changed.
+            if (force !== true && Date.now() - _cashArrivalLoadedAt < 20000) return;
+            _cashArrivalLoadedAt = Date.now();
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+            if (!session) return;
+            try {
+                const res = await auth.convexQuery('cashArrival:openAlerts', {}, session.idToken);
+                _cashArrivalList = (res && res.alerts) || [];
+                _cashArrivalState = window.WildcatCashAudit.arrivalReload(_cashArrivalState, _cashArrivalList);
+                renderCashArrivalPanel();
+                // Close the ones some other route paid meanwhile, quietly.
+                const paid = _cashArrivalList.filter(a => a.paidMeanwhile).map(a => a.id);
+                if (paid.length) auth.convexMutation('cashArrival:settlePaid', { ids: paid }, session.idToken).catch(() => {});
+            } catch (e) {
+                host.innerHTML = '';
+                console.warn('[cash] could not load lost-award alerts:', e && e.message);
+            }
+        }
+
+        function toggleCashArrivalPick(i) {
+            const a = (_cashArrivalList || [])[i];
+            if (!a) return;
+            _cashArrivalState = window.WildcatCashAudit.arrivalToggle(_cashArrivalState, a);
+            renderCashArrivalPanel();
+        }
+
+        function renderCashArrivalPanel() {
+            const host = document.getElementById('cashArrivalPanel');
+            if (!host) return;
+            const all = _cashArrivalList || [];
+            const list = all.filter(a => !a.paidMeanwhile);
+            if (!list.length) { host.innerHTML = ''; return; }
+            const fmt = (t) => { const d = new Date(t); return isNaN(d.getTime()) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
+            const BLOCKED = {
+                // The recount's to settle, not this panel's (final re-review,
+                // 2026-10-01): it alone can see whether the money arrived.
+                coverage_lost: 'The app cannot check whether this was paid, so it is left for the cash recount. Nothing to do here',
+                before_reset: 'From around a cash reset, so it is left for the cash recount. Nothing to do here',
+                before_zero_point: 'From before a cash reset: not given back',
+                stale: 'Too old to give back here, so it is left for the cash recount. Nothing to do here',
+                student_not_found: 'Student not found'
+            };
+            const warn = (a) => {
+                const w = [];
+                if (a.blocked) w.push(BLOCKED[a.blocked] || ('Cannot be given back here (' + a.blocked + ')'));
+                // EVERY later similar movement, not just the first.
+                (a.candidates || []).forEach(c => {
+                    w.push('Possibly given again: ' + (c.amount > 0 ? '+' : '−') + '$' + Math.abs(Number(c.amount) || 0) +
+                        (c.behavior ? ' ' + c.behavior : '') + (c.by ? ' by ' + c.by : '') + ' at ' + fmt(c.at));
+                });
+                if (a.kind === 'deduct') w.push('This takes money away');
+                if ((a.flags || []).includes('late')) w.push('Arrived more than 3 days late');
+                if ((a.flags || []).includes('twin')) w.push('Looks like a copy of a restored award');
+                if ((a.flags || []).includes('delivered_by_other')) w.push('Sent from ' + (a.deliveredBy || 'another account') + '\'s sign-in');
+                if (!a.found) w.push('Student not found');
+                return w;
+            };
+            const st = _cashArrivalState;
+            const req = window.WildcatCashAudit.arrivalFixRequest(st, list);
+            const net = list.filter(a => req.ids.indexOf(a.id) !== -1).reduce((n, a) => n + (Number(a.amount) || 0), 0);
+            const dismissIds = window.WildcatCashAudit.arrivalDismissRequest(st, list);
+            const rows = list.map(a => {
+                const i = all.indexOf(a);
+                const w = warn(a);
+                return '<div class="wc-att-row ' + (w.length ? 'wc-drift-held' : 'wc-drift-owed') + '">' +
+                    '<label style="display:flex;gap:8px;align-items:flex-start;flex:1;min-width:0;">' +
+                        '<input type="checkbox" ' + (st.picks[a.id] ? 'checked ' : '') +
+                            (window.WildcatCashAudit.arrivalLeftForRecount(a) ? 'disabled ' : '') +
+                            'onchange="toggleCashArrivalPick(' + i + ')">' +
+                        '<span class="wc-att-name">' + escapeHtml(a.studentName || ('Student #' + a.studentId)) +
+                            '<span class="wc-att-meta">' + escapeHtml((a.behaviorName || '') + (a.notes ? ' — ' + a.notes : '')) + '</span>' +
+                            '<span class="wc-att-meta">by ' + escapeHtml(a.teacherName || 'unknown') + ', ' + escapeHtml(fmt(a.at)) +
+                                ' · arrived ' + escapeHtml(fmt(a.arrivedAt)) + '</span>' +
+                            (w.length ? '<span class="wc-att-meta" style="color:#b45309;"><strong>' + escapeHtml(w.join(' · ')) + '</strong></span>' : '') +
+                        '</span>' +
+                    '</label>' +
+                    '<span class="wc-att-figs"><span class="wc-att-pct">' + (a.amount > 0 ? '+' : '−') + '$' + Math.abs(Number(a.amount) || 0) + '</span>' +
+                        (a.balance !== null ? '<span class="wc-att-days">now $' + a.balance + '</span>' : '') + '</span>' +
+                '</div>';
+            }).join('');
+            host.innerHTML = '<div class="wc-card panel-card wc-drift">' +
+                '<h4 style="margin:0 0 4px;">' + list.length + ' cash award' + (list.length === 1 ? '' : 's') +
+                    ' arrived without their money</h4>' +
+                '<p class="wc-uv-hint">A teacher\'s sign-in expired and their page reloaded before these finished sending: ' +
+                    'the record reached the server, the money did not. <strong>Nothing has been changed.</strong> ' +
+                    'Tick the ones to give back and press the button. Anything with a warning is left unticked for you to decide; ' +
+                    'ticking it yourself is how you say you have looked. If something new turns up after you look, it is not paid.</p>' +
+                '<div class="wc-att-list">' + rows + '</div>' +
+                '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;">' +
+                    '<button type="button" class="btn" ' + (req.ids.length && !_cashArrivalBusy ? '' : 'disabled ') +
+                        'onclick="fixCashArrivals()">Give back ' + req.ids.length + ' (net ' + (net < 0 ? '−' : '') + '$' + Math.abs(net) + ')</button>' +
+                    // Dismiss counts only the rows ticked BY HAND.
+                    '<button type="button" class="btn btn-secondary" ' + (dismissIds.length && !_cashArrivalBusy ? '' : 'disabled ') +
+                        'onclick="dismissCashArrivals()">Dismiss ' + dismissIds.length + ' ticked by hand…</button>' +
+                '</div>' +
+            '</div>';
+        }
+
+        async function fixCashArrivals() {
+            const req = window.WildcatCashAudit.arrivalFixRequest(_cashArrivalState, _cashArrivalList || []);
+            if (!req.ids.length || _cashArrivalBusy) return;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+            if (!session) { showToast('You are signed out.', 'warn', 5000); return; }
+            _cashArrivalBusy = true;
+            renderCashArrivalPanel();
+            try {
+                const res = await auth.convexMutation('cashArrival:fixAlerts', req, session.idToken);
+                const already = (res.results || []).filter(r => r.outcome === 'already_paid').length;
+                const againNow = (res.results || []).filter(r => r.reason === 'given_again').length;
+                const refused = (res.results || []).filter(r => r.outcome === 'refused').length - againNow;
+                showToast('Gave back ' + res.paid + ' (net $' + res.net + ')' +
+                    (already ? '; ' + already + ' had already been paid another way' : '') +
+                    (againNow ? '; ' + againNow + ' were NOT paid because a similar award appeared that you had not seen: look again' : '') +
+                    (refused ? '; ' + refused + ' could not be checked and were left for the cash recount' : '') + '.',
+                    (refused || againNow) ? 'warn' : 'success', 11000);
+                if (typeof refreshRosterFromConvex === 'function') refreshRosterFromConvex('lost awards restored');
+            } catch (e) {
+                showToast('Nothing was changed: ' + ((e && e.message) || ''), 'error', 9000);
+            } finally {
+                _cashArrivalBusy = false;
+                await loadCashArrivalAlerts(true);
+                fetchCashArrivalSummary(true);
+            }
+        }
+
+        async function dismissCashArrivals() {
+            const dismissIds = window.WildcatCashAudit.arrivalDismissRequest(_cashArrivalState, _cashArrivalList || []);
+            const list = (_cashArrivalList || []).filter(a => dismissIds.indexOf(a.id) !== -1);
+            if (!list.length || _cashArrivalBusy) return;
+            // SAYS WHAT IT WILL CLOSE: the selection is shared with Give back,
+            // and some rows arrive ticked.
+            const names = list.slice(0, 8).map(a => (a.studentName || a.studentId) + ' ' + (a.amount > 0 ? '+' : '−') + '$' + Math.abs(Number(a.amount) || 0));
+            const reason = window.prompt('Dismiss ' + list.length + ' without giving the money back?\n' +
+                names.join(', ') + (list.length > 8 ? ', and ' + (list.length - 8) + ' more' : '') +
+                '\n\nWhy? (for the audit log)', 'Already given again by the teacher');
+            if (reason === null) return;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession();
+            if (!session) { showToast('You are signed out.', 'warn', 5000); return; }
+            _cashArrivalBusy = true;
+            try {
+                const res = await auth.convexMutation('cashArrival:dismissAlerts', { ids: list.map(a => a.id), reason }, session.idToken);
+                showToast('Dismissed ' + res.dismissed + (res.closed ? ', and closed ' + res.closed + ' that can never be paid' : '') +
+                    (res.left ? '; ' + res.left + ' could not be checked and were left for the cash recount' : '') +
+                    '. No money was moved, and nothing will pay the dismissed ones later.', 'info', 8000);
+            } catch (e) {
+                showToast('Nothing was changed: ' + ((e && e.message) || ''), 'error', 9000);
+            } finally {
+                _cashArrivalBusy = false;
+                await loadCashArrivalAlerts(true);
+                fetchCashArrivalSummary(true);
+            }
+        }
+
         let _cashDrift = null;
         let _cashDriftAsked = false;
         async function fetchCashDrift(force) {
@@ -42047,6 +42398,7 @@
             // Fire and forget, guarded against a second ask. Never awaited:
             // the dashboard must paint from what is already in memory.
             fetchCashDrift();
+            fetchCashArrivalSummary();
 
             const tiles = document.getElementById('dashTiles');
             if (tiles) {
@@ -42099,6 +42451,14 @@
                               // asserts every switchTab target resolves.
                               onclick: "switchTab('cashAudit')",
                               arrowLabel: 'Open the cash audit log' })
+                        : '',
+                    // AWARDS THAT ARRIVED WITHOUT THEIR MONEY: admins only, and
+                    // only when there are some. Silent otherwise, like the tile
+                    // above.
+                    (isAdmin && _cashArrivalSummary && _cashArrivalSummary.waiting > 0)
+                        ? wcTile('Awards missing their money', _cashArrivalSummary.waiting,
+                            { tone: 'warn', onclick: "switchTab('cashAudit')",
+                              arrowLabel: 'Review awards that arrived without their money' })
                         : ''
                 ].join('');
             }

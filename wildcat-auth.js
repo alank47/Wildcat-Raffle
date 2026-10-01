@@ -550,26 +550,227 @@
       }
     }
 
+    // ONE FORCED RENEWAL AT A TIME (2026-09-30). A refused save, a refused
+    // award and a press of "Sign in again" all end up here with force; they
+    // share the one renewal already running instead of each starting their
+    // own. See renewHeldSession.
+    const out = force ? await renewHeldSession() : await silentStaffSignIn(false);
+    return out.session;
+  }
+
+  // ---------------------------------------------------------------------
+  // WHY A SILENT RENEWAL FAILED, and which failures only a person can fix
+  // (2026-09-30).
+  //
+  // "Sign in again" used to redirect to Microsoft whenever the silent path
+  // came back empty. A redirect RELOADS THE PAGE, and a reload empties the
+  // money this tab holds that the server has not confirmed -- the 9/29 loss.
+  // So a renewal now says why it failed, and the redirect is kept for the
+  // failures a redirect can actually fix: Microsoft saying a person must sign
+  // in, no cached account (or none for the person holding the session), or
+  // the server refusing even a NEW token. A network drop, a timeout, a server
+  // error or a CDN that did not load is not one of those -- a redirect needs
+  // the same network and the same server -- so the page is kept and the
+  // person can simply try again.
+  // ---------------------------------------------------------------------
+  const RENEW_NEEDS_INTERACTION = 'needs_interaction';
+  const RENEW_UNREACHABLE = 'unreachable';
+  const RENEW_SIGNED_OUT = 'signed_out';     // somebody signed out meanwhile
+  const RENEW_UNREACHABLE_MESSAGE =
+    'Could not reach Microsoft. Your awards are still here \u2014 try again in a moment.';
+
+  /** Only a person can fix this one: Microsoft or the server said so. */
+  function needsInteraction(err) {
+    if (!err) return false;
+    if (err.wcNeedsInteraction === true) return true;
+    if (err.name === 'InteractionRequiredAuthError') return true;
+    const code = String(err.errorCode || '') + ' ' + String(err.subError || '');
+    return /\b(interaction_required|login_required|consent_required|no_tokens_found|refresh_token_expired|bad_token|native_account_unavailable|invalid_grant|no_account_in_silent_request|no_account_error)\b/i.test(code);
+  }
+
+  /** The server refused a token (me:get answered 401). */
+  function refusedByServer(err) {
+    return /\b401\b/.test(String((err && err.message) || err || ''));
+  }
+
+  function failedRenewal(kind, detail) {
+    return { session: null, failure: kind, detail: String((detail && detail.message) || detail || '') };
+  }
+
+  const normalEmail = (e) => String(e || '').trim().toLowerCase();
+
+  /**
+   * The cached Microsoft account that IS the person holding this session.
+   *
+   * MSAL's cache can hold two accounts on a shared Chromebook after a
+   * select_account redirect, and accounts[0] is not necessarily the one
+   * signed in here. Renewing somebody else's account would hand this tab --
+   * and the awards on its screen -- to them. Matched on every name MSAL keeps
+   * for an account, because the server's email is the token's email claim.
+   */
+  function heldAccount(app, accounts, email) {
+    const names = (a) => [a && a.username, a && a.idTokenClaims && a.idTokenClaims.email,
+      a && a.idTokenClaims && a.idTokenClaims.preferred_username].map(normalEmail).filter(Boolean);
+    const active = app.getActiveAccount ? app.getActiveAccount() : null;
+    if (active && names(active).includes(email)) return active;
+    return accounts.find((a) => names(a).includes(email)) || null;
+  }
+
+  /** Seconds until an id token expires, or null when it cannot be read. */
+  function idTokenSecondsLeft(result) {
+    let exp = result && result.idTokenClaims && result.idTokenClaims.exp;
+    if (typeof exp !== 'number') {
+      try {
+        const part = String(result.idToken).split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+        exp = JSON.parse(atob(part + '==='.slice((part.length + 3) % 4))).exp;
+      } catch (e) { return null; }
+    }
+    return typeof exp === 'number' ? exp - Date.now() / 1000 : null;
+  }
+
+  /** Under five minutes left is as good as expired: the next write would 401. */
+  const ID_TOKEN_MIN_SECONDS = 5 * 60;
+
+  let forcedRenewal = null;
+
+  // A SIGN-OUT ENDS ANY SIGN-IN STILL ON ITS WAY (2026-10-01).
+  //
+  // signOut() adds one to this. A sign-in -- a renewal most of all, which can
+  // take seconds -- notes it before its first wait and checks it again before
+  // it puts a session in place. Without that, a teacher signing out while a
+  // renewal was in flight was signed straight back in when it landed, and
+  // MSAL wrote their account back into storage after signOut() had wiped it:
+  // the shared Chromebook problem again, handed to whoever sits down next.
+  let signOutCount = 0;
+
+  function signedOutSince(count) {
+    return count !== signOutCount;
+  }
+
+  /**
+   * A sign-in overtaken by a sign-out. What MSAL wrote back while it ran is
+   * wiped -- unless somebody has signed in since, whose sign-in is real and
+   * whose account stays.
+   */
+  function abandonSignIn() {
+    if (!session) forgetCachedStaffAccount();
+    const err = new Error('Signed out while signing in.');
+    err.wcSignedOut = true;
+    return err;
+  }
+
+  /**
+   * Renew the session this tab holds, silently. Answers { session } or
+   * { session: null, failure, detail }. ONE AT A TIME: a second caller gets
+   * the renewal already running, so repeated presses and a refused save or
+   * award arriving together cannot run overlapping renewals.
+   */
+  function renewHeldSession() {
+    if (forcedRenewal) return forcedRenewal;
+    // Cleared only if it is still this one: a sign-out drops it early, and
+    // the next renewal must not be dropped when this one settles.
+    const renewal = silentStaffSignIn(true).finally(() => {
+      if (forcedRenewal === renewal) forcedRenewal = null;
+    });
+    forcedRenewal = renewal;
+    return renewal;
+  }
+
+  async function silentStaffSignIn(force) {
+    const count = signOutCount;
+    const out = await silentStaffSignInOnce(force, count);
+    if (signedOutSince(count)) {
+      // MSAL may have written the account back while this was in flight.
+      return failedRenewal(RENEW_SIGNED_OUT, abandonSignIn());
+    }
+    return out;
+  }
+
+  async function silentStaffSignInOnce(force, count) {
+    const scopes = ['openid', 'profile', 'email'];
+    // Forced means "renew the person holding this session", and nobody else.
+    const wanted = force ? normalEmail(session && session.me && session.me.email) : '';
+    // ...so with nobody holding one there is nothing to renew (final
+    // re-review, 2026-10-01). It used to fall back to the first cached
+    // account, which after a sign-out could be the teacher who just left.
+    if (force && !wanted) return failedRenewal(RENEW_NEEDS_INTERACTION, 'no session to renew');
+    let app;
     try {
-      const app = await entraClient();
+      app = await entraClient();
+    } catch (err) {
+      console.debug('[wildcat-auth] no session to resume:', err && err.message);
+      return failedRenewal(RENEW_UNREACHABLE, err);   // the Microsoft library did not load
+    }
+    // Whether the token in hand is one Microsoft has just issued, rather
+    // than one read from its cache. Read by the catch below.
+    let refreshed = force;
+    try {
       const accounts = app.getAllAccounts ? app.getAllAccounts() : [];
-      if (!accounts.length) return null;
+      const account = wanted ? heldAccount(app, accounts, wanted) : accounts[0];
+      if (!account) {
+        return failedRenewal(RENEW_NEEDS_INTERACTION,
+          wanted ? 'no cached Microsoft account for ' + wanted : 'no cached Microsoft account');
+      }
 
-      const result = await app.acquireTokenSilent({
-        account: accounts[0],
-        scopes: ['openid', 'profile', 'email'],
+      // A FORCED RESUME SKIPS MSAL'S CACHE (2026-09-30).
+      //
+      // A forced resume only happens because the server has just refused the
+      // token this tab holds, so the cache is exactly what is in doubt. MSAL
+      // judges its cached result by the ACCESS token's expiry, and the id
+      // token -- the one Convex checks -- has its own, shorter-or-equal life.
+      // (Read from MSAL's cache rules, not measured here.) So the cache can
+      // hand back the very id token that was refused, me:get refuses it
+      // again, and the renewal "fails" with a good refresh token unused.
+      // forceRefresh goes to that refresh token, still silently.
+      let result = await app.acquireTokenSilent({
+        account,
+        scopes,
+        forceRefresh: force,
       });
-      if (!result || !result.idToken) return null;
+      // CHECKED THE MOMENT MICROSOFT ANSWERS (final re-review): MSAL writes
+      // the account back into storage as it answers, so a sign-out during
+      // that wait is acted on now, before the next person's press can read it.
+      if (signedOutSince(count)) throw abandonSignIn();
 
-      await finishSignIn(result.idToken, 'staff');
+      // AN UNFORCED CACHE HIT IS CHECKED, NOT TRUSTED (2026-09-30). The
+      // restore on page load reads the cache, and for the reason above it can
+      // hand back an id token that has expired or is about to: the restore
+      // "works" and the next write 401s. So a token under five minutes from
+      // expiry is refreshed once, here, silently.
+      if (!refreshed && result && result.idToken) {
+        const left = idTokenSecondsLeft(result);
+        if (left !== null && left < ID_TOKEN_MIN_SECONDS) {
+          refreshed = true;
+          result = await app.acquireTokenSilent({ account, scopes, forceRefresh: true });
+          if (signedOutSince(count)) throw abandonSignIn();
+        }
+      }
+      if (!result || !result.idToken) return failedRenewal(RENEW_NEEDS_INTERACTION, 'no id token');
+
+      try {
+        await finishSignIn(result.idToken, 'staff', wanted || null, count);
+      } catch (err) {
+        // ...and a cached token the server refuses gets ONE fresh try.
+        if (refreshed || !refusedByServer(err)) throw err;
+        refreshed = true;
+        result = await app.acquireTokenSilent({ account, scopes, forceRefresh: true });
+        if (signedOutSince(count)) throw abandonSignIn();
+        if (!result || !result.idToken) return failedRenewal(RENEW_NEEDS_INTERACTION, 'no id token');
+        await finishSignIn(result.idToken, 'staff', wanted || null, count);
+      }
       console.log('[wildcat-auth] session resumed silently');
-      return session;
+      return { session, failure: null, detail: '' };
     } catch (err) {
       // Expected whenever the token needs a real prompt. Logged at debug level
       // rather than as an error, because "nobody is signed in" is the normal
       // state of a login screen.
       console.debug('[wildcat-auth] no session to resume:', err && err.message);
-      return null;
+      // The server refusing a token Microsoft has just issued is not a
+      // network problem: only a real sign-in can change that answer.
+      if (needsInteraction(err) || (refreshed && refusedByServer(err))) {
+        return failedRenewal(RENEW_NEEDS_INTERACTION, err);
+      }
+      return failedRenewal(RENEW_UNREACHABLE, err);
     }
   }
 
@@ -662,7 +863,7 @@
    * registration keeps `convex/auth.config.ts` untouched. All that differs is
    * the doorway.
    */
-  async function nativeStaffSignIn() {
+  async function nativeStaffSignIn(sameAs) {
     const SocialLogin = window.Capacitor.Plugins.SocialLogin;
 
     await SocialLogin.initialize({
@@ -719,13 +920,17 @@
       /* diagnostic only; never block a sign-in on it */
     }
 
-    await finishSignIn(idToken, 'staff');
+    // The answer is handed back: signInWithMicrosoft adopts the record it
+    // names. And a session already held here is renewed only for the SAME
+    // person (2026-10-01) -- the sheet offers every account on the device,
+    // and the money waiting in this page belongs to whoever is holding it.
+    return finishSignIn(idToken, 'staff', sameAs || null);
   }
 
-  async function signInStaff() {
+  async function signInStaff(opts) {
     // In the app there is no redirect to make. Nothing after this returns.
     if (nativeSignInAvailable()) {
-      return nativeStaffSignIn();
+      return nativeStaffSignIn(opts && opts.sameAs);
     }
 
     const app = await entraClient();
@@ -934,8 +1139,15 @@
    * does not inspect the token, because a value the browser computed is a value
    * the browser can lie about. `expected` is used only to make a mismatch a
    * clear error instead of a confusing one.
+   *
+   * `sameAs` (2026-09-30) is set by a RENEWAL: the email of the person whose
+   * session is being renewed. A token that the server says is somebody else
+   * is refused BEFORE it replaces the session, so a renewal can never hand
+   * this tab, and the awards on its screen, to another person.
    */
-  async function finishSignIn(idToken, expected) {
+  async function finishSignIn(idToken, expected, sameAs, count) {
+    // Noted before the first wait; see A SIGN-OUT ENDS ANY SIGN-IN.
+    const since = count === undefined ? signOutCount : count;
     const me = await convexQuery('me:get', {}, idToken);
 
     if (me.kind !== expected) {
@@ -943,6 +1155,14 @@
         `Signed in as ${me.kind}, but this is the ${expected} entrance.`,
       );
     }
+    if (sameAs && normalEmail(me.email) !== normalEmail(sameAs)) {
+      const err = new Error(
+        `This page is signed in as ${sameAs}, but Microsoft signed in ${me.email}. ` +
+        `Choose ${sameAs}, or sign out first to switch.`);
+      err.wcNeedsInteraction = true;   // only choosing the right account fixes it
+      throw err;
+    }
+    if (signedOutSince(since)) throw abandonSignIn();
 
     session = { idToken, me };
 
@@ -972,6 +1192,10 @@
       console.error('[wildcat-auth] FAILED to record sign-in proof:', err && err.message);
       window.__wildcatAuthRecordError = String((err && err.message) || err);
     }
+
+    // ...and again after the wait above: a sign-out during it has already
+    // cleared the session, and announcing a sign-in would reload the app.
+    if (signedOutSince(since)) throw abandonSignIn();
 
     emit('wildcat-auth-signin', me);
     return me;
@@ -1025,6 +1249,10 @@
     // button, which is the screen the owner saw and reported.
     const kind = (session && session.me && session.me.kind) || null;
 
+    // Ends any sign-in or renewal still on its way, and lets the next press
+    // start a fresh renewal rather than share one that will now be refused.
+    signOutCount++;
+    forcedRenewal = null;
     session = null;
     clearStudentToken();
     if (window.google && window.google.accounts && window.google.accounts.id) {
@@ -1106,14 +1334,63 @@
     try {
       // The cached account first. resumeSession() re-checks the guard itself,
       // so this is a no-op on a device that has passed to a student.
-      const resumed = await resumeSession();
-      if (resumed) {
-        await adoptStaffRecord(resumed.me);
-        return;
+      //
+      // A STAFF SESSION ALREADY HELD IS RENEWED, NOT HANDED BACK (2026-09-30).
+      // This is also the "Sign in again" button on the signed-out bar, which
+      // only appears after the server has refused this tab's token. Unforced,
+      // resumeSession() returns the session it is holding -- the expired one --
+      // so the button adopted the dead token, every save was refused again,
+      // and it never reached the redirect either: a loop. Forced, it renews
+      // silently first, and only a renewal that fails falls through to the
+      // redirect below, which reloads the page and empties any money this tab
+      // has not had confirmed. Silent first is what keeps that money here.
+      // A renewal counts as a known staff tab for the shared Chromebook
+      // guard, which is only true because a STAFF session is held; a student
+      // session or none at all takes the guarded path exactly as before.
+      //
+      // AND THE REDIRECT ONLY WHEN A PERSON IS NEEDED. A renewal that failed
+      // for want of a network, a server or the Microsoft library keeps the
+      // page and says so: a redirect would need all three too, and would
+      // reload away the money on it. See WHY A SILENT RENEWAL FAILED.
+      //
+      // Answers { ok } or { ok: false, kept, message } so the signed-out bar
+      // can say what happened; a redirect never answers, it leaves the page.
+      //
+      // Not in the app: there MSAL holds no account to renew (staff signed in
+      // through the native sheet), and the native sign-in below does not
+      // reload the page, so a held session goes straight to it.
+      const holding = Boolean(session && session.me && session.me.kind === 'staff');
+      const heldEmail = holding ? session.me.email : null;
+      const renewing = holding && !nativeSignInAvailable();
+      if (renewing) {
+        const renewal = await renewHeldSession();
+        if (renewal.session) {
+          await adoptStaffRecord(renewal.session.me);
+          return { ok: true };
+        }
+        if (renewal.failure === RENEW_SIGNED_OUT) {
+          // Signed out while it ran: nobody is left to sign back in.
+          return { ok: false, message: '' };
+        }
+        if (renewal.failure !== RENEW_NEEDS_INTERACTION) {
+          console.warn('[wildcat-auth] renewal could not reach Microsoft; keeping the page:', renewal.detail);
+          setError(RENEW_UNREACHABLE_MESSAGE);
+          return { ok: false, kept: true, message: RENEW_UNREACHABLE_MESSAGE };
+        }
+        // Only a person can fix it: the redirect below.
+      } else if (!holding) {
+        const resumed = await resumeSession();
+        if (resumed) {
+          await adoptStaffRecord(resumed.me);
+          return { ok: true };
+        }
       }
 
-      const me = await signInStaff();          // throws unless Convex says staff
+      // In the app a held session is renewed by the native sheet, for the
+      // same person only (see nativeStaffSignIn). On the web this redirects.
+      const me = await signInStaff({ sameAs: heldEmail });  // throws unless Convex says staff
       await adoptStaffRecord(me);
+      return { ok: true };
     } catch (err) {
       // Popup dismissal is a normal thing a person does, not an error worth
       // shouting about.
@@ -1124,6 +1401,7 @@
         setError(msg);
         console.error('[wildcat-auth] staff sign-in failed:', err);
       }
+      return { ok: false, message: msg };
     } finally {
       if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
     }

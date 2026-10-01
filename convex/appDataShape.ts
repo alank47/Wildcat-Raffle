@@ -496,6 +496,16 @@ export function ringPush(cur: CashApplied | null | undefined, add: readonly Cash
     have.add(m.id);
     ids.push({ i: m.id, at: String(m.at) });
   });
+  // EVICT THE OLDEST BY `at`, NOT THE FIRST INSERTED (2026-09-30). A late
+  // batch of old rows (the arrival credit pays rows that arrive hours late)
+  // used to evict today's entries and drag `since` up to this morning, and a
+  // movement from earlier today still pending in a stuck tab was then refused
+  // as coverage_lost and never paid. Evicting by date raises `since` as little
+  // as possible; the invariant is unchanged, because every entry left has an
+  // `at` no earlier than the one evicted. Stable, so equal times keep order.
+  if (ids.length > CASH_APPLIED_MAX) {
+    ids.sort((x, y) => String(x.at).localeCompare(String(y.at)));
+  }
   while (ids.length > CASH_APPLIED_MAX) {
     const dropped = ids.shift();
     if (!dropped) break;
