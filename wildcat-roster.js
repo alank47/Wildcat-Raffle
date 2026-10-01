@@ -1506,6 +1506,208 @@
   }
 
   // =====================================================================
+  // PERFECT ATTENDANCE FOR A CHOSEN MONTH, SORTED, ON PAPER (2026-10-01)
+  //
+  // The owner, 2026-10-01: "sort/filter by specific month and not just 'this
+  // month'", and print the lists by filter. The Month tab now picks any month
+  // of this school year; "this month" is just the one it starts on.
+  //
+  // THE SAME RULES, A DIFFERENT WINDOW. perfectVerdict and perfectList are
+  // untouched: a past month is judged exactly the way the current one is, so
+  // September read in October gives the list September gave on the 30th --
+  // provided nothing was corrected in PowerSchool since, which is the point of
+  // reading it from the marks rather than from a saved copy.
+  //
+  // A MONTH IS CLIPPED AT BOTH ENDS.
+  //   - Never before the school year. Eligibility is "enrolled on or before
+  //     window.from", so an August window from the 1st would call everybody
+  //     who enrolled on the first day of school a late arrival. August is
+  //     "from 12 Aug" instead.
+  //   - Never after today. A mark entered ahead of time for tomorrow is not a
+  //     day anyone has missed yet, and a month still running says "so far".
+  //
+  // Calendar days in UTC, like dayFrom above, never local time.
+  // =====================================================================
+
+  var MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+    'August', 'September', 'October', 'November', 'December'];
+
+  /**
+   * A REAL day or null. dayFrom rolls "2026-02-30" over to 2 March, which is
+   * right for arithmetic and wrong for input: a month list built from a date
+   * that does not exist would be built from a different one.
+   */
+  function realDay(iso) {
+    var d = dayFrom(iso);
+    if (!d) return null;
+    var out = isoOf(d);
+    return out === String(iso).slice(0, 10) ? out : null;
+  }
+
+  /** "12 Aug", from "YYYY-MM-DD". No locale and no time zone in it. */
+  function shortDay(d) {
+    return d.getUTCDate() + ' ' + MONTH_NAMES[d.getUTCMonth()].slice(0, 3);
+  }
+
+  /** "21 to 25 Sep 2026", "28 Sep to 2 Oct 2026", "29 Dec 2026 to 2 Jan 2027". */
+  function dayRange(fromIso, toIso) {
+    var a = dayFrom(fromIso), b = dayFrom(toIso);
+    if (!a || !b) return '';
+    var sameYear = a.getUTCFullYear() === b.getUTCFullYear();
+    var sameMonth = sameYear && a.getUTCMonth() === b.getUTCMonth();
+    var left = sameMonth ? String(a.getUTCDate())
+      : shortDay(a) + (sameYear ? '' : ' ' + a.getUTCFullYear());
+    return left + ' to ' + shortDay(b) + ' ' + b.getUTCFullYear();
+  }
+
+  function monthName(key) {
+    return MONTH_NAMES[+key.slice(5, 7) - 1] + ' ' + key.slice(0, 4);
+  }
+
+  /** "October 2026 (so far)", "August 2026 (from 12 Aug)", "September 2026". */
+  function monthChoiceLabel(w) {
+    var notes = [];
+    if (w.clamped) notes.push('from ' + shortDay(dayFrom(w.from)));
+    if (w.partial) notes.push('so far');
+    return monthName(w.month) + (notes.length ? ' (' + notes.join(', ') + ')' : '');
+  }
+
+  /**
+   * One month of this school year, as a window perfectVerdict can judge.
+   * `monthKey` is "YYYY-MM". Null for a month with no school days in it yet:
+   * one after today, or one that ended before the year began.
+   */
+  function perfectMonthWindow(monthKey, todayIso, yearStartIso) {
+    var key = String(monthKey || '');
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(key)) return null;
+    var today = realDay(todayIso), start = realDay(yearStartIso);
+    if (!today || !start) return null;
+    var first = key + '-01';
+    var last = lastDayOfMonth(first);
+    var from = first < start ? start : first;
+    var to = last > today ? today : last;
+    if (from > to) return null;
+    // "SO FAR" UNTIL THE MONTH IS OVER, its last day included (review,
+    // 2026-10-01). Today's marks are still coming in all day -- the 06:30
+    // rebuild carries yesterday, the 12:30 one half of today -- so a list read
+    // on 30 September is not yet September's list. Calling it finished on the
+    // 30th printed a child late that afternoon on a sheet headed "September
+    // 2026", and the corrected list the next morning carried the same name.
+    var partial = last >= today;
+    return {
+      key: 'month', month: key, from: from, to: to,
+      // The screen's sentence reads "October 2026 so far: 1 Oct to 1 Oct".
+      label: monthName(key) + (partial ? ' so far' : ''),
+      partial: partial, clamped: from > first
+    };
+  }
+
+  /**
+   * Every month the Month tab can offer, NEWEST FIRST, so the month you most
+   * likely want is at the top: from this month back to the one the school
+   * year started in. [] for bad input or a year that has not started.
+   *
+   * The 24 is a guard on the loop, not a policy: a school year is never more
+   * than thirteen calendar months, and a start date typed with the wrong
+   * century must not build a dropdown of a thousand months.
+   */
+  var PERFECT_MONTHS_MAX = 24;
+
+  function perfectMonths(todayIso, yearStartIso) {
+    var today = realDay(todayIso), start = realDay(yearStartIso);
+    if (!today || !start || start > today) return [];
+    var out = [];
+    var y = +today.slice(0, 4), m = +today.slice(5, 7);
+    for (var n = 0; n < PERFECT_MONTHS_MAX; n++) {
+      var key = String(y) + '-' + (m < 10 ? '0' : '') + m;
+      var w = perfectMonthWindow(key, today, start);
+      if (!w) break;
+      out.push({
+        key: key, label: monthChoiceLabel(w), from: w.from, to: w.to,
+        partial: w.partial, clamped: w.clamped
+      });
+      m--;
+      if (m === 0) { m = 12; y--; }
+    }
+    return out;
+  }
+
+  /**
+   * The period, in the words a printed list is headed with: "September
+   * 2026", "October 2026 (so far)", "Week of 21 to 25 Sep 2026", "Year to
+   * date, 12 Aug to 1 Oct 2026". A sheet of paper outlives the screen it came
+   * from, so the year is always in it.
+   */
+  function perfectPeriodName(win) {
+    if (!win || !win.from || !win.to) return '';
+    if (win.key === 'month' && win.month) return monthChoiceLabel(win);
+    if (win.key === 'week') return 'Week of ' + dayRange(win.from, win.to);
+    if (win.key === 'year') return 'Year to date, ' + dayRange(win.from, win.to);
+    return (win.label ? win.label + ', ' : '') + dayRange(win.from, win.to);
+  }
+
+  /**
+   * The window's exact days, "1 to 29 Sep 2026", for the line under a printed
+   * month's heading (review, 2026-10-01). A week and the year to date carry
+   * their dates in the heading; "September 2026 (so far)" does not, and a
+   * list drawn on the 29th and printed on the 1st would otherwise read as the
+   * whole month.
+   */
+  function perfectPeriodDates(win) {
+    return win && win.from && win.to ? dayRange(win.from, win.to) : '';
+  }
+
+  /**
+   * The orders the list can be read in. "Grade, then last name" is the order
+   * the list has always had, so it stays the default.
+   */
+  var PERFECT_SORTS = [
+    { key: 'grade', label: 'Grade, then last name', fields: ['gradeLevel', 'lastName', 'firstName'] },
+    { key: 'last', label: 'Last name', fields: ['lastName', 'firstName'] },
+    { key: 'first', label: 'First name', fields: ['firstName', 'lastName'] },
+    { key: 'id', label: 'Student ID', fields: ['studentNumber'] }
+  ];
+
+  /**
+   * Case-insensitive, numeric-aware: "diaz" sits with "Diaz", grade 9 before
+   * 10, ID 999 before 1001. A BLANK SORTS LAST rather than first, so a list
+   * read aloud never opens on a student with no name or grade recorded --
+   * the same place the grade filter puts "No grade recorded".
+   */
+  function compareField(a, b) {
+    var x = String(a == null ? '' : a).trim().toLowerCase();
+    var y = String(b == null ? '' : b).trim().toLowerCase();
+    if (x === y) return 0;
+    if (!x) return 1;
+    if (!y) return -1;
+    return x.localeCompare(y, undefined, { numeric: true });
+  }
+
+  /**
+   * perfectList's students in the chosen order, as a NEW array. STABLE on
+   * purpose, and by position rather than by trusting the engine: two Ana
+   * Diazes keep the order they came in, so the screen and the printed sheet
+   * built from the same list can never disagree about who is first. An
+   * unknown key reads as the default.
+   */
+  function perfectSort(students, sortKey) {
+    var spec = PERFECT_SORTS[0];
+    for (var k = 0; k < PERFECT_SORTS.length; k++) {
+      if (PERFECT_SORTS[k].key === sortKey) spec = PERFECT_SORTS[k];
+    }
+    var fields = spec.fields;
+    var tagged = (students || []).map(function (s, i) { return { s: s || {}, i: i }; });
+    tagged.sort(function (a, b) {
+      for (var f = 0; f < fields.length; f++) {
+        var c = compareField(a.s[fields[f]], b.s[fields[f]]);
+        if (c) return c;
+      }
+      return a.i - b.i;
+    });
+    return tagged.map(function (t) { return t.s; });
+  }
+
+  // =====================================================================
   // WHO WAS MISSING IN A WEEK OR A MONTH (2026-09-23)
   //
   // Attendance Watch's "Who is missing" ranks the YEAR, against the chronic
@@ -2290,6 +2492,12 @@
     datesInWindow: datesInWindow,
     perfectVerdict: perfectVerdict,
     perfectList: perfectList,
+    perfectMonths: perfectMonths,
+    perfectMonthWindow: perfectMonthWindow,
+    perfectPeriodName: perfectPeriodName,
+    perfectPeriodDates: perfectPeriodDates,
+    PERFECT_SORTS: PERFECT_SORTS,
+    perfectSort: perfectSort,
     absenceWindows: absenceWindows,
     WINDOW_BANDS: WINDOW_BANDS,
     windowBand: windowBand,

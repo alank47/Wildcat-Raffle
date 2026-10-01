@@ -9010,7 +9010,12 @@
                 _sidebarModeApplied = false; // next login re-runs mode-first logic
                 if (typeof wcStopPassAlertPolling === 'function') wcStopPassAlertPolling();
                 document.body.classList.remove('sidebar-open', 'sidebar-collapsed');
-                
+                // The perfect attendance sheet sits on <body>, above #mainApp,
+                // so hiding the app below leaves it -- every name and student
+                // ID on it -- over the login screen for whoever sits down next.
+                // The inactivity logout reaches here with it open (2026-10-01).
+                if (typeof closePerfectAttendanceSheet === 'function') closePerfectAttendanceSheet();
+
                 // Drop the federated session too. Without this a teacher could
                 // "log out", leave the Chromebook, and leave a Microsoft
                 // account cached in storage for whoever sat down next.
@@ -31010,7 +31015,11 @@
 
         function renderPurchaseListSheet() {
             const sheet = document.getElementById('wcPrintSheet');
-            if (!sheet) return;
+            // NOT OVER THE PERFECT ATTENDANCE SHEET (2026-10-01). The two
+            // share this id, and a Promise Time lookup that answers after the
+            // purchase list was closed would otherwise redraw it over the
+            // attendance list someone has opened since.
+            if (!sheet || sheet.getAttribute('data-sheet') === 'perfect') return;
             const choices = purchaseListChoices();
             _purchaseListChoicesShown = choices;
             const picks = choices.filter(function (c) { return _purchaseListPicks && _purchaseListPicks.has(c.id); })
@@ -33071,6 +33080,17 @@
         let _paCache = null;
         let _paWindow = 'week';
         let _paBusy = false;
+        // THE MONTH TAB IS ANY MONTH OF THE YEAR (owner, 2026-10-01: "not just
+        // 'this month'"). Null means "the current month", so the tab opens
+        // where it always did and keeps following the calendar until somebody
+        // picks one. Kept here rather than read off the dropdown, because the
+        // dropdown is rebuilt as the days pass ("October 2026 (so far)").
+        let _paMonth = null;
+        // WHAT THE SCREEN LAST DREW, which is exactly what Print prints: the
+        // same rows, window, grade, excused setting and order. Null while
+        // loading or refused, with the reason in _paWhyNot.
+        let _paShown = null;
+        let _paWhyNot = '';
 
         function setPerfectWindow(key) {
             _paWindow = String(key || 'week');
@@ -33079,6 +33099,49 @@
                 if (k) b.classList.toggle('active', k === _paWindow);
             });
             renderPerfectAttendance();
+        }
+
+        function setPerfectMonth(key) {
+            _paMonth = String(key || '') || null;
+            renderPerfectAttendance();
+        }
+
+        /** "7", "(none)" -- the grade a row is filtered and grouped under. */
+        function paGradeKey(r) {
+            return String(r.gradeLevel == null ? '' : r.gradeLevel).trim() || '(none)';
+        }
+
+        function paGradeName(key) {
+            return key === 'all' ? 'All grades' : key === '(none)' ? 'No grade recorded' : 'Grade ' + key;
+        }
+
+        /**
+         * The month dropdown, from the calendar rather than the data, so it is
+         * right before the marks have loaded. Shown on the Month tab only.
+         * Returns the month to draw: the one picked, or this month when the
+         * one picked is no longer offered (the school year start was changed).
+         */
+        function syncPerfectMonthPicker() {
+            const R = window.WildcatRoster;
+            const months = R && R.perfectMonths ? R.perfectMonths(attTodayIso(), attendanceSchoolDays().first) : [];
+            const keys = months.map(m => m.key);
+            if (_paMonth && keys.indexOf(_paMonth) === -1) _paMonth = null;
+            const chosen = _paMonth || keys[0] || null;
+            // INLINE display, not `hidden`: the wrapper's class sets display,
+            // and an author display rule beats the [hidden] default.
+            const wrap = document.getElementById('attPerfectMonthWrap');
+            if (wrap) wrap.style.display = _paWindow === 'month' ? '' : 'none';
+            const sel = document.getElementById('attPerfectMonth');
+            if (sel) {
+                const want = months.map(m => m.key + '|' + m.label).join('\n');
+                const have = Array.from(sel.options).map(o => o.value + '|' + o.textContent).join('\n');
+                if (want !== have) {
+                    sel.innerHTML = months.map(m => '<option value="' + escapeHtml(m.key) + '">'
+                        + escapeHtml(m.label) + '</option>').join('');
+                }
+                sel.value = chosen || '';
+            }
+            return chosen;
         }
 
         // =====================================================================
@@ -34205,11 +34268,24 @@
         async function renderPerfectAttendance(force) {
             const body = document.getElementById('attPerfectBody');
             if (!body) return;
+            // PRINTABLE EXACTLY WHILE A LIST IS ON SCREEN (review, 2026-10-01).
+            // _paShown is cleared where the card stops showing a list -- the
+            // loading line, a refusal, a period that cannot be worked out --
+            // and NOT on the way in. A click mid-Refresh redraws the cached
+            // list, and clearing on entry let that list stay printable after
+            // the Refresh came back refused; clearing on entry also made a
+            // second Refresh, turned away by the guard below, say "nothing to
+            // print" under a list still on screen.
             const R = window.WildcatRoster;
-            if (!R || typeof R.perfectList !== 'function') {
+            if (!R || typeof R.perfectList !== 'function' || typeof R.perfectMonthWindow !== 'function'
+                || typeof R.perfectSort !== 'function') {
                 body.innerHTML = '<p class="wu-absent">Attendance rules did not load. Refresh the page.</p>';
+                _paShown = null;
+                _paWhyNot = 'Attendance rules did not load.';
                 return;
             }
+            // The month dropdown appears with the Month tab, not after the load.
+            syncPerfectMonthPicker();
 
             // The guard is on the FETCH, not the render, for the same reason
             // as Attendance Watch above: guarding the whole function drops a
@@ -34219,13 +34295,15 @@
                 if (_paBusy) return;
                 _paBusy = true;
                 body.innerHTML = '<p class="wu-absent">Loading perfect attendance&hellip;</p>';
+                _paShown = null;
+                _paWhyNot = '';
                 try { res = await loadPerfectMarks(force === true); }
                 finally { _paBusy = false; }
             }
             if (!res || res.allowed === false) {
-                body.innerHTML = '<p class="wu-absent">' +
-                    escapeHtml((res && res.reason) || 'Perfect attendance is not available to your access level.')
-                    + '</p>';
+                _paShown = null;
+                _paWhyNot = (res && res.reason) || 'Perfect attendance is not available to your access level.';
+                body.innerHTML = '<p class="wu-absent">' + escapeHtml(_paWhyNot) + '</p>';
                 return;
             }
 
@@ -34235,8 +34313,14 @@
             // panel's "last full week" disagreed with Who is missing's.
             const today = attTodayIso();
             const windows = R.perfectWindows(today, basis.first);
-            const win = windows && windows[_paWindow];
+            // The Month tab draws the month picked, read again after the load
+            // in case it changed while the marks were on their way.
+            const win = _paWindow === 'month'
+                ? R.perfectMonthWindow(syncPerfectMonthPicker(), today, basis.first)
+                : windows && windows[_paWindow];
             if (!win || !win.from) {
+                _paShown = null;
+                _paWhyNot = 'That period could not be worked out. Check the school year start date.';
                 body.innerHTML = '<p class="wu-absent">That period could not be worked out. '
                     + 'Check the school year start date above.</p>';
                 return;
@@ -34253,27 +34337,32 @@
                 grade = sel.value || 'all';
                 const keys = [];
                 rows.forEach(r => {
-                    const g = String(r.gradeLevel == null ? '' : r.gradeLevel).trim() || '(none)';
+                    const g = paGradeKey(r);
                     if (keys.indexOf(g) === -1) keys.push(g);
                 });
                 const want = ['all'].concat(attGradeOrder(keys));
                 const have = Array.from(sel.options).map(o => o.value);
                 if (want.join('|') !== have.join('|')) {
                     sel.innerHTML = want.map(k => '<option value="' + escapeHtml(k) + '">'
-                        + (k === 'all' ? 'All grades' : k === '(none)' ? 'No grade recorded' : 'Grade ' + escapeHtml(k))
-                        + '</option>').join('');
+                        + escapeHtml(paGradeName(k)) + '</option>').join('');
                     sel.value = want.indexOf(grade) === -1 ? 'all' : grade;
                     grade = sel.value;
                 }
             }
 
-            const scoped = grade === 'all' ? rows : rows.filter(r => {
-                const g = String(r.gradeLevel == null ? '' : r.gradeLevel).trim() || '(none)';
-                return g === grade;
-            });
+            // ONE grade key for the filter here and the per-grade pages of the
+            // printed sheet, so the two can never sort a child differently.
+            const scoped = grade === 'all' ? rows : rows.filter(r => paGradeKey(r) === grade);
 
             const out = R.perfectList(scoped, win, { countExcused: strict });
             const c = out.counts;
+            // THE ORDER IS A CHOICE (2026-10-01). Sorted once, here, and the
+            // printed sheet reuses this exact array rather than sorting again.
+            const sort = (document.getElementById('attPerfectSort') || {}).value || 'grade';
+            const students = R.perfectSort(out.students, sort);
+            _paShown = { res: res, win: win, grade: grade, strict: strict, sort: sort,
+                         rows: scoped, counts: c, students: students };
+            _paWhyNot = '';
 
             const fmt = d => {
                 const p = String(d || '').split('-');
@@ -34299,7 +34388,7 @@
                     : '')
                 + '</p>';
 
-            if (!out.students.length) {
+            if (!students.length) {
                 html += '<p class="wu-absent">Nobody has a clean record for this period'
                     + (grade === 'all' ? '' : ' in this grade') + '. '
                     + c.brokenByTardy + ' student' + (c.brokenByTardy === 1 ? '' : 's')
@@ -34309,7 +34398,7 @@
             }
 
             html += '<div class="wc-att-list wc-pa-list">';
-            out.students.forEach(st => {
+            students.forEach(st => {
                 const name = ((st.firstName || '') + ' ' + (st.lastName || '')).trim()
                     || ('Student ' + st.studentNumber);
                 html += '<div class="wc-att-row wc-pa-row">'
@@ -34336,6 +34425,276 @@
                 + '</p>';
 
             body.innerHTML = html;
+        }
+
+        // =====================================================================
+        // PERFECT ATTENDANCE, ON PAPER (2026-10-01)
+        //
+        // The owner: "pull pdf/print perfect attendance lists by filter". This
+        // is the store's purchase-list sheet over again -- an in-page overlay,
+        // #wcPrintSheet, printed by the same @media print rules -- for the same
+        // reason: a pop-up window is blocked on many Chromebooks, and the
+        // browser's own print dialog already offers "Save as PDF".
+        //
+        // IT PRINTS WHAT THE SCREEN SHOWS, from _paShown: the same rows,
+        // window, grade, excused setting and order, never a fresh read. A list
+        // read out at an assembly has to be the one somebody checked on screen
+        // a minute before, not one that moved because a sync landed between.
+        //
+        // THE PURCHASE LIST'S FUNCTIONS ARE NOT TOUCHED. The two share the
+        // element id because the print rules are keyed on it, so opening this
+        // sheet removes whatever sheet is there and builds its own, and nothing
+        // it changes -- the wc-printing class, the page title -- outlives it.
+        //
+        // THE OTHER WAY ROUND IS NOT IN THIS SHEET'S HANDS (review,
+        // 2026-10-01). The purchase list finds its sheet by the shared id, and
+        // two of its paths finish late: opening waits up to 8 s on the store
+        // before it draws, and its Promise Time lookup redraws when PowerSchool
+        // answers, even after its own Close. Either can land in this sheet. So
+        // this sheet watches for it and steps aside -- relabelled as the
+        // purchase list, its print, title and Ctrl+P hook gone with it -- rather
+        // than leave a purchase list announced as perfect attendance, or saved
+        // as a PDF under this list's name. A closed purchase list coming back
+        // that way is its own quirk; the one-line guard for it belongs in
+        // renderPurchaseListSheet and waits on the owner's OK to touch it.
+        // =====================================================================
+        let _paSheet = null;          // the screen's view the open sheet was built from
+        let _paSheetByGrade = true;   // "Start each grade on a new page"
+        let _paPrintDone = null;      // ends the print in progress, exactly once
+        let _paSheetWatch = null;     // notices the purchase list drawing into the sheet
+
+        function openPerfectAttendanceSheet() {
+            const view = _paShown;
+            if (!view) {
+                showAlert('ℹ️ ' + (_paWhyNot
+                    ? 'There is no perfect attendance list to print. ' + _paWhyNot
+                    : 'Perfect attendance has not loaded yet, so there is nothing to print. Wait for the list to appear, then try again.'));
+                return;
+            }
+            // REPLACED, NOT REUSED: an open purchase list (or an earlier copy
+            // of this one) goes, with any print it left half-finished.
+            endPerfectAttendancePrint();
+            unhookPerfectAttendanceSheet();
+            const old = document.getElementById('wcPrintSheet');
+            if (old) old.remove();
+            document.body.classList.remove('wc-printing');
+            const sheet = document.createElement('div');
+            sheet.id = 'wcPrintSheet';
+            sheet.className = 'print-sheet';
+            sheet.setAttribute('role', 'dialog');
+            sheet.setAttribute('aria-label', 'Perfect attendance list');
+            sheet.setAttribute('data-sheet', 'perfect');
+            document.body.appendChild(sheet);
+            _paSheet = view;
+            renderPerfectAttendanceSheet();
+            // CTRL+P PRINTS THE SHEET TOO (review, 2026-10-01). The print rules
+            // apply only under body.wc-printing, which the sheet's own button
+            // sets. Staff press Ctrl+P out of habit, and without the class
+            // Chrome printed the whole app with this sheet as one clipped
+            // screenful on every page: 156 of 180 names never reached the
+            // paper, and nothing on it said so. While the sheet is open, any
+            // print starts the way the button does.
+            window.addEventListener('beforeprint', perfectAttendanceBeforePrint);
+            if (typeof MutationObserver === 'function') {
+                _paSheetWatch = new MutationObserver(function () {
+                    if (sheet.getAttribute('data-sheet') !== 'perfect' || sheet.querySelector('[data-pa-sheet]')) return;
+                    endPerfectAttendancePrint();
+                    unhookPerfectAttendanceSheet();
+                    sheet.removeAttribute('data-sheet');
+                    sheet.setAttribute('aria-label', 'Purchase list');
+                    _paSheet = null;
+                });
+                _paSheetWatch.observe(sheet, { childList: true });
+            }
+        }
+
+        /**
+         * The sheet, while it is still THIS list. The attribute alone is not
+         * proof, since the purchase list can draw into the element without
+         * changing it: the toolbar this file drew must still be inside.
+         */
+        function perfectAttendanceSheetOpen() {
+            const sheet = document.getElementById('wcPrintSheet');
+            return sheet && _paSheet && sheet.getAttribute('data-sheet') === 'perfect'
+                && sheet.querySelector('[data-pa-sheet]') ? sheet : null;
+        }
+
+        /** Ctrl+P, or Chrome's menu > Print, while the sheet is open. */
+        function perfectAttendanceBeforePrint() {
+            if (_paPrintDone) return;   // the sheet's own button started this print
+            if (!perfectAttendanceSheetOpen()) { unhookPerfectAttendanceSheet(); return; }
+            beginPerfectAttendancePrint();
+        }
+
+        /** Lets go of the Ctrl+P hook and the takeover watch. */
+        function unhookPerfectAttendanceSheet() {
+            window.removeEventListener('beforeprint', perfectAttendanceBeforePrint);
+            if (_paSheetWatch) { _paSheetWatch.disconnect(); _paSheetWatch = null; }
+        }
+
+        function setPerfectSheetByGrade(on) {
+            _paSheetByGrade = !!on;
+            renderPerfectAttendanceSheet();
+        }
+
+        /** What Chrome calls the saved PDF: "Perfect Attendance - September 2026 - Grade 7". */
+        function perfectSheetFileName(view) {
+            return 'Perfect Attendance - ' + window.WildcatRoster.perfectPeriodName(view.win)
+                + ' - ' + paGradeName(view.grade);
+        }
+
+        function renderPerfectAttendanceSheet() {
+            const sheet = document.getElementById('wcPrintSheet');
+            const view = _paSheet;
+            const R = window.WildcatRoster;
+            if (!sheet || !view || !R || sheet.getAttribute('data-sheet') !== 'perfect') return;
+            const res = view.res || {};
+            const period = R.perfectPeriodName(view.win);
+            const sortSpec = (R.PERFECT_SORTS || []).filter(s => s.key === view.sort)[0];
+            const printedAt = new Date().toLocaleString([], { month: 'short', day: 'numeric', year: 'numeric',
+                                                              hour: 'numeric', minute: '2-digit' });
+            // A date as well as a time: paper is read on other days.
+            let readAt = '';
+            const synced = res.lastSyncedAt ? new Date(res.lastSyncedAt) : null;
+            if (synced && !isNaN(synced.getTime())) {
+                readAt = synced.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+            }
+            const rule = 'No absences and no tardies; '
+                + (view.strict ? 'excused absences and tardies still count' : 'excused ones forgiven');
+
+            // ONE PAGE PER GRADE, each with its own count, so a page handed to
+            // a grade lead stands on its own. The names on each page are the
+            // screen's own sorted list, split; the counts are the same rules
+            // over that grade's rows, which is what the screen shows when that
+            // grade is picked.
+            let pages;
+            if (view.grade === 'all' && _paSheetByGrade && view.students.length) {
+                const keys = [];
+                view.rows.forEach(r => { const g = paGradeKey(r); if (keys.indexOf(g) === -1) keys.push(g); });
+                pages = attGradeOrder(keys).map(g => ({
+                    heading: paGradeName(g),
+                    gradeName: paGradeName(g),
+                    counts: R.perfectList(view.rows.filter(r => paGradeKey(r) === g), view.win,
+                                          { countExcused: view.strict }).counts,
+                    students: view.students.filter(s => paGradeKey(s) === g)
+                }));
+            } else {
+                pages = [{ heading: '', gradeName: paGradeName(view.grade), counts: view.counts, students: view.students }];
+            }
+
+            // A MONTH'S DAYS ON PAPER (review, 2026-10-01): the week's and the
+            // year's are in their heading, a month's are not, and the screen
+            // can be a day older than the paper -- the idle refresh drops the
+            // marks without redrawing.
+            const dates = view.win.key === 'month' && R.perfectPeriodDates ? R.perfectPeriodDates(view.win) : '';
+
+            const pageHtml = pg => {
+                const c = pg.counts;
+                const sub = (dates ? [escapeHtml(dates)] : []).concat([
+                    escapeHtml(pg.gradeName),
+                    escapeHtml(rule),
+                    c.perfect + ' of ' + c.eligible + ' eligible student' + (c.eligible === 1 ? '' : 's')
+                        + (c.eligible ? ' (' + c.pct + '%)' : '')
+                ]);
+                if (c.notEligible) sub.push(c.notEligible + ' not counted (enrolled after the period began)');
+                sub.push('printed ' + escapeHtml(printedAt));
+                if (readAt) sub.push('attendance last read from PowerSchool ' + escapeHtml(readAt));
+                const table = pg.students.length
+                    ? '<table class="print-table"><thead><tr>' +
+                        '<th>#</th><th>Student</th><th>Grade</th><th>Student ID</th>' +
+                      '</tr></thead><tbody>' + pg.students.map((st, i) => {
+                        const name = st.lastName && st.firstName ? st.lastName + ', ' + st.firstName
+                            : (st.lastName || st.firstName || 'Student ' + st.studentNumber);
+                        return '<tr>' +
+                            '<td>' + (i + 1) + '</td>' +
+                            '<td>' + escapeHtml(name) + '</td>' +
+                            '<td>' + escapeHtml(st.gradeLevel) + '</td>' +
+                            '<td>' + escapeHtml(st.studentNumber) + '</td>' +
+                        '</tr>';
+                      }).join('') + '</tbody></table>'
+                    // NOT AN EMPTY TABLE: a blank grid on paper reads as a
+                    // printer fault, not as an answer.
+                    : '<p class="print-empty">Nobody had perfect attendance for this period.</p>';
+                return '<section class="print-page">' +
+                    '<h2>' + escapeHtml('Perfect Attendance — ' + period + (pg.heading ? ' — ' + pg.heading : '')) + '</h2>' +
+                    '<p class="print-sub">' + sub.join(' · ') + '</p>' +
+                    (res.truncated
+                        ? '<p class="print-sub"><strong>The roster is longer than this screen reads; some students are missing from this list.</strong></p>'
+                        : '') +
+                    table +
+                '</section>';
+            };
+
+            // data-pa-sheet marks the content as this list's: see
+            // perfectAttendanceSheetOpen.
+            const toolbar =
+                '<div class="print-toolbar" data-pa-sheet>' +
+                    '<div class="print-toolbar-row">' +
+                        '<strong>Perfect attendance: ' + escapeHtml(period) + '</strong>' +
+                        '<button type="button" class="btn" onclick="printPerfectAttendanceSheet()"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-printer"></use></svg> Print or save as PDF</button>' +
+                        '<button type="button" class="btn btn-secondary" onclick="closePerfectAttendanceSheet()">Close</button>' +
+                    '</div>' +
+                    (view.grade === 'all'
+                        ? '<div class="print-picks"><label><input type="checkbox" ' + (_paSheetByGrade ? 'checked ' : '') +
+                          'onchange="setPerfectSheetByGrade(this.checked)"> Start each grade on a new page</label></div>'
+                        : '') +
+                    '<p class="receipt-meta">The list on screen: ' + escapeHtml(paGradeName(view.grade)) +
+                        (sortSpec ? '. Order: ' + escapeHtml(sortSpec.label) : '') + '. ' +
+                        'To get a PDF: press Print, then choose “Save as PDF” as the destination.</p>' +
+                '</div>';
+            sheet.innerHTML = toolbar + '<div class="print-pages">' + pages.map(pageHtml).join('') + '</div>';
+        }
+
+        function printPerfectAttendanceSheet() {
+            if (!perfectAttendanceSheetOpen()) return;
+            beginPerfectAttendancePrint();
+            try { window.print(); }
+            catch (e) { console.warn('[perfect attendance] print failed:', e && e.message); endPerfectAttendancePrint(); }
+        }
+
+        /**
+         * Everything a print of the sheet needs except the dialog itself, so
+         * the button and Ctrl+P (perfectAttendanceBeforePrint) start it alike.
+         */
+        function beginPerfectAttendancePrint() {
+            const view = _paSheet;
+            endPerfectAttendancePrint();
+            // THE PDF'S FILE NAME. Chrome names a saved PDF after the page
+            // title, so for the length of the print the title is the list's
+            // name -- and it is ALWAYS put back: when the dialog closes, after
+            // a minute if the browser never says it did, and on Close. A tab
+            // left titled "Perfect Attendance - ..." would be wrong all day.
+            const before = document.title;
+            let timer = null;
+            const done = function () {
+                if (_paPrintDone !== done) return;
+                _paPrintDone = null;
+                window.removeEventListener('afterprint', done);
+                clearTimeout(timer);
+                document.body.classList.remove('wc-printing');
+                document.title = before;
+            };
+            _paPrintDone = done;
+            document.title = perfectSheetFileName(view);
+            // PRINTS ONLY THE SHEET: the class hides every other child of <body>
+            // under @media print, exactly as for the purchase list.
+            document.body.classList.add('wc-printing');
+            window.addEventListener('afterprint', done);
+            timer = setTimeout(done, 60000);
+        }
+
+        /** Ends a print still in progress: the class comes off, the title comes back. */
+        function endPerfectAttendancePrint() {
+            if (_paPrintDone) _paPrintDone();
+        }
+
+        function closePerfectAttendanceSheet() {
+            endPerfectAttendancePrint();
+            unhookPerfectAttendanceSheet();
+            const sheet = document.getElementById('wcPrintSheet');
+            if (sheet && sheet.getAttribute('data-sheet') === 'perfect') sheet.remove();
+            document.body.classList.remove('wc-printing');
+            _paSheet = null;
         }
 
         async function loadAttendanceRows(force) {
