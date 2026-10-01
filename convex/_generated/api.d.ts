@@ -18,6 +18,7 @@ import type * as appDataShape from "../appDataShape.js";
 import type * as attendanceDays from "../attendanceDays.js";
 import type * as attendanceDaysRead from "../attendanceDaysRead.js";
 import type * as attendanceList from "../attendanceList.js";
+import type * as attendanceLookup from "../attendanceLookup.js";
 import type * as attendanceProbe from "../attendanceProbe.js";
 import type * as attendanceRunChart from "../attendanceRunChart.js";
 import type * as attendanceRunChartData from "../attendanceRunChartData.js";
@@ -121,6 +122,7 @@ declare const fullApi: ApiFromModules<{
   attendanceDays: typeof attendanceDays;
   attendanceDaysRead: typeof attendanceDaysRead;
   attendanceList: typeof attendanceList;
+  attendanceLookup: typeof attendanceLookup;
   attendanceProbe: typeof attendanceProbe;
   attendanceRunChart: typeof attendanceRunChart;
   attendanceRunChartData: typeof attendanceRunChartData;
