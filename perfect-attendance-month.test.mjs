@@ -936,8 +936,11 @@ console.log("\nTHE WIRING\n");
     /document\.title = before;/.test(printFn) && /window\.addEventListener\('afterprint', done\)/.test(printFn) &&
     /setTimeout\(done, 60000\)/.test(printFn) && /endPerfectAttendancePrint\(\);/.test(lift(scriptSrc, "closePerfectAttendanceSheet")) &&
     /beginPerfectAttendancePrint\(\);\s*try \{ window\.print\(\); \}/.test(lift(scriptSrc, "printPerfectAttendanceSheet")));
+  // CHANGED 2026-10-01: the branch is now also taken, without asking, by the
+  // inactivity logout (`inactive ||`), which a teacher at a shared Chromebook
+  // could otherwise Cancel. Run for real in cash-analytics-fixes.test.mjs.
   check("logout closes the sheet, inside the confirmed branch",
-    /if \(await showConfirm\([^)]*\)\) \{[\s\S]*closePerfectAttendanceSheet\(\);[\s\S]*\}/.test(lift(scriptSrc, "logout")));
+    /if \((?:inactive \|\| )?await showConfirm\([^)]*\)\) \{[\s\S]*closePerfectAttendanceSheet\(\);[\s\S]*\}/.test(lift(scriptSrc, "logout")));
 
   // THE PURCHASE LIST IS NOT TOUCHED. Its four functions are pinned as they
   // stood on 2026-10-01, when this sheet was added beside them. If you change

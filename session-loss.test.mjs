@@ -110,8 +110,14 @@ console.log("\nAnalytics is not scoped to one person, so stale data must be visi
   // against 0. Not a permissions rule: nothing in Analytics filters by user.
   // One session had loaded from Convex and the other had fallen back to
   // localStorage, and nothing on screen said so.
+  //
+  // CHANGED 2026-10-01: updateCashAuditLogTable left this list. The owner
+  // decided staff-level views with names are for admins and PBIS only, so
+  // below those roles the cash audit log shows a person their own entries
+  // (cashAuditEntriesFor). That is a permissions rule by ROLE, checked below;
+  // for admins and PBIS the log is still the whole school's.
   const scopedByDesign = ["updateMyActivity", "updateCashActivityLog"];
-  const schoolWide = ["updateCashAnalytics", "updateCashAuditLogTable",
+  const schoolWide = ["updateCashAnalytics",
                       "updateTeacherInteractionDetails", "updateLeaderboard"];
 
   const bodyOf = (n) => {
@@ -128,6 +134,9 @@ console.log("\nAnalytics is not scoped to one person, so stale data must be visi
     check(`${fn} DOES filter to the signed-in user, as its name promises`,
       /currentUser\.(id|name|username)/.test(bodyOf(fn)));
   }
+  check("updateCashAuditLogTable is scoped by role through one helper, not by name",
+    /cashAuditEntriesFor\(auditLog, currentUser\)/.test(bodyOf("updateCashAuditLogTable")) &&
+    /if \(cashStaffViewsAllowed\(user\)\) return cash;/.test(bodyOf("cashAuditEntriesFor")));
 
   check("a cached load raises a notice", /function refreshStaleDataNotice\(/.test(code));
   const notice = code.slice(code.indexOf("function refreshStaleDataNotice("),

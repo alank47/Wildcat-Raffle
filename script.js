@@ -1431,6 +1431,7 @@
         // helpers exists to make cheap:
         //
         //   isCashBehaviourRow(t)  -> should this row count as a BEHAVIOUR?
+        //   cashBehaviourKind(t)   -> and if so, an 'award' or a 'deduct'?
         //   reversedCashIds()      -> the set of originals that were reversed
         //
         // MONEY AND BEHAVIOUR ANSWER DIFFERENTLY, deliberately. A balance is
@@ -1460,18 +1461,53 @@
          * Is this row one of a child's behaviours, or is it bookkeeping?
          *
          * Excluded: a reversal row, a row that has been reversed, the
-         * `system_reset` rows a balance reset writes, and store refunds. Each is
-         * a correction or an administrative act rather than something a student
-         * did, and counting any of them is how a report starts disagreeing with
-         * what the adults in the building remember.
+         * `system_reset` rows a balance reset writes, store refunds, and store
+         * PURCHASES. Each is a correction, an administrative act or a child
+         * spending their own money rather than something a student did, and
+         * counting any of them is how a report starts disagreeing with what the
+         * adults in the building remember.
+         *
+         * PURCHASES ADDED 2026-10-01. A purchase is kind 'redeem' with a
+         * negative amount, so every screen that split rows by sign read it as a
+         * deduction: each $1,500 Power-Up Pass was one more "negative
+         * behaviour", the Data Dashboard's deducted total grew by the price of
+         * the store's stock, and a staff member who rang up a sale at the desk
+         * was charged with it in the Teacher table. The rule is now the
+         * positive one -- only an award or a deduction is a behaviour -- so a
+         * kind nobody has invented yet starts out as bookkeeping rather than as
+         * a child's misbehaviour.
+         *
+         * Money is not this function's business. A balance, a receipt and the
+         * Cash Audit Log's list of movements still count every row.
          */
         function isCashBehaviourRow(t, reversedIds) {
             if (!t) return false;
             if (t.kind === 'reversal' || t.reversesTxnId) return false;
+            const kind = String(t.kind || '');
+            if (kind && kind !== 'award' && kind !== 'deduct') return false;
             if (t.behaviorId === 'system_reset') return false;
             if (String(t.behaviorId || '').startsWith('reward-refund:')) return false;
             const ids = reversedIds || reversedCashIds();
             return !ids.has(String(t.id || ''));
+        }
+
+        /**
+         * Which behaviour a row is: 'award', 'deduct', or null for bookkeeping.
+         *
+         * BY KIND, NOT BY SIGN (2026-10-01). `type` is the sign of the amount and
+         * nothing else (recordCashTransaction writes it that way on purpose), so
+         * splitting on it is how a purchase became a deduction and a reversed
+         * deduction became an award. `kind` is what actually happened.
+         *
+         * A row with no kind at all predates the field; its sign is all there
+         * is, the same fallback cashReversalRules.plannedCounterDelta uses.
+         */
+        function cashBehaviourKind(t, reversedIds) {
+            if (!isCashBehaviourRow(t, reversedIds)) return null;
+            const kind = String(t.kind || '');
+            if (kind === 'award' || kind === 'deduct') return kind;
+            const amount = Number(t.amount) || 0;
+            return amount > 0 ? 'award' : amount < 0 ? 'deduct' : null;
         }
 
         /**
@@ -2892,9 +2928,13 @@
             sessionStorage.setItem('lastActivity', Date.now());
             
             // Set new timer
+            // NOT A QUESTION (2026-10-01). This called the Logout button's
+            // logout(), which asks "Are you sure?" -- so whoever sat down at a
+            // shared Chromebook next could press Cancel and carry on as the
+            // person who walked away, an admin's names and all.
             inactivityTimer = setTimeout(() => {
                 alert('You have been logged out due to inactivity.');
-                logout();
+                logout({ inactive: true });
             }, INACTIVITY_TIMEOUT);
         }
 
@@ -9040,6 +9080,10 @@
 
             }
 
+            // Colleagues' cash by name: admins and PBIS only. Re-asked for
+            // whoever just signed in, since the page was not reloaded.
+            applyCashAnalyticsGate();
+
             updateAllDisplays();
             if (teacher.role === 'superadmin' || teacher.role === 'admin') {
                 updateSuperAdminList();
@@ -9049,11 +9093,15 @@
             // checkAndRunAutoWeekReset();
         }
 
-        async function logout() {
+        async function logout(opts) {
             // The next person on this Chromebook starts where their role starts,
             // not where the last one left off.
             wcForgetTab();
-            if (await showConfirm('Are you sure you want to logout?')) {
+            // The inactivity timer has already told them they are logged out;
+            // only the Logout button asks. Strictly `true`, so no other caller
+            // skips the question by accident.
+            const inactive = !!(opts && opts.inactive === true);
+            if (inactive || await showConfirm('Are you sure you want to logout?')) {
                 currentUser = null;
                 currentStudent = null;
                 clearSession(); // Clear saved session
@@ -9065,6 +9113,16 @@
                 // ID on it -- over the login screen for whoever sits down next.
                 // The inactivity logout reaches here with it open (2026-10-01).
                 if (typeof closePerfectAttendanceSheet === 'function') closePerfectAttendanceSheet();
+                // The same for colleagues' cash (2026-10-01): an admin's Teacher
+                // Interactions tables and the school-wide audit log stay in the
+                // DOM under a hidden tab, so they are emptied here rather than
+                // left for whoever signs in next. currentUser is null by now,
+                // so the gate wipes.
+                try {
+                    applyCashAnalyticsGate();
+                    const cashAuditBody = document.getElementById('cashAuditLogTable');
+                    if (cashAuditBody) cashAuditBody.innerHTML = '';
+                } catch (e) { /* never block a logout */ }
 
                 // Drop the federated session too. Without this a teacher could
                 // "log out", leave the Chromebook, and leave a Microsoft
@@ -9774,6 +9832,52 @@
             }
         }
 
+        /**
+         * The cash audit entries this person may see (2026-10-01).
+         *
+         * Admins, superadmins and the PBIS team: all of them. Everyone else:
+         * the entries they made, matched on their id the way My Activity
+         * matches its rows -- an entry with no id on it belongs to nobody, not
+         * to everybody. The owner's decision was "admins and PBIS only" for
+         * staff-level views with names, and this log names the adult on every
+         * row; its search box matched teacher names, so a teacher could type a
+         * colleague's name and read their day.
+         *
+         * Nothing in the app needs a teacher to read this log school-wide: the
+         * two dashboard tiles that link here are shown only to admins and the
+         * PBIS team, and a child's own history on the Accounts screen reads
+         * through CA.forStudent, not through this tab.
+         */
+        function cashAuditEntriesFor(entries, user) {
+            const CA = window.WildcatCashAudit;
+            const cash = (Array.isArray(entries) ? entries : []).filter(CA.isCashEntry);
+            if (cashStaffViewsAllowed(user)) return cash;
+            const me = (user && user.id != null) ? String(user.id) : '';
+            if (!me) return [];
+            return cash.filter(e => e && e.teacherId != null && String(e.teacherId) === me);
+        }
+
+        /**
+         * The home dashboard's activity feed, for this person (2026-10-01).
+         *
+         * The feed read the whole audit log, so the first screen every teacher
+         * and campus aide sees listed colleagues' cash awards and deductions by
+         * name, with the note -- and the day strip and the "Cash Deducted" chip
+         * turned it into exactly the search the Cash Audit Log no longer
+         * allows. Cash entries now go through cashAuditEntriesFor, the same
+         * rule as that log; everything that is not cash is left as it was.
+         */
+        function dashFeedEntriesFor(entries, user) {
+            const list = Array.isArray(entries) ? entries : [];
+            if (cashStaffViewsAllowed(user)) return list;
+            const CA = window.WildcatCashAudit;
+            // No cash module, no way to tell cash from anything else: show
+            // nothing rather than guess.
+            if (!CA || typeof CA.isCashEntry !== 'function') return [];
+            const mine = new Set(cashAuditEntriesFor(list, user));
+            return list.filter(e => !CA.isCashEntry(e) || mine.has(e));
+        }
+
         function updateCashAuditLogTable(keepPage) {
             if (!keepPage) loadCashArrivalAlerts();   // throttled inside
             renderCashDriftPanel();
@@ -9801,8 +9905,19 @@
                 return st ? `${st.firstName} ${st.lastName}` : '';
             };
 
-            let rows = auditLog
-                .filter(CA.isCashEntry)
+            // WHOSE ROWS, BEFORE ANYTHING ELSE (2026-10-01). See
+            // cashAuditEntriesFor: the search below runs over what this person
+            // may see, so it cannot be used to find a colleague.
+            const seesEveryone = cashStaffViewsAllowed();
+            const scopeNote = document.getElementById('cashAuditScopeNote');
+            if (scopeNote) {
+                scopeNote.style.display = seesEveryone ? 'none' : '';
+                scopeNote.textContent = seesEveryone ? ''
+                    : 'This shows the cash you have awarded, deducted or handled yourself. ' +
+                      'Admins and the PBIS team see everyone’s.';
+            }
+
+            let rows = cashAuditEntriesFor(auditLog, currentUser)
                 .map(e => CA.describe(e, nameOf));
 
             // Search the whole log (all pages), not the rendered rows, and over
@@ -26285,6 +26400,9 @@
                     const weekControls = document.getElementById('weekControls');
                     if (weekControls) weekControls.style.display = seesAdminTabs ? 'flex' : 'none';
 
+                    // Colleagues' cash by name: admins and PBIS only (2026-10-01).
+                    applyCashAnalyticsGate();
+
                     if (typeof switchSystemMode === 'function') {
                         switchSystemMode(getSavedTeacherMode() || allowedModeOrDefault());
                     }
@@ -29776,10 +29894,11 @@
             // Same fix as My Activity: the ledger, not the dead global.
             // "MOST COMMON BEHAVIORS" COUNTS BEHAVIOURS, so the bookkeeping is
             // dropped: both halves of a reversal, the system_reset rows a
-            // balance reset writes, and store refunds. Without this the top of
-            // this chart fills up with "Reversed: Be Present" and every
-            // corrected mistake is counted twice -- once as the thing that did
-            // not happen and once as the correction.
+            // balance reset writes, store refunds, and (2026-10-01) store
+            // purchases. Without this the top of this chart fills up with
+            // "Reversed: Be Present" and every corrected mistake is counted
+            // twice -- once as the thing that did not happen and once as the
+            // correction -- and "Power-Up Pass" is listed as a behaviour.
             const _behaviourReversedIds = reversedCashIds();
             // No prototype: a behaviour named "__proto__" otherwise wrote
             // count and total onto every object in the page (found in review).
@@ -31871,8 +31990,161 @@
             }
         }
 
+        // ========================================
+        // STAFF NAMES ARE FOR ADMINS AND PBIS (2026-10-01)
+        // ========================================
+        //
+        // THE OWNER'S DECISION, 2026-10-01: "admins and PBIS only". Cash
+        // Analytics was open to every role, and nothing in it asked who was
+        // looking -- so any teacher or campus aide could open Teacher
+        // Interactions and read every colleague's award count, deduction count
+        // and ratio by name, the names beside each flagged child, and any
+        // colleague's last hundred awards with their notes. The Cash Audit Log
+        // did the same through its search box.
+        //
+        // What stays open to everyone: the Data Dashboard and Trends, which are
+        // school-wide and name nobody, and their own rows in the audit log.
+        //
+        // NOT THE AUTHORIZATION BOUNDARY, as switchTab says of every renderer:
+        // the ledger itself is served to all staff by the server. This makes
+        // the screens match the decision; it does not make the data secret.
+
+        /** The roles that may see other staff by name in Cash. */
+        const CASH_STAFF_VIEW_ROLES = ['admin', 'superadmin', 'pbis'];
+
+        /**
+         * May this person see colleagues by name in Cash?
+         *
+         * THE ROLE ITSELF, deliberately not canReadInsights or the
+         * attendanceWatch grant: a campus aide holds that grant so she can read
+         * attendance, and it says nothing about reading colleagues' cash.
+         * Unknown roles are refused -- a new role starts out seeing less.
+         */
+        function cashStaffViewsAllowed(user) {
+            const u = (user === undefined) ? currentUser : user;
+            return !!(u && CASH_STAFF_VIEW_ROLES.indexOf(String(u.role || '')) !== -1);
+        }
+
+        /**
+         * Take every staff name off the Teacher Interactions pane.
+         *
+         * HIDDEN IS NOT GONE. The pane is display:none whenever another subtab
+         * is open, and logout does not reload the page -- so on a shared
+         * Chromebook an admin's tables, colleagues' names and notes included,
+         * sat in the DOM under the next teacher to sign in. This empties them
+         * instead of trusting a style.
+         */
+        function wipeStaffCashViews() {
+            const closed = (cols) => '<tr><td colspan="' + cols + '" style="text-align: center; padding: 40px; color: #999;">' +
+                'Staff activity is for admins and the PBIS team.</td></tr>';
+            [['teacherActivityTableBody', 8], ['interventionStudentsTableBody', 7],
+             ['teacherInteractionDetailsTableBody', 8]].forEach(([id, cols]) => {
+                const el = document.getElementById(id);
+                if (el) el.innerHTML = closed(cols);
+            });
+            ['teacherInteractionsActiveCount', 'teacherInteractionsTotalPositive',
+             'teacherInteractionsTotalNegative', 'teacherInteractionsPositivityRatio'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = '—';
+            });
+            const dropdown = document.getElementById('teacherInteractionFilterTeacher');
+            if (dropdown) dropdown.innerHTML = '<option value="">All Teachers</option>';
+            const pane = document.getElementById('analyticsTeacherInteractions');
+            if (pane) pane.style.display = 'none';
+        }
+
+        /**
+         * The gate, applied to what is on screen: the subtab button, and
+         * whatever the pane already holds. Returns whether names may show.
+         *
+         * Run on every open of Cash Analytics and again on sign-in, on a
+         * restored session, on entering and leaving teacher view, and on
+         * logout -- so a different person signing in on the same Chromebook
+         * gets their own answer without anybody reloading anything.
+         */
+        function applyCashAnalyticsGate() {
+            const allowed = cashStaffViewsAllowed();
+            const btn = document.getElementById('teacherInteractionsSubtab');
+            if (btn) btn.style.display = allowed ? '' : 'none';
+            if (!allowed) wipeStaffCashViews();
+            return allowed;
+        }
+
+        // ========================================
+        // ONE GOAL: 5 TO 1 (2026-10-01)
+        // ========================================
+
+        /** Five awards for every deduction: the gauge, the tips and these tables. */
+        const CASH_RATIO_GOAL = 5;
+        /** Fewer deductions than this is not enough to call a ratio. */
+        const CASH_RATIO_MIN_DEDUCTIONS = 5;
+
+        /**
+         * Awards to deductions against the 5 to 1 goal, in words.
+         *
+         * WHY NOT A PERCENTAGE. The Teacher table coloured "positivity" green
+         * from 70% -- about 2.3 to 1 -- so a teacher at 3 to 1 read as meeting
+         * a goal that the home gauge, the sidebar tips and the quiet-students
+         * rule all put at 5 to 1. One goal, in one unit, on every screen.
+         *
+         * NO RATIO BELOW FIVE DEDUCTIONS. Twelve awards and no deductions is not
+         * a perfect score, and 9 to 1 on one deduction is a single afternoon
+         * away from 4.5 to 1. With fewer than five the honest answer is that
+         * there is not enough to judge; with none, that there were none.
+         *
+         * ROUNDED DOWN to one decimal, so 4.96 reads "4.9 to 1" below the goal
+         * instead of "5.0 to 1" in amber, which would look like a mistake.
+         *
+         *   'meets'    at or above 5 to 1       green
+         *   'below'    under 5 to 1             amber -- something to act on, never red
+         *   'neutral'  too few deductions, or none
+         */
+        function cashRatioVerdict(awards, deductions) {
+            const a = Math.max(0, Math.floor(Number(awards) || 0));
+            const d = Math.max(0, Math.floor(Number(deductions) || 0));
+            const goal = CASH_RATIO_GOAL + ' to 1 goal';
+            if (d === 0) {
+                return { tone: 'neutral', ratio: null, label: 'no deductions',
+                         note: 'nothing yet to measure against the ' + goal };
+            }
+            if (d < CASH_RATIO_MIN_DEDUCTIONS) {
+                return { tone: 'neutral', ratio: null, label: 'too few deductions to judge',
+                         note: 'a ratio is shown from ' + CASH_RATIO_MIN_DEDUCTIONS + ' deductions' };
+            }
+            const ratio = a / d;
+            const shown = Math.floor((a * 10) / d) / 10;
+            const meets = ratio >= CASH_RATIO_GOAL;
+            return { tone: meets ? 'meets' : 'below', ratio: ratio,
+                     label: shown.toFixed(1) + ' to 1',
+                     note: (meets ? 'meets the ' : 'below the ') + goal };
+        }
+
+        /** The verdict as one escaped cell's worth of markup. */
+        function cashRatioHtml(v) {
+            return '<span class="wc-ratio is-' + v.tone + '">' + escapeHtml(v.label) + '</span>' +
+                (v.tone === 'neutral' ? '' : '<span class="wc-ratio-note">' + escapeHtml(v.note) + '</span>');
+        }
+
+        /** Put a verdict on one of the "awards to deductions" tiles. */
+        function setCashRatioTile(valueId, noteId, v) {
+            const value = document.getElementById(valueId);
+            if (value) {
+                value.textContent = v.label;
+                value.classList.remove('wc-ratio', 'is-meets', 'is-below', 'is-neutral');
+                value.classList.add('wc-ratio', 'is-' + v.tone);
+            }
+            const note = document.getElementById(noteId);
+            if (note) note.textContent = v.note;
+        }
+
         // Analytics Subtab Functions
         function switchAnalyticsSubtab(subtab) {
+            // THE GATE FIRST (2026-10-01). Asked here, on every switch, because
+            // this is where both the tab's own open and the subtab buttons
+            // arrive -- a teacher reaching Teacher Interactions by any route
+            // lands on the Data Dashboard instead.
+            if (!applyCashAnalyticsGate() && subtab === 'teacherInteractions') subtab = 'dashboard';
+
             // Update button styles
             document.querySelectorAll('.analytics-subtab').forEach(btn => {
                 btn.style.background = '#f5f5f5';
@@ -31903,6 +32175,7 @@
                 document.getElementById('trendsSubtab').style.background = '#FF6B35';
                 document.getElementById('trendsSubtab').style.color = 'white';
                 document.getElementById('analyticsTrends').style.display = 'block';
+                renderCashTrends();
             }
         }
 
@@ -31912,9 +32185,11 @@
                 .map(cb => cb.value);
             
             if (selectedGrades.length === 0) {
-                // No grades selected - show zeros
+                // No grades selected - show zeros. The ratio tile says why it is
+                // empty: "no deductions" would be a claim about the school.
                 document.getElementById('avgBehaviorsPerStudent').textContent = '0.0';
-                document.getElementById('avgPositivityRatio').textContent = '0%';
+                setCashRatioTile('avgPositivityRatio', 'avgPositivityRatioNote',
+                    { tone: 'neutral', label: '—', note: 'no grades selected' });
                 document.getElementById('avgDollarsPerStudent').textContent = '$0';
                 document.getElementById('dashTotalStudents').textContent = '0';
                 document.getElementById('dashTotalPositive').textContent = '0';
@@ -31944,7 +32219,8 @@
             if (filteredStudents.length === 0) {
                 // No students in selected grades
                 document.getElementById('avgBehaviorsPerStudent').textContent = '0.0';
-                document.getElementById('avgPositivityRatio').textContent = '0%';
+                setCashRatioTile('avgPositivityRatio', 'avgPositivityRatioNote',
+                    { tone: 'neutral', label: '—', note: 'no students in these grades' });
                 document.getElementById('avgDollarsPerStudent').textContent = '$0';
                 document.getElementById('dashTotalStudents').textContent = '0';
                 document.getElementById('dashTotalPositive').textContent = '0';
@@ -31964,7 +32240,7 @@
             
             // A REVERSAL IS NOT A BEHAVIOUR ON EITHER OF THESE TILES.
             //
-            // The gate below is `type === 'positive' || 'negative'`, and `type`
+            // The gate here was `type === 'positive' || 'negative'`, and `type`
             // is the SIGN of the row's own amount by design -- so a reversal row
             // always passed it. Breonny Vazquez, reversed on 2026-09-15, then
             // read as one positive behaviour AND one negative behaviour, and
@@ -31995,18 +32271,26 @@
                 totalBalance += (student.wildcatCashBalance || 0);
             });
 
+            // REAL BEHAVIOUR ONLY, THE MONEY INCLUDED (2026-10-01).
+            //
+            // This split every row by its SIGN and summed the dollars of all of
+            // them, behaviour or not. So each Power-Up Pass a child bought was a
+            // $1,500 "negative behaviour", and "Total Cash Deducted" carried the
+            // store's takings -- 25 passes, $37,500, by 2026-10-01. The dollars
+            // used to count both halves of a reversal so these tiles netted
+            // against the balances; with purchases out they no longer can, and
+            // should not try -- "awarded" and "deducted" now mean what an adult
+            // gave or took for behaviour, by KIND, and "Total in Circulation"
+            // below is the one figure about balances.
             _dashLedger.forEach(txn => {
-                if (txn.type !== 'positive' && txn.type !== 'negative') return;
-                // The MONEY counts both halves of a reversal -- the pair nets to
-                // zero, so the dollar tiles keep reconciling with the balances.
-                // Only the EVENT counts drop it.
-                const isBehaviour = isCashBehaviourRow(txn, _dashReversedIds);
-                if (txn.amount > 0) {
-                    if (isBehaviour) totalPositiveBehaviors++;
-                    totalAwarded += txn.amount;
-                } else if (txn.amount < 0) {
-                    if (isBehaviour) totalNegativeBehaviors++;
-                    totalDeducted += Math.abs(txn.amount);
+                const kind = cashBehaviourKind(txn, _dashReversedIds);
+                const dollars = Math.abs(Number(txn.amount) || 0);
+                if (kind === 'award') {
+                    totalPositiveBehaviors++;
+                    totalAwarded += dollars;
+                } else if (kind === 'deduct') {
+                    totalNegativeBehaviors++;
+                    totalDeducted += dollars;
                 }
             });
             
@@ -32014,12 +32298,14 @@
             
             // Calculate averages
             const avgBehaviors = totalBehaviors / filteredStudents.length;
-            const positivityRatio = totalBehaviors > 0 ? (totalPositiveBehaviors / totalBehaviors * 100) : 0;
             const avgBalance = totalBalance / filteredStudents.length;
             
             // Update dashboard
             document.getElementById('avgBehaviorsPerStudent').textContent = avgBehaviors.toFixed(1);
-            document.getElementById('avgPositivityRatio').textContent = positivityRatio.toFixed(1) + '%';
+            // Awards to deductions against the 5 to 1 goal: the same words and
+            // the same five-deduction minimum as the Teacher table and Trends.
+            setCashRatioTile('avgPositivityRatio', 'avgPositivityRatioNote',
+                cashRatioVerdict(totalPositiveBehaviors, totalNegativeBehaviors));
             document.getElementById('avgDollarsPerStudent').textContent = '$' + Math.round(avgBalance).toLocaleString();
             
             document.getElementById('dashTotalStudents').textContent = filteredStudents.length;
@@ -32035,6 +32321,10 @@
         // ========================================
 
         function updateTeacherInteractions() {
+            // NOTHING WITH A NAME FOR ANYONE ELSE (2026-10-01). Asked here as
+            // well as at the subtab, because this is reachable by a direct call
+            // and by whatever restores a screen; a hidden button is a courtesy.
+            if (!applyCashAnalyticsGate()) return;
             console.log('Updating Teacher Interactions analytics...');
             
             // Analyze teacher activity from wildcatCashTransactions
@@ -32070,12 +32360,19 @@
             // withdrawal is not a second one. Without this a single mistake
             // reads as two interactions and the admin who fixed it appears in
             // the teacher table.
+            //
+            // AND A SALE AT THE DESK IS NOT ONE (2026-10-01). A purchase rung
+            // up by a member of staff carries their teacherId, and it was
+            // counted against them as a negative interaction -- the person
+            // running the store looked like the strictest adult in the school.
             const reversedIds = reversedCashIds();
             const ledgerRows = (typeof cashTransactions !== 'undefined' && Array.isArray(cashTransactions))
                 ? cashTransactions : [];
 
             ledgerRows.forEach(txn => {
                 if (!isCashBehaviourRow(txn, reversedIds)) return;
+                const behaviourKind = cashBehaviourKind(txn, reversedIds);
+                if (!behaviourKind) return;
 
                 // Check for teacherId field (from Award Cash) OR addedBy/removedBy (from Add/Remove Cash)
                 const teacherId = txn.teacherId || txn.addedBy || txn.removedBy;
@@ -32097,12 +32394,13 @@
                 stats.totalInteractions++;
                 if (txn.studentId) stats.studentsImpacted.add(txn.studentId);
 
-                if (txn.type === 'positive') {
+                // By KIND, not by `type` (the sign). See cashBehaviourKind.
+                if (behaviourKind === 'award') {
                     stats.positiveCount++;
-                    stats.totalAwarded += Math.abs(txn.amount);
-                } else if (txn.type === 'negative') {
+                    stats.totalAwarded += Math.abs(Number(txn.amount) || 0);
+                } else {
                     stats.negativeCount++;
-                    stats.totalDeducted += Math.abs(txn.amount);
+                    stats.totalDeducted += Math.abs(Number(txn.amount) || 0);
                 }
             });
             
@@ -32119,15 +32417,12 @@
                 }
             });
             
-            const overallPositivityRatio = (totalPositive + totalNegative) > 0 
-                ? (totalPositive / (totalPositive + totalNegative) * 100) 
-                : 0;
-            
             // Update summary cards
             document.getElementById('teacherInteractionsActiveCount').textContent = activeTeacherCount;
             document.getElementById('teacherInteractionsTotalPositive').textContent = totalPositive.toLocaleString();
             document.getElementById('teacherInteractionsTotalNegative').textContent = totalNegative.toLocaleString();
-            document.getElementById('teacherInteractionsPositivityRatio').textContent = overallPositivityRatio.toFixed(1) + '%';
+            setCashRatioTile('teacherInteractionsPositivityRatio', 'teacherInteractionsRatioNote',
+                cashRatioVerdict(totalPositive, totalNegative));
             
             // Update teacher activity table
             updateTeacherActivityTable(teacherStats);
@@ -32143,10 +32438,11 @@
         }
 
         function updateTeacherActivityTable(teacherStats) {
+            if (!cashStaffViewsAllowed()) { wipeStaffCashViews(); return; }
             const tbody = document.getElementById('teacherActivityTableBody');
             
             // Convert to array and sort by total interactions (descending)
-            const sortedTeachers = Object.values(teacherStats)
+            const sortedTeachers = Object.values(teacherStats || {})
                 .filter(stats => stats.totalInteractions > 0)
                 .sort((a, b) => b.totalInteractions - a.totalInteractions);
             
@@ -32156,21 +32452,22 @@
             }
             
             tbody.innerHTML = sortedTeachers.map(stats => {
-                const positivityRatio = stats.totalInteractions > 0 
-                    ? (stats.positiveCount / stats.totalInteractions * 100) 
-                    : 0;
+                // THE 5 TO 1 GOAL, NOT 70% (2026-10-01). Green from 70% positive
+                // was about 2.3 to 1, so a teacher at 3 to 1 was shown as meeting
+                // a goal they were well short of. See cashRatioVerdict: below the
+                // goal is amber, and under five deductions there is no ratio.
+                const verdict = cashRatioVerdict(stats.positiveCount, stats.negativeCount);
                 
-                const positivityColor = positivityRatio >= 70 ? '#2E7D52' : 
-                                       positivityRatio >= 50 ? '#f59e0b' : '#B3392F';
-                
+                // The NAME IS ESCAPED: it comes off the staff record, and this
+                // was the one cell in the table that reached innerHTML raw.
                 return `
                     <tr>
-                        <td style="font-weight: 600;">${stats.name}</td>
+                        <td style="font-weight: 600;">${escapeHtml(String(stats.name || 'Unknown'))}</td>
                         <td style="text-align: center; font-weight: 600;">${stats.totalInteractions}</td>
                         <td style="text-align: center; color: #10b981; font-weight: 600;">${stats.positiveCount}</td>
                         <td style="text-align: center; color: #ef4444; font-weight: 600;">${stats.negativeCount}</td>
-                        <td style="text-align: center; color: ${positivityColor}; font-weight: 700; font-size: 16px;">
-                            ${positivityRatio.toFixed(1)}%
+                        <td style="text-align: center;">
+                            ${cashRatioHtml(verdict)}
                         </td>
                         <td style="text-align: center; color: #10b981;">$${stats.totalAwarded.toLocaleString()}</td>
                         <td style="text-align: center; color: #ef4444;">$${stats.totalDeducted.toLocaleString()}</td>
@@ -32192,6 +32489,8 @@
 
         function updateInterventionStudents() {
             _interventionReversedIds = reversedCashIds();
+            // "Primary Teachers" names colleagues: admins and PBIS only (2026-10-01).
+            if (!cashStaffViewsAllowed()) { wipeStaffCashViews(); return; }
             const tbody = document.getElementById('interventionStudentsTableBody');
             
             // Identify students needing intervention
@@ -32279,9 +32578,12 @@
                 const balance = student.wildcatCashBalance || 0;
                 const totalDeducted = deductions.reduce((n, t) => n + Math.abs(Number(t.amount) || 0), 0);
                 
-                // Find teachers who have interacted with this student
+                // Find teachers who have interacted with this student -- by a
+                // BEHAVIOUR (2026-10-01): the adult who rang up a child's
+                // purchase at the desk did not interact with their conduct.
                 const teachersSet = new Set();
                 student.wildcatCashTransactions.forEach(txn => {
+                    if (!isCashBehaviourRow(txn, _interventionReversedIds)) return;
                     const teacherId = txn.teacherId || txn.addedBy || txn.removedBy;
                     // Match by ID or username
                     const teacher = teachers.find(t => t.id === teacherId || t.username === teacherId);
@@ -32293,8 +32595,8 @@
                 
                 return `
                     <tr style="background: ${balance < 500 ? 'rgba(239, 68, 68, 0.05)' : 'white'};">
-                        <td style="font-weight: 600;">${student.firstName} ${student.lastName}</td>
-                        <td style="text-align: center;">${student.grade}</td>
+                        <td style="font-weight: 600;">${escapeHtml(String((student.firstName || '') + ' ' + (student.lastName || '')))}</td>
+                        <td style="text-align: center;">${escapeHtml(String(student.grade == null ? '' : student.grade))}</td>
                         <td style="text-align: center; color: ${balanceColor}; font-weight: 700; font-size: 16px;">
                             $${balance.toLocaleString()}
                         </td>
@@ -32302,7 +32604,7 @@
                         <td style="text-align: center; color: #ef4444; font-weight: 700; font-size: 16px;">
                             ${negativeCount}
                         </td>
-                        <td style="font-size: 13px;">${primaryTeachers || 'None'}</td>
+                        <td style="font-size: 13px;">${escapeHtml(primaryTeachers || 'None')}</td>
                         <td style="text-align: center;">
                             <button class="btn btn-secondary" onclick="viewStudentCashDetails('${student.id}')" style="padding: 6px 12px; font-size: 12px;">
                                 View Details
@@ -32314,6 +32616,9 @@
         }
 
         function updateTeacherInteractionDetails() {
+            // Any colleague's last hundred rows, notes included: admins and
+            // PBIS only (2026-10-01). The filter controls call this directly.
+            if (!cashStaffViewsAllowed()) { wipeStaffCashViews(); return; }
             const tbody = document.getElementById('teacherInteractionDetailsTableBody');
             
             // Get filter values
@@ -32359,9 +32664,14 @@
                 // an award. The dropdown has no reversal option, so it is
                 // simply excluded from both -- visible in the unfiltered list,
                 // never miscounted in a filtered one.
-                const isReversalRow = txn.kind === 'reversal';
-                if (selectedType === 'positive' && (isReversalRow || txn.type !== 'positive')) return false;
-                if (selectedType === 'negative' && (isReversalRow || txn.type !== 'negative')) return false;
+                //
+                // THE SAME RULE AS EVERY OTHER COUNT ON THIS TAB (2026-10-01).
+                // "Negative Only" filtered on `type`, the sign, so it listed
+                // every store purchase as a negative interaction. A filter is
+                // now a behaviour of that kind -- not a purchase, a refund, a
+                // reset, a reversal or a row that was reversed.
+                if (selectedType === 'positive' && cashBehaviourKind(txn, _detailReversedIds) !== 'award') return false;
+                if (selectedType === 'negative' && cashBehaviourKind(txn, _detailReversedIds) !== 'deduct') return false;
                 
                 // Filter by student name
                 if (searchText && !txn.studentName.toLowerCase().includes(searchText)) return false;
@@ -32408,16 +32718,33 @@
                 // indistinguishable from an award for good behaviour. A
                 // reversal gets its own badge, and an original that has been
                 // reversed is marked so nobody acts on a withdrawn deduction.
+                //
+                // AND A PURCHASE IS A PURCHASE (2026-10-01). It is negative by
+                // sign, so it wore a red "Negative" badge beside the reward's
+                // name -- a child's Power-Up Pass listed as misbehaviour. Store
+                // rows get their own grey badge, like a reversed original. So do
+                // the rows a balance RESET writes: kind 'deduct' for a child's
+                // whole balance, one per student under the admin who pressed it,
+                // which otherwise filled this list with red "Negative" badges.
                 const isReversalRow = txn.kind === 'reversal';
+                const isPurchase = txn.kind === 'redeem';
+                const isRefund = String(txn.behaviorId || '').startsWith('reward-refund:');
+                const isReset = txn.behaviorId === 'system_reset';
                 const wasReversed = !isReversalRow
                     && _detailReversedIds.has(String(txn.id || ''));
                 const typeColor = isReversalRow ? '#2F67A7'
-                    : wasReversed ? '#6E7885'
+                    : (wasReversed || isPurchase || isRefund || isReset) ? '#6E7885'
                     : txn.type === 'positive' ? '#2E7D52' : '#B3392F';
                 const typeBadge = !amountOk ? 'Incomplete'
                     : isReversalRow ? 'Reversal'
                     : wasReversed ? 'Reversed'
+                    : isPurchase ? 'Purchase'
+                    : isRefund ? 'Refund'
+                    : isReset ? 'Reset'
                     : txn.type === 'positive' ? 'Positive' : 'Negative';
+                // A self-serve purchase names the CHILD in teacherName (there
+                // was no adult), which put a student in the Teacher column.
+                if (isPurchase && !txn.teacherId) teacherName = 'Student store';
                 const amountDisplay = !amountOk ? '—'
                     : txn.amount >= 0 ? `+$${Math.abs(txn.amount)}` : `-$${Math.abs(txn.amount)}`;
                 
@@ -32446,6 +32773,8 @@
         }
 
         function populateTeacherFilterDropdown() {
+            // A list of colleagues by name: admins and PBIS only (2026-10-01).
+            if (!cashStaffViewsAllowed()) { wipeStaffCashViews(); return; }
             const dropdown = document.getElementById('teacherInteractionFilterTeacher');
             
             // Get unique teachers who have made transactions
@@ -32467,11 +32796,252 @@
             const options = ['<option value="">All Teachers</option>'];
             teachers.forEach(teacher => {
                 if (activeTeachers.has(teacher.id)) {
-                    options.push(`<option value="${teacher.id}">${teacher.name}</option>`);
+                    // Escaped: a staff name and id off the record, into innerHTML.
+                    options.push(`<option value="${escapeHtml(String(teacher.id))}">${escapeHtml(String(teacher.name || ''))}</option>`);
                 }
             });
             
             dropdown.innerHTML = options.join('');
+        }
+
+        // ========================================
+        // TRENDS: THE SCHOOL, WEEK BY WEEK (2026-10-01)
+        // ========================================
+        //
+        // The Trends subtab said "Trend analysis will be displayed here" from
+        // the day it was built. The owner asked for a simple weekly picture:
+        // how many staff gave an award, how many students got one -- by grade,
+        // middle school beside high school -- and the 5 to 1 ratio.
+        //
+        // SCHOOL-WIDE AND NAMELESS, so it is open to everyone who can open Cash
+        // Analytics. No adult or student is named, and no adult's share is
+        // shown: "how many teachers awarded" is a fact about the school,
+        // "which ones did not" is the Teacher Interactions subtab.
+        //
+        // FROM WHAT IS ALREADY LOADED. It reads `cashTransactions`, `teachers`
+        // and enrolledStudents() when the subtab opens -- no query, no reload.
+
+        /** The week the cash history starts: the one week labelled launch week. */
+        const CASH_LAUNCH_WEEK = '2026-09-14';
+        /** Grades this school has, in the order the table shows them. */
+        const CASH_TREND_GRADES = ['6', '7', '8', '9', '10', '11', '12'];
+
+        /** The Monday on or before a calendar day, both as ISO dates. Noon, so a clock change cannot move it. */
+        function cashWeekMonday(iso) {
+            const d = new Date(String(iso || '') + 'T12:00:00');
+            if (isNaN(d.getTime())) return '';
+            d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+            return wcIsoDay(d);
+        }
+
+        /** "Sep 14–18", or "Sep 28 – Oct 2" across a month: the school days of that week. */
+        function cashWeekLabel(mondayIso) {
+            const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const a = new Date(String(mondayIso) + 'T12:00:00');
+            if (isNaN(a.getTime())) return String(mondayIso || '');
+            const b = new Date(a.getTime());
+            b.setDate(b.getDate() + 4);
+            return a.getMonth() === b.getMonth()
+                ? MONTHS[a.getMonth()] + ' ' + a.getDate() + '–' + b.getDate()
+                : MONTHS[a.getMonth()] + ' ' + a.getDate() + ' – ' + MONTHS[b.getMonth()] + ' ' + b.getDate();
+        }
+
+        /**
+         * The week-by-week figures. PURE: rows, staff, students and dates in;
+         * numbers out. A test runs it with no DOM.
+         *
+         *   o.rows         the cash ledger
+         *   o.reversedIds  reversedCashIds() for those rows
+         *   o.staff        the staff records (id, role)
+         *   o.students     the ENROLLED students (id, grade) -- the denominators
+         *   o.campusOf     grade -> 'middle' | 'high' | null, the app's own rule
+         *   o.cutoffIso    the history cutoff's calendar day, or '' for none
+         *   o.todayIso     today's calendar day
+         *
+         * WEEKS RUN MONDAY TO FRIDAY on the school's calendar day (wcIsoDay,
+         * the local day the attendance screens use, never UTC -- an award at
+         * 5:30 PM in Los Angeles is already tomorrow in UTC). A row stamped
+         * after today is left out: PowerSchool has taught this app that dates
+         * arrive from the future.
+         *
+         * BEHAVIOUR ONLY, by cashBehaviourKind: no purchases, refunds, resets,
+         * reversals or reversed rows. A staff member "gave an award" if one
+         * award row carries their id; a student "got one" if one award row is
+         * theirs and they are enrolled now, in a grade this school has.
+         */
+        function cashTrendWeeks(o) {
+            const rows = Array.isArray(o && o.rows) ? o.rows : [];
+            const reversedIds = (o && o.reversedIds) || new Set();
+            const staff = Array.isArray(o && o.staff) ? o.staff : [];
+            const enrolledList = Array.isArray(o && o.students) ? o.students : [];
+            const campusOf = (o && typeof o.campusOf === 'function') ? o.campusOf : () => null;
+            const todayIso = String((o && o.todayIso) || '');
+            const thisMonday = cashWeekMonday(todayIso);
+            // "So far" only while that week's school days are still running: on
+            // a Saturday or a Sunday the Monday-to-Friday week is over.
+            const todayDow = new Date(todayIso + 'T12:00:00').getDay();
+            const schoolDayToday = todayDow >= 1 && todayDow <= 5;
+            const MAX_WEEKS = 52;
+
+            const roleById = new Map(staff.filter(Boolean).map(s => [String(s.id), String(s.role || '')]));
+            const teacherAccounts = staff.filter(s => s && s.role === 'teacher').length;
+
+            // The denominators: who is enrolled NOW, by grade and by campus.
+            const gradeOf = new Map();
+            const enrolled = { byGrade: {}, middle: 0, high: 0, total: 0 };
+            CASH_TREND_GRADES.forEach(g => { enrolled.byGrade[g] = 0; });
+            enrolledList.forEach(s => {
+                const g = String(parseInt(String(s && s.grade), 10));
+                if (CASH_TREND_GRADES.indexOf(g) === -1) return;
+                gradeOf.set(String(s.id), g);
+                enrolled.byGrade[g]++;
+                enrolled.total++;
+                const c = campusOf(g);
+                if (c === 'middle') enrolled.middle++;
+                else if (c === 'high') enrolled.high++;
+            });
+
+            let first = (o && o.cutoffIso) ? cashWeekMonday(o.cutoffIso) : '';
+            const byWeek = new Map();
+            rows.forEach(t => {
+                const kind = cashBehaviourKind(t, reversedIds);
+                if (!kind || !t.timestamp) return;
+                const day = wcIsoDay(t.timestamp);
+                if (!day || day > todayIso) return;
+                const monday = cashWeekMonday(day);
+                if (first && monday < first) return;
+                let w = byWeek.get(monday);
+                if (!w) {
+                    w = { awards: 0, deductions: 0, teachers: new Set(), others: new Set(), students: new Set() };
+                    byWeek.set(monday, w);
+                }
+                if (kind === 'deduct') { w.deductions++; return; }
+                w.awards++;
+                const actor = String(t.teacherId || t.addedBy || t.removedBy || '');
+                if (actor) (roleById.get(actor) === 'teacher' ? w.teachers : w.others).add(actor);
+                const sid = String(t.studentId == null ? '' : t.studentId);
+                if (gradeOf.has(sid)) w.students.add(sid);
+            });
+            if (!first) first = Array.from(byWeek.keys()).sort()[0] || thisMonday;
+
+            const weeks = [];
+            for (let m = first; m && m <= thisMonday; ) {
+                const w = byWeek.get(m) || { awards: 0, deductions: 0, teachers: new Set(), others: new Set(), students: new Set() };
+                const byGrade = {};
+                CASH_TREND_GRADES.forEach(g => { byGrade[g] = 0; });
+                let middle = 0, high = 0;
+                w.students.forEach(sid => {
+                    const g = gradeOf.get(sid);
+                    byGrade[g]++;
+                    const c = campusOf(g);
+                    if (c === 'middle') middle++;
+                    else if (c === 'high') high++;
+                });
+                weeks.push({
+                    monday: m,
+                    label: cashWeekLabel(m),
+                    soFar: m === thisMonday && schoolDayToday,
+                    launch: m === first && m === CASH_LAUNCH_WEEK,
+                    teachersAwarding: w.teachers.size,
+                    otherStaffAwarding: w.others.size,
+                    awards: w.awards,
+                    deductions: w.deductions,
+                    verdict: cashRatioVerdict(w.awards, w.deductions),
+                    studentsAwarded: { byGrade: byGrade, middle: middle, high: high, total: w.students.size }
+                });
+                const next = new Date(m + 'T12:00:00');
+                next.setDate(next.getDate() + 7);
+                m = wcIsoDay(next);
+            }
+            return {
+                weeks: weeks.slice(-MAX_WEEKS),
+                enrolled: enrolled,
+                teacherAccounts: teacherAccounts,
+                grades: CASH_TREND_GRADES.slice()
+            };
+        }
+
+        /** "45%" over "120 of 268", or a dash when nobody is enrolled in it. */
+        function cashTrendShare(n, of) {
+            if (!of) return '<span class="wc-trend-of">—</span>';
+            return '<b>' + Math.round((n / of) * 100) + '%</b>' +
+                '<span class="wc-trend-of">' + n + ' of ' + of + '</span>';
+        }
+
+        /** The two tables, from cashTrendWeeks' model. Numbers and dates only; nothing to escape but the labels. */
+        function cashTrendsHtml(model) {
+            const weeks = (model && model.weeks) || [];
+            const intro = '<p class="wc-trend-note">The whole school, week by week since cash history starts. ' +
+                'Behaviour only: store purchases, refunds, reversals and resets are left out. Nobody is named.</p>';
+            if (!weeks.length) {
+                return '<div class="wc-card panel-card"><h3 class="chart-title">Week by week</h3>' + intro +
+                    '<p class="wc-trend-note">No weeks to show yet.</p></div>';
+            }
+            const weekCell = (w) => '<th scope="row">' + escapeHtml(w.label) +
+                (w.launch ? '<span class="wc-trend-tag">launch week</span>' : '') +
+                (w.soFar ? '<span class="wc-trend-tag">so far</span>' : '') + '</th>';
+            const n = (x) => Number(x || 0).toLocaleString();
+            const e = model.enrolled;
+            const accounts = model.teacherAccounts;
+
+            const staffRows = weeks.map(w => '<tr>' + weekCell(w) +
+                '<td><b>' + n(w.teachersAwarding) + '</b>' +
+                    (accounts ? '<span class="wc-trend-of">of ' + n(accounts) + ' teacher accounts</span>' : '') + '</td>' +
+                '<td><b>' + n(w.otherStaffAwarding) + '</b></td>' +
+                '<td>' + n(w.awards) + '</td>' +
+                '<td>' + n(w.deductions) + '</td>' +
+                '<td>' + cashRatioHtml(w.verdict) + '</td>' +
+            '</tr>').join('');
+
+            const gradeHead = model.grades.map(g => '<th scope="col">Grade ' + escapeHtml(g) + '</th>').join('');
+            const studentRows = weeks.map(w => '<tr>' + weekCell(w) +
+                '<td class="wc-trend-campus">' + cashTrendShare(w.studentsAwarded.middle, e.middle) + '</td>' +
+                '<td class="wc-trend-campus">' + cashTrendShare(w.studentsAwarded.high, e.high) + '</td>' +
+                model.grades.map(g => '<td>' + cashTrendShare(w.studentsAwarded.byGrade[g], e.byGrade[g]) + '</td>').join('') +
+            '</tr>').join('');
+
+            return '<div class="wc-card panel-card">' +
+                    '<h3 class="chart-title">Staff and behaviour, week by week</h3>' + intro +
+                    '<div class="wu-scroll-x"><table class="student-table wc-trend-table">' +
+                        '<thead><tr><th scope="col">Week</th><th scope="col">Teachers who gave an award</th>' +
+                        '<th scope="col">Other staff who gave an award</th><th scope="col">Awards</th>' +
+                        '<th scope="col">Deductions</th><th scope="col">Awards to deductions (goal: ' +
+                            CASH_RATIO_GOAL + ' to 1)</th></tr></thead>' +
+                        '<tbody>' + staffRows + '</tbody>' +
+                    '</table></div>' +
+                    '<p class="wc-trend-note">Weeks run Monday to Friday. ' +
+                        '&ldquo;Teacher accounts&rdquo; counts every account with the teacher role, and some of them may be ' +
+                        'vacancies or staff without a classroom, so it is not a participation rate. ' +
+                        'A ratio is shown once a week has ' + CASH_RATIO_MIN_DEDUCTIONS + ' deductions.</p>' +
+                '</div>' +
+                '<div class="wc-card panel-card">' +
+                    '<h3 class="chart-title">Students who got at least one award</h3>' +
+                    '<p class="wc-trend-note">Out of the students enrolled now: ' + n(e.middle) +
+                        ' in Middle School (grades 6&ndash;8) and ' + n(e.high) + ' in High School (grades 9&ndash;12).</p>' +
+                    '<div class="wu-scroll-x"><table class="student-table wc-trend-table">' +
+                        '<thead><tr><th scope="col">Week</th><th scope="col">Middle School</th>' +
+                        '<th scope="col">High School</th>' + gradeHead + '</tr></thead>' +
+                        '<tbody>' + studentRows + '</tbody>' +
+                    '</table></div>' +
+                '</div>';
+        }
+
+        /** Draw Trends from what this tab already holds. */
+        function renderCashTrends() {
+            const host = document.getElementById('cashTrendsBody');
+            if (!host) return;
+            const S = window.WildcatStore;
+            host.innerHTML = cashTrendsHtml(cashTrendWeeks({
+                rows: (typeof cashTransactions !== 'undefined' && Array.isArray(cashTransactions)) ? cashTransactions : [],
+                reversedIds: reversedCashIds(),
+                staff: Array.isArray(teachers) ? teachers : [],
+                students: enrolledStudents(),
+                // THE APP'S OWN CAMPUS RULE, the one the store locks the
+                // Power-Up Pass with: grades 6-8 middle, 9-12 high.
+                campusOf: (g) => (S && typeof S.studentCampusOf === 'function') ? S.studentCampusOf(g) : null,
+                cutoffIso: _historyCutoffMs === null ? '' : wcIsoDay(new Date(_historyCutoffMs)),
+                todayIso: wcIsoDay(new Date())
+            }));
         }
 
         /**
@@ -38462,6 +39032,9 @@
                 .forEach(t => t.classList.toggle('disabled', !superOnly));
             const weekControls = document.getElementById('weekControls');
             if (weekControls) weekControls.style.display = narrow ? 'none' : 'flex';
+            // currentUser is already the previewed (or restored) person here,
+            // so teacher view shows exactly what that person would.
+            applyCashAnalyticsGate();
         }
 
         function populatePreviewTeacherSelect() {
@@ -41206,10 +41779,42 @@
             const sub = document.getElementById('dashGoalSub');
             if (!panel || !body) return;
 
-            const goal = Math.max(1, Number(o && o.goal) || 1);
             const today = Math.max(0, Number(o && o.today) || 0);
             const mine = Math.max(0, Number(o && o.mine) || 0);
-            const med = Number(o && o.median) || 0;
+            const days = Math.max(0, Number(o && o.schoolDays) || 0);
+            const tally = '<span><b>' + mine + '</b> award' + (mine === 1 ? '' : 's') + ' in ' +
+                days + ' school day' + (days === 1 ? '' : 's') + '</span>';
+
+            // NO SCHOOL TODAY (2026-10-01): the window's tally, and no bar to
+            // fill on a day nobody is asked to award.
+            if (o && o.noSchool) {
+                panel.hidden = false;
+                panel.classList.remove('is-hit');
+                if (chip) chip.textContent = 'No school today';
+                if (sub) sub.textContent = 'The goal counts school days only.';
+                body.innerHTML = '<div class="wc-goal-foot">' + tally + '</div>';
+                return;
+            }
+
+            // NOT ENOUGH TO COMPARE YET (2026-10-01). With fewer than
+            // CASH_GOAL_MIN_STAFF teachers awarding, "the typical colleague" is
+            // one or two people, and a goal set by them is their habit rather
+            // than the school's. Said in words, with no bar to fill.
+            if (!o || o.goal == null) {
+                panel.hidden = false;
+                panel.classList.remove('is-hit');
+                if (chip) chip.textContent = today + ' today';
+                if (sub) sub.textContent = 'Not enough teachers are awarding yet to set a goal.';
+                body.innerHTML =
+                    '<div class="wc-goal-foot">' + tally +
+                        '<span class="wc-goal-vs">a goal appears once ' + CASH_GOAL_MIN_STAFF +
+                            ' teachers have given awards</span>' +
+                    '</div>';
+                return;
+            }
+
+            const goal = Math.max(1, Number(o.goal) || 1);
+            const med = Number(o.median) || 0;
 
             const hit = today >= goal;
             const pct = Math.round((Math.min(today, goal) / goal) * 100);
@@ -41219,20 +41824,43 @@
             if (chip) chip.textContent = today + ' / ' + goal;
             if (sub) {
                 sub.textContent = hit
-                    ? 'More than half the staff manage on a normal day.'
-                    : (goal - today) + ' more to match a typical day here.';
+                    ? 'More than half the teachers who award manage on a normal day.'
+                    : (goal - today) + ' more award' + (goal - today === 1 ? '' : 's') +
+                      ' to match a typical day here.';
             }
 
             body.innerHTML =
                 '<div class="wc-goal-track" role="img" aria-label="' +
-                    today + ' of ' + goal + ' interactions today">' +
+                    today + ' of ' + goal + ' awards today">' +
                     '<span class="wc-goal-fill" style="width:' + pct + '%;"></span>' +
                 '</div>' +
-                '<div class="wc-goal-foot">' +
-                    '<span><b>' + mine + '</b> in ' + QUIET_WINDOW_DAYS + ' days</span>' +
+                '<div class="wc-goal-foot">' + tally +
                     '<span class="wc-goal-vs">typical colleague <b>' +
                         med.toFixed(med % 1 ? 1 : 0) + '</b></span>' +
                 '</div>';
+        }
+
+        /** Fewer teachers awarding than this, and there is nobody yet to compare with. */
+        const CASH_GOAL_MIN_STAFF = 3;
+
+        /**
+         * The colleagues Today's goal is measured against: award counts for
+         * accounts with the TEACHER role that gave at least one award in the
+         * window (2026-10-01).
+         *
+         * This was every staff record -- sixty-two of them, admins, the PBIS
+         * team, campus aides, vacancies and accounts nobody signs into. Most
+         * of those award nothing because awarding is not their job, so they
+         * pulled the median toward zero and the goal down to its floor of one:
+         * the bar was set by people who were never going to clear it. A
+         * teacher who has not started yet is not a yardstick either; they are
+         * who the goal is for.
+         */
+        function cashGoalStaffCounts(staff, awardsByActor) {
+            return (Array.isArray(staff) ? staff : [])
+                .filter(s => s && s.role === 'teacher')
+                .map(s => Number(awardsByActor && awardsByActor[s.id]) || 0)
+                .filter(n => n > 0);
         }
 
         function wcRenderQuietStudents(seesAll) {
@@ -41269,10 +41897,15 @@
             // Interactions per student, from EVERY adult. This is the threshold
             // a student is measured against: how much attention that child has
             // had, not how much one teacher gave.
+            //
+            // BY KIND, NOT SIGN (2026-10-01), and with purchases gone from
+            // `moves` -- isCashBehaviourRow drops them now. A child who bought a
+            // Power-Up Pass had been "interacted with" once, negatively, which
+            // could take them off this list and out of the 5 to 1 band at once.
             const interactions = {};
             moves.forEach(t => {
                 const e = (interactions[String(t.studentId)] ||= { positive: 0, negative: 0 });
-                if ((Number(t.amount) || 0) > 0) e.positive += 1; else e.negative += 1;
+                if (cashBehaviourKind(t, _quietReversedIds) === 'award') e.positive += 1; else e.negative += 1;
             });
 
             const schoolStudents = enrolledStudents();
@@ -41289,8 +41922,13 @@
             // aggregates every colleague's awards to the same child. Same
             // words, different denominators, and the wrong pairing is an
             // accusation the data does not support.
+            //
+            // AWARDS ONLY (2026-10-01). This counted every behaviour, so a
+            // deduction moved a teacher toward a goal about noticing children
+            // doing well -- a morning of corrections read as a good day.
             const awardsByActor = {};
             moves.forEach(t => {
+                if (cashBehaviourKind(t, _quietReversedIds) !== 'award') return;
                 const actor = t.teacherId || t.addedBy || t.removedBy;
                 if (!actor) return;
                 awardsByActor[actor] = (awardsByActor[actor] || 0) + 1;
@@ -41303,23 +41941,55 @@
             // noise within a week. Measured on synthetic staff counts, one
             // heavy awarder moves the mean to 38.6 and the median to 1.5.
             //
-            // Everyone counts, including the colleagues who awarded nothing --
-            // a median over only the active would flatter the school and set
-            // the goal by the keenest half of it.
-            const staffCounts = (Array.isArray(teachers) ? teachers : [])
-                .map(t => awardsByActor[t.id] || 0);
+            // OVER TEACHERS WHO AWARD, NOT EVERY STAFF RECORD (2026-10-01).
+            // This counted everyone, zeros included, on the reasoning that a
+            // median over only the active would flatter the school. In practice
+            // the zeros were admins, campus aides and vacancies -- people whose
+            // job is not awarding -- and they set the bar. See
+            // cashGoalStaffCounts.
+            const staffCounts = cashGoalStaffCounts(teachers, awardsByActor);
             const staffMedian = R.median(staffCounts);
             const myAwards = (currentUser && awardsByActor[currentUser.id]) || 0;
 
+            // PER SCHOOL DAY (2026-10-01). This divided a thirty-CALENDAR-day
+            // count by thirty: eight or so weekend days nobody awards on, and
+            // -- while the history is younger than the window -- the days
+            // before the cutoff, which hold no rows at all. Both made the goal
+            // too low. Weekdays only, from the later of the window's start and
+            // the cutoff, on the school's calendar day as the attendance
+            // screens count it. Holidays are not subtracted, as there: that
+            // errs toward a goal slightly too low, never too high.
+            const windowStart = (_historyCutoffMs !== null && _historyCutoffMs > since) ? _historyCutoffMs : since;
+            const schoolDays = R.schoolDaysElapsed(wcIsoDay(new Date(windowStart)), wcIsoDay(new Date()));
+
             // Today's goal, derived from what the typical colleague does rather
             // than a number I picked. Rises as the school takes the system up.
-            const goal = R.dailyGoal(staffCounts, QUIET_WINDOW_DAYS);
+            // None at all until there are enough colleagues to call typical.
+            const goal = staffCounts.length >= CASH_GOAL_MIN_STAFF
+                ? R.dailyGoal(staffCounts, Math.max(1, schoolDays))
+                : null;
             const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
             const myToday = moves.filter(t => {
+                if (cashBehaviourKind(t, _quietReversedIds) !== 'award') return false;
                 const actor = t.teacherId || t.addedBy || t.removedBy;
                 return actor && currentUser && actor === currentUser.id &&
                        new Date(t.timestamp).getTime() >= todayStart.getTime();
             }).length;
+
+            // The goal is its own panel -- the goal is about the adult and the
+            // list below is about children, and they are read at different
+            // moments. Drawn BEFORE the roster check (2026-10-01), so a person
+            // with no classes gets their own figure rather than whatever the
+            // last person on this Chromebook left in the panel. Private to
+            // whoever is signed in: their count, and a median with no names.
+            //
+            // NO GOAL ON A SATURDAY OR A SUNDAY (2026-10-01). The goal is per
+            // school day now, so a weekend asked for "N more awards" on a day
+            // with no school. The school's calendar day, as schoolDays above.
+            const todayDow = new Date().getDay();
+            wcRenderDailyGoal({ goal: goal, today: myToday, mine: myAwards,
+                                median: staffMedian, schoolDays: schoolDays,
+                                noSchool: todayDow === 0 || todayDow === 6 });
 
             const scoped = R.scopeStudents({
                 students: schoolStudents,
@@ -41338,11 +42008,6 @@
             });
             const rows = res.never.concat(res.quiet);
             panel.hidden = false;
-
-            // The goal is its own panel now -- the goal is about the adult
-            // and this list is about children, and they are read at different
-            // moments. wcRenderDailyGoal draws it.
-            wcRenderDailyGoal({ goal: goal, today: myToday, mine: myAwards, median: staffMedian });
 
             if (!rows.length) {
                 if (chip) chip.textContent = 'all noticed';
@@ -41366,10 +42031,17 @@
                 const grade = st.grade ? 'Grade ' + escapeHtml(String(st.grade)) : '';
                 // Two different facts, said differently. "0 awards" is not a low
                 // score, it is no score, and a teacher reads them differently.
+                //
+                // AWARDS ARE AWARDS (2026-10-01). This printed r.total -- awards
+                // AND deductions -- as "awards", so a child with five awards and
+                // one deduction read "6 awards". The mistake Today's goal made;
+                // the two counts are now said separately.
                 const note = r.total === 0
                     ? '<span class="wc-quiet-never">never awarded</span>'
-                    : '<span class="wc-quiet-few">' + r.total + ' award' + (r.total === 1 ? '' : 's') +
-                      ' &middot; ' + Math.round(r.positivity * 100) + '% positive</span>';
+                    : '<span class="wc-quiet-few">' + r.positive + ' award' + (r.positive === 1 ? '' : 's') +
+                      (r.negative
+                          ? ' &middot; ' + r.negative + ' deduction' + (r.negative === 1 ? '' : 's')
+                          : '') + '</span>';
                 return '<button type="button" class="wc-quiet-row" ' +
                        'onclick="openStudentProfile(\'' + escapeHtml(String(st.id)) + '\')" ' +
                        'aria-label="Open ' + name + '">' +
@@ -42384,12 +43056,20 @@
                     return actor && currentUser && actor === currentUser.id;
                 });
 
+            // Which of those are behaviours, and of which kind -- one rule for
+            // the tile and the gauge below, the same as Cash Analytics.
+            const _weekReversedIds = reversedCashIds();
+
             // Awarded, not net. A teacher wants to know what they gave out;
             // netting deductions against it answers a different question and
             // makes a busy week look like a quiet one.
+            //
+            // AWARDS, NOT EVERY CREDIT (2026-10-01). This summed any positive
+            // amount, so a store refund or a withdrawn deduction counted as
+            // cash awarded this week.
             const cashAwarded = cashThisWeek
-                .filter(t => (Number(t.amount) || 0) > 0)
-                .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+                .filter(t => cashBehaviourKind(t, _weekReversedIds) === 'award')
+                .reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
 
             const openReferrals = (typeof visibleReferrals === 'function')
                 ? visibleReferrals().filter(r => r && r.status !== 'closed').length
@@ -42480,32 +43160,55 @@
             const gaugeVal = document.getElementById('dashGaugeValue');
             const legs = document.getElementById('dashGaugeLegs');
 
-            const positives = cashThisWeek.filter(t => (Number(t.amount) || 0) > 0).length;
-            const negatives = cashThisWeek.filter(t => (Number(t.amount) || 0) < 0).length;
+            // The arrow to Cash Analytics, for the people whose gauge is the
+            // school's: admins and the PBIS team (2026-10-01). It was
+            // .admin-only, so the PBIS lead -- the person the ratio is for --
+            // had no way from the gauge to the figures behind it.
+            const gaugeLink = document.getElementById('dashGaugeAnalyticsBtn');
+            if (gaugeLink) gaugeLink.style.display = cashStaffViewsAllowed() ? '' : 'none';
+
+            // REAL BEHAVIOUR ONLY, BY KIND (2026-10-01). This counted every row
+            // by its sign with no filter at all: each Power-Up Pass a child
+            // bought was a "corrective", a refund or a withdrawn deduction was
+            // a "positive", and a school-wide gauge in the week of a store sale
+            // read as a week of discipline.
+            const positives = cashThisWeek.filter(t => cashBehaviourKind(t, _weekReversedIds) === 'award').length;
+            const negatives = cashThisWeek.filter(t => cashBehaviourKind(t, _weekReversedIds) === 'deduct').length;
 
             // Against a target of five. Nothing awarded at all is NOT a ratio
             // of zero -- it is no measurement, and 0:1 would accuse a teacher
             // of something they have not done.
-            const RATIO_TARGET = 5;
-            const ratio = (positives === 0 && negatives === 0)
-                ? null
-                : (negatives === 0 ? RATIO_TARGET : positives / negatives);
-            const rate = ratio === null ? null : Math.min(1, ratio / RATIO_TARGET);
+            //
+            // THE SAME RULE AS EVERY OTHER RATIO ON THE SITE (owner,
+            // 2026-10-01: "5 to 1"). cashRatioVerdict decides: no deductions
+            // reads "no deductions" and one to four read "too few deductions
+            // to judge", and neither fills the gauge. A teacher sees their OWN
+            // week here, and a full gauge for three awards and no corrections
+            // was the perfect score the rule says zero must never be. Rounded
+            // down by the same function, so this gauge and Trends never
+            // disagree about the same week ("4.9 to 1", not "5.0").
+            const RATIO_TARGET = CASH_RATIO_GOAL;
+            const nothingYet = positives === 0 && negatives === 0;
+            const verdict = cashRatioVerdict(positives, negatives);
+            const rate = verdict.ratio === null ? null : Math.min(1, verdict.ratio / RATIO_TARGET);
+            const ratioShown = verdict.ratio === null ? '' : verdict.label.replace(/ to 1$/, '');
 
-            wcSetGauge(gauge, rate, ratio === null
+            wcSetGauge(gauge, rate, nothingYet
                 ? 'Positive to corrective ratio: nothing awarded yet this week'
-                : `Positive to corrective ratio ${ratio.toFixed(1)} to 1, against a target of ${RATIO_TARGET}`);
+                : (verdict.ratio === null
+                    ? `Positive to corrective ratio: ${verdict.label} (${positives} positive, ${negatives} corrective this week)`
+                    : `Positive to corrective ratio ${ratioShown} to 1, against a target of ${RATIO_TARGET}`));
 
             if (gaugeVal) {
-                gaugeVal.innerHTML = ratio === null
+                gaugeVal.innerHTML = nothingYet
                     ? '<span class="wu-absent">no awards yet</span>'
-                    : (negatives === 0
-                        ? `${positives}<span style="font-size:.5em;"> : 0</span>`
-                        : `${ratio.toFixed(1)}<span style="font-size:.5em;"> : 1</span>`);
+                    : (verdict.ratio === null
+                        ? '<span class="wu-absent">' + escapeHtml(verdict.label) + '</span>'
+                        : `${escapeHtml(ratioShown)}<span style="font-size:.5em;"> : 1</span>`);
             }
 
             if (legs) {
-                legs.innerHTML = (ratio === null)
+                legs.innerHTML = nothingYet
                     ? '<p class="wu-absent">' + (seesAll
                         ? 'Nothing has been awarded this week yet.'
                         : 'You have not awarded anything this week yet.') + '</p>'
@@ -42753,7 +43456,10 @@
             const feed = document.getElementById('dashFeed');
             const filterRow = document.getElementById('dashFeedFilters');
             if (feed) {
-                const log = Array.isArray(auditLog) ? auditLog : [];
+                // Colleagues' cash by name is for admins and PBIS: see
+                // dashFeedEntriesFor. Scoped BEFORE the 20-entry window and the
+                // chips, so neither is built from rows this person cannot see.
+                const log = dashFeedEntriesFor(auditLog, currentUser);
                 // On today, the feed is what the reference's feed is: the most
                 // recent things that happened, each carrying its own date.
                 // Scoping it strictly to today made a busy school with six

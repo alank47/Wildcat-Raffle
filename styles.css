@@ -10200,3 +10200,42 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 .wds-enter-title { font-weight: 800; font-size: 15px; }
 .wds-enter-go { font-weight: 800; font-size: 13px; color: #f0b429; white-space: nowrap; }
 .store-look-btn { margin-left: 8px; }
+
+/* ---- Cash Analytics: one goal, 5 to 1 (2026-10-01) -----------------------
+   Awards to deductions against the 5 to 1 goal, written the same way on the
+   Teacher table, the two ratio tiles and Trends (cashRatioVerdict). Below the
+   goal is AMBER, never red: something to act on, not a failure. Too few
+   deductions, or none, carries no colour at all, because it is not a score. */
+.wc-ratio { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wc-ratio.is-meets { color: var(--wc-green-deep, #2E7D52); }
+.wc-ratio.is-below { color: var(--wc-amber-deep, #8A5A00); }
+.wc-ratio.is-neutral { color: var(--wc-gray-text, #5F5E5A); font-weight: 600; white-space: normal; }
+.wc-ratio-note {
+    display: block; margin-top: 2px;
+    font-size: 11.5px; font-weight: 500; color: var(--wc-gray-text, #5F5E5A);
+    white-space: nowrap;
+}
+/* "too few deductions to judge" is words, not a figure: the tile's 26px
+   numeral size would break it over three lines. */
+.stat-compact .stat-num.wc-ratio.is-neutral { font-size: 17px; line-height: 1.3; }
+
+/* ---- Cash Analytics: Trends (2026-10-01) ---------------------------------
+   Two week-by-week tables. Each scrolls sideways inside its own card
+   (.wu-scroll-x), so a phone at 375px gets a swipeable table and never a
+   page that slides. */
+.wc-trend-note { color: var(--wc-gray-text, #5F5E5A); font-size: 13px; line-height: 1.45; margin: 0 0 12px; }
+.wc-trend-table { width: 100%; }
+.wc-trend-table th,
+.wc-trend-table td { white-space: nowrap; vertical-align: top; }
+.wc-trend-table tbody th {
+    text-transform: none; letter-spacing: 0; font-size: 13.5px; font-weight: 650;
+    color: var(--wu-fg, #14161B);
+}
+.wc-trend-table td b { font-variant-numeric: tabular-nums; }
+.wc-trend-of { display: block; font-size: 11.5px; color: var(--wc-gray-text, #5F5E5A); }
+.wc-trend-tag {
+    display: block; width: max-content; margin-top: 3px; padding: 1px 7px;
+    border-radius: 999px; font-size: 11px; font-weight: 600;
+    background: var(--wu-surface-sunk, #EFF2F6); color: var(--wu-fg-dim, #5F6570);
+}
+.wc-trend-campus { background: rgba(47, 103, 167, 0.05); }

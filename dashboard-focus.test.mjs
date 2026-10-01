@@ -64,17 +64,20 @@ console.log("\nThe gauge measures the PBIS ratio");
 {
   const g = code.slice(code.indexOf("const gauge = document.getElementById('dashGauge')"),
                        code.indexOf("const days = document.getElementById('dashDays')"));
-  check("five positives to one correction is the target", /RATIO_TARGET = 5/.test(g));
+  check("five positives to one correction is the target",
+    /RATIO_TARGET = CASH_RATIO_GOAL/.test(g) && /const CASH_RATIO_GOAL = 5;/.test(code));
   check("it counts positive and corrective movements", /positives/.test(g) && /negatives/.test(g));
 
   // Nothing awarded is NOT a ratio of zero. 0:1 accuses a teacher of something
   // they have not done.
   check("nothing awarded reads as no measurement, not as a bad ratio",
-    /\(positives === 0 && negatives === 0\)\s*\n?\s*\? null/.test(g));
+    /const nothingYet = positives === 0 && negatives === 0;/.test(g) && /nothingYet\s*\?\s*'<span class="wu-absent">no awards yet/.test(g));
   check("and says so in words", /no awards yet/.test(g));
-  check("all-positive does not divide by zero",
-    /negatives === 0 \? RATIO_TARGET : positives \/ negatives/.test(g));
-  check("the gauge never exceeds full", /Math\.min\(1, ratio \/ RATIO_TARGET\)/.test(g));
+  // 2026-10-01: the shared 5 to 1 rule judges the gauge too, so no
+  // deductions (or one to four) is never a full gauge or a perfect score.
+  check("no deductions, or too few, are judged by the shared rule, never a full gauge",
+    /const verdict = cashRatioVerdict\(positives, negatives\);/.test(g) && /verdict\.ratio === null \? null/.test(g));
+  check("the gauge never exceeds full", /Math\.min\(1, verdict\.ratio \/ RATIO_TARGET\)/.test(g));
   check("the sub-rings show the two counts behind it",
     /wcSubring\('Positive'[\s\S]{0,160}wcSubring\('Corrective'/.test(g));
   check("nothing in it mentions jackpot", !/[Jj]ackpot/.test(g));

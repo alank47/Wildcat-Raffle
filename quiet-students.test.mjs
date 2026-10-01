@@ -171,8 +171,13 @@ console.log("\nThe teacher comparison uses a denominator that is fair");
   // comparison is per member of staff; the student threshold is per student.
   check("the student threshold is interactions per student",
     /schoolAverage = schoolStudents\.length[\s\S]{0,120}moves\.length \/ schoolStudents\.length/.test(app));
-  check("the teacher comparison is per member of staff, counting everyone",
-    /staffCounts = \(Array\.isArray\(teachers\)[\s\S]{0,120}awardsByActor\[t\.id\] \|\| 0\)/.test(app));
+  // CHANGED 2026-10-01 (the owner's "5 to 1" fixes). This pinned "counting
+  // everyone": every staff record, zeros included. Those zeros were admins,
+  // campus aides and vacancies, and they set the bar. The comparison is now
+  // over teacher accounts that gave an award -- see cashGoalStaffCounts, run
+  // for real in cash-analytics-fixes.test.mjs.
+  check("the teacher comparison is per teacher who awards, through one helper",
+    /staffCounts = cashGoalStaffCounts\(teachers, awardsByActor\)/.test(app));
   check("and the two are not confused with each other",
     /Same\s*\n?\s*\/\/ words, different denominators/.test(
       readFileSync(new URL("./script.js", import.meta.url), "utf8")));
@@ -239,8 +244,12 @@ console.log("\nThe goal and the comparison are on screen");
 
   check("the comparison uses the median, not the mean",
     /R\.median\(staffCounts\)/.test(app) && !/staffAverage/.test(app));
-  check("colleagues who awarded nothing are counted, so the bar is honest",
-    /teachers : \[\]\)\s*\n?\s*\.map\(t => awardsByActor\[t\.id\] \|\| 0\)/.test(app));
+  // CHANGED 2026-10-01. This pinned the opposite rule ("colleagues who awarded
+  // nothing are counted"). The owner's decision: the yardstick is teacher
+  // accounts with at least one award, so admins, PBIS, campus aides, vacancies
+  // and zero-award accounts no longer drag the goal to its floor.
+  check("only teacher accounts that gave an award set the bar",
+    /\.filter\(s => s && s\.role === 'teacher'\)[\s\S]{0,140}\.filter\(n => n > 0\)/.test(app));
   check("the goal comes from the same counts", /R\.dailyGoal\(staffCounts/.test(app));
   check("progress is today's awards, not the window's", /todayStart/.test(app));
   check("the bar is capped so it cannot overflow", /Math\.min\(today, goal\)/.test(app));

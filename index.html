@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20261001r">
-    <link rel="icon" href="favicon.ico?v=20261001r" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20261001r" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20261001r" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20261001s">
+    <link rel="icon" href="favicon.ico?v=20261001s" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20261001s" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20261001s" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20261001r">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20261001s">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20261001r">
+    <link rel="stylesheet" href="styles.css?v=20261001s">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20261001r">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20261001s">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20261001r">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20261001s">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20261001r" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20261001s" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -184,7 +184,7 @@
                      asset, so there is one logo to replace when the school
                      changes it. -->
                 <div class="wp-brand">
-                    <img src="assets/westbrook-logo.png?v=20261001r"
+                    <img src="assets/westbrook-logo.png?v=20261001s"
                          alt="Westbrook Academy" class="wp-brandlogo" id="wpBrandLogo">
                     <!-- The product's name, which appeared nowhere on the
                          student's screen while the teacher's topbar has said
@@ -412,7 +412,7 @@
         <header class="app-topbar">
             <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-menu"></use></svg></button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20261001r" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20261001s" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -619,7 +619,7 @@
                             <div class="wu-panel-head">
                                 <div>
                                     <h3 class="wu-panel-title">Today&rsquo;s goal</h3>
-                                    <p class="wu-panel-sub" id="dashGoalSub">Interactions with students today.</p>
+                                    <p class="wu-panel-sub" id="dashGoalSub">Awards you have given today.</p>
                                 </div>
                                 <span class="wu-chip" id="dashGoalChip"></span>
                             </div>
@@ -653,8 +653,13 @@
                             <!-- Went to Wildcat Jackpot when this panel measured
                                  Jackpot qualification. It measures the PBIS
                                  ratio now, so it opens the Cash analytics that
-                                 the ratio comes from. -->
-                            <button type="button" class="wu-action admin-only" aria-label="Open cash analytics"
+                                 the ratio comes from.
+                                 ADMINS AND PBIS (2026-10-01), not .admin-only:
+                                 the PBIS lead is who the ratio is for.
+                                 renderTeacherDashboard shows it through
+                                 cashStaffViewsAllowed; hidden until then. -->
+                            <button type="button" class="wu-action" id="dashGaugeAnalyticsBtn" aria-label="Open cash analytics"
+                                    style="display: none;"
                                     onclick="switchTab('cashAnalytics')">&#8599;</button>
                             <div class="wu-panel-body wc-gauge-body">
                                 <!-- The three caps are what give the arc its
@@ -4619,7 +4624,10 @@
                     <button class="analytics-subtab active" onclick="switchAnalyticsSubtab('dashboard')" id="dashboardSubtab" style="padding: 10px 20px; background: #C08A2E; border: none; border-radius: 6px 6px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap;">
                         <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-trending-up"></use></svg> Data Dashboard
                     </button>
-                    <button class="analytics-subtab" onclick="switchAnalyticsSubtab('teacherInteractions')" id="teacherInteractionsSubtab" style="padding: 10px 20px; background: #f5f5f5; color: #333; border: none; border-radius: 6px 6px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap;">
+                    <!-- Names colleagues: admins and the PBIS team only
+                         (2026-10-01). Hidden here and shown by
+                         applyCashAnalyticsGate, so nobody else sees it flash. -->
+                    <button class="analytics-subtab" onclick="switchAnalyticsSubtab('teacherInteractions')" id="teacherInteractionsSubtab" style="display: none; padding: 10px 20px; background: #f5f5f5; color: #333; border: none; border-radius: 6px 6px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap;">
                         <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-teachers"></use></svg> Teacher Interactions
                     </button>
                     <button class="analytics-subtab" onclick="switchAnalyticsSubtab('transactions')" id="transactionsSubtab" style="padding: 10px 20px; background: #f5f5f5; color: #333; border: none; border-radius: 6px 6px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap;">
@@ -4676,11 +4684,13 @@
                             <div style="font-size: 12px; opacity: 0.8;">Total behaviors received</div>
                         </div>
                         
-                        <!-- Average Positivity Ratio -->
+                        <!-- Awards to deductions, against the 5 to 1 goal
+                             (2026-10-01; was a positivity percentage).
+                             Filled by setCashRatioTile. -->
                         <div class="wc-card wc-stat stat-compact">
-                            <div class="stat-label"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-check-circle"></use></svg> Avg Positivity Ratio</div>
-                            <div class="stat-num" id="avgPositivityRatio">0%</div>
-                            <div style="font-size: 12px; opacity: 0.8;">Positive vs total behaviors</div>
+                            <div class="stat-label"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-check-circle"></use></svg> Awards to Deductions</div>
+                            <div class="stat-num" id="avgPositivityRatio">&mdash;</div>
+                            <div id="avgPositivityRatioNote" style="font-size: 12px; opacity: 0.8;">Goal: 5 to 1</div>
                         </div>
                         
                         <!-- Average Dollars per Student -->
@@ -4744,8 +4754,9 @@
                             <div class="stat-num" id="teacherInteractionsTotalNegative">0</div>
                         </div>
                         <div class="wc-card wc-stat stat-compact">
-                            <div class="stat-label">Avg Positivity Ratio</div>
-                            <div class="stat-num" id="teacherInteractionsPositivityRatio">0%</div>
+                            <div class="stat-label">Awards to Deductions</div>
+                            <div class="stat-num" id="teacherInteractionsPositivityRatio">&mdash;</div>
+                            <div id="teacherInteractionsRatioNote" style="font-size: 12px; opacity: 0.8;">Goal: 5 to 1</div>
                         </div>
                     </div>
 
@@ -4760,7 +4771,7 @@
                                         <th>Total Interactions</th>
                                         <th>Positive</th>
                                         <th>Negative</th>
-                                        <th>Positivity %</th>
+                                        <th>Awards to Deductions (goal: 5 to 1)</th>
                                         <th>$ Awarded</th>
                                         <th>$ Deducted</th>
                                         <th>Students Impacted</th>
@@ -4850,12 +4861,14 @@
                     </div>
                 </div>
                 
-                <!-- Trends Subtab -->
+                <!-- Trends Subtab. THE SCHOOL, WEEK BY WEEK (2026-10-01): staff
+                     who gave an award, awards and deductions against 5 to 1,
+                     and students awarded by grade with Middle School beside
+                     High School. School-wide and nameless, so open to everyone
+                     who can open this tab. Drawn by renderCashTrends from the
+                     ledger already loaded. -->
                 <div id="analyticsTrends" class="analytics-subtab-content" style="display: none;">
-                    <div class="wc-card panel-card">
-                        <h3>Trends Over Time</h3>
-                        <p style="color: #666;">Trend analysis will be displayed here.</p>
-                    </div>
+                    <div id="cashTrendsBody"></div>
                 </div>
                 
                 <div id="cashAnalyticsDetails"></div>
@@ -4883,6 +4896,11 @@
                 <div id="cashArrivalPanel"></div>
 
                 <div id="cashDriftPanel"></div>
+
+                <!-- WHOSE ROWS (2026-10-01). Below admin and PBIS this log
+                     shows a person their own entries only; this says so,
+                     filled by updateCashAuditLogTable. -->
+                <p id="cashAuditScopeNote" class="wc-trend-note" style="display: none;"></p>
 
                 <div class="search-bar">
                     <input type="text" id="searchCashAudit" placeholder="Search by student, teacher, or behavior..." onkeyup="searchCashAuditLog()">
@@ -6218,24 +6236,24 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20261001r"></script>
+    <script src="wildcat-auth.js?v=20261001s"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
     <!-- The icon sprite. Injected at load, before anything renders, so an
          icon is never a blank square for a frame. -->
-    <script src="wildcat-icons.js?v=20261001r"></script>
-    <script src="wildcat-motion.js?v=20261001r"></script>
-    <script src="wildcat-discipline.js?v=20261001r"></script>
-    <script src="wildcat-audit.js?v=20261001r"></script>
-    <script src="wildcat-cashaudit.js?v=20261001r"></script>
-    <script src="wildcat-dirty.js?v=20261001r"></script>
-    <script src="wildcat-update.js?v=20261001r"></script>
-    <script src="wildcat-modes.js?v=20261001r"></script>
-    <script src="wildcat-merge.js?v=20261001r"></script>
-    <script src="wildcat-savequeue.js?v=20261001r"></script>
-    <script src="wildcat-roster.js?v=20261001r"></script>
-    <script src="wildcat-store.js?v=20261001r"></script>
-    <script src="script.js?v=20261001r"></script>
+    <script src="wildcat-icons.js?v=20261001s"></script>
+    <script src="wildcat-motion.js?v=20261001s"></script>
+    <script src="wildcat-discipline.js?v=20261001s"></script>
+    <script src="wildcat-audit.js?v=20261001s"></script>
+    <script src="wildcat-cashaudit.js?v=20261001s"></script>
+    <script src="wildcat-dirty.js?v=20261001s"></script>
+    <script src="wildcat-update.js?v=20261001s"></script>
+    <script src="wildcat-modes.js?v=20261001s"></script>
+    <script src="wildcat-merge.js?v=20261001s"></script>
+    <script src="wildcat-savequeue.js?v=20261001s"></script>
+    <script src="wildcat-roster.js?v=20261001s"></script>
+    <script src="wildcat-store.js?v=20261001s"></script>
+    <script src="script.js?v=20261001s"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -6245,7 +6263,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20261001r').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20261001s').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {
