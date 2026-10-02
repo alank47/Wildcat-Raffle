@@ -96,6 +96,20 @@ export const rebuild = internalAction({
     if (!host || !id || !secret || !schoolid || !yearid) {
       return { ok: false, reason: "PowerSchool settings are not all present in this deployment." };
     }
+    // A PARTIAL REBUILD IS REFUSED (review, 2026-10-02). With { since } the
+    // read covers only the recent days, but every table below is CLEARED and
+    // rewritten from that read -- psAttendanceDays, the totals, the day
+    // totals and the perfect attendance marks would all lose every earlier
+    // date. The owner: no data from this year or last may be lost. `since`
+    // stays usable for measuring, with dryRun.
+    if (since && dryRun !== true) {
+      return {
+        ok: false,
+        reason: "A rebuild with { since } would replace the whole year's tables with only the days it "
+          + "read, wiping every earlier date. Refused; nothing was read or written. Run it without "
+          + "since, or with dryRun: true to measure.",
+      };
+    }
     const syncedAt = new Date().toISOString();
     const tok = await token(host, id, secret);
 
@@ -218,7 +232,8 @@ export const rebuild = internalAction({
         ok: false,
         reason: `attendance paged out at ${att.pages} pages (${att.rows.length} rows), so the read is `
           + `truncated and the newest dates are missing. Nothing was written and the previous `
-          + `calendar is untouched. Raise MAX_PAGES or pass { since } to read only recent days.`,
+          + `calendar is untouched. Raise MAX_PAGES (a partial { since } rebuild is refused: it `
+          + `would wipe every earlier date).`,
         attendanceRows: att.rows.length,
         attendancePages: att.pages,
       };
@@ -232,11 +247,29 @@ export const rebuild = internalAction({
     let unmappedCc = 0, unmappedStudent = 0;
     // The per-student marks for the perfect attendance rollup, accumulated in
     // this same pass.
-    type Marks = { absent: Set<string>; exAbsent: Set<string>; tardy: Set<string>; exTardy: Set<string> };
+    //
+    // THE UNEXCUSED DATES ARE RECORDED, NOT WORKED OUT LATER (2026-10-01). The
+    // owner: excused tardies must not cost a child perfect attendance. A day
+    // can carry an Excused Tardy in one period and a plain Tardy in another,
+    // and "tardy dates minus excused tardy dates" forgives that whole day,
+    // plain tardy included. Only here, block by block, is the difference
+    // visible, so a date goes in unexTardy when at least one of its tardy
+    // blocks is NOT excused -- and the same for absences, so the excused
+    // absences switch can be exact too.
+    type Marks = {
+      absent: Set<string>; exAbsent: Set<string>; unexAbsent: Set<string>;
+      tardy: Set<string>; exTardy: Set<string>; unexTardy: Set<string>;
+    };
     const marksOf = new Map<string, Marks>();
     const marksFor = (num: string) => {
       let m = marksOf.get(num);
-      if (!m) { m = { absent: new Set(), exAbsent: new Set(), tardy: new Set(), exTardy: new Set() }; marksOf.set(num, m); }
+      if (!m) {
+        m = {
+          absent: new Set(), exAbsent: new Set(), unexAbsent: new Set(),
+          tardy: new Set(), exTardy: new Set(), unexTardy: new Set(),
+        };
+        marksOf.set(num, m);
+      }
       return m;
     };
 
@@ -258,8 +291,14 @@ export const rebuild = internalAction({
         if (isAbsent || isTardy) {
           const m = marksFor(numAny);
           const excused = excusedCode.has(code);
-          if (isAbsent) { m.absent.add(date); if (excused) m.exAbsent.add(date); }
-          if (isTardy) { m.tardy.add(date); if (excused) m.exTardy.add(date); }
+          if (isAbsent) {
+            m.absent.add(date);
+            if (excused) m.exAbsent.add(date); else m.unexAbsent.add(date);
+          }
+          if (isTardy) {
+            m.tardy.add(date);
+            if (excused) m.exTardy.add(date); else m.unexTardy.add(date);
+          }
         }
       }
 
@@ -452,6 +491,11 @@ export const rebuild = internalAction({
         excusedAbsentDates: m ? sorted(m.exAbsent) : [],
         tardyDates: m ? sorted(m.tardy) : [],
         excusedTardyDates: m ? sorted(m.exTardy) : [],
+        // Always written, [] included: an empty list here is a fact ("never
+        // late without an excuse"), where a missing one means "not rebuilt
+        // since 2026-10-01" and sends the browser to its approximation.
+        unexcusedAbsentDates: m ? sorted(m.unexAbsent) : [],
+        unexcusedTardyDates: m ? sorted(m.unexTardy) : [],
       };
     });
     for (let pass = 0; pass < 20; pass++) {

@@ -1266,20 +1266,37 @@ export const perfectCounts = internalQuery({
       students: rows.length,
       windows: windows.map((w) => {
         let perfect = 0, noAbsences = 0, forgiving = 0, ineligible = 0;
+        let perfectCountingExcusedTardies = 0;
         for (const r of rows) {
           const entry = String(r.entryDate ?? "");
           if (entry && entry > w.from) { ineligible++; continue; }
           const a = inWin(r.absentDates, w.from, w.to);
           const t = inWin(r.tardyDates, w.from, w.to);
-          const ua = (r.absentDates ?? []).some((d) =>
-            d >= w.from && d <= w.to && !(r.excusedAbsentDates ?? []).includes(d));
-          const ut = (r.tardyDates ?? []).some((d) =>
-            d >= w.from && d <= w.to && !(r.excusedTardyDates ?? []).includes(d));
+          // THE SHIPPED RULE SINCE 2026-10-01: an excused tardy never breaks
+          // it. The unexcused lists are exact once the rebuild has written
+          // them. A row not rebuilt yet keeps today's rule EXACTLY, as the
+          // screen does (wildcat-roster.js perfectVerdict, review 2026-10-02):
+          // every tardy counts strictly, and the subtraction applies only to
+          // the forgiving count.
+          const ua = r.unexcusedAbsentDates
+            ? inWin(r.unexcusedAbsentDates, w.from, w.to)
+            : (r.absentDates ?? []).some((d) =>
+              d >= w.from && d <= w.to && !(r.excusedAbsentDates ?? []).includes(d));
+          const exactUt = r.unexcusedTardyDates ? inWin(r.unexcusedTardyDates, w.from, w.to) : null;
+          const strictT = exactUt !== null ? exactUt : t;
+          const forgivingT = exactUt !== null ? exactUt
+            : (r.tardyDates ?? []).some((d) =>
+              d >= w.from && d <= w.to && !(r.excusedTardyDates ?? []).includes(d));
           if (!a) noAbsences++;
-          if (!a && !t) perfect++;
-          if (!ua && !ut) forgiving++;
+          if (!a && !strictT) perfect++;
+          // The rule before 2026-10-01, kept so the change can be measured.
+          if (!a && !t) perfectCountingExcusedTardies++;
+          if (!ua && !forgivingT) forgiving++;
         }
-        return { ...w, eligible: rows.length - ineligible, ineligible, perfect, noAbsences, forgiving };
+        return {
+          ...w, eligible: rows.length - ineligible, ineligible, perfect, noAbsences, forgiving,
+          perfectCountingExcusedTardies,
+        };
       }),
     };
   },

@@ -533,7 +533,8 @@ console.log("\nTHE SHEET IS THE SCREEN, ON PAPER\n");
   check("unticked, it is one page in exactly the screen's order",
     pages.length === 1 && pageRows(pages[0]).map((r) => r.id).join(",") === onScreen.join(","));
   check("...headed with the period alone", pages[0].includes("<h2>Perfect Attendance — September 2026</h2>"));
-  check("...and the whole school's count", /All grades · No absences and no tardies; excused absences and tardies still count · 6 of 8 eligible students \(75%\)/.test(pages[0]));
+  // Rule wording re-pinned 2026-10-01: excused tardies left the switch.
+  check("...and the whole school's count", /All grades · No absences and no tardies \(excused tardies do not count\); excused absences still count · 6 of 8 eligible students \(75%\)/.test(pages[0]));
   check("it says when it was printed and when PowerSchool was last read",
     / · printed [^·<]+ · attendance last read from PowerSchool [^<]+<\/p>/.test(pages[0]));
   check("students print Last, First",
@@ -553,7 +554,7 @@ console.log("\nTHE SHEET IS THE SCREEN, ON PAPER\n");
   check("one grade: one page, no grade-per-page option",
     pages.length === 1 && !/Start each grade/.test(sheetOf(dom).innerHTML));
   check("...the sub-line names the grade and the forgiving rule",
-    /<p class="print-sub">1 to 30 Sep 2026 · Grade 7 · No absences and no tardies; excused ones forgiven · 3 of 4 eligible students \(75%\)/.test(pages[0]));
+    /<p class="print-sub">1 to 30 Sep 2026 · Grade 7 · No absences and no tardies \(excused tardies do not count\); excused absences forgiven · 3 of 4 eligible students \(75%\)/.test(pages[0]));
   check("...and only that grade's students, in the screen's order",
     pageRows(pages[0]).map((r) => r.id).join(",") === screenIds(dom).join(",") && screenIds(dom).join(",") === "1002,1001,1005");
   check("the file name names the grade", app.perfectSheetFileName(app.shown) === "Perfect Attendance - September 2026 - Grade 7");
@@ -866,13 +867,89 @@ console.log("\nPER-GRADE PAGES FOLLOW THE EXCUSED SETTING\n");
   const sep = R.perfectMonthWindow("2026-09", "2026-10-01", "2026-08-12");
   const want = ["6", "7", "8", "(none)"].map((g) => R.perfectList(
     ROWS.filter((r) => (String(r.gradeLevel).trim() || "(none)") === g), sep, { countExcused: false }).counts);
-  check("forgiving, Ivy's excused absence keeps her on the screen", ids.includes("1007") && /excused ones forgiven/.test(screen));
+  check("forgiving, Ivy's excused absence keeps her on the screen", ids.includes("1007") && /excused absences forgiven/.test(screen));
   check("...and each grade's page counts by the SAME rule as the screen",
     pages.length === 4 && want.every((c, i) => pages[i].includes(
       `${c.perfect} of ${c.eligible} eligible student${c.eligible === 1 ? "" : "s"} (${c.pct}%)`)),
     pages.map((p) => (p.match(/\d+ of \d+ eligible students? \([\d.]+%\)/) || ["?"])[0]).join(" | "));
   check("...so Grade 6 reads 1 of 1, not 0 of 1 with a name under it",
     /1 of 1 eligible student \(100%\)/.test(pages[0]) && pageRows(pages[0]).some((r) => r.id === "1007"));
+}
+
+// EXCUSED TARDIES NEVER COUNT (owner, 2026-10-01), as the screen draws it and
+// the paper prints it. excused-tardy.test.mjs covers the rule and the rebuild;
+// this is the same rule through renderPerfectAttendance and the sheet.
+const ET_DAY = "2026-09-22";
+const ET_ROWS = [
+  // Rebuilt rows, with the exact unexcused lists.
+  student({ studentNumber: "3001", firstName: "Kai", gradeLevel: "7", tardyDates: [ET_DAY], excusedTardyDates: [ET_DAY],
+            unexcusedTardyDates: [], unexcusedAbsentDates: [] }),
+  student({ studentNumber: "3002", firstName: "Lia", gradeLevel: "7", tardyDates: [ET_DAY], excusedTardyDates: [ET_DAY],
+            unexcusedTardyDates: [ET_DAY], unexcusedAbsentDates: [] }),
+  student({ studentNumber: "3005", firstName: "Ola", gradeLevel: "7", absentDates: [ET_DAY], excusedAbsentDates: [ET_DAY],
+            unexcusedAbsentDates: [], unexcusedTardyDates: [] }),
+  student({ studentNumber: "3006", firstName: "Pia", gradeLevel: "7", absentDates: [ET_DAY], excusedAbsentDates: [ET_DAY],
+            unexcusedAbsentDates: [ET_DAY], unexcusedTardyDates: [] }),
+  // Rows written before the rebuild added those lists.
+  student({ studentNumber: "3003", firstName: "Mo", gradeLevel: "7", tardyDates: [ET_DAY], excusedTardyDates: [ET_DAY] }),
+  student({ studentNumber: "3004", firstName: "Ned", gradeLevel: "7", tardyDates: [ET_DAY] }),
+];
+const ET_MARKS = { allowed: true, rows: ET_ROWS, lastSyncedAt: "2026-10-01T19:30:00Z", truncated: false };
+
+/** The panel over ET_ROWS for one window, with the box set; the sheet opened on it. */
+async function excusedTardyScreen(src, win, strict) {
+  const { app, dom } = buildScreen(src, { today: "2026-10-01", yearStart: "2026-08-12" });
+  app.cache = ET_MARKS;
+  dom.fixed.attPerfectExcused.checked = strict;
+  app.setPerfectWindow(win === "week" || win === "year" ? win : "month");
+  if (win !== "week" && win !== "year") app.setPerfectMonth(win);
+  await app.renderPerfectAttendance();
+  const screen = dom.fixed.attPerfectBody.innerHTML;
+  const ids = screenIds(dom).slice().sort();
+  app.openPerfectAttendanceSheet();
+  return { screen, ids, pages: sheetPages(dom) };
+}
+
+console.log("\nEXCUSED TARDIES, ON SCREEN AND ON PAPER\n");
+{
+  for (const win of ["week", "2026-09", "year"]) {
+    const s = await excusedTardyScreen(scriptSrc, win, true);
+    // Kai's row is rebuilt: forgiven. Mo's is not yet: today's rule until the
+    // rebuild that runs straight after the deploy (review, 2026-10-02).
+    check(`${win}, box ticked: a rebuilt row's excused tardy is on the list; an un-rebuilt one waits`,
+      s.ids.includes("3001") && !s.ids.includes("3003"), s.ids.join(","));
+    check(`${win}, box ticked: a plain tardy, a same-day T and D, and any absence are not`,
+      !["3002", "3004", "3005", "3006"].some((id) => s.ids.includes(id)), s.ids.join(","));
+  }
+  const strict = await excusedTardyScreen(scriptSrc, "2026-09", true);
+  check("the sentence states the whole rule, ticked",
+    /1<\/strong> of 6 students \(16\.7%\) had no absences and no tardies \(excused tardies do not count\); excused absences still count\./
+      .test(strict.screen), strict.screen.slice(0, 400));
+  check("...the footnote counts the tardies that count (Lia, Ned, and Mo until his rebuild) and the absences (Ola and Pia)",
+    /3 more had no absences but at least one unexcused tardy\. 2 missed class with no unexcused tardy, and 0 had both\./
+      .test(strict.screen));
+  check("...and the paper prints the same rule",
+    strict.pages.length > 0 && strict.pages.every((p) =>
+      p.includes("No absences and no tardies (excused tardies do not count); excused absences still count")));
+
+  const forgiving = await excusedTardyScreen(scriptSrc, "2026-09", false);
+  check("unticked, the excused absence joins the list; nothing changes for tardies",
+    forgiving.ids.join(",") === "3001,3003,3005", forgiving.ids.join(","));
+  check("...a day with an excused AND a plain absence still keeps Pia off", !forgiving.ids.includes("3006"));
+  check("...the sentence says so",
+    /had no absences and no tardies \(excused tardies do not count\); excused absences forgiven\./.test(forgiving.screen));
+  check("...and the paper too",
+    forgiving.pages.every((p) => p.includes("No absences and no tardies (excused tardies do not count); excused absences forgiven")));
+  const oct = await excusedTardyScreen(scriptSrc, "2026-10", true);
+  check("October carries none of September's marks", oct.ids.join(",") === "3001,3002,3003,3004,3005,3006",
+    oct.ids.join(","));
+}
+{
+  // TEETH: a screen sentence that always says "still count".
+  const src = breakOnce(scriptSrc, "+ (strict ? 'still count' : 'forgiven') + '.'", "+ 'still count' + '.'", "screen-rule");
+  const s = await excusedTardyScreen(src, "2026-09", false);
+  check("TEETH: a forgiving screen that claims excused absences still count is caught",
+    !/excused absences forgiven\./.test(s.screen));
 }
 
 console.log("\nA GRADE THAT IS MARKUP PRINTS AS TEXT\n");

@@ -480,6 +480,10 @@ export const absenceWindow = query({
  * dropdown, and whether "excused" breaks perfection is a switch the owner
  * asked for on the screen. Sending the rule to the server would put a deploy
  * between a headteacher and a question about their own school.
+ *
+ * The unexcused dates (2026-10-01) are facts in the same sense, not a rule:
+ * which days had a mark that was NOT excused, recorded per block by the
+ * rebuild because the browser cannot recover it from the other four lists.
  */
 export const attendanceMarks = query({
   args: {},
@@ -522,6 +526,12 @@ export const attendanceMarks = query({
         excusedAbsentDates: r.excusedAbsentDates ?? [],
         tardyDates: r.tardyDates ?? [],
         excusedTardyDates: r.excusedTardyDates ?? [],
+        // NULL, NEVER [], for a row the rebuild has not refilled since
+        // 2026-10-01. An empty list says "never late without an excuse", and
+        // defaulting to it would put every late child on the award list until
+        // the next rebuild. Null sends the browser to its approximation.
+        unexcusedAbsentDates: r.unexcusedAbsentDates ?? null,
+        unexcusedTardyDates: r.unexcusedTardyDates ?? null,
       })),
     };
   },

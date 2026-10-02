@@ -1331,6 +1331,14 @@
   // it on the screen: strict by default, forgiving on request, because a
   // school argues about that one every year and it must not need a developer.
   // Year to date the choice is 36 students against 63.
+  //
+  // EXCUSED TARDIES ARE SETTLED, AND NO LONGER PART OF THAT SWITCH (owner,
+  // 2026-10-01: "Can we not count Excused Tardies in Perfect Attendance? And
+  // make it retroactive to September?"). An Excused Tardy (code D) never
+  // breaks perfect attendance in any window; a plain Tardy (T) always does,
+  // even on a day that also had an excused one. The switch now covers excused
+  // ABSENCES only. (The 36-against-63 above was measured with tardies in the
+  // switch, so it is not today's choice.)
   // =====================================================================
 
   /** A day, in the school's own calendar terms, from "YYYY-MM-DD". */
@@ -1414,11 +1422,18 @@
     return out;
   }
 
+  /** `list` without any date in `drop`. */
+  function withoutDates(list, drop) {
+    return list.filter(function (d) { return drop.indexOf(d) === -1; });
+  }
+
   /**
    * Was this student perfect over this window, and if not, why not?
    *
-   * `countExcused` true means an excused absence or tardy still breaks it --
-   * the strict reading, and the default.
+   * `countExcused` true means an excused ABSENCE still breaks it -- the
+   * strict reading, and the default. It has no say over tardies since
+   * 2026-10-01: an excused tardy never breaks it, an unexcused one always
+   * does.
    *
    * ELIGIBILITY IS PART OF THE ANSWER, not a filter applied elsewhere. A
    * student who enrolled on 2026-09-15 has no year to be perfect over, and
@@ -1434,11 +1449,36 @@
 
     var absences = datesInWindow(r.absentDates, win);
     var tardies = datesInWindow(r.tardyDates, win);
+
+    // ONLY AN UNEXCUSED TARDY BREAKS IT, in every window (owner, 2026-10-01).
+    // unexcusedTardyDates is exact: the rebuild puts a date there when at
+    // least one of that day's tardy blocks was not excused, so a plain Tardy
+    // still counts on a day that also had an Excused one.
+    if (Array.isArray(r.unexcusedTardyDates)) {
+      tardies = datesInWindow(r.unexcusedTardyDates, win);
+    } else if (!countExcused) {
+      // A ROW THE REBUILD HAS NOT REFILLED YET keeps today's rule EXACTLY
+      // (review, 2026-10-02): every tardy counts with the box ticked, and with
+      // it unticked excused ones are forgiven by subtraction, as they always
+      // were. The new rule's subtraction under the ticked box forgave a day
+      // with BOTH kinds and put a child late without an excuse on a list that
+      // may be printed; this way the switch-over adds nobody, and the exact
+      // rule arrives with the rebuild run straight after the deploy.
+      tardies = withoutDates(tardies, datesInWindow(r.excusedTardyDates, win));
+    }
+    //
+    // RETROACTIVE BY CONSTRUCTION. Nothing is stored per month or per week:
+    // every list is worked out from these marks each time it is drawn, so the
+    // rule reaches September, and every other window, with nothing to redo.
+
+    // THE SWITCH IS ABOUT EXCUSED ABSENCES ONLY. Forgiving, a day breaks it
+    // only if it had an absence that was not excused -- exactly, from
+    // unexcusedAbsentDates, or by the same approximation as above for a row
+    // the rebuild has not refilled yet.
     if (!countExcused) {
-      var exA = datesInWindow(r.excusedAbsentDates, win);
-      var exT = datesInWindow(r.excusedTardyDates, win);
-      absences = absences.filter(function (d) { return exA.indexOf(d) === -1; });
-      tardies = tardies.filter(function (d) { return exT.indexOf(d) === -1; });
+      absences = Array.isArray(r.unexcusedAbsentDates)
+        ? datesInWindow(r.unexcusedAbsentDates, win)
+        : withoutDates(absences, datesInWindow(r.excusedAbsentDates, win));
     }
 
     var entry = String(r.entryDate || '').slice(0, 10);

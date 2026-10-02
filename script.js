@@ -33397,7 +33397,7 @@
 
         const ATT_VIEW_SUBTITLES = {
             watch: 'Chronic absence and tardiness, worst first',
-            perfect: 'Students with no absences and no tardies',
+            perfect: 'Students with no absences and no unexcused tardies',
             subgroup: 'Chronic absence by student group, against the school\'s own rate',
             rate: 'Attendance rate by week and month, against its median'
         };
@@ -35188,8 +35188,11 @@
                 + fmt(win.to) + '</strong>. '
                 + '<strong>' + c.perfect + '</strong> of ' + c.eligible + ' students'
                 + (c.eligible ? ' (' + c.pct + '%)' : '')
-                + ' had no absences and no tardies'
-                + (strict ? '' : ', excused ones forgiven') + '.'
+                // THE RULE, IN FULL (2026-10-01). Excused tardies never count;
+                // the box above is about excused absences only, and the
+                // sentence says which way it is set.
+                + ' had no absences and no tardies (excused tardies do not count); excused absences '
+                + (strict ? 'still count' : 'forgiven') + '.'
                 // THE DENOMINATOR IS ON SCREEN. "35 students" means nothing
                 // without "of 586", and a list that quietly shrank because a
                 // sync broke would otherwise read as a bad week.
@@ -35203,7 +35206,7 @@
                 html += '<p class="wu-absent">Nobody has a clean record for this period'
                     + (grade === 'all' ? '' : ' in this grade') + '. '
                     + c.brokenByTardy + ' student' + (c.brokenByTardy === 1 ? '' : 's')
-                    + ' missed out on lateness alone.</p>';
+                    + ' missed out on unexcused tardies alone.</p>';
                 body.innerHTML = html;
                 return;
             }
@@ -35226,9 +35229,11 @@
             // the filtering and a headteacher looking at a short list should
             // be able to see that without being told.
             html += '<p class="wc-att-foot">'
-                + c.brokenByTardy + ' more had no absences but were late at least once. '
-                + c.brokenByAbsence + ' missed class without being late, and '
-                + c.brokenByBoth + ' did both.'
+                // "Unexcused" since 2026-10-01: an excused tardy breaks
+                // nothing, so it is not what kept anyone off.
+                + c.brokenByTardy + ' more had no absences but at least one unexcused tardy. '
+                + c.brokenByAbsence + ' missed class with no unexcused tardy, and '
+                + c.brokenByBoth + ' had both.'
                 + (res.lastSyncedAt
                     ? ' Attendance last read from PowerSchool ' + escapeHtml(wcClockAt(res.lastSyncedAt)) + '.'
                     : '')
@@ -35370,8 +35375,10 @@
             if (synced && !isNaN(synced.getTime())) {
                 readAt = synced.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
             }
-            const rule = 'No absences and no tardies; '
-                + (view.strict ? 'excused absences and tardies still count' : 'excused ones forgiven');
+            // The screen's rule, word for word (2026-10-01): paper read at an
+            // assembly must say the same thing the screen did.
+            const rule = 'No absences and no tardies (excused tardies do not count); excused absences '
+                + (view.strict ? 'still count' : 'forgiven');
 
             // ONE PAGE PER GRADE, each with its own count, so a page handed to
             // a grade lead stands on its own. The names on each page are the

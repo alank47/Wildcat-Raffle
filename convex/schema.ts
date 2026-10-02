@@ -861,6 +861,22 @@ export default defineSchema({
     /** Every date carrying at least one tardy-coded block. Sorted, unique. */
     tardyDates: v.array(v.string()),
     excusedTardyDates: v.array(v.string()),
+    /**
+     * Dates carrying at least one absence block, or one tardy block, whose
+     * code was NOT excused (2026-10-01). Not "all minus excused": a day with
+     * an Excused Tardy in one period and a plain Tardy in another is in
+     * excusedTardyDates AND here, because the plain one still breaks perfect
+     * attendance. OPTIONAL because rows written before 2026-10-01 lack them
+     * until the next rebuild refills the table; until then the browser keeps
+     * the rule from before the change for that row.
+     *
+     * KEEP THESE TWO FIELDS EVEN IF THE FEATURE IS EVER UNDONE: Convex checks
+     * stored rows against the schema on a push, so removing them while rows
+     * carry them is refused (and so is sisStats.replaceAttendanceMarks's
+     * validator, mid-rebuild, after it has cleared the table).
+     */
+    unexcusedAbsentDates: v.optional(v.array(v.string())),
+    unexcusedTardyDates: v.optional(v.array(v.string())),
     syncedAt: v.string(),
   })
     .index("by_studentNumber", ["studentNumber"])

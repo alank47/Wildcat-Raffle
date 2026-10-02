@@ -755,6 +755,11 @@ export const replaceAttendanceMarks = internalMutation({
         excusedAbsentDates: v.array(v.string()),
         tardyDates: v.array(v.string()),
         excusedTardyDates: v.array(v.string()),
+        // 2026-10-01, for excused tardies. Declared here as well as in the
+        // schema, or the rebuild's writes are refused AFTER its clear has
+        // emptied the table, and the perfect attendance list goes blank.
+        unexcusedAbsentDates: v.optional(v.array(v.string())),
+        unexcusedTardyDates: v.optional(v.array(v.string())),
       }),
     ),
   },
