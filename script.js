@@ -30812,6 +30812,58 @@
             showToast(`✅ ${receiptId} fulfilled`, 'success');
         }
 
+        /**
+         * TAKE A HANDOVER BACK (owner, 2026-10-02: "I need a way to unfulfill
+         * something in the store"). The Middle School Power-Up Pass event was
+         * cancelled after a pass had been marked handed over, and a fulfilled
+         * receipt could not be cancelled, so the child could not be refunded.
+         *
+         * ADMINS ONLY, like Cancel: reopening a receipt is the first half of
+         * handing money back. It moves NO money itself -- the receipt returns to
+         * Awaiting pickup and the refund, if due, is the ordinary Cancel, with
+         * its reset-boundary check and its single refund row. The undo is kept
+         * on the receipt (WildcatStore.applyUnfulfill), never erased.
+         */
+        async function unfulfillReceipt(receiptId) {
+            if (!correctionIsAdmin()) {
+                showAlert('⚠️ Only an admin can undo a handover.');
+                return;
+            }
+            await storePullWithin(5000);
+            const idx = cashReceipts.findIndex(r => r.id === receiptId);
+            if (idx === -1) { alert('⚠️ Receipt not found'); return; }
+            const receipt = cashReceipts[idx];
+            const verdict = window.WildcatStore.canUnfulfill(receipt);
+            if (!verdict.allowed) { alert('⚠️ ' + verdict.reason); return; }
+
+            const reason = await showPrompt(
+                `Undo the handover of receipt ${receiptId} (${receipt.rewardName}, ${receipt.studentName})?\n\n` +
+                `It goes back to "Awaiting pickup". No money moves. To refund ` +
+                `$${receipt.totalCost}, press Cancel on it afterwards.\n\n` +
+                `Reason:`);
+            if (reason === null) return;
+
+            // AGAIN, after the question, on the server's copy: another desk may
+            // have undone or cancelled it while this prompt was open.
+            await storePullWithin(5000);
+            const idxNow = cashReceipts.findIndex(r => r.id === receiptId);
+            if (idxNow === -1) { alert('⚠️ Receipt not found'); return; }
+            const recheck = window.WildcatStore.canUnfulfill(cashReceipts[idxNow]);
+            if (!recheck.allowed) { alert('⚠️ ' + recheck.reason); return; }
+
+            cashReceipts[idxNow] = window.WildcatStore.applyUnfulfill(
+                cashReceipts[idxNow], Date.now(), currentUser || {}, reason
+            );
+            const undo = cashReceipts[idxNow].unfulfilled[cashReceipts[idxNow].unfulfilled.length - 1];
+            addToAuditLog('reward_unfulfilled', receipt.studentId, 'Wildcat Cash',
+                receipt.totalCost,
+                `Undid the handover of ${receipt.rewardName}, receipt ${receiptId}. ${undo.reason}`);
+            saveData();
+            updateReceiptsTable();
+            showToast(`${receiptId} is back to Awaiting pickup. Press Cancel on it to refund $${receipt.totalCost}.`,
+                'success', 9000);
+        }
+
         async function cancelReceipt(receiptId) {
             // ADMINS ONLY (the owner's call, 2026-09-27). A cancel hands money
             // back, and on a one-per-student item it also hands the child
@@ -30968,7 +31020,12 @@
                         ? `<button class="btn btn-sm btn-secondary" onclick="cancelReceipt('${r.id}')">Cancel</button>`
                         : '')
                     : r.status === 'fulfilled'
-                        ? `<span class="receipt-meta">by ${escapeHtml(r.fulfilledBy || '')}</span>`
+                        ? `<span class="receipt-meta">by ${escapeHtml(r.fulfilledBy || '')}</span>` +
+                          // Undo is the first half of a refund, so admins only,
+                          // like Cancel (2026-10-02).
+                          (canCancelHere
+                            ? `<button class="btn btn-sm btn-secondary" onclick="unfulfillReceipt('${r.id}')">Unfulfill</button>`
+                            : '')
                         : `<span class="receipt-meta">${escapeHtml(r.cancelReason || '')}</span>`;
                 return `
                     <tr>
@@ -42641,6 +42698,7 @@
             'undid award':                   'undo',
             'deleted ticket entry':          'undo',
             'reward_cancelled':              'undo',
+            'reward_unfulfilled':            'undo',
             // Two actions, not one: wildcat-cashaudit.js keys a static SIGN off
             // the action, so a single 'cash_reversal' would have to carry
             // sign 0 and would render every reversal as "+$0".

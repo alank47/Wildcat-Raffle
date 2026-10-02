@@ -406,5 +406,48 @@ console.log("\nYear end rollover");
   check("and reports a zero total rather than NaN", empty.counts.totalBalance === 0);
 }
 
+console.log("\nTaking a handover back, then refunding (2026-10-02)");
+{
+  // The Middle School Power-Up Pass event was cancelled after a pass had been
+  // marked handed over. A fulfilled receipt cannot be cancelled, so the child
+  // could not be refunded. Unfulfil reopens it; the ordinary Cancel refunds.
+  const st = student();
+  const bought = S.buildPurchase({ student: st, reward: reward(), actor: ACTOR, now: NOW, rand: seq }).receipt;
+  const given = S.applyFulfill(bought, NOW + 60000, { name: "Front Office" });
+  check("a handed-over receipt can be unfulfilled", S.canUnfulfill(given).allowed === true);
+  check("an issued receipt cannot (nothing to undo)", S.canUnfulfill(bought).allowed === false);
+
+  const LATER = NOW + 86400000;
+  const back = S.applyUnfulfill(given, LATER, { name: "Admin One" }, "Event cancelled for Middle School");
+  check("unfulfilling puts it back to Awaiting pickup", back.status === "issued");
+  check("...and clears the current handover", back.fulfilledAt === null && back.fulfilledBy === null);
+  check("...but KEEPS the history: who handed it over, when, who undid it and why",
+    Array.isArray(back.unfulfilled) && back.unfulfilled.length === 1 &&
+    back.unfulfilled[0].wasFulfilledBy === "Front Office" && back.unfulfilled[0].wasFulfilledAt === given.fulfilledAt &&
+    back.unfulfilled[0].by === "Admin One" && back.unfulfilled[0].reason === "Event cancelled for Middle School");
+  check("...and moves updatedAt forward, so the server keeps it (the fulfilment-lost bug)",
+    Date.parse(back.updatedAt) === LATER && Date.parse(back.updatedAt) > Date.parse(given.updatedAt));
+  check("...without changing what was paid", back.totalCost === given.totalCost && back.id === given.id);
+  check("the original object is not mutated", given.status === "fulfilled" && !given.unfulfilled);
+  check("unfulfilling moves no money: it returns a receipt, not a transaction",
+    !("transactionRequest" in Object(back)) && back.status === "issued");
+  check("a reopened receipt cannot be unfulfilled again", S.canUnfulfill(back).allowed === false);
+
+  const res = S.buildCancel({ receipt: back, student: st, reason: "Event cancelled", actor: ACTOR, now: LATER + 1000 });
+  check("once reopened, Cancel is allowed and refunds the full price ONCE",
+    res.ok === true && res.receipt.status === "cancelled" && res.transactionRequest && res.transactionRequest.amount === 1000);
+  check("...the refund names the receipt", res.transactionRequest.notes.includes(bought.id));
+  check("...and the undo history survives the cancel", res.receipt.unfulfilled && res.receipt.unfulfilled.length === 1);
+  check("a cancelled receipt cannot be unfulfilled", S.canUnfulfill(res.receipt).allowed === false);
+  check("...or cancelled again (no second refund)", S.canCancel(res.receipt).allowed === false);
+
+  // Handed over again after an undo, then undone again: both undos are kept.
+  const again = S.applyUnfulfill(S.applyFulfill(back, LATER + 5000, { name: "Desk 2" }), LATER + 9000, { name: "Admin Two" }, "Wrong student");
+  check("a second undo appends, it does not overwrite", again.unfulfilled.length === 2 &&
+    again.unfulfilled[1].wasFulfilledBy === "Desk 2" && again.unfulfilled[0].by === "Admin One");
+  check("an undo with no reason says so", S.applyUnfulfill(given, LATER, { name: "A" }, "  ").unfulfilled[0].reason === "No reason given");
+  check("a missing receipt is refused", S.canUnfulfill(null).allowed === false);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -176,6 +176,30 @@ console.log("\nTHE RECEIPTS DESK\n");
   check("the Cancel button is only drawn for an admin",
     /const canCancelHere = correctionIsAdmin\(\);/.test(script) && /\(canCancelHere\s*\?\s*`<button[^`]*cancelReceipt/.test(script));
 
+  // UNFULFIL (2026-10-02): admins only, reads the server's copy before and
+  // after the question, moves no money, and is drawn only for admins on a
+  // handed-over receipt.
+  const undo = lift("unfulfillReceipt");
+  check("unfulfil is refused to anyone but an admin, before anything else happens",
+    /^function unfulfillReceipt\(receiptId\) \{\s*(\/\/[^\n]*\n\s*)*if \(!correctionIsAdmin\(\)\)/.test(undo));
+  const firstPull = undo.indexOf("await storePullWithin(");
+  const secondPull = undo.indexOf("await storePullWithin(", firstPull + 1);
+  check("...re-reads the receipts before deciding, and again after the reason is asked",
+    firstPull > -1 && firstPull < undo.indexOf("cashReceipts.findIndex(") &&
+    secondPull > undo.indexOf("showPrompt(") && secondPull < undo.indexOf("applyUnfulfill("));
+  check("...and checks canUnfulfill on the fresh copy, not the one the question was asked about",
+    /const recheck = window\.WildcatStore\.canUnfulfill\(cashReceipts\[idxNow\]\);/.test(undo));
+  check("...and moves no money (no refund, no cash transaction)",
+    !/recordCashTransaction|buildCancel|transactionRequest/.test(undo));
+  check("...and is written to the audit log as its own action",
+    /addToAuditLog\('reward_unfulfilled'/.test(undo));
+  check("the Unfulfill button is drawn only for an admin, on a handed-over receipt",
+    /r\.status === 'fulfilled'[\s\S]{0,400}\(canCancelHere\s*\?\s*`<button[^`]*unfulfillReceipt/.test(script));
+  const audit = readFileSync(new URL("./wildcat-cashaudit.js", import.meta.url), "utf8");
+  check("the Cash Audit Log knows the action, with no money sign",
+    /'reward_unfulfilled'/.test(audit) && /reward_unfulfilled:\s*\{[^}]*sign: 0/.test(audit));
+  check("the home feed files it under undo", /'reward_unfulfilled':\s*'undo'/.test(script));
+
   const tabs = script.slice(script.indexOf("} else if (tabName === 'rewardsStore') {"), script.indexOf("} else if (tabName === 'studentAccounts') {"));
   check("opening either store tab re-reads both lists",
     /openStoreTab\('rewardsStore'\)/.test(tabs) && /openStoreTab\('receipts'\)/.test(tabs));

@@ -29,6 +29,7 @@
     'reward_redemption',
     'reward_fulfilled',
     'reward_cancelled',
+    'reward_unfulfilled',
     'reset_all_student_cash',
     'cash_recount',
     'cash_drift_detected',
@@ -43,6 +44,9 @@
     reward_redemption:      { label: 'Reward Redeemed', icon: '🎁', cls: 'act-redeem', sign: -1 },
     reward_fulfilled:       { label: 'Reward Given',    icon: '✅', cls: 'act-redeem', sign: 0 },
     reward_cancelled:       { label: 'Reward Cancelled',icon: '↩️', cls: 'act-other',  sign: 1 },
+    // A handover taken back (2026-10-02). No money moves -- the refund, if
+    // any, is the Cancel that follows -- so sign 0, like reward_fulfilled.
+    reward_unfulfilled:     { label: 'Handover Undone', icon: '↩️', cls: 'act-other',  sign: 0 },
     reset_all_student_cash: { label: 'System Reset',    icon: '🔄', cls: 'act-reset',  sign: 0 },
     // A counter correction, not a movement: the recount derives the four cash
     // counters from transactions that were already there. sign 0 because no

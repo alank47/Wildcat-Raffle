@@ -633,6 +633,67 @@
     return next;
   }
 
+  // ---------------------------------------------------------------------
+  // Taking a handover back (2026-10-02)
+  //
+  // The owner: "I need a way to unfulfill something in the store. I want to
+  // refund a student her money since the power up pass event was cancelled
+  // for middle school." A fulfilled receipt is terminal, and canCancel
+  // refuses it on purpose -- cancelling a handed-over item would refund money
+  // without the item coming back. When the thing bought turns out not to
+  // happen at all (a cancelled event), or the receipt was marked handed over
+  // by mistake, an admin needs the receipt open again.
+  //
+  // UNFULFIL ONLY REOPENS. It moves no money and does not cancel: the receipt
+  // goes back to 'issued' (Awaiting pickup), and the refund, if one is due,
+  // is the existing Cancel -- with its reset-boundary check and its single
+  // refund row. One path hands money back, not two.
+  //
+  // NOTHING IS ERASED. Each undo appends {at, by, reason, wasFulfilledAt,
+  // wasFulfilledBy} to `unfulfilled`, so "handed over by X at Y, taken back
+  // by Z because ..." stays on the receipt.
+  // ---------------------------------------------------------------------
+
+  function canUnfulfill(receipt) {
+    if (!receipt) return { allowed: false, reason: 'Receipt not found.' };
+    if (receipt.status === 'issued') {
+      return { allowed: false, reason: 'That receipt has not been handed over yet, so there is nothing to undo.' };
+    }
+    if (receipt.status === 'cancelled') {
+      return { allowed: false, reason: 'That receipt was cancelled.' };
+    }
+    if (receipt.status !== 'fulfilled') {
+      return { allowed: false, reason: 'That receipt is not marked as handed over.' };
+    }
+    return { allowed: true };
+  }
+
+  /**
+   * Reopen a handed-over receipt. Returns a NEW receipt; the caller replaces.
+   * updatedAt moves with it for the reason applyFulfill gives: a state change
+   * on a row saved by id that does not bump updatedAt is silently undone by
+   * the server's merge on the next load.
+   */
+  function applyUnfulfill(receipt, now, actor, reason) {
+    var next = {};
+    for (var k in receipt) if (Object.prototype.hasOwnProperty.call(receipt, k)) next[k] = receipt[k];
+    var at = new Date(now).toISOString();
+    var history = Array.isArray(receipt.unfulfilled) ? receipt.unfulfilled.slice() : [];
+    history.push({
+      at: at,
+      by: trimmed(actor && (actor.name || actor.username)) || 'Unknown',
+      reason: trimmed(reason) || 'No reason given',
+      wasFulfilledAt: receipt.fulfilledAt || null,
+      wasFulfilledBy: receipt.fulfilledBy || null
+    });
+    next.unfulfilled = history;
+    next.status = 'issued';
+    next.fulfilledAt = null;
+    next.fulfilledBy = null;
+    next.updatedAt = at;
+    return next;
+  }
+
   function canCancel(receipt) {
     if (!receipt) return { allowed: false, reason: 'Receipt not found.' };
     if (TERMINAL_RECEIPT_STATES.indexOf(receipt.status) !== -1) {
@@ -1061,6 +1122,8 @@
     buildPurchase: buildPurchase,
     canFulfill: canFulfill,
     applyFulfill: applyFulfill,
+    canUnfulfill: canUnfulfill,
+    applyUnfulfill: applyUnfulfill,
     canCancel: canCancel,
     buildCancel: buildCancel,
     cancelRefundVerdict: cancelRefundVerdict,

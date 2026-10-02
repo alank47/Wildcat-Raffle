@@ -925,7 +925,10 @@ console.log("\n5. Trends: the school, week by week");
 console.log("\n6. Version stamps and wiring");
 {
   const stamps = [...html.matchAll(/\?v=([0-9a-z]+)/g)].map((m) => m[1]);
-  check("all 26 stamps moved to 20261001s together", stamps.length === 26 && stamps.every((s) => s === "20261001s"),
+  // NOT PINNED TO ONE VALUE (2026-10-02): every later publish bumps the stamp
+  // again. All 26 must move together, and never back behind this release.
+  check("all 26 stamps moved together, at or past 20261001s",
+    stamps.length === 26 && new Set(stamps).size === 1 && stamps[0] >= "20261001s",
     [...new Set(stamps)].join(","));
   check("this test runs right after cash-audit.test.mjs",
     /node cash-audit\.test\.mjs && node cash-analytics-fixes\.test\.mjs/.test(pkg.scripts.test));
