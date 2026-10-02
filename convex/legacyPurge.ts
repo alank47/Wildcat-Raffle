@@ -3201,16 +3201,25 @@ export const receiptStatusDrift = internalQuery({
     };
     const fulfilled = idsIn("reward_fulfilled");
     const cancelled = idsIn("reward_cancelled");
+    // How many handovers the log records per receipt (an undo can be
+    // followed by another handover).
+    const fulfilledCount = new Map<string, number>();
+    for (const a of audit as any[]) {
+      if (String(a.payload?.action ?? "") !== "reward_fulfilled") continue;
+      const m = String(a.payload?.reason ?? "").match(/receipt ([A-Za-z0-9_-]+)/);
+      if (m) fulfilledCount.set(m[1], (fulfilledCount.get(m[1]) ?? 0) + 1);
+    }
 
     const drift: any[] = [];
     for (const r of receipts as any[]) {
       const id = String(r.id ?? "");
       const status = String(r.status ?? "");
-      // A HANDOVER TAKEN BACK (2026-10-02) is not a lost fulfilment: the
-      // receipt carries its undo history, so a fulfilled audit line with a
-      // stored status of issued or cancelled is the expected result.
-      const undone = Array.isArray(r.unfulfilled) && r.unfulfilled.length > 0;
-      const saysFulfilled = fulfilled.has(id) && !undone;
+      // A HANDOVER TAKEN BACK (2026-10-02) is not a lost fulfilment. Counted,
+      // not skipped (final review): the log says "fulfilled" only when it
+      // records more handovers than the receipt records undos, so a SECOND
+      // handover that was lost after an undo is still reported.
+      const undos = Array.isArray(r.unfulfilled) ? r.unfulfilled.length : 0;
+      const saysFulfilled = (fulfilledCount.get(id) ?? 0) > undos;
       const saysCancelled = cancelled.has(id);
       if (saysFulfilled && status !== "fulfilled") {
         drift.push({ id, storedStatus: status, auditSays: "fulfilled", hasUpdatedAt: !!r.updatedAt });

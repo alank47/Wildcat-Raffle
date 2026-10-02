@@ -146,7 +146,7 @@ console.log("\nTHE RECEIPTS DESK\n");
   const merge = new Function("window", "getRewards", "setRewards", "getReceipts", "setReceipts",
     lift("mergeStoreLists")
       .replace(/wildcatCashRewards = /, "setRewards(").replace(/window\.WildcatMerge\.mergeById\(normalized, wildcatCashRewards\);/, "window.WildcatMerge.mergeById(normalized, getRewards()));")
-      .replace(/cashReceipts = window\.WildcatMerge\.mergeById\(serverReceipts, cashReceipts\)/, "setReceipts(window.WildcatMerge.mergeById(serverReceipts, getReceipts())")
+      .replace(/cashReceipts = window\.WildcatStore\.mergeReceipts\(serverReceipts, cashReceipts\)/, "setReceipts(window.WildcatStore.mergeReceipts(serverReceipts, getReceipts())")
       .replace(/\.sort\(\(a, b\) => new Date\(a\.purchasedAt\) - new Date\(b\.purchasedAt\)\);/, ".sort((a, b) => new Date(a.purchasedAt) - new Date(b.purchasedAt)));")
     + "\nreturn mergeStoreLists;")({ WildcatStore: WS, WildcatMerge: WM },
       () => wildcatCashRewards, (v) => { wildcatCashRewards = v; },
@@ -194,6 +194,22 @@ console.log("\nTHE RECEIPTS DESK\n");
   check("...re-reads the receipts before deciding, and again after the reason is asked",
     firstPull > -1 && firstPull < undo.indexOf("cashReceipts.findIndex(") &&
     secondPull > undo.indexOf("showPrompt(") && secondPull < undo.indexOf("applyUnfulfill("));
+  // FINAL REVIEW, 2026-10-02: one refund per purchase, checked on the server's
+  // ledger; the tab follows the server's cancelled-wins rule.
+  check("cancel looks for an earlier refund on the server, and refuses if it cannot tell",
+    /const earlier = await findExistingReceiptRefund\(receiptId\);\s*if \(earlier\.unknown\)/.test(cancel)
+    && /refund: !alreadyRefunded,/.test(cancel));
+  check("...and an already-refunded purchase is cancelled pointing at THAT refund",
+    /if \(alreadyRefunded && !res\.receipt\.refundTxId\) res\.receipt\.refundTxId = alreadyRefunded\.id;/.test(cancel));
+  const finder = lift("findExistingReceiptRefund");
+  check("the earlier-refund check reads this week's and last week's ledger from the server",
+    /readLegacyDoc\('cash_tx_' \+ w\)/.test(finder) && /now - 7 \* 86400000/.test(finder) && /return \{ unknown: true/.test(finder));
+  check("unfulfil words its promise from the same check", /await findExistingReceiptRefund\(receiptId\)/.test(undo) && /it was already refunded/.test(undo));
+  check("the store refresh and the full loader both merge receipts by the server's rule",
+    /WildcatStore\.mergeReceipts\(serverReceipts, cashReceipts\)/.test(lift("mergeStoreLists"))
+    && (script.match(/WildcatStore\.mergeReceipts\(serverReceipts, cashReceipts\)/g) || []).length === 2);
+  check("a save the server answers with a kept-cancelled receipt makes the tab catch up",
+    /key === 'cashReceipts' && r && r\.keptCancelledReceipts > 0/.test(script));
   check("unfulfil refuses unless the server answered, before AND after the question",
     (undo.match(/if \(!\(await storePullWithin\(5000\)\)\)/g) || []).length === 2);
   check("...is refused in teacher view", /if \(isPreviewingTeacher\(\)\)/.test(undo));

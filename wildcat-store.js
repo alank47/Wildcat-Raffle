@@ -722,6 +722,59 @@
     return next;
   }
 
+  /**
+   * The receipt list a tab should hold, from the server's and its own: union
+   * by id, and where both hold a receipt, THE SERVER'S RULE (final review,
+   * 2026-10-02) -- a cancelled copy beats any copy that is not, whatever the
+   * stamps say; otherwise the later-touched copy, the server's on a tie. The
+   * server refuses to reopen a cancelled receipt, but a tab that merged by
+   * stamp alone kept its own later "fulfilled" copy for ever, and from that
+   * tab Unfulfil then Cancel refunded the purchase a second time.
+   */
+  function mergeReceipts(server, local) {
+    var byId = {}, order = [], loose = [];
+    function take(rows, isServer) {
+      (rows || []).forEach(function (r) {
+        if (!r) return;
+        var id = trimmed(r.id);
+        if (!id) { loose.push(r); return; }
+        if (!Object.prototype.hasOwnProperty.call(byId, id)) { byId[id] = r; order.push(id); return; }
+        var have = byId[id];
+        var haveC = have.status === 'cancelled', newC = r.status === 'cancelled';
+        if (haveC !== newC) { if (newC) byId[id] = r; return; }
+        // Same terminal-ness: the later-touched copy; the server's on a tie
+        // (the server's copies are taken first).
+        if (receiptTouched(r) > receiptTouched(have)) byId[id] = r;
+      });
+    }
+    take(server, true);
+    take(local, false);
+    return order.map(function (id) { return byId[id]; }).concat(loose);
+  }
+
+  /**
+   * The refund already made for a receipt, if any, from ledger rows (final
+   * review, 2026-10-02). A cancel's refund is its own ledger row and sticks
+   * even when the cancelled receipt does not -- two admins at once, a desk
+   * handing over at the same moment -- so the receipt's status alone cannot
+   * say whether the money already went back. buildCancel writes the row as
+   * behaviorId 'reward-refund:<reward>' with notes 'Cancelled receipt <id>. ...'.
+   */
+  function existingReceiptRefund(receiptId, rows) {
+    var id = trimmed(receiptId);
+    if (!id) return null;
+    var prefix = 'Cancelled receipt ' + id + '.';
+    var list = rows || [];
+    for (var i = 0; i < list.length; i++) {
+      var t = list[i];
+      if (!t) continue;
+      if (String(t.behaviorId || '').indexOf('reward-refund:') !== 0) continue;
+      if (String(t.notes || '').indexOf(prefix) !== 0) continue;
+      return { id: t.id || null, at: t.timestamp || null, amount: t.amount };
+    }
+    return null;
+  }
+
   function canCancel(receipt) {
     if (!receipt) return { allowed: false, reason: 'Receipt not found.' };
     if (TERMINAL_RECEIPT_STATES.indexOf(receipt.status) !== -1) {
@@ -1151,6 +1204,8 @@
     canFulfill: canFulfill,
     applyFulfill: applyFulfill,
     canUnfulfill: canUnfulfill,
+    mergeReceipts: mergeReceipts,
+    existingReceiptRefund: existingReceiptRefund,
     receiptTouched: receiptTouched,
     applyUnfulfill: applyUnfulfill,
     canCancel: canCancel,

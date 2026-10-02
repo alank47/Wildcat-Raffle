@@ -3932,14 +3932,14 @@
                         // rest of this loader uses, so a receipt raised on one
                         // device is not dropped by a save from another.
                         const serverReceipts = secondaryData.cashReceipts || [];
-                        if (cashReceipts && cashReceipts.length > 0 && window.WildcatMerge) {
-                            // THE NEWER COPY OF EACH RECEIPT WINS (review,
-                            // 2026-10-02), the rule mergeStoreLists and the
-                            // server already use. This kept the server's copy
-                            // on any matching id, so a reload in the moments
-                            // before a cancel or an undo had saved put the old
-                            // state back on screen -- inviting a second cancel.
-                            cashReceipts = window.WildcatMerge.mergeById(serverReceipts, cashReceipts)
+                        if (cashReceipts && cashReceipts.length > 0 && window.WildcatStore && window.WildcatStore.mergeReceipts) {
+                            // THE SERVER'S RULE FOR EACH RECEIPT (review,
+                            // 2026-10-02): a cancelled copy wins, then the
+                            // newer. This kept the server's copy on any
+                            // matching id, so a reload in the moments before a
+                            // cancel or an undo had saved put the old state
+                            // back on screen -- inviting a second cancel.
+                            cashReceipts = window.WildcatStore.mergeReceipts(serverReceipts, cashReceipts)
                                 .sort((a, b) => new Date(a.purchasedAt) - new Date(b.purchasedAt));
                         } else if (cashReceipts && cashReceipts.length > 0) {
                             const merged = [...serverReceipts];
@@ -5682,7 +5682,19 @@
                                 const sent = JSON.parse(JSON.stringify(value));
                                 secondaryWrites.push(
                                     mergeLegacySlice('secondary', key, sent, 'id')
-                                        .then(r => { saveDirty.markWritten('secondary:' + key, sent); return r; }));
+                                        .then(r => {
+                                            saveDirty.markWritten('secondary:' + key, sent);
+                                            // THE SERVER KEPT A RECEIPT CANCELLED that this
+                                            // tab still had open (2026-10-02): catch up now,
+                                            // rather than offer it for another refund.
+                                            if (key === 'cashReceipts' && r && r.keptCancelledReceipts > 0) {
+                                                pullStoreSlices().then(function () {
+                                                    if (typeof updateReceiptsTable === 'function') updateReceiptsTable();
+                                                });
+                                                showToast('A purchase on this screen had already been cancelled elsewhere. The list has been updated.', 'warn', 9000);
+                                            }
+                                            return r;
+                                        }));
                             }
 
                             const secondaryWholeValue = {
@@ -30172,7 +30184,9 @@
                 wildcatCashRewards = window.WildcatMerge.mergeById(normalized, wildcatCashRewards);
             }
             if (Array.isArray(serverReceipts)) {
-                cashReceipts = window.WildcatMerge.mergeById(serverReceipts, cashReceipts)
+                // The server's rule: a cancelled copy beats any other
+                // (WildcatStore.mergeReceipts), then the later-touched.
+                cashReceipts = window.WildcatStore.mergeReceipts(serverReceipts, cashReceipts)
                     .sort((a, b) => new Date(a.purchasedAt) - new Date(b.purchasedAt));
             }
         }
@@ -30822,6 +30836,35 @@
         }
 
         /**
+         * HAS THIS RECEIPT ALREADY BEEN REFUNDED? (final review, 2026-10-02)
+         *
+         * A cancel's refund is its own ledger row and survives even when the
+         * cancelled receipt does not -- two admins at once, or a desk handing
+         * the item over in the same seconds -- so the receipt's status alone
+         * cannot say whether the money already went back. Read from the
+         * server: this week's and last week's ledger (a racing refund is
+         * seconds old), plus what this tab holds. { refund } or { refund: null },
+         * or { unknown: true } when the server could not be read -- and then
+         * no refund is made.
+         */
+        async function findExistingReceiptRefund(receiptId) {
+            const rows = Array.isArray(cashTransactions) ? cashTransactions.slice() : [];
+            try {
+                const now = Date.now();
+                const weeks = new Set([cashWeekKey(new Date(now).toISOString()),
+                                       cashWeekKey(new Date(now - 7 * 86400000).toISOString())]);
+                for (const w of weeks) {
+                    const d = await readLegacyDoc('cash_tx_' + w);
+                    const tx = (d.data() || {}).transactions;
+                    if (Array.isArray(tx)) rows.push(...tx);
+                }
+            } catch (e) {
+                return { unknown: true, error: (e && e.message) || String(e) };
+            }
+            return { refund: window.WildcatStore.existingReceiptRefund(receiptId, rows) };
+        }
+
+        /**
          * TAKE A HANDOVER BACK (owner, 2026-10-02: "I need a way to unfulfill
          * something in the store"). The Middle School Power-Up Pass event was
          * cancelled after a pass had been marked handed over, and a fulfilled
@@ -30864,11 +30907,15 @@
             // Cancel will refuse.
             const refundVerdict = window.WildcatStore.cancelRefundVerdict(receipt, _historyCutoffMs);
             const studentFound = !!students.find(st => st.id === receipt.studentId);
-            const refundable = refundVerdict.allowed && studentFound;
+            const earlier = await findExistingReceiptRefund(receiptId);
+            const alreadyRefunded = !!(earlier && earlier.refund);
+            const refundable = refundVerdict.allowed && studentFound && !alreadyRefunded;
             const refundLine = refundable
                 ? `To refund $${receipt.totalCost}, press Cancel on it afterwards.`
                 : `\u26A0\uFE0F Cancel will NOT refund this one: ` +
-                  (refundVerdict.allowed ? 'no student record matches this receipt.' : refundVerdict.reason);
+                  (alreadyRefunded ? 'it was already refunded' + (earlier.refund.at ? ' on ' + new Date(earlier.refund.at).toLocaleString() : '') + '.'
+                   : !refundVerdict.allowed ? refundVerdict.reason
+                   : 'no student record matches this receipt.');
 
             const reason = await showPrompt(
                 `Undo the handover of receipt ${receiptId} (${receipt.rewardName}, ${receipt.studentName})?\n\n` +
@@ -30954,11 +31001,22 @@
             const recheck = window.WildcatStore.canCancel(fresh);
             if (!recheck.allowed) { alert('⚠️ ' + recheck.reason); return; }
 
+            // ONE REFUND PER PURCHASE, checked against the server's ledger
+            // (final review, 2026-10-02). If the money already went back -- a
+            // racing cancel whose receipt save lost -- cancel without paying it
+            // again; if the ledger cannot be read, do nothing at all.
+            const earlier = await findExistingReceiptRefund(receiptId);
+            if (earlier.unknown) {
+                showAlert('\u26A0\uFE0F Could not check this purchase for an earlier refund just now. Nothing was changed; try again in a moment.');
+                return;
+            }
+            const alreadyRefunded = earlier.refund;
+
             const student = students.find(s => s.id === fresh.studentId);
             // Built from the FRESH copy, so nothing added to it while the
             // prompt was open (an undo's history) is overwritten.
             const res = window.WildcatStore.buildCancel({
-                receipt: fresh, student, reason, refund: true,
+                receipt: fresh, student, reason, refund: !alreadyRefunded,
                 historyCutoffMs: _historyCutoffMs,
                 actor: currentUser || {}, now: Date.now()
             });
@@ -30970,6 +31028,9 @@
                 const refundTx = recordCashTransaction(res.transactionRequest);
                 if (refundTx) res.receipt.refundTxId = refundTx.id;
             }
+            // Already refunded: the cancelled receipt points at THAT refund, so
+            // it reads as refunded and nobody goes looking for the money.
+            if (alreadyRefunded && !res.receipt.refundTxId) res.receipt.refundTxId = alreadyRefunded.id;
             cashReceipts[idxNow] = res.receipt;
 
             addToAuditLog('reward_cancelled', receipt.studentId, 'Wildcat Cash',
@@ -30985,7 +31046,11 @@
             // cancelled, the message claimed a refund, and $100 never moved.
             // A success message that cannot see whether it succeeded is worse
             // than no message.
-            if (res.refunded && res.receipt.refundTxId) {
+            if (alreadyRefunded) {
+                showToast(`${receiptId} cancelled. It had ALREADY been refunded` +
+                    (alreadyRefunded.at ? ` on ${new Date(alreadyRefunded.at).toLocaleString()}` : '') +
+                    `, so no second refund was made.`, 'warn', 12000);
+            } else if (res.refunded && res.receipt.refundTxId) {
                 showToast(`${receiptId} cancelled and $${receipt.totalCost} refunded`, 'success');
             } else if (res.refundRefused) {
                 // REFUSED ON PURPOSE, which is a different message from the

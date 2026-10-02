@@ -475,5 +475,32 @@ console.log("\nA slow device clock cannot lose a handover, an undo or a cancel (
   check("receiptTouched reads the server's fields", S.receiptTouched({ updatedAt: "2026-10-02T10:00:00.000Z", submittedAt: "2026-10-02T11:00:00.000Z" }) === Date.parse("2026-10-02T11:00:00.000Z"));
 }
 
+console.log("\nOne cancelled copy wins, and an earlier refund is found (final review, 2026-10-02)");
+{
+  const A = "2026-10-02T16:00:00.000Z", B = "2026-10-02T16:05:00.000Z";
+  const serverCancelled = { id: "WC-1", status: "cancelled", refundTxId: "txn_1", updatedAt: A };
+  const tabFulfilled = { id: "WC-1", status: "fulfilled", updatedAt: B };       // later stamp, NOT cancelled
+  const m1 = S.mergeReceipts([serverCancelled], [tabFulfilled]);
+  check("the server's cancelled copy beats a tab's LATER fulfilled copy", m1.length === 1 && m1[0].status === "cancelled" && m1[0].refundTxId === "txn_1");
+  const m2 = S.mergeReceipts([{ id: "WC-1", status: "issued", updatedAt: A }], [{ id: "WC-1", status: "cancelled", updatedAt: "2026-10-02T15:00:00.000Z" }]);
+  check("...and a tab's cancelled copy beats the server's open one, even stamped earlier (the save is on its way)", m2[0].status === "cancelled");
+  const m3 = S.mergeReceipts([{ id: "WC-2", status: "issued", updatedAt: A }], [{ id: "WC-2", status: "fulfilled", updatedAt: B }]);
+  check("otherwise the later-touched copy wins", m3[0].status === "fulfilled");
+  const m4 = S.mergeReceipts([{ id: "WC-3", status: "issued", updatedAt: A, n: "server" }], [{ id: "WC-3", status: "issued", updatedAt: A, n: "tab" }]);
+  check("...the server's on a tie", m4[0].n === "server");
+  const m5 = S.mergeReceipts([{ id: "WC-4", status: "issued" }], [{ id: "WC-5", status: "issued" }, { status: "issued" }]);
+  check("rows only one side has are kept, the unidentified too", m5.length === 3 && m5[0].id === "WC-4" && m5[1].id === "WC-5");
+
+  const ledger = [
+    { id: "txn_a", behaviorId: "cash-1", notes: "Cancelled receipt WC-9. not a refund" },
+    { id: "txn_r", behaviorId: "reward-refund:rw1", notes: "Cancelled receipt WC-9. Event cancelled", timestamp: B, amount: 1500 },
+    { id: "txn_x", behaviorId: "reward-refund:rw1", notes: "Cancelled receipt WC-99. other" },
+  ];
+  const found = S.existingReceiptRefund("WC-9", ledger);
+  check("an earlier refund for the receipt is found in the ledger", found && found.id === "txn_r" && found.amount === 1500 && found.at === B);
+  check("...not a refund for a different receipt whose id merely starts the same", S.existingReceiptRefund("WC-1", [{ behaviorId: "reward-refund:x", notes: "Cancelled receipt WC-10. y" }]) === null);
+  check("...and nothing when there is none", S.existingReceiptRefund("WC-7", ledger) === null && S.existingReceiptRefund("", ledger) === null);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
