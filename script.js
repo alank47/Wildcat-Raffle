@@ -3932,7 +3932,16 @@
                         // rest of this loader uses, so a receipt raised on one
                         // device is not dropped by a save from another.
                         const serverReceipts = secondaryData.cashReceipts || [];
-                        if (cashReceipts && cashReceipts.length > 0) {
+                        if (cashReceipts && cashReceipts.length > 0 && window.WildcatMerge) {
+                            // THE NEWER COPY OF EACH RECEIPT WINS (review,
+                            // 2026-10-02), the rule mergeStoreLists and the
+                            // server already use. This kept the server's copy
+                            // on any matching id, so a reload in the moments
+                            // before a cancel or an undo had saved put the old
+                            // state back on screen -- inviting a second cancel.
+                            cashReceipts = window.WildcatMerge.mergeById(serverReceipts, cashReceipts)
+                                .sort((a, b) => new Date(a.purchasedAt) - new Date(b.purchasedAt));
+                        } else if (cashReceipts && cashReceipts.length > 0) {
                             const merged = [...serverReceipts];
                             cashReceipts.forEach(localReceipt => {
                                 if (!serverReceipts.find(r => r.id === localReceipt.id)) {
@@ -30826,26 +30835,53 @@
          */
         async function unfulfillReceipt(receiptId) {
             if (!correctionIsAdmin()) {
-                showAlert('⚠️ Only an admin can undo a handover.');
+                showAlert('\u26A0\uFE0F Only an admin can undo a handover.');
                 return;
             }
-            await storePullWithin(5000);
+            // Not while previewing a teacher: the change would be made under
+            // that person's name and saved after the preview ends.
+            if (isPreviewingTeacher()) {
+                showAlert('\u26A0\uFE0F Exit teacher view to undo a handover.');
+                return;
+            }
+            // CONFIRMED WITH THE SERVER, OR NOT AT ALL (review, 2026-10-02). A
+            // tab that cannot reach the server may hold a copy that is already
+            // cancelled and refunded there; acting on it is how one purchase
+            // could be refunded twice. (The server refuses to reopen a cancelled
+            // receipt too; this says so before anyone types a reason.)
+            if (!(await storePullWithin(5000))) {
+                showAlert('\u26A0\uFE0F Could not check this receipt with the server just now. Nothing was changed; try again in a moment.');
+                return;
+            }
             const idx = cashReceipts.findIndex(r => r.id === receiptId);
             if (idx === -1) { alert('⚠️ Receipt not found'); return; }
             const receipt = cashReceipts[idx];
             const verdict = window.WildcatStore.canUnfulfill(receipt);
             if (!verdict.allowed) { alert('⚠️ ' + verdict.reason); return; }
 
+            // WHAT CANCEL WILL DO AFTERWARDS, said truthfully (review): the same
+            // checks cancelReceipt makes, so this never promises a refund that
+            // Cancel will refuse.
+            const refundVerdict = window.WildcatStore.cancelRefundVerdict(receipt, _historyCutoffMs);
+            const studentFound = !!students.find(st => st.id === receipt.studentId);
+            const refundable = refundVerdict.allowed && studentFound;
+            const refundLine = refundable
+                ? `To refund $${receipt.totalCost}, press Cancel on it afterwards.`
+                : `\u26A0\uFE0F Cancel will NOT refund this one: ` +
+                  (refundVerdict.allowed ? 'no student record matches this receipt.' : refundVerdict.reason);
+
             const reason = await showPrompt(
                 `Undo the handover of receipt ${receiptId} (${receipt.rewardName}, ${receipt.studentName})?\n\n` +
-                `It goes back to "Awaiting pickup". No money moves. To refund ` +
-                `$${receipt.totalCost}, press Cancel on it afterwards.\n\n` +
+                `It goes back to "Awaiting pickup". No money moves. ${refundLine}\n\n` +
                 `Reason:`);
             if (reason === null) return;
 
             // AGAIN, after the question, on the server's copy: another desk may
             // have undone or cancelled it while this prompt was open.
-            await storePullWithin(5000);
+            if (!(await storePullWithin(5000))) {
+                showAlert('\u26A0\uFE0F Could not check this receipt with the server just now. Nothing was changed; try again in a moment.');
+                return;
+            }
             const idxNow = cashReceipts.findIndex(r => r.id === receiptId);
             if (idxNow === -1) { alert('⚠️ Receipt not found'); return; }
             const recheck = window.WildcatStore.canUnfulfill(cashReceipts[idxNow]);
@@ -30854,14 +30890,17 @@
             cashReceipts[idxNow] = window.WildcatStore.applyUnfulfill(
                 cashReceipts[idxNow], Date.now(), currentUser || {}, reason
             );
-            const undo = cashReceipts[idxNow].unfulfilled[cashReceipts[idxNow].unfulfilled.length - 1];
-            addToAuditLog('reward_unfulfilled', receipt.studentId, 'Wildcat Cash',
-                receipt.totalCost,
-                `Undid the handover of ${receipt.rewardName}, receipt ${receiptId}. ${undo.reason}`);
+            const undone = cashReceipts[idxNow];
+            const undo = undone.unfulfilled[undone.unfulfilled.length - 1];
+            addToAuditLog('reward_unfulfilled', undone.studentId, 'Wildcat Cash',
+                undone.totalCost,
+                `Undid the handover of ${undone.rewardName}, receipt ${receiptId}. ${undo.reason}`);
             saveData();
             updateReceiptsTable();
-            showToast(`${receiptId} is back to Awaiting pickup. Press Cancel on it to refund $${receipt.totalCost}.`,
-                'success', 9000);
+            showToast(refundable
+                ? `${receiptId} is back to Awaiting pickup. Press Cancel on it to refund $${undone.totalCost}.`
+                : `${receiptId} is back to Awaiting pickup. Cancel will not refund it -- see the reason on Cancel.`,
+                refundable ? 'success' : 'warn', 9000);
         }
 
         async function cancelReceipt(receiptId) {
@@ -30870,6 +30909,10 @@
             // their chance to buy again.
             if (!correctionIsAdmin()) {
                 showAlert('\u26A0\uFE0F Only an admin can cancel a purchase.');
+                return;
+            }
+            if (isPreviewingTeacher()) {
+                showAlert('\u26A0\uFE0F Exit teacher view to cancel a purchase.');
                 return;
             }
             await storePullWithin(5000);
@@ -30897,16 +30940,25 @@
 
             // AGAIN, after the question: another desk may have handed it over
             // or cancelled it while this prompt was open, and the 20-second
-            // refresh may have replaced the list. Decided on the fresh copy.
-            await storePullWithin(5000);
+            // refresh may have replaced the list. Decided on the fresh copy --
+            // and only once the server has actually answered (review,
+            // 2026-10-02): a cancel decided on a copy the server could not
+            // confirm is how one purchase could be refunded twice.
+            if (!(await storePullWithin(5000))) {
+                showAlert('\u26A0\uFE0F Could not check this receipt with the server just now. Nothing was changed; try again in a moment.');
+                return;
+            }
             const idxNow = cashReceipts.findIndex(r => r.id === receiptId);
             if (idxNow === -1) { alert('⚠️ Receipt not found'); return; }
-            const recheck = window.WildcatStore.canCancel(cashReceipts[idxNow]);
+            const fresh = cashReceipts[idxNow];
+            const recheck = window.WildcatStore.canCancel(fresh);
             if (!recheck.allowed) { alert('⚠️ ' + recheck.reason); return; }
 
-            const student = students.find(s => s.id === receipt.studentId);
+            const student = students.find(s => s.id === fresh.studentId);
+            // Built from the FRESH copy, so nothing added to it while the
+            // prompt was open (an undo's history) is overwritten.
             const res = window.WildcatStore.buildCancel({
-                receipt, student, reason, refund: true,
+                receipt: fresh, student, reason, refund: true,
                 historyCutoffMs: _historyCutoffMs,
                 actor: currentUser || {}, now: Date.now()
             });
@@ -31006,7 +31058,7 @@
             }
 
             // Cancelling refunds money, so the button is an admin's only.
-            const canCancelHere = correctionIsAdmin();
+            const canCancelHere = correctionIsAdmin() && !isPreviewingTeacher();
             tbody.innerHTML = rows.map(r => {
                 const when = new Date(r.purchasedAt);
                 const badge = r.status === 'issued'

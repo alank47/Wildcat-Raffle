@@ -588,6 +588,33 @@
   // Fulfillment
   // ---------------------------------------------------------------------
 
+  /**
+   * When a receipt was last changed, by the SERVER'S rule (legacyData
+   * touchedAt): the latest of updatedAt / loopClosedAt / closedAt /
+   * submittedAt. 0 when none is readable.
+   */
+  function receiptTouched(r) {
+    var best = 0;
+    var fields = ['updatedAt', 'loopClosedAt', 'closedAt', 'submittedAt'];
+    for (var i = 0; i < fields.length; i++) {
+      var t = r && r[fields[i]] ? Date.parse(r[fields[i]]) : NaN;
+      if (isFinite(t) && t > best) best = t;
+    }
+    return best;
+  }
+
+  /**
+   * updatedAt for a change to `receipt`: ALWAYS NEWER THAN THE COPY BEING
+   * CHANGED, whatever this device's clock says (review, 2026-10-02). The
+   * server keeps a same-id receipt only if its stamp is later, so a
+   * Chromebook running a few minutes slow had its Cancel silently thrown away
+   * -- while the refund, a separate ledger row, stayed -- and a second Cancel
+   * paid the refund again. retireBehavior learned this first.
+   */
+  function stampAfter(receipt, now) {
+    return new Date(Math.max(now, receiptTouched(receipt) + 1)).toISOString();
+  }
+
   function canFulfill(receipt) {
     if (!receipt) return { allowed: false, reason: 'Receipt not found.' };
     if (receipt.status === 'fulfilled') {
@@ -629,7 +656,7 @@
     next.status = 'fulfilled';
     next.fulfilledAt = new Date(now).toISOString();
     next.fulfilledBy = trimmed(actor && (actor.name || actor.username)) || 'Unknown';
-    next.updatedAt = next.fulfilledAt;
+    next.updatedAt = stampAfter(receipt, now);
     return next;
   }
 
@@ -670,9 +697,10 @@
 
   /**
    * Reopen a handed-over receipt. Returns a NEW receipt; the caller replaces.
-   * updatedAt moves with it for the reason applyFulfill gives: a state change
+   * updatedAt moves with it for the reason applyFulfill gives -- a state change
    * on a row saved by id that does not bump updatedAt is silently undone by
-   * the server's merge on the next load.
+   * the server's merge on the next load -- and is always later than the copy
+   * it replaces (stampAfter).
    */
   function applyUnfulfill(receipt, now, actor, reason) {
     var next = {};
@@ -690,7 +718,7 @@
     next.status = 'issued';
     next.fulfilledAt = null;
     next.fulfilledBy = null;
-    next.updatedAt = at;
+    next.updatedAt = stampAfter(receipt, now);
     return next;
   }
 
@@ -813,7 +841,7 @@
     // is a separate ledger row carrying its own id, so it inserts and sticks
     // whatever happens to this one. A cancellation that did not persist left
     // the student refunded AND the receipt still open to collect against.
-    next.updatedAt = next.cancelledAt;
+    next.updatedAt = stampAfter(receipt, now);
 
     var transactionRequest = null;
     if (refund && o.student) {
@@ -1123,6 +1151,7 @@
     canFulfill: canFulfill,
     applyFulfill: applyFulfill,
     canUnfulfill: canUnfulfill,
+    receiptTouched: receiptTouched,
     applyUnfulfill: applyUnfulfill,
     canCancel: canCancel,
     buildCancel: buildCancel,

@@ -449,5 +449,31 @@ console.log("\nTaking a handover back, then refunding (2026-10-02)");
   check("a missing receipt is refused", S.canUnfulfill(null).allowed === false);
 }
 
+console.log("\nA slow device clock cannot lose a handover, an undo or a cancel (review, 2026-10-02)");
+{
+  // The server keeps a same-id receipt only if its stamp is later. A
+  // Chromebook running minutes slow stamped its Cancel earlier than the
+  // stored Unfulfil, the server kept "issued", and the refund (a separate
+  // ledger row) stayed -- so a second Cancel paid it again.
+  const st = student();
+  const bought = S.buildPurchase({ student: st, reward: reward(), actor: ACTOR, now: NOW, rand: seq }).receipt;
+  const FAST = NOW + 10 * 60000;           // a desk 10 minutes fast hands it over
+  const given = S.applyFulfill(bought, FAST, { name: "Desk" });
+  const SLOW = NOW + 2 * 60000;            // an admin whose clock reads earlier
+  const back = S.applyUnfulfill(given, SLOW, { name: "Admin" }, "Event cancelled");
+  check("an undo on a slower clock is still stamped AFTER the handover it replaces",
+    Date.parse(back.updatedAt) > Date.parse(given.updatedAt));
+  check("...while its own record keeps the real time it was done", back.unfulfilled[0].at === new Date(SLOW).toISOString());
+  const SLOWER = NOW + 60000;
+  const res = S.buildCancel({ receipt: back, student: st, reason: "Event cancelled", actor: ACTOR, now: SLOWER });
+  check("a cancel on an even slower clock is still stamped after the undo",
+    Date.parse(res.receipt.updatedAt) > Date.parse(back.updatedAt));
+  check("...and its cancelledAt is the real time", res.receipt.cancelledAt === new Date(SLOWER).toISOString());
+  const regiven = S.applyFulfill(back, SLOWER, { name: "Desk 2" });
+  check("a re-handover on a slow clock is stamped after the undo too",
+    Date.parse(regiven.updatedAt) > Date.parse(back.updatedAt));
+  check("receiptTouched reads the server's fields", S.receiptTouched({ updatedAt: "2026-10-02T10:00:00.000Z", submittedAt: "2026-10-02T11:00:00.000Z" }) === Date.parse("2026-10-02T11:00:00.000Z"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

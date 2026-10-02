@@ -223,6 +223,11 @@ function rowDate(payload: unknown): number {
   return NaN;
 }
 
+/** A store receipt whose status is 'cancelled' (the terminal state). */
+function receiptIsCancelled(payload: unknown): boolean {
+  return !!payload && typeof payload === "object" && (payload as Record<string, unknown>).status === "cancelled";
+}
+
 function touchedAt(payload: unknown): number {
   if (!payload || typeof payload !== "object") return 0;
   const p = payload as Record<string, unknown>;
@@ -510,11 +515,24 @@ export const mergeSlice = mutation({
       keptStored.push(r);
       storedByToken.set(token, r);
     }
+    let keptCancelledReceipts = 0;
     for (const r of rows) {
       const token = tokenFor(r);
       if (seen.has(token)) {
         // Stored wins, unless the incoming copy is the same row touched later.
         const stored = storedByToken.get(token);
+        // A CANCELLED STORE RECEIPT IS FINAL (review, 2026-10-02). Its refund
+        // is a separate ledger row that stays whatever happens here, so a stale
+        // or offline tab sending its older "issued" or "fulfilled" copy -- or
+        // an Unfulfil made against one -- must not reopen it: that wiped
+        // refundTxId and let the same purchase be cancelled and refunded twice.
+        // No screen ever reopens a cancelled receipt, so nothing legitimate is
+        // refused; a later cancelled copy (a corrected reason) still updates.
+        if (stored && doc === "secondary" && collection === "cashReceipts"
+            && receiptIsCancelled(stored.payload) && !receiptIsCancelled(r.payload)) {
+          keptCancelledReceipts++;
+          continue;
+        }
         if (stored && touchedAt(r.payload) > touchedAt(stored.payload)) {
           toUpdate.push({
             id: stored._id,
@@ -624,6 +642,8 @@ export const mergeSlice = mutation({
       // What the arrival note recorded (null when it did not run). Browsers
       // ignore it; it is here for the tests and a curious reader.
       cashArrival,
+      // Store receipts kept cancelled against an incoming copy that was not.
+      keptCancelledReceipts,
     };
 
   },

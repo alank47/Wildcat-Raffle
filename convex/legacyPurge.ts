@@ -3206,7 +3206,11 @@ export const receiptStatusDrift = internalQuery({
     for (const r of receipts as any[]) {
       const id = String(r.id ?? "");
       const status = String(r.status ?? "");
-      const saysFulfilled = fulfilled.has(id);
+      // A HANDOVER TAKEN BACK (2026-10-02) is not a lost fulfilment: the
+      // receipt carries its undo history, so a fulfilled audit line with a
+      // stored status of issued or cancelled is the expected result.
+      const undone = Array.isArray(r.unfulfilled) && r.unfulfilled.length > 0;
+      const saysFulfilled = fulfilled.has(id) && !undone;
       const saysCancelled = cancelled.has(id);
       if (saysFulfilled && status !== "fulfilled") {
         drift.push({ id, storedStatus: status, auditSays: "fulfilled", hasUpdatedAt: !!r.updatedAt });
@@ -3953,7 +3957,7 @@ export const exportStudentCash = internalQuery({
 /** Wildcat Cash actions, mirrored from wildcat-cashaudit.js CASH_ACTIONS plus the two resets. */
 const CASH_AUDIT_ACTIONS = [
   "cash_award", "cash_deduct",
-  "reward_redemption", "reward_fulfilled", "reward_cancelled",
+  "reward_redemption", "reward_fulfilled", "reward_cancelled", "reward_unfulfilled",
   "reset_all_student_cash", "school_year_rollover",
 ];
 

@@ -96,6 +96,9 @@ const moduleScopeTs = [
   // Added 2026-09-28: a student-store reward keeps the server's stock unless
   // an admin deliberately set a new one. Called by the update path.
   liftDecl("function keepServerStock("),
+  // Added 2026-10-02: a cancelled store receipt is final. Called by the
+  // update path.
+  liftDecl("function receiptIsCancelled("),
 ].join("\n");
 const touchedJs = ts.transpileModule(moduleScopeTs, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
@@ -110,7 +113,7 @@ const runNew = new Function("ctx", "doc", "collection", "rows", "dedupeField",
   // real one.
   "const noteArrivedCash = async () => null;\n" +
   "return (async () => {" + js +
-  "\nreturn { inserted: toInsert.length, updated: toUpdate.length, deleted, refusedAsHistory };" +
+  "\nreturn { inserted: toInsert.length, updated: toUpdate.length, deleted, refusedAsHistory, keptCancelledReceipts };" +
   "})();");
 
 /** The OLD algorithm, verbatim. The thing the new one must still agree with. */
@@ -559,6 +562,49 @@ console.log("\n-- a student-store reward keeps the server's stock --");
   const unticked = await final({ ...storedPass, stock: 75, studentPurchasable: false, updatedAt: T3 });
   check("unticking 'students can buy' does not restock it on the way out",
     unticked.stock === 35 && unticked.studentPurchasable === false);
+}
+
+console.log("\nA cancelled store receipt is final (2026-10-02)");
+{
+  // A stale or offline tab sending its older "issued" or "fulfilled" copy of
+  // a receipt that is already cancelled -- or an Unfulfil made against one --
+  // reopened it on the server and wiped refundTxId, while the refund (its own
+  // ledger row) stayed: the same purchase could then be refunded twice.
+  const t1 = "2026-10-02T16:00:00.000Z", t2 = "2026-10-02T16:05:00.000Z";
+  const run = async (existing, rows, doc = "secondary", coll = "cashReceipts") => {
+    const f = fakeDb(existing);
+    const ctx = { db: { ...f.ctx.db }, rowsInOrder: f.ctx.rowsInOrder };
+    const result = await runNew(ctx, doc, coll, rows, "id", MAX_ROWS_PER_SLICE, mailSpy().fn);
+    return { result, final: f.ctx.rowsInOrder() };
+  };
+  const cancelled = row({ id: "WC-1", status: "cancelled", refundTxId: "txn_r1", updatedAt: t1 });
+  {
+    const r = await run([cancelled], [row({ id: "WC-1", status: "issued", updatedAt: t2 })]);
+    check("a NEWER 'issued' copy does not reopen a cancelled receipt",
+      r.final[0].payload.status === "cancelled" && r.final[0].payload.refundTxId === "txn_r1");
+    check("...and the server says it kept it", r.result.keptCancelledReceipts === 1 && r.result.updated === 0);
+  }
+  {
+    const r = await run([cancelled], [row({ id: "WC-1", status: "fulfilled", updatedAt: t2 })]);
+    check("...nor does a newer 'fulfilled' copy", r.final[0].payload.status === "cancelled");
+  }
+  {
+    const r = await run([cancelled], [row({ id: "WC-1", status: "cancelled", refundTxId: "txn_r1", cancelReason: "Corrected", updatedAt: t2 })]);
+    check("a newer CANCELLED copy still updates it (a corrected reason)",
+      r.final[0].payload.cancelReason === "Corrected" && r.result.updated === 1);
+  }
+  {
+    const r = await run([row({ id: "WC-2", status: "fulfilled", updatedAt: t1 })],
+                        [row({ id: "WC-2", status: "issued", updatedAt: t2 })]);
+    check("an Unfulfil of a FULFILLED receipt still lands (only cancelled is final)",
+      r.final[0].payload.status === "issued" && r.result.updated === 1);
+  }
+  {
+    const r = await run([row({ id: "WC-3", status: "cancelled", updatedAt: t1 })],
+                        [row({ id: "WC-3", status: "issued", updatedAt: t2 })], "referrals", "behaviorReferrals");
+    check("the rule is the store receipts' alone: other lists merge as before",
+      r.final[0].payload.status === "issued");
+  }
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

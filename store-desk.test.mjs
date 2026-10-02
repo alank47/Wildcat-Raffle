@@ -173,8 +173,15 @@ console.log("\nTHE RECEIPTS DESK\n");
   check("cancel is refused to anyone but an admin, before anything else happens",
     /^function cancelReceipt\(receiptId\) \{\s*(\/\/[^\n]*\n\s*)*if \(!correctionIsAdmin\(\)\)/.test(cancel));
   check("and re-reads the receipts before deciding", cancel.indexOf("await storePullWithin(") < cancel.indexOf("cashReceipts.findIndex("));
-  check("the Cancel button is only drawn for an admin",
-    /const canCancelHere = correctionIsAdmin\(\);/.test(script) && /\(canCancelHere\s*\?\s*`<button[^`]*cancelReceipt/.test(script));
+  check("the Cancel button is only drawn for an admin, and not in teacher view",
+    /const canCancelHere = correctionIsAdmin\(\) && !isPreviewingTeacher\(\);/.test(script) && /\(canCancelHere\s*\?\s*`<button[^`]*cancelReceipt/.test(script));
+  // REVIEW, 2026-10-02: a refund decided on a copy the server never confirmed
+  // is how one purchase could be refunded twice.
+  check("cancel refuses unless the server answered after the question",
+    /if \(!\(await storePullWithin\(5000\)\)\) \{[\s\S]{0,240}return;\s*\}\s*const idxNow/.test(cancel));
+  check("...builds the cancellation from the FRESH copy, not the one read before the prompt",
+    /buildCancel\(\{\s*receipt: fresh,/.test(cancel) && /const fresh = cashReceipts\[idxNow\];/.test(cancel));
+  check("...and is refused in teacher view", /if \(isPreviewingTeacher\(\)\)/.test(cancel));
 
   // UNFULFIL (2026-10-02): admins only, reads the server's copy before and
   // after the question, moves no money, and is drawn only for admins on a
@@ -187,6 +194,11 @@ console.log("\nTHE RECEIPTS DESK\n");
   check("...re-reads the receipts before deciding, and again after the reason is asked",
     firstPull > -1 && firstPull < undo.indexOf("cashReceipts.findIndex(") &&
     secondPull > undo.indexOf("showPrompt(") && secondPull < undo.indexOf("applyUnfulfill("));
+  check("unfulfil refuses unless the server answered, before AND after the question",
+    (undo.match(/if \(!\(await storePullWithin\(5000\)\)\)/g) || []).length === 2);
+  check("...is refused in teacher view", /if \(isPreviewingTeacher\(\)\)/.test(undo));
+  check("...and only promises a refund that Cancel would give (the same checks)",
+    /cancelRefundVerdict\(receipt, _historyCutoffMs\)/.test(undo) && /Cancel will NOT refund this one/.test(undo));
   check("...and checks canUnfulfill on the fresh copy, not the one the question was asked about",
     /const recheck = window\.WildcatStore\.canUnfulfill\(cashReceipts\[idxNow\]\);/.test(undo));
   check("...and moves no money (no refund, no cash transaction)",
@@ -385,7 +397,7 @@ console.log("\nWHAT THE REVIEW FOUND (2026-09-28), EACH PINNED\n");
   const cancel = lift("cancelReceipt");
   check("cancel decides on a fresh copy AFTER the reason prompt",
     cancel.indexOf("await showPrompt(") < cancel.lastIndexOf("await storePullWithin(")
-    && /const recheck = window\.WildcatStore\.canCancel\(cashReceipts\[idxNow\]\);/.test(cancel)
+    && /const fresh = cashReceipts\[idxNow\];\s*const recheck = window\.WildcatStore\.canCancel\(fresh\);/.test(cancel)
     && /cashReceipts\[idxNow\] = res\.receipt;/.test(cancel) && !/cashReceipts\[idx\] = res\.receipt;/.test(cancel));
   check("retire finds the reward again after its confirm",
     /const at = wildcatCashRewards\.findIndex\(r => r\.id === rewardId\);/.test(lift("retireRewardById")));
