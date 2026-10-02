@@ -30847,12 +30847,23 @@
          * or { unknown: true } when the server could not be read -- and then
          * no refund is made.
          */
-        async function findExistingReceiptRefund(receiptId) {
+        async function findExistingReceiptRefund(receiptId, purchasedAt) {
             const rows = Array.isArray(cashTransactions) ? cashTransactions.slice() : [];
             try {
+                // EVERY WEEK FROM THE PURCHASE TO NOW (final check, 2026-10-02):
+                // a refund cannot be older than its purchase, and a tab not
+                // reloaded for a fortnight does not hold an older refund in
+                // memory. Capped at 14 weeks back and at the history cutoff, as
+                // cashReversalRules.weekKeysBetween is; for a recent purchase
+                // this is one to three reads.
                 const now = Date.now();
-                const weeks = new Set([cashWeekKey(new Date(now).toISOString()),
-                                       cashWeekKey(new Date(now - 7 * 86400000).toISOString())]);
+                const bought = Date.parse(String(purchasedAt || ''));
+                const floor = Math.max(
+                    isFinite(bought) ? bought : now - 7 * 86400000,
+                    isFinite(_historyCutoffMs) ? _historyCutoffMs : -Infinity,
+                    now - 14 * 7 * 86400000);
+                const weeks = new Set([cashWeekKey(new Date(now).toISOString())]);
+                for (let t = floor; t < now; t += 7 * 86400000) weeks.add(cashWeekKey(new Date(t).toISOString()));
                 for (const w of weeks) {
                     const d = await readLegacyDoc('cash_tx_' + w);
                     const tx = (d.data() || {}).transactions;
@@ -30907,10 +30918,13 @@
             // Cancel will refuse.
             const refundVerdict = window.WildcatStore.cancelRefundVerdict(receipt, _historyCutoffMs);
             const studentFound = !!students.find(st => st.id === receipt.studentId);
-            const earlier = await findExistingReceiptRefund(receiptId);
+            const earlier = await findExistingReceiptRefund(receiptId, receipt.purchasedAt);
             const alreadyRefunded = !!(earlier && earlier.refund);
-            const refundable = refundVerdict.allowed && studentFound && !alreadyRefunded;
-            const refundLine = refundable
+            const refundUnknown = !!(earlier && earlier.unknown);
+            const refundable = refundVerdict.allowed && studentFound && !alreadyRefunded && !refundUnknown;
+            const refundLine = (refundUnknown && refundVerdict.allowed && studentFound)
+                ? `Cancel will first check for an earlier refund; that check could not run just now.`
+                : refundable
                 ? `To refund $${receipt.totalCost}, press Cancel on it afterwards.`
                 : `\u26A0\uFE0F Cancel will NOT refund this one: ` +
                   (alreadyRefunded ? 'it was already refunded' + (earlier.refund.at ? ' on ' + new Date(earlier.refund.at).toLocaleString() : '') + '.'
@@ -30946,7 +30960,9 @@
             updateReceiptsTable();
             showToast(refundable
                 ? `${receiptId} is back to Awaiting pickup. Press Cancel on it to refund $${undone.totalCost}.`
-                : `${receiptId} is back to Awaiting pickup. Cancel will not refund it -- see the reason on Cancel.`,
+                : refundUnknown
+                    ? `${receiptId} is back to Awaiting pickup. Cancel will check for an earlier refund before paying one.`
+                    : `${receiptId} is back to Awaiting pickup. Cancel will not refund it -- see the reason on Cancel.`,
                 refundable ? 'success' : 'warn', 9000);
         }
 
@@ -31005,7 +31021,7 @@
             // (final review, 2026-10-02). If the money already went back -- a
             // racing cancel whose receipt save lost -- cancel without paying it
             // again; if the ledger cannot be read, do nothing at all.
-            const earlier = await findExistingReceiptRefund(receiptId);
+            const earlier = await findExistingReceiptRefund(receiptId, receipt.purchasedAt);
             if (earlier.unknown) {
                 showAlert('\u26A0\uFE0F Could not check this purchase for an earlier refund just now. Nothing was changed; try again in a moment.');
                 return;

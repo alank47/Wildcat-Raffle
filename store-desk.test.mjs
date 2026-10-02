@@ -197,14 +197,19 @@ console.log("\nTHE RECEIPTS DESK\n");
   // FINAL REVIEW, 2026-10-02: one refund per purchase, checked on the server's
   // ledger; the tab follows the server's cancelled-wins rule.
   check("cancel looks for an earlier refund on the server, and refuses if it cannot tell",
-    /const earlier = await findExistingReceiptRefund\(receiptId\);\s*if \(earlier\.unknown\)/.test(cancel)
+    /const earlier = await findExistingReceiptRefund\(receiptId, receipt\.purchasedAt\);\s*if \(earlier\.unknown\)/.test(cancel)
     && /refund: !alreadyRefunded,/.test(cancel));
   check("...and an already-refunded purchase is cancelled pointing at THAT refund",
     /if \(alreadyRefunded && !res\.receipt\.refundTxId\) res\.receipt\.refundTxId = alreadyRefunded\.id;/.test(cancel));
   const finder = lift("findExistingReceiptRefund");
-  check("the earlier-refund check reads this week's and last week's ledger from the server",
-    /readLegacyDoc\('cash_tx_' \+ w\)/.test(finder) && /now - 7 \* 86400000/.test(finder) && /return \{ unknown: true/.test(finder));
-  check("unfulfil words its promise from the same check", /await findExistingReceiptRefund\(receiptId\)/.test(undo) && /it was already refunded/.test(undo));
+  check("the earlier-refund check reads every week from the purchase to now, from the server",
+    /readLegacyDoc\('cash_tx_' \+ w\)/.test(finder) && /for \(let t = floor; t < now; t \+= 7 \* 86400000\)/.test(finder)
+    && /now - 14 \* 7 \* 86400000/.test(finder) && /return \{ unknown: true/.test(finder));
+  check("...given the purchase date by both callers",
+    (script.match(/await findExistingReceiptRefund\(receiptId, receipt\.purchasedAt\)/g) || []).length === 2);
+  check("unfulfil promises nothing when the check could not run",
+    /Cancel will first check for an earlier refund; that check could not run just now\./.test(undo));
+  check("unfulfil words its promise from the same check", /await findExistingReceiptRefund\(receiptId, receipt\.purchasedAt\)/.test(undo) && /it was already refunded/.test(undo));
   check("the store refresh and the full loader both merge receipts by the server's rule",
     /WildcatStore\.mergeReceipts\(serverReceipts, cashReceipts\)/.test(lift("mergeStoreLists"))
     && (script.match(/WildcatStore\.mergeReceipts\(serverReceipts, cashReceipts\)/g) || []).length === 2);
