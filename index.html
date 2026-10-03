@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20261005a">
-    <link rel="icon" href="favicon.ico?v=20261005a" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20261005a" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20261005a" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20261005b">
+    <link rel="icon" href="favicon.ico?v=20261005b" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20261005b" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20261005b" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20261005a">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20261005b">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20261005a">
+    <link rel="stylesheet" href="styles.css?v=20261005b">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20261005a">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20261005b">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20261005a">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20261005b">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20261005a" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20261005b" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -184,7 +184,7 @@
                      asset, so there is one logo to replace when the school
                      changes it. -->
                 <div class="wp-brand">
-                    <img src="assets/westbrook-logo.png?v=20261005a"
+                    <img src="assets/westbrook-logo.png?v=20261005b"
                          alt="Westbrook Academy" class="wp-brandlogo" id="wpBrandLogo">
                     <!-- The product's name, which appeared nowhere on the
                          student's screen while the teacher's topbar has said
@@ -412,7 +412,7 @@
         <header class="app-topbar">
             <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-menu"></use></svg></button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20261005a" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20261005b" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -2244,6 +2244,26 @@
                             Sync now
                         </button>
                         <div id="sisSyncStatus" class="filter-showing" style="display: none; margin-top: 14px;"></div>
+                    </div>
+
+                    <!-- THE ATTENDANCE REBUILD (2026-10-02).
+                         Every attendance screen is rebuilt from PowerSchool
+                         about half an hour after each sync. A run that refuses
+                         keeps the previous data, which looks exactly like a
+                         quiet day -- so each run records how it went, and this
+                         card shows it. Nothing to press: a run that does not
+                         finish ok runs again by itself 15 minutes later. -->
+                    <div class="wc-card panel-card" style="margin: 0 0 24px 0;">
+                        <div class="panel-head">
+                            <span class="panel-icon">&#128197;</span>
+                            <h3>Attendance rebuild</h3>
+                        </div>
+                        <p class="panel-hint" style="margin: 0 0 14px 0;">
+                            Rebuilds every attendance screen from PowerSchool at about <b>6:30 AM</b> and
+                            <b>12:30 PM</b> (an hour earlier in winter, when the clocks go back), from the
+                            whole school year each time.
+                        </p>
+                        <div id="attRebuildHealth" class="filter-showing" style="margin-top: 4px;">Loading&hellip;</div>
                     </div>
 
                     <!-- Kickboard Integration Settings -->
@@ -6240,24 +6260,24 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20261005a"></script>
+    <script src="wildcat-auth.js?v=20261005b"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
     <!-- The icon sprite. Injected at load, before anything renders, so an
          icon is never a blank square for a frame. -->
-    <script src="wildcat-icons.js?v=20261005a"></script>
-    <script src="wildcat-motion.js?v=20261005a"></script>
-    <script src="wildcat-discipline.js?v=20261005a"></script>
-    <script src="wildcat-audit.js?v=20261005a"></script>
-    <script src="wildcat-cashaudit.js?v=20261005a"></script>
-    <script src="wildcat-dirty.js?v=20261005a"></script>
-    <script src="wildcat-update.js?v=20261005a"></script>
-    <script src="wildcat-modes.js?v=20261005a"></script>
-    <script src="wildcat-merge.js?v=20261005a"></script>
-    <script src="wildcat-savequeue.js?v=20261005a"></script>
-    <script src="wildcat-roster.js?v=20261005a"></script>
-    <script src="wildcat-store.js?v=20261005a"></script>
-    <script src="script.js?v=20261005a"></script>
+    <script src="wildcat-icons.js?v=20261005b"></script>
+    <script src="wildcat-motion.js?v=20261005b"></script>
+    <script src="wildcat-discipline.js?v=20261005b"></script>
+    <script src="wildcat-audit.js?v=20261005b"></script>
+    <script src="wildcat-cashaudit.js?v=20261005b"></script>
+    <script src="wildcat-dirty.js?v=20261005b"></script>
+    <script src="wildcat-update.js?v=20261005b"></script>
+    <script src="wildcat-modes.js?v=20261005b"></script>
+    <script src="wildcat-merge.js?v=20261005b"></script>
+    <script src="wildcat-savequeue.js?v=20261005b"></script>
+    <script src="wildcat-roster.js?v=20261005b"></script>
+    <script src="wildcat-store.js?v=20261005b"></script>
+    <script src="script.js?v=20261005b"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -6267,7 +6287,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20261005a').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20261005b').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {

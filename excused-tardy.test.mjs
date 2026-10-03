@@ -24,6 +24,7 @@
 // for real. A regex over the source would still pass with the code broken.
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { fakePowerSchool } from "./fake-powerschool.mjs";
 
 const rosterSrc = readFileSync(new URL("./wildcat-roster.js", import.meta.url), "utf8");
 const daysSrc = readFileSync(new URL("./convex/attendanceDays.ts", import.meta.url), "utf8");
@@ -65,11 +66,14 @@ const R = loadRoster();
 // ---------------------------------------------------------------- the rebuild
 // The shipped action with its imports stubbed: Convex's wrappers become plain
 // objects, absenceDayRules is the REAL module, and fetch and process.env are
-// a fake PowerSchool handed in as parameters.
+// a fake PowerSchool handed in as parameters. The clock is pinned to
+// 2026-10-02 (2026-10-02): the year is read in month pieces cut at "today",
+// and a test that moved with the calendar would test something else in June.
 const absenceRules = await import("data:text/javascript," + encodeURIComponent(tsToJs(rulesSrc)));
 
 function loadRebuild(transform) {
   let body = transform ? transform(daysSrc) : daysSrc;
+  body = breakOnce(body, "function laToday(): string {", 'function laToday(): string {\n  return "2026-10-02";', "clock");
   body = body
     .replace(/^"use node";[ \t]*\n/m, "")
     .replace(/^import[\s\S]*?from\s*"[^"]*";[ \t]*\n/gm, "")
@@ -83,7 +87,10 @@ function loadRebuild(transform) {
     .bind(null, (d) => d, ref(""), v, absenceRules.addAbsenceDay, absenceRules.emptyAbsenceSplit);
 }
 
-// The school's attendance codes, as read on 2026-10-01.
+// The school's attendance codes, as read on 2026-10-01. Every fixture row
+// carries the fields the rebuild filters on (schoolid, termid, yearid...):
+// the shared fake PowerSchool applies every clause, and throws on a clause a
+// fixture row could not answer.
 const CODES = [
   { id: 1, att_code: "A", description: "Absent", presence_status_cd: "Absent" },
   { id: 2, att_code: "T", description: "Tardy", presence_status_cd: "Present" },
@@ -94,10 +101,11 @@ const CODES = [
   { id: 7, att_code: "F", description: "Field Trip", presence_status_cd: "Present" },
   { id: 8, att_code: "K", description: "Ditching", presence_status_cd: "Present" },
   { id: 9, att_code: "P", description: "Independent Study In Progress", presence_status_cd: "Absent" },
-];
+].map((c) => ({ ...c, schoolid: 1 }));
+const TERMS = [{ id: 3600, schoolid: 1, yearid: 36, firstday: "2026-08-12", lastday: "2027-06-10", isyearrec: 1 }];
 const C = Object.fromEntries(CODES.map((c) => [c.att_code || "blank", c.id]));
 // Ten sections, one per period slot; 999 is a section the build cannot place.
-const CC = Array.from({ length: 10 }, (_, i) => ({ id: 501 + i, expression: `${i + 1}(A-E)` }));
+const CC = Array.from({ length: 10 }, (_, i) => ({ id: 501 + i, expression: `${i + 1}(A-E)`, schoolid: 1, termid: 3600 }));
 const SLOTS = CC.map((c) => c.expression);
 const P = (n) => 500 + n;   // the section a student sits in for period n
 const UNPLACEABLE = 999;
@@ -105,10 +113,12 @@ const UNPLACEABLE = 999;
 const STUDENTS = [
   ["101", "1001"], ["102", "1002"], ["103", "1003"], ["104", "1004"], ["105", "1005"],
   ["106", "1006"], ["107", "1007"], ["108", "1008"], ["109", "1009"],
-].map(([id, n]) => ({ id, student_number: n, entrydate: "2026-08-12" }));
+].map(([id, n]) => ({ id, student_number: n, entrydate: "2026-08-12", schoolid: 1, enroll_status: 0 }));
 
+let nextAttendanceId = 1;
 const row = (studentid, date, code, ccid) =>
-  ({ studentid, att_date: date + "T00:00:00", periodid: 1, attendance_codeid: code, ccid });
+  ({ id: nextAttendanceId++, yearid: 36, schoolid: 1, studentid, att_date: date + "T00:00:00", periodid: 1,
+     attendance_codeid: code, ccid });
 // Every date is in SEPTEMBER, the month the owner asked to be redone.
 const ATTENDANCE = [
   // 1001 Tia: a plain Tardy only.
@@ -137,16 +147,9 @@ const ATTENDANCE = [
 ];
 
 async function runRebuild(rebuild, tables) {
-  const t = Object.assign({ attendance_code: CODES, cc: CC, students: STUDENTS, attendance: ATTENDANCE }, tables || {});
-  const resp = (body) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
-  const fetch = async (url) => {
-    const u = new URL(url);
-    if (u.pathname === "/oauth/access_token") return resp({ access_token: "tok" });
-    const m = /^\/ws\/schema\/table\/(\w+)$/.exec(u.pathname);
-    if (!m || !t[m[1]]) throw new Error("the fake PowerSchool has no " + u.pathname);
-    const size = +u.searchParams.get("pagesize"), page = +u.searchParams.get("page");
-    return resp({ record: t[m[1]].slice((page - 1) * size, page * size).map((r) => ({ tables: { [m[1]]: r } })) });
-  };
+  const t = Object.assign({ attendance_code: CODES, cc: CC, students: STUDENTS, attendance: ATTENDANCE, terms: TERMS },
+    tables || {});
+  const fetch = fakePowerSchool(t).fetch;
   const env = { PS_HOST: "ps.example", PS_CLIENT_ID: "id", PS_CLIENT_SECRET: "s", PS_SCHOOL_ID: "1",
                 PS_YEAR_ID: "36", PS_TERM_ID: "3600" };
   const writes = [];
@@ -158,7 +161,11 @@ async function runRebuild(rebuild, tables) {
       }
       throw new Error("unexpected query " + fn.__path);
     },
-    runMutation: async (fn, args) => { writes.push({ fn: fn.__path, args }); return { moreToClear: false }; },
+    // Every mutation succeeds here, and the month-piece switch reads as ON, so
+    // these marks come out of the path that will be live. The real run record,
+    // write lock and switch are exercised in attendance-wall.test.mjs.
+    runMutation: async (fn, args) => { writes.push({ fn: fn.__path, args }); return { ok: true, moreToClear: false, monthPieces: true }; },
+    scheduler: { runAfter: async () => "job_1", cancel: async () => {} },
   };
   const summary = await rebuild(fetch, { env }).handler(ctx, {});
   const marks = writes.filter((w) => w.fn === "sisStats.replaceAttendanceMarks" && !w.args.clearFirst)
@@ -172,6 +179,9 @@ const shipped = await runRebuild(loadRebuild());
   const { summary, marks, by } = shipped;
   check("the rebuild ran against the fake PowerSchool and wrote a row per student",
     summary.ok === true && marks.length === STUDENTS.length, JSON.stringify(summary).slice(0, 300));
+  check("...reading the year in month pieces that PowerSchool's own count agreed with",
+    summary.readMode === "month pieces" && summary.yearCount === ATTENDANCE.length && summary.attendanceRows === ATTENDANCE.length,
+    JSON.stringify({ readMode: summary.readMode, yearCount: summary.yearCount, rows: summary.attendanceRows }));
   check("the code mapping is as measured: D is an excused tardy, T a plain one, X the only excused absence",
     same(summary.codeMapping.map((c) => c.code + ":" + c.counts + (c.excused ? ":excused" : "")),
       ["A:absence", "T:tardy", "X:absence:excused", "I:absence", "D:tardy:excused", "P:absence"]),

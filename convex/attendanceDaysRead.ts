@@ -1,4 +1,5 @@
-import { internalQuery } from "./_generated/server";
+import { internalQuery, query } from "./_generated/server";
+import { requireAdmin } from "./identity";
 
 /**
  * Each student's enrolled period slots, from psAttendanceBySection.
@@ -77,5 +78,42 @@ export const studentNames = internalQuery({
       if (rows.length < 1000) break;
     }
     return out;
+  },
+});
+
+/**
+ * How the attendance rebuild has been doing, for admins (2026-10-02).
+ *
+ * The record attendanceDays:rebuild writes to appState "attendanceRebuild"
+ * after every run: the last good one, the last one, the last twenty, the last
+ * comparison, and any run still going. Plus the thresholds the browser judges
+ * it by.
+ *
+ * NO CLOCK HERE, on purpose. "How old is the last good run" depends on when it
+ * is asked, and a query's answer is cached until the row it read changes -- a
+ * server-side age would freeze at the moment it was first worked out, and a
+ * run that died without writing anything would never look late. The browser
+ * does the arithmetic, on a copy it refetches when it is five minutes old.
+ */
+export const rebuildHealth = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
+    const row = await ctx.db
+      .query("appState")
+      .withIndex("by_key", (q) => q.eq("key", "attendanceRebuild"))
+      .unique();
+    // budgetSeconds is attendanceDays' READ_BUDGET_MS (a "use node" file this
+    // query cannot import): a run REFUSES once its reading passes it, long
+    // before Convex's 600, so the slow warning judges the reading time
+    // against it (review, 2026-10-02). attendance-wall.test.mjs holds the two equal.
+    return {
+      health: (row?.value as Record<string, any>) ?? null,
+      limits: {
+        staleAfterHours: 19, stuckAfterMinutes: 15, slowSeconds: 300, limitSeconds: 600,
+        budgetSeconds: 360, slowReadSeconds: 240,
+        singleReadWarnRows: 34000, freshMinutes: 5, schedule: "13:30 and 19:30 UTC",
+      },
+    };
   },
 });

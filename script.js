@@ -6342,6 +6342,10 @@
             if (subtab === 'integrations' && typeof showLastSisSync === 'function') {
                 showLastSisSync();
             }
+            // The attendance rebuild's own record, beside it (2026-10-02).
+            if (subtab === 'integrations' && typeof showAttendanceRebuildHealth === 'function') {
+                showAttendanceRebuildHealth();
+            }
 
             // The NFC tag list is remote, so it is fetched when its tab is
             // opened rather than held stale in the DOM. Same trigger the
@@ -9889,7 +9893,14 @@
          * rule as that log; everything that is not cash is left as it was.
          */
         function dashFeedEntriesFor(entries, user) {
-            const list = Array.isArray(entries) ? entries : [];
+            // THE ATTENDANCE REBUILD'S ALARM IS FOR ADMINS (review, 2026-10-02),
+            // like its tile and its card: "attendance screens are not being
+            // refreshed" on every teacher's first screen is an alarm they
+            // cannot act on.
+            const u = (user === undefined) ? currentUser : user;
+            const admin = !!(u && (u.role === 'admin' || u.role === 'superadmin'));
+            const list = (Array.isArray(entries) ? entries : [])
+                .filter(e => admin || !e || e.action !== 'attendance_rebuild_refused');
             if (cashStaffViewsAllowed(user)) return list;
             const CA = window.WildcatCashAudit;
             // No cash module, no way to tell cash from anything else: show
@@ -14269,6 +14280,115 @@
             }
         }
         window.showLastSisSync = showLastSisSync;
+
+        /**
+         * THE ATTENDANCE REBUILD, on opening the panel (2026-10-02).
+         *
+         * Every attendance screen is rebuilt from PowerSchool twice a day, and
+         * a run that refuses keeps yesterday's tables -- which looks exactly
+         * like a quiet day. This card is where an admin can see, without a
+         * developer, whether the last run worked, how long it read against
+         * its 6-minute read budget, and what the last comparison said.
+         * Fetched fresh on every open; nothing here is ever asked of staff.
+         */
+        async function showAttendanceRebuildHealth() {
+            const out = document.getElementById('attRebuildHealth');
+            if (!out) return;
+            await fetchAttendanceRebuildHealth(true);
+            if (!_attRebuildHealth) {
+                out.textContent = 'The attendance rebuild record could not be read just now.';
+                return;
+            }
+            const h = _attRebuildHealth.health || {};
+            const v = attendanceRebuildVerdict();
+            // IN THE SCHOOL'S TIME (review, 2026-10-03, round 5), as the
+            // headline, the tile, the audit entry and the CLI say it: in the
+            // browser's own zone, one card gave two different times for one run.
+            const when = (iso) => {
+                const t = Date.parse(iso || '');
+                return isFinite(t) ? new Date(t).toLocaleString('en-US', {
+                    timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+                }) : 'an unknown time';
+            };
+            const parts = [];
+            parts.push('<div style="margin-bottom:8px;"><b>' + escapeHtml(v.headline || '') + '</b></div>');
+            parts.push('<div>Reading the year: ' + (h.monthPieces === true
+                ? 'in month pieces, proved against PowerSchool\'s own count.'
+                : 'in one read (the old way, which stops at 40,000 rows).') + '</div>');
+            const ok = h.lastOk;
+            if (ok) {
+                // READ AGAINST THE READ BUDGET (review, 2026-10-02): a run refuses
+                // once its reading passes it, long before Convex's 600 seconds.
+                const budget = Number((_attRebuildHealth.limits || {}).budgetSeconds) || 360;
+                parts.push('<div>Last good rebuild ' + escapeHtml(when(ok.finishedAt)) + ': ' +
+                    escapeHtml(String(Number(ok.attendanceRows) || 0)) + ' rows, ' +
+                    escapeHtml(ok.windows ? ok.windows + ' month pieces' : 'one read') + ', ' +
+                    escapeHtml(String((ok.pages && ok.pages.attendance) || 0)) + ' pages, read ' +
+                    escapeHtml(String(Number(ok.readSeconds) || 0)) + ' of ' + escapeHtml(String(budget)) + ' s, ' +
+                    escapeHtml(String(Number(ok.seconds) || 0)) + ' s in all.</div>');
+            }
+            const last = h.last;
+            if (last && last.ok === false) {
+                // ONLY WHILE THAT TIME IS STILL TO COME (review, 2026-10-03): the
+                // line kept promising a run at a time already past, under a
+                // headline that had stopped promising it.
+                const retryAt = Date.parse(last.retryAt || '');
+                parts.push('<div>Last run ' + escapeHtml(when(last.finishedAt || last.startedAt)) + ': <b>' +
+                    escapeHtml(last.code === 'failed' ? 'failed' : last.code === 'abandoned' ? 'did not finish' : 'refused') +
+                    '</b> &mdash; ' + escapeHtml(String(last.reason || last.code || '')) +
+                    (isFinite(retryAt) && Date.now() < retryAt
+                        ? ' Runs again by itself at ' + escapeHtml(when(last.retryAt)) + '.' : '') + '</div>');
+            }
+            // THE LAST DRY RUN, however it ended (review, 2026-10-03, round 4).
+            // One that was refused or failed files no comparison, so the card
+            // showed only an older 'Last comparison' line, which read as its
+            // answer. One Convex stopped files nothing at all: no line newer
+            // than when it started.
+            const dry = h.lastDryRun;
+            if (dry) {
+                parts.push('<div>Last dry run ' + escapeHtml(when(dry.finishedAt || dry.startedAt)) + ': ' +
+                    escapeHtml(dry.ok === true ? 'ok'
+                        : (dry.code === 'failed' ? 'failed' : 'refused ' + String(dry.code || '')) + ': ' +
+                          String(dry.reason || '')) + '</div>');
+            }
+            const c = h.lastCompare;
+            if (c) {
+                parts.push('<div>Last comparison with the old single read, ' + escapeHtml(when(c.finishedAt || c.at)) + ': ' +
+                    escapeHtml(c.possible === false
+                        ? String(c.reason || 'not possible')
+                        : c.identical === true
+                            ? 'identical (' + (Number(c.singleRows) || 0) + ' rows both ways, the same four tables).'
+                            : String(c.verdict || 'different') + ' (' + (Number(c.onlyInSingle) || 0) + ' only in the old read, ' +
+                              (Number(c.onlyInWindows) || 0) + ' only in the pieces, ' + (Number(c.differing) || 0) + ' different).') +
+                    '</div>');
+            }
+            const recent = Array.isArray(h.recent) ? h.recent.slice(0, 10) : [];
+            if (recent.length) {
+                parts.push('<div class="table-scroll" style="margin-top:10px;"><table class="wc-table"><thead><tr>' +
+                    '<th>Started</th><th>Result</th><th>Rows</th><th>Pieces</th><th>Seconds</th><th>Why</th></tr></thead><tbody>' +
+                    recent.map((r) => '<tr><td>' + escapeHtml(when(r.startedAt)) + '</td><td>' +
+                        escapeHtml(r.ok ? 'ok' : (r.code === 'failed' ? 'failed' : r.code === 'abandoned' ? 'did not finish' : 'refused')) +
+                        (r.trigger === 'retry' ? ' (retry)' : '') + '</td><td>' +
+                        escapeHtml(r.attendanceRows === undefined ? '' : String(r.attendanceRows)) + '</td><td>' +
+                        escapeHtml(r.windows ? String(r.windows) : (r.readMode === 'single read' ? '1' : '')) + '</td><td>' +
+                        escapeHtml(r.seconds === undefined ? '' : String(r.seconds)) + '</td><td>' +
+                        escapeHtml(r.ok ? '' : String(r.reason || r.code || '')) + '</td></tr>').join('') +
+                    '</tbody></table></div>');
+            }
+            out.innerHTML = parts.join('');
+        }
+        window.showAttendanceRebuildHealth = showAttendanceRebuildHealth;
+
+        /** From the dashboard tile to the card, in one click (Settings is hidden in Cash mode). */
+        function openAttendanceRebuildPanel() {
+            switchTab('settings');
+            switchSettingsSubtab('integrations');
+            const panel = document.getElementById('attRebuildHealth');
+            if (panel && panel.scrollIntoView) {
+                panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+        window.openAttendanceRebuildPanel = openAttendanceRebuildPanel;
 
         async function runSisSyncNow() {
             const btn = document.getElementById('sisSyncNowBtn');
@@ -42733,6 +42853,81 @@
             }
         }
 
+        /**
+         * IS THE ATTENDANCE DATA CURRENT? Admins only (2026-10-02).
+         *
+         * NOT FETCHED ONCE PER PAGE LOAD, unlike the cash check above. The
+         * verdict ages the record against the clock, so a copy from when the
+         * page opened would say "did not finish" about a run that was merely
+         * in progress at lunch, and "hours behind" on a tab left open
+         * overnight -- cured only by a reload, which nobody should be asked
+         * for. So the copy carries when it was fetched, every repaint asks
+         * again once it is five minutes old, the verdict ignores the clock on
+         * an older copy, and a tile showing trouble re-checks by itself.
+         */
+        let _attRebuildHealth = null;
+        let _attRebuildAskedAt = 0;
+        let _attRebuildRecheck = null;
+        async function fetchAttendanceRebuildHealth(force) {
+            const admin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin');
+            if (!admin) return;
+            if (force !== true && Date.now() - _attRebuildAskedAt < 5 * 60000) return;
+            _attRebuildAskedAt = Date.now();
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!session) return;
+            try {
+                const before = attendanceRebuildVerdict();
+                const res = await auth.convexQuery('attendanceDaysRead:rebuildHealth', {}, session.idToken);
+                _attRebuildHealth = {
+                    health: (res && res.health) || null,
+                    limits: (res && res.limits) || {},
+                    fetchedAt: new Date().toISOString(),
+                };
+                const now = attendanceRebuildVerdict();
+                // renderTeacherDashboard draws #dashTiles; updateDashboard is the
+                // Cash analytics stats and never touched the tile (review, 2026-10-02).
+                // Only when the TILE would change: an old copy now reads
+                // 'unknown' rather than 'ok', and neither draws a tile.
+                const tileOf = (v) => (v.level === 'warn' || v.level === 'bad') ? v.level + '|' + v.tile : '';
+                if (tileOf(now) !== tileOf(before) &&
+                        wcPanelOnScreen('dashTiles') && typeof renderTeacherDashboard === 'function') {
+                    renderTeacherDashboard();
+                }
+                if (_attRebuildRecheck) clearTimeout(_attRebuildRecheck);
+                _attRebuildRecheck = (now.level === 'warn' || now.level === 'bad')
+                    ? setTimeout(() => { _attRebuildRecheck = null; fetchAttendanceRebuildHealth(true); }, 5 * 60000 + 1000)
+                    : null;
+            } catch (e) {
+                // A dashboard tile is not worth a visible error. A retry that
+                // also failed writes its own audit entry.
+                console.warn('[dash] could not read the attendance rebuild record:', e && e.message);
+            }
+        }
+        /**
+         * THE DASHBOARD TILE for a verdict (review, 2026-10-02). With no value,
+         * wcTile draws the faint grey placeholder that means "no data" and
+         * ignores the tone, so trouble looked like a roster still loading. A
+         * figure instead: red "Not updating" when bad, "Needs a look" when it
+         * is a warning, and the verdict's own words beneath.
+         */
+        function attendanceRebuildTile(v) {
+            const bad = v.level === 'bad';
+            return wcTile('Attendance data', bad ? 'Not updating' : 'Needs a look',
+                { tone: bad ? 'bad' : 'warn',
+                  note: v.tile || v.headline,
+                  onclick: 'openAttendanceRebuildPanel()',
+                  arrowLabel: 'See the attendance rebuild' });
+        }
+        function attendanceRebuildVerdict() {
+            const R = window.WildcatRoster;
+            if (!_attRebuildHealth || !R || typeof R.rebuildHealthVerdict !== 'function') {
+                return { level: 'unknown', headline: '', tile: '', lines: [] };
+            }
+            return R.rebuildHealthVerdict(_attRebuildHealth.health, new Date().toISOString(),
+                _attRebuildHealth.limits, _attRebuildHealth.fetchedAt);
+        }
+
         function wcTile(label, value, opts) {
             const o = opts || {};
             const arrow = o.onclick
@@ -42741,7 +42936,9 @@
             const body = (value === null || value === undefined)
                 ? `<div class="wu-tile-figure"><span class="wu-absent">${escapeHtml(o.absent || 'no data')}</span></div>`
                 : `<div class="wu-tile-figure ${o.tone ? 'wu-tile-' + o.tone : ''}">${escapeHtml(String(value))}</div>`;
-            return `<div class="wu-tile">${arrow}<div class="wu-tile-label">${escapeHtml(label)}</div>${body}</div>`;
+            // An optional line of words under the figure, in the figure-label style.
+            const note = o.note ? `<div class="wu-figure-label">${escapeHtml(o.note)}</div>` : '';
+            return `<div class="wu-tile">${arrow}<div class="wu-tile-label">${escapeHtml(label)}</div>${body}${note}</div>`;
         }
 
         /**
@@ -42884,6 +43081,9 @@
             'reset_all_student_cash':        'system',
             'cash_recount':                  'system',
             'cash_drift_detected':           'system',
+            // Written by the server when an attendance rebuild AND its retry
+            // both did not complete (sisStats.finishAttendanceRebuild).
+            'attendance_rebuild_refused':    'system',
             'cash_refund_withdrawn':         'undo',
             'school_year_rollover':          'system'
         };
@@ -43310,6 +43510,9 @@
             // the dashboard must paint from what is already in memory.
             fetchCashDrift();
             fetchCashArrivalSummary();
+            // Re-asked once the copy is five minutes old, never awaited.
+            fetchAttendanceRebuildHealth();
+            const attRebuild = attendanceRebuildVerdict();
 
             const tiles = document.getElementById('dashTiles');
             if (tiles) {
@@ -43370,6 +43573,12 @@
                         ? wcTile('Awards missing their money', _cashArrivalSummary.waiting,
                             { tone: 'warn', onclick: "switchTab('cashAudit')",
                               arrowLabel: 'Review awards that arrived without their money' })
+                        : '',
+                    // ATTENDANCE DATA THAT HAS STOPPED MOVING (2026-10-02): admins
+                    // only, and only when the rebuild's record says something is
+                    // wrong. Silent otherwise, like the two tiles above.
+                    (isAdmin && (attRebuild.level === 'warn' || attRebuild.level === 'bad'))
+                        ? attendanceRebuildTile(attRebuild)
                         : ''
                 ].join('');
             }

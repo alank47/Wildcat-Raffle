@@ -2496,6 +2496,190 @@
     return '';
   }
 
+  /**
+   * IS THE ATTENDANCE DATA CURRENT? The verdict on the record the rebuild
+   * writes after every run (appState "attendanceRebuild"), for the admin card
+   * and the dashboard tile (2026-10-02).
+   *
+   * Levels: 'ok', 'warn', 'bad', and 'unknown' when there is nothing to judge
+   * yet. Only 'warn' and 'bad' raise the dashboard tile, so the evening of a
+   * deploy, before the first scheduled run, is not an alarm.
+   *
+   * A COPY IS ONLY AS GOOD AS WHEN IT WAS FETCHED. A dashboard left open over
+   * lunch still holds the record from when it loaded: judged against the clock
+   * later, a run that was in progress then reads as "did not finish", and a
+   * tab left open overnight reads as "hours behind" while every run succeeded.
+   * So the rules that depend on time passing -- a run stuck past 15 minutes,
+   * the last good run past 19 hours, a retry that has come and gone -- are
+   * only applied to a copy fetched in the last few minutes; the page refetches
+   * an older one before it trusts it. The longest normal gap is 18 hours
+   * (12:30 PM to 6:30 AM), hence 19.
+   */
+  var REBUILD_LIMITS = {
+    staleAfterHours: 19, stuckAfterMinutes: 15, slowSeconds: 300, limitSeconds: 600,
+    budgetSeconds: 360, slowReadSeconds: 240,
+    singleReadWarnRows: 34000, freshMinutes: 5
+  };
+  function rebuildHealthVerdict(health, nowIso, limits, fetchedIso) {
+    var L = {};
+    Object.keys(REBUILD_LIMITS).forEach(function (k) {
+      var x = limits && Number(limits[k]);
+      L[k] = isFinite(x) && x > 0 ? x : REBUILD_LIMITS[k];
+    });
+    var now = Date.parse(nowIso || '');
+    var fetched = fetchedIso ? Date.parse(fetchedIso) : now;
+    var fresh = isFinite(now) && isFinite(fetched) && Math.abs(now - fetched) <= L.freshMinutes * 60000;
+    var ms = function (iso) { var t = Date.parse(iso || ''); return isFinite(t) ? t : null; };
+    var when = function (iso) {
+      var t = ms(iso);
+      if (t === null) return 'an unknown time';
+      return new Date(t).toLocaleString('en-US', {
+        timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+      });
+    };
+    var h = health || null;
+    var last = h && h.last ? h.last : null;
+    var lastOk = h && h.lastOk ? h.lastOk : null;
+    // THE RUNS STILL GOING (review, 2026-10-02): the server now keeps one
+    // entry per run, keyed by run id, so a second run starting cannot hide the
+    // first. A single marker (the older shape) is read as one.
+    var r0 = h && h.running && typeof h.running === 'object' ? h.running : null;
+    var live = !r0 ? [] : (typeof r0.runId === 'string' ? [r0] :
+      Object.keys(r0).map(function (k) { return r0[k]; }).filter(function (x) { return x && typeof x === 'object'; }));
+    var lines = [];
+    var readS = lastOk ? Number(lastOk.readSeconds) : NaN;
+    if (lastOk) {
+      lines.push('Last good rebuild ' + when(lastOk.finishedAt) + ': ' + (Number(lastOk.attendanceRows) || 0) +
+        ' rows' + (lastOk.windows ? ', ' + lastOk.windows + ' month pieces' : ', one read') +
+        (isFinite(readS) ? ', read ' + readS + ' of ' + L.budgetSeconds + ' s' : '') +
+        ', ' + (Number(lastOk.seconds) || 0) + ' s in all.');
+    }
+    // WHAT THE SCREENS HOLD NOW (review, 2026-10-02). A run that failed while
+    // writing, or that Convex stopped while writing, can leave some tables
+    // short, and a later refusal that writes nothing does not mend them. So
+    // when any run since the last good one may have written part-way, the
+    // screens are not "still showing" the last good data. A run stopped while
+    // READING cleared nothing, and is not damage.
+    var recentRuns = h && Array.isArray(h.recent) ? h.recent : (last ? [last] : []);
+    var damage = null;
+    for (var i = 0; i < recentRuns.length; i++) {
+      var rr = recentRuns[i];
+      if (!rr || rr.ok === true) break;
+      if (rr.stage === 'write') damage = rr;
+    }
+    var screens = function () {
+      if (damage) {
+        return 'Some attendance screens may be incomplete since ' + when(damage.finishedAt || damage.startedAt) +
+          ', when a rebuild ' + (damage.code === 'abandoned' ? 'was stopped while writing' : 'failed while writing') + '.';
+      }
+      // No good run on record is not "no data" (review, 2026-10-02): the
+      // record began with this build, and the tables still hold the last
+      // rebuild from before it.
+      return lastOk
+        ? 'Attendance screens still show the data from ' + when(lastOk.finishedAt) + '.'
+        : 'Attendance screens still show the last rebuild from before this record began (no good run recorded since).';
+    };
+    var out = function (level, headline, tile) {
+      return { level: level, headline: headline, tile: tile, lines: lines, fresh: fresh };
+    };
+
+    if (!h || (!last && !live.length)) return out('unknown', 'No attendance rebuild has been recorded yet.', 'no rebuild recorded yet');
+
+    // 1. A run that never came back: Convex stops an action at 10 minutes.
+    if (fresh && live.length) {
+      var stuck = live.filter(function (x) {
+        var t = ms(x.startedAt);
+        return t !== null && now - t > L.stuckAfterMinutes * 60000;
+      });
+      if (stuck.length) {
+        // Stopped while it held the write lock: it was part-way through writing.
+        var writer = h.writing ? stuck.filter(function (x) { return x.runId === h.writing.runId; })[0] : null;
+        if (!damage && writer) {
+          damage = { code: 'abandoned', stage: 'write', startedAt: h.writing.claimedAt || writer.startedAt };
+        }
+        return out('bad', 'The last attendance rebuild did not finish (probably ran out of time). ' +
+          screens(), 'last rebuild did not finish');
+      }
+    }
+    if (!last) return out('unknown', 'The first attendance rebuild is running now.', 'first rebuild running');
+
+    // 2. The last real run did not finish ok.
+    if (last.ok === false) {
+      var verb = last.code === 'failed' ? 'failed' : last.code === 'abandoned' ? 'did not finish' : 'refused';
+      var retryAt = ms(last.retryAt);
+      // ITS RETRY IS RUNNING NOW (review, 2026-10-02): a warning, whatever
+      // the clock says -- including for a run Convex stopped, whose record
+      // carries no retryAt but whose retry was booked when it started.
+      var retryRunning = live.some(function (x) { return x.retryOf === last.runId; });
+      // A refusal with a retry still to come heals itself: a warning, not an
+      // alarm, until the retry has had its chance. On an old copy nobody can
+      // tell whether it has, so it is not called an alarm either.
+      var retryPending = retryRunning || (retryAt !== null && (!fresh || now < retryAt));
+      var what = 'Attendance rebuild ' + verb + ' at ' + when(last.finishedAt || last.startedAt) + ': ' +
+        String(last.reason || last.code || 'no reason recorded');
+      if (retryPending) {
+        return retryRunning
+          ? out('warn', what + ' Its retry is running now.', verb + ', retry running')
+          : out('warn', what + ' It runs again by itself at ' + when(last.retryAt) + '.',
+            verb + ', retrying at ' + when(last.retryAt));
+      }
+      return out('bad', what + ' ' + screens(),
+        verb + ' at ' + when(last.finishedAt || last.startedAt));
+    }
+
+    // 3. Too long since the last good run.
+    if (fresh) {
+      var okAt = lastOk ? ms(lastOk.finishedAt) : null;
+      if (okAt === null || now - okAt > L.staleAfterHours * 3600000) {
+        var hours = okAt === null ? null : Math.floor((now - okAt) / 3600000);
+        return out('bad', hours === null
+          ? 'No good attendance rebuild is recorded.'
+          : 'Attendance screens are ' + hours + ' hours behind PowerSchool: the last good rebuild was ' +
+            when(lastOk.finishedAt) + '.',
+          hours === null ? 'no good rebuild recorded' : hours + ' hours behind PowerSchool');
+      }
+    }
+
+    // 3b. The last good run finished, but said something is wrong with what it
+    //     wrote (review, 2026-10-02): no tardy code found, for one. The cron
+    //     drops the run's own summary, so this is the only place it is seen.
+    if (lastOk && lastOk.warning) {
+      return out('warn', 'The last attendance rebuild finished with a warning: ' + String(lastOk.warning),
+        'finished with a warning');
+    }
+
+    // 4. Still fine, but heading for the READ BUDGET (review, 2026-10-02). A
+    //    run refuses once its reading passes budgetSeconds (6 minutes), long
+    //    before Convex's 10-minute limit, so the reading time is what is
+    //    judged -- the total, writes included, used to be set against 600 and
+    //    showed 230 s of room on a run 5 s from refusing.
+    if (isFinite(readS) && readS > L.slowReadSeconds) {
+      return out('warn', 'The attendance rebuild is getting slow: it read for ' + readS + ' of the ' +
+        L.budgetSeconds + ' seconds a run may read before it refuses. It needs splitting across runs before it reaches that.',
+        'getting slow: read ' + readS + ' of ' + L.budgetSeconds + ' s');
+    }
+    //    And the whole run, writes included, against Convex's own limit.
+    if (lastOk && Number(lastOk.seconds) > L.slowSeconds) {
+      return out('warn', 'The attendance rebuild is getting slow: it took ' + Number(lastOk.seconds) + ' of the ' +
+        L.limitSeconds + ' seconds Convex allows a run, in all. It needs splitting across runs before it reaches the limit.',
+        'getting slow: ' + Number(lastOk.seconds) + ' of ' + L.limitSeconds + ' s');
+    }
+    // 5. Still on the old single read, and near its 40,000-row wall.
+    if (lastOk && lastOk.readMode === 'single read' && Number(lastOk.attendanceRows) > L.singleReadWarnRows) {
+      return out('warn', 'The attendance rebuild still reads the year in one piece, and it is at ' +
+        Number(lastOk.attendanceRows) + ' of the 40,000 rows one read can hold. Turn on the month pieces.',
+        'near the 40,000-row wall');
+    }
+    // "CURRENT" ONLY FROM A FRESH COPY (review, 2026-10-02). On an old copy --
+    // the card's re-check failed -- the age rules above were skipped, so
+    // nothing here knows the data is current; a copy 40 minutes old said so
+    // about a run 22 hours old.
+    if (!fresh) {
+      return out('unknown', 'Could not re-check just now; last rebuilt ' + when(lastOk ? lastOk.finishedAt : null) + '.', '');
+    }
+    return out('ok', 'Attendance data is current: last rebuilt ' + when(lastOk ? lastOk.finishedAt : null) + '.', '');
+  }
+
   root.WildcatRoster = {
     CASH_NOTE_MIN: CASH_NOTE_MIN,
     cashNoteVerdict: cashNoteVerdict,
@@ -2526,6 +2710,8 @@
     RATE_MEASURES: RATE_MEASURES,
     runRateModel: runRateModel,
     rateSignalReading: rateSignalReading,
+    REBUILD_LIMITS: REBUILD_LIMITS,
+    rebuildHealthVerdict: rebuildHealthVerdict,
     absenceSeriesValues: absenceSeriesValues,
     absenceSignalBlurb: absenceSignalBlurb,
     perfectWindows: perfectWindows,

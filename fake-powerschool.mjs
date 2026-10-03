@@ -1,0 +1,250 @@
+// A fake PowerSchool, for running the SHIPPED attendance rebuild in tests.
+//
+// WHY IT HONOURS EVERY FILTER (2026-10-02). The rebuild now reads the year in
+// month pieces and proves them against PowerSchool's own count. A fake that
+// ignored `q` -- the one excused-tardy.test.mjs used to have -- would hand
+// every piece the whole table, and nothing about the proof could be tested.
+// So every clause is applied, a clause naming a field the fixture row does
+// not have THROWS (a fixture cannot silently ignore a filter), and a blank or
+// missing value is SQL NULL: it matches no ==, ge or le clause, so a row with
+// no date is counted by the year query and by no dated piece -- exactly what
+// the real thing would do.
+//
+// It serves:
+//   POST /oauth/access_token
+//   GET  /ws/schema/table/<table>?q=&projection=&pagesize=&page=
+//   GET  /ws/schema/table/<table>/count?q=
+// and records every request, and the most it ever had in flight at once.
+//
+// Options, each a way PowerSchool could misbehave:
+//   leExclusive        `le` behaves like `<`, so month-end rows fall out
+//   ignoreDateFilter   table reads ignore att_date clauses (counts honour them)
+//   shuffle            rows come back in a different (seeded) order
+//   insertDuringRead   { row, afterPage, match(q), times: "once" | "always" }
+//                      a teacher entering attendance while a piece is read
+//   failCountWith500   number of /count requests to answer HTTP 500
+//   failWindowWith500  { match(q), times } table reads answering HTTP 500
+//   slowMs             delay before every answer
+//   swapFieldInWindows { id, field, value } a dated read sees a different value
+//   nullDateRow        add a this-year row whose att_date is blank
+//   dropFromSingleRead id: an undated read of the year skips this row (the
+//                      old single read coming back short)
+//   insertAfterYearCount { row, after: [k, ...] } a teacher's entry landing
+//                      just after PowerSchool answers the k-th count of the
+//                      whole year (the undated count), never during a read
+//   hang               { match(q), page } that table read never answers; it
+//                      ends only when the request's own signal aborts it
+//   swapDuringRead     { row, afterPage, match(q), times: "once" | "always" }
+//                      one teacher save mid-read: the first row that page
+//                      served is DELETED and `row` is inserted, so both counts
+//                      stay the same and the next page shifts by one. With no
+//                      `row`, the delete alone: matched to the old single read,
+//                      a delete while it pages (or, after its last page, just
+//                      after it)
+//   insertBeforeSingleRead row: entered just before the first page of an
+//                      undated read of the year (between the pieces and the
+//                      comparison's old single read)
+//   editBeforeSingleRead { id, field, value } the same moment: an office
+//                      correction, e.g. an absence excused or re-dated
+//   deleteBeforeSingleRead id, or a list of ids: the same moment, deleted
+//   unstablePaging     { match(q) } every page of a matching table read comes
+//                      from a different order of the rows
+//   hideFromDated      id, or a list of ids: every read AND count carrying an
+//                      att_date clause leaves this dated row out, so the
+//                      pieces' dated count agrees with them and they take it
+//                      for a row with no date (undatedRows); an undated read
+//                      or count still has it
+//   editBeforeRecheck  { id, field, value } an office correction landing
+//                      after the comparison's old single read, just before
+//                      its first by-id re-read (a table read with id==)
+
+const NULL = (x) => x === null || x === undefined || x === "";
+
+function parseQuery(q) {
+  if (!q) return [];
+  return q.split(";").filter(Boolean).map((c) => {
+    const m = /^(\w+)(==|=ge=|=le=)(.*)$/.exec(c);
+    if (!m) throw new Error(`the fake PowerSchool cannot parse the clause "${c}"`);
+    return { field: m[1].toLowerCase(), op: m[2], value: m[3] };
+  });
+}
+
+function compare(field, a, b) {
+  if (field === "att_date") {
+    const x = String(a).slice(0, 10), y = String(b).slice(0, 10);
+    return x < y ? -1 : x > y ? 1 : 0;
+  }
+  const na = Number(a), nb = Number(b);
+  if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+  return String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0;
+}
+
+function seeded(seed) {
+  let s = seed >>> 0 || 1;
+  return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+}
+
+export function fakePowerSchool(tablesIn, opts = {}) {
+  const tables = {};
+  for (const [k, rows] of Object.entries(tablesIn)) tables[k] = rows.map((r) => ({ ...r }));
+  if (opts.nullDateRow) {
+    tables.attendance.push({ ...tables.attendance[0], id: 990001, att_date: "" });
+  }
+  const log = [];
+  let inFlight = 0, maxInFlight = 0, nextId = 900000;
+  let countFails = Number(opts.failCountWith500) || 0;
+  let windowFails = opts.failWindowWith500 ? Number(opts.failWindowWith500.times ?? Infinity) : 0;
+  let inserted = 0;
+  let yearCounts = 0;
+  let swaps = 0;
+  let requests = 0;
+  let singleInserted = false;
+  let recheckEdited = false;
+  const deleted = [];
+  const hidden = opts.hideFromDated === undefined ? null : new Set([].concat(opts.hideFromDated).map(String));
+
+  const matches = (row, clauses, table, forCount) => !(hidden && table === "attendance" && hidden.has(String(row.id))
+    && clauses.some((c) => c.field === "att_date")) && clauses.every(({ field, op, value }) => {
+    if (!(field in row)) {
+      throw new Error(`the fake PowerSchool was asked to filter ${table} on "${field}", which the fixture row lacks`);
+    }
+    if (field === "att_date" && opts.ignoreDateFilter && !forCount) return true;
+    const x = row[field];
+    if (NULL(x)) return false;
+    if (op === "==") return String(x) === value;
+    const c = compare(field, x, value);
+    if (op === "=ge=") return c >= 0;
+    if (field === "att_date" && opts.leExclusive) return c < 0;
+    return c <= 0;
+  });
+
+  const resp = (status, body, headers) => ({
+    ok: status >= 200 && status < 300, status,
+    json: async () => body,
+    text: async () => JSON.stringify(body),
+    headers: { get: (k) => (headers && headers[String(k).toLowerCase()]) ?? null },
+  });
+
+  const fetch = async (url, init) => {
+    const u = new URL(url);
+    inFlight++;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    const entry = { path: u.pathname, q: u.searchParams.get("q"), page: Number(u.searchParams.get("page")) || null,
+      started: Date.now(), at: log.length };
+    log.push(entry);
+    try {
+      if (opts.slowMs) await new Promise((r) => setTimeout(r, opts.slowMs));
+      else await new Promise((r) => setImmediate(r));
+      if (u.pathname === "/oauth/access_token") { entry.kind = "token"; return resp(200, { access_token: "tok" }); }
+      const count = /^\/ws\/schema\/table\/(\w+)\/count$/.exec(u.pathname);
+      const read = /^\/ws\/schema\/table\/(\w+)$/.exec(u.pathname);
+      const table = (count || read || [])[1];
+      if (!table || !tables[table]) throw new Error("the fake PowerSchool has no " + u.pathname);
+      entry.table = table;
+      const clauses = parseQuery(entry.q);
+      if (count) {
+        entry.kind = "count";
+        if (countFails > 0) { countFails--; return resp(500, { message: "count failed" }); }
+        const n = tables[table].filter((r) => matches(r, clauses, table, true)).length;
+        const iy = opts.insertAfterYearCount;
+        if (iy && table === "attendance" && !/att_date=/.test(entry.q || "")) {
+          yearCounts++;
+          if (iy.after.includes(yearCounts)) { inserted++; tables.attendance.push({ ...iy.row, id: nextId++ }); }
+        }
+        return resp(200, { count: n });
+      }
+      entry.kind = "table";
+      const hang = opts.hang;
+      if (hang && table === "attendance" && hang.match(entry.q || "")
+          && (hang.page === undefined || Number(u.searchParams.get("page")) === hang.page)) {
+        entry.hung = true;
+        await new Promise((_, reject) => {
+          const sig = init && init.signal;
+          if (!sig) return;   // no signal: it never settles, as a dead connection would not
+          if (sig.aborted) { reject(sig.reason); return; }
+          sig.addEventListener("abort", () => reject(sig.reason), { once: true });
+        });
+      }
+      if (windowFails > 0 && opts.failWindowWith500.match(entry.q || "")) {
+        windowFails--;
+        return resp(500, { message: "read failed" });
+      }
+      const size = Number(u.searchParams.get("pagesize")), page = Number(u.searchParams.get("page"));
+      requests++;
+      const beforeSingle = opts.insertBeforeSingleRead || opts.editBeforeSingleRead || opts.deleteBeforeSingleRead !== undefined;
+      if (beforeSingle && table === "attendance" && page === 1 && !/att_date=/.test(entry.q || "") && !singleInserted) {
+        singleInserted = true;
+        if (opts.insertBeforeSingleRead) {
+          inserted++;
+          tables.attendance.push({ ...opts.insertBeforeSingleRead, id: nextId++ });
+        }
+        const ed = opts.editBeforeSingleRead;
+        if (ed) {
+          const at = tables.attendance.findIndex((r) => String(r.id) === String(ed.id));
+          if (at >= 0) tables.attendance[at] = { ...tables.attendance[at], [ed.field]: ed.value };
+        }
+        for (const id of opts.deleteBeforeSingleRead === undefined ? [] : [].concat(opts.deleteBeforeSingleRead)) {
+          const at = tables.attendance.findIndex((r) => String(r.id) === String(id));
+          if (at >= 0) deleted.push(tables.attendance.splice(at, 1)[0]);
+        }
+      }
+      const er = opts.editBeforeRecheck;
+      if (er && table === "attendance" && /(^|;)id==/.test(entry.q || "") && !recheckEdited) {
+        recheckEdited = true;
+        const at = tables.attendance.findIndex((r) => String(r.id) === String(er.id));
+        if (at >= 0) tables.attendance[at] = { ...tables.attendance[at], [er.field]: er.value };
+      }
+      let rows = tables[table].filter((r) => matches(r, clauses, table, false));
+      if (opts.dropFromSingleRead !== undefined && table === "attendance" && !/att_date=/.test(entry.q || "")) {
+        rows = rows.filter((r) => String(r.id) !== String(opts.dropFromSingleRead));
+      }
+      if (opts.shuffle) {
+        const rnd = seeded(typeof opts.shuffle === "number" ? opts.shuffle : 7);
+        rows = rows.map((r) => [rnd(), r]).sort((a, b) => a[0] - b[0]).map((p) => p[1]);
+      }
+      if (opts.unstablePaging && table === "attendance" && opts.unstablePaging.match(entry.q || "")) {
+        const rnd = seeded(1000 + requests);
+        rows = rows.map((r) => [rnd(), r]).sort((a, b) => a[0] - b[0]).map((p) => p[1]);
+      }
+      const projection = (u.searchParams.get("projection") || "").split(",").map((f) => f.trim().toLowerCase()).filter(Boolean);
+      const swap = opts.swapFieldInWindows;
+      const served = rows.slice((page - 1) * size, page * size).map((r) => {
+        let row = r;
+        if (swap && table === "attendance" && /att_date=/.test(entry.q || "") && String(r.id) === String(swap.id)) {
+          row = { ...r, [swap.field]: swap.value };
+        }
+        const out = {};
+        for (const f of projection.length ? projection : Object.keys(row)) if (f in row) out[f] = row[f];
+        return { tables: { [table]: out } };
+      });
+      entry.served = served.length;
+      entry.ids = served.map((r) => r.tables[table].id).filter((x) => x !== undefined).map(String);
+      const ins = opts.insertDuringRead;
+      if (ins && table === "attendance" && page === (ins.afterPage || 1) && ins.match(entry.q || "")
+          && (ins.times === "always" || inserted === 0)) {
+        inserted++;
+        tables.attendance.push({ ...ins.row, id: nextId++ });
+      }
+      const sw = opts.swapDuringRead;
+      if (sw && table === "attendance" && page === (sw.afterPage || 1) && sw.match(entry.q || "") && served.length
+          && (sw.times === "always" || swaps === 0)) {
+        swaps++;
+        const gone = String(served[0].tables[table].id);
+        const at = tables.attendance.findIndex((r) => String(r.id) === gone);
+        if (at >= 0) deleted.push(tables.attendance.splice(at, 1)[0]);
+        if (sw.row) tables.attendance.push({ ...sw.row, id: nextId++ });
+      }
+      return resp(200, { record: served });
+    } finally {
+      entry.finished = Date.now();
+      inFlight--;
+    }
+  };
+  return {
+    fetch, log, tables,
+    get maxInFlight() { return maxInFlight; },
+    get inserted() { return inserted; },
+    get swaps() { return swaps; },
+    deleted,
+  };
+}

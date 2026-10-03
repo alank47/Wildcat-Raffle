@@ -31,11 +31,19 @@ crons.daily(
 
 // Rebuild the per-date absence picture, half an hour after each SIS sync.
 //
-// SEPARATE FROM THE SYNC, on purpose. It reads the ATTENDANCE table directly
-// -- 155 pages plus 56 for the enrolment slot map -- and a slow read must not
-// be able to delay or fail the roster, grades and attendance pull that the
-// whole app depends on. It also depends on psAttendanceBySection, which that
-// sync writes, so it has to run after it rather than beside it.
+// SEPARATE FROM THE SYNC, on purpose. It reads the whole year of the
+// ATTENDANCE table directly -- 215 pages on 2026-10-02, and growing every
+// school day -- and a slow read must not be able to delay or fail the roster,
+// grades and attendance pull that the whole app depends on. It also depends on
+// psAttendanceBySection, which that sync writes, so it has to run after it
+// rather than beside it.
+//
+// THE YEAR IN MONTH PIECES (2026-10-02). One read of the year stops at 40,000
+// rows, around mid-November; with the switch on, the rebuild reads it a month
+// at a time and proves the pieces against PowerSchool's own count. Every run,
+// ok or not, records itself in appState "attendanceRebuild" (Settings >
+// Integrations), and a run that does not finish ok runs once more fifteen
+// minutes later. Same two times, same {} arguments.
 crons.daily(
   "absence day rebuild (morning)",
   { hourUTC: 13, minuteUTC: 30 },
