@@ -6,6 +6,7 @@ import { sisNumberKey, sisEmailKey, gradeCell } from "./studentPortalRules";
 import { teacherRosterEmail } from "./rosterEmail";
 import { studentView } from "./views";
 import { projectGrade } from "./gradeProjection";
+import { isMissingWork, onlyMissingWork } from "./missingWorkRules";
 import { storeSignal } from "./studentStore";
 import { readGradeScopeBlock } from "./gradeScopeRead";
 
@@ -375,11 +376,18 @@ export const myStudentView = query({
           .collect()
       : [];
 
+    // WHAT IS MISSING IS missingWorkRules.isMissingWork, and nothing else: the
+    // owner's final rule of 2026-10-05. Missing box ticked, at any score, or
+    // scored exactly 0, ticked or not. The table holds what PowerSchool sent;
+    // the rule is applied here, on the way out, so the list, its count, the
+    // label each row carries and the points projection all agree.
     const missingWork = number.ok
-      ? await ctx.db
-          .query("psMissingWork")
-          .withIndex("by_studentNumber", (q) => q.eq("studentNumber", number.value))
-          .collect()
+      ? onlyMissingWork(
+          await ctx.db
+            .query("psMissingWork")
+            .withIndex("by_studentNumber", (q) => q.eq("studentNumber", number.value))
+            .collect(),
+        )
       : [];
 
     // The denominator. Absent until plugin 1.4.0 is installed, in which case
@@ -512,17 +520,27 @@ export const myStudentView = query({
               courseName: m.courseName ?? null,
               categoryName: m.categoryName ?? null,
               isLate: m.isLate ?? false,
-              // null and 0 are DIFFERENT ANSWERS here, and the card says
-              // different things for each. null is "flagged missing, nothing
-              // entered"; 0 is "flagged missing and scored zero", which at this
-              // school is how most teachers record work not handed in -- 634 of
-              // 1,054 items on 2026-09-05. A student can act on both, but the
-              // second is also the one where a retake is worth asking about.
+              // The score as PowerSchool holds it, null when there is none. The
+              // card subtracts it from the value for "up to N points back", so
+              // work ticked missing but carrying 6 of 10 offers 4 back, not 10.
               // ?? null, never || null, or a genuine 0 would become null.
               scorePoints: m.scorePoints ?? null,
-              // Absent means a row written before plugin 1.4.1, whose query
-              // returned only flagged work -- so absent is TRUE, not false.
-              isMissing: m.isMissing !== false,
+              // THE RULE'S ANSWER, NOT PowerSchool's BOX. Every row that reaches
+              // here passed isMissingWork, so this is true for all of them --
+              // an unticked zero included, which under the owner's final rule
+              // (2026-10-05) is missing work, not a separate "scored zero"
+              // kind. Sent as the rule's answer because the deployed card
+              // decides its wording from this one field:
+              //
+              //   true   "Missing work" heading, "ask if you can still turn
+              //          it in", "worth N pts"
+              //   false  "Scored zero" heading, "ask about a retake",
+              //          "scored 0 of N"
+              //
+              // Passing the raw box through would put an unticked zero under
+              // the second wording, which is the kind the owner removed. The
+              // raw box stays in psMissingWork for anyone who needs it.
+              isMissing: isMissingWork(m),
             });
             return acc;
           }, {} as Record<string, unknown[]>),
@@ -547,7 +565,9 @@ export const myStudentView = query({
               }, {} as Record<string, typeof missingWork>),
             )) {
               // What is still on the table: the value of the work minus
-              // whatever partial credit is already recorded against it.
+              // whatever partial credit is already recorded against it. Over
+              // missing work only (onlyMissingWork above), so a row the rule
+              // says is not missing can never inflate the projection.
               const available = items.reduce((sum, m) => {
                 const worth = typeof m.pointsPossible === "number" ? m.pointsPossible : 0;
                 const got = typeof m.scorePoints === "number" ? m.scorePoints : 0;

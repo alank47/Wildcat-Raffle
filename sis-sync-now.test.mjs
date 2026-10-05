@@ -81,10 +81,17 @@ console.log("\nA student can tell missing work from a score");
   // Read top to bottom that is "here is what I scored".
   check("the list is titled", /wp-missing-title/.test(script));
   check("with the count", /' assignment' : ' assignments'/.test(script));
-  check("it says a teacher marked them, not the app",
-    /Your teacher marked these as not handed in/.test(script));
-  check("and, where they are all flagged, that the points are a value not a score",
-    /what each is\s*\n?\s*'?\s*\+?\s*'?worth, not a score you were given/.test(script));
+  // Since the owner's final rule (2026-10-05) the all-missing note also sits
+  // over a 0 the teacher typed in without ticking the box, so it says both ways
+  // a row counts as missing. The old "Your teacher marked these as not handed
+  // in ... not a score you were given" was false of an entered 0; the render is
+  // checked in convex/missingWorkRules.test.mjs.
+  check("it says what the teacher did, not the app: marked missing, or entered a 0",
+    /your teacher marked each one missing, or entered a 0 '\s*\+\s*'for it\./.test(script));
+  check("and that the points are what each is worth",
+    /The points show what each is worth\.'/.test(script));
+  check("the note no longer calls an entered 0 'not handed in' or 'not a score you were given'",
+    !/Your teacher marked these as not handed in/.test(script) && !/not a score you were given/.test(script));
   // The intent, not one wording: a bare point value under a posted grade reads
   // as a score. Every branch must attach a word that says which it is.
   check("no row renders a bare point number",
@@ -131,9 +138,15 @@ console.log("\nA student can see what there is to gain");
     !/wpEsc\(String\(got\)\) \+ ' of '/.test(script));
   check("and an unscored item still says what it is worth",
     /worth = 'worth ' \+ wpEsc\(String\(P\)\)/.test(script));
-  // THE FLAG DECIDES, NOT THE SCORE. Set by the owner 2026-09-05: a flagged
-  // assignment means the work is not in, whatever it scored -- and 634 of 1,054
-  // flagged items carry a zero, so scoring cannot be the signal.
+  // THE CARD'S TWO WORDINGS, as script.js still draws them. Under the owner's
+  // 2026-09-05 rule a ticked row asked "can I still turn it in" and an
+  // unticked zero asked about a retake. The owner's FINAL rule (2026-10-05)
+  // makes both missing work: the server now sends isMissing as the rule's
+  // answer (convex/missingWorkRules.ts), true for every row it lists, so the
+  // retake wording below is no longer reached from the live server. It is
+  // pinned unchanged because the row wording is not part of that change (only
+  // the heading note and the senior staff wording are), so a page still
+  // running the old script.js and the new one draw every row the same way.
   check("a flagged row asks whether it can still be handed in",
     /flagged\s*\?\s*' &middot; <b>ask if you can still turn it in<\/b>'/.test(script));
   check("and only an UNFLAGGED row asks about a retake",
@@ -209,8 +222,11 @@ console.log("\nThe flag survives the whole path, and an old row defaults to miss
     /isMissing: m\.is_missing === undefined \? true : String\(m\.is_missing\) === "1"/.test(sisAction));
   check("the mutation validator accepts it, or the whole sync fails",
     /isMissing: v\.optional\(v\.boolean\(\)\)/.test(sisStats));
-  check("the server sends it on, defaulting absent to missing",
-    /isMissing: m\.isMissing !== false/.test(views));
+  // Since 2026-10-05 the server sends the RULE's answer, not the raw box:
+  // an unticked zero is missing work, and absent still reads as ticked.
+  check("the server sends the rule's answer, which reads absent as missing",
+    /isMissing: isMissingWork\(m\)/.test(views) &&
+    /import \{[^}]*\bisMissingWork\b[^}]*\} from "\.\/missingWorkRules";/.test(views));
 
   // Rows written by 1.3.x have no such column, and that query returned only
   // flagged work -- so absent must read as TRUE. Reading it as false would tell

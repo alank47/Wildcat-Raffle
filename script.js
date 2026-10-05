@@ -21073,12 +21073,18 @@
                         : 'Work to follow up &middot; ' + nMissing + ' missing &middot; ' +
                           nZero + ' scored zero';
 
-                // The explanation follows the same three cases, because "your
-                // teacher marked these as not handed in" is simply untrue of a
-                // zero that was handed in.
+                // The explanation follows the same three cases.
+                //
+                // THE FIRST ONE MUST BE TRUE OF A 0 THE TEACHER TYPED IN. Since
+                // the owner's final rule (2026-10-05, convex/missingWorkRules.ts)
+                // the server sends every listed row as missing, an unticked 0
+                // included, so this branch now sits over entered zeros too. It
+                // used to say "your teacher marked these as not handed in ... not
+                // a score you were given", and both halves are false of a 0 a
+                // teacher entered without ticking the Missing box.
                 const headNote = (nZero === 0)
-                    ? 'Your teacher marked these as not handed in. The points show what each is ' +
-                      'worth, not a score you were given.'
+                    ? 'These count as missing: your teacher marked each one missing, or entered a 0 ' +
+                      'for it. The points show what each is worth.'
                     : (nMissing === 0)
                         ? 'These were graded and scored zero. Your teacher can tell you whether a ' +
                           'retake is possible.'
@@ -21128,6 +21134,13 @@
                     // Anything unflagged and non-zero is not in this list at
                     // all: the query returns flagged work and zeros, nothing
                     // else.
+                    //
+                    // SUPERSEDED 2026-10-05 by the owner's final rule
+                    // (convex/missingWorkRules.ts): an unticked zero is missing
+                    // work too, and the server sends isMissing as the rule's
+                    // answer, true for every row it lists. So the live server
+                    // never reaches the retake branch; it stays so that this
+                    // file and the server can be deployed in either order.
                     const P = (typeof m.pointsPossible === 'number') ? m.pointsPossible : null;
                     const got = (typeof m.scorePoints === 'number') ? m.scorePoints : null;
                     const flagged = m.isMissing !== false;
@@ -28120,9 +28133,16 @@
                         : '<span class="wc-sr-count ' + (s2.failingCount > 0 ? 'is-failing' : 'is-clear') +
                           '">' + s2.failingCount + '</span>';
                     const marked = s2.sectionsMarked + ' of ' + s2.sectionsEnrolled + ' classes marked';
+                    // The split is printed only when the server sends one. Since
+                    // the owner's final rule (2026-10-05) an entered 0 is missing
+                    // work and scoredZero is 0 by construction, so "(N not in,
+                    // 0 scored zero)" would call a typed-in 0 "not in" and
+                    // claim nothing scored zero.
                     const owed = (s2.notHandedIn + s2.scoredZero) > 0
-                        ? ' · ' + (s2.notHandedIn + s2.scoredZero) + ' outstanding (' +
-                          s2.notHandedIn + ' not in, ' + s2.scoredZero + ' scored zero)'
+                        ? ' · ' + (s2.notHandedIn + s2.scoredZero) + ' outstanding' +
+                          (s2.scoredZero > 0
+                            ? ' (' + s2.notHandedIn + ' not in, ' + s2.scoredZero + ' scored zero)'
+                            : '')
                         : '';
                     return '<button type="button" class="wc-sr-row' + (unknown ? ' is-unknown' : '') +
                         '" onclick="openSeniorDetail(\'' + escapeHtml(String(s2.studentNumber)) + '\')">' +
@@ -28283,15 +28303,22 @@
                         'The grade comes from work already marked, so this is a conversation with the ' +
                         'teacher rather than a pile to hand in.</p></div>';
                 }
+                // "Missing", not "Not handed in", where the server sends no
+                // split. Since the owner's final rule (2026-10-05) every row
+                // here is missing work by convex/missingWorkRules.ts, a 0 the
+                // teacher typed in without ticking the box included, and
+                // "not handed in" beside "scored 0 of 10" says something about
+                // that row nobody knows. "Missing" is the rule's own word and is
+                // true of every row it lists.
                 const heading = c.notHandedIn && c.scoredZero
                     ? 'Work behind this grade · ' + c.notHandedIn + ' not handed in · ' + c.scoredZero + ' scored zero'
-                    : (c.scoredZero ? 'Scored zero · ' + c.scoredZero : 'Not handed in · ' + c.notHandedIn);
+                    : (c.scoredZero ? 'Scored zero · ' + c.scoredZero : 'Missing · ' + c.notHandedIn);
                 return '<div class="wc-sr-work"><h5>' + escapeHtml(heading) + '</h5>' +
                     c.work.map(function (w) {
                         const doubtful = w.flaggedMissing && (w.scorePoints || 0) > 0;
                         const state = doubtful
                             ? 'flagged missing, but a score is recorded — the flag may be out of date'
-                            : (w.flaggedMissing ? 'not handed in' : 'handed in, scored 0');
+                            : (w.flaggedMissing ? 'missing' : 'handed in, scored 0');
                         // pointsPossible null: the cell is OMITTED, never
                         // "worth 0 pts" -- a section can grade by something
                         // other than points, and "worth 0" says it does not
@@ -28350,9 +28377,15 @@
                 // in · 0 scored zero · 0 points still on the table" sat directly
                 // above the sentence that says the same thing in words, and four
                 // zeros in a row read as a broken panel rather than as good news.
+                //
+                // And the split only when the server sends one: scoredZero is 0
+                // by construction since 2026-10-05, and "N not handed in · 0
+                // scored zero" would deny the zeros listed right below it.
                 if (c.notHandedIn + c.scoredZero > 0) {
-                    out += '<p class="wc-sr-tally">' + (c.notHandedIn + c.scoredZero) + ' outstanding · ' +
-                        c.notHandedIn + ' not handed in · ' + c.scoredZero + ' scored zero' +
+                    out += '<p class="wc-sr-tally">' + (c.notHandedIn + c.scoredZero) + ' outstanding' +
+                        (c.scoredZero > 0
+                            ? ' · ' + c.notHandedIn + ' not handed in · ' + c.scoredZero + ' scored zero'
+                            : '') +
                         // Points are omitted rather than shown as zero when the
                         // outstanding work carries no point value: a section can
                         // grade by something other than points, and "0 points

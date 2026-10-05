@@ -497,12 +497,21 @@ export default defineSchema({
     .index("by_section", ["sectionId"]),
 
   /**
-   * Work a teacher has MARKED missing, one row per student per assignment.
+   * Missing work, one row per student per assignment: what PowerSchool's
+   * missing_work query returns -- AssignmentScore.ISMISSING = 1 OR
+   * SCOREPOINTS = 0 (plugin 1.4.1 on) -- stored exactly as given, flag and
+   * score included.
    *
-   * WHAT IT IS NOT. Not "unscored". An assignment with no score may be ungraded
-   * yet, excused, or not collected, and showing those to a child as work they
-   * owe is worse than showing nothing. Only AssignmentScore.ISMISSING = 1 lands
-   * here, which is a flag a teacher set on purpose.
+   * WHAT COUNTS AS MISSING IS DECIDED WHEN IT IS READ, by
+   * missingWorkRules.isMissingWork, the owner's final rule of 2026-10-05: the
+   * Missing box ticked at any score, or a score of exactly 0 ticked or not.
+   * Every row the query returns meets it today; a reader still asks, so a row
+   * from anywhere else cannot reach a child unexamined.
+   *
+   * WHAT IT IS NOT. Not "unscored". An assignment with no score and no flag
+   * may be ungraded yet, excused, or not collected, and showing those to a
+   * child as work they owe is worse than showing nothing. The query never
+   * returns one, and the rule says it is not missing.
    *
    * pointsPossible is OPTIONAL and must stay that way. A section can score by
    * something other than points, and an assignment with no point value is still
@@ -893,12 +902,14 @@ export default defineSchema({
     categoryName: v.optional(v.string()),
     isLate: v.optional(v.boolean()),
     /**
-     * Did a TEACHER flag this, or is it here because it scored zero?
+     * PowerSchool's Missing box, as the teacher left it. Stored raw.
      *
-     * From plugin 1.4.1 the query returns both, and they are different
-     * situations with different asks: flagged means the work is not in, so the
-     * question is whether it can still be handed in; an unflagged zero means it
-     * WAS handed in and scored nothing, so the question is a retake.
+     * From plugin 1.4.1 the query returns ticked work and unticked zeros. Since
+     * the owner's final rule (2026-10-05) BOTH are missing work -- the box no
+     * longer separates "not in" from a "scored zero, ask about a retake" kind,
+     * which is gone -- and a ticked box stays missing whatever score it
+     * carries, "until the teacher removes the designation". Readers ask
+     * missingWorkRules.isMissingWork rather than this field.
      *
      * Optional because rows written by 1.3.x carry no such column, and every
      * one of those was flagged by definition -- the old query returned nothing
@@ -910,11 +921,10 @@ export default defineSchema({
      * gradebook's own terms.
      *
      * The PowerQuery has returned both since 1.3.0 and the sync threw them
-     * away. `scorePoints` is what makes "you scored 0 of 100" sayable instead
-     * of the bare "100 pts" a student reads as a mark they were given, and it
-     * is the difference between work flagged missing and work scored zero --
-     * which the owner wants shown as two different prompts, hand it in versus
-     * ask about a retake.
+     * away. `scorePoints` is what lets an unticked row count as missing work
+     * (exactly 0 is; anything above is not), what the card subtracts for "up
+     * to N points back", and what tells staff a ticked box sits on work that
+     * already carries a score. Stored as given; never inferred.
      *
      * `totalPointValue` sits beside `pointsPossible` in PowerSchool and is not
      * always the same number; both are kept rather than guessing which a given

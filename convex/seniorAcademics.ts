@@ -6,6 +6,7 @@ import {
   countUnderBothRules,
 } from "./seniorEligibility";
 import { projectGrade } from "./gradeProjection";
+import { isMissingWork, markedMissingButScored } from "./missingWorkRules";
 
 /**
  * Named twelfth-graders and the classes they are failing.
@@ -135,6 +136,7 @@ export const failingList = query({
         .withIndex("by_studentNumber", (q) => q.eq("studentNumber", key))
         .collect();
       gradeRows.forEach((g) => bump(g.syncedAt));
+      // Freshness reads every row: it describes the feed, not the list.
       missing.forEach((m) => bump(m.syncedAt));
 
       const marks = gradeRows.map((g) => g.currentGrade);
@@ -157,11 +159,20 @@ export const failingList = query({
       // Outstanding work in the FAILING classes only: this number means
       // distance-from-clear, and work owed in a class they are passing is not
       // what the decision is about. The popup shows all of it regardless.
-      let notHandedIn = 0, scoredZero = 0;
+      //
+      // WHAT IS OUTSTANDING IS missingWorkRules.isMissingWork, the owner's
+      // final rule of 2026-10-05: the Missing box ticked at any score, or a
+      // score of exactly 0 with or without it. Every such row is "not handed
+      // in". `scoredZero` is kept on the response because the deployed screen
+      // prints it, and it is 0 by construction: the unticked zero it used to
+      // count is missing work now, on this list exactly as on the student's
+      // own card, and the two must not disagree about one assignment.
+      let notHandedIn = 0;
+      const scoredZero = 0;
       for (const m of missing) {
         const sec = String(m.sectionId ?? "").trim();
         if (!failingSections.has(sec)) continue;
-        if (m.isMissing !== false) notHandedIn++; else scoredZero++;
+        if (isMissingWork(m)) notHandedIn++;
       }
 
       // NULL, NOT ZERO, when nothing has been posted at all. "We did not look"
@@ -309,6 +320,10 @@ export const detail = query({
     const orphanWork: any[] = [];
     const enrolledSections = new Set([...bySection.keys()]);
     for (const m of missing) {
+      // Same rule as the list above and the student's own card
+      // (missingWorkRules.isMissingWork), so an administrator and the student
+      // holding up their phone see the same items.
+      if (!isMissingWork(m)) continue;
       const sec = String(m.sectionId ?? "").trim();
       const row = {
         assignmentName: m.assignmentName ?? null,
@@ -317,9 +332,16 @@ export const detail = query({
         scorePoints: typeof (m as any).scorePoints === "number" ? (m as any).scorePoints : null,
         categoryName: m.categoryName ?? null,
         isLate: m.isLate === true,
-        // ABSENT READS AS FLAGGED. Rows written by plugin 1.3.x carry no such
-        // column and every one of those was flagged by definition.
-        flaggedMissing: m.isMissing !== false,
+        // MISSING BY THE RULE, which is every row that reaches here -- an
+        // unticked zero included. The deployed screen splits "not handed in"
+        // from "handed in, scored 0" on this one field, and the owner's final
+        // rule (2026-10-05) removed the second kind, so this is the rule's
+        // answer rather than PowerSchool's box.
+        flaggedMissing: isMissingWork(m),
+        // Missing ONLY because the box is still ticked on work that carries a
+        // score above zero. Missing "until the teacher removes the
+        // designation", so the screen names it as the row to raise with them.
+        markedMissingButScored: markedMissingButScored(m),
         courseName: m.courseName ?? null,
       };
       if (sec && enrolledSections.has(sec)) {
@@ -334,7 +356,9 @@ export const detail = query({
       }
     }
 
-    // Flagged before zeros, then oldest due date first, undated LAST. The
+    // Flagged before zeros, then oldest due date first, undated LAST. Since
+    // 2026-10-05 every row here is missing by the rule, so in practice this is
+    // due date alone -- as on the student's card. The
     // sentinel, not `dueDate || ""` -- an empty string sorts above real dates
     // and puts undated work in front of things genuinely overdue. Same
     // comparator the student's own view uses, deliberately: a student holding
@@ -369,8 +393,13 @@ export const detail = query({
         failingLetter: failingLetterOf(g.currentGrade),
         work,
         notHandedIn: work.filter((w) => w.flaggedMissing).length,
+        // 0 by construction since 2026-10-05; kept because the deployed
+        // screen prints it. See failingList.
         scoredZero: work.filter((w) => !w.flaggedMissing).length,
-        flaggedButScored: work.filter((w) => w.flaggedMissing && (w.scorePoints ?? 0) > 0).length,
+        // Ticked missing with a score above zero: still missing by the owner's
+        // rule until the teacher unticks it, and the deployed screen marks
+        // each one "the flag may be out of date" so staff know whom to ask.
+        flaggedButScored: work.filter((w) => w.markedMissingButScored).length,
         pointsAvailable,
         pointsGraded: pts ? pts.possible : null,
         thinGradebook: pts !== null && pts.possible > 0 && pts.possible < THIN_POINTS,

@@ -3,6 +3,7 @@ import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { primaryEmailByStudentNumber } from "./identityRules";
 import { attachStudentEmail } from "./rosterEmail";
+import { markedMissingButScored } from "./missingWorkRules";
 
 /**
  * Scheduled PowerSchool sync, run by Convex rather than by a laptop.
@@ -289,6 +290,9 @@ export const syncFromPowerSchool = internalAction({
       courseName?: string;
       categoryName?: string;
       isLate?: boolean;
+      scorePoints?: number;
+      totalPointValue?: number;
+      isMissing?: boolean;
     };
     let missingRows: MissingRow[] = [];
     let missingError: string | null = null;
@@ -315,8 +319,11 @@ export const syncFromPowerSchool = internalAction({
           isLate: String(m.is_late) === "1",
           // Returned by the query since 1.3.0 and discarded here until
           // 2026-09-05. n() keeps undefined as undefined: a missing score and
-          // a score of zero are different facts, and this column is what tells
-          // "not handed in" apart from "handed in and scored nothing".
+          // a score of zero are different facts. STORED AS GIVEN, with the
+          // flag below: what counts as missing is decided when the table is
+          // READ (missingWorkRules.isMissingWork, owner's final rule
+          // 2026-10-05), never here, so every row PowerSchool returns is
+          // written and a change of rule is a deploy, not a resync.
           scorePoints: n(m.score_points),
           totalPointValue: n(m.total_point_value),
           // Absent means 1.3.x, whose query returned ONLY flagged work, so an
@@ -568,6 +575,11 @@ export const syncFromPowerSchool = internalAction({
       gradeRows: gradeRows.length,
       gradeRowsMissingPercent: gradeRows.filter((g) => g.currentPercent === undefined).length,
       missingWorkRows: missingRows.length,
+      // Of those, how many carry a score above zero with the Missing box
+      // still ticked. Missing by the owner's rule (2026-10-05) "until the
+      // teacher removes the designation", so this is the number that falls as
+      // teachers untick them -- 808 on the day it was added.
+      missingWorkMarkedButScored: missingRows.filter(markedMissingButScored).length,
       // Named rather than silently zero, for the same reason the race error
       // is: "nobody is missing work" and "we were refused" need different
       // responses, and only one of them is a code problem.

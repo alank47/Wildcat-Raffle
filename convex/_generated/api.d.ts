@@ -62,6 +62,7 @@ import type * as me from "../me.js";
 import type * as mealPins from "../mealPins.js";
 import type * as migrate from "../migrate.js";
 import type * as mirror from "../mirror.js";
+import type * as missingWorkRules from "../missingWorkRules.js";
 import type * as passCard from "../passCard.js";
 import type * as promiseTime from "../promiseTime.js";
 import type * as psBehavior from "../psBehavior.js";
@@ -166,6 +167,7 @@ declare const fullApi: ApiFromModules<{
   mealPins: typeof mealPins;
   migrate: typeof migrate;
   mirror: typeof mirror;
+  missingWorkRules: typeof missingWorkRules;
   passCard: typeof passCard;
   promiseTime: typeof promiseTime;
   psBehavior: typeof psBehavior;

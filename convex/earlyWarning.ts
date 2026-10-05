@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { requireStaff } from "./identity";
 import { canReadInsights } from "./accessRules";
 import { readCoverage } from "./psBehavior";
+import { isMissingWork } from "./missingWorkRules";
 
 /**
  * THE COURSE-PERFORMANCE COUNTS BEHIND THE COMBINED EARLY WARNING LIST, plus
@@ -109,6 +110,11 @@ const MAX_MISSING_PER_STUDENT = 200;
  * Low-but-not-zero grades are kept untouched: 341 of 659 have flagged work
  * behind them, so that part of the signal is real.
  *
+ * SINCE 2026-10-05 "flagged missing work" in the paragraph above reads as
+ * "missing work by missingWorkRules.isMissingWork": the box ticked, or a score
+ * of exactly 0 entered without it. The figures above were measured on the
+ * ticked box alone and are kept as the record of why the rule exists.
+ *
  * Both counts cross the wire -- `failingCourses` applies this rule and
  * `failingCoursesRaw` does not -- so the screen can show the difference and a
  * future decision can change it without a deploy.
@@ -154,14 +160,35 @@ export async function countsForStudent(
     .withIndex("by_studentNumber", (q: any) => q.eq("studentNumber", studentNumber))
     .take(MAX_MISSING_PER_STUDENT);
 
-  // isMissing ABSENT READS AS TRUE. Rows written by plugin 1.3.x carry no such
-  // column and every one of those was teacher-flagged by definition.
-  const flaggedBySection = new Map<string, number>();
+  // OWED WORK IS missingWorkRules.isMissingWork, and nothing else: the
+  // owner's final rule of 2026-10-05. Missing box ticked at any score
+  // (isMissing ABSENT reads as ticked: plugin 1.3.x rows carry no such column
+  // and every one was ticked by definition), OR scored exactly 0, ticked or
+  // not. Until that rule an unticked zero was skipped here as "scored zero";
+  // it is owed work now, on this list exactly as on the student's own card.
+  //
+  // The same count corroborates a 0% grade below: a section where the
+  // student has missing work by this rule is graded, not empty -- and an
+  // entered zero is a teacher grading, which is what the corroboration asks.
+  //
+  // ONLY CLASSES THE STUDENT IS STILL IN (2026-10-05). PowerSchool keeps the
+  // gradebook of a class the student dropped, and missing_work returns it:
+  // 395 of 6,523 rows that day, in 89 sections no current grade row names.
+  // The student's card can never show those (it opens missing work from a
+  // course row), so counting them here ranked a child on work nobody can ask
+  // them for. A row with no section, or a student with no grade rows at all,
+  // is still counted: that is a gap in what we know, not a dropped class.
+  const currentSections = new Set(
+    grades.map((g: any) => String(g.sectionId || "")).filter(Boolean),
+  );
+  const missingBySection = new Map<string, number>();
   let missingRecent = 0, missingOlder = 0, missingUndated = 0;
   for (const m of missing) {
-    if (m.isMissing === false) continue;
+    if (!isMissingWork(m)) continue;
+    const rowSection = String(m.sectionId || "");
+    if (currentSections.size && rowSection && !currentSections.has(rowSection)) continue;
     const sec = String(m.sectionId || m.assignmentSectionId || "");
-    if (sec) flaggedBySection.set(sec, (flaggedBySection.get(sec) || 0) + 1);
+    if (sec) missingBySection.set(sec, (missingBySection.get(sec) || 0) + 1);
     const due = String(m.dueDate || "").slice(0, 10);
     if (!due || !cutoff) missingUndated++;
     else if (due >= cutoff) missingRecent++;
@@ -176,7 +203,7 @@ export async function countsForStudent(
     graded++;
     if (p >= FAIL_BELOW) continue;
     failingRaw++;
-    if (p === 0 && !(flaggedBySection.get(String(g.sectionId || "")) || 0)) { ungraded++; continue; }
+    if (p === 0 && !(missingBySection.get(String(g.sectionId || "")) || 0)) { ungraded++; continue; }
     failing++;
   }
 

@@ -2,6 +2,7 @@ import { internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { countsForStudent, recencyCutoff } from "./earlyWarning";
 import { reportedCategories } from "./raceRollup";
+import { isMissingWork } from "./missingWorkRules";
 
 /**
  * MEASURE THE SCHOOL BEFORE DRAWING A LINE THROUGH IT.
@@ -128,9 +129,9 @@ export const profile = internalQuery({
         .query("psMissingWork")
         .withIndex("by_studentNumber", (q) => q.eq("studentNumber", a.studentNumber))
         .take(200);
-      // isMissing absent reads as TRUE: rows written by plugin 1.3.x carry no
-      // such column and every one of those was teacher-flagged by definition.
-      const flagged = missing.filter((m) => m.isMissing !== false).length;
+      // Owed work by missingWorkRules.isMissingWork, the rule the screen
+      // counts by (owner, 2026-10-05): the box ticked, or a score of exactly 0.
+      const flagged = missing.filter(isMissingWork).length;
       if (missing.length === 0) noMissingRows++;
       bump(missCount, flagged);
 
@@ -247,8 +248,9 @@ export const gradeReality = internalQuery({
  * concluded from its silence.
  *
  * It also tests the corroboration that DOES exist today: psMissingWork carries
- * sectionId, so a 0% in a section where a teacher has flagged missing work is
- * a student genuinely behind, while a 0% in a section with no flagged work at
+ * sectionId, so a 0% in a section holding missing work -- by
+ * missingWorkRules.isMissingWork, the box ticked or a score of exactly 0 -- is
+ * a student genuinely behind, while a 0% in a section with no missing work at
  * all is far more likely to be a gradebook nobody has filled in.
  */
 export const corroboration = internalQuery({
@@ -263,8 +265,8 @@ export const corroboration = internalQuery({
     let students = 0, last = after || "";
     let pointsRows = 0, gradeRows = 0, missingRows = 0;
     let studentsWithAnyPointsRow = 0, studentsWithAnyMissing = 0;
-    // For each below-60 grade row, is there flagged missing work in the SAME
-    // section? That is the corroboration available without plugin 1.4.1.
+    // For each below-60 grade row, is there missing work (isMissingWork) in the
+    // SAME section? That is the corroboration available without plugin 1.4.1.
     const zero: Record<string, number> = {};
     const low: Record<string, number> = {};
 
@@ -282,7 +284,9 @@ export const corroboration = internalQuery({
 
       const missBySection = new Map<string, number>();
       for (const m of missing) {
-        if (m.isMissing === false) continue;
+        // Missing work by missingWorkRules.isMissingWork, as earlyWarning.ts
+        // corroborates a 0% (owner's rule, 2026-10-05).
+        if (!isMissingWork(m)) continue;
         const k = String(m.sectionId || m.assignmentSectionId || "");
         missBySection.set(k, (missBySection.get(k) || 0) + 1);
       }
@@ -373,7 +377,8 @@ export const calibrate = internalQuery({
       const flaggedBySection = new Map<string, number>();
       let recent = 0, older = 0, undated = 0;
       for (const m of missing) {
-        if (m.isMissing === false) continue;
+        // The same rule countsForStudent applies (missingWorkRules, 2026-10-05).
+        if (!isMissingWork(m)) continue;
         const k = String(m.sectionId || m.assignmentSectionId || "");
         flaggedBySection.set(k, (flaggedBySection.get(k) || 0) + 1);
         const due = String(m.dueDate || "").slice(0, 10);

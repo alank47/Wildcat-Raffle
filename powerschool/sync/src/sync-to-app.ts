@@ -282,6 +282,17 @@ const missingRows = missingWork.map((m: any) => ({
   courseName: str(m.course_name),
   categoryName: str(m.category_name),
   isLate: String(m.is_late) === "1",
+  // The same three fields the cron (convex/sisAction.ts) carries, stored as
+  // PowerSchool gives them. Without them every row this script writes lands
+  // with no flag and no score: the staff screens lose "a score is recorded,
+  // the flag may be out of date", the card's "points back" counts work the
+  // student already has points for, and the table stops saying what
+  // PowerSchool said. What counts as missing is decided at read time
+  // (convex/missingWorkRules.ts). String "0"/"1" for is_missing, as for
+  // is_late: Boolean("0") is true.
+  scorePoints: num(m.score_points),
+  totalPointValue: num(m.total_point_value),
+  isMissing: m.is_missing === undefined ? true : String(m.is_missing) === "1",
 })).filter((m) => m.studentNumber && m.assignmentSectionId);
 for (let i = 0; i < missingRows.length; i += CHUNK) {
   if (i === 0) {

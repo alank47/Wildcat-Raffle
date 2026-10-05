@@ -229,6 +229,28 @@ check("the server takes its read gate from accessRules.ts", accessNames.includes
 check("and every name it imports from there is real",
   accessNames.length > 0 && accessNames.every((n) => access[n] !== undefined), accessNames.join(","));
 
+// WHAT COUNTS AS OWED WORK IS DECIDED IN missingWorkRules.ts, NOT HERE: the
+// owner's final rule of 2026-10-05, the Missing box ticked at any score or a
+// score of exactly 0. Pure, so the REAL module is loaded and bound, for the
+// reason accessRules is above.
+const missingSrc = js("./convex/missingWorkRules.ts");
+check("missingWorkRules.ts imports nothing, so loading it on its own is the real thing",
+  !/^import /m.test(missingSrc));
+const missingRules = (() => {
+  const m = { exports: {} };
+  const out = ts.transpileModule(missingSrc, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  new Function("module", "exports", out)(m, m.exports);
+  return m.exports;
+})();
+const missingImport = serverSrc.match(/^import \{([^}]+)\} from "\.\/missingWorkRules";$/m);
+const missingNames = missingImport ? missingImport[1].split(",").map((s) => s.trim()).filter(Boolean) : [];
+check("the server takes owed work from missingWorkRules.ts", missingNames.includes("isMissingWork"),
+  missingImport ? missingImport[0] : "no import from ./missingWorkRules");
+check("and every name it imports from there is real",
+  missingNames.length > 0 && missingNames.every((n) => missingRules[n] !== undefined), missingNames.join(","));
+
 // The shipped handler, with Convex's wrappers and its other imports stubbed.
 // `staff` is the teachers row requireStaff returns; attendanceWatch lives on it.
 function loadServer(opts) {
@@ -245,11 +267,14 @@ function loadServer(opts) {
     const readCoverage = async () => (${JSON.stringify(o.coverage || null)});
     // The REAL accessRules exports, under the names the server imports.
     const { ${accessNames.join(", ")} } = __accessRules;
+    // And the REAL missing-work rule, the same way.
+    const { ${missingNames.join(", ")} } = __missingRules;
   `;
   const out = ts.transpileModule(stubs + body, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
   }).outputText;
-  return new Function("__accessRules", out + "\nreturn { academicCounts, countsForStudent, recencyCutoff };")(access);
+  return new Function("__accessRules", "__missingRules",
+    out + "\nreturn { academicCounts, countsForStudent, recencyCutoff };")(access, missingRules);
 }
 
 function makeDb(tables) {
@@ -358,17 +383,26 @@ for (const role of ["teacher", "campusaide"]) {
     psMissingWork: [
       miss("1001", "S1", "2026-09-20"), miss("1001", "S1", "2026-09-08"),
       miss("1001", "S1", "2026-09-06"), miss("1001", "S1", "2026-08-20"),
-      // isMissing FALSE is a scored zero, not work owed, and must not count.
+      // Unticked and unscored is not owed work: ungraded is not zero.
       miss("1001", "S1", "2026-09-19", { isMissing: false }),
       // isMissing ABSENT reads as true: plugin 1.3.x rows carried no column.
       miss("1001", "S1", "2026-09-19"),
+      // THE OWNER'S FINAL RULE, 2026-10-05. An unticked ZERO is owed work...
+      miss("1001", "S1", "2026-09-18", { isMissing: false, scorePoints: 0 }),
+      // ...a ticked box is owed at any score, until the teacher unticks it...
+      miss("1001", "S1", "2026-08-21", { isMissing: true, scorePoints: 10, pointsPossible: 10 }),
+      // ...and an unticked score above zero ("50% or 59%") is not.
+      miss("1001", "S1", "2026-09-17", { isMissing: false, scorePoints: 5.9, pointsPossible: 10 }),
     ],
   });
   const out = await m.academicCounts.handler(db.ctx, { today: "2026-09-21", recentDays: 14 });
   const r = out.rows[0];
-  check("the 14-day window splits owed work by due date", r.missingRecent === 3 && r.missingOlder === 2,
+  check("the 14-day window splits owed work by due date", r.missingRecent === 4 && r.missingOlder === 3,
     `recent ${r.missingRecent} older ${r.missingOlder}`);
-  check("isMissing:false is excluded", r.missingRecent + r.missingOlder === 5);
+  check("unticked and unscored is excluded, as is an unticked score above zero",
+    r.missingRecent + r.missingOlder + r.missingUndated === 7);
+  check("an unticked zero is owed work (owner, 2026-10-05)", r.missingRecent === 4);
+  check("a ticked box carrying a score is still owed", r.missingOlder === 3);
   check("the cutoff is reported so the screen can state it", out.cutoff === "2026-09-07", out.cutoff);
   check("a date is compared as a STRING, never parsed and re-serialized",
     !/new Date\(\s*[a-z]*\.?dueDate/i.test(serverSrc) && !/Date\.parse\([^)]*dueDate/i.test(serverSrc));
