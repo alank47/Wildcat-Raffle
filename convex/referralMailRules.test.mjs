@@ -40,14 +40,18 @@ console.log("\n-- the list is the six the owner named, and nothing else --");
 {
   const emails = REFERRAL_RECIPIENTS.map((r) => r.email);
   check("six standing recipients", emails.length === 6);
-  ["jasonm", "leahr", "ashargm", "laurab", "sammyg", "alank"].forEach((u) =>
+  check("Asharg Molla is no longer on the list (left the staff directory, 2026-10-06)",
+    !emails.some((e) => /ashargm/i.test(e)));
+  ["jasonm", "leahr", "claudial", "laurab", "sammyg", "alank"].forEach((u) =>
     check(`${u}@ is on it`, emails.includes(`${u}@lapromisefund.org`)));
   // Mailing "everyone with an admin role" would have been eleven people,
   // including the app's own developer and a counselor made admin an hour
   // earlier for an unrelated screen.
   check("the developer is NOT on it", !emails.some((e) => e.startsWith("lawrence")));
+  // Claudia Lopez was in this list until 2026-10-06, when the owner named her
+  // a recipient: holding a role still adds nobody, a decision does.
   check("nor the people who hold a role but were not named",
-    !emails.some((e) => e.startsWith("arianan") || e.startsWith("claudia") ||
+    !emails.some((e) => e.startsWith("arianan") ||
                         e.startsWith("christine") || e.startsWith("shaqueal")));
   check("every address is on the staff domain",
     emails.every((e) => e.endsWith("@lapromisefund.org")));

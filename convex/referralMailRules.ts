@@ -36,7 +36,10 @@ export const REFERRAL_RECIPIENTS: ReadonlyArray<{ email: string; name: string; w
   // the whole referral rather than a link.
   { email: "jasonm@lapromisefund.org", name: "Jason Marin", why: "Chief of Schools" },
   { email: "leahr@lapromisefund.org", name: "Leah Ruiz", why: "admin" },
-  { email: "ashargm@lapromisefund.org", name: "Asharg Molla", why: "admin" },
+  // 2026-10-06, on the owner's instruction: Claudia Lopez added; Asharg Molla
+  // removed (no longer in the staff directory, so referrals were going to a
+  // departed colleague's mailbox).
+  { email: "claudial@lapromisefund.org", name: "Claudia Lopez", why: "admin" },
   // Also files referrals herself, so she is deduped against the filer below.
   { email: "laurab@lapromisefund.org", name: "Laura Baltazar", why: "pbis" },
   { email: "sammyg@lapromisefund.org", name: "Sammy Gonzalez", why: "pbis" },
