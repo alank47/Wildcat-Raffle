@@ -7,11 +7,14 @@ import { laterCandidates, ZERO_POINT_SLACK_MS } from "./cashArrivalRules";
 /**
  * Putting the four cash counters back in agreement with the ledger.
  *
- * WHY THIS IS PAGED, and not one call. The cash ledger held 2,066 rows on
- * 2026-09-17 and grows by roughly 450 a school day; the students table holds
- * 763. A single execution that read both would be at 2,829 of Convex's 4,096
- * document reads today and over the limit within the week -- and a repair that
- * works this afternoon and fails silently next Tuesday is worse than no
+ * WHY THIS IS PAGED, and not one call. The cash ledger grows by roughly 450
+ * rows a school day (6,954 rows, ~3.9 MiB on 2026-10-05) and every one of the
+ * 763 student rows carries its own copy of its cash history (~3.2 MiB). The
+ * limit a single execution reading both runs into is Convex's 16 MiB of data
+ * read (the others: 32,000 documents scanned, 4,096 index ranges, 8,192 array
+ * elements) -- this comment used to say "4,096 document reads", which is the
+ * index-range limit and is not what one collect() counts against. Either way
+ * a repair that works this afternoon and fails next month is worse than no
  * repair. So the ledger is read a page at a time by `ledgerPage`, the driver
  * groups it by student, and `recountStudents` reads only the students in its
  * own slice, by index, one read each.
@@ -342,15 +345,26 @@ export const recountStudents = internalMutation({
  * Takes the student ids the recount flagged and returns their cash rows with
  * timestamps, amounts and the behaviour that caused them. NO NAMES: the caller
  * already has them and this is a diagnostic, not a roster.
+ *
+ * THE CAP IS SAID OUT LOUD (2026-10-05). It reads at most 4,000 rows of the
+ * week, and used to stop there in silence -- so past 4,000 rows a week the
+ * rows it did not reach were simply absent, and "no rows for this student" was
+ * indistinguishable from "did not look". Now a cut-off read returns
+ * `truncated: true` and a `warning`: what it returns is only part of the week,
+ * and an absence in it proves nothing. Unchanged when the week fits.
  */
+const ROWS_FOR_STUDENTS_CAP = 4000;
+
 export const rowsForStudents = internalQuery({
   args: { studentIds: v.array(v.string()), doc: v.string() },
   handler: async (ctx, { studentIds, doc }) => {
     const want = new Set(studentIds.map((s) => String(s)));
-    const slices = await ctx.db
+    const read = await ctx.db
       .query("legacyMirror")
       .withIndex("by_doc", (q) => q.eq("doc", doc))
-      .take(4000);
+      .take(ROWS_FOR_STUDENTS_CAP + 1);
+    const truncated = read.length > ROWS_FOR_STUDENTS_CAP;
+    const slices = truncated ? read.slice(0, ROWS_FOR_STUDENTS_CAP) : read;
     const out: Array<Record<string, any>> = [];
     for (const r of slices) {
       if (r.collection !== "transactions") continue;
@@ -385,6 +399,15 @@ export const rowsForStudents = internalQuery({
       }
     }
     out.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+    if (truncated) {
+      return {
+        rows: out, slicesRead: slices.length,
+        truncated: true,
+        warning: `${doc} holds more than ${ROWS_FOR_STUDENTS_CAP} rows and only the first ` +
+          `${ROWS_FOR_STUDENTS_CAP} were read. These rows are PART of the week: a student or a ` +
+          `movement missing from them may still be in the ledger. Do not conclude anything from an absence.`,
+      };
+    }
     return { rows: out, slicesRead: slices.length };
   },
 });

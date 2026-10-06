@@ -4928,13 +4928,29 @@ export const reverseRefund = internalMutation({
       };
     }
 
+    // EVERY CAPPED READ BELOW REFUSES WHEN IT IS CUT OFF (2026-10-05). Each
+    // used to stop at its cap in silence, and each silence would have been a
+    // wrong conclusion acted on: past 4,000 rows a week "not in the ledger"
+    // refused a refund that IS there (blaming the two stores for disagreeing);
+    // past 2,000 reversals the counters would be derived without some of them;
+    // past 2,000 receipts the receipt could be missed and left pointing at a
+    // ledger row this deletes. A read that did not see everything says so.
+    const WEEK_CAP = 4000, REVERSAL_CAP = 2000, RECEIPT_CAP = 2000;
     const week = cashWeekKeyForRepair(String(onRecord.timestamp ?? ""));
     const doc = `cash_tx_${week}`;
     const weekRows = await ctx.db.query("legacyMirror")
       .withIndex("by_doc_collection", (q) => q.eq("doc", doc).eq("collection", "transactions"))
-      .take(4000);
-    const ledgerRow = (weekRows as any[]).find(
+      .take(WEEK_CAP + 1);
+    const weekTruncated = weekRows.length > WEEK_CAP;
+    const ledgerRow = (weekRows as any[]).slice(0, WEEK_CAP).find(
       (r) => String((r.payload as any)?.id ?? "") === id);
+    if (!ledgerRow && weekTruncated) {
+      return {
+        ok: false, refused: true, truncated: true,
+        note: `${doc} holds more than ${WEEK_CAP} rows and only ${WEEK_CAP} were read, so ` +
+              `"${id} is not in the ledger" cannot be concluded. Nothing was deleted.`,
+      };
+    }
     if (!ledgerRow) {
       return {
         ok: false, refused: true,
@@ -4945,7 +4961,15 @@ export const reverseRefund = internalMutation({
 
     // The counters as the REMAINING history says they should be.
     const remaining = arr.filter((t: any) => String(t?.id ?? "") !== id);
-    const revRows = await ctx.db.query("cashReversals").take(2000);
+    const revRead = await ctx.db.query("cashReversals").take(REVERSAL_CAP + 1);
+    if (revRead.length > REVERSAL_CAP) {
+      return {
+        ok: false, refused: true, truncated: true,
+        note: `More than ${REVERSAL_CAP} reversals are on record and only ${REVERSAL_CAP} were ` +
+              `read, so the counters cannot be derived correctly. Nothing was changed.`,
+      };
+    }
+    const revRows = revRead;
     const deltas: Record<string, any> = {};
     for (const r of revRows as any[]) {
       const rid = String(r.reversalTxnId ?? "");
@@ -4959,12 +4983,20 @@ export const reverseRefund = internalMutation({
       .filter((f) => Math.abs((Number((student as any)[f]) || 0) - derived[f]) >= 0.005)
       .map((f) => ({ field: f, was: Number((student as any)[f]) || 0, now: derived[f] }));
 
-    const receiptRows = await ctx.db.query("legacyMirror")
+    const receiptRead = await ctx.db.query("legacyMirror")
       .withIndex("by_doc_collection",
         (q) => q.eq("doc", "secondary").eq("collection", "cashReceipts"))
-      .take(2000);
-    const receiptRow = (receiptRows as any[]).find(
+      .take(RECEIPT_CAP + 1);
+    const receiptRow = (receiptRead as any[]).slice(0, RECEIPT_CAP).find(
       (r) => String((r.payload as any)?.refundTxId ?? "") === id);
+    if (!receiptRow && receiptRead.length > RECEIPT_CAP) {
+      return {
+        ok: false, refused: true, truncated: true,
+        note: `More than ${RECEIPT_CAP} receipts are stored and only ${RECEIPT_CAP} were read, so ` +
+              `the receipt pointing at ${id} may exist unseen and would be left pointing at a ` +
+              `deleted row. Nothing was deleted.`,
+      };
+    }
 
     if (apply === true) {
       await ctx.db.delete(ledgerRow._id);

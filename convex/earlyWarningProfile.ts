@@ -1748,6 +1748,65 @@ export const cashDriftPatterns = internalQuery({
 });
 
 /**
+ * THE CAPS ON THE PER-STUDENT CASH DIAGNOSTICS BELOW, SAID OUT LOUD
+ * (2026-10-05).
+ *
+ * Each reads at most 3,000 rows of every week it is given and, for the two
+ * that cross-check the audit log, at most 4,000 audit entries from `sinceIso`
+ * -- and each used to stop there in silence. 3,000 is 84% of the busiest week
+ * so far (W38, 2,527), so one push week crosses it; and ~2,300 audit entries
+ * are written a school week, so 4,000 covers about 1.7 weeks: any `sinceIso`
+ * before about 9/23 was ALREADY cut off on 2026-10-05. A cut-off read here does
+ * not fail, it answers -- "no audit entries", "the ledger is short", "this row
+ * is missing" -- about the part it happened to see.
+ *
+ * So a read that hit its cap now REFUSES TO CONCLUDE: the function returns
+ * `truncated: true`, which weeks (or the audit window) were cut off, and none
+ * of its verdicts. What it returns when nothing was cut off is unchanged.
+ * Narrow the weeks, or move `sinceIso` later, and ask again.
+ */
+const DIAG_WEEK_CAP = 3000;
+const DIAG_AUDIT_CAP = 4000;
+
+/** One week of the ledger for a diagnostic, and whether the cap cut it off. */
+async function diagnosticWeek(ctx: any, week: string): Promise<{ rows: any[]; truncated: boolean }> {
+  const got = await ctx.db.query("legacyMirror")
+    .withIndex("by_doc", (q: any) => q.eq("doc", `cash_tx_${week}`)).take(DIAG_WEEK_CAP + 1);
+  return got.length > DIAG_WEEK_CAP
+    ? { rows: got.slice(0, DIAG_WEEK_CAP), truncated: true }
+    : { rows: got, truncated: false };
+}
+
+/** The audit log from `sinceIso`, oldest first, and whether the cap cut it off. */
+async function diagnosticAudit(ctx: any, sinceIso: string): Promise<{ rows: any[]; truncated: boolean }> {
+  const got = await ctx.db.query("appAuditLog")
+    .withIndex("by_timestamp", (q: any) => q.gte("timestamp", sinceIso)).take(DIAG_AUDIT_CAP + 1);
+  return got.length > DIAG_AUDIT_CAP
+    ? { rows: got.slice(0, DIAG_AUDIT_CAP), truncated: true }
+    : { rows: got, truncated: false };
+}
+
+/** What a diagnostic returns INSTEAD of its verdicts when a read was cut off. */
+function refusedAsTruncated(truncatedWeeks: string[], auditTruncated: boolean, sinceIso?: string) {
+  const parts: string[] = [];
+  if (truncatedWeeks.length) {
+    parts.push(`${truncatedWeeks.join(", ")} hold${truncatedWeeks.length === 1 ? "s" : ""} more than ` +
+      `${DIAG_WEEK_CAP} rows and only ${DIAG_WEEK_CAP} were read`);
+  }
+  if (auditTruncated) {
+    parts.push(`the audit log from ${sinceIso ?? "that time"} holds more than ${DIAG_AUDIT_CAP} ` +
+      `entries and only the oldest ${DIAG_AUDIT_CAP} were read`);
+  }
+  return {
+    truncated: true,
+    truncatedWeeks,
+    auditTruncated,
+    refused: `No conclusion: ${parts.join("; ")}. Anything this would report as missing or ` +
+      `disagreeing might simply not have been read. Ask again with fewer weeks or a later sinceIso.`,
+  };
+}
+
+/**
  * WALK ONE DRIFTED STUDENT'S LEDGER, using the balanceAfter the CLIENT wrote.
  *
  * Every cash row carries `balanceAfter`: what the browser believed the balance
@@ -1771,9 +1830,10 @@ export const traceDriftedStudents = internalQuery({
   handler: async (ctx, { weeks, studentIds, limit }) => {
     const want = new Set(studentIds.map(String));
     const rowsBy = new Map<string, any[]>();
+    const truncatedWeeks: string[] = [];
     for (const w of weeks) {
-      const rows = await ctx.db.query("legacyMirror")
-        .withIndex("by_doc", (q) => q.eq("doc", `cash_tx_${w}`)).take(3000);
+      const { rows, truncated } = await diagnosticWeek(ctx, w);
+      if (truncated) truncatedWeeks.push(w);
       for (const r of rows) {
         if (r.collection !== "transactions") continue;
         const p: any = r.payload;
@@ -1783,6 +1843,8 @@ export const traceDriftedStudents = internalQuery({
         (rowsBy.get(sid) ?? rowsBy.set(sid, []).get(sid)!).push(p);
       }
     }
+    // A walk over part of a week reads as a gap in the child's ledger.
+    if (truncatedWeeks.length) return refusedAsTruncated(truncatedWeeks, false);
 
     const out: any[] = [];
     let lastMatches = 0, lastDiffers = 0, noBalanceAfter = 0, gapsFound = 0;
@@ -1892,9 +1954,10 @@ export const lostLedgerRecoverable = internalQuery({
   handler: async (ctx, { weeks, studentIds }) => {
     const want = new Set(studentIds.map(String));
     const inWeekly = new Map<string, Set<string>>();
+    const truncatedWeeks: string[] = [];
     for (const w of weeks) {
-      const rows = await ctx.db.query("legacyMirror")
-        .withIndex("by_doc", (q) => q.eq("doc", `cash_tx_${w}`)).take(3000);
+      const { rows, truncated } = await diagnosticWeek(ctx, w);
+      if (truncated) truncatedWeeks.push(w);
       for (const r of rows) {
         if (r.collection !== "transactions") continue;
         const p: any = r.payload;
@@ -1904,6 +1967,9 @@ export const lostLedgerRecoverable = internalQuery({
         (inWeekly.get(sid) ?? inWeekly.set(sid, new Set()).get(sid)!).add(String(p.id ?? ""));
       }
     }
+    // A row the cut-off read did not reach would be counted "only on the
+    // student" -- recoverable money that is in fact already in the ledger.
+    if (truncatedWeeks.length) return refusedAsTruncated(truncatedWeeks, false);
 
     let studentsChecked = 0, withArray = 0, recoverable = 0, fullyRecoverable = 0;
     let rowsMissing = 0, rowsFoundOnStudent = 0, moneyRecoverable = 0;
@@ -1956,9 +2022,13 @@ export const lostLedgerRecoverable = internalQuery({
 export const auditActions = internalQuery({
   args: { sinceIso: v.optional(v.string()) },
   handler: async (ctx, { sinceIso }) => {
-    const rows = await ctx.db.query("appAuditLog")
+    const read = await ctx.db.query("appAuditLog")
       .withIndex("by_timestamp", (q) => sinceIso ? q.gte("timestamp", sinceIso) : q)
-      .take(4000);
+      .take(DIAG_AUDIT_CAP + 1);
+    // Counts of the OLDEST 4,000 when there are more, said so rather than
+    // passed off as the log's totals.
+    const truncated = read.length > DIAG_AUDIT_CAP;
+    const rows = truncated ? read.slice(0, DIAG_AUDIT_CAP) : read;
     const byAction: Record<string, number> = {};
     const cashKeys = new Set<string>();
     for (const r of rows) {
@@ -1967,7 +2037,11 @@ export const auditActions = internalQuery({
       byAction[a] = (byAction[a] || 0) + 1;
       if (/cash/i.test(a)) for (const k of Object.keys(p)) cashKeys.add(k);
     }
-    return { rows: rows.length, byAction, cashEntryFields: [...cashKeys].sort() };
+    const counts = { rows: rows.length, byAction, cashEntryFields: [...cashKeys].sort() };
+    return truncated
+      ? { ...counts, truncated: true,
+          warning: `More than ${DIAG_AUDIT_CAP} entries since ${sinceIso ?? "the start"}: these are the counts of the oldest ${DIAG_AUDIT_CAP} only.` }
+      : counts;
   },
 });
 
@@ -1993,9 +2067,10 @@ export const auditVsLedger = internalQuery({
 
     // 1. the weekly ledger
     const ledger = new Map<string, { sum: number; ids: Set<string> }>();
+    const truncatedWeeks: string[] = [];
     for (const w of weeks) {
-      const rows = await ctx.db.query("legacyMirror")
-        .withIndex("by_doc", (q) => q.eq("doc", `cash_tx_${w}`)).take(3000);
+      const { rows, truncated } = await diagnosticWeek(ctx, w);
+      if (truncated) truncatedWeeks.push(w);
       for (const r of rows) {
         if (r.collection !== "transactions") continue;
         const p: any = r.payload;
@@ -2012,8 +2087,12 @@ export const auditVsLedger = internalQuery({
 
     // 2. the audit log
     const audit = new Map<string, { sum: number; n: number; entries: string[] }>();
-    const auditRows = await ctx.db.query("appAuditLog")
-      .withIndex("by_timestamp", (q) => q.gte("timestamp", sinceIso)).take(4000);
+    const { rows: auditRows, truncated: auditTruncated } = await diagnosticAudit(ctx, sinceIso);
+    // The third witness over part of the record is not a witness: "audit
+    // agrees with the LEDGER" would really mean "the entries were not read".
+    if (truncatedWeeks.length || auditTruncated) {
+      return refusedAsTruncated(truncatedWeeks, auditTruncated, sinceIso);
+    }
     const seenEntry = new Set<string>();
     for (const r of auditRows) {
       const p: any = r.payload || {};
@@ -2079,11 +2158,14 @@ export const auditVsLedger = internalQuery({
 export const auditSample = internalQuery({
   args: { studentId: v.string() },
   handler: async (ctx, { studentId }) => {
-    const rows = await ctx.db.query("appAuditLog")
-      .withIndex("by_timestamp", (q) => q.gte("timestamp", "2026-09-14T00:00:00Z")).take(4000);
+    const { rows, truncated } = await diagnosticAudit(ctx, "2026-09-14T00:00:00Z");
     const mine = rows.map((r) => r.payload as any)
       .filter((p) => p && /^cash_/.test(String(p.action ?? "")) && String(p.studentId ?? "") === studentId);
-    return { found: mine.length, samples: mine.slice(0, 3) };
+    // "found: 0" from the oldest 4,000 entries is not "this student has none".
+    return truncated
+      ? { found: mine.length, samples: mine.slice(0, 3), truncated: true,
+          warning: `Only the oldest ${DIAG_AUDIT_CAP} entries since 2026-09-14 were read; a newer one may exist.` }
+      : { found: mine.length, samples: mine.slice(0, 3) };
   },
 });
 
@@ -2112,9 +2194,10 @@ export const missingLedgerRows = internalQuery({
     const present = new Set<string>();
     const behaviourIdByName = new Map<string, string>();
     const weekOfRow = new Map<string, string>();
+    const truncatedWeeks: string[] = [];
     for (const w of weeks) {
-      const rows = await ctx.db.query("legacyMirror")
-        .withIndex("by_doc", (q) => q.eq("doc", `cash_tx_${w}`)).take(3000);
+      const { rows, truncated } = await diagnosticWeek(ctx, w);
+      if (truncated) truncatedWeeks.push(w);
       for (const r of rows) {
         if (r.collection !== "transactions") continue;
         const p: any = r.payload;
@@ -2129,8 +2212,13 @@ export const missingLedgerRows = internalQuery({
       }
     }
 
-    const audit = await ctx.db.query("appAuditLog")
-      .withIndex("by_timestamp", (q) => q.gte("timestamp", sinceIso)).take(4000);
+    const { rows: audit, truncated: auditTruncated } = await diagnosticAudit(ctx, sinceIso);
+    // These rows are what cashRestore puts BACK into the ledger. A ledger row
+    // the cut-off read did not reach would be proposed as missing and restored
+    // a second time; an audit entry it did not reach would simply be dropped.
+    if (truncatedWeeks.length || auditTruncated) {
+      return refusedAsTruncated(truncatedWeeks, auditTruncated, sinceIso);
+    }
     const missing: any[] = [];
     for (const r of audit) {
       const p: any = r.payload || {};

@@ -5,10 +5,13 @@ import { MAX_CASH_DELTA } from "./appDataShape";
 import {
   buildReversalRow,
   cashWeekKey,
+  ledgerSearchWeeks,
   plannedCounterDelta,
+  readWeeksWithinBudget,
   reversalAuditAction,
   reversalVerdict,
-  weekKeysBetween,
+  weekKeysNewestFirst,
+  weekOfTxnId,
   type CashRow,
 } from "./cashReversalRules";
 
@@ -36,8 +39,49 @@ import {
  * and the CLI, which is enough to fix a real mis-deduction today.
  */
 
-/** How many students to scan when nothing narrows the search. */
+/**
+ * WHAT THESE READS COST, AND THE LIMIT THEY ARE KEPT UNDER (2026-10-05).
+ *
+ * Convex stops one execution at 16 MiB of data read, 32,000 documents
+ * scanned, 4,096 index ranges (db.get / db.query calls) or 8,192 array
+ * elements. For this file the byte limit is the one that binds: legacyMirror
+ * has no index on `payload.id` or `payload.studentId`, so every ledger read is
+ * a whole week document (~1.3 MiB, ~2,200 rows a school week), and every
+ * student row carries its whole cash-history copy. Measured that day, the
+ * Reverse button and the reversible list read every week since 9/14 PLUS the
+ * whole students table: about 7.4 of 16 MiB, growing ~2.1 MiB a school week,
+ * so both would have started failing about the first week of November.
+ *
+ * Now: the student is one indexed read, a reversal reads at most three weeks
+ * (usually one), and the list reads newest weeks first inside a byte budget
+ * and says when it stopped short. The structural fix -- an index on the
+ * ledger rows themselves -- is the next step, proven separately.
+ */
+
+/** The reversible list may span at most this many week documents, newest first. */
 const MAX_WEEK_DOCS = 14;
+
+/**
+ * What the reversible list may read of the ledger, in estimated bytes (JSON
+ * of each whole row, which measured within 1% of Convex's own count for
+ * ledger rows on 2026-10-05). 12 of 16 MiB leaves room for the student row,
+ * the register lookups and the +/-20% the estimate may be off by.
+ */
+const LIST_BYTE_BUDGET = 12 * 1048576;
+
+/**
+ * The largest a row is assumed to be when working out how many rows one read
+ * may ask for. Measured: average 588 bytes, largest 1,056.
+ */
+const ROW_BYTES_CEILING = 1200;
+
+/** What one reversal's search may read before it gives up and says so. */
+const SEARCH_BYTE_BUDGET = 8 * 1048576;
+
+/** The size of a row as Convex will roughly count it. */
+function approxRowBytes(r: unknown): number {
+  try { return JSON.stringify(r).length; } catch { return ROW_BYTES_CEILING; }
+}
 
 async function historyCutoffMs(ctx: any): Promise<number | null> {
   const row = await ctx.db
@@ -49,52 +93,109 @@ async function historyCutoffMs(ctx: any): Promise<number | null> {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+type LedgerSearch =
+  | { kind: "found"; row: CashRow; weekKey: string; docId: any }
+  | { kind: "duplicate"; weeks: string[] }
+  | { kind: "index_miss"; weeksSearched: string[]; idHasNoTime: boolean };
+
 /**
  * Find one transaction in the ledger, and the week document holding it.
  *
  * legacyMirror is indexed by document name only -- there is no index on
- * `payload.id` -- so this reads candidate week documents and scans them. The
- * candidates are bounded by the history cutoff, because a transaction older
- * than that is refused anyway: today that is one document. `weekHint` skips
- * even that when the caller already knows, and is never trusted -- a wrong
- * hint costs one extra document read, not a wrong answer.
+ * `payload.id` -- so this reads candidate week documents and scans them. THE
+ * CANDIDATES ARE BOUNDED, at most three (see ledgerSearchWeeks): the caller's
+ * weekHint, the week the id's own milliseconds point at, and a neighbour only
+ * when those milliseconds sit within an hour of a week boundary. Measured on
+ * 2026-10-05, the id's week is the row's week for all 6,866 ids that carry a
+ * time, so a reversal now reads ONE week where it read every week since the
+ * cutoff, and the newest transactions are no longer the most expensive.
+ *
+ * A MISS IS SAID, NOT SEARCHED FOR. There is deliberately no "then scan every
+ * week" fallback: that scan is the read that hits Convex's 16 MiB limit, and
+ * a mistyped id or an id with no time in it (the 88 `txn_rb_` rows put back
+ * by a repair script) would walk straight into it. Those come back as
+ * `index_miss`, logged, and are reversed with their week as `weekHint`.
+ *
+ * TWO ROWS WITH ONE ID ARE REFUSED (`duplicate`). unique() would throw, and
+ * first() would reverse one copy and leave the other standing -- the money
+ * moves once while the ledger still shows the original. There were none on
+ * 2026-10-05, inside or across weeks. EVERY PLANNED WEEK IS READ BEFORE
+ * DECIDING (at most three, normally one), so a second copy in any of them is
+ * seen: stopping at the first hit let a weekHint naming another week reverse
+ * a copy filed there -- another child's counters -- without ever reading the
+ * id's own week. A copy filed in a week outside the plan is still outside a
+ * bounded search; the ledger index (the next step) is what will see that.
  */
 async function findLedgerRow(
   ctx: any,
   txnId: string,
-  cutoffMs: number | null,
-  nowMs: number,
   weekHint?: string | null,
-): Promise<{ row: CashRow; weekKey: string; docId: any } | null> {
-  const weeks: string[] = [];
-  if (weekHint) weeks.push(String(weekHint));
-  const from = cutoffMs === null ? nowMs - 60 * 86400000 : cutoffMs;
-  for (const w of weekKeysBetween(from, nowMs, MAX_WEEK_DOCS)) {
-    if (!weeks.includes(w)) weeks.push(w);
-  }
-
-  for (const week of weeks) {
-    const doc = "cash_tx_" + week;
+): Promise<LedgerSearch> {
+  const plan = ledgerSearchWeeks(txnId, weekHint);
+  const searched: string[] = [];
+  let bytes = 0;
+  let hit: { row: any; weekKey: string } | null = null;
+  const copyWeeks: string[] = [];
+  for (const week of plan.weeks) {
+    if (bytes > SEARCH_BYTE_BUDGET) break;
     const rows = await ctx.db
       .query("legacyMirror")
       .withIndex("by_doc_collection", (q: any) =>
-        q.eq("doc", doc).eq("collection", "transactions"))
+        q.eq("doc", "cash_tx_" + week).eq("collection", "transactions"))
       .collect();
+    searched.push(week);
     for (const r of rows as any[]) {
-      if (String(r.payload?.id ?? "") === txnId) {
-        return { row: r.payload as CashRow, weekKey: week, docId: r._id };
-      }
+      bytes += approxRowBytes(r);
+      if (String(r.payload?.id ?? "") !== txnId) continue;
+      copyWeeks.push(week);
+      if (!hit) hit = { row: r, weekKey: week };
     }
   }
-  return null;
+  if (copyWeeks.length > 1) return { kind: "duplicate", weeks: [...new Set(copyWeeks)] };
+  if (hit) return { kind: "found", row: hit.row.payload as CashRow, weekKey: hit.weekKey, docId: hit.row._id };
+  const idHasNoTime = plan.guessed === null;
+  // A LOG LINE, so a miss is visible in the Convex logs without anyone having
+  // been told about it. The id is not personal data; nothing else is printed.
+  console.warn(
+    `[cashReversal] index_miss: ${txnId} is not in ` +
+    (searched.length ? searched.join(", ") : "any week") +
+    (idHasNoTime ? " (its id carries no time" + (plan.hint ? "" : " and no weekHint was given") + ")" : ""));
+  return { kind: "index_miss", weeksSearched: searched, idHasNoTime };
 }
 
-/** The student row this transaction belongs to, by the app-facing id. */
-async function findStudent(ctx: any, studentId: string) {
-  const all = await ctx.db.query("students").collect();
-  return (all as any[]).find(
-    (s) => String(s.legacyId ?? s._id) === studentId || String(s._id) === studentId,
-  ) ?? null;
+/**
+ * The student row a ledger studentId names, BY INDEX (2026-10-05).
+ *
+ * This used to collect() every student row and .find() one. Every student row
+ * carries its whole cash-history copy, so that one line read 3.2 MiB (Convex's
+ * own count, 2026-10-05) -- nearly half of the reversal path's bytes -- and
+ * grew ~0.86 MiB every school week.
+ *
+ * THE SAME CHILD THE SCAN FOUND, NOT A WIDER NET. The scan matched
+ * `legacyId ?? _id` or `_id`; this is by_legacyId, then the `_id` form through
+ * normalizeId + get. The by_studentNumber fallback cashAward and cashRecount
+ * use is deliberately NOT added: the scan never matched on studentNumber, and
+ * a fallback that changes nothing today (all 763 have legacyId equal to their
+ * studentNumber, none duplicated) is exactly the kind that goes unnoticed on
+ * the day it starts to matter.
+ *
+ * TWO STUDENTS WITH ONE legacyId are `ambiguous`, never resolved: the scan
+ * took whichever came first in table order, and for money that is a coin toss.
+ */
+async function findStudent(
+  ctx: any,
+  studentId: string,
+): Promise<{ student: any | null; ambiguous: boolean }> {
+  if (!studentId) return { student: null, ambiguous: false };
+  const byLegacy = await ctx.db
+    .query("students")
+    .withIndex("by_legacyId", (q: any) => q.eq("legacyId", studentId))
+    .take(2);
+  if (byLegacy.length > 1) return { student: null, ambiguous: true };
+  if (byLegacy.length === 1) return { student: byLegacy[0], ambiguous: false };
+  const id = ctx.db.normalizeId("students", studentId);
+  const byId = id ? await ctx.db.get(id) : null;
+  return { student: byId ?? null, ambiguous: false };
 }
 
 async function existingReversal(ctx: any, txnId: string) {
@@ -134,11 +235,38 @@ async function doReverse(
   const cutoff = await historyCutoffMs(ctx);
 
   const already = await existingReversal(ctx, txnId);
-  const found = already
-    ? null
-    : await findLedgerRow(ctx, txnId, cutoff, nowMs, args.weekHint);
+  const search = already ? null : await findLedgerRow(ctx, txnId, args.weekHint);
 
-  const student = found ? await findStudent(ctx, String(found.row.studentId ?? "")) : null;
+  // Both refusals sit exactly where "not found" always did: after the
+  // already-reversed check, which must stay first because it is the
+  // double-tap's quiet success, and before anything moves.
+  if (search?.kind === "duplicate") {
+    return {
+      ok: false,
+      code: "duplicate_txn_id",
+      reason:
+        `Two rows in the ${search.weeks.join(" and ")} ledger carry this transaction's id, so reversing ` +
+        "one would leave the other standing. Nothing was changed; it has to be looked at by hand.",
+    };
+  }
+  if (search?.kind === "index_miss") {
+    return {
+      ok: false,
+      code: "index_miss",
+      weeksSearched: search.weeksSearched,
+      reason: search.idHasNoTime
+        ? "This transaction's id carries no date (it was put back by a repair), so the server " +
+          "cannot tell which week holds it. A developer can reverse it with its week " +
+          "(cashReversal:reverseAsAdmin with weekHint, shown on each row of the reversible list)."
+        : "That transaction is not in the cash ledger for the week its id points to (" +
+          search.weeksSearched.join(", ") + "). It may never have reached the server, " +
+          "or the id may be mistyped.",
+    };
+  }
+  const found = search?.kind === "found" ? search : null;
+
+  const lookup = found ? await findStudent(ctx, String(found.row.studentId ?? "")) : null;
+  const student = lookup?.student ?? null;
 
   const verdict = reversalVerdict({
     original: found?.row ?? null,
@@ -167,6 +295,15 @@ async function doReverse(
   }
 
   const original = found!.row;
+  if (!student && lookup?.ambiguous) {
+    return {
+      ok: false,
+      code: "student_ambiguous",
+      reason:
+        "Two student records carry the id this transaction names, so there is no way to " +
+        "know whose counters to move. Nothing was changed; worth checking the roster.",
+    };
+  }
   if (!student) {
     return {
       ok: false,
@@ -417,27 +554,74 @@ export const reversibleFor = internalQuery({
   handler: async (ctx, { studentId, limit }) => await listReversible(ctx, studentId, limit),
 });
 
-/** The shared listing body, so the public and internal views cannot drift. */
+/**
+ * The shared listing body, so the public and internal views cannot drift.
+ *
+ * NEWEST WEEKS FIRST, INSIDE A BYTE BUDGET (2026-10-05). It reads the weeks
+ * since the cutoff newest first, at most fourteen, and stops before a week
+ * that would carry it past LIST_BYTE_BUDGET. Today that is every week (about
+ * 3.9 MiB); the budget is what turns the day the ledger outgrows one read
+ * into a shorter list that SAYS it is shorter, instead of an error.
+ *
+ * `ledgerRows` KEEPS ITS MEANING: every row this student has since the
+ * cutoff. The panel prints it as the true total (script.js, "THE TRUE TOTAL,
+ * not the page size") because a capped count was once shown as a child's
+ * whole ledger. So when the read did not cover every week since the cutoff,
+ * `ledgerRows` is never the bare short count: it is the words "at least N"
+ * (a string), `complete` is false and `more` is true. The live panel prints
+ * it as-is -- "at least 812 ledger rows" -- and, because a string is never
+ * `> rows.length`, never adds "showing the newest". (It was null until
+ * 2026-10-05's review, which the panel printed as "null ledger rows".)
+ * `ledgerRowsRead` stays the plain number for anything that wants one.
+ *
+ * A ROW THE SERVER WILL REFUSE IS NOT OFFERED. Every reason `reverse` would
+ * refuse a row that this list can see is checked here too, so the Reverse
+ * button never appears on a row it will always fail: the verdict, two ledger
+ * rows carrying one id (any week this read), a student id that names no
+ * student or two, and an id the button cannot find (see `hintless` below).
+ */
 async function listReversible(ctx: any, studentId: string, limit?: number) {
   {
     const nowMs = Date.now();
     const cutoff = await historyCutoffMs(ctx);
-    const student = await findStudent(ctx, studentId);
+    const { student, ambiguous } = await findStudent(ctx, studentId);
 
     const from = cutoff === null ? nowMs - 60 * 86400000 : cutoff;
-    const rows: Array<{ row: CashRow; weekKey: string }> = [];
-    for (const week of weekKeysBetween(from, nowMs, MAX_WEEK_DOCS)) {
-      const mirrored = await ctx.db
+    const weeks = weekKeysNewestFirst(from, nowMs, MAX_WEEK_DOCS);
+    // Fourteen weeks back from now may stop short of the cutoff's week; from
+    // then on the oldest weeks are outside the list, and it says so. (A cutoff
+    // set in the future leaves nothing before it to miss.)
+    const reachesCutoff = from > nowMs ||
+      weeks.includes(cashWeekKey(new Date(from).toISOString()));
+    const idCopies = new Map<string, number>();
+    const read = await readWeeksWithinBudget<any>({
+      weeks,
+      read: (week, maxRows) => ctx.db
         .query("legacyMirror")
         .withIndex("by_doc_collection", (q: any) =>
           q.eq("doc", "cash_tx_" + week).eq("collection", "transactions"))
-        .collect();
-      for (const r of mirrored as any[]) {
-        if (String(r.payload?.studentId ?? "") === studentId) {
-          rows.push({ row: r.payload as CashRow, weekKey: week });
-        }
-      }
+        .take(maxRows),
+      sizeOf: approxRowBytes,
+      keep: (r) => {
+        // Every row of every week read is counted by id, this child's or not:
+        // `reverse` refuses an id two rows carry, whoever they belong to.
+        const id = String(r.payload?.id ?? "");
+        if (id) idCopies.set(id, (idCopies.get(id) ?? 0) + 1);
+        return String(r.payload?.studentId ?? "") === studentId;
+      },
+      byteBudget: LIST_BYTE_BUDGET,
+      rowBytesCeiling: ROW_BYTES_CEILING,
+    });
+    const complete = read.stoppedAt === null && reachesCutoff;
+    if (!complete) {
+      console.warn(
+        `[cashReversal] reversible list incomplete: read ${read.weeksRead.length} of ` +
+        `${weeks.length} weeks (${(read.bytes / 1048576).toFixed(1)} MiB)` +
+        (read.stoppedAt ? `, stopped before ${read.stoppedAt}` : "") +
+        (reachesCutoff ? "" : ", window ends before the cutoff week"));
     }
+    const rows: Array<{ row: CashRow; weekKey: string }> = read.rows.map(
+      ({ row, week }) => ({ row: row.payload as CashRow, weekKey: week }));
 
     rows.sort((a, b) =>
       String(b.row.timestamp ?? "").localeCompare(String(a.row.timestamp ?? "")));
@@ -453,6 +637,34 @@ async function listReversible(ctx: any, studentId: string, limit?: number) {
         counters: student ?? undefined,
         maxDelta: MAX_CASH_DELTA,
       });
+      // A ROW THE BUTTON CANNOT FIND IS NOT OFFERED. The live panel sends
+      // `reverse` the id alone, so the search reads only the weeks the id
+      // itself points at (ledgerSearchWeeks with no hint). An id with no time
+      // in it (a `txn_rb_` row a repair put back) points nowhere, and an id
+      // whose time names another week points at the wrong place -- either
+      // way its Reverse button would always fail. Greyed with the reason
+      // instead, and the week a developer needs is in the words.
+      const hintless = !ledgerSearchWeeks(row.id).weeks.includes(weekKey);
+      const id = String(row.id ?? "");
+      const blocked: { code: string; why: string } | null = !verdict.allowed ? null
+        : (idCopies.get(id) ?? 0) > 1
+          ? { code: "duplicate_txn_id",
+              why: "Two ledger rows carry this transaction's id, so reversing one would leave the " +
+                   "other standing. It has to be looked at by hand." }
+        : !student
+          ? (ambiguous
+              ? { code: "student_ambiguous",
+                  why: "Two student records carry this id, so there is no way to know whose " +
+                       "counters to move. Worth checking the roster." }
+              : { code: "student_not_found",
+                  why: "No student record carries this id, so there are no counters to move." })
+        : hintless
+          ? { code: "needs_week_hint",
+              why: (weekOfTxnId(row.id) === null
+                ? "Put back by a repair, so its id carries no date the Reverse button can use. "
+                : "Its id points at a different week from the one it is filed in, so the Reverse button cannot find it. ") +
+                `A developer can reverse it (week ${weekKey}).` }
+        : null;
       out.push({
         txnId: String(row.id ?? ""),
         weekKey,
@@ -463,9 +675,9 @@ async function listReversible(ctx: any, studentId: string, limit?: number) {
         notes: row.notes ?? null,
         teacherName: row.teacherName ?? null,
         reversesTxnId: row.reversesTxnId ?? null,
-        canReverse: verdict.allowed,
-        why: verdict.allowed ? null : verdict.reason,
-        code: verdict.code,
+        canReverse: verdict.allowed && !blocked,
+        why: blocked ? blocked.why : verdict.allowed ? null : verdict.reason,
+        code: blocked ? blocked.code : verdict.code,
         reversal: already
           ? {
               at: already.reversedAt,
@@ -476,14 +688,50 @@ async function listReversible(ctx: any, studentId: string, limit?: number) {
           : null,
       });
     }
+    // AN INCOMPLETE LIST WITH NOTHING IN IT IS NOT "NO CASH MOVEMENTS". Once
+    // the byte budget leaves the oldest weeks out, a child whose only rows sit
+    // in those weeks gets nothing back, and the live panel (script.js
+    // showStudentCashReversal) prints "No cash movements on the ledger for
+    // this student" over a ledger that has some. One greyed row says what was
+    // not read instead. amount null renders as a dash; canReverse false means
+    // no button. It is not counted in `returned` or `ledgerRowsRead`.
+    const returned = out.length;
+    if (!complete && out.length === 0) {
+      const oldest = read.weeksRead.length ? read.weeksRead[read.weeksRead.length - 1] : null;
+      out.push({
+        txnId: "",
+        weekKey: oldest ?? "",
+        timestamp: null,
+        amount: null as unknown as number,
+        kind: null,
+        behaviorName: "Older weeks not shown",
+        notes: null,
+        teacherName: null,
+        reversesTxnId: null,
+        canReverse: false,
+        why: `This list only reads the newest ${read.weeksRead.length} week(s)` +
+          (oldest ? `, back to week ${oldest}` : "") +
+          ". This student's movements are older than that. A developer can look them up and reverse one.",
+        code: "older_weeks_not_read",
+        reversal: null,
+      });
+    }
     return {
       studentId,
       studentName: student
         ? `${student.firstName ?? ""} ${student.lastName ?? ""}`.trim()
         : null,
       balance: student?.wildcatCashBalance ?? null,
-      ledgerRows: rows.length,
-      returned: out.length,
+      // The TRUE total, or "at least N" in words. See the note above the function.
+      ledgerRows: complete ? rows.length : `at least ${rows.length}`,
+      returned,
+      complete,
+      more: !complete || rows.length > out.length,
+      // What was read, for a person or a later client: a lower bound when
+      // `complete` is false.
+      ledgerRowsRead: rows.length,
+      weeksRead: read.weeksRead.length,
+      oldestWeekRead: read.weeksRead.length ? read.weeksRead[read.weeksRead.length - 1] : null,
       transactions: out,
     };
   }

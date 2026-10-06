@@ -49,45 +49,84 @@ const SETTINGS_KEY = "liveSettings";
  * `mirroredAt` for historical reasons; for this key it means "last written".
  */
 
+/** How many enrolment lookups run at once. See enrolledByIndex. */
+const ENROLMENT_LOOKUPS_AT_ONCE = 50;
+
+/**
+ * WHO IS ACTUALLY ENROLLED RIGHT NOW, one indexed lookup per student.
+ *
+ * The students table holds 734 people and the current term's roster holds
+ * 646. The other 88 are prior year students who have not been deleted,
+ * deliberately: a student who transferred out still has a balance, and a
+ * roster gap is not proof a person ceased to exist.
+ *
+ * psRoster is replaced wholesale on every sync and only ever contains the
+ * term being synced, so membership in it IS current enrolment. That is a
+ * better test than archivedAt, which is only written when a sync runs with
+ * archiveMissing enabled and is currently set on nobody.
+ *
+ * WHY BY INDEX (2026-10-05). `load` used to collect() the whole roster --
+ * 5,463 rows, about nine per student, 2.9 MiB -- only to learn which student
+ * numbers appear in it. That was about 45% of every staff page load's bytes,
+ * on the one call whose failure is SILENT (the browser falls back to its
+ * local copy), against Convex's 16 MiB per-execution read limit. Asking "does
+ * a row exist?" once per student is exactly what leaderboard.ts already does:
+ * the same definition, 607 rows and ~0.3 MiB instead. Measured on production
+ * that day: both methods name the same 607 students, none different.
+ *
+ * Cost in index ranges: one per student (763 today) against a limit of 4,096,
+ * which the students table would need to quadruple to reach. Run in small
+ * batches rather than all at once, so the number in flight stays bounded.
+ */
+export async function enrolledByIndex(
+  ctx: { db: any },
+  studentRows: ReadonlyArray<{ studentNumber?: string }>,
+): Promise<boolean[]> {
+  const out: boolean[] = new Array(studentRows.length).fill(false);
+  for (let i = 0; i < studentRows.length; i += ENROLMENT_LOOKUPS_AT_ONCE) {
+    const batch = studentRows.slice(i, i + ENROLMENT_LOOKUPS_AT_ONCE);
+    const hits = await Promise.all(batch.map((row) => {
+      const num = row.studentNumber;
+      return num
+        ? ctx.db
+            .query("psRoster")
+            .withIndex("by_studentNumber", (q: any) => q.eq("studentNumber", num))
+            .first()
+        : Promise.resolve(null);
+    }));
+    hits.forEach((hit, j) => { out[i + j] = Boolean(hit); });
+  }
+  return out;
+}
+
 export const load = query({
   args: {},
   handler: async (ctx) => {
     await requireStaff(ctx);
 
-    const [studentRows, teacherRows, settingsRow, rosterRows, cutoffRow] = await Promise.all([
+    const [studentRows, teacherRows, settingsRow, cutoffRow] = await Promise.all([
       ctx.db.query("students").collect(),
       ctx.db.query("teachers").collect(),
       ctx.db
         .query("appState")
         .withIndex("by_key", (q) => q.eq("key", SETTINGS_KEY))
         .unique(),
-      ctx.db.query("psRoster").collect(),
       ctx.db
         .query("appState")
         .withIndex("by_key", (q) => q.eq("key", "historyCutoff"))
         .unique(),
     ]);
 
-    // WHO IS ACTUALLY ENROLLED RIGHT NOW.
-    //
-    // The students table holds 734 people and the current term's roster holds
-    // 646. The other 88 are prior year students who have not been deleted,
-    // deliberately: a student who transferred out still has a balance, and a
-    // roster gap is not proof a person ceased to exist.
-    //
-    // psRoster is replaced wholesale on every sync and only ever contains the
-    // term being synced, so membership in it IS current enrolment. That is a
-    // better test than archivedAt, which is only written when a sync runs with
-    // archiveMissing enabled and is currently set on nobody.
-    const enrolledNumbers = new Set(rosterRows.map((r) => r.studentNumber));
+    // Who is enrolled: see enrolledByIndex for the definition and the cost.
+    const enrolled = await enrolledByIndex(ctx, studentRows);
 
     // Every student is still RETURNED, each flagged. Filtering here would hide
     // a departed student's balance from the only UI that can see it. The app
     // decides what to display, and the students table shows the enrolled.
     return {
-      students: studentRows.map((row) => ({
+      students: studentRows.map((row, i) => ({
         ...toAppStudent(row),
-        enrolled: Boolean(row.studentNumber && enrolledNumbers.has(row.studentNumber)),
+        enrolled: enrolled[i],
       })),
       teachers: teacherRows.map(toAppTeacher),
       settings: (settingsRow?.value as Record<string, unknown>) ?? {},
@@ -123,9 +162,10 @@ export const load = query({
  * moved ahead.
  *
  * WHY IT IS ITS OWN QUERY AND NOT `load`. It runs once a minute in every open
- * tab, forever. `load` reads every student, every teacher and the whole roster
- * to answer it, which is a few hundred kilobytes to compare two integers. This
- * reads one settings row.
+ * tab, forever. `load` reads every student (each carrying its cash-history
+ * copy), every teacher and an enrolment lookup per student -- about 3.5 MiB
+ * since 2026-10-05, 5.8 MiB before -- which is a lot to compare two integers.
+ * This reads one settings row.
  *
  * WHY IT RETURNS NULLS RATHER THAN ZEROS. A fresh deployment has no settings
  * row. Zero would read as "the server is on week 0", which is behind every tab
@@ -193,11 +233,17 @@ export const loadSelfCheck = internalQuery({
 
     const students = studentRows.map(toAppStudent);
     const teachers = teacherRows.map(toAppTeacher);
+    // THE SAME METHOD `load` USES, so this reports what load would return.
+    const byIndex = await enrolledByIndex(ctx, studentRows);
+    const enrolledCount = byIndex.filter(Boolean).length;
+    // AND THE OLD METHOD BESIDE IT (2026-10-05): the whole roster, which load
+    // read until it switched to one lookup per student. Deploy-key only, so
+    // the extra 2.9 MiB costs no staff page anything; it is here so the switch
+    // can be proved against production after the deploy, not assumed.
     const rosterRows = await ctx.db.query("psRoster").collect();
     const enrolledSet = new Set(rosterRows.map((r) => r.studentNumber));
-    const enrolledCount = studentRows.filter(
-      (r) => r.studentNumber && enrolledSet.has(r.studentNumber),
-    ).length;
+    const byScan = studentRows.map((r) => Boolean(r.studentNumber && enrolledSet.has(r.studentNumber)));
+    const methodsDisagree = byScan.filter((v, i) => v !== byIndex[i]).length;
     const sum = (key: string) =>
       students.reduce((total, s) => total + (Number(s[key]) || 0), 0);
 
@@ -209,6 +255,9 @@ export const loadSelfCheck = internalQuery({
       archivedStudents: students.filter((s) => s.archivedAt).length,
       enrolledNow: enrolledCount,
       notEnrolled: students.length - enrolledCount,
+      // Must be equal / 0. Counts only: no student is named.
+      enrolledByRosterScan: byScan.filter(Boolean).length,
+      enrolmentMethodsDisagree: methodsDisagree,
 
       teachers: teachers.length,
       teachersWithEmail: teachers.filter((t) => t.email).length,

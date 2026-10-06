@@ -109,32 +109,179 @@ export function cashWeekKey(ts: unknown): string {
 }
 
 /**
- * Every week key from `fromMs` to `toMs` inclusive, oldest first.
+ * The week keys from `toMs` back to `fromMs`, NEWEST FIRST, at most `cap`.
  *
- * WHY THE SEARCH IS BOUNDED BY THE CUTOFF. legacyMirror is indexed by document
- * name only -- there is no index on `payload.id` -- so finding one transaction
- * means reading a week document and scanning it. Scanning every week of the
- * year would blow Convex's 4,096-document read limit by spring. But a
- * transaction older than the history cutoff is refused anyway, so the weeks
- * worth searching are exactly the weeks since the cutoff. Today that is one.
- * The cap exists so that a school which never resets degrades into a clear
- * error rather than a failed execution.
+ * WHY NEWEST FIRST, AND WHY THE CAP COUNTS BACK FROM NOW (2026-10-05). This
+ * used to count `cap` weeks FORWARD from the cutoff, oldest first. Two things
+ * were wrong with that. A reversal search read every week from 9/14 before it
+ * reached this week's, so the newest transactions -- the ones a person wants
+ * reversed -- were the most expensive to find. And from the week of 12/21 the
+ * fourteen weeks counted from the 9/14 cutoff no longer included the current
+ * week at all: a new transaction would read as "not found" and the reversible
+ * list would stop showing new rows, whatever the ledger's size. Counting back
+ * from now keeps the current week in the window for ever; what falls out of a
+ * capped window is the OLDEST week, and callers say so (see listReversible).
+ *
+ * WHAT BOUNDS IT. legacyMirror is indexed by document name only -- there is
+ * no index on `payload.id` -- so finding a row means reading whole week
+ * documents. The binding Convex limit for that is 16 MiB of data read per
+ * execution (a week is ~1.3 MiB today), not a document count: the real
+ * per-execution limits are 16 MiB read, 32,000 documents scanned, 4,096 index
+ * ranges (calls to db.get / db.query) and 8,192 array elements.
+ *
+ * Stepping back exactly seven days always lands in the previous ISO week (the
+ * keys are computed in UTC, where every week is seven days), so the loop meets
+ * `fromMs`'s week exactly and stops there.
+ */
+export function weekKeysNewestFirst(fromMs: number, toMs: number, cap = 14): string[] {
+  const out: string[] = [];
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || cap < 1) return out;
+  const DAY = 86400000;
+  const first = cashWeekKey(new Date(Math.min(fromMs, toMs)).toISOString());
+  for (let t = toMs; out.length < cap; t -= 7 * DAY) {
+    const k = cashWeekKey(new Date(t).toISOString());
+    if (k === "unknown") break;
+    if (!out.includes(k)) out.push(k);
+    // `first` is always met; the second test is only a belt for a clock or
+    // calendar this file has not imagined.
+    if (k === first || t < Math.min(fromMs, toMs) - 7 * DAY) break;
+  }
+  return out;
+}
+
+/**
+ * The same weeks, oldest first: the newest `cap` weeks of the span. Kept for
+ * callers and tests that read a span in date order. See weekKeysNewestFirst.
  */
 export function weekKeysBetween(fromMs: number, toMs: number, cap = 14): string[] {
-  const out: string[] = [];
-  const DAY = 86400000;
-  for (let t = fromMs; t <= toMs; t += 7 * DAY) {
-    const k = cashWeekKey(new Date(t).toISOString());
-    if (k !== "unknown" && !out.includes(k)) out.push(k);
-    if (out.length >= cap) break;
+  return weekKeysNewestFirst(fromMs, toMs, cap).reverse();
+}
+
+/** The name part of a weekly cash document, e.g. "2026_W38". */
+export const CASH_WEEK_KEY = /^\d{4}_W\d{2}$/;
+
+/**
+ * THE ONLY ID SHAPES THAT CARRY THEIR OWN TIME, and nothing looser.
+ *
+ * Every writer that mints a cash id from the clock writes `txn_<13 digits>_`,
+ * `txn_buy_<13>_`, `txn_rev_<13>_` or `txn_refund_<13>_`. Measured on
+ * production 2026-10-05: 6,866 of 6,954 ledger rows carry one, and for every
+ * one of them the week of those milliseconds IS the week document holding the
+ * row (the id and the row's timestamp are minted together: at most 2 ms apart).
+ * The other 88 are `txn_rb_` + 12 hex characters of a sha1
+ * (scripts/restore-missing-cash.mjs), which carry no time at all -- and a loose
+ * "find thirteen digits" match could read a date out of the hash.
+ */
+export const TXN_ID_MILLIS = /^txn_(?:buy_|rev_|refund_)?(\d{13})_/;
+
+/** The milliseconds a transaction id was minted at, or null when it has none. */
+export function txnIdMillis(id: unknown): number | null {
+  const m = TXN_ID_MILLIS.exec(String(id ?? ""));
+  if (!m) return null;
+  const ms = Number(m[1]);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** The week document a transaction id points at, or null for an id with no time. */
+export function weekOfTxnId(id: unknown): string | null {
+  const ms = txnIdMillis(id);
+  if (ms === null) return null;
+  const k = cashWeekKey(new Date(ms).toISOString());
+  return k === "unknown" ? null : k;
+}
+
+/**
+ * How close to a week boundary an id's time must be before the neighbouring
+ * week is searched too. An hour, the same slack CUTOFF_SLACK_MS gives a fast
+ * clock: the measured gap between an id's milliseconds and its row's timestamp
+ * is at most 2 ms, so this only matters for an id minted in the last or first
+ * hour of a week by a writer that stamps the two separately.
+ */
+export const WEEK_EDGE_MS = 60 * 60 * 1000;
+
+/**
+ * THE WEEKS A REVERSAL MAY READ TO FIND ONE ROW, in the order to read them.
+ * BOUNDED: never more than three, whatever the ledger's size.
+ *
+ *   1. the caller's `weekHint`, when it is a real week key -- never trusted,
+ *      only read first: a wrong hint costs one extra week, not a wrong answer;
+ *   2. the week the id's own milliseconds point at;
+ *   3. the neighbouring week, only when those milliseconds are within
+ *      WEEK_EDGE_MS of the boundary on that side.
+ *
+ * NOTHING ELSE. A miss in these weeks is reported as a miss (`index_miss`),
+ * never answered by scanning every week since the cutoff: that scan is the
+ * read that hits Convex's 16 MiB limit from about the first week of November,
+ * and a mistyped id, or an id with no time in it, would walk straight into it.
+ * An id with no time (`txn_rb_`) and no hint therefore searches nothing.
+ */
+export function ledgerSearchWeeks(txnId: unknown, weekHint?: unknown): {
+  weeks: string[];
+  hint: string | null;
+  guessed: string | null;
+} {
+  const weeks: string[] = [];
+  const raw = typeof weekHint === "string" ? weekHint.trim() : "";
+  const hint = CASH_WEEK_KEY.test(raw) ? raw : null;
+  if (hint) weeks.push(hint);
+  const ms = txnIdMillis(txnId);
+  const guessed = weekOfTxnId(txnId);
+  if (ms !== null && guessed) {
+    for (const t of [ms, ms + WEEK_EDGE_MS, ms - WEEK_EDGE_MS]) {
+      const k = cashWeekKey(new Date(t).toISOString());
+      if (k !== "unknown" && !weeks.includes(k)) weeks.push(k);
+    }
   }
-  // The end of the range falls in a week the 7-day stride steps over whenever
-  // the span is not a whole number of weeks, so the last week is added here
-  // rather than by widening the loop -- widening it can also step PAST the
-  // range and pick up a week that holds nothing.
-  const last = cashWeekKey(new Date(toMs).toISOString());
-  if (last !== "unknown" && !out.includes(last) && out.length < cap) out.push(last);
-  return out;
+  return { weeks, hint, guessed };
+}
+
+/**
+ * READ WEEK DOCUMENTS NEWEST FIRST, WITHIN A BYTE BUDGET, KEEPING ONLY WHOLE
+ * WEEKS. Pure apart from the `read` it is handed, so the stopping rule is
+ * testable without a database.
+ *
+ * Each read is capped by row count, worked out from the budget left and a
+ * per-row ceiling, so no single read can carry the total far past the budget
+ * (`take` bounds rows; the byte limit is what Convex enforces). A week that
+ * does not fit in the room left is LEFT OUT ENTIRELY and named in `stoppedAt`:
+ * half a week would be a list with a hole in the middle that looks complete.
+ *
+ * `keep` decides which rows are returned; every row read still counts toward
+ * the budget, because Convex charges for what is read, not for what is kept.
+ */
+export async function readWeeksWithinBudget<R>(opts: {
+  weeks: readonly string[];
+  read: (week: string, maxRows: number) => Promise<readonly R[]>;
+  sizeOf: (row: R) => number;
+  keep: (row: R) => boolean;
+  byteBudget: number;
+  rowBytesCeiling: number;
+  /** Never ask one read for more rows than this (Convex arrays stop at 8,192). */
+  maxRowsPerRead?: number;
+}): Promise<{
+  rows: Array<{ row: R; week: string }>;
+  weeksRead: string[];
+  bytes: number;
+  stoppedAt: string | null;
+}> {
+  const rows: Array<{ row: R; week: string }> = [];
+  const weeksRead: string[] = [];
+  let bytes = 0;
+  const perRead = Math.max(1, Math.floor(opts.maxRowsPerRead ?? 8000));
+  for (const week of opts.weeks) {
+    const room = Math.min(perRead,
+      Math.floor((opts.byteBudget - bytes) / Math.max(1, opts.rowBytesCeiling)));
+    if (room < 1) return { rows, weeksRead, bytes, stoppedAt: week };
+    const got = await opts.read(week, room + 1);
+    let weekBytes = 0;
+    for (const r of got) weekBytes += Math.max(0, Number(opts.sizeOf(r)) || 0);
+    // Read, so it counts, whether or not the week is kept.
+    bytes += weekBytes;
+    if (got.length > room) return { rows, weeksRead, bytes, stoppedAt: week };
+    for (const r of got) if (opts.keep(r)) rows.push({ row: r, week });
+    weeksRead.push(week);
+  }
+  return { rows, weeksRead, bytes, stoppedAt: null };
 }
 
 /**

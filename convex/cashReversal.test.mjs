@@ -18,6 +18,11 @@ import {
   reversalAuditAction,
   reversalVerdict,
   weekKeysBetween,
+  weekKeysNewestFirst,
+  txnIdMillis,
+  weekOfTxnId,
+  ledgerSearchWeeks,
+  readWeeksWithinBudget,
   CUMULATIVE_COUNTERS,
 } from "./cashReversalRules.ts";
 import { readFileSync } from "node:fs";
@@ -270,9 +275,9 @@ console.log("\n-- the week key matches the client, character for character --");
 console.log("\n-- the ledger search is bounded by the cutoff --");
 {
   // legacyMirror is indexed by document name only, so finding one transaction
-  // means reading week documents and scanning them. Unbounded, that blows
-  // Convex's 4,096-document read limit by spring. Bounded by the cutoff, it is
-  // one document today.
+  // means reading whole week documents. The limit that binds is Convex's
+  // 16 MiB of data read per execution (a week is ~1.3 MiB), not a document
+  // count. Bounded by the cutoff, it was one document on the first day.
   const oneDay = weekKeysBetween(CUT, Date.parse("2026-09-15T17:00:00Z"));
   check("one week since the cutoff means one document to search",
     oneDay.length === 1 && oneDay[0] === "2026_W38", oneDay.join(","));
@@ -293,6 +298,87 @@ console.log("\n-- the ledger search is bounded by the cutoff --");
   check("no duplicates when the range straddles one week",
     new Set(weekKeysBetween(CUT, CUT + 3 * 86400000)).size
       === weekKeysBetween(CUT, CUT + 3 * 86400000).length);
+}
+
+console.log("\n-- the window counts back from NOW, so the current week is never dropped --");
+{
+  // THE 12/21 CLIFF. Fourteen weeks counted forward from the 9/14 cutoff end
+  // at W51; from the week of 12/21 the week a new transaction is filed in was
+  // outside the search and the list. Counting back from now keeps it.
+  const dec22 = Date.parse("2026-12-22T17:00:00Z");
+  const win = weekKeysNewestFirst(CUT, dec22, 14);
+  check("on 12/22 the window still starts with the current week",
+    win[0] === "2026_W52" && win.length === 14, win.slice(0, 3).join(","));
+  check("and what falls out is the OLDEST week, the cutoff's",
+    !win.includes("2026_W38") && win[13] === "2026_W39", win[13]);
+  check("weekKeysBetween keeps the same newest weeks, oldest first",
+    JSON.stringify(weekKeysBetween(CUT, dec22, 14)) === JSON.stringify([...win].reverse()));
+  check("a short span is every week back to the cutoff's, newest first",
+    weekKeysNewestFirst(CUT, Date.parse("2026-10-05T17:00:00Z")).join(",") === "2026_W41,2026_W40,2026_W39,2026_W38");
+  check("a span across New Year steps through ISO week 53",
+    weekKeysNewestFirst(Date.parse("2026-12-25T00:00:00Z"), Date.parse("2027-01-06T00:00:00Z")).join(",")
+      === "2027_W01,2026_W53,2026_W52");
+  check("a bad number gives no weeks rather than a guess",
+    weekKeysNewestFirst(NaN, Date.now()).length === 0);
+}
+
+console.log("\n-- an id's own time, and nothing looser --");
+{
+  const ms = Date.parse("2026-09-30T18:00:00Z");
+  check("txn_<13 digits>_ carries its time", txnIdMillis(`txn_${ms}_abcd`) === ms);
+  check("so do txn_buy_, txn_rev_ and txn_refund_",
+    [`txn_buy_${ms}_x`, `txn_rev_${ms}_x`, `txn_refund_${ms}_x`].every((id) => txnIdMillis(id) === ms));
+  check("a repaired txn_rb_ id carries none, even when its hash has thirteen digits in it",
+    txnIdMillis("txn_rb_0123456789ab") === null && txnIdMillis("txn_rb_1234567890123_x") === null);
+  check("nor does a short number, a missing underscore or a non-string",
+    txnIdMillis("txn_12345_x") === null && txnIdMillis(`txn_${ms}`) === null &&
+    txnIdMillis(undefined) === null && txnIdMillis(12345) === null);
+  check("the week an id points at is its row's week", weekOfTxnId(`txn_${ms}_a`) === "2026_W40");
+}
+
+console.log("\n-- a reversal searches at most three weeks --");
+{
+  const mid = Date.parse("2026-09-30T18:00:00Z");          // a Wednesday
+  const id = `txn_${mid}_a`;
+  check("an id mid-week: its own week only",
+    JSON.stringify(ledgerSearchWeeks(id).weeks) === '["2026_W40"]');
+  check("a hint is read first, and never twice",
+    JSON.stringify(ledgerSearchWeeks(id, "2026_W39").weeks) === '["2026_W39","2026_W40"]' &&
+    JSON.stringify(ledgerSearchWeeks(id, "2026_W40").weeks) === '["2026_W40"]');
+  check("a hint that is not a week key is ignored",
+    JSON.stringify(ledgerSearchWeeks(id, "../students").weeks) === '["2026_W40"]' &&
+    ledgerSearchWeeks(id, "2026_W40 ").hint === "2026_W40");
+  check("an id with no time and no hint searches nothing",
+    ledgerSearchWeeks("txn_rb_0123456789ab").weeks.length === 0 &&
+    JSON.stringify(ledgerSearchWeeks("txn_rb_0123456789ab", "2026_W39").weeks) === '["2026_W39"]');
+  const monday = Date.parse("2026-09-28T00:20:00Z");       // 20 minutes into W40
+  check("in a week's first hour the previous week is searched too",
+    JSON.stringify(ledgerSearchWeeks(`txn_${monday}_a`).weeks) === '["2026_W40","2026_W39"]');
+  const sunday = Date.parse("2026-09-27T23:50:00Z");       // 10 minutes before W40
+  check("in a week's last hour the next week is",
+    JSON.stringify(ledgerSearchWeeks(`txn_${sunday}_a`).weeks) === '["2026_W39","2026_W40"]');
+  check("with a hint as well, never more than three",
+    ledgerSearchWeeks(`txn_${monday}_a`, "2026_W30").weeks.length === 3);
+}
+
+console.log("\n-- reading weeks within a byte budget keeps only whole weeks --");
+{
+  const weekOf = { A: 10, B: 10, C: 10 };                     // rows per week
+  const reads = [];
+  const read = async (w, max) => { reads.push([w, max]); return Array.from({ length: Math.min(weekOf[w], max) }, (_, i) => ({ w, i, mine: i % 2 === 0 })); };
+  const all = await readWeeksWithinBudget({ weeks: ["A", "B", "C"], read, sizeOf: () => 100, keep: (r) => r.mine, byteBudget: 10000, rowBytesCeiling: 100 });
+  check("everything fits: every week read, only the kept rows returned, every row counted",
+    all.stoppedAt === null && all.weeksRead.join("") === "ABC" && all.rows.length === 15 && all.bytes === 3000);
+  reads.length = 0;
+  const cut = await readWeeksWithinBudget({ weeks: ["A", "B", "C"], read, sizeOf: () => 100, keep: () => true, byteBudget: 2500, rowBytesCeiling: 100 });
+  check("a week that does not fit is left out whole and named",
+    cut.stoppedAt === "C" && cut.weeksRead.join("") === "AB" && cut.rows.every((r) => r.week !== "C") && cut.rows.length === 20,
+    JSON.stringify({ s: cut.stoppedAt, w: cut.weeksRead, n: cut.rows.length }));
+  check("each read asks for no more rows than the budget left can hold, plus one to detect overflow",
+    JSON.stringify(reads) === JSON.stringify([["A", 26], ["B", 16], ["C", 6]]), JSON.stringify(reads));
+  const capped = await readWeeksWithinBudget({ weeks: ["A"], read, sizeOf: () => 1, keep: () => true, byteBudget: 1e9, rowBytesCeiling: 1, maxRowsPerRead: 5 });
+  check("and never more than maxRowsPerRead, so a huge week is refused rather than read",
+    capped.stoppedAt === "A" && capped.rows.length === 0);
 }
 
 console.log("\n-- the ledger insert carries no mirror key --");

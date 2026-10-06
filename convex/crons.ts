@@ -143,6 +143,28 @@ crons.cron(
 );
 
 /**
+ * How close is each heavy read to Convex's 16 MiB-per-call limit?
+ *
+ * WHY (2026-10-05). The cash ledger is stored as whole week documents and
+ * every student row carries its own copy of its cash history, so several reads
+ * grow every school day -- and the biggest, the staff page load, fails
+ * SILENTLY into the browser's local copy. Measured that day the walls were
+ * weeks away; this writes the distance down every night (appState
+ * "readHeadroom", bands amber 40% / red 70%, with projected dates) so the next
+ * one is seen coming. It only measures. See readHeadroom.ts.
+ *
+ * 10:25 UTC is roughly 03:25 in Los Angeles: after the drift check (10:10) and
+ * the run chart (10:15), long before the 13:00 sync, and on a minute none of
+ * the other jobs use (:00, :10, :15, :20, :30, :40).
+ */
+crons.cron(
+  "read headroom check",
+  "25 10 * * *",
+  internal.readHeadroom.nightly,
+  { reason: "nightly" },
+);
+
+/**
  * Chase referrals nobody has closed.
  *
  * WHY. On 2026-09-22, three of the four referrals ever filed were still open

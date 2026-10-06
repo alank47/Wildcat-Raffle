@@ -70,6 +70,8 @@ import type * as psSync from "../psSync.js";
 import type * as push from "../push.js";
 import type * as pushSend from "../pushSend.js";
 import type * as raceRollup from "../raceRollup.js";
+import type * as readHeadroom from "../readHeadroom.js";
+import type * as readHeadroomRules from "../readHeadroomRules.js";
 import type * as referralMail from "../referralMail.js";
 import type * as referralMailRules from "../referralMailRules.js";
 import type * as referralPing from "../referralPing.js";
@@ -175,6 +177,8 @@ declare const fullApi: ApiFromModules<{
   push: typeof push;
   pushSend: typeof pushSend;
   raceRollup: typeof raceRollup;
+  readHeadroom: typeof readHeadroom;
+  readHeadroomRules: typeof readHeadroomRules;
   referralMail: typeof referralMail;
   referralMailRules: typeof referralMailRules;
   referralPing: typeof referralPing;
