@@ -33,6 +33,8 @@ import type * as cashArrivalRules from "../cashArrivalRules.js";
 import type * as cashAward from "../cashAward.js";
 import type * as cashAwardRules from "../cashAwardRules.js";
 import type * as cashDriftCheck from "../cashDriftCheck.js";
+import type * as cashInsights from "../cashInsights.js";
+import type * as cashInsightsRules from "../cashInsightsRules.js";
 import type * as cashRecount from "../cashRecount.js";
 import type * as cashRecountRules from "../cashRecountRules.js";
 import type * as cashRestore from "../cashRestore.js";
@@ -140,6 +142,8 @@ declare const fullApi: ApiFromModules<{
   cashAward: typeof cashAward;
   cashAwardRules: typeof cashAwardRules;
   cashDriftCheck: typeof cashDriftCheck;
+  cashInsights: typeof cashInsights;
+  cashInsightsRules: typeof cashInsightsRules;
   cashRecount: typeof cashRecount;
   cashRecountRules: typeof cashRecountRules;
   cashRestore: typeof cashRestore;

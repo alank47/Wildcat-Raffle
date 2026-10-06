@@ -133,8 +133,12 @@ function makeDom(opts = {}) {
       if (sel === ".analytics-subtab") return subtabs.map(byId);
       if (sel === ".analytics-subtab-content") return panes.map(byId);
       if (sel === ".grade-filter-checkbox:checked") return (opts.grades || ["6", "7", "8", "9", "10", "11", "12"]).map((v) => ({ value: v }));
+      // Below admin and PBIS the Data Dashboard filters by campus (2026-10-06).
+      if (sel === ".campus-filter-checkbox:checked") return (opts.campuses || ["middle", "high"]).map((v) => ({ value: v }));
       return [];
     },
+    /** Cash Analytics on screen: the tab open, as switchTab leaves it. */
+    openCashTab() { byId("cashAnalyticsTab").classList.add("active"); },
     /** Everything any element holds, for "is a name anywhere on screen?". */
     text: () => Object.values(els).map((e) => e.innerHTML + " " + e.textContent).join(" "),
   };
@@ -149,10 +153,21 @@ const FNS = [
   "cashTrendWeeks", "cashTrendShare", "cashTrendsHtml", "renderCashTrends", "wcRenderDailyGoal",
   "cashGoalStaffCounts", "wcRenderQuietStudents", "cashAuditEntriesFor", "updateCashAuditLogTable",
   "dashFeedEntriesFor",
+  // One count, reach, balance and outcome (2026-10-06): the renderers above call these.
+  "cashLedgerChanged", "cashNoteKey", "cashAddDays", "cashClickModel", "cashClicksNow", "cashCountUnit", "setCashCountUnit",
+  "cashRatioPlain", "cashRatioPlainHtml", "cashClickTotals", "cashSchoolClickWindow", "cashSchoolWeekClicks", "cashLastFinishedMonday", "cashFinishedMondays",
+  "cashStudentGroups", "cashPraiseWeeks", "cashReachWindow", "cashReachModel", "cashNoticeDefaultSince", "cashNoticeSinceFor",
+  "setCashNoticeSince", "cashNeverNoticed", "cashExpectationBalance", "cashOutcomeWeeks", "cashShortDate", "cashPraiseHtml",
+  "cashShareWords", "cashReachHtml", "cashNeverNoticedHtml", "cashOutcomeHtml", "cashBalanceHtml", "cashPaneOpen",
+  "cashTrendsContextNow", "cashNoticeMarksNow", "loadCashTrendsContext", "loadCashNeverNoticedMarks", "dashSelectedGrades",
 ];
 const CONSTS = [
   "CASH_STAFF_VIEW_ROLES", "CASH_RATIO_GOAL", "CASH_RATIO_MIN_DEDUCTIONS", "CASH_LAUNCH_WEEK",
   "CASH_TREND_GRADES", "CASH_GOAL_MIN_STAFF", "QUIET_WINDOW_DAYS",
+  "CASH_CORE_EXPECTATIONS", "CASH_EXPECTATION_ORDER", "CASH_EXPECTATION_NAMES", "CASH_CLICK_GAP_MS", "CASH_CLICK_WHOLE",
+  "CASH_REACH_SCHOOL_DAYS", "CASH_BALANCE_WEEKS", "CASH_MANY_ADULTS_MIN", "CASH_MANY_ADULTS_TOP_SHARE",
+  "CASH_NAMED_LIST_MAX_SHARE", "CASH_OUTCOME_WEEKS_NEEDED", "CASH_MARKS_MIN_COVERAGE", "CASH_TRENDS_CONTEXT_MS",
+  "CASH_COUNT_UNIT_KEY", "CASH_PART_DAY_QUESTION_FROM",
 ];
 
 /**
@@ -169,6 +184,11 @@ function loadApp(src, G) {
     let auditLog = G.auditLog || [];
     let _historyCutoffMs = G.cutoffMs === undefined ? null : G.cutoffMs;
     let _interventionReversedIds = null;
+    // The insight panels' state (2026-10-06), as script.js declares it.
+    let _cashLedgerVersion = 0, _cashClickMemo = null, _cashTrendsCtx = null, _cashNoticeMarks = null, _cashNoticeGen = 0;
+    let _cashNoticeSince = null, _cashCountUnitHere = null, _cashTrendsDrawnForStaff = false, _cashBalanceDrawnForStaff = false;
+    let _paCache = null;
+    const localStorage = G.localStorage || { getItem() { return null; }, setItem() {} };
     const document = G.document;
     const window = G.window;
     // "Now", when a test needs it fixed: a weekday, or a Saturday.
@@ -214,9 +234,11 @@ const kid = (id, grade, extra = {}) => ({ id, firstName: "Kid", lastName: id.toU
 function ledger() {
   const at = new Date().toISOString();
   return [
-    { id: "a1", kind: "award", type: "positive", amount: 100, teacherId: "t1", studentId: "s6", behaviorName: "Be Present", timestamp: at },
-    { id: "a2", kind: "award", type: "positive", amount: 100, teacherId: "t1", studentId: "s9", behaviorName: "Be Present", timestamp: at },
-    { id: "d1", kind: "deduct", type: "negative", amount: -50, teacherId: "t1", studentId: "s9", behaviorName: "Not Responsible", timestamp: at },
+    // Ids since 2026-10-06: the click count reads the four expectations by id.
+    // a1 and a2 are ONE press of Award (same adult, behaviour and note, same moment).
+    { id: "a1", kind: "award", type: "positive", amount: 100, teacherId: "t1", studentId: "s6", behaviorId: "wc1", behaviorName: "Be Present", timestamp: at },
+    { id: "a2", kind: "award", type: "positive", amount: 100, teacherId: "t1", studentId: "s9", behaviorId: "wc1", behaviorName: "Be Present", timestamp: at },
+    { id: "d1", kind: "deduct", type: "negative", amount: -50, teacherId: "t1", studentId: "s9", behaviorId: "wc7", behaviorName: "Not Responsible", timestamp: at },
     // A child buying a Power-Up Pass from their own Chromebook: no adult at all.
     { id: "p1", kind: "redeem", type: "negative", amount: -1500, teacherId: "", teacherName: "Kid S9", studentId: "s9",
       behaviorId: "reward:pup", behaviorName: "Power-Up Pass", timestamp: at },
@@ -249,8 +271,11 @@ function world(src = scriptSrc, over = {}) {
   const app = loadApp(src, {
     currentUser: over.currentUser || ADMIN, teachers: over.teachers || STAFF, students: over.students || KIDS(),
     cashTransactions: over.cashTransactions || ledger(), auditLog: over.auditLog || [], cutoffMs: over.cutoffMs,
-    document: dom, window: MODS, roster: over.roster, Date: over.Date,
+    document: dom, window: MODS, roster: over.roster, Date: over.Date, localStorage: over.localStorage,
   });
+  // Cash Analytics on screen unless a test says otherwise: the Data
+  // Dashboard's ratio tile is only worked out while it is (2026-10-06).
+  if (over.tabOpen !== false) dom.openCashTab();
   return { dom, app };
 }
 const el = (w, id) => w.dom.getElementById(id);
@@ -319,15 +344,23 @@ console.log("\n   The Data Dashboard");
   check("Total in Circulation is still the balances, enrolled only",
     el(w, "dashTotalCirculation").textContent === "$1,675", el(w, "dashTotalCirculation").textContent);
   check("the ratio tile speaks the 5 to 1 language", el(w, "avgPositivityRatio").textContent === "too few deductions to judge");
+  // OWNER, 2026-10-06: the existing screens STAY PER STUDENT; clicks live on
+  // Trends' new panels until staff have been told.
+  check("...counted per student, exactly the totals beside it (not in clicks)",
+    !/clicks/i.test(el(w, "avgPositivityRatioNote").textContent), el(w, "avgPositivityRatioNote").textContent);
 }
 
-console.log("\n   Most Common Behaviors");
+console.log("\n   Expectation balance (was Most Common Behaviors)");
 {
+  // The ledger's expectation rows are all from today, so the balance window
+  // (finished weeks) holds none of them; its own suite (cash-insights) fills
+  // it. Here: the panel replaces the old one and keeps its guarantees.
   const w = world();
   w.app.updateCashAnalytics();
   const out = el(w, "cashAnalyticsDetails").innerHTML;
-  check("lists real behaviours", /Be Present/.test(out));
-  check("and not the Power-Up Pass", !/Power-Up Pass/.test(out));
+  check("the balance panel is drawn in place of 'Most Common Behaviors (All Time)'",
+    /Expectation balance/.test(out) && !/Most Common Behaviors/.test(out) && !/Most Common Behaviors/.test(code));
+  check("and lists no Power-Up Pass, and no dollars", !/Power-Up Pass/.test(out) && !/\$/.test(out));
 }
 
 console.log("\n   Teacher Interactions, the detail filter and the badge");
@@ -362,19 +395,40 @@ console.log("\n   The home gauge and the cash tile (the shipped statements, run)
   const c = g.indexOf("const positives = cashThisWeek");
   const d = g.indexOf("const RATIO_TARGET = CASH_RATIO_GOAL;", c);
   check("the gauge's statements were found", a > 0 && b > a && c > b && d > c);
-  const run = (src) => {
+  const run = (src, seesAll = false, rows = ledger()) => {
     const s = strip(src);
     const A = s.slice(s.indexOf("const _weekReversedIds = reversedCashIds();"), s.indexOf("const openReferrals", s.indexOf("const _weekReversedIds")));
     const C = s.slice(s.indexOf("const positives = cashThisWeek"), s.indexOf("const RATIO_TARGET = CASH_RATIO_GOAL;", s.indexOf("const positives = cashThisWeek")));
     const { app } = world(src);
-    return new Function("cashThisWeek", "reversedCashIds", "cashBehaviourKind",
-      A + C + "return { cashAwarded, positives, negatives };")(ledger(), () => new Set(["r0"]), app.cashBehaviourKind);
+    const monday = new Date(); monday.setHours(0, 0, 0, 0); monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+    return new Function("cashThisWeek", "reversedCashIds", "cashBehaviourKind", "seesAll", "cashSchoolWeekClicks", "wcIsoDay", "weekStart",
+      A + C + "return { cashAwarded, positives, negatives, gaugeCounts };")(rows, () => new Set(rows.filter((t) => t.reversesTxnId).map((t) => t.reversesTxnId)),
+      app.cashBehaviourKind, seesAll, app.cashSchoolWeekClicks, app.wcIsoDay, monday.getTime());
   };
   const r = run(scriptSrc);
   check("a purchase is not 'Corrective' and a withdrawn deduction is not 'Positive'",
     r.positives === 3 && r.negatives === 1, JSON.stringify(r));
   check("'Cash awarded this week' is awards, not refunds", r.cashAwarded === 225, String(r.cashAwarded));
   check("the gauge still targets 5", /const RATIO_TARGET = CASH_RATIO_GOAL;/.test(code) && /const CASH_RATIO_GOAL = 5;/.test(code));
+  check("a teacher's own gauge stays per student, and says so",
+    r.gaugeCounts.awards === 3 && r.gaugeCounts.deductions === 1 && r.gaugeCounts.unit === "per student", JSON.stringify(r.gaugeCounts));
+  // THE SCHOOL'S GAUGE AND TRENDS AGREE (review, 2026-10-06): for PBIS the
+  // gauge is the school's week, in the same unit and by the same rule as the
+  // week-by-week table's current week.
+  const school = run(scriptSrc, true);
+  const tw = world(scriptSrc, { currentUser: PBIS });
+  const todayIso = tw.app.wcIsoDay(new Date());
+  const praise = tw.app.cashPraiseWeeks({ model: tw.app.cashClickModel(ledger(), new Set(["r0"])), cutoffIso: "", todayIso });
+  const thisWeek = praise.weeks[praise.weeks.length - 1];
+  // Every behaviour, as the 5 to 1 goal counts (review, 2026-10-06): the a1+a2
+  // press and the legacy "Be Kind" award; the withdrawn deduction is not one.
+  // OWNER, 2026-10-06: the school's gauge STAYS PER STUDENT too, like the
+  // other existing screens; Trends carries the week in clicks.
+  check("pbis: the school gauge stays per student (owner, 2026-10-06), not Trends' clicks",
+    school.gaugeCounts.unit === "per student" && school.gaugeCounts.awards === 3 && school.gaugeCounts.deductions === 1 &&
+    thisWeek.clicks.allAwards === 2,
+    JSON.stringify({ gauge: school.gaugeCounts, trends: thisWeek.clicks }));
+  check("...and its subrings read 'this week', as before", /wcSubring\('Positive', 'this week', gaugeCounts\.awards/.test(code));
   globalThis.__gaugeRun = run;
 
   // THE GAUGE FOLLOWS THE SHARED 5 TO 1 RULE (2026-10-01): a teacher's own
@@ -384,9 +438,9 @@ console.log("\n   The home gauge and the cash tile (the shipped statements, run)
     const from = s.indexOf("const RATIO_TARGET = CASH_RATIO_GOAL;");
     const to = s.indexOf("wcSetGauge(gauge", from);
     const verdictFn = liftFn(src, "cashRatioVerdict");
-    return new Function("positives", "negatives",
+    return new Function("gaugeCounts",
       "const CASH_RATIO_GOAL = 5, CASH_RATIO_MIN_DEDUCTIONS = 5;\n" + verdictFn + "\n" + s.slice(from, to) +
-      "return { rate, ratioShown, nothingYet };")(positives, negatives);
+      "return { rate, ratioShown, nothingYet };")({ awards: positives, deductions: negatives, unit: "per student" });
   };
   const g0 = fill(scriptSrc, 3, 0), g4 = fill(scriptSrc, 12, 4), g5 = fill(scriptSrc, 12, 5), g6 = fill(scriptSrc, 30, 5);
   check("the gauge: awards and no deductions fill nothing (never a perfect score)", g0.rate === null && g0.ratioShown === "", JSON.stringify(g0));
@@ -394,7 +448,7 @@ console.log("\n   The home gauge and the cash tile (the shipped statements, run)
   check("the gauge: five deductions give a ratio, rounded down", g5.rate !== null && Math.abs(g5.rate - 0.48) < 1e-9 && g5.ratioShown === "2.4", JSON.stringify(g5));
   check("the gauge: at or above 5 to 1 it is full", g6.rate === 1 && g6.ratioShown === "6.0", JSON.stringify(g6));
   const oldFill = scriptSrc.replace("const rate = verdict.ratio === null ? null : Math.min(1, verdict.ratio / RATIO_TARGET);",
-    "const rate = nothingYet ? null : Math.min(1, (negatives === 0 ? RATIO_TARGET : positives / negatives) / RATIO_TARGET);");
+    "const rate = nothingYet ? null : Math.min(1, (gaugeCounts.deductions === 0 ? RATIO_TARGET : gaugeCounts.awards / gaugeCounts.deductions) / RATIO_TARGET);");
   check("TEETH: the old gauge filled completely for awards with no deductions", oldFill !== scriptSrc && fill(oldFill, 3, 0).rate === 1);
 }
 
@@ -577,6 +631,7 @@ function inactivityWorld(src, answer) {
   const G = { dom, answer, timers: [], confirms: 0 };
   const app = new Function("G", `
     let currentUser = ${JSON.stringify(ADMIN)}, currentStudent = null, inactivityTimer = null, _sidebarModeApplied = true;
+    let _cashTrendsDrawnForStaff = false, _cashBalanceDrawnForStaff = false, _cashNoticeMarks = null, _cashNoticeGen = 0, _cashTrendsCtx = null;
     const INACTIVITY_TIMEOUT = 30 * 60 * 1000;
     const document = G.dom;
     const window = {};
@@ -699,13 +754,22 @@ console.log("\n3. One goal: 5 to 1");
   check("the Data Dashboard tile is 'Awards to Deductions' with a note under it",
     /Awards to Deductions<\/div>\s*<div class="stat-num" id="avgPositivityRatio">/.test(html) && /id="avgPositivityRatioNote"/.test(html));
 
+  // Four more deductions, each its own press (its own note): five deduction
+  // clicks against two award clicks (the a1+a2 press and the legacy "Be Kind"
+  // award: every behaviour counts toward the 5 to 1 goal); by student, 3 against 5.
   const many = ledger().concat(Array.from({ length: 4 }, (_, i) =>
-    ({ id: "dd" + i, kind: "deduct", amount: -10, teacherId: "t1", studentId: "s6", timestamp: new Date().toISOString() })));
+    ({ id: "dd" + i, kind: "deduct", amount: -10, teacherId: "t1", studentId: "s6", behaviorId: "wc8", notes: "note " + i,
+       timestamp: new Date().toISOString() })));
   const w2 = world(scriptSrc, { cashTransactions: many });
   w2.app.updateDashboard();
-  check("the tile reads 'N to 1' with the goal beside it, once there are five deductions",
-    el(w2, "avgPositivityRatio").textContent === "0.6 to 1" && /below the 5 to 1 goal/.test(el(w2, "avgPositivityRatioNote").textContent),
+  check("the tile reads 'N to 1' PER STUDENT with the goal beside it, once there are five deductions (3 to 5)",
+    el(w2, "avgPositivityRatio").textContent === "0.6 to 1" && /below the 5 to 1 goal/.test(el(w2, "avgPositivityRatioNote").textContent) &&
+    el(w2, "dashTotalPositive").textContent === 3 && el(w2, "dashTotalNegative").textContent === 5,
     el(w2, "avgPositivityRatio").textContent + " / " + el(w2, "avgPositivityRatioNote").textContent);
+  const hidden = world(scriptSrc, { cashTransactions: many, tabOpen: false });
+  hidden.app.updateDashboard();
+  check("with Cash Analytics not on screen the tile is still the per-student ratio, as before",
+    el(hidden, "avgPositivityRatio").textContent === "0.6 to 1" && el(hidden, "dashTotalPositive").textContent === 3);
 
   // Nothing selected is not "no deductions": that would be a claim about a
   // school with hundreds of them.
@@ -747,8 +811,8 @@ function gaugeDisplay(src, positives, negatives) {
   // copy of either is what the gauge runs.
   const helpers = "const CASH_RATIO_GOAL = 5, CASH_RATIO_MIN_DEDUCTIONS = 5;\n" +
     liftFn(src, "cashRatioVerdict") + "\n" + liftFn(src, "escapeHtml") + "\n";
-  new Function("positives", "negatives", "gauge", "gaugeVal", "wcSetGauge", helpers + src.slice(a, b))(
-    positives, negatives, {}, gaugeVal, (g, rate, label) => { out.rate = rate; out.label = label; });
+  new Function("gaugeCounts", "gauge", "gaugeVal", "wcSetGauge", helpers + src.slice(a, b))(
+    { awards: positives, deductions: negatives, unit: "per student" }, {}, gaugeVal, (g, rate, label) => { out.rate = rate; out.label = label; });
   return out;
 }
 
@@ -897,16 +961,24 @@ console.log("\n5. Trends: the school, week by week");
     w1.studentsAwarded.middle === 2 && w1.studentsAwarded.high === 2 && m.enrolled.middle === 3 && m.enrolled.high === 4);
 
   const { app } = world();
-  const out = app.cashTrendsHtml(m);
+  // The praise weeks beside it, as renderCashTrends passes them (2026-10-06).
+  const rowsT = trendRows();
+  const praiseT = app.cashPraiseWeeks({ model: app.cashClickModel(rowsT, new Set(rowsT.filter((t) => t.reversesTxnId).map((t) => t.reversesTxnId))),
+    cutoffIso: "2026-09-14", todayIso: "2026-10-01" });
+  const out = app.cashTrendsHtml(m, { staffView: true, praise: praiseT });
+  const outTeacher = app.cashTrendsHtml(m, { staffView: false, praise: praiseT });
   check("the table shows 'launch week' and 'so far'", /launch week/.test(out) && /so far/.test(out));
   check("'of N teacher accounts' comes with the vacancy caveat on screen",
     /of 4 teacher accounts/.test(out) && /vacancies or staff without a classroom/.test(out));
   check("Middle School and High School sit side by side",
     /<th scope="col">Middle School<\/th><th scope="col">High School<\/th>/.test(out));
-  check("by grade, with the shares", /Grade 6/.test(out) && /Grade 12/.test(out) && /<b>33%<\/b><span class="wc-trend-of">1 of 3<\/span>/.test(out));
+  check("by grade, with the shares, for admins and PBIS", /Grade 6/.test(out) && /Grade 12/.test(out) && /<b>33%<\/b><span class="wc-trend-of">1 of 3<\/span>/.test(out));
+  check("...and no grade column for anyone else (owner, 2026-10-06), Middle and High School still there",
+    !/Grade \d/.test(outTeacher) && /<th scope="col">Middle School<\/th><th scope="col">High School<\/th>/.test(outTeacher));
   check("nobody is named: no adult, no student", !/Ms\. Lee|Mr\. Park|Quinn|Vacancy|Pat PBIS|Dr\. Admin|Student\d|Kid/.test(out));
   check("both tables scroll inside their card, never the page",
     (out.match(/<div class="wu-scroll-x"><table class="student-table wc-trend-table">/g) || []).length === 2 &&
+    (out.match(/<table/g) || []).length === 2 &&
     /\.wu-scroll-x \{ overflow-x: auto;/.test(uiCss) && /\.wc-trend-table th,\n\.wc-trend-table td \{ white-space: nowrap;/.test(css));
 
   // Through the subtab, from what is loaded, for a teacher as much as an admin.
@@ -1105,7 +1177,8 @@ console.log("\nDO THE ASSERTIONS HAVE TEETH?\n");
   check("TEETH: an inactivity logout that asks can be Cancelled, and the admin stays signed in",
     r.app.who() !== null && r.G.confirms === 1);
 
-  const verdictZero = breakOnce(scriptSrc, "{ tone: 'neutral', label: '—', note: 'no grades selected' }", "cashRatioVerdict(0, 0)", "no-grades");
+  const verdictZero = breakOnce(scriptSrc, "{ tone: 'neutral', label: '—', note: cashStaffViewsAllowed() ? 'no grades selected' : 'no campus selected' }",
+    "cashRatioVerdict(0, 0)", "no-grades");
   check("TEETH: a verdict of (0, 0) with nothing ticked says 'no deductions'", noGradesTile(verdictZero, []).value === "no deductions");
 
   const nearest = breakOnce(scriptSrc, "const shown = Math.floor((a * 10) / d) / 10;", "const shown = Math.round((a * 10) / d) / 10;", "gauge-round");

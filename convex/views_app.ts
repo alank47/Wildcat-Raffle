@@ -42,8 +42,12 @@ const RECENT_CASH = 15;
  * write-time check cannot see that coming. Checked here, the patch stops
  * working the moment the address belongs to somebody, which is the moment it
  * would otherwise start handing out their roster.
+ *
+ * EXPORTED (2026-10-06) for cashInsights:trendsContext, which asks the same
+ * question of every staff record to count who teaches a PowerSchool class --
+ * so a psEmail patch counts there exactly as it does here.
  */
-async function rosterEmailFor(
+export async function rosterEmailFor(
   ctx: { db: any },
   teacher: { email: string; psEmail?: string },
 ): Promise<{ email: string; via: string | null; refused: boolean }> {

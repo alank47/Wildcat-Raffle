@@ -154,8 +154,12 @@ console.log("\n-- second review (2026-09-24): the timing, the clock, the cap --"
       && /var BEHAVIOR_MAX_AMOUNT = 5000;/.test(storeSrc));
   check("and the form says so too", /id="newBehaviorPoints"[^>]*max="5000"/.test(html));
 
-  check("the 'Most Common Behaviors' tally has no prototype for a name like __proto__ to poison",
-    /const behaviorFreq = Object\.create\(null\);/.test(script));
+  // "Most Common Behaviors" became Expectation balance (2026-10-06); its list
+  // of other behaviours is tallied in a Map, which has no prototype to poison
+  // (cash-insights.test.mjs runs it with a behaviour named __proto__).
+  const balance = script.slice(script.indexOf("function cashExpectationBalance("), script.indexOf("function cashOutcomeWeeks("));
+  check("the expectation balance's tally of other behaviours has no prototype for a name like __proto__ to poison",
+    /const other = new Map\(\);/.test(balance) && !/const other = \{\}/.test(balance));
   check("the idle pull waits while a save is running", /if \(typeof isSyncing !== 'undefined' && isSyncing\) return;/.test(script));
 }
 
@@ -194,7 +198,8 @@ console.log("\n-- names are text, never markup --");
   const list = script.slice(script.indexOf("function updateBehaviorsList"), script.indexOf("async function deleteBehavior"));
   check("the settings list escapes the name", /escapeHtml\(String\(behavior\.name \|\| ''\)\)/.test(list) && !/\$\{behavior\.name\}/.test(list));
   check("and the id inside the onclick", /deleteBehavior\('\$\{escapeHtml\(String\(behavior\.id\)\)\}'\)/.test(list));
-  check("the 'Most Common Behaviors' report escapes it too", /font-weight: 600;">\$\{escapeHtml\(String\(name\)\)\}<\/span>/.test(script));
+  check("the expectation balance escapes it too (its 'Other behaviours' list)",
+    /'<li>' \+ escapeHtml\(String\(x\.name\)\) \+/.test(script.slice(script.indexOf("function cashBalanceHtml("))));
   check("the name box is limited to 60 characters, as the rule is", /id="newBehaviorName"[^>]*maxlength="60"/.test(html));
 }
 

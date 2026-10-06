@@ -3413,6 +3413,7 @@
                         }
                     });
                     cashTransactions.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                    if (typeof cashLedgerChanged === 'function') cashLedgerChanged();
                     // Everything read from the weekly documents is, by
                     // definition, on the server. The save below sends the rest.
                     cashIdsOnServer = new Set(cashTransactions.map(t => t && t.id).filter(Boolean));
@@ -6223,6 +6224,12 @@
                             // daily rebuild the other two read, so it goes
                             // stale on exactly the same schedule.
                             _paCache = null;
+                            // Cash Analytics > Trends' named list carries the
+                            // same marks beside its names, fetched once per
+                            // session otherwise (review, 2026-10-06): a tab
+                            // left open past the 12:30 rebuild, or overnight,
+                            // showed old absences against a newer day count.
+                            _cashNoticeMarks = null;
                             _sgCache = null;
                             // The week/month split reads the same per-date
                             // rows, rebuilt on the same schedule.
@@ -17921,6 +17928,7 @@
                 added++;
             });
             if (added) cashTransactions.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+            if (added && typeof cashLedgerChanged === 'function') cashLedgerChanged();
             // A pull is also confirmation: anything it handed us is on the
             // server by definition.
             pruneCashOutbox(cashIdsOnServer);
@@ -30059,55 +30067,33 @@
             // This function is called when switching to the Analytics tab
             // The dashboard is now updated via updateDashboard() which is called
             // when the subtab is initialized
-            
-            // Keep the behavior frequency analysis for the cashAnalyticsDetails section
             const container = document.getElementById('cashAnalyticsDetails');
             if (!container) return;
-            
-            // Behavior frequency
-            // Same fix as My Activity: the ledger, not the dead global.
-            // "MOST COMMON BEHAVIORS" COUNTS BEHAVIOURS, so the bookkeeping is
-            // dropped: both halves of a reversal, the system_reset rows a
-            // balance reset writes, store refunds, and (2026-10-01) store
-            // purchases. Without this the top of this chart fills up with
-            // "Reversed: Be Present" and every corrected mistake is counted
-            // twice -- once as the thing that did not happen and once as the
-            // correction -- and "Power-Up Pass" is listed as a behaviour.
-            const _behaviourReversedIds = reversedCashIds();
-            // No prototype: a behaviour named "__proto__" otherwise wrote
-            // count and total onto every object in the page (found in review).
-            const behaviorFreq = Object.create(null);
-            cashTransactions.forEach(txn => {
-                if (!isCashBehaviourRow(txn, _behaviourReversedIds)) return;
-                if (!behaviorFreq[txn.behaviorName]) {
-                    behaviorFreq[txn.behaviorName] = { count: 0, total: 0 };
-                }
-                behaviorFreq[txn.behaviorName].count++;
-                behaviorFreq[txn.behaviorName].total += txn.amount;
-            });
-            
-            const sortedBehaviors = Object.entries(behaviorFreq)
-                .sort((a, b) => b[1].count - a[1].count)
-                .slice(0, 10);
-            
-            let behaviorHTML = '<div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-top: 30px;"><h3>Most Common Behaviors (All Time)</h3>';
-            
-            if (sortedBehaviors.length === 0) {
-                behaviorHTML += '<p style="color: #666; text-align: center; padding: 20px;">No behavior data yet.</p>';
-            } else {
-                sortedBehaviors.forEach(([name, data]) => {
-                    const color = data.total > 0 ? '#2E7D52' : '#B3392F';
-                    behaviorHTML += `
-                        <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e0e0e0;">
-                            <span style="color: #333; font-weight: 600;">${escapeHtml(String(name))}</span>
-                            <span style="color: ${color};">${data.count} times (${data.total > 0 ? '+' : ''}$${data.total})</span>
-                        </div>
-                    `;
-                });
-            }
-            behaviorHTML += '</div>';
-            
-            container.innerHTML = behaviorHTML;
+
+            // EXPECTATION BALANCE (2026-10-06), in place of "Most Common
+            // Behaviors (All Time)". That list ranked behaviour names by how
+            // many ledger rows carried them, so one whole-class award of Be
+            // Present outweighed a month of one-to-one praise, and Spirit Week
+            // sat among the expectations. This is the four expectations, like
+            // for like, with a many-adults check -- see cashExpectationBalance.
+            //
+            // THE SAME BOOKKEEPING RULE as every behaviour count: the click
+            // model is built on cashBehaviourKind, so purchases, refunds,
+            // resets and both halves of a reversal are not behaviours here.
+            // Behaviour names are escaped, and tallied in a Map, so a custom
+            // behaviour called "__proto__" is only a name.
+            const S = window.WildcatStore;
+            const staffView = cashStaffViewsAllowed();
+            container.innerHTML = cashBalanceHtml(cashExpectationBalance({
+                model: cashClicksNow(),
+                students: enrolledStudents(),
+                campusOf: (g) => (S && typeof S.studentCampusOf === 'function') ? S.studentCampusOf(g) : null,
+                todayIso: wcIsoDay(new Date()),
+                cutoffIso: _historyCutoffMs === null ? '' : wcIsoDay(new Date(_historyCutoffMs))
+            }), staffView);
+            // Remembered for the gate: the adult counts are staff-only, so a
+            // panel drawn for an admin is emptied when the next person is not.
+            _cashBalanceDrawnForStaff = staffView;
         }
 
         // Behavior Management
@@ -32394,6 +32380,28 @@
             if (dropdown) dropdown.innerHTML = '<option value="">All Teachers</option>';
             const pane = document.getElementById('analyticsTeacherInteractions');
             if (pane) pane.style.display = 'none';
+
+            // THE NAMED NO-AWARD LIST, THE GRADE ROWS AND THE ADULT COUNTS
+            // (2026-10-06). Emptied, not redrawn: this runs on every sign-in
+            // and every subtab switch for a teacher, and redrawing would put
+            // the click model on those paths. Only a view drawn with the staff
+            // parts is emptied; the next open draws the right one.
+            if (_cashTrendsDrawnForStaff) {
+                const trends = document.getElementById('cashTrendsBody');
+                if (trends) trends.innerHTML = '';
+                _cashTrendsDrawnForStaff = false;
+            }
+            if (_cashBalanceDrawnForStaff) {
+                const balance = document.getElementById('cashAnalyticsDetails');
+                if (balance) balance.innerHTML = '';
+                _cashBalanceDrawnForStaff = false;
+            }
+            // The marks behind the names go too, and an answer still on its
+            // way is thrown away when it lands (loadCashNeverNoticedMarks).
+            _cashNoticeMarks = null;
+            _cashNoticeGen++;
+            // The nameless calendar is kept for the person who fetched it.
+            if (_cashTrendsCtx && (!currentUser || _cashTrendsCtx.userId !== currentUser.id)) _cashTrendsCtx = null;
         }
 
         /**
@@ -32409,6 +32417,14 @@
             const allowed = cashStaffViewsAllowed();
             const btn = document.getElementById('teacherInteractionsSubtab');
             if (btn) btn.style.display = allowed ? '' : 'none';
+            // GRADES FOR ADMINS AND PBIS, CAMPUSES FOR EVERYONE ELSE on the
+            // Data Dashboard's filter (2026-10-06). See dashSelectedGrades.
+            const grades = document.getElementById('dashGradeFilter');
+            if (grades) grades.style.display = allowed ? 'grid' : 'none';
+            const campuses = document.getElementById('dashCampusFilter');
+            if (campuses) campuses.style.display = allowed ? 'none' : 'grid';
+            const title = document.getElementById('dashFilterTitle');
+            if (title) title.textContent = allowed ? 'Filter by Grade Level' : 'Filter by Campus';
             if (!allowed) wipeStaffCashViews();
             return allowed;
         }
@@ -32519,20 +32535,27 @@
                 document.getElementById('trendsSubtab').style.color = 'white';
                 document.getElementById('analyticsTrends').style.display = 'block';
                 renderCashTrends();
+                // THE SERVER'S HALF, asked for here and never inside the
+                // renderer. Both reads go out together and Trends is redrawn
+                // ONCE, when both have settled and either brought something
+                // (review, 2026-10-06: a redraw per answer was three full draws
+                // on every open, about 0.3 s at spring's ledger size).
+                Promise.all([loadCashTrendsContext(), cashStaffViewsAllowed() ? loadCashNeverNoticedMarks() : false])
+                    .then(got => { if (got.some(Boolean) && cashPaneOpen('analyticsTrends')) renderCashTrends(); });
             }
         }
 
         function updateDashboard() {
-            // Get selected grades
-            const selectedGrades = Array.from(document.querySelectorAll('.grade-filter-checkbox:checked'))
-                .map(cb => cb.value);
+            // The grades ticked -- or, below admin and PBIS, every grade of
+            // the campuses ticked (dashSelectedGrades).
+            const selectedGrades = dashSelectedGrades();
             
             if (selectedGrades.length === 0) {
                 // No grades selected - show zeros. The ratio tile says why it is
                 // empty: "no deductions" would be a claim about the school.
                 document.getElementById('avgBehaviorsPerStudent').textContent = '0.0';
                 setCashRatioTile('avgPositivityRatio', 'avgPositivityRatioNote',
-                    { tone: 'neutral', label: '—', note: 'no grades selected' });
+                    { tone: 'neutral', label: '—', note: cashStaffViewsAllowed() ? 'no grades selected' : 'no campus selected' });
                 document.getElementById('avgDollarsPerStudent').textContent = '$0';
                 document.getElementById('dashTotalStudents').textContent = '0';
                 document.getElementById('dashTotalPositive').textContent = '0';
@@ -32647,6 +32670,9 @@
             document.getElementById('avgBehaviorsPerStudent').textContent = avgBehaviors.toFixed(1);
             // Awards to deductions against the 5 to 1 goal: the same words and
             // the same five-deduction minimum as the Teacher table and Trends.
+            // STAYS PER STUDENT (owner, 2026-10-06): the click count lives on
+            // Trends' new panels until staff have been told; switching this
+            // tile would drop it from about 9 to 1 to about 5 to 1 mid-day.
             setCashRatioTile('avgPositivityRatio', 'avgPositivityRatioNote',
                 cashRatioVerdict(totalPositiveBehaviors, totalNegativeBehaviors));
             document.getElementById('avgDollarsPerStudent').textContent = '$' + Math.round(avgBalance).toLocaleString();
@@ -32764,6 +32790,8 @@
             document.getElementById('teacherInteractionsActiveCount').textContent = activeTeacherCount;
             document.getElementById('teacherInteractionsTotalPositive').textContent = totalPositive.toLocaleString();
             document.getElementById('teacherInteractionsTotalNegative').textContent = totalNegative.toLocaleString();
+            // Per student, as the totals and the table count (owner, 2026-10-06:
+            // existing screens keep per-student counting; clicks are on Trends).
             setCashRatioTile('teacherInteractionsPositivityRatio', 'teacherInteractionsRatioNote',
                 cashRatioVerdict(totalPositive, totalNegative));
             
@@ -33311,8 +33339,18 @@
                 '<span class="wc-trend-of">' + n + ' of ' + of + '</span>';
         }
 
-        /** The two tables, from cashTrendWeeks' model. Numbers and dates only; nothing to escape but the labels. */
-        function cashTrendsHtml(model) {
+        /**
+         * Trends, from cashTrendWeeks' model and the insight models beside it.
+         * Numbers, dates and labels only: the one name that can reach this
+         * markup is a student's, in the no-award list, for admins and PBIS.
+         *
+         *   x.staffView  cashStaffViewsAllowed(): grade rows and names
+         *   x.unit       'clicks' | 'students', for the week-by-week table
+         *   x.praise     cashPraiseWeeks       x.reach    cashReachModel
+         *   x.notice     cashNeverNoticed      x.outcome  cashOutcomeWeeks
+         */
+        function cashTrendsHtml(model, x) {
+            const v = x || {};
             const weeks = (model && model.weeks) || [];
             const intro = '<p class="wc-trend-note">The whole school, week by week since cash history starts. ' +
                 'Behaviour only: store purchases, refunds, reversals and resets are left out. Nobody is named.</p>';
@@ -33325,42 +33363,25 @@
                 (w.soFar ? '<span class="wc-trend-tag">so far</span>' : '') + '</th>';
             const n = (x) => Number(x || 0).toLocaleString();
             const e = model.enrolled;
-            const accounts = model.teacherAccounts;
-
-            const staffRows = weeks.map(w => '<tr>' + weekCell(w) +
-                '<td><b>' + n(w.teachersAwarding) + '</b>' +
-                    (accounts ? '<span class="wc-trend-of">of ' + n(accounts) + ' teacher accounts</span>' : '') + '</td>' +
-                '<td><b>' + n(w.otherStaffAwarding) + '</b></td>' +
-                '<td>' + n(w.awards) + '</td>' +
-                '<td>' + n(w.deductions) + '</td>' +
-                '<td>' + cashRatioHtml(w.verdict) + '</td>' +
-            '</tr>').join('');
-
-            const gradeHead = model.grades.map(g => '<th scope="col">Grade ' + escapeHtml(g) + '</th>').join('');
+            // GRADE COLUMNS FOR ADMINS AND PBIS ONLY (owner, 2026-10-06:
+            // grade-level numbers are theirs). Middle School and High School
+            // stay open to every role.
+            const grades = v.staffView ? model.grades : [];
+            const gradeHead = grades.map(g => '<th scope="col">Grade ' + escapeHtml(g) + '</th>').join('');
             const studentRows = weeks.map(w => '<tr>' + weekCell(w) +
                 '<td class="wc-trend-campus">' + cashTrendShare(w.studentsAwarded.middle, e.middle) + '</td>' +
                 '<td class="wc-trend-campus">' + cashTrendShare(w.studentsAwarded.high, e.high) + '</td>' +
-                model.grades.map(g => '<td>' + cashTrendShare(w.studentsAwarded.byGrade[g], e.byGrade[g]) + '</td>').join('') +
+                grades.map(g => '<td>' + cashTrendShare(w.studentsAwarded.byGrade[g], e.byGrade[g]) + '</td>').join('') +
             '</tr>').join('');
 
-            return '<div class="wc-card panel-card">' +
-                    '<h3 class="chart-title">Staff and behaviour, week by week</h3>' + intro +
-                    '<div class="wu-scroll-x"><table class="student-table wc-trend-table">' +
-                        '<thead><tr><th scope="col">Week</th><th scope="col">Teachers who gave an award</th>' +
-                        '<th scope="col">Other staff who gave an award</th><th scope="col">Awards</th>' +
-                        '<th scope="col">Deductions</th><th scope="col">Awards to deductions (goal: ' +
-                            CASH_RATIO_GOAL + ' to 1)</th></tr></thead>' +
-                        '<tbody>' + staffRows + '</tbody>' +
-                    '</table></div>' +
-                    '<p class="wc-trend-note">Weeks run Monday to Friday. ' +
-                        '&ldquo;Teacher accounts&rdquo; counts every account with the teacher role, and some of them may be ' +
-                        'vacancies or staff without a classroom, so it is not a participation rate. ' +
-                        'A ratio is shown once a week has ' + CASH_RATIO_MIN_DEDUCTIONS + ' deductions.</p>' +
-                '</div>' +
+            return (v.reach ? cashReachHtml(v) : '') +
+                cashPraiseHtml(model, v) +
+                (v.outcome ? cashOutcomeHtml(v.outcome) : '') +
                 '<div class="wc-card panel-card">' +
                     '<h3 class="chart-title">Students who got at least one award</h3>' +
                     '<p class="wc-trend-note">Out of the students enrolled now: ' + n(e.middle) +
-                        ' in Middle School (grades 6&ndash;8) and ' + n(e.high) + ' in High School (grades 9&ndash;12).</p>' +
+                        ' in Middle School (grades 6&ndash;8) and ' + n(e.high) + ' in High School (grades 9&ndash;12). ' +
+                        'Any award, events included, counted per student.</p>' +
                     '<div class="wu-scroll-x"><table class="student-table wc-trend-table">' +
                         '<thead><tr><th scope="col">Week</th><th scope="col">Middle School</th>' +
                         '<th scope="col">High School</th>' + gradeHead + '</tr></thead>' +
@@ -33369,22 +33390,1332 @@
                 '</div>';
         }
 
-        /** Draw Trends from what this tab already holds. */
+        /** Draw Trends from what this tab already holds, plus the calendar trendsContext brought, if it has. */
         function renderCashTrends() {
             const host = document.getElementById('cashTrendsBody');
             if (!host) return;
             const S = window.WildcatStore;
+            const R = window.WildcatRoster;
+            const staffView = cashStaffViewsAllowed();
+            // THE APP'S OWN CAMPUS RULE, the one the store locks the
+            // Power-Up Pass with: grades 6-8 middle, 9-12 high.
+            const campusOf = (g) => (S && typeof S.studentCampusOf === 'function') ? S.studentCampusOf(g) : null;
+            const todayIso = wcIsoDay(new Date());
+            const cutoffIso = _historyCutoffMs === null ? '' : wcIsoDay(new Date(_historyCutoffMs));
+            const students = enrolledStudents();
+            const model = cashClicksNow();
+            const ctx = cashTrendsContextNow();
+            const reachWindow = cashReachWindow({ ctx: ctx, model: model, todayIso: todayIso });
+            const through = reachWindow.dates.length ? reachWindow.dates[reachWindow.dates.length - 1] : '';
+            const since = cashNoticeSinceFor(todayIso, cutoffIso, through);
             host.innerHTML = cashTrendsHtml(cashTrendWeeks({
                 rows: (typeof cashTransactions !== 'undefined' && Array.isArray(cashTransactions)) ? cashTransactions : [],
                 reversedIds: reversedCashIds(),
                 staff: Array.isArray(teachers) ? teachers : [],
-                students: enrolledStudents(),
-                // THE APP'S OWN CAMPUS RULE, the one the store locks the
-                // Power-Up Pass with: grades 6-8 middle, 9-12 high.
-                campusOf: (g) => (S && typeof S.studentCampusOf === 'function') ? S.studentCampusOf(g) : null,
-                cutoffIso: _historyCutoffMs === null ? '' : wcIsoDay(new Date(_historyCutoffMs)),
-                todayIso: wcIsoDay(new Date())
-            }));
+                students: students,
+                campusOf: campusOf,
+                cutoffIso: cutoffIso,
+                todayIso: todayIso
+            }), {
+                staffView: staffView,
+                unit: cashCountUnit(),
+                cutoffIso: cutoffIso,
+                praise: cashPraiseWeeks({ model: model, cutoffIso: cutoffIso, todayIso: todayIso }),
+                reach: cashReachModel({ model: model, students: students, campusOf: campusOf, window: reachWindow,
+                                        todayIso: todayIso, roster: (ctx && ctx.data) ? ctx.data.rosterStaff : null }),
+                notice: cashNeverNoticed({ model: model, students: students, campusOf: campusOf, from: since, through: through }),
+                // Names and their absences: drawn for admins and PBIS only.
+                marks: staffView ? cashNoticeMarksNow() : null,
+                schoolDates: (ctx && ctx.data && Array.isArray(ctx.data.schoolDates)) ? ctx.data.schoolDates : null,
+                outcome: cashOutcomeWeeks({ ctx: ctx, model: model, students: students, campusOf: campusOf,
+                                            cutoffIso: cutoffIso, todayIso: todayIso, R: R })
+            });
+            // Remembered, so the gate can take a staff view off the screen
+            // without redrawing a teacher's (wipeStaffCashViews).
+            _cashTrendsDrawnForStaff = staffView;
+        }
+
+        // ========================================
+        // ONE COUNT, WHO IS REACHED, BALANCE, AND WHAT CHANGED (2026-10-06)
+        // ========================================
+        //
+        // THE OWNER, 2026-10-06: "do 1 through 4, go with your suggestions".
+        //
+        //   1. ONE HONEST COUNT OF ONE-TO-ONE PRAISE. A whole-class award is
+        //      thirty ledger rows from one press of Award, and every screen
+        //      counted it as thirty positive behaviours -- so the school read
+        //      about 10 to 1 while the presses behind it were about 4 to 1.
+        //      Counted here in CLICKS, with one-to-one praise as the headline.
+        //   2. REACH: who is being noticed and who has not been, by campus for
+        //      everyone, by grade and by name for admins and PBIS only.
+        //   3. EXPECTATION BALANCE, like for like, with a many-adults check so
+        //      one adult's habit is not read as the school's.
+        //   4. AN OUTCOME ADULTS DO NOT CONTROL -- unexcused tardies and
+        //      part-day absences -- beside the praise, week by week.
+        //
+        // FROM WHAT THE BROWSER ALREADY HOLDS. Every cash figure is worked out
+        // from the ledger this tab loaded (cashTransactions), so it costs the
+        // server nothing. The one read, cashInsights:trendsContext, brings only
+        // what the ledger cannot: the school calendar, the attendance lines,
+        // and who teaches a PowerSchool class. A server-side named list would
+        // need a whole-ledger or whole-students read, which the read wall
+        // forbids (read-walls.test.mjs) -- so the names are a SCREEN rule, the
+        // same as every cash view: every staff browser already holds them.
+        //
+        // NEVER IN DOLLARS (standing rule: prices are variable), and never a
+        // note's text: notes are compared, never shown.
+
+        /** The four expectations, BY BEHAVIOUR ID, never by name: renaming one cannot move it. [expectation, kind]. */
+        const CASH_CORE_EXPECTATIONS = { wc1: ['present', 'award'], wc2: ['respectful', 'award'], wc3: ['responsible', 'award'], wc4: ['safe', 'award'], wc5: ['present', 'deduct'], wc6: ['respectful', 'deduct'], wc7: ['responsible', 'deduct'], wc8: ['safe', 'deduct'] };
+        /** In the order the school says them. */
+        const CASH_EXPECTATION_ORDER = ['respectful', 'responsible', 'safe', 'present'];
+        const CASH_EXPECTATION_NAMES = { respectful: 'Be Respectful', responsible: 'Be Responsible', safe: 'Be Safe', present: 'Be Present' };
+        /** One press of Award: rows from one adult, one behaviour, one note, each this close to the one before. */
+        const CASH_CLICK_GAP_MS = 5000;
+        /** A press reaching this many students or more is a whole-class award; two to four is a small group. */
+        const CASH_CLICK_WHOLE = 5;
+        /** Reach is read over the last ten school days. */
+        const CASH_REACH_SCHOOL_DAYS = 10;
+        /** Expectation balance reads the last four finished school weeks (any award or deduction in them). */
+        const CASH_BALANCE_WEEKS = 4;
+        /** A pattern is the school's when at least three adults are behind it (two never pass the 40% rule anyway: one gives half)... */
+        const CASH_MANY_ADULTS_MIN = 3;
+        /** ...and none of them gives more than 40% of it. Exactly 40% passes. */
+        const CASH_MANY_ADULTS_TOP_SHARE = 0.4;
+        /** Names are a working list only while they are at most a tenth of the school. */
+        const CASH_NAMED_LIST_MAX_SHARE = 0.10;
+        /** Weeks of cash history before the behaviour-change check is worth reading. */
+        const CASH_OUTCOME_WEEKS_NEEDED = 10;
+        /** Fewer marks rows than this share of enrolled students: the marks are mid-rebuild. */
+        const CASH_MARKS_MIN_COVERAGE = 0.95;
+        /** How long one tab keeps trendsContext before asking again. */
+        const CASH_TRENDS_CONTEXT_MS = 10 * 60 * 1000;
+        /**
+         * THE UNEXPLAINED STEP IN PART-DAY ABSENCES (first look 2026-10-05,
+         * review 2026-10-06). From Friday 9/25 part-day absences jumped at
+         * both campuses and stayed up -- Middle School from about 3-10 per 100
+         * a day to 12-18, High School from 9-20 to 18-37. Nobody knows yet
+         * whether students changed or the recording did (a marking, schedule
+         * or code change); the attendance office has been asked. Until it
+         * answers, every part-day cell from that week on is tagged and the
+         * caption says why, so the jump beside the praise columns is not read
+         * as behaviour. Set to '' once the step is explained.
+         */
+        const CASH_PART_DAY_QUESTION_FROM = '2026-09-25';
+        /** This viewer's clicks | students choice, in this browser only. */
+        const CASH_COUNT_UNIT_KEY = 'wcCashCountUnit';
+
+        /** Bumped wherever the ledger changes, so the click model is never served stale. */
+        let _cashLedgerVersion = 0;
+        let _cashClickMemo = null;
+        /** { userId, at, status: 'loading' | 'ok' | 'failed', data } -- campus figures and the calendar, nameless. */
+        let _cashTrendsCtx = null;
+        /** { userId, gen, status, res } -- attendance marks WITH NAMES, for the no-award list. */
+        let _cashNoticeMarks = null;
+        /** Bumped by every wipe: an answer that set off before it is thrown away. */
+        let _cashNoticeGen = 0;
+        let _cashNoticeSince = null;
+        /** The unit chosen in this tab, when storage would not keep it. */
+        let _cashCountUnitHere = null;
+        /** Whether Trends / the balance panel were last drawn with staff-only parts. */
+        let _cashTrendsDrawnForStaff = false;
+        let _cashBalanceDrawnForStaff = false;
+
+        /** The ledger changed under the click model: pullCashWeek, recordCashTransaction, a load. */
+        function cashLedgerChanged() {
+            _cashLedgerVersion++;
+        }
+
+        /** A note as a comparison key: trimmed, inner spaces collapsed, lower case. Compared, never displayed. */
+        function cashNoteKey(s) {
+            return String(s == null ? '' : s).trim().replace(/\s+/g, ' ').toLowerCase();
+        }
+
+        /** A calendar day moved by whole days, at noon so a clock change cannot move it. */
+        function cashAddDays(iso, n) {
+            const d = new Date(String(iso || '') + 'T12:00:00');
+            if (isNaN(d.getTime())) return '';
+            d.setDate(d.getDate() + n);
+            return wcIsoDay(d);
+        }
+
+        /**
+         * EVERY BEHAVIOUR ROW, GROUPED INTO THE PRESSES OF AWARD THAT MADE IT.
+         * PURE: rows and the reversed ids in, clicks out.
+         *
+         * A CLICK is rows from the same adult, behaviour and note, in time
+         * order, each within CASH_CLICK_GAP_MS of the ONE BEFORE -- a chain,
+         * not a window from the first row, because a class of thirty takes
+         * longer than five seconds to save. The timestamp is the browser's own
+         * per-row stamp. The server's exact record of each send (recordedAt in
+         * cashAwardCommands) is never written onto the ledger row, so no
+         * browser can see it. MEASURED AGAINST IT (review, 2026-10-06, 3,240
+         * command rows since 9/23): 49 clicks span two presses -- 98 rows, all
+         * one-student Spirit Week presses made under five seconds apart with
+         * the same note. Not one expectation row differs. So the four
+         * expectations are counted exactly, and event clicks (which only the 5
+         * to 1 ratio counts) can read a little low in an event week. Exact
+         * grouping would need a click id on every row: an award-time change,
+         * for later.
+         *
+         * A row with no adult is never merged: nobody's press is not one press.
+         * Kind is part of the key, so an award and a deduction never share one.
+         *
+         * SIZE IS COUNTED BEFORE REVERSALS: reversing one child out of a
+         * two-student award does not make the other a one-student award. What
+         * is COUNTED is what is live (`liveStudents`, one per student), and a
+         * click whose every row was reversed counts nowhere.
+         *
+         * ONE-TO-ONE (the owner's headline, 2026-10-06): a one-student award on
+         * one of the four expectations where that same adult gave no
+         * expectation award with the same note to a DIFFERENT student on the
+         * same school day, in a press of any size. The same note to the same
+         * child twice is still one-to-one; another adult's identical note does
+         * not count against it. A note ticked for three children is not
+         * personal praise, and neither is one pasted to three children one at
+         * a time. The day is the school's calendar day (wcIsoDay), never UTC.
+         */
+        function cashClickModel(rows, reversedIds) {
+            const ids = reversedIds || new Set();
+            const BEFORE_REVERSALS = new Set();
+            const chains = new Map();
+            const groups = [];
+            (Array.isArray(rows) ? rows : []).forEach(t => {
+                const kind = cashBehaviourKind(t, BEFORE_REVERSALS);
+                if (!kind || !t.timestamp) return;
+                const ms = Date.parse(t.timestamp);
+                if (!isFinite(ms)) return;
+                const actor = String(t.teacherId || t.addedBy || t.removedBy || '');
+                const behaviorId = String(t.behaviorId || '');
+                const note = cashNoteKey(t.notes != null ? t.notes : t.note);
+                const entry = { t: t, ms: ms, actor: actor, kind: kind, behaviorId: behaviorId, note: note };
+                if (!actor) { groups.push([entry]); return; }
+                const key = actor + '\u0001' + kind + '\u0001' + behaviorId + '\u0001' + note;
+                let list = chains.get(key);
+                if (!list) { list = []; chains.set(key, list); }
+                list.push(entry);
+            });
+            chains.forEach(list => {
+                list.sort((a, b) => a.ms - b.ms);
+                let cur = null;
+                list.forEach(en => {
+                    if (cur && en.ms - cur[cur.length - 1].ms <= CASH_CLICK_GAP_MS) cur.push(en);
+                    else { cur = [en]; groups.push(cur); }
+                });
+            });
+            const clicks = groups.map(list => {
+                const first = list[0];
+                const students = new Set();
+                const liveStudents = new Set();
+                list.forEach(en => {
+                    const sid = String(en.t.studentId == null ? '' : en.t.studentId);
+                    students.add(sid);
+                    if (!ids.has(String(en.t.id || ''))) liveStudents.add(sid);
+                });
+                const exp = CASH_CORE_EXPECTATIONS[first.behaviorId];
+                const day = wcIsoDay(new Date(first.ms));
+                const size = students.size;
+                return {
+                    actor: first.actor,
+                    kind: first.kind,
+                    behaviorId: first.behaviorId,
+                    behaviorName: String(first.t.behaviorName || ''),
+                    // Only the four expectations count; and only when the
+                    // row's kind is the expectation's own.
+                    expectation: (exp && exp[1] === first.kind) ? exp[0] : null,
+                    note: first.note,
+                    ms: first.ms,
+                    day: day,
+                    monday: cashWeekMonday(day),
+                    size: size,
+                    sizeClass: size >= CASH_CLICK_WHOLE ? 'whole' : (size >= 2 ? 'small' : 'one'),
+                    students: Array.from(students),
+                    liveStudents: Array.from(liveStudents),
+                    oneToOne: false
+                };
+            });
+            // Who each adult gave each note to, each day: every expectation
+            // award, any size -- the LIVE students only (review, 2026-10-06).
+            // An award reversed because it went to the wrong child never
+            // reached that child, so the corrected award to the right one is
+            // still the only child with that note.
+            const reuse = new Map();
+            clicks.forEach(c => {
+                if (c.kind !== 'award' || !c.expectation) return;
+                const k = c.actor + '\u0001' + c.day + '\u0001' + c.note;
+                let s = reuse.get(k);
+                if (!s) { s = new Set(); reuse.set(k, s); }
+                c.liveStudents.forEach(sid => s.add(sid));
+            });
+            clicks.forEach(c => {
+                if (c.kind !== 'award' || !c.expectation || c.size !== 1 || !c.liveStudents.length) return;
+                const s = reuse.get(c.actor + '\u0001' + c.day + '\u0001' + c.note);
+                c.oneToOne = !!s && s.size === 1;
+            });
+            clicks.sort((a, b) => a.ms - b.ms);
+            return { clicks: clicks };
+        }
+
+        /**
+         * The click model for the ledger this tab holds, worked out once per
+         * change. Keyed on the array itself, its length, its last row, the
+         * reversals and a counter every writer bumps -- so a week replaced
+         * with one of the same length is still noticed.
+         */
+        function cashClicksNow() {
+            const rows = (typeof cashTransactions !== 'undefined' && Array.isArray(cashTransactions)) ? cashTransactions : [];
+            const ids = reversedCashIds();
+            const last = rows.length ? String((rows[rows.length - 1] || {}).id || '') : '';
+            const m = _cashClickMemo;
+            if (m && m.rows === rows && m.len === rows.length && m.last === last && m.rev === ids.size &&
+                m.ver === _cashLedgerVersion) return m.model;
+            const model = cashClickModel(rows, ids);
+            _cashClickMemo = { rows: rows, len: rows.length, last: last, rev: ids.size, ver: _cashLedgerVersion, model: model };
+            return model;
+        }
+
+        /** 'clicks' unless this viewer chose students. A page that cannot read storage starts on clicks. */
+        function cashCountUnit() {
+            if (_cashCountUnitHere) return _cashCountUnitHere;
+            try {
+                return localStorage.getItem(CASH_COUNT_UNIT_KEY) === 'students' ? 'students' : 'clicks';
+            } catch (e) {
+                return 'clicks';
+            }
+        }
+
+        function setCashCountUnit(unit) {
+            const u = unit === 'students' ? 'students' : 'clicks';
+            _cashCountUnitHere = u;
+            try { localStorage.setItem(CASH_COUNT_UNIT_KEY, u); } catch (e) { /* this tab still remembers */ }
+            renderCashTrends();
+        }
+
+        /**
+         * A ratio shown as a READING, never against the 5 to 1 goal. For the
+         * one-to-one ratio: its top is filtered by note reuse and its bottom
+         * is every individual deduction, so grading it against a goal built
+         * for all praise against all correction would make "below" permanent
+         * (review, 2026-10-06). Same five-deduction minimum, same rounding.
+         */
+        function cashRatioPlain(awards, deductions) {
+            const v = cashRatioVerdict(awards, deductions);
+            if (v.ratio === null) {
+                return { tone: 'neutral', ratio: null, label: v.label,
+                         note: (Math.floor(Number(deductions) || 0) === 0) ? 'no individual deductions'
+                             : 'a ratio is shown from ' + CASH_RATIO_MIN_DEDUCTIONS + ' deductions' };
+            }
+            return { tone: 'neutral', ratio: v.ratio, label: v.label, note: 'a reading, not a target' };
+        }
+
+        function cashRatioPlainHtml(v) {
+            return '<span class="wc-ratio is-neutral">' + escapeHtml(v.label) + '</span>' +
+                (v.ratio === null ? '' : '<span class="wc-ratio-note">' + escapeHtml(v.note) + '</span>');
+        }
+
+        /**
+         * AWARDS AND DEDUCTIONS IN CLICKS FOR THE 5 TO 1 GOAL: ONE RULE for
+         * every screen that shows it (review, 2026-10-06) -- Trends' weeks
+         * (cashPraiseWeeks counts the same way, week by week), the home gauge,
+         * the Data Dashboard tile and the Teacher Interactions card. PURE.
+         *
+         * EVERY BEHAVIOUR COUNTS, events and custom ones included: the goal is
+         * all awards against all deductions, as it always was. Leaving Spirit
+         * Week out turned its week from "meets" to "below", and the owner has
+         * not chosen to treat events apart (that is a later item). One-to-one
+         * praise, reach and expectation balance still read the four
+         * expectations only.
+         *
+         *   studentIds  a Set: only presses that reached one of these students
+         *               (the Data Dashboard's grades); absent: every press,
+         *               the whole school, leavers and former staff included
+         *   fromMonday  from this week on (the history cutoff's), as Trends
+         *   onlyMonday  one week (the home gauge)
+         *   todayIso    nothing dated after today
+         */
+        function cashClickTotals(model, o) {
+            const opt = o || {};
+            const ids = opt.studentIds || null;
+            let awards = 0, deductions = 0;
+            ((model && Array.isArray(model.clicks)) ? model.clicks : []).forEach(c => {
+                if (!c.liveStudents.length || !c.day) return;
+                if (opt.todayIso && c.day > opt.todayIso) return;
+                if (opt.fromMonday && c.monday < opt.fromMonday) return;
+                if (opt.onlyMonday && c.monday !== opt.onlyMonday) return;
+                if (ids && !c.liveStudents.some(sid => ids.has(sid))) return;
+                if (c.kind === 'award') awards++;
+                else deductions++;
+            });
+            return { awards: awards, deductions: deductions };
+        }
+
+        /** The window every whole-school click total reads: from the history cutoff's week, through today -- Trends' weeks. */
+        function cashSchoolClickWindow() {
+            const cutoffIso = _historyCutoffMs === null ? '' : wcIsoDay(new Date(_historyCutoffMs));
+            return { fromMonday: cutoffIso ? cashWeekMonday(cutoffIso) : '', todayIso: wcIsoDay(new Date()) };
+        }
+
+        /**
+         * THE SCHOOL'S WEEK, IN CLICKS: the home gauge's figure for admins and
+         * PBIS, computed the way Trends computes the same week, so the two
+         * cannot disagree about it. PURE.
+         */
+        function cashSchoolWeekClicks(rows, reversedIds, mondayIso, todayIso) {
+            const t = cashClickTotals(cashClickModel(rows, reversedIds), { onlyMonday: mondayIso, todayIso: todayIso });
+            return { awards: t.awards, deductions: t.deductions, unit: 'in clicks' };
+        }
+
+        /** The Monday of the newest Monday-to-Friday week whose Friday is before today. */
+        function cashLastFinishedMonday(todayIso) {
+            const mon = cashWeekMonday(todayIso);
+            if (!mon) return '';
+            return cashAddDays(mon, 4) < todayIso ? mon : cashAddDays(mon, -7);
+        }
+
+        /** Every finished week's Monday, from the history cutoff's week. */
+        function cashFinishedMondays(todayIso, cutoffIso) {
+            const last = cashLastFinishedMonday(todayIso);
+            const first = cutoffIso ? cashWeekMonday(cutoffIso) : last;
+            const out = [];
+            for (let m = first; m && last && m <= last; m = cashAddDays(m, 7)) out.push(m);
+            return out;
+        }
+
+        /** Enrolled students in grades 6-12 by id, and how many in each group: the denominators. */
+        function cashStudentGroups(students, campusOf) {
+            const gradeOf = new Map();
+            const enrolled = { all: 0, middle: 0, high: 0 };
+            CASH_TREND_GRADES.forEach(g => { enrolled[g] = 0; });
+            (Array.isArray(students) ? students : []).forEach(s => {
+                const g = String(parseInt(String(s && s.grade), 10));
+                if (CASH_TREND_GRADES.indexOf(g) === -1) return;
+                gradeOf.set(String(s.id), g);
+                enrolled.all++;
+                enrolled[g]++;
+                const c = campusOf(g);
+                if (c === 'middle' || c === 'high') enrolled[c]++;
+            });
+            const count = (ids) => {
+                const out = { all: 0, middle: 0, high: 0 };
+                CASH_TREND_GRADES.forEach(g => { out[g] = 0; });
+                ids.forEach(sid => {
+                    const g = gradeOf.get(sid);
+                    if (!g) return;
+                    out.all++;
+                    out[g]++;
+                    const c = campusOf(g);
+                    if (c === 'middle' || c === 'high') out[c]++;
+                });
+                return out;
+            };
+            return { gradeOf: gradeOf, enrolled: enrolled, count: count };
+        }
+
+        /**
+         * #1, WEEK BY WEEK. PURE: the click model and the dates in.
+         *
+         * Each week is counted twice, so the toggle needs no recount:
+         *   clicks    one per press of Award (the default)
+         *   students  one per student per press -- what the totals, the
+         *             Teacher table and a teacher's own gauge count
+         * The split columns count the four expectations only. Every other
+         * behaviour -- Spirit Week and any custom one -- is counted in
+         * `leftOut`, so nothing disappears silently; students + leftOut is
+         * the old per-row count, week by week. THE 5 TO 1 VERDICT counts every
+         * behaviour (`allAwards`, `allDeductions`), events included, by the
+         * rule cashClickTotals keeps for every screen (review, 2026-10-06).
+         *
+         * Weeks run Monday to Friday by the school's calendar day, the same
+         * Mondays as cashTrendWeeks', from the history cutoff; nothing after
+         * today.
+         */
+        function cashPraiseWeeks(o) {
+            const clicks = (o && o.model && Array.isArray(o.model.clicks)) ? o.model.clicks : [];
+            const todayIso = String((o && o.todayIso) || '');
+            const thisMonday = cashWeekMonday(todayIso);
+            let first = (o && o.cutoffIso) ? cashWeekMonday(o.cutoffIso) : '';
+            const blank = () => ({ awards: 0, awardWhole: 0, awardSmall: 0, awardOne: 0, oneToOne: 0,
+                                   deductions: 0, deductOne: 0, deductGroup: 0, leftOut: 0, allAwards: 0, allDeductions: 0 });
+            const byWeek = new Map();
+            clicks.forEach(c => {
+                const reached = c.liveStudents.length;
+                if (!reached || !c.day || c.day > todayIso) return;
+                if (first && c.monday < first) return;
+                let w = byWeek.get(c.monday);
+                if (!w) { w = { clicks: blank(), students: blank() }; byWeek.set(c.monday, w); }
+                const add = (k) => { w.clicks[k] += 1; w.students[k] += reached; };
+                add(c.kind === 'award' ? 'allAwards' : 'allDeductions');
+                if (!c.expectation) { add('leftOut'); return; }
+                if (c.kind === 'award') {
+                    add('awards');
+                    add(c.sizeClass === 'whole' ? 'awardWhole' : (c.sizeClass === 'small' ? 'awardSmall' : 'awardOne'));
+                    if (c.oneToOne) add('oneToOne');
+                } else {
+                    add('deductions');
+                    // THE OWNER'S RULE: two to four students at once is a group
+                    // deduction, never an individual one.
+                    add(c.sizeClass === 'one' ? 'deductOne' : 'deductGroup');
+                }
+            });
+            if (!first) first = Array.from(byWeek.keys()).sort()[0] || thisMonday;
+            const weeks = [];
+            for (let m = first; m && m <= thisMonday; m = cashAddDays(m, 7)) {
+                const w = byWeek.get(m) || { clicks: blank(), students: blank() };
+                // Labels, "launch week" and "so far" are cashTrendWeeks'; the
+                // table lines the two up by Monday.
+                weeks.push({
+                    monday: m,
+                    clicks: w.clicks,
+                    students: w.students,
+                    verdict: { clicks: cashRatioVerdict(w.clicks.allAwards, w.clicks.allDeductions),
+                               students: cashRatioVerdict(w.students.allAwards, w.students.allDeductions) },
+                    // ONE PER PRESS IN BOTH UNITS: a one-student press reaches
+                    // one student, so this ratio does not move with the toggle.
+                    oneToOneRatio: cashRatioPlain(w.clicks.oneToOne, w.clicks.deductOne)
+                });
+            }
+            return { weeks: weeks.slice(-52) };
+        }
+
+        /**
+         * THE REACH WINDOW: the last ten school days, from the school's own
+         * calendar (trendsContext). While that is loading there is no window
+         * -- drawing a guess first and the calendar second made the figures
+         * jump on screen. Only if it FAILS does the window fall back to the
+         * weekdays before today with any behaviour in the ledger, and says so.
+         */
+        function cashReachWindow(o) {
+            const ctx = o && o.ctx;
+            const todayIso = String((o && o.todayIso) || '');
+            if (ctx && ctx.data && Array.isArray(ctx.data.schoolDates)) {
+                return { source: 'calendar',
+                         dates: ctx.data.schoolDates.filter(d => d < todayIso).slice(-CASH_REACH_SCHOOL_DAYS) };
+            }
+            if (!ctx || ctx.status !== 'failed') return { source: 'loading', dates: [] };
+            const days = new Set();
+            ((o.model && o.model.clicks) || []).forEach(c => {
+                if (!c.day || c.day >= todayIso) return;
+                const dow = new Date(c.day + 'T12:00:00').getDay();
+                if (dow >= 1 && dow <= 5) days.add(c.day);
+            });
+            return { source: 'activity', dates: Array.from(days).sort().slice(-CASH_REACH_SCHOOL_DAYS) };
+        }
+
+        /**
+         * #2, WHO IS BEING NOTICED. PURE.
+         *
+         * Out of the students enrolled NOW, the share with at least one live
+         * expectation award in the window: any expectation award (events left out, so
+         * not the TFI figure, which counts any acknowledgement),
+         * a one-student award, and a one-to-one award -- per campus, per
+         * grade, and for the school. Grades are computed for everyone and
+         * DRAWN only for admins and PBIS.
+         *
+         * "STAFF WITH A POWERSCHOOL CLASS" is one idea in both places (review,
+         * 2026-10-06): the one-to-one line from classroom staff and the
+         * participation count both use trendsContext's roster list, any role.
+         * Without that list the panel shows a dash, never zero.
+         */
+        function cashReachModel(o) {
+            const clicks = (o && o.model && Array.isArray(o.model.clicks)) ? o.model.clicks : [];
+            const campusOf = (o && typeof o.campusOf === 'function') ? o.campusOf : () => null;
+            const win = (o && o.window) || { source: 'loading', dates: [] };
+            const todayIso = String((o && o.todayIso) || '');
+            const G = cashStudentGroups(o && o.students, campusOf);
+            const roster = (o && o.roster && Array.isArray(o.roster.ids)) ? o.roster : null;
+            const canon = new Map();
+            if (roster) roster.ids.forEach(pair => (Array.isArray(pair) ? pair : [pair])
+                .forEach(id => canon.set(String(id), String(Array.isArray(pair) ? pair[0] : pair))));
+            const inWin = new Set(win.dates);
+            const any = new Set(), one = new Set(), oto = new Set(), otoRoster = new Set();
+            const lastMonday = cashLastFinishedMonday(todayIso);
+            const part = { any: new Set(), one: new Set(), oneToOne: new Set() };
+            clicks.forEach(c => {
+                if (c.kind !== 'award' || !c.expectation || !c.liveStudents.length) return;
+                if (inWin.has(c.day)) {
+                    c.liveStudents.forEach(sid => {
+                        any.add(sid);
+                        if (c.sizeClass === 'one') one.add(sid);
+                        if (c.oneToOne) {
+                            oto.add(sid);
+                            if (canon.has(c.actor)) otoRoster.add(sid);
+                        }
+                    });
+                }
+                if (roster && c.monday === lastMonday && canon.has(c.actor)) {
+                    const who = canon.get(c.actor);
+                    part.any.add(who);
+                    if (c.sizeClass === 'one') part.one.add(who);
+                    if (c.oneToOne) part.oneToOne.add(who);
+                }
+            });
+            // OUT OF WHO EXISTED THAT WEEK (review, 2026-10-06): a staff
+            // record created after the week's Friday could not have awarded
+            // in it. trendsContext sends each record's creation day beside its
+            // ids; without them (an older server) it is today's count.
+            const lastFriday = lastMonday ? cashAddDays(lastMonday, 4) : '';
+            const created = (roster && Array.isArray(roster.createdDays) && roster.createdDays.length === roster.ids.length)
+                ? roster.createdDays : null;
+            const of = !roster ? 0 : (created
+                ? created.filter(d => !d || !lastFriday || String(d) <= lastFriday).length
+                : (Number(roster.count) || 0));
+            return {
+                window: win,
+                enrolled: G.enrolled,
+                any: G.count(any),
+                one: G.count(one),
+                oneToOne: G.count(oto),
+                rosterOneToOne: roster ? G.count(otoRoster) : null,
+                participation: roster ? { of: of, monday: lastMonday,
+                    any: part.any.size, one: part.one.size, oneToOne: part.oneToOne.size } : null
+            };
+        }
+
+        /** The no-award list's start: the Monday of the last four finished weeks, never before the history cutoff. */
+        function cashNoticeDefaultSince(todayIso, cutoffIso) {
+            const last = cashLastFinishedMonday(todayIso);
+            let from = last ? cashAddDays(last, -7 * (CASH_BALANCE_WEEKS - 1)) : '';
+            if (cutoffIso && (!from || from < cutoffIso)) from = cutoffIso;
+            return from;
+        }
+
+        /** The date the viewer picked, while it is still between the cutoff and the last school day; else the default. */
+        function cashNoticeSinceFor(todayIso, cutoffIso, through) {
+            const d = _cashNoticeSince;
+            if (d && /^\d{4}-\d{2}-\d{2}$/.test(d) && (!cutoffIso || d >= cutoffIso) && (!through || d <= through)) return d;
+            return cashNoticeDefaultSince(todayIso, cutoffIso);
+        }
+
+        function setCashNoticeSince(value) {
+            _cashNoticeSince = /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? String(value) : null;
+            renderCashTrends();
+        }
+
+        /**
+         * #2, NO AWARD SINCE A DATE. PURE.
+         *
+         * Enrolled students with no live expectation award of any size from
+         * `from` through the last completed school day. A child whose only
+         * award in that time was an event's (Spirit Week) stays on the list --
+         * an event is not being noticed -- but is TAGGED, and counted apart:
+         * "14 with no award at all, plus 6 with an event award only" (review,
+         * 2026-10-06), so a mentor list is not built on a misreading.
+         *
+         * `overCap`: more than a tenth of the school is not a working list.
+         */
+        function cashNeverNoticed(o) {
+            const clicks = (o && o.model && Array.isArray(o.model.clicks)) ? o.model.clicks : [];
+            const campusOf = (o && typeof o.campusOf === 'function') ? o.campusOf : () => null;
+            const from = String((o && o.from) || '');
+            const through = String((o && o.through) || '');
+            const G = cashStudentGroups(o && o.students, campusOf);
+            if (!from || !through || through < from) {
+                return { from: from, through: through, rows: [], counts: null, enrolled: G.enrolled.all, overCap: false };
+            }
+            const core = new Set(), event = new Set();
+            clicks.forEach(c => {
+                if (c.kind !== 'award' || !c.liveStudents.length || c.day < from || c.day > through) return;
+                c.liveStudents.forEach(sid => (c.expectation ? core : event).add(sid));
+            });
+            const rows = [];
+            (Array.isArray(o.students) ? o.students : []).forEach(s => {
+                const sid = String(s && s.id);
+                const g = G.gradeOf.get(sid);
+                if (!g || core.has(sid)) return;
+                rows.push({ student: s, id: sid, grade: g, campus: campusOf(g), eventOnly: event.has(sid) });
+            });
+            const none = G.count(rows.filter(r => !r.eventOnly).map(r => r.id));
+            const eventOnly = G.count(rows.filter(r => r.eventOnly).map(r => r.id));
+            return {
+                from: from, through: through, rows: rows,
+                counts: { none: none, eventOnly: eventOnly },
+                enrolled: G.enrolled.all,
+                overCap: rows.length > CASH_NAMED_LIST_MAX_SHARE * G.enrolled.all
+            };
+        }
+
+        /**
+         * #3, EXPECTATION BALANCE. PURE.
+         *
+         * LIKE FOR LIKE (review, 2026-10-06). The ratio is one-to-one praise
+         * against individual deductions: one child at a time on both sides.
+         * Small-group awards and small-group deductions sit side by side in
+         * their own columns, outside it, and so do whole-class ones -- the
+         * first draft put small-group AWARDS on top and left small-group
+         * DEDUCTIONS off the bottom, which turned three of the four verdicts.
+         * Counted as awards and deductions, one per student, among students
+         * enrolled now. Over the last four finished SCHOOL weeks (fewer when the
+         * history is shorter).
+         *
+         * THE MANY-ADULTS CHECK, for a cell with five or more individual
+         * deductions: fewer than three adults behind them, or one adult with
+         * more than 40% of them, is CONCENTRATED -- a conversation with
+         * staff, not a school reteach. The WHOLE-SCHOOL cell is concentrated
+         * too when either campus cell is: two campuses each led by one adult
+         * add up to a school-wide-looking pattern that is neither's.
+         *
+         * Per-adult counts never leave this function: a cell carries how many
+         * adults and the largest share, and the screen shows even those to
+         * admins and PBIS only.
+         */
+        function cashExpectationBalance(o) {
+            const clicks = (o && o.model && Array.isArray(o.model.clicks)) ? o.model.clicks : [];
+            const campusOf = (o && typeof o.campusOf === 'function') ? o.campusOf : () => null;
+            const todayIso = String((o && o.todayIso) || '');
+            const G = cashStudentGroups(o && o.students, campusOf);
+            // SCHOOL WEEKS, NOT CALENDAR WEEKS (review, 2026-10-06): the last
+            // four finished weeks with any award or deduction at all, so a
+            // winter break or a holiday week is skipped rather than taking a
+            // slot and halving what the many-adults check reads.
+            const active = new Set();
+            clicks.forEach(c => { if (c.day && c.day <= todayIso) active.add(c.monday); });
+            const mondays = cashFinishedMondays(todayIso, (o && o.cutoffIso) || '')
+                .filter(m => active.has(m)).slice(-CASH_BALANCE_WEEKS);
+            const inWeeks = new Set(mondays);
+            const blank = () => ({ oneToOne: 0, oneReused: 0, individual: 0, smallAwards: 0, smallDeducts: 0,
+                                   wholeAwards: 0, wholeDeducts: 0, byAdult: new Map() });
+            const rows = CASH_EXPECTATION_ORDER.map(e => ({ expectation: e, name: CASH_EXPECTATION_NAMES[e],
+                cells: { all: blank(), middle: blank(), high: blank() } }));
+            const byExp = new Map(rows.map(r => [r.expectation, r]));
+            const other = new Map();
+            clicks.forEach(c => {
+                if (!c.liveStudents.length || !inWeeks.has(c.monday) || c.day > todayIso) return;
+                const sids = c.liveStudents.filter(sid => G.gradeOf.has(sid));
+                if (!sids.length) return;
+                if (!c.expectation) {
+                    const key = c.behaviorId || c.behaviorName || '(none)';
+                    const x = other.get(key) || { name: '', awards: 0, deductions: 0 };
+                    x.name = c.behaviorName || x.name || 'Unnamed behaviour';
+                    if (c.kind === 'award') x.awards += sids.length; else x.deductions += sids.length;
+                    other.set(key, x);
+                    return;
+                }
+                const row = byExp.get(c.expectation);
+                sids.forEach(sid => {
+                    const camp = campusOf(G.gradeOf.get(sid));
+                    [row.cells.all, (camp === 'middle' || camp === 'high') ? row.cells[camp] : null].forEach(cell => {
+                        if (!cell) return;
+                        if (c.kind === 'award') {
+                            if (c.sizeClass === 'whole') cell.wholeAwards++;
+                            else if (c.sizeClass === 'small') cell.smallAwards++;
+                            else if (c.oneToOne) cell.oneToOne++;
+                            else cell.oneReused++;
+                        } else if (c.sizeClass === 'one') {
+                            cell.individual++;
+                            cell.byAdult.set(c.actor, (cell.byAdult.get(c.actor) || 0) + 1);
+                        } else if (c.sizeClass === 'small') {
+                            cell.smallDeducts++;
+                        } else {
+                            cell.wholeDeducts++;
+                        }
+                    });
+                });
+            });
+            const finish = (cell) => {
+                let top = 0;
+                cell.byAdult.forEach(k => { if (k > top) top = k; });
+                cell.adults = cell.byAdult.size;
+                cell.topShare = cell.individual ? top / cell.individual : 0;
+                cell.check = cell.individual < CASH_RATIO_MIN_DEDUCTIONS ? 'few'
+                    : ((cell.adults < CASH_MANY_ADULTS_MIN || cell.topShare > CASH_MANY_ADULTS_TOP_SHARE) ? 'concentrated' : 'spread');
+                cell.why = cell.check === 'concentrated' ? 'own' : null;
+                cell.ratio = cashRatioPlain(cell.oneToOne, cell.individual);
+                delete cell.byAdult;
+            };
+            rows.forEach(r => {
+                finish(r.cells.middle);
+                finish(r.cells.high);
+                finish(r.cells.all);
+                if (r.cells.all.check !== 'concentrated' &&
+                    (r.cells.middle.check === 'concentrated' || r.cells.high.check === 'concentrated')) {
+                    r.cells.all.check = 'concentrated';
+                    r.cells.all.why = 'campus';
+                }
+            });
+            return {
+                mondays: mondays,
+                from: mondays.length ? mondays[0] : '',
+                to: mondays.length ? cashAddDays(mondays[mondays.length - 1], 4) : '',
+                rows: rows,
+                other: Array.from(other.values()).sort((a, b) => (b.awards + b.deductions) - (a.awards + a.deductions))
+            };
+        }
+
+        /**
+         * #4, THE BEHAVIOUR-CHANGE CHECK. PURE: trendsContext's weekly sums,
+         * the click model, the enrolled students and the roster rules in.
+         *
+         * Per finished week and campus: the share of students enrolled now
+         * given one-to-one praise, and any award; unexcused tardy days and
+         * part-day absences per 100 students per school day.
+         *
+         * PART-DAY ABSENCES go through WildcatRoster.absenceSplit at the
+         * app's default whole-day rule, the one every attendance screen uses
+         * -- never the stored partialDays, which ignores the misrecord rule.
+         *
+         * NOTHING IS EVER A ZERO IT DOES NOT KNOW. No context yet: loading.
+         * The context failed: unavailable. Marks mid-rebuild (under 95% of
+         * enrolled), a row without tardy codes, a week past the marks' last
+         * complete day, a week the run table has not reached: each says so.
+         */
+        function cashOutcomeWeeks(o) {
+            const ctx = o && o.ctx;
+            const data = ctx && ctx.data;
+            if (!data || !Array.isArray(data.weeks)) {
+                return { status: (ctx && ctx.status === 'failed') ? 'failed' : 'loading', weeks: [] };
+            }
+            const clicks = (o.model && Array.isArray(o.model.clicks)) ? o.model.clicks : [];
+            const campusOf = typeof o.campusOf === 'function' ? o.campusOf : () => null;
+            const todayIso = String(o.todayIso || '');
+            const R = o.R;
+            // THE ATTENDANCE LINES FOLLOW THE ATTENDANCE SCREENS' RULE (review,
+            // 2026-10-06): administrators, the PBIS team and Attendance Watch,
+            // decided by the server (trendsContext). Everyone else gets the
+            // praise columns and a line saying who the attendance is for.
+            const attendance = data.attendance !== false;
+            const G = cashStudentGroups(o.students, campusOf);
+            const cutoffMonday = o.cutoffIso ? cashWeekMonday(o.cutoffIso) : '';
+            const perWeek = new Map();
+            clicks.forEach(c => {
+                if (c.kind !== 'award' || !c.expectation || !c.liveStudents.length || c.day > todayIso) return;
+                let w = perWeek.get(c.monday);
+                if (!w) {
+                    w = { any: { middle: new Set(), high: new Set() }, oto: { middle: new Set(), high: new Set() } };
+                    perWeek.set(c.monday, w);
+                }
+                c.liveStudents.forEach(sid => {
+                    const camp = campusOf(G.gradeOf.get(sid));
+                    if (camp !== 'middle' && camp !== 'high') return;
+                    w.any[camp].add(sid);
+                    if (c.oneToOne) w.oto[camp].add(sid);
+                });
+            });
+            const coverage = G.enrolled.all ? (Number(data.marksRows) || 0) / G.enrolled.all : 0;
+            const marksRefreshing = coverage < CASH_MARKS_MIN_COVERAGE;
+            const codesMissing = (Number(data.marksMissingUnexcused) || 0) > 0;
+            const settings = R && R.DEFAULT_DAY_SETTINGS;
+            const BAND = { middle: '6-8', high: '9-12' };
+            const weeks = data.weeks.map(w => {
+                const preCash = !!cutoffMonday && w.monday < cutoffMonday;
+                const cash = perWeek.get(w.monday);
+                const campus = {};
+                ['middle', 'high'].forEach(k => {
+                    const b = w.bands ? w.bands[BAND[k]] : null;
+                    let tardy, part;
+                    if (!attendance) tardy = { state: 'restricted' };
+                    else if (w.status !== 'in') tardy = { state: 'pending' };
+                    else if (marksRefreshing) tardy = { state: 'refreshing' };
+                    else if (codesMissing) tardy = { state: 'codes' };
+                    else if (w.tardyStale || !b || b.tardyMemberDays === null || b.tardyMemberDays === undefined) tardy = { state: 'stale' };
+                    else tardy = { state: 'ok', n: b.unexcusedTardyDays, of: b.tardyMemberDays,
+                                   rate: b.tardyMemberDays ? (100 * b.unexcusedTardyDays) / b.tardyMemberDays : null };
+                    const sp = (b && R && typeof R.absenceSplit === 'function') ? R.absenceSplit(b, settings) : null;
+                    if (!attendance) part = { state: 'restricted' };
+                    else if (w.status !== 'in') part = { state: 'pending' };
+                    else if (sp && b.members) part = { state: 'ok', n: sp.partialDays, of: b.members, rate: (100 * sp.partialDays) / b.members };
+                    else part = { state: 'none' };
+                    campus[k] = {
+                        enrolled: G.enrolled[k],
+                        oneToOne: preCash ? null : (cash ? cash.oto[k].size : 0),
+                        any: preCash ? null : (cash ? cash.any[k].size : 0),
+                        tardy: tardy,
+                        part: part
+                    };
+                });
+                return { monday: w.monday, label: cashWeekLabel(w.monday), days: Array.isArray(w.dates) ? w.dates.length : 0,
+                         status: w.status, preCash: preCash, provisional: false, campus: campus,
+                         // A week whose Friday is on or after the step holds days after it.
+                         partQuestion: attendance && !!CASH_PART_DAY_QUESTION_FROM &&
+                             cashAddDays(w.monday, 4) >= CASH_PART_DAY_QUESTION_FROM };
+            });
+            const done = weeks.filter(w => w.status === 'in');
+            const latest = done.length ? done[done.length - 1] : null;
+            if (latest) latest.provisional = true;
+            return {
+                status: 'ok',
+                attendance: attendance,
+                weeks: weeks,
+                marksThrough: data.marksThrough || null,
+                cashWeeks: done.filter(w => !w.preCash).length,
+                needed: CASH_OUTCOME_WEEKS_NEEDED,
+                lastPraised: (latest && !latest.preCash) ? latest.campus.middle.oneToOne + latest.campus.high.oneToOne : null,
+                lastLabel: latest ? latest.label : ''
+            };
+        }
+
+        /** "Sep 22" from a calendar day. */
+        function cashShortDate(iso) {
+            const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const d = new Date(String(iso || '') + 'T12:00:00');
+            return isNaN(d.getTime()) ? String(iso || '') : MONTHS[d.getMonth()] + ' ' + d.getDate();
+        }
+
+        /** #1's table: the staff columns from cashTrendWeeks, the clicks from cashPraiseWeeks. */
+        function cashPraiseHtml(model, v) {
+            const unit = v.unit === 'students' ? 'students' : 'clicks';
+            const praiseBy = new Map(((v.praise && v.praise.weeks) || []).map(w => [w.monday, w]));
+            const n = (x) => Number(x || 0).toLocaleString();
+            const accounts = model.teacherAccounts;
+            const dash = '<span class="wc-trend-of">&mdash;</span>';
+            const weekCell = (w) => '<th scope="row">' + escapeHtml(w.label) +
+                (w.launch ? '<span class="wc-trend-tag">launch week</span>' : '') +
+                (w.soFar ? '<span class="wc-trend-tag">so far</span>' : '') + '</th>';
+            const rows = model.weeks.map(w => {
+                const p = praiseBy.get(w.monday);
+                const c = p ? p[unit] : null;
+                return '<tr>' + weekCell(w) +
+                    '<td><b>' + n(w.teachersAwarding) + '</b>' +
+                        (accounts ? '<span class="wc-trend-of">of ' + n(accounts) + ' teacher accounts</span>' : '') + '</td>' +
+                    '<td><b>' + n(w.otherStaffAwarding) + '</b></td>' +
+                    (c ? ('<td>' + n(c.awardWhole) + '</td><td>' + n(c.awardSmall) + '</td><td>' + n(c.awardOne) + '</td>' +
+                        '<td class="wc-trend-campus"><b>' + n(c.oneToOne) + '</b>' +
+                            '<span class="wc-insight-n">any one-student award: ' + n(c.awardOne) + '</span></td>' +
+                        '<td>' + n(c.deductOne) + '</td><td>' + n(c.deductGroup) + '</td>' +
+                        '<td>' + cashRatioHtml(p.verdict[unit]) +
+                            '<span class="wc-insight-n">' + n(c.allAwards) + ' to ' + n(c.allDeductions) + '</span></td>' +
+                        '<td>' + cashRatioPlainHtml(p.oneToOneRatio) +
+                            '<span class="wc-insight-n">' + n(p.clicks.oneToOne) + ' to ' + n(p.clicks.deductOne) + '</span></td>' +
+                        '<td>' + n(c.leftOut) + '</td>')
+                      : ('<td>' + dash + '</td>').repeat(9)) +
+                '</tr>';
+            }).join('');
+            const word = unit === 'clicks' ? 'clicks' : 'students';
+            const toggle = '<div class="wc-unit-toggle" role="group" aria-label="Count awards and deductions in">' +
+                '<span class="wc-unit-label">Count in</span>' +
+                ['clicks', 'students'].map(u => '<button type="button" onclick="setCashCountUnit(\'' + u + '\')" aria-pressed="' +
+                    (u === unit ? 'true' : 'false') + '">' + (u === 'clicks' ? 'Clicks' : 'Students') + '</button>').join('') +
+                '</div>';
+            return '<div class="wc-card panel-card">' +
+                    '<h3 class="chart-title">How awards were given, week by week</h3>' +
+                    '<p class="wc-trend-note">The whole school since cash history starts, counted in <b>' + word + '</b>. ' +
+                        'Store purchases, refunds, reversals and resets are left out. The ' + CASH_RATIO_GOAL + ' to 1 ratio counts ' +
+                        'every award and deduction, events and custom behaviours (such as Spirit Week) included; every other ' +
+                        'column counts the four expectations only, and the last column shows the event and custom ones. ' +
+                        'Nobody is named.</p>' +
+                    toggle +
+                    '<div class="wu-scroll-x"><table class="student-table wc-trend-table">' +
+                        '<thead><tr><th scope="col">Week</th><th scope="col">Teachers who gave an award</th>' +
+                        '<th scope="col">Other staff who gave an award</th>' +
+                        '<th scope="col">Whole-class awards (5+)</th><th scope="col">Small-group awards (2&ndash;4)</th>' +
+                        '<th scope="col">One-student awards</th><th scope="col">One-to-one praise</th>' +
+                        '<th scope="col">Individual deductions (1)</th><th scope="col">Group deductions (2+)</th>' +
+                        '<th scope="col">All awards to all deductions (goal: ' + CASH_RATIO_GOAL + ' to 1)</th>' +
+                        '<th scope="col">One-to-one to individual deductions</th>' +
+                        '<th scope="col">Event and custom (in the ' + CASH_RATIO_GOAL + ' to 1 ratio only)</th></tr></thead>' +
+                        '<tbody>' + rows + '</tbody>' +
+                    '</table></div>' +
+                    '<p class="wc-trend-note">A <b>click</b> is one press of Award: rows from the same adult, behaviour and note, ' +
+                        'each within ' + (CASH_CLICK_GAP_MS / 1000) + ' seconds of the one before. <b>Students</b> counts one per ' +
+                        'student per press, the way the totals, the Teacher table and a teacher&rsquo;s own gauge count. ' +
+                        '<b>One-to-one praise</b> is an award to one student with a note that adult did not use for any other ' +
+                        'student that day; &ldquo;any one-student award&rdquo; counts every press that reached one student. ' +
+                        'Deductions given to two to four students at once are group deductions, never individual ones.</p>' +
+                    '<p class="wc-trend-note">Whole-class awards are a valid, research-backed practice; this table separates them, ' +
+                        'it does not grade them. The ' + CASH_RATIO_GOAL + ' to 1 goal is for all awards against all deductions, ' +
+                        'events included; ' +
+                        'the one-to-one ratio is a reading, not a target. A ratio is shown once there are ' +
+                        CASH_RATIO_MIN_DEDUCTIONS + ' deductions. Note text is never shown. ' +
+                        '&ldquo;Teacher accounts&rdquo; counts every account with the teacher role, vacancies or staff without a ' +
+                        'classroom included, so it is not a participation rate.</p>' +
+                '</div>';
+        }
+
+        /** "16% (99 of 607)", in words, for a sentence. */
+        function cashShareWords(k, of) {
+            if (!of) return '&mdash;';
+            return Math.round((k / of) * 100) + '% (' + Number(k).toLocaleString() + ' of ' + Number(of).toLocaleString() + ')';
+        }
+
+        /** #2: who is being noticed, the no-award count, and (admins and PBIS) the grades and the names. */
+        function cashReachHtml(v) {
+            const r = v.reach;
+            const w = r.window;
+            const n = (x) => Number(x || 0).toLocaleString();
+            const head = '<h3 class="chart-title">Who is being noticed</h3>';
+            if (w.source === 'loading') {
+                return '<div class="wc-card panel-card">' + head +
+                    '<p class="wc-trend-note">Loading the attendance calendar&hellip;</p></div>';
+            }
+            if (!w.dates.length) {
+                return '<div class="wc-card panel-card">' + head +
+                    '<p class="wc-trend-note">No school days to read yet.</p></div>';
+            }
+            const span = cashShortDate(w.dates[0]) + ' &ndash; ' + cashShortDate(w.dates[w.dates.length - 1]);
+            const src = w.source === 'calendar'
+                ? 'by the school calendar'
+                : 'the attendance calendar could not be loaded, so these are the weekdays with any award or deduction';
+            const groups = [['middle', 'Middle School'], ['high', 'High School'], ['all', 'Whole school']]
+                .concat(v.staffView ? CASH_TREND_GRADES.map(g => [g, 'Grade ' + g]) : []);
+            const nn = v.notice && v.notice.counts;
+            const rows = groups.map(([k, label]) => '<tr' + (k === 'all' ? ' class="wc-insight-total"' : '') + '>' +
+                '<th scope="row">' + escapeHtml(label) + '</th>' +
+                '<td class="wc-trend-campus">' + cashTrendShare(r.any[k], r.enrolled[k]) + '</td>' +
+                '<td>' + cashTrendShare(r.one[k], r.enrolled[k]) + '</td>' +
+                '<td>' + cashTrendShare(r.oneToOne[k], r.enrolled[k]) + '</td>' +
+                '<td>' + (nn ? '<b>' + n(nn.none[k] + nn.eventOnly[k]) + '</b><span class="wc-trend-of">' + n(nn.none[k]) +
+                    ' no award at all, ' + n(nn.eventOnly[k]) + ' an event award only</span>' : '&mdash;') + '</td>' +
+            '</tr>').join('');
+            const p = r.participation;
+            const lastWeek = p && p.monday ? cashWeekLabel(p.monday) : '';
+            const partLine = p
+                ? 'Staff with a PowerSchool class who gave an award last finished week (' + escapeHtml(lastWeek) + '): ' +
+                  '<b>' + n(p.any) + '</b> of ' + n(p.of) + ' any award, <b>' + n(p.one) + '</b> of ' + n(p.of) +
+                  ' a one-student award, <b>' + n(p.oneToOne) + '</b> of ' + n(p.of) + ' one-to-one praise.'
+                : 'Staff with a PowerSchool class who gave an award last week: &mdash; (the class list could not be loaded).';
+            // ANY ROLE WITH A CLASS, and no fixed conclusion (review,
+            // 2026-10-06): four of the 34 are not teacher accounts, and a
+            // sentence that says the same thing whatever the number is not a
+            // reading of it.
+            const rosterLine = r.rosterOneToOne
+                ? 'One-to-one praise from staff with a PowerSchool class (any role) reached ' +
+                  cashShareWords(r.rosterOneToOne.all, r.enrolled.all) + ' of students.'
+                : 'One-to-one praise from staff with a PowerSchool class: &mdash; (the class list could not be loaded).';
+            const since = v.notice ? v.notice.from : '';
+            const through = v.notice ? v.notice.through : '';
+            const picker = '<label class="wc-insight-since">No award since ' +
+                '<input type="date" id="cashNoticeSince" value="' + escapeHtml(since) + '"' +
+                (v.cutoffIso ? ' min="' + escapeHtml(v.cutoffIso) + '"' : '') +
+                (through ? ' max="' + escapeHtml(through) + '"' : '') +
+                ' onchange="setCashNoticeSince(this.value)"></label>';
+            return '<div class="wc-card panel-card">' + head +
+                '<p class="wc-trend-note">The last ' + w.dates.length + ' school days, ' + span + ' (' + src + '). ' +
+                    'Out of the students enrolled now; an expectation award only, events left out.</p>' +
+                picker +
+                '<div class="wu-scroll-x"><table class="student-table wc-trend-table">' +
+                    '<thead><tr><th scope="col">Students</th>' +
+                    '<th scope="col">Any expectation award<span class="wc-trend-of">events left out</span></th>' +
+                    '<th scope="col">A one-student award<span class="wc-trend-of">our stricter measure, not a TFI score</span></th>' +
+                    '<th scope="col">One-to-one praise<span class="wc-trend-of">our stricter measure, not a TFI score</span></th>' +
+                    '<th scope="col">No award since ' + escapeHtml(cashShortDate(since)) + '</th></tr></thead>' +
+                    '<tbody>' + rows + '</tbody>' +
+                '</table></div>' +
+                '<p class="wc-trend-note">' + rosterLine + '</p>' +
+                '<p class="wc-trend-note">' + partLine + '</p>' +
+                '<p class="wc-trend-note">&ldquo;No award since&rdquo; runs from the date chosen through ' +
+                    escapeHtml(cashShortDate(through)) + ', the last completed school day, and includes students who joined ' +
+                    'after that date. An event award (such as Spirit Week) does not count as being noticed; those students ' +
+                    'are counted apart.</p>' +
+                (v.staffView ? '<div id="cashNeverNoticedList" class="wc-insight-list">' + cashNeverNoticedHtml(v) + '</div>' : '') +
+            '</div>';
+        }
+
+        /**
+         * THE NAMED LIST: admins, superadmins and the PBIS team, by ROLE
+         * (cashStaffViewsAllowed), and only while it is a working list -- a
+         * tenth of the school or fewer. Name and grade, "joined" when they
+         * arrived after the date, an event-only tag, and their attendance over
+         * the same days. No staff name, no note, ever.
+         */
+        function cashNeverNoticedHtml(v) {
+            if (!v || !v.staffView || !cashStaffViewsAllowed()) return '';
+            const nv = v.notice;
+            if (!nv || !nv.counts) return '';
+            if (!nv.rows.length) return '<p class="wc-trend-note">Every student enrolled now has had an expectation award since ' +
+                escapeHtml(cashShortDate(nv.from)) + '.</p>';
+            if (nv.overCap) {
+                return '<p class="wc-trend-note"><b>' + nv.rows.length.toLocaleString() + '</b> students: too many to be a working ' +
+                    'list; pick an earlier date.</p>';
+            }
+            const marks = v.marks;
+            const byNumber = new Map();
+            const ok = marks && marks.status === 'ok' && marks.res && Array.isArray(marks.res.rows);
+            if (ok) marks.res.rows.forEach(m => { if (m && m.studentNumber) byNumber.set(String(m.studentNumber), m); });
+            const days = Array.isArray(v.schoolDates) ? v.schoolDates.filter(d => d >= nv.from && d <= nv.through) : null;
+            const daySet = new Set(days || []);
+            const sorted = nv.rows.slice().sort((a, b) => (parseInt(a.grade, 10) - parseInt(b.grade, 10)) ||
+                String(a.student.lastName || '').localeCompare(String(b.student.lastName || '')) ||
+                String(a.student.firstName || '').localeCompare(String(b.student.firstName || '')));
+            const items = sorted.map(r => {
+                const s = r.student;
+                const name = escapeHtml(((s.firstName || '') + ' ' + (s.lastName || '')).trim() || 'Unnamed student');
+                let context;
+                const m = ok ? byNumber.get(String(s.studentNumber || '')) : null;
+                if (!marks || marks.status === 'loading') context = 'loading attendance&hellip;';
+                else if (!ok || !days) context = 'attendance context unavailable';
+                else if (!m) context = 'no attendance on file';
+                else {
+                    // THE SAME ENTRY RULE AS windowAbsenceList: an absence or
+                    // late mark before the entry date moves it back.
+                    let entry = String(m.entryDate || '').slice(0, 10);
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(entry)) entry = '';
+                    if (entry) [].concat(m.absentDates || [], m.tardyDates || []).forEach(x => {
+                        const d = String(x || '').slice(0, 10);
+                        if (daySet.has(d) && d < entry) entry = d;
+                    });
+                    const mine = days.filter(d => !entry || d >= entry);
+                    const mineSet = new Set(mine);
+                    const within = (list) => new Set((list || []).map(x => String(x || '').slice(0, 10)).filter(d => mineSet.has(d))).size;
+                    context = 'absent (any period) on ' + within(m.absentDates) + ' of ' + mine.length + ' school days; ' +
+                        (Array.isArray(m.unexcusedTardyDates)
+                            ? 'late without an excuse on ' + within(m.unexcusedTardyDates)
+                            : 'late days not yet refreshed') +
+                        (entry && entry > nv.from ? '; joined ' + escapeHtml(cashShortDate(entry)) : '');
+                }
+                return '<li><b>' + name + '</b> <span class="wc-trend-of">Grade ' + escapeHtml(r.grade) +
+                    (r.eventOnly ? ' &middot; <span class="wc-trend-tag">event award only</span>' : '') +
+                    ' &middot; ' + context + '</span></li>';
+            }).join('');
+            return '<h4 class="wc-insight-sub">Students with no expectation award since ' + escapeHtml(cashShortDate(nv.from)) +
+                ' (admins and the PBIS team only)</h4><ul class="wc-insight-names">' + items + '</ul>';
+        }
+
+        /** #4's table. Campus level only: never a grade, never a name. */
+        function cashOutcomeHtml(out) {
+            const head = '<h3 class="chart-title">Did behaviour change? Week by week</h3>';
+            if (!out || out.status === 'loading') {
+                return '<div class="wc-card panel-card">' + head + '<p class="wc-trend-note">Loading the attendance calendar&hellip;</p></div>';
+            }
+            if (out.status === 'failed') {
+                return '<div class="wc-card panel-card">' + head + '<p class="wc-trend-note">Attendance lines unavailable right now.</p></div>';
+            }
+            const pct = (k, of) => of ? '<b>' + Math.round((k / of) * 100) + '%</b><span class="wc-trend-of">' +
+                Number(k).toLocaleString() + ' of ' + Number(of).toLocaleString() + '</span>' : '<span class="wc-trend-of">&mdash;</span>';
+            const cashCell = (w, k, field) => w.preCash ? '<span class="wc-trend-of">no cash record</span>'
+                : pct(w.campus[k][field], w.campus[k].enrolled);
+            const rateCell = (x) => {
+                if (x.state === 'ok') return '<b>' + (x.rate === null ? '&mdash;' : x.rate.toFixed(1)) + '</b>' +
+                    '<span class="wc-trend-of">' + Number(x.n).toLocaleString() + ' in ' + Number(x.of).toLocaleString() + ' student-days</span>';
+                const words = {
+                    pending: 'attendance not yet in',
+                    refreshing: 'tardy marks refreshing',
+                    codes: 'tardy codes refreshing',
+                    stale: 'tardies not refreshed since ' + (out.marksThrough ? cashShortDate(out.marksThrough) : 'the last rebuild'),
+                    none: 'no school days'
+                };
+                return '<span class="wc-trend-of">' + escapeHtml(words[x.state] || '\u2014') + '</span>';
+            };
+            // The attendance columns only for those the server gave them to.
+            const att = out.attendance !== false;
+            const questionTag = '<span class="wc-trend-tag">recording question</span>';
+            const rows = out.weeks.map(w => '<tr>' +
+                '<th scope="row">' + escapeHtml(w.label) +
+                    (w.provisional ? '<span class="wc-trend-tag">provisional</span>' : '') +
+                    (w.days && w.days < 5 ? '<span class="wc-trend-tag">' + w.days + ' school day' + (w.days === 1 ? '' : 's') + '</span>' : '') +
+                '</th>' +
+                ['middle', 'high'].map(k =>
+                    '<td class="wc-trend-campus">' + cashCell(w, k, 'oneToOne') + '</td>' +
+                    '<td>' + cashCell(w, k, 'any') + '</td>' +
+                    (att ? '<td>' + rateCell(w.campus[k].tardy) + '</td>' +
+                        '<td>' + rateCell(w.campus[k].part) +
+                            (w.partQuestion && w.campus[k].part.state === 'ok' ? questionTag : '') + '</td>' : '')).join('') +
+            '</tr>').join('');
+            const question = att && CASH_PART_DAY_QUESTION_FROM && out.weeks.some(w => w.partQuestion)
+                ? '<p class="wc-trend-note"><b>Part-day absences, from ' + escapeHtml(cashShortDate(CASH_PART_DAY_QUESTION_FROM)) +
+                  ':</b> they jumped that day at both campuses and stayed higher, and nobody knows yet whether students changed or ' +
+                  'the recording did (a marking, schedule or code change). The attendance office has been asked. Until it answers, ' +
+                  'read the cells tagged &ldquo;recording question&rdquo; as a question about the records, not as a change in ' +
+                  'behaviour.</p>'
+                : '';
+            const span = att ? 4 : 2;
+            const praised = out.lastPraised === null ? '' : 'One-to-one praise reached ' + Number(out.lastPraised).toLocaleString() +
+                (out.lastPraised === 1 ? ' student' : ' students') + ' in the latest finished week (' + escapeHtml(out.lastLabel) +
+                '), so even a real effect would be too small to see on a school line yet. ';
+            return '<div class="wc-card panel-card">' + head +
+                '<p class="wc-trend-note"><b>' + Math.min(out.cashWeeks, out.needed) + ' of ' + out.needed + ' weeks so far.</b> ' +
+                    'Wait for ' + out.needed + ' weeks of cash history before reading a change.</p>' +
+                '<div class="wu-scroll-x"><table class="student-table wc-trend-table">' +
+                    '<thead><tr><th scope="col" rowspan="2">Week</th>' +
+                    '<th scope="colgroup" colspan="' + span + '">Middle School (grades 6&ndash;8)</th>' +
+                    '<th scope="colgroup" colspan="' + span + '">High School (grades 9&ndash;12)</th></tr><tr>' +
+                    ['middle', 'high'].map(() => '<th scope="col">Given one-to-one praise</th>' +
+                        '<th scope="col">Given an expectation award</th>' +
+                        (att ? '<th scope="col">Unexcused tardies per 100 students a day</th>' +
+                            '<th scope="col">Part-day absences per 100 students a day</th>' : '')).join('') +
+                    '</tr></thead><tbody>' + rows + '</tbody>' +
+                '</table></div>' +
+                (att ? '' : '<p class="wc-trend-note">The attendance lines that sit beside these (unexcused tardies and part-day ' +
+                    'absences) are for administrators, the PBIS team and staff given Attendance Watch access, as on the ' +
+                    'attendance-rate chart.</p>') +
+                question +
+                '<p class="wc-trend-note">These lines share weeks; this table cannot show that praise caused a change. ' + praised +
+                    'The evidence we want is a change that lines up with a planned push, in the group that got it and not in the others.</p>' +
+                '<p class="wc-trend-note">Praise: out of the students enrolled now, the four expectations only, events left out ' +
+                    '(so &ldquo;given an expectation award&rdquo; can be lower than the any-award table below). ' +
+                    (att ? 'Part-day absences: ' +
+                    'the same nightly table as the attendance-rate chart, students enrolled that day (including some who have ' +
+                    'since left), after the app&rsquo;s whole-day rule. Unexcused tardies: the twice-daily attendance marks, ' +
+                    'students enrolled now, from the day each joined. ' : '') + 'Weeks before cash history began read &ldquo;no cash ' +
+                    'record&rdquo;. A short week is not merged into the next, as the attendance-rate chart merges it, because ' +
+                    'every figure here is per school day; it shows its day count instead. The newest week is provisional: ' +
+                    'PowerSchool corrections arrive late.</p>' +
+            '</div>';
+        }
+
+        /**
+         * #3's panel, under every Cash Analytics subtab. Nameless for every
+         * role; how many adults are behind a cell, and the largest one's share,
+         * for admins and PBIS only -- a teacher can often tell who "top adult
+         * 56%" is (review, 2026-10-06).
+         */
+        function cashBalanceHtml(bal, staffView) {
+            const n = (x) => Number(x || 0).toLocaleString();
+            const head = '<h3 class="chart-title">Expectation balance</h3>';
+            if (!bal || !bal.mondays.length) {
+                return '<div class="wc-card panel-card">' + head + '<p class="wc-trend-note">No finished week of cash history yet.</p></div>';
+            }
+            const span = cashShortDate(bal.from) + ' &ndash; ' + cashShortDate(bal.to);
+            const check = (cell) => {
+                if (cell.check === 'few') return '<span class="wc-trend-of">too few individual deductions to check</span>';
+                const detail = staffView ? '<span class="wc-insight-n">from ' + n(cell.adults) + ' adult' + (cell.adults === 1 ? '' : 's') +
+                    '; top adult ' + Math.round(cell.topShare * 100) + '%</span>' : '';
+                if (cell.check === 'spread') return 'spread across adults' + detail;
+                return '<b>' + (cell.why === 'campus' ? 'Concentrated within a campus' : 'Concentrated') + ':</b> talk with staff, ' +
+                    'not a school reteach' + detail +
+                    (staffView ? '<button type="button" class="wc-insight-link" onclick="switchAnalyticsSubtab(\'teacherInteractions\')">' +
+                        'Teacher Interactions</button>' : '');
+            };
+            const where = [['all', 'Whole school'], ['middle', 'Middle School'], ['high', 'High School']];
+            const body = bal.rows.map(r => where.map(([k, label], i) => {
+                const c = r.cells[k];
+                return '<tr' + (c.check === 'concentrated' ? ' class="wc-insight-grey"' : '') + '>' +
+                    (i === 0 ? '<th scope="rowgroup" rowspan="3">' + escapeHtml(r.name) + '</th>' : '') +
+                    '<th scope="row">' + label + '</th>' +
+                    '<td class="wc-trend-campus"><b>' + n(c.oneToOne) + '</b>' +
+                        (c.oneReused ? '<span class="wc-insight-n">plus ' + n(c.oneReused) + ' to one student, note reused</span>' : '') + '</td>' +
+                    '<td><b>' + n(c.individual) + '</b></td>' +
+                    '<td>' + cashRatioPlainHtml(c.ratio) + '</td>' +
+                    '<td>' + n(c.smallAwards) + '</td><td>' + n(c.smallDeducts) + '</td>' +
+                    '<td>' + n(c.wholeAwards) + '</td><td>' + n(c.wholeDeducts) + '</td>' +
+                    '<td>' + check(c) + '</td>' +
+                '</tr>';
+            }).join('')).join('');
+            const other = bal.other.length
+                ? '<div class="wc-insight-other"><h4 class="wc-insight-sub">Other behaviours, left out of the figures above</h4><ul>' +
+                  bal.other.map(x => '<li>' + escapeHtml(String(x.name)) + ': ' + n(x.awards) + ' award' + (x.awards === 1 ? '' : 's') +
+                      ', ' + n(x.deductions) + ' deduction' + (x.deductions === 1 ? '' : 's') + '</li>').join('') + '</ul></div>'
+                : '';
+            return '<div class="wc-card panel-card">' + head +
+                '<p class="wc-trend-note">The last ' + bal.mondays.length + ' finished school week' + (bal.mondays.length === 1 ? '' : 's') +
+                    ', ' + span + ' (a week with no awards or deductions at all, such as a break, is skipped). ' +
+                    'Awards and deductions, one per student, among students enrolled now. Nobody is named.</p>' +
+                '<div class="wu-scroll-x"><table class="student-table wc-trend-table">' +
+                    '<thead><tr><th scope="col">Expectation</th><th scope="col">Where</th>' +
+                    '<th scope="col">One-to-one praise</th><th scope="col">Individual deductions</th>' +
+                    '<th scope="col">One-to-one to individual</th>' +
+                    '<th scope="col">Small-group awards (2&ndash;4)</th><th scope="col">Small-group deductions (2&ndash;4)</th>' +
+                    '<th scope="col">Whole-class awards (5+)</th><th scope="col">Whole-class deductions (5+)</th>' +
+                    '<th scope="col">Many-adults check</th></tr></thead>' +
+                    '<tbody>' + body + '</tbody>' +
+                '</table></div>' +
+                '<p class="wc-trend-note">Like for like: the ratio compares praise given to one student at a time with deductions ' +
+                    'given to one student at a time. Small-group and whole-class awards and deductions sit in their own columns, ' +
+                    'outside it. It is a reading, not a target. One-to-one praise is an award to one student with a note that adult ' +
+                    'did not use for any other student that day.</p>' +
+                '<p class="wc-trend-note">A pattern is the school&rsquo;s only when at least ' + CASH_MANY_ADULTS_MIN + ' adults ' +
+                    'gave its individual deductions and none gave more than ' + Math.round(CASH_MANY_ADULTS_TOP_SHARE * 100) + '% of ' +
+                    'them; otherwise the row is greyed. The whole school is greyed too when a campus is, because two campuses each ' +
+                    'led by one adult add up to a pattern that is neither&rsquo;s. Checked from ' + CASH_RATIO_MIN_DEDUCTIONS +
+                    ' individual deductions.</p>' +
+                '<p class="wc-trend-note">Staff mostly used Not Being Present for engagement (phones, off task), not for lateness ' +
+                    'or absence (read from the notes, Sep 14 &ndash; Oct 2).</p>' +
+                other +
+            '</div>';
+        }
+
+        /** Is this Cash Analytics pane on screen? The tab open, and the pane not hidden inside it. */
+        function cashPaneOpen(paneId) {
+            const tab = document.getElementById('cashAnalyticsTab');
+            const pane = document.getElementById(paneId);
+            return !!(tab && pane && tab.classList && tab.classList.contains('active') && pane.style.display !== 'none');
+        }
+
+        /** trendsContext as this person last fetched it, or null: one person's copy is never another's. */
+        function cashTrendsContextNow() {
+            const c = _cashTrendsCtx;
+            return (c && currentUser && c.userId === currentUser.id) ? c : null;
+        }
+
+        /** The marks with names, for this person, only while they may see them. */
+        function cashNoticeMarksNow() {
+            const m = _cashNoticeMarks;
+            if (!cashStaffViewsAllowed() || !m || !currentUser || m.userId !== currentUser.id) return null;
+            return m;
+        }
+
+        /**
+         * THE CALENDAR, THE ATTENDANCE LINES AND THE CLASS LIST, once per ten
+         * minutes per person. Called from switchAnalyticsSubtab('trends'),
+         * NEVER from inside the renderer, so drawing Trends never waits on or
+         * triggers a read. Trends draws "loading" first and again once this
+         * and the marks have landed; a failure draws "unavailable", never
+         * zeros. True when it stored an answer (the caller redraws).
+         */
+        async function loadCashTrendsContext(force) {
+            if (!currentUser) return;
+            const who = currentUser.id;
+            const have = cashTrendsContextNow();
+            if (have && have.status === 'loading') return;
+            if (!force && have && have.status === 'ok' && Date.now() - have.at < CASH_TRENDS_CONTEXT_MS) return;
+            _cashTrendsCtx = { userId: who, at: have ? have.at : 0, status: 'loading', data: have ? have.data : null };
+            let data = null;
+            try {
+                const auth = window.WildcatAuth;
+                const session = auth && auth.getSession && auth.getSession();
+                if (auth && session) {
+                    const res = await auth.convexQuery('cashInsights:trendsContext', { today: wcIsoDay(new Date()) }, session.idToken);
+                    if (res && res.allowed === true && Array.isArray(res.weeks)) data = res;
+                }
+            } catch (e) {
+                data = null;
+            }
+            // Signed out, or someone else signed in, while it was on its way.
+            if (!currentUser || currentUser.id !== who) return;
+            _cashTrendsCtx = data
+                ? { userId: who, at: Date.now(), status: 'ok', data: data }
+                : { userId: who, at: Date.now(), status: 'failed', data: null };
+            return true;
+        }
+
+        /**
+         * THE MARKS BEHIND THE NAMED LIST: the existing attendance query, which
+         * admins and PBIS already pass, or Perfect Attendance's copy of it.
+         *
+         * A LATE ANSWER IS THROWN AWAY (review, 2026-10-06). After a logout, or
+         * once an admin enters teacher view, wipeStaffCashViews bumps the
+         * generation; an answer that set off before it -- or for another
+         * person -- is dropped rather than left holding names in memory.
+         */
+        async function loadCashNeverNoticedMarks() {
+            if (!cashStaffViewsAllowed() || !currentUser) return;
+            const who = currentUser.id;
+            const have = cashNoticeMarksNow();
+            if (have && (have.status === 'ok' || have.status === 'loading')) return;
+            const gen = _cashNoticeGen;
+            _cashNoticeMarks = { userId: who, gen: gen, status: 'loading', res: null };
+            let res = null;
+            try {
+                if (typeof _paCache !== 'undefined' && _paCache && _paCache.allowed === true && Array.isArray(_paCache.rows)) {
+                    res = _paCache;
+                } else {
+                    const auth = window.WildcatAuth;
+                    const session = auth && auth.getSession && auth.getSession();
+                    if (auth && session) res = await auth.convexQuery('attendanceList:attendanceMarks', {}, session.idToken);
+                }
+            } catch (e) {
+                res = null;
+            }
+            if (gen !== _cashNoticeGen || !currentUser || currentUser.id !== who || !cashStaffViewsAllowed()) return;
+            const ok = !!(res && res.allowed === true && Array.isArray(res.rows));
+            _cashNoticeMarks = { userId: who, gen: gen, status: ok ? 'ok' : 'failed', res: ok ? res : null };
+            return true;
+        }
+
+        /**
+         * The grades the Data Dashboard reads. ADMINS AND PBIS pick grades;
+         * everyone else picks a campus, and gets every grade in it (owner,
+         * 2026-10-06: grade-level numbers are for admins and PBIS only). The
+         * new ratio tile would otherwise have handed a teacher grade 8's.
+         */
+        function dashSelectedGrades() {
+            if (cashStaffViewsAllowed()) {
+                return Array.from(document.querySelectorAll('.grade-filter-checkbox:checked')).map(cb => String(cb.value));
+            }
+            const S = window.WildcatStore;
+            const campuses = Array.from(document.querySelectorAll('.campus-filter-checkbox:checked')).map(cb => String(cb.value));
+            return CASH_TREND_GRADES.filter(g => {
+                const c = (S && typeof S.studentCampusOf === 'function') ? S.studentCampusOf(g) : null;
+                return c !== null && campuses.indexOf(c) !== -1;
+            });
         }
 
         /**
@@ -38557,6 +39888,8 @@
             }
             // Durable from the moment it exists. See CASH OUTBOX above.
             enqueueCashOutbox(tx);
+            // The click model is rebuilt on its next read (cashClicksNow).
+            if (typeof cashLedgerChanged === 'function') cashLedgerChanged();
             return tx;
         }
 
@@ -43615,6 +44948,11 @@
             const positives = cashThisWeek.filter(t => cashBehaviourKind(t, _weekReversedIds) === 'award').length;
             const negatives = cashThisWeek.filter(t => cashBehaviourKind(t, _weekReversedIds) === 'deduct').length;
 
+            // PER STUDENT FOR EVERYONE (owner, 2026-10-06): the existing
+            // screens keep per-student counting until staff have been told;
+            // the school's week in clicks is on Trends.
+            const gaugeCounts = { awards: positives, deductions: negatives, unit: 'per student' };
+
             // Against a target of five. Nothing awarded at all is NOT a ratio
             // of zero -- it is no measurement, and 0:1 would accuse a teacher
             // of something they have not done.
@@ -43625,18 +44963,19 @@
             // to judge", and neither fills the gauge. A teacher sees their OWN
             // week here, and a full gauge for three awards and no corrections
             // was the perfect score the rule says zero must never be. Rounded
-            // down by the same function, so this gauge and Trends never
-            // disagree about the same week ("4.9 to 1", not "5.0").
+            // down by the same function, and -- for the school's week -- in
+            // the same unit, so this gauge and Trends never disagree about the
+            // same week ("4.9 to 1", not "5.0").
             const RATIO_TARGET = CASH_RATIO_GOAL;
-            const nothingYet = positives === 0 && negatives === 0;
-            const verdict = cashRatioVerdict(positives, negatives);
+            const nothingYet = gaugeCounts.awards === 0 && gaugeCounts.deductions === 0;
+            const verdict = cashRatioVerdict(gaugeCounts.awards, gaugeCounts.deductions);
             const rate = verdict.ratio === null ? null : Math.min(1, verdict.ratio / RATIO_TARGET);
             const ratioShown = verdict.ratio === null ? '' : verdict.label.replace(/ to 1$/, '');
 
             wcSetGauge(gauge, rate, nothingYet
                 ? 'Positive to corrective ratio: nothing awarded yet this week'
                 : (verdict.ratio === null
-                    ? `Positive to corrective ratio: ${verdict.label} (${positives} positive, ${negatives} corrective this week)`
+                    ? `Positive to corrective ratio: ${verdict.label} (${gaugeCounts.awards} positive, ${gaugeCounts.deductions} corrective this week)`
                     : `Positive to corrective ratio ${ratioShown} to 1, against a target of ${RATIO_TARGET}`));
 
             if (gaugeVal) {
@@ -43652,8 +44991,9 @@
                     ? '<p class="wu-absent">' + (seesAll
                         ? 'Nothing has been awarded this week yet.'
                         : 'You have not awarded anything this week yet.') + '</p>'
-                    : wcSubring('Positive', 'this week', positives, 'good') +
-                      wcSubring('Corrective', 'this week', negatives, negatives ? 'bad' : null);
+                    : wcSubring('Positive', 'this week', gaugeCounts.awards, 'good') +
+                      wcSubring('Corrective', 'this week', gaugeCounts.deductions,
+                          gaugeCounts.deductions ? 'bad' : null);
             }
 
             // ---- Who is not being noticed ---------------------------

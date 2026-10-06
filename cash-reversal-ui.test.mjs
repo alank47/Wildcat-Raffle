@@ -119,14 +119,18 @@ console.log("\n3. The intervention table cannot flag a withdrawn deduction");
     /function updateInterventionStudents\(\)\s*\{\s*_interventionReversedIds = reversedCashIds\(\);/.test(code));
 }
 
-console.log("\n4. Most Common Behaviors counts behaviours");
+console.log("\n4. Expectation balance (was Most Common Behaviors) counts behaviours");
 {
-  // "const behaviorFreq = " -- it became Object.create(null) on 2026-09-24,
-  // so a behaviour named __proto__ cannot poison the page (behaviors-persist).
-  const fn = code.slice(code.indexOf("const behaviorFreq = "),
-                        code.indexOf("const sortedBehaviors"));
+  // The panel became Expectation balance on 2026-10-06. It reads the click
+  // model, which takes rows through cashBehaviourKind -- so bookkeeping is
+  // never a behaviour -- sizes each press BEFORE reversals, and counts only
+  // the students still live. cash-insights.test.mjs runs it.
+  const model = code.slice(code.indexOf("function cashClickModel("), code.indexOf("function cashClicksNow("));
   check("bookkeeping rows are skipped",
-    /if \(!isCashBehaviourRow\(txn, _behaviourReversedIds\)\) return;/.test(fn));
+    /const kind = cashBehaviourKind\(t, BEFORE_REVERSALS\);\s*if \(!kind \|\| !t\.timestamp\) return;/.test(model));
+  check("a reversed row is sized in its press but never counted",
+    /if \(!ids\.has\(String\(en\.t\.id \|\| ''\)\)\) liveStudents\.add\(sid\);/.test(model) &&
+    /if \(!c\.liveStudents\.length \|\| !inWeeks\.has\(c\.monday\)/.test(code.slice(code.indexOf("function cashExpectationBalance("))));
 }
 
 console.log("\n5. What a child sees on their own phone");

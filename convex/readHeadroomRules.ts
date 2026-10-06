@@ -61,6 +61,11 @@ export type HeadroomMeasure = {
     bytes: number;
     docs: Array<{ doc: string; rows: number; bytes: number }>;
   };
+  /**
+   * What cashInsights:trendsContext reads (2026-10-06). Optional: a measure
+   * without it -- an older record, a test -- simply has no such reader.
+   */
+  trendsContext?: { rows: number; bytes: number } | null;
 };
 
 export type Reader = {
@@ -243,6 +248,16 @@ export function estimateReaders(measure: HeadroomMeasure): Reader[] {
       growthMiBPerWeek: plus(ledger, studs),
     }),
   ];
+  if (measure.trendsContext && Number.isFinite(measure.trendsContext.bytes)) {
+    readers.push(make({
+      name: "cashInsights:trendsContext",
+      what: "this year's attendance run days, every psAttendanceMarks row, every staff row, one roster row per staff member",
+      reachedBy: "Cash Analytics > Trends, any staff role, the marks only for those who may read attendance (cached ten minutes per tab); grows through the school year as " +
+        "each marks row collects dates, not with the cash ledger",
+      bytes: measure.trendsContext.bytes,
+      growthMiBPerWeek: null,
+    }));
+  }
   return readers.sort((a, b) => b.pct - a.pct);
 }
 

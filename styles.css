@@ -10239,3 +10239,47 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     background: var(--wu-surface-sunk, #EFF2F6); color: var(--wu-fg-dim, #5F6570);
 }
 .wc-trend-campus { background: rgba(47, 103, 167, 0.05); }
+
+/* ---- Cash Analytics: one count, reach, balance, outcome (2026-10-06) ------
+   The clicks | students switch on the week-by-week table, the small "n"
+   beside a figure, and a greyed row for a pattern one adult carries ("talk
+   with staff, not a school reteach"). Every table still scrolls inside its
+   own card (.wu-scroll-x), so a phone never gets a page that slides. */
+.wc-unit-toggle {
+    display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    margin: 0 0 12px; font-size: 13px; color: var(--wc-gray-text, #5F5E5A);
+}
+.wc-unit-toggle .wc-unit-label { font-weight: 600; margin-right: 2px; }
+.wc-unit-toggle button {
+    padding: 5px 12px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--wu-border, #D9DEE5); background: var(--wu-surface, #fff);
+    color: var(--wu-fg, #14161B); font: inherit; font-weight: 600;
+}
+.wc-unit-toggle button[aria-pressed="true"] {
+    background: var(--wu-fg, #14161B); border-color: var(--wu-fg, #14161B); color: #fff;
+}
+.wc-insight-n {
+    display: block; margin-top: 2px; font-size: 11.5px; font-weight: 500;
+    color: var(--wc-gray-text, #5F5E5A); white-space: nowrap;
+}
+.wc-trend-table tr.wc-insight-grey td,
+.wc-trend-table tr.wc-insight-grey th[scope="row"] {
+    background: var(--wu-surface-sunk, #EFF2F6); color: var(--wc-gray-text, #5F5E5A);
+}
+.wc-trend-table tr.wc-insight-total th,
+.wc-trend-table tr.wc-insight-total td { border-top: 2px solid var(--wu-border, #D9DEE5); }
+.wc-insight-link {
+    display: block; margin-top: 4px; padding: 0; border: 0; background: none; cursor: pointer;
+    font: inherit; font-size: 12px; font-weight: 600; color: var(--wc-blue, #2F67A7); text-decoration: underline;
+}
+.wc-insight-since {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--wu-fg, #14161B);
+}
+.wc-insight-since input { font: inherit; font-weight: 500; padding: 4px 8px; max-width: 100%; }
+.wc-insight-sub { margin: 16px 0 8px; font-size: 14px; font-weight: 700; color: var(--wu-fg, #14161B); }
+.wc-insight-names { margin: 0; padding-left: 18px; font-size: 13.5px; line-height: 1.5; }
+.wc-insight-names li { margin: 0 0 6px; overflow-wrap: anywhere; }
+.wc-insight-names .wc-trend-of { display: inline; }
+.wc-insight-names .wc-trend-tag { display: inline-block; margin-top: 0; }
+.wc-insight-other ul { margin: 0; padding-left: 18px; font-size: 13px; color: var(--wc-gray-text, #5F5E5A); }

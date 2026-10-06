@@ -141,6 +141,39 @@ export const smallReads = internalQuery({
   },
 });
 
+/**
+ * What cashInsights:trendsContext reads (2026-10-06): this year's attendance
+ * run days, every psAttendanceMarks row, every staff row and one psRoster row
+ * per staff member. The same tables and bounds as that query; sizes only, and
+ * the roster is looked up by psEmail when set, else email -- the address
+ * rosterEmailFor picks for every staff member it does not refuse.
+ *
+ * NOT THE LEDGER: nothing here grows with cash. It grows through the school
+ * year instead, as each marks row collects dates, which is why it is measured.
+ */
+export const trendsContextReads = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    let rows = 0, bytes = 0;
+    const add = (doc: unknown) => { if (doc) { rows++; bytes += sizeOf(doc); } };
+    const newest = await ctx.db.query("attendanceRunDays").withIndex("by_yearid_date").order("desc").first();
+    add(newest);
+    if (newest) {
+      const year = await ctx.db.query("attendanceRunDays")
+        .withIndex("by_yearid_date", (q) => q.eq("yearid", newest.yearid)).take(801);
+      for (const r of year) add(r);
+    }
+    for (const m of await ctx.db.query("psAttendanceMarks").take(3001)) add(m);
+    for (const t of await ctx.db.query("teachers").take(501)) {
+      add(t);
+      const email = String((t as any).psEmail || (t as any).email || "").trim().toLowerCase();
+      if (!email) continue;
+      add(await ctx.db.query("psRoster").withIndex("by_teacherEmail", (q) => q.eq("teacherEmail", email)).first());
+    }
+    return { rows, bytes };
+  },
+});
+
 /** Write the result, and the audit entry when a band got worse (if switched on). */
 export const recordResult = internalMutation({
   args: { result: v.any() },
@@ -278,6 +311,7 @@ export const nightly = internalAction({
       mirror.docs = [...byDoc.entries()].map(([doc, x]) => ({ doc, ...x }));
 
       const small: any = await ctx.runQuery(internal.readHeadroom.smallReads, {});
+      const trends: any = await ctx.runQuery(internal.readHeadroom.trendsContextReads, {});
       const nowIso = new Date().toISOString();
       const measure: HeadroomMeasure = {
         nowIso,
@@ -287,6 +321,7 @@ export const nightly = internalAction({
         teachers: small.teachers,
         loadSettingsBytes: small.loadSettingsBytes,
         mirror,
+        trendsContext: { rows: trends.rows, bytes: trends.bytes },
       };
       const readers = estimateReaders(measure);
       const MiB = (b: number) => Math.round((b / 1048576) * 100) / 100;
@@ -306,6 +341,7 @@ export const nightly = internalAction({
           enrolmentLookups: { rows: students.rosterLookupHits, MiB: MiB(students.rosterLookupBytes) },
           teachers: { rows: small.teachers.rows, MiB: MiB(small.teachers.bytes) },
           legacyMirror: { rows: mirror.rows, MiB: MiB(mirror.bytes) },
+          trendsContextReads: { rows: trends.rows, MiB: MiB(trends.bytes) },
         },
         cutoff: small.cutoffIso,
         method: "whole-row JSON size of what each reader reads, summed; within 1% of Convex's own count " +

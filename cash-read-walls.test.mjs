@@ -553,6 +553,7 @@ console.log("\n11. The nightly check end to end: pages, records, and keeps quiet
   const H = M.headroom;
   const QUERIES = { "readHeadroom.studentsPage": H.studentsPage, "readHeadroom.rosterPage": H.rosterPage,
                     "readHeadroom.mirrorPage": H.mirrorPage, "readHeadroom.smallReads": H.smallReads,
+                    "readHeadroom.trendsContextReads": H.trendsContextReads,
                     "readHeadroom.recordResult": H.recordResult };
   const ctx = {
     runQuery: async (ref, args) => QUERIES[ref].handler({ db: d.db }, args),
@@ -758,6 +759,7 @@ function nightlyRig(d, mod) {
   const H = mod.headroom;
   const Q = { "readHeadroom.studentsPage": H.studentsPage, "readHeadroom.rosterPage": H.rosterPage,
               "readHeadroom.mirrorPage": H.mirrorPage, "readHeadroom.smallReads": H.smallReads,
+                    "readHeadroom.trendsContextReads": H.trendsContextReads,
               "readHeadroom.recordResult": H.recordResult };
   return {
     H, Q,
@@ -772,6 +774,13 @@ function headroomSeed() {
   s.psRoster = s.students.slice(0, 30).map((st) => ({ studentNumber: st.studentNumber, sectionId: "x" }));
   s.teachers = [{ name: "T" }];
   s.appState.push({ key: "liveSettings", value: { a: 1 }, mirroredAt: "x" });
+  // What cashInsights:trendsContext reads (2026-10-06), big enough to register
+  // as a reader at all: "every reader turns amber" below includes it.
+  s.attendanceRunDays = Array.from({ length: 40 }, (_, i) => ({ yearid: 36, date: `2026-09-${String((i % 28) + 1).padStart(2, "0")}`,
+    band: i % 2 ? "6-8" : "9-12", members: 300, absentDays: 20, fullDaysStrict: 5, misrecordDaysByGap: [0, 0, 0],
+    partialDays: 15, assumedPresentDays: 0, gradeEstimated: false, syncedAt: "2026-10-01T10:15:00.000Z" }));
+  s.psAttendanceMarks = Array.from({ length: 30 }, (_, i) => ({ studentNumber: String(9000 + i),
+    absentDates: Array.from({ length: 20 }, (_, j) => `2026-09-${String(j + 1).padStart(2, "0")}`), syncedAt: "2026-10-01T13:30:00.000Z" }));
   return s;
 }
 
