@@ -34562,7 +34562,7 @@
                 return '<b>' + (cell.why === 'campus' ? 'Concentrated within a campus' : 'Concentrated') + ':</b> talk with staff, ' +
                     'not a school reteach' + detail +
                     (staffView ? '<button type="button" class="wc-insight-link" onclick="switchAnalyticsSubtab(\'teacherInteractions\')">' +
-                        'Teacher Interactions</button>' : '');
+                        'Staff tab</button>' : '');
             };
             const where = [['all', 'Whole school'], ['middle', 'Middle School'], ['high', 'High School']];
             const body = bal.rows.map(r => where.map(([k, label], i) => {

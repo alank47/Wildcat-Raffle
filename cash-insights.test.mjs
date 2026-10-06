@@ -541,8 +541,8 @@ for (const who of [by("T2"), AIDE]) {
   check(`${who.role}${who.attendanceWatch ? " (with the attendance grant)" : ""}: no grade rows or grade columns`, !/Grade \d/.test(out));
   check(`${who.role}: no named list and no student name`, !/cashNeverNoticedList/.test(out) && !/Stu7|Last7|Bold/.test(out + bal));
   check(`${who.role}: the campus counts are still there`, /No award since/.test(out) && /Middle School/.test(out));
-  check(`${who.role}: no Teacher Interactions link and no adult share in the balance`,
-    !/Teacher Interactions/.test(bal) && !/top adult/.test(bal) && !/from \d+ adult/.test(bal));
+  check(`${who.role}: no Staff tab link and no adult share in the balance`,
+    !/Staff tab/.test(bal) && !/top adult/.test(bal) && !/from \d+ adult/.test(bal));
   check(`${who.role}: the names query was never made`, !w.G.queries.includes("attendanceList:attendanceMarks"));
 }
 for (const who of [PBIS, ADMIN, SUPER]) {
@@ -551,7 +551,7 @@ for (const who of [PBIS, ADMIN, SUPER]) {
   w.app.updateCashAnalytics();
   const bal = el(w, "cashAnalyticsDetails").innerHTML;
   check(`${who.role}: grade rows, the named list, the adult share and the link`, /Grade 7/.test(out) && /cashNeverNoticedList/.test(out) &&
-    /Stu7 Last7/.test(out) && /top adult/.test(bal) && /Teacher Interactions/.test(bal), who.role);
+    /Stu7 Last7/.test(out) && /top adult/.test(bal) && /Staff tab/.test(bal), who.role);
 }
 {
   // An admin previewing a teacher: currentUser IS the teacher (applyPreviewVisibility).
