@@ -23,7 +23,7 @@
  */
 
 import {
-  REFERRAL_RECIPIENTS, esc, shortName, whenText, MAX_FIELD, MAX_DESCRIPTION, SCHOOL_TZ,
+  REFERRAL_RECIPIENTS, esc, shortName, whenText, incidentText, MAX_FIELD, MAX_DESCRIPTION, SCHOOL_TZ,
 } from "./referralMailRules";
 
 /** A stage is a distinct piece of mail, logged and sent at most once. */
@@ -449,7 +449,7 @@ export function pingMailPlan(
     `<table style="border-collapse:collapse;font-size:14px">` +
     row("Student", student) + row("Student ID", r.studentId) + row("Grade", grade) +
     row("Behavior", behavior) +
-    row("Incident", whenText(r.dateTime || r.date)) +
+    row("Incident", incidentText(r.dateTime || r.date)) +
     row("Filed", whenText(r.submittedAt)) +
     row("Filed by", clampText(r.filedBy, MAX_FIELD) || clampText(r.filedByEmail, MAX_FIELD)) +
     row("Open for", days(age)) +

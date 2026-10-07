@@ -140,6 +140,37 @@ export function whenText(raw: unknown): string {
   });
 }
 
+// "2026-09-14" or "2026-09-14T11:09" -- a school clock reading with no zone.
+const WALL_CLOCK = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?)?$/;
+
+/**
+ * When the INCIDENT happened, as the filer wrote it.
+ *
+ * NOT whenText. script.js writes `dateTime` as `${date}T${time}` with no zone:
+ * a reading of the school's clock. new Date() on Convex reads that as UTC and
+ * whenText then moves it to Los Angeles, so an 11:09 incident reached every
+ * inbox as "4:09 AM" -- seven hours before it happened, beside a correct
+ * "Filed at". A bare date did worse: UTC midnight is 5 PM the day before.
+ * A zone-less value is printed exactly as written; anything carrying a zone
+ * is a real instant and goes through whenText.
+ */
+export function incidentText(raw: unknown): string {
+  const s = String(raw ?? "").trim();
+  const m = WALL_CLOCK.exec(s);
+  if (!m) return whenText(s);
+  const [, y, mo, d, h, mi] = m;
+  const hasTime = h !== undefined;
+  // Built and printed in UTC so no zone is ever applied: the digits in are
+  // the digits out.
+  const at = new Date(Date.UTC(+y, +mo - 1, +d, hasTime ? +h : 12, hasTime ? +mi : 0));
+  if (isNaN(at.getTime())) return s;
+  return at.toLocaleString("en-US", {
+    weekday: "long", year: "numeric", month: "long", day: "numeric",
+    ...(hasTime ? { hour: "numeric", minute: "2-digit" } : {}),
+    timeZone: "UTC",
+  }) + (hasTime ? "" : " (time not recorded)");
+}
+
 export type MailPlan = {
   to: string[];
   subject: string;
@@ -213,7 +244,7 @@ export function mailPlan(referral: any, filer: { email: string; name?: string })
 
   parts.push(section("The incident",
     `<table style="border-collapse:collapse;font-size:14px">` +
-    row("When", whenText(r.dateTime || r.date)) +
+    row("When", incidentText(r.dateTime || r.date)) +
     row("Where", clamp(r.location, MAX_FIELD)) +
     row("Behavior", clamp(r.behavior || r.behaviorType, MAX_FIELD)) + `</table>`));
 

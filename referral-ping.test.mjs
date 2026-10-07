@@ -361,6 +361,21 @@ console.log("\nTHE MAIL ITSELF\n");
     !m.html.includes("<script>") && m.html.includes("&lt;script&gt;"));
   check("a typed newline survives", m.html.includes("Second time."));
 
+  // The form stores the incident as a zone-less clock reading. Convex runs in
+  // UTC, and this used to print a 10:42 incident as "3:42 AM" in every chaser.
+  {
+    const laptopTz = process.env.TZ;
+    process.env.TZ = "UTC";
+    try {
+      const wall = R.pingMailPlan({ ...referral, dateTime: "2026-09-14T10:42" },
+        { stage: "nudge", ageSchoolDays: 4, to: R.pingRecipients("nudge") }).html;
+      check("the chaser shows the incident at the time the filer entered, on a UTC server",
+        wall.includes("10:42 AM") && !wall.includes("3:42 AM"));
+    } finally {
+      if (laptopTz === undefined) delete process.env.TZ; else process.env.TZ = laptopTz;
+    }
+  }
+
   check("it says what would make the reminder stop", /What ends this reminder/.test(m.html));
   check("it names the screen and the action, not just the problem",
     /Referral Review/.test(m.html) && /close/i.test(m.html));

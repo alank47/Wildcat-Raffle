@@ -9,7 +9,7 @@
 // Run: npm test
 
 import {
-  REFERRAL_RECIPIENTS, recipientsFor, mailPlan, esc, shortName, whenText,
+  REFERRAL_RECIPIENTS, recipientsFor, mailPlan, esc, shortName, whenText, incidentText,
   MAX_DESCRIPTION,
 } from "./referralMailRules.ts";
 
@@ -234,6 +234,40 @@ console.log("\n-- missing fields degrade, never crash --");
     whenText("2026-09-12T03:00:00.000Z").includes("September 11"));
   check("an unparseable date is passed through as written",
     whenText("sometime tuesday") === "sometime tuesday");
+  // THE INCIDENT IS A CLOCK READING, NOT AN INSTANT. script.js writes
+  // dateTime as "2026-09-11T10:42" with no zone. Convex runs in UTC, so
+  // whenText read it as 10:42 UTC and every referral and chaser email showed
+  // the incident at 3:42 AM. This laptop runs Pacific, which hid it: the checks
+  // below run under UTC, the way the server does.
+  const laptopTz = process.env.TZ;
+  process.env.TZ = "UTC";
+  try {
+    check("the server really is on UTC for these checks",
+      new Date("2026-09-11T10:42").getUTCHours() === 10);
+    check("an incident time is printed exactly as the filer wrote it",
+      incidentText("2026-09-11T10:42").includes("10:42 AM") &&
+      incidentText("2026-09-11T10:42").includes("Friday, September 11, 2026"));
+    check("an afternoon incident keeps its day and hour",
+      incidentText("2026-09-14T14:00").includes("Monday, September 14, 2026") &&
+      incidentText("2026-09-14T14:00").includes("2:00 PM"));
+    check("seconds in the stored time do not change the reading",
+      incidentText("2026-09-11T10:42:00").includes("10:42 AM"));
+    check("a date with no time stays on its own day and says the time is missing",
+      incidentText("2026-09-14") === "Monday, September 14, 2026 (time not recorded)");
+    check("an incident stored WITH a zone is still converted to the school's clock",
+      incidentText("2026-09-14T15:10:00Z").includes("8:10 AM"));
+    check("an empty incident reads not recorded",
+      incidentText("") === "not recorded");
+    check("an impossible date is passed through, never Invalid Date",
+      !/Invalid/.test(incidentText("2026-13-45T99:99")));
+    const sent = mailPlan(REF, FILER).html;
+    check("the referral email shows the incident at the time the filer entered",
+      sent.includes("10:42 AM") && !sent.includes("3:42 AM"));
+    check("and the filing time is still converted from the server stamp",
+      mailPlan({ ...REF, submittedAt: "2026-09-11T17:47:00.000Z" }, FILER).html.includes("10:47 AM"));
+  } finally {
+    if (laptopTz === undefined) delete process.env.TZ; else process.env.TZ = laptopTz;
+  }
   check("absent fields read as not recorded", /not recorded/.test(mailPlan({}, FILER).html));
   check("an empty additionalActions block is omitted entirely",
     !/Anything else the teacher did/.test(mailPlan({ ...REF, additionalActions: "" }, FILER).html));
