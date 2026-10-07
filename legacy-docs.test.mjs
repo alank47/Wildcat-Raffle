@@ -187,5 +187,55 @@ console.log("\nEvery document loadData reads is on the list");
     !fixed.some((d) => /^audit_log_\d|^cash_tx_/.test(d)));
 }
 
+console.log("\nAn open tab on the old code reads a SCOPED referrals doc correctly (2026-10-07)");
+{
+  // THE OLD-TAB CONTRACT for legacyData:loadDoc's scoped read. Every tab open
+  // when the server changes keeps running the script.js it loaded. That code
+  // is frozen, so its install step is copied here VERBATIM as of 689f3fe (the
+  // last build before the scoped read), and run on what the shipped loader
+  // above makes of each answer the server could give a teacher.
+  const oldTabInstall = (docs, failed) => {
+    const _legacy = docs;
+    const snapOf = (name) => ({ exists: () => Boolean(_legacy[name]), data: () => _legacy[name] || {} });
+    const referralsSnap = snapOf("referrals");
+    const secondaryData = { behaviorReferrals: [{ id: "LEGACY" }] };   // what a null would fall back to
+    let behaviorReferrals;
+    const referralsData = referralsSnap.exists() ? referralsSnap.data() : {};
+    if (Array.isArray(referralsData.behaviorReferrals)) {
+      behaviorReferrals = referralsData.behaviorReferrals;
+    } else {
+      behaviorReferrals = secondaryData.behaviorReferrals || [];
+    }
+    const unreadLegacyDocs = new Set(failed || []);
+    return { behaviorReferrals, unreadLegacyDocs };
+  };
+  const run = async (store, opts) => {
+    const f = fakeAuth({ main: { a: 1 }, ...store }, opts);
+    const m = mod({ WildcatAuth: f.api });
+    const res = await m.loadLegacyDocsFromConvex(["main", "referrals"]);
+    return oldTabInstall(res.docs, res.failed);
+  };
+
+  let t = await run({ referrals: { behaviorReferrals: [{ id: "R1" }, { id: "R3" }] } });
+  check("a teacher's own rows: installed as the referral list",
+    Array.isArray(t.behaviorReferrals) && t.behaviorReferrals.map((r) => r.id).join(",") === "R1,R3");
+  check("...and 'referrals' is NOT marked unread, so the tab can still save and file",
+    !t.unreadLegacyDocs.has("referrals"));
+
+  t = await run({ referrals: { behaviorReferrals: [] } });
+  check("a teacher with none ({ behaviorReferrals: [] }): an empty list, not the legacy fallback",
+    Array.isArray(t.behaviorReferrals) && t.behaviorReferrals.length === 0);
+  check("...and still not unread", !t.unreadLegacyDocs.has("referrals"));
+
+  // WHY THE SCOPED READ NEVER RETURNS NULL OR THROWS: these are what an old
+  // tab does with each, and both are wrong.
+  t = await run({});
+  check("a null doc sends the old tab to the legacy secondary list (so scoped mode never returns null)",
+    t.behaviorReferrals.length === 1 && t.behaviorReferrals[0].id === "LEGACY");
+  t = await run({ referrals: { behaviorReferrals: [] } }, { failOn: ["referrals"] });
+  check("a thrown read marks 'referrals' unread, which blocks every save (so scoped mode never throws)",
+    t.unreadLegacyDocs.has("referrals"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);

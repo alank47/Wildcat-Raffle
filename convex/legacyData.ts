@@ -1,9 +1,14 @@
 import { query, mutation } from "./_generated/server";
+import type { QueryCtx } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
 import { requireStaff } from "./identity";
 import { notifyNewReferrals } from "./referralMail";
 import { noteArrivedCash } from "./cashArrival";
-import { pinOwnerFields } from "./referralAccessRules";
+import {
+  pinOwnerFields, scopeReferralRows, seesAllReferrals, normalizeSwitch, switchAllows,
+  REFERRAL_SCOPE_KEY,
+} from "./referralAccessRules";
+import type { ReferralSwitch } from "./referralAccessRules";
 
 /**
  * The app-facing half of the legacy mirror.
@@ -113,32 +118,101 @@ export const loadSlice = query({
   },
 });
 
+/**
+ * One document's rows, rebuilt into the object the Firestore document used to
+ * be: an unkeyed slice becomes an array, a keyed one a map of its keyed rows.
+ * Null for no rows (see "Returns null rather than {}" above).
+ *
+ * MOVED HERE VERBATIM from loadDoc (2026-10-07), so the scoped read below and
+ * referralAccess:compareScope rebuild through the SAME code as the read every
+ * page load has always used. A second copy is how "identical" stops being
+ * true without anybody noticing.
+ */
+export function rebuildDoc(rows: Array<{ collection: string; key?: string; payload: unknown }>): Record<string, unknown> | null {
+  if (rows.length === 0) return null;
+
+  const collections: Record<string, Array<{ key?: string; payload: unknown }>> = {};
+  for (const r of rows) (collections[r.collection] ??= []).push({ key: r.key, payload: r.payload });
+
+  const out: Record<string, unknown> = {};
+  for (const [collection, slice] of Object.entries(collections)) {
+    const keyed = slice.some((r) => typeof r.key === "string");
+    if (keyed) {
+      const map: Record<string, unknown> = {};
+      for (const r of slice) if (typeof r.key === "string") map[r.key] = r.payload;
+      out[collection] = map;
+    } else {
+      out[collection] = slice.map((r) => r.payload);
+    }
+  }
+  return out;
+}
+
+/**
+ * One of the referral switches (referralAccessRules.ts), read where it is
+ * used, on every call -- so turning one off takes effect on the next read or
+ * save in every open tab, with no deploy and nobody refreshing.
+ *
+ * .first(), NEVER .unique(). A duplicated key makes .unique() throw a plain
+ * Error, which Convex redacts to "Server Error"; inside loadDoc that would mark
+ * 'referrals' unread in every tab, and an unread doc blocks every save the tab
+ * makes (script.js mergeLegacySlice). A switch row must never be able to do
+ * that. A missing or unreadable row is OFF.
+ */
+export async function readReferralSwitch(ctx: Pick<QueryCtx, "db">, key: string): Promise<ReferralSwitch> {
+  const row = await ctx.db.query("appState").withIndex("by_key", (q) => q.eq("key", key)).first();
+  return normalizeSwitch(row?.value);
+}
+
 export const loadDoc = query({
   args: { doc: v.string() },
   handler: async (ctx, { doc }) => {
-    await requireStaff(ctx);
+    const me = await requireStaff(ctx);
 
     const rows = await ctx.db
       .query("legacyMirror")
       .withIndex("by_doc", (q) => q.eq("doc", doc))
       .collect();
-    if (rows.length === 0) return null;
 
-    const collections: Record<string, Array<{ key?: string; payload: unknown }>> = {};
-    for (const r of rows) (collections[r.collection] ??= []).push({ key: r.key, payload: r.payload });
-
-    const out: Record<string, unknown> = {};
-    for (const [collection, slice] of Object.entries(collections)) {
-      const keyed = slice.some((r) => typeof r.key === "string");
-      if (keyed) {
-        const map: Record<string, unknown> = {};
-        for (const r of slice) if (typeof r.key === "string") map[r.key] = r.payload;
-        out[collection] = map;
-      } else {
-        out[collection] = slice.map((r) => r.payload);
-      }
+    // A TEACHER IS SERVED THEIR OWN REFERRALS, NOT THE SCHOOL'S (2026-10-07).
+    //
+    // Until now every staff member's browser downloaded every referral --
+    // named children, descriptions, administrator notes -- and the page drew
+    // only some of them. The rows are now filtered HERE, by the signed-in
+    // email (referralAccessRules.ts says why email and nothing else), behind
+    // the referralScope switch: absent means off, which is today's read
+    // exactly.
+    //
+    // NEVER NULL, NEVER A THROW, even for a teacher with no referrals. Every
+    // tab already open runs script.js from before this change: a null sends
+    // its loadData to the legacy `secondary` list, and a throw marks
+    // 'referrals' unread, which blocks every save the tab makes and stops that
+    // teacher filing a referral at all. An empty list is what an old tab
+    // handles correctly, so that is what a teacher with none gets.
+    //
+    // Admin, superadmin and PBIS get every unkeyed referral, which on any data
+    // the app can write is exactly what they got before.
+    if (doc === "referrals" && switchAllows(await readReferralSwitch(ctx, REFERRAL_SCOPE_KEY), me.email)) {
+      return rebuildDoc(scopeReferralRows(rows, me)) ?? { behaviorReferrals: [] };
     }
-    return out;
+
+    // DETENTIONS ARE THE SAME RECORD BY ANOTHER ROUTE. A detention made from
+    // a referral carries the child's name and "Referral <id>: <behaviour>",
+    // and `secondary` was sent whole to every staff member. Under the same
+    // switch, a caller who does not see every referral gets none.
+    //
+    // Checked before doing it (2026-10-07): only the Detention tab draws
+    // detentions, and only admin, superadmin and PBIS have it; and detentions
+    // are only ever saved through mergeSlice -- a union, where an empty list
+    // deletes nothing -- never through saveSlice (script.js saveData's
+    // whole-value list does not include them). The key stays an array so old
+    // code reads it as it always has.
+    if (doc === "secondary" && rows.length > 0 && !seesAllReferrals(me.role)
+        && switchAllows(await readReferralSwitch(ctx, REFERRAL_SCOPE_KEY), me.email)) {
+      return { ...(rebuildDoc(rows.filter((r) => r.collection !== "detentions")) ?? {}), detentions: [] };
+    }
+
+    return rebuildDoc(rows);
   },
 });
 
