@@ -44712,6 +44712,16 @@
         }
 
         function exportReferralReport() {
+            const D = window.WildcatDiscipline;
+            // ADMIN, SUPERADMIN AND PBIS ONLY, checked here and not only by
+            // which tab draws the button. The file names staff (Referred By,
+            // Closed By) and carries each child's student number and grade,
+            // and it leaves the app the moment it is written.
+            if (!D.seesAllReferrals(currentUser && currentUser.role)) {
+                alert('The referral report is for administrators and PBIS.');
+                return;
+            }
+
             // EXPORTS WHAT THE EXPORTER MAY SEE, not the whole table. A file
             // leaves the app and gets mailed around, so an unscoped export is
             // the most durable way to leak a discipline record.
@@ -44724,28 +44734,47 @@
             // Create workbook
             const wb = XLSX.utils.book_new();
             
-            // Prepare data
+            // THE COLUMNS SAY WHAT THE RECORD SAYS (2026-10-07).
+            //
+            // Date and Time were new Date(r.dateTime): dateTime is just the
+            // date when no time was entered, which parses as UTC midnight and
+            // printed the day BEFORE at 5:00 PM. They are now the date the
+            // teacher entered, exactly, and that time on a 12-hour clock.
+            //
+            // Parent Notified read r.parentNotified, which only the retired
+            // review flow wrote, so every row said No, including the closed
+            // referrals whose closer ticked "Notified parents/guardians
+            // promptly". It is now derived from the closing actions, and
+            // BLANK while a referral is open (D.parentNotified).
+            //
+            // Reviewed By, Tickets Deducted and Cash Deducted are gone: that
+            // same retired flow was the only writer, no referral has them,
+            // and a column of empty cells and zeros reads as "nobody was
+            // reviewed and nothing was deducted".
             const data = behaviorReferrals.map(r => ({
                 'Referral ID': r.id,
-                'Date': new Date(r.dateTime).toLocaleDateString(),
-                'Time': new Date(r.dateTime).toLocaleTimeString(),
+                'Date': r.date || D.incidentDay(r) || '',
+                'Time': wcClock(r.time),
                 'Student Name': r.studentName,
+                'Student Number': r.studentNumber || referralStudentNumber(r),
+                'Grade': r.studentGrade || '',
+                'Campus': r.school || '',
                 'Behavior Type': r.behaviorType,
                 'Interventions Attempted': (r.interventions || []).length,
                 'Too Severe For Interventions': r.severeBypass ? 'Yes' : 'No',
-                'Resolution': r.resolutionType === 'no_action' ? 'No action required' : (r.status === 'closed' ? 'Action taken' : ''),
+                'Resolution': r.status === 'closed' ? D.resolutionLabel(r.resolutionType) : '',
                 'Closing Actions': (r.closingActions || []).join('; '),
+                'Parent Notified': D.parentNotified(r),
                 'Loop Closed': r.loopClosed ? 'Yes' : 'No',
                 'Location': r.location,
                 'Description': r.description,
                 'Referred By': r.referredBy,
                 'Status': r.status,
+                'Closed By': r.status === 'closed' ? (r.closedBy || '') : '',
+                // closedAt is an instant; the day it fell on in Los Angeles.
+                'Closed Date': r.status === 'closed' ? (D.schoolDayOf(r.closedAt) || '') : '',
                 'Consequence': r.consequence || '',
-                'Admin Notes': r.adminNotes || '',
-                'Reviewed By': r.reviewedBy || '',
-                'Tickets Deducted': r.ticketsDeducted || 0,
-                'Cash Deducted': r.cashDeducted || 0,
-                'Parent Notified': r.parentNotified ? 'Yes' : 'No'
+                'Admin Notes': r.adminNotes || ''
             }));
             
             // Create worksheet
@@ -44754,8 +44783,9 @@
             // Add to workbook
             XLSX.utils.book_append_sheet(wb, ws, 'Behavior Referrals');
             
-            // Generate file
-            const filename = `Behavior_Referrals_${new Date().toISOString().split('T')[0]}.xlsx`;
+            // Generate file, named for the school's today rather than UTC's,
+            // which after 5pm is already tomorrow.
+            const filename = `Behavior_Referrals_${D.schoolToday()}.xlsx`;
             XLSX.writeFile(wb, filename);
             
             alert('✅ Referral report exported successfully!');
