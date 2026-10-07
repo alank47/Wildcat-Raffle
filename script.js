@@ -2922,9 +2922,85 @@
             // session comes through here (logout, the inactivity timer, an
             // expired session at page start, a student leaving the portal).
             stripDisciplineFromLocalCache();
+            closeTeacherViewAtSignOut();
             if (inactivityTimer) {
                 clearTimeout(inactivityTimer);
             }
+        }
+
+        /**
+         * A TEACHER VIEW ENDS WITH THE SESSION (review, 2026-10-07).
+         *
+         * Only the banner's Exit button ever ended a preview, so an admin in
+         * teacher view who clicked Logout, or was logged out for inactivity,
+         * left realUser set for whoever signed in next on that Chromebook.
+         * The newcomer was then treated as an admin previewing: their device
+         * kept the whole school's referrals and every detention, their cache
+         * was stamped with the admin's email, every save was refused as
+         * "preview", and the leftover Exit button put them into the admin's
+         * account. Ended here, on every way out, with no redraw of the
+         * admin's screens: nobody is signed in to draw them for. Never throws.
+         */
+        function closeTeacherViewAtSignOut() {
+            try {
+                if (realUser === null) return;
+                realUser = null;
+                previewRoster = null;
+                previewRosterError = null;
+                renderPreviewBanner();   // not previewing any more: removes the bar
+            } catch (e) { /* page start, before the preview code has run */ }
+        }
+
+        /**
+         * THE CACHE OF SOMEBODY WHO IS NOT HERE IS REMOVED, NOT JUST UNREAD
+         * (review, 2026-10-07). Called at page start, once the session this
+         * tab carries (if any) is known, and when a student signs in.
+         *
+         * clearSession strips the cache, but closing the tab skips it: both
+         * the app's session and Microsoft's live in sessionStorage, so a
+         * closed tab is signed out without anything running. loadDataLocal
+         * then declined to RESTORE an admin's whole-school copy for the next
+         * person, and left it in localStorage, where that person could read
+         * it from the console before signing in. Kept only when it is
+         * stamped with the session this tab is carrying -- an admin's own
+         * reload -- because it is only a fallback for a failed server load,
+         * and losing it costs a re-read.
+         */
+        function dropDisciplineCacheUnlessMine() {
+            try {
+                const raw = localStorage.getItem('raffleData');
+                if (!raw) return false;
+                const data = JSON.parse(raw);
+                if (!data || typeof data !== 'object' || localCacheIsMine(data)) return false;
+                stripDisciplineFromLocalCache();
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        /**
+         * THE DISCIPLINE RECORD IN THIS TAB'S MEMORY AND ON ITS SCREENS, gone
+         * at sign-out (review, 2026-10-07). Logout hid the app and nothing
+         * more: the whole school's referrals and detentions stayed in
+         * behaviorReferrals and detentions, which the console reads by name,
+         * and in the hidden tables, for whoever used the tab next -- and a
+         * student signing in with Google never loads anything that would
+         * replace them. A staff sign-in loads them again from the server.
+         */
+        function forgetDisciplineRecord() {
+            behaviorReferrals = [];
+            detentions = [];
+            ['referralReviewTable', 'closedReferralsList', 'referralDetailBody', 'studentReferralHistoryBody',
+             'referralTrend', 'referralBehaviors', 'referralDemographics', 'referralClosedAnalytics',
+             'activeDetentionsList', 'completedDetentionsList'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.innerHTML = '';
+            });
+            ['openReferralCount', 'closedReferralCount', 'activeDetentionCount', 'completedDetentionCount'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = '';
+            });
         }
 
         /**
@@ -3048,6 +3124,10 @@
         function establishStudentSession(student) {
             currentStudent = student;
             if (typeof saveSession === 'function') saveSession();
+            // A student never holds the staff discipline record, whoever
+            // used this browser before them (review, 2026-10-07).
+            stripDisciplineFromLocalCache();
+            forgetDisciplineRecord();
 
             // Opens the PORTAL, not the legacy #studentDashboard.
             //
@@ -4583,7 +4663,8 @@
                 // this tab is still holding survives. Local-only rows are kept
                 // by mergeReferrals precisely because absence from the server
                 // is not a deletion.
-                const merged = D.mergeReferrals(pendingReferrals, behaviorReferrals);
+                const merged = D.mergeReferrals(pendingReferrals, behaviorReferrals,
+                    { serverOwnsClose: serverOwnsReferralClose() });
                 behaviorReferrals = merged.referrals;
                 if (merged.added || pendingReferrals.length) {
                     console.log('[save] rebased after reload:', pendingReferrals.length,
@@ -9220,6 +9301,7 @@
                 currentUser = null;
                 currentStudent = null;
                 clearSession(); // Clear saved session
+                if (typeof forgetDisciplineRecord === 'function') forgetDisciplineRecord();
                 _sidebarModeApplied = false; // next login re-runs mode-first logic
                 if (typeof wcStopPassAlertPolling === 'function') wcStopPassAlertPolling();
                 document.body.classList.remove('sidebar-open', 'sidebar-collapsed');
@@ -18422,6 +18504,7 @@
                         }
                         if (before !== fresh.role) {
                             console.log(`✅ Your access level changed: ${before} -> ${fresh.role}. Reload to apply it everywhere.`);
+                            rescopeDisciplineForRole(before).catch(() => {});
                         }
                     }
                 }
@@ -23484,7 +23567,12 @@
         // A student signing in gets the portal, not the teacher app.
         window.addEventListener('wildcat-auth-signin', (event) => {
             const me = event.detail || {};
-            if (me.kind === 'student') openStudentPortal(null);
+            if (me.kind !== 'student') return;
+            // A student never holds the staff discipline record, whoever used
+            // this browser before them (review, 2026-10-07).
+            stripDisciplineFromLocalCache();
+            forgetDisciplineRecord();
+            openStudentPortal(null);
         });
 
         // Explicit, because wildcat-auth.js reaches for window.openStudentPortal
@@ -26570,6 +26658,9 @@
             
             // Check for existing session AFTER data is loaded
             const hasSession = loadSession();
+            // Whoever's discipline record the local cache holds goes, unless
+            // it is this tab's own session's (dropDisciplineCacheUnlessMine).
+            dropDisciplineCacheUnlessMine();
 
             // Restore the Microsoft session too when a STAFF user was restored,
             // so Convex writes (meal PIN, NFC tags, hall passes, bell schedule)
@@ -26610,6 +26701,8 @@
             if (staffNeedsReauth) {
                 console.warn('[boot] a staff session was restored locally but Convex has no session; asking for sign-in.');
                 currentUser = null;
+                // Not a live session after all, so not a cache to keep.
+                stripDisciplineFromLocalCache();
                 try { localStorage.removeItem('currentSession'); } catch (e) {}
                 document.getElementById('mainApp').classList.add('hidden');
                 document.getElementById('loginScreen').classList.remove('hidden');
@@ -43190,9 +43283,59 @@
             }
         }
 
+        /**
+         * AN ACCESS CHANGE REACHES WHAT THE TAB HOLDS, NOT ONLY WHAT IT DRAWS
+         * (review, 2026-10-07). refreshRosterFromConvex applies a new role
+         * live, and the Discipline tabs follow it. The record did not:
+         *   - promoted to PBIS or admin, the tab still held a teacher's own
+         *     referrals and NO detentions until a page load, so the Detention
+         *     tab read "No active detentions" and closing a referral with the
+         *     detention action made a second one beside the one that existed;
+         *   - moved down to teacher, it kept the whole school.
+         * So a widened role reads detentions (a union by id: nothing local is
+         * dropped) and pulls referrals; a narrowed one sheds. Never during a
+         * teacher preview, whose list is the admin's. Never throws.
+         */
+        async function rescopeDisciplineForRole(beforeRole) {
+            try {
+                if (!currentUser || isPreviewingTeacher()) return 'unchanged';
+                if (referralsScopedToViewer()) { shedReferralsNotMine(); return 'shed'; }
+                if (window.WildcatDiscipline.seesAllReferrals(beforeRole)) return 'unchanged';
+                const res = await loadLegacyDocsFromConvex(['secondary']);
+                const sec = res && res.docs && res.docs.secondary;
+                const failed = res && res.failed && res.failed.indexOf('secondary') !== -1;
+                if (!failed && sec && Array.isArray(sec.detentions)) {
+                    const served = new Set(sec.detentions.map(d => d && d.id));
+                    detentions = sec.detentions.concat((detentions || []).filter(d => d && !served.has(d.id)));
+                }
+                await refreshReferralsFromServer();
+                return 'widened';
+            } catch (e) {
+                console.warn('[referrals] could not apply the new access level:', (e && e.message) || e);
+                return 'error';
+            }
+        }
+
         /** Close and Close-the-loop are for admin, superadmin and PBIS. */
         function canCloseReferralsHere() {
             return Boolean(currentUser) && window.WildcatDiscipline.canCloseReferrals(currentUser.role);
+        }
+
+        /**
+         * Is the server's close the truth for this tab, whatever the stamps
+         * say? Yes for a signed-in teacher or campus aide, who cannot close:
+         * their copy's stamps carry their own clock, and a fast one kept an
+         * admin's close off their screen until a reload (review, 2026-10-07;
+         * WildcatDiscipline.mergeReferrals). Never during a teacher preview,
+         * where the admin's own unsaved close must survive. Any failure
+         * answers no, which is how every pull merged before.
+         */
+        function serverOwnsReferralClose() {
+            try {
+                return Boolean(currentUser) && !isPreviewingTeacher() && !canCloseReferralsHere();
+            } catch (e) {
+                return false;
+            }
         }
 
         /** What a tab that may not close says if a close is reached anyway (an old link, the console). */
@@ -43274,7 +43417,8 @@
                 // PBIS, and during a teacher preview.
                 const rows = cacheableReferrals(served);
                 shedReferralsNotMine();
-                const merged = window.WildcatDiscipline.mergeReferrals(behaviorReferrals, rows);
+                const merged = window.WildcatDiscipline.mergeReferrals(behaviorReferrals, rows,
+                    { serverOwnsClose: serverOwnsReferralClose() });
                 behaviorReferrals = merged.referrals;
                 _referralPullAt = new Date();
                 return { added: merged.added, updated: merged.updated, changed: merged.changed };
@@ -43344,6 +43488,20 @@
             const countEl = document.getElementById('openReferralCount');
             if (countEl) countEl.textContent = open.length;
 
+            // CLOSE IS FOR ADMIN, SUPERADMIN AND PBIS (owner, 2026-10-07).
+            // Everyone else sees where the referral stands instead of a button.
+            // Asked once per draw, not per row.
+            const mayClose = canCloseReferralsHere();
+            // The hint above the table promised Close and "close the loop" to
+            // everyone, and then a teacher found neither (review, 2026-10-07).
+            const hint = document.getElementById('openReferralsHint');
+            if (hint) {
+                hint.textContent = mayClose
+                    ? 'Referrals awaiting an administrator. Closing one records the resolution; '
+                      + 'afterwards you can "close the loop" to report back to staff.'
+                    : 'Your referrals waiting for an administrator or the PBIS team to close them.';
+            }
+
             if (!open.length) {
                 tbody.innerHTML = `<tr><td colspan="6">
                     <div class="empty-state">
@@ -43354,10 +43512,6 @@
                 return;
             }
 
-            // CLOSE IS FOR ADMIN, SUPERADMIN AND PBIS (owner, 2026-10-07).
-            // Everyone else sees where the referral stands instead of a button.
-            // Asked once per draw, not per row.
-            const mayClose = canCloseReferralsHere();
             tbody.innerHTML = open.map(r => {
                 const d = new Date(r.submittedAt);
                 const ivCount = (r.interventions || []).length;
@@ -43944,16 +44098,21 @@
             // when this changed: by filing time the first four weeks read
             // 4/3/3/8, by incident 4/3/5/6.
             const t = window.WildcatDiscipline.trend(all, trendGrain, window.WildcatDiscipline.schoolToday());
-            if (!t.points.length) {
-                el.innerHTML = '<p class="panel-hint">No referrals yet.</p>';
-                return;
-            }
-            const max = Math.max.apply(null, t.points.map(p => p.count)) || 1;
             // Said, not dropped: an incident dated after today (the date box
             // has no maximum) or before the chart's first period.
             const outside = [];
             if (t.later) outside.push(`${t.later} referral${t.later === 1 ? ' has an incident date' : 's have incident dates'} after today`);
-            if (t.earlier) outside.push(`${t.earlier} referral${t.earlier === 1 ? ' is' : 's are'} dated before ${escapeHtml(t.points[0].label)}`);
+            if (t.earlier && t.points.length) outside.push(`${t.earlier} referral${t.earlier === 1 ? ' is' : 's are'} dated before ${escapeHtml(t.points[0].label)}`);
+            if (!t.points.length) {
+                // EVERY referral dated after today (review, 2026-10-07): the
+                // first one of a year typed with the wrong month. "No
+                // referrals yet" would hide exactly the referral to fix.
+                el.innerHTML = outside.length
+                    ? `<p class="panel-hint">No referrals dated up to today. Not shown: ${outside.join('; ')}. Check the date on those referrals.</p>`
+                    : '<p class="panel-hint">No referrals yet.</p>';
+                return;
+            }
+            const max = Math.max.apply(null, t.points.map(p => p.count)) || 1;
             el.innerHTML = `
                 <div class="wc-card">
                     <table class="wc-table"><thead><tr>

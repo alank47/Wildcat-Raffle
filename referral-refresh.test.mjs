@@ -119,7 +119,8 @@ console.log("\n-- wired to the screen --");
   check("the pull fetches ONLY the referrals document, not everything",
     /loadLegacyDocsFromConvex\(\['referrals'\]\)/.test(script));
   check("it uses the tested merge rather than assigning the response",
-    /WildcatDiscipline\.mergeReferrals\(behaviorReferrals, rows\)/.test(script));
+    // (A third argument, the merge's options, is allowed: review, 2026-10-07.)
+    /WildcatDiscipline\.mergeReferrals\(behaviorReferrals, rows[,)]/.test(script));
   check("a failed read is not treated as an empty server",
     /res\.failed && res\.failed\.indexOf\('referrals'\) !== -1/.test(script));
   check("concurrent pulls are guarded", /_referralPullBusy/.test(script));
@@ -194,6 +195,8 @@ function loadPull(src, G) {
     ${liftFn(src, "referralsScopedToViewer")}
     ${liftFn(src, "cacheableReferrals")}
     ${liftFn(src, "shedReferralsNotMine")}
+    ${liftFn(src, "canCloseReferralsHere")}
+    ${liftFn(src, "serverOwnsReferralClose")}
     ${liftLet(src, "_referralPullBusy")}
     ${liftLet(src, "_referralPullAt")}
     async function loadLegacyDocsFromConvex(names) {
@@ -303,6 +306,43 @@ function loadPull(src, G) {
     const app = loadPull(noShed, G);
     await app.refreshReferralsFromServer();
     check("TEETH: without the shed an old whole-school copy stays in memory", app.held().length === 2);
+  });
+
+  // ---- a fast clock on a teacher's Chromebook (review, 2026-10-07) ---------
+  // The teacher's copy is stamped by the teacher's clock. Ten minutes fast,
+  // it looked newer than the admin's close made three minutes after filing,
+  // so every pull kept the teacher's open copy.
+  const filedFast = () => mineR("FAST", "2026-10-07T15:10:00.000Z");
+  const closedOnServer = () => ({ ...filedFast(), status: "closed", closedBy: "A Admin", closedAt: "2026-10-07T15:03:00.000Z",
+    closingActions: ["Notified parents/guardians promptly"], resolutionType: "action_taken",
+    updatedAt: "2026-10-07T15:03:00.000Z" });
+  later("a teacher whose clock runs fast sees the admin's close", async () => {
+    const G = { D, session: { ok: 1 }, local: [filedFast()], rows: [closedOnServer()], reads: [], user: T };
+    const app = loadPull(script, G);
+    const res = await app.refreshReferralsFromServer();
+    const r = app.held()[0];
+    check("the teacher's tab shows it closed after a pull, with the admin's close fields",
+      r.status === "closed" && r.closedBy === "A Admin" && r.closingActions.length === 1, JSON.stringify(r));
+    check("...and the screen is told something changed", res.updated === 1 && res.changed === true);
+    check("...while the copy's own fields (its stamp) are the tab's", r.updatedAt === "2026-10-07T15:10:00.000Z");
+
+    // An admin's tab keeps the stamp rule exactly: its own close, made a
+    // moment ago and maybe not saved yet, must not be undone by a pull.
+    const adminLocal = { ...closedOnServer(), status: "closed", closedBy: "Me", updatedAt: "2026-10-07T15:20:00.000Z" };
+    const A = { D, session: { ok: 1 }, local: [adminLocal], rows: [filedFast()], reads: [], user: { role: "admin", email: "a@x.org" } };
+    const adm = loadPull(script, A);
+    await adm.refreshReferralsFromServer();
+    check("an admin's newer local close survives a pull of the older open copy", adm.held()[0].closedBy === "Me");
+    const P = { D, session: { ok: 1 }, local: [filedFast()], rows: [closedOnServer()], reads: [], user: T, previewing: true };
+    const pv = loadPull(script, P);
+    await pv.refreshReferralsFromServer();
+    check("and nothing changes during a teacher preview (the admin's list is underneath)", pv.held()[0].status === "open");
+
+    const plain = loadPull(breakOnce(script, "{ serverOwnsClose: serverOwnsReferralClose() });\n                behaviorReferrals = merged.referrals;\n                _referralPullAt",
+      "{});\n                behaviorReferrals = merged.referrals;\n                _referralPullAt", "server owns close"),
+      { D, session: { ok: 1 }, local: [filedFast()], rows: [closedOnServer()], reads: [], user: T });
+    await plain.refreshReferralsFromServer();
+    check("TEETH: without serverOwnsClose the fast-clock copy keeps the referral open", plain.held()[0].status === "open");
   });
 
   later("teeth: busy", async () => {

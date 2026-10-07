@@ -115,6 +115,15 @@ console.log("\n-- Trends: real labels, by incident, to this week --");
   check("an incident dated after today is said, not drawn",
     /Not shown: 1 referral has an incident date after today/.test(future) && !/Week of Nov 30/.test(future));
 
+  // Review, 2026-10-07: EVERY referral dated after today -- the first of a
+  // year typed with the wrong month -- read "No referrals yet." and the note
+  // that exists for exactly that case was dropped.
+  const allFuture = render(script, "renderReferralTrend", "referralTrend", [ref({ id: "F", date: "2026-12-01" })]);
+  check("when every incident is after today the pane says so instead of 'No referrals yet.'",
+    /Not shown: 1 referral has an incident date after today/.test(allFuture) && !/No referrals yet/.test(allFuture), allFuture);
+  check("...and with no referrals at all it still says 'No referrals yet.'",
+    /No referrals yet\./.test(render(script, "renderReferralTrend", "referralTrend", [])));
+
   const fn = liftFn(script, "renderReferralTrend");
   check("the renderer passes the school's today", /trend\(all, trendGrain, window\.WildcatDiscipline\.schoolToday\(\)\)/.test(fn));
 }
@@ -137,6 +146,11 @@ console.log("\n-- TEETH --");
   const key = breakOnce(script, "<td>${escapeHtml(p.label)}${p.current", "<td>${escapeHtml(p.key)}${p.current", "label");
   check("TEETH: printing the key instead of the label loses 'Week of'",
     !/Week of/.test(render(key, "renderReferralTrend", "referralTrend", ALL)));
+
+  const earlyReturn = breakOnce(script, "            if (!t.points.length) {\n                // EVERY referral dated after today",
+    "            if (!t.points.length) { el.innerHTML = '<p class=\"panel-hint\">No referrals yet.</p>'; return; }\n            if (false) {\n                // EVERY referral dated after today", "all future");
+  check("TEETH: returning 'No referrals yet.' before the note hides the future-dated referral",
+    /No referrals yet/.test(render(earlyReturn, "renderReferralTrend", "referralTrend", [ref({ id: "F", date: "2026-12-01" })])));
 
   const noToday = breakOnce(script, "trend(all, trendGrain, window.WildcatDiscipline.schoolToday())",
     "trend(all, trendGrain)", "today");

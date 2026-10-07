@@ -35,6 +35,7 @@ const check = (n, c, why) => {
   c ? (pass++, console.log(`  PASS  ${n}`)) : (fail++, console.log(`  FAIL  ${n}${why ? "  (" + why + ")" : ""}`));
 };
 
+const J = (x) => JSON.stringify(x);
 const loadD = (src) => { const sb = {}; new Function("globalThis", src).call(sb, sb); return sb.WildcatDiscipline; };
 const D = loadD(discSrc);
 
@@ -73,12 +74,13 @@ function breakOnce(src, from, to, label) {
   return src.slice(0, at) + to + src.slice(at + from.length);
 }
 
-function makeEl(id) {
+function makeEl(id, els) {
   const cls = new Set();
   return {
     id, innerHTML: "", textContent: "", value: "",
     classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c) },
     querySelector: () => null,
+    remove() { if (els) { delete els[id]; (els.__removed ||= []).push(id); } },
   };
 }
 function makeStorage(seed) {
@@ -97,7 +99,9 @@ const FNS = [
   "showReferralToast", "updateReferralReviewTable", "updateClosedReferralsList", "openCloseReferralModal",
   "confirmCloseReferral", "createDetentionFromReferral", "openCloseLoopModal", "confirmCloseLoop",
   "closeModalById", "openRefModal", "viewReferralDetails", "cacheLocally", "stripDisciplineFromLocalCache",
-  "clearSession", "renderRaceCard",
+  "clearSession", "renderRaceCard", "closeTeacherViewAtSignOut", "dropDisciplineCacheUnlessMine",
+  "forgetDisciplineRecord", "renderPreviewBanner", "logout", "establishStudentSession", "reloadPreservingUnsavedWork",
+  "serverOwnsReferralClose", "rescopeDisciplineForRole",
 ];
 const LINES = ["isPreviewingTeacher", "getOpenReferrals", "getClosedReferrals", "DETENTION_CLOSING_ACTION", "LOCAL_CACHE_AUDIT_MAX"];
 
@@ -108,7 +112,9 @@ const LINES = ["isPreviewingTeacher", "getOpenReferrals", "getClosedReferrals", 
 function loadApp(src, G, Dmod) {
   const els = {};
   const document = {
-    getElementById: (id) => els[id] || (els[id] = makeEl(id)),
+    getElementById: (id) => els[id] || (els[id] = makeEl(id, els)),
+    body: { classList: { add() {}, remove() {} }, appendChild() {} },
+    createElement: () => makeEl("created", els),
     querySelector: (sel) => (sel === 'input[name="closeResolution"]:checked' ? { value: G.resolution || "action_taken" } : null),
     querySelectorAll: (sel) => (sel === ".closing-action:checked" ? (G.actions || []).map((v) => ({ value: v })) : []),
   };
@@ -134,6 +140,31 @@ function loadApp(src, G, Dmod) {
     let detentionLocations = ['Main Office'];
     let inactivityTimer = null;
     let _referralPullAt = null;
+    let previewRoster = G.realUser ? { sections: [] } : null;
+    let previewRosterError = null;
+    let currentStudent = null;
+    let _sidebarModeApplied = true;
+    let auditLog = [], cashTransactions = [];
+    const auditIdsOnServer = new Set(), cashIdsOnServer = new Set();
+    function ensureEntryId(e) { return e && e.id; }
+    function wcForgetTab() {}
+    async function showConfirm() { return true; }
+    function applyCashAnalyticsGate() {}
+    function showStudentLogin() {}
+    // loadData, as far as reloadPreservingUnsavedWork needs it: install what
+    // the server sends the way loadData does (runServerInstall below).
+    async function loadData() { runServerInstall(G.reloadSnap, G.reloadSecondary || {}); }
+    // The two reads rescopeDisciplineForRole makes, against a fake server.
+    async function loadLegacyDocsFromConvex(names) {
+      (G.docReads ||= []).push(names.slice());
+      return G.docsFail ? { failed: names.slice(), docs: {} } : { docs: { secondary: { detentions: G.serverDetentions || [] } } };
+    }
+    async function refreshReferralsFromServer() {
+      G.pulls = (G.pulls || 0) + 1;
+      const D = window.WildcatDiscipline;
+      behaviorReferrals = D.mergeReferrals(behaviorReferrals, cacheableReferrals(G.serverReferrals || [])).referrals;
+      return {};
+    }
     const _unsavedReferrals = G.unsaved || new Map();
     function showToast(message, kind) { G.toasts.push({ message, kind }); }
     function saveInBackground(label) { G.saves.push(label); }
@@ -150,9 +181,12 @@ ${restoreSnippet}
 ${installSnippet}
     }
     return {
-      ${FNS.join(", ")}, runLocalRestore, runServerInstall,
+      ${FNS.join(", ")}, runLocalRestore, runServerInstall, isPreviewingTeacher,
       get referrals() { return behaviorReferrals; },
+      set referrals(v) { behaviorReferrals = v; },
       get detentions() { return detentions; },
+      get realUser() { return realUser; },
+      get previewRoster() { return previewRoster; },
       set currentUser(v) { currentUser = v; },
     };`;
   G.toasts = []; G.saves = [];
@@ -198,6 +232,8 @@ console.log("\n-- who may close: the page and the server agree --");
   }
   check("the server's closers are the page's DISCIPLINE_ALL_ROLES",
     [...Server.REFERRAL_CLOSE_ROLES].join() === D.DISCIPLINE_ALL_ROLES.join());
+  check("the close fields a teacher's pull takes from the server are the server guard's CLOSE_FIELDS",
+    [...Server.CLOSE_FIELDS].join() === D.REFERRAL_CLOSE_FIELDS.join());
 }
 
 // ---------------------------------------------------------------- the buttons
@@ -217,6 +253,27 @@ for (const [label, user] of [["teacher", TEACHER], ["campus aide", { ...AIDE, em
   check(`${label}: 'Loop pending' instead`, closed.includes("Loop pending"));
   const detail = detailHtml(script, user, "MINE-OPEN");
   check(`${label}: the detail view offers no 'Close this referral'`, !detail.includes("Close this referral"));
+}
+
+console.log("\n-- the hint above Open Referrals says what this person can do (review) --");
+{
+  const hintFor = (src, user, refs) => {
+    const a = loadApp(src, world(user, refs ? { referrals: refs } : {}));
+    a.updateReferralReviewTable();
+    return a.els.openReferralsHint.textContent;
+  };
+  for (const [label, user] of [["teacher", TEACHER], ["campus aide", AIDE]]) {
+    const h = hintFor(script, user);
+    check(`${label}: the hint does not promise Close or "close the loop"`, !/Closing one|close the loop/i.test(h), h);
+    check(`${label}: it says who closes them`, /administrator or the PBIS team/.test(h));
+    check(`${label}: the same with no open referrals`, !/close the loop/i.test(hintFor(script, user, [])));
+  }
+  for (const [label, user] of [["admin", ADMIN], ["PBIS", PBIS]]) {
+    check(`${label}: the hint still explains Close and the loop`, /Closing one records the resolution/.test(hintFor(script, user)));
+  }
+  check("index.html gives the hint the id the table draws into", /<p class="panel-hint" id="openReferralsHint"/.test(html));
+  const fixed = breakOnce(script, "                hint.textContent = mayClose\n", "                hint.textContent = true\n", "hint");
+  check("TEETH: one hint for everyone promises a teacher the loop again", /close the loop/.test(hintFor(fixed, TEACHER)));
 }
 
 console.log("\n-- admin, superadmin and PBIS keep every button --");
@@ -415,6 +472,12 @@ console.log("\n-- loadDataLocal's restore: only the same person's copy --");
   a = loadApp(script, world(ADMIN));
   a.runLocalRestore({ behaviorReferrals: REFS(), detentions: [{ id: "d" }] });
   check("a cache from before the stamp restores nothing", a.referrals.length === 0 && a.detentions.length === 0);
+  // The first page load on every device after this build: nobody signed in,
+  // and a cache written by the old build with no stamp at all.
+  a = loadApp(script, world(null));
+  a.runLocalRestore({ behaviorReferrals: REFS(), detentions: [{ id: "detention_1" }] });
+  check("page start, nobody signed in, a cache from before the stamp: nothing restored",
+    a.referrals.length === 0 && a.detentions.length === 0);
 
   a = loadApp(script, world(null, { auth: { getSession: () => ({ me: { kind: "staff", email: "Admin@x.org" } }) } }));
   a.runLocalRestore(cached("admin@x.org"));
@@ -442,6 +505,187 @@ console.log("\n-- signing out takes the discipline record off the device --");
   let threw = false;
   try { bad.clearSession(); } catch (e) { threw = true; }
   check("a corrupt cache does not stop a sign-out", !threw);
+}
+
+// ---------------------------------------------------------------- review, 2026-10-07
+
+const DETS1 = () => [{ id: "detention_1", sourceReferralId: "THEIRS-OPEN", status: "active" }];
+const adminCache = (extra) => JSON.stringify(Object.assign({ referralsOwner: "admin@x.org", behaviorReferrals: REFS(),
+  detentions: DETS1(), cashTransactions: [{ id: "c1" }], students: [] }, extra));
+const blobIn = (G) => JSON.parse(G.localStorage.getItem("raffleData"));
+const SCREENS = ["referralReviewTable", "closedReferralsList", "referralDetailBody", "studentReferralHistoryBody",
+  "referralTrend", "referralDemographics", "referralClosedAnalytics", "activeDetentionsList", "completedDetentionsList"];
+/** An admin's tab with the whole school drawn, as the inactivity logout finds it. */
+function drawnAdminTab(src, over) {
+  const G = world(ADMIN, Object.assign({ detentions: DETS1() }, over));
+  const a = loadApp(src, G);
+  SCREENS.forEach((id) => { document_el(a, id).innerHTML = "<td>Student THEIRS-OPEN</td>"; });
+  document_el(a, "openReferralCount").textContent = "2";
+  return { G, a };
+}
+function document_el(a, id) { return a.els[id] || (a.els[id] = makeEl(id, a.els)); }
+
+console.log("\n-- logout empties the discipline record from memory and from the screens --");
+{
+  const { a } = drawnAdminTab(script);
+  await a.logout({ inactive: true });
+  check("after the inactivity logout the tab holds no referrals", a.referrals.length === 0);
+  check("...and no detentions", a.detentions.length === 0);
+  check("...and every referral and detention screen is emptied",
+    SCREENS.every((id) => !a.els[id] || a.els[id].innerHTML === ""), SCREENS.filter((id) => a.els[id] && a.els[id].innerHTML).join());
+  check("...and the counts with them", a.els.openReferralCount.textContent === "");
+}
+
+console.log("\n-- a teacher view ends with the session --");
+{
+  const G = world({ ...TEACHER }, { realUser: ADMIN, detentions: DETS1() });
+  const a = loadApp(script, G);
+  document_el(a, "wcPreviewBar");
+  await a.logout({ inactive: true });
+  check("logging out of a teacher view ends it", a.realUser === null && a.isPreviewingTeacher() === false);
+  check("...drops the previewed roster", a.previewRoster === null);
+  check("...and takes the banner (and its Exit button) off the page", (a.els.__removed || []).includes("wcPreviewBar"));
+  // The next person signs in on that Chromebook: loadData installs before the
+  // sign-in knows who they are, then the sign-in sheds.
+  a.runServerInstall({ exists: () => true, data: () => ({ behaviorReferrals: REFS() }) }, { detentions: DETS1() });
+  a.currentUser = { id: "t9", role: "teacher", email: "t.teacher@x.org", name: "Next Teacher" };
+  a.shedReferralsNotMine();
+  check("the next teacher's tab is scoped to their own referrals", a.referrals.map((r) => r.id).sort().join() === "MINE-CLOSED,MINE-OPEN");
+  check("...holds no detentions", a.detentions.length === 0);
+  check("...and stamps the cache with their email, not the admin's", a.referralCacheOwner() === "t.teacher@x.org");
+  check("...and may not close", a.canCloseReferralsHere() === false);
+  const plain = loadApp(script, world(ADMIN));
+  let threw = false;
+  try { plain.clearSession(); } catch (e) { threw = true; }
+  check("a sign-out with no preview running is unaffected", !threw && plain.realUser === null);
+}
+
+console.log("\n-- page start: a cache that is not this tab's session's is removed, not just left unread --");
+{
+  let G = world(null, { localStorage: makeStorage({ raffleData: adminCache() }) });
+  let a = loadApp(script, G);
+  check("nobody signed in (a closed tab, a new one opened): the admin's cache is dropped", a.dropDisciplineCacheUnlessMine() === true);
+  let b = blobIn(G);
+  check("...no referrals, no detentions, no stamp left on the device",
+    !("behaviorReferrals" in b) && !("detentions" in b) && !("referralsOwner" in b));
+  check("...and the rest of the cache is kept (unsaved cash is recovered from it)", b.cashTransactions.length === 1);
+
+  G = world(null, { localStorage: makeStorage({ raffleData: adminCache({ referralsOwner: undefined }) }) });
+  loadApp(script, G).dropDisciplineCacheUnlessMine();
+  check("an unstamped cache from before this build is dropped too", !("behaviorReferrals" in blobIn(G)));
+
+  G = world(TEACHER, { localStorage: makeStorage({ raffleData: adminCache() }) });
+  loadApp(script, G).dropDisciplineCacheUnlessMine();
+  check("a teacher's session on a device an admin used: dropped", !("behaviorReferrals" in blobIn(G)));
+
+  G = world(ADMIN, { localStorage: makeStorage({ raffleData: adminCache() }) });
+  a = loadApp(script, G);
+  check("the admin's own reload keeps the admin's cache", a.dropDisciplineCacheUnlessMine() === false
+    && blobIn(G).behaviorReferrals.length === 4 && blobIn(G).detentions.length === 1);
+
+  const bad = loadApp(script, world(null, { localStorage: makeStorage({ raffleData: "{not json" }) }));
+  let threw = false;
+  try { bad.dropDisciplineCacheUnlessMine(); } catch (e) { threw = true; }
+  check("a corrupt cache does not stop a page start", !threw);
+
+  const boot = script.slice(script.indexOf("const hasSession = loadSession();"), script.indexOf("} else if (hasSession) {"));
+  check("the page start drops it right after the session is restored, before anything is shown",
+    /^const hasSession = loadSession\(\);\s*(\/\/[^\n]*\n\s*)*dropDisciplineCacheUnlessMine\(\);/.test(boot));
+  check("...and strips it when the restored staff session turns out to be dead",
+    /if \(staffNeedsReauth\) \{[\s\S]*?currentUser = null;[\s\S]{0,120}stripDisciplineFromLocalCache\(\);/.test(boot));
+}
+
+console.log("\n-- a student signing in never inherits the staff discipline record --");
+{
+  const G = world(null, { localStorage: makeStorage({ raffleData: adminCache() }), detentions: DETS1() });
+  const a = loadApp(script, G);
+  a.establishStudentSession({ id: "S1" });
+  check("establishStudentSession strips the cache and empties memory",
+    !("behaviorReferrals" in blobIn(G)) && a.referrals.length === 0 && a.detentions.length === 0);
+  const code = script.replace(/^\s*\/\/.*$/gm, "");
+  check("the Google student sign-in strips and forgets before opening the portal",
+    /if \(me\.kind !== 'student'\) return;\s*stripDisciplineFromLocalCache\(\);\s*forgetDisciplineRecord\(\);\s*openStudentPortal\(null\);/.test(code));
+}
+
+console.log("\n-- the two install paths a test did not reach (review) --");
+{
+  // A teacher whose 'referrals' document is absent gets the legacy secondary
+  // list -- cut to their own like the main one.
+  const a = loadApp(script, world(TEACHER));
+  a.runServerInstall({ exists: () => false, data: () => ({}) }, { behaviorReferrals: REFS(), detentions: DETS1() });
+  check("legacy secondary fallback: a teacher keeps only their own", a.referrals.map((r) => r.id).sort().join() === "MINE-CLOSED,MINE-OPEN");
+  const adm = loadApp(script, world(ADMIN));
+  adm.runServerInstall({ exists: () => false, data: () => ({}) }, { behaviorReferrals: REFS(), detentions: DETS1() });
+  check("...an admin keeps all four", adm.referrals.length === 4);
+
+  // A teacher tab still holding other teachers' rows (loaded before it knew
+  // who was signed in) goes through the reload every save conflict triggers.
+  const unsaved = ref("UNSAVED-9", { filedByEmail: "", referredByEmail: "", referredBy: "" });
+  const G = world(TEACHER, { unsaved: new Map([["UNSAVED-9", unsaved]]),
+    reloadSnap: { exists: () => true, data: () => ({ behaviorReferrals: [ref("MINE-OPEN")] }) } });
+  const r = loadApp(script, G);
+  r.referrals = [...REFS(), unsaved];
+  await r.reloadPreservingUnsavedWork();
+  check("reloadPreservingUnsavedWork keeps the teacher's own and the unsaved one, and nobody else's",
+    r.referrals.map((x) => x.id).sort().join() === "MINE-CLOSED,MINE-OPEN,UNSAVED-9", r.referrals.map((x) => x.id).join());
+  // The same reload, for a teacher whose clock runs fast: their copy looks
+  // newer than the admin's close, and must not win it back.
+  const fast = ref("MINE-OPEN", { updatedAt: "2026-10-07T15:10:00.000Z", submittedAt: "2026-10-07T15:10:00.000Z" });
+  const closed = { ...fast, status: "closed", closedBy: "A Admin", closedAt: "2026-10-07T15:03:00.000Z", updatedAt: "2026-10-07T15:03:00.000Z" };
+  const F = loadApp(script, world(TEACHER, { reloadSnap: { exists: () => true, data: () => ({ behaviorReferrals: [closed] }) } }));
+  F.referrals = [fast];
+  await F.reloadPreservingUnsavedWork();
+  check("...and a teacher's fast-clock copy takes the admin's close through the reload",
+    F.referrals.length === 1 && F.referrals[0].status === "closed" && F.referrals[0].closedBy === "A Admin");
+}
+
+console.log("\n-- an access change mid-session reaches what the tab holds (review) --");
+{
+  const SERVER_DETS = [{ id: "detention_1", sourceReferralId: "THEIRS-OPEN", status: "active" }, { id: "detention_2", status: "completed" }];
+  // A teacher's tab, scoped, then promoted to PBIS by refreshRosterFromConvex.
+  let G = world(TEACHER, { serverDetentions: SERVER_DETS, serverReferrals: REFS() });
+  let a = loadApp(script, G);
+  a.runServerInstall({ exists: () => true, data: () => ({ behaviorReferrals: REFS() }) }, { detentions: SERVER_DETS });
+  check("before: the teacher's tab holds their two referrals and no detentions", a.referrals.length === 2 && a.detentions.length === 0);
+  a.currentUser = { ...TEACHER, role: "pbis" };
+  check("promoted to PBIS: the detentions are read", (await a.rescopeDisciplineForRole("teacher")) === "widened"
+    && a.detentions.length === 2 && J(G.docReads) === J([["secondary"]]));
+  check("...the referrals are pulled", G.pulls === 1 && a.referrals.length === 4);
+  check("...so the referral's active detention is found, and a close will not make a second",
+    !!D.activeDetentionFor(a.detentions, "THEIRS-OPEN"));
+
+  // Moved down from admin to teacher: shed, nothing fetched.
+  G = world(ADMIN, { detentions: SERVER_DETS.slice() });
+  a = loadApp(script, G);
+  a.currentUser = { ...ADMIN, role: "teacher", email: "t.teacher@x.org" };
+  check("moved down to teacher: the tab sheds to their own and holds no detentions",
+    (await a.rescopeDisciplineForRole("admin")) === "shed" && a.referrals.length === 2 && a.detentions.length === 0 && !G.docReads);
+
+  G = world(ADMIN, { serverDetentions: SERVER_DETS });
+  a = loadApp(script, G);
+  a.currentUser = { ...ADMIN, role: "pbis" };
+  check("admin to PBIS (both see everything): nothing is read", (await a.rescopeDisciplineForRole("admin")) === "unchanged" && !G.docReads);
+
+  G = world({ ...TEACHER, role: "pbis" }, { realUser: ADMIN, serverDetentions: SERVER_DETS });
+  a = loadApp(script, G);
+  check("during a teacher preview: nothing changes", (await a.rescopeDisciplineForRole("teacher")) === "unchanged" && !G.docReads);
+
+  G = world({ ...TEACHER, role: "pbis" }, { docsFail: true, detentions: [{ id: "detention_9" }] });
+  a = loadApp(script, G);
+  await a.rescopeDisciplineForRole("teacher");
+  check("a failed read keeps what the tab has", a.detentions.length === 1);
+
+  const roster = liftFn(script, "refreshRosterFromConvex");
+  check("refreshRosterFromConvex applies it when the role changed",
+    /if \(before !== fresh\.role\) \{\n[^\n]*\n\s*rescopeDisciplineForRole\(before\)/.test(roster));
+
+  const noFetch = breakOnce(script, "                const res = await loadLegacyDocsFromConvex(['secondary']);\n",
+    "                const res = null;\n", "promotion read");
+  G = world(TEACHER, { serverDetentions: SERVER_DETS });
+  a = loadApp(noFetch, G);
+  a.currentUser = { ...TEACHER, role: "pbis" };
+  await a.rescopeDisciplineForRole("teacher");
+  check("TEETH: without the read a promoted user's Detention tab stays empty", a.detentions.length === 0);
 }
 
 console.log("\n-- the referral save reports numbers only --");
@@ -501,8 +745,8 @@ console.log("\n-- Demographics: a PBIS cell withheld to protect a small group --
 
 console.log("\n-- TEETH: each guard, removed, is caught --");
 {
-  const allButtons = breakOnce(script, "            const mayClose = canCloseReferralsHere();\n            tbody.innerHTML",
-    "            const mayClose = true;\n            tbody.innerHTML", "open table");
+  const allButtons = breakOnce(script, "            const mayClose = canCloseReferralsHere();\n            // The hint above",
+    "            const mayClose = true;\n            // The hint above", "open table");
   check("TEETH: a Close button drawn for everyone is caught", openHtml(allButtons, TEACHER).includes("openCloseReferralModal"));
 
   const loopForAll = breakOnce(script, "            const mayClose = canCloseReferralsHere();\n            host.innerHTML",
@@ -557,12 +801,63 @@ console.log("\n-- TEETH: each guard, removed, is caught --");
   r.runLocalRestore({ referralsOwner: "admin@x.org", behaviorReferrals: REFS(), detentions: [{ id: "d" }] });
   check("TEETH: restoring without the stamp check puts an admin's copy back at page start", r.referrals.length === 4);
 
-  const noStrip = breakOnce(script, "            stripDisciplineFromLocalCache();\n            if (inactivityTimer)",
-    "            if (inactivityTimer)", "sign-out strip");
+  const noStrip = breakOnce(script, "            stripDisciplineFromLocalCache();\n            closeTeacherViewAtSignOut();",
+    "            closeTeacherViewAtSignOut();", "sign-out strip");
   const G2 = world(TEACHER, { localStorage: makeStorage({ raffleData: JSON.stringify({ behaviorReferrals: REFS() }) }) });
   loadApp(noStrip, G2).clearSession();
   check("TEETH: a sign-out that does not strip leaves the referrals on the device",
     JSON.parse(G2.localStorage.getItem("raffleData")).behaviorReferrals.length === 4);
+
+  // Review, 2026-10-07.
+  const noForget = breakOnce(script, "                clearSession(); // Clear saved session\n                if (typeof forgetDisciplineRecord === 'function') forgetDisciplineRecord();\n",
+    "                clearSession(); // Clear saved session\n", "logout forgets");
+  const nf = drawnAdminTab(noForget).a;
+  await nf.logout({ inactive: true });
+  check("TEETH: a logout that does not forget leaves the whole school in memory", nf.referrals.length === 4);
+
+  const previewLives = breakOnce(script, "            stripDisciplineFromLocalCache();\n            closeTeacherViewAtSignOut();\n",
+    "            stripDisciplineFromLocalCache();\n", "preview ends");
+  const pl = loadApp(previewLives, world({ ...TEACHER }, { realUser: ADMIN }));
+  await pl.logout({ inactive: true });
+  pl.runServerInstall({ exists: () => true, data: () => ({ behaviorReferrals: REFS() }) }, { detentions: DETS1() });
+  pl.currentUser = { id: "t9", role: "teacher", email: "t.teacher@x.org" };
+  pl.shedReferralsNotMine();
+  check("TEETH: a preview that outlives the logout leaves the next teacher holding the whole school",
+    pl.referrals.length === 4 && pl.detentions.length === 1);
+
+  const keepsAny = breakOnce(script, "if (!data || typeof data !== 'object' || localCacheIsMine(data)) return false;",
+    "return false;", "page-start drop");
+  const Gk = world(null, { localStorage: makeStorage({ raffleData: adminCache() }) });
+  loadApp(keepsAny, Gk).dropDisciplineCacheUnlessMine();
+  check("TEETH: a page start that only declines to restore leaves the admin's cache readable", blobIn(Gk).behaviorReferrals.length === 4);
+
+  const studentKeeps = breakOnce(script, "            // used this browser before them (review, 2026-10-07).\n            stripDisciplineFromLocalCache();\n            forgetDisciplineRecord();\n",
+    "            // used this browser before them (review, 2026-10-07).\n", "student sign-in");
+  const Gs = world(null, { localStorage: makeStorage({ raffleData: adminCache() }) });
+  loadApp(studentKeeps, Gs).establishStudentSession({ id: "S1" });
+  check("TEETH: a student session that does not strip leaves the cache", blobIn(Gs).behaviorReferrals.length === 4);
+
+  const rawFallback = breakOnce(script, "behaviorReferrals = cacheableReferrals(secondaryData.behaviorReferrals || []);",
+    "behaviorReferrals = secondaryData.behaviorReferrals || [];", "secondary fallback");
+  const rf = loadApp(rawFallback, world(TEACHER));
+  rf.runServerInstall({ exists: () => false, data: () => ({}) }, { behaviorReferrals: REFS() });
+  check("TEETH: an unfiltered legacy fallback keeps the whole school on a teacher's tab", rf.referrals.length === 4);
+
+  const rawReload = breakOnce(script,
+    "const pendingReferrals = cacheableReferrals(Array.isArray(behaviorReferrals) ? behaviorReferrals.slice() : []);",
+    "const pendingReferrals = Array.isArray(behaviorReferrals) ? behaviorReferrals.slice() : [];", "reload cut");
+  const Gr = world(TEACHER, { reloadSnap: { exists: () => true, data: () => ({ behaviorReferrals: [ref("MINE-OPEN")] }) } });
+  const rr = loadApp(rawReload, Gr);
+  rr.referrals = REFS();
+  await rr.reloadPreservingUnsavedWork();
+  check("TEETH: a reload that carries everything across merges other teachers' rows back in",
+    rr.referrals.some((x) => x.id.startsWith("THEIRS")));
+
+  const noOwnerCheck = breakOnce(script, "return Boolean(owner) && stamp === owner;", "return stamp === owner;", "owner required");
+  const no = loadApp(noOwnerCheck, world(null));
+  no.runLocalRestore({ behaviorReferrals: REFS(), detentions: [{ id: "detention_1" }] });
+  check("TEETH: without 'nobody signed in owns nothing', an unstamped cache is restored at page start",
+    no.referrals.length === 4 && no.detentions.length === 1);
 
   // The pure rules in wildcat-discipline.js.
   const teacherCloses = loadD(breakOnce(discSrc,

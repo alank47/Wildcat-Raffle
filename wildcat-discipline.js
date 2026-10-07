@@ -857,9 +857,9 @@
     var actions = Array.isArray(r.closingActions) ? r.closingActions.map(trimmed) : [];
     if (actions.indexOf(PARENT_NOTIFIED_ACTION) !== -1) return 'Yes';
     if (actions.indexOf(PARENT_CONFERENCE_ACTION) !== -1) return 'Yes';
-    // A row from the retired review flow that recorded it the old way is not
-    // contradicted. None exist today; this costs nothing if one turns up.
-    if (r.parentNotified === true) return 'Yes';
+    // NOT the retired review flow's r.parentNotified (review, 2026-10-07).
+    // The owner's rule is the two actions and nothing else, so a closed
+    // referral with neither ticked says No. Production holds no such row.
     return 'No';
   }
 
@@ -1016,6 +1016,36 @@
 
 
   /**
+   * Every field closing a referral or closing its loop writes. MUST equal
+   * CLOSE_FIELDS in convex/referralAccessRules.ts, which the server's close
+   * guard keeps out of a teacher's copy; referral-close-gate.test.mjs compares
+   * the two.
+   */
+  var REFERRAL_CLOSE_FIELDS = [
+    'status', 'resolutionType', 'closingActions', 'adminNotes', 'closedBy', 'closedAt',
+    'consequence', 'detentionDays', 'loopClosed', 'loopClosedBy', 'loopClosedAt', 'forwardedTo'
+  ];
+
+  function closeValue(r, k) {
+    return r && Object.prototype.hasOwnProperty.call(r, k) ? JSON.stringify(r[k]) : undefined;
+  }
+
+  function closeDiffers(a, b) {
+    return REFERRAL_CLOSE_FIELDS.some(function (k) { return closeValue(a, k) !== closeValue(b, k); });
+  }
+
+  /** A copy of `row` carrying `served`'s close fields; one `served` lacks is removed. */
+  function withCloseOf(row, served) {
+    var out = {};
+    Object.keys(row).forEach(function (k) { out[k] = row[k]; });
+    REFERRAL_CLOSE_FIELDS.forEach(function (k) {
+      if (Object.prototype.hasOwnProperty.call(served, k)) out[k] = served[k];
+      else delete out[k];
+    });
+    return out;
+  }
+
+  /**
    * Union a freshly-fetched referral list into the one this tab is holding.
    *
    * WHY A PULL EXISTS AT ALL. Referrals reach a tab exactly once, at page
@@ -1038,10 +1068,22 @@
    *
    * Returns the merged array plus what changed, so the screen can say "2 new"
    * rather than redrawing silently and leaving the reader to wonder.
+   *
+   * opts.serverOwnsClose: THE SERVER'S CLOSE IS THE TRUTH FOR A TAB THAT
+   * CANNOT CLOSE (review, 2026-10-07). "Later wins" compares the copies'
+   * stamps, and the teacher's copy carries the teacher's clock. A Chromebook
+   * ten minutes fast files a referral stamped ten minutes ahead; an admin
+   * closes it three minutes later; the teacher's own copy still looks newer,
+   * so every pull kept it, and the teacher saw "Awaiting an administrator"
+   * on a closed referral until they reloaded the page. A tab that cannot
+   * close never has a close of its own to protect, so with this set the
+   * server's close fields (REFERRAL_CLOSE_FIELDS) are taken onto the kept
+   * copy whichever stamp is later. Everything else follows the rule above.
    */
-  function mergeReferrals(local, server) {
+  function mergeReferrals(local, server, opts) {
     var localRows = Array.isArray(local) ? local : [];
     var serverRows = Array.isArray(server) ? server : [];
+    var serverOwnsClose = Boolean(opts && opts.serverOwnsClose);
 
     function stamp(r) {
       // updatedAt is written on every edit; submittedAt only at filing. Either
@@ -1065,6 +1107,9 @@
       }
       var have = byId[id];
       if (stamp(r) > stamp(have.row)) byId[id] = { row: r, from: from };
+      else if (serverOwnsClose && from === 'server' && closeDiffers(have.row, r)) {
+        byId[id] = { row: withCloseOf(have.row, r), from: from };
+      }
     }
 
     localRows.forEach(function (r) { put(r, 'local'); });
@@ -1574,6 +1619,7 @@
 
   root.WildcatDiscipline = {
     mergeReferrals: mergeReferrals,
+    REFERRAL_CLOSE_FIELDS: REFERRAL_CLOSE_FIELDS,
     UNIFORM_TIERS: UNIFORM_TIERS,
     DEFAULT_UNIFORM_SETTINGS: DEFAULT_UNIFORM_SETTINGS,
     uniformSettingsOrDefault: uniformSettingsOrDefault,

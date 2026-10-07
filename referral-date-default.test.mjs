@@ -161,6 +161,19 @@ console.log("\n-- a default rolls over at Los Angeles midnight --");
   check("a tab left open overnight shows the new day when the form is opened", f.date === "2026-10-09", f.date);
 }
 
+console.log("\n-- a date typed on one referral does not outlive it (review, 2026-10-07) --");
+{
+  // The clear re-marks the date it refills. Without that mark, a date the
+  // teacher TYPED on the last referral left the field unmarked, and the next
+  // morning's referral on a tab left open overnight kept the clear's day.
+  const f = makeForm().at("2026-10-07T15:00:00-07:00").open().pick();
+  f.type("referralDate", "2026-10-06");
+  f.at("2026-10-07T15:05:00-07:00").clear();
+  check("the clear puts today back, marked as a default", f.date === "2026-10-07" && f.els.referralDate.dataset.auto === "1");
+  f.at("2026-10-08T07:30:00-07:00").pick();
+  check("the next morning's referral defaults to the next morning", f.date === "2026-10-08", f.date);
+}
+
 console.log("\n-- the wiring --");
 {
   const tab = script.slice(script.indexOf("        function switchDisciplineTab("), script.indexOf("            } else if (subtab === 'review') {"));
@@ -197,6 +210,13 @@ console.log("\n-- TEETH --");
     "fill('referralDate', at.toISOString().split('T')[0]);", "utc");
   check("TEETH: a UTC default gives tomorrow at 6:30pm",
     makeForm(utc).at("2026-10-07T18:30:00-07:00").open().date !== "2026-10-07");
+
+  const unmarked = breakOnce(script, "                d.value = window.WildcatDiscipline.schoolToday(new Date());\n                d.dataset.auto = '1';\n",
+    "                d.value = window.WildcatDiscipline.schoolToday(new Date());\n", "clear marks the date");
+  const u = makeForm(unmarked).at("2026-10-07T15:00:00-07:00").open().pick();
+  u.type("referralDate", "2026-10-06");
+  u.at("2026-10-07T15:05:00-07:00").clear().at("2026-10-08T07:30:00-07:00").pick();
+  check("TEETH: a clear that does not mark its date leaves yesterday on the next morning's referral", u.date === "2026-10-07", u.date);
 
   const noPick = breakOnce(script, "if (e.target && e.target.id === 'referralStudentSelect') applyReferralWhenDefaults(new Date());",
     "", "pick");

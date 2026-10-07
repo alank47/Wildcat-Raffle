@@ -459,8 +459,10 @@ console.log("\nParent notified comes from the closing actions");
     D.parentNotified(ref({ status: "closed", closingActions: ["Isolated and de-escalated the situation"] })) === "No");
   check("closed with no actions at all is No",
     D.parentNotified(ref({ status: "closed" })) === "No");
-  check("a legacy row that recorded it the old way stays Yes",
-    D.parentNotified(ref({ status: "closed", parentNotified: true })) === "Yes");
+  // The owner's rule is the two actions and nothing else (review, 2026-10-07):
+  // the retired review flow's flag does not make it Yes.
+  check("a closed referral with neither action is No, whatever an old parentNotified flag says",
+    D.parentNotified(ref({ status: "closed", closingActions: [], parentNotified: true })) === "No");
 
   const tally = D.closingActionCounts([
     ref({ status: "closed", closingActions: [N, C] }),
@@ -482,6 +484,29 @@ console.log("\nParent notified comes from the closing actions");
   check("and the parent conference", stored.includes(C));
 }
 
+console.log("\nA tab that cannot close takes the server's close (review, 2026-10-07)");
+{
+  const L = { id: "R8", status: "open", closedBy: "", closingActions: [], updatedAt: "2026-10-07T15:10:00.000Z",
+    submittedAt: "2026-10-07T15:10:00.000Z", description: "mine" };
+  const S = { ...L, status: "closed", closedBy: "A Admin", closingActions: ["x"], closedAt: "2026-10-07T15:03:00.000Z",
+    updatedAt: "2026-10-07T15:03:00.000Z", description: "server's" };
+  const plain = D.mergeReferrals([L], [S]);
+  check("without the option the later stamp wins as always (the fast-clock copy)", plain.referrals[0].status === "open" && !plain.changed);
+  const m = D.mergeReferrals([L], [S], { serverOwnsClose: true });
+  const r = m.referrals[0];
+  check("with it the close fields are the server's", r.status === "closed" && r.closedBy === "A Admin" && r.closedAt === S.closedAt
+    && r.closingActions.length === 1);
+  check("...the rest of the kept copy is the tab's", r.description === "mine" && r.updatedAt === L.updatedAt);
+  check("...it is counted as an update", m.updated === 1 && m.changed === true);
+  check("...and the tab's own object is not mutated", L.status === "open" && !("closedAt" in L));
+  const same = D.mergeReferrals([L], [{ ...L, updatedAt: "2026-10-07T15:00:00.000Z" }], { serverOwnsClose: true });
+  check("identical close fields change nothing and count nothing", same.referrals[0] === L && !same.changed);
+  const gone = D.mergeReferrals([{ ...L, consequence: "lunch" }], [L], { serverOwnsClose: true }).referrals[0];
+  check("a close field the server's copy lacks is removed", !("consequence" in gone));
+  const newer = D.mergeReferrals([L], [{ ...S, updatedAt: "2026-10-07T16:00:00.000Z" }], { serverOwnsClose: true }).referrals[0];
+  check("a newer server copy still wins whole", newer.description === "server's");
+}
+
 console.log("\nTEETH: the checks above catch the bugs they describe");
 {
   const load = (from, to) => {
@@ -500,6 +525,11 @@ console.log("\nTEETH: the checks above catch the bugs they describe");
   const wrong = utcToday.schoolToday(new Date("2026-10-07T23:30:00-07:00"));
   process.env.TZ = tz;
   check("TEETH: a 'today' that is not pinned to Los Angeles fails on a UTC device", wrong !== "2026-10-07");
+
+  const legacyFlag = load("    if (actions.indexOf(PARENT_CONFERENCE_ACTION) !== -1) return 'Yes';\n",
+    "    if (actions.indexOf(PARENT_CONFERENCE_ACTION) !== -1) return 'Yes';\n    if (r.parentNotified === true) return 'Yes';\n");
+  check("TEETH: honouring the old flag says Yes with neither action ticked",
+    legacyFlag.parentNotified(ref({ status: "closed", closingActions: [], parentNotified: true })) === "Yes");
 
   const oldExport = load("if (r.status !== 'closed') return '';", "return r.parentNotified ? 'Yes' : 'No';");
   check("TEETH: the old r.parentNotified read fails the closed-with-notification case",

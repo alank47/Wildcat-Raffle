@@ -78,7 +78,8 @@ console.log("\n-- a forced reload REBASES, it does not discard --");
     fn.indexOf("behaviorReferrals.slice()") < fn.indexOf("await loadData()"));
   check("and merges them back AFTER", fn.indexOf("mergeReferrals") > fn.indexOf("await loadData()"));
   check("using the tested union rule, not an assignment",
-    /D\.mergeReferrals\(pendingReferrals, behaviorReferrals\)/.test(fn));
+    // (A third argument, the merge's options, is allowed: review, 2026-10-07.)
+    /D\.mergeReferrals\(pendingReferrals, behaviorReferrals[,)]/.test(fn));
   check("the table is redrawn so the referral is visibly still there",
     /updateReferralReviewTable/.test(fn));
   check("it survives WildcatDiscipline being absent rather than throwing",
