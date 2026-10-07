@@ -310,6 +310,23 @@ console.log("\nThe CLI: switches, the side-by-side compare, and the write previe
   check("configureCloseGuard sets its own row only", st.referralCloseGuard.enabled === true && st.referralScope.enabled === false);
   check("one row per switch, never a duplicate", d.tables.appState.filter((r) => r.key === "referralScope").length === 1);
 
+  // A PILOT LIST OF BLANKS (review, 2026-10-07): `'{"pilotEmails":["'$T1'"]}'`
+  // with T1 unset sends [""]. Normalised that was [], which means everyone.
+  const blank = makeDb(seed());
+  await A.configureScope.handler({ db: blank.db }, { enabled: true, pilotEmails: ["teacher.one@school.org"] });
+  const before = J(await A.status.handler({ db: blank.db }, {}));
+  let refused = null;
+  try { await A.configureScope.handler({ db: blank.db }, { pilotEmails: [""] }); } catch (e) { refused = e; }
+  check("configureScope refuses a pilot list that names no email, rather than opening it to everyone",
+    !!refused && /none is an email/.test(refused.message), refused && refused.message);
+  check("...and changes nothing", J(await A.status.handler({ db: blank.db }, {})) === before);
+  refused = null;
+  try { await A.configureCloseGuard.handler({ db: makeDb(seed()).db }, { enabled: true, pilotEmails: ["  ", ""] }); } catch (e) { refused = e; }
+  check("configureCloseGuard refuses it too", !!refused);
+  await A.configureScope.handler({ db: blank.db }, { pilotEmails: [] });
+  check("an empty list typed on purpose still opens the switch to everyone",
+    J((await A.status.handler({ db: blank.db }, {})).referralScope) === J({ enabled: true, pilotEmails: [] }));
+
   const cmp = await A.compareScope.handler({ db: makeDb(seed()).db }, { emails: [ADMIN.email, PBIS.email, T1.email, NONE.email, "nobody@school.org"] });
   const [adm, pb, t1, none, nobody] = cmp.people;
   check("compare: admin and PBIS are identical to the current read", adm.identicalToCurrent && pb.identicalToCurrent && adm.scoped === 6 && adm.current === 6);
@@ -384,6 +401,22 @@ console.log("\nTEETH: the read, re-broken, fails a check above");
     const B = load({ legacyData: (s) => s.replace(from, to) });
     check(`TEETH: ${what} -> its check fails`, (await holds(B)) === false);
     check(`TEETH control: ${what} -> the same check passes on the shipped code`, (await holds(M)) === true);
+  }
+}
+
+{
+  // The pilot-list refusal, removed.
+  const from = "  if (a.pilotEmails !== undefined && a.pilotEmails.length > 0 && listed!.length === 0) {";
+  if (!SRC.referralAccess.includes(from)) check("TEETH (blank pilot list): the break applied", false, "pattern not found");
+  else {
+    const B = load({ referralAccess: (s) => s.replace(from, "  if (false) {") });
+    const d = makeDb(seed());
+    let threw = false;
+    try { await B.access.configureScope.handler({ db: d.db }, { enabled: true, pilotEmails: [""] }); } catch (e) { threw = true; }
+    const st = await B.access.status.handler({ db: d.db }, {});
+    // Stored normalised it is [], which the reader cannot tell from "everyone".
+    check("TEETH: without the refusal a blank pilot list opens the switch to the whole school",
+      !threw && st.referralScope.enabled === true && st.referralScope.pilotEmails.length === 0);
   }
 }
 

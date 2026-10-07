@@ -767,6 +767,14 @@ export const mergeSlice = mutation({
         key: r.key,
         payload: r.payload,
         mirroredAt,
+        // WHO PUT A REFERRAL HERE, as the server knows it (review,
+        // 2026-10-07). The role from the verified token, beside the payload
+        // rather than inside it, so no browser can write or rewrite it. The
+        // PBIS race breakdown leaves out the referrals PBIS filed: otherwise
+        // PBIS could file one for a chosen child plus nine made-up numbers,
+        // move its own snapshot, and read that child's race off the cell that
+        // changed (disciplineAggregates.ts pbisCountable).
+        ...(doc === "referrals" ? { insertedByRole: String(me.role ?? "").trim().toLowerCase() } : {}),
       });
     }
     for (const u of toUpdate) {
@@ -808,8 +816,11 @@ export const mergeSlice = mutation({
       // A teacher served only their own referrals could otherwise read the
       // whole school's count from every save, and watch it move when a
       // colleague files. Left out for anyone who does not see every
-      // referral; no screen reads it.
-      ...(doc === "referrals" && !seesAllReferrals(me.role)
+      // referral; no screen reads it. The same for the detention total
+      // (review, 2026-10-07): detentions are the same record by another
+      // route, and loadDoc serves this caller none of them.
+      ...((doc === "referrals" || (doc === "secondary" && collection === "detentions"))
+          && !seesAllReferrals(me.role)
         ? {} : { stored: keptStored.length + toInsert.length }),
       incoming: rows.length,
       // So a caller can see that a re-send of unchanged data wrote nothing.

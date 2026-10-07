@@ -31,6 +31,10 @@ const SRC = {
   disciplineAggregates: read("./convex/disciplineAggregates.ts"),
   raceRollup: read("./convex/raceRollup.ts"),
   referralMailRules: read("./convex/referralMailRules.ts"),
+  // For the end-to-end check that PBIS cannot steer its own picture: the real
+  // write path, against the same in-memory database.
+  legacyData: read("./convex/legacyData.ts"),
+  referralAccessRules: read("./convex/referralAccessRules.ts"),
 };
 
 function load(overrides = {}) {
@@ -45,6 +49,8 @@ function load(overrides = {}) {
         return ctx.staff;
       },
     },
+    "./referralMail": { notifyNewReferrals: async () => {} },
+    "./cashArrival": { noteArrivedCash: async () => null },
   };
   const req = (name) => {
     if (stubs[name]) return stubs[name];
@@ -62,7 +68,7 @@ function load(overrides = {}) {
     cache[key] = module.exports;
     return module.exports;
   };
-  return { agg: req("./disciplineAggregates"), rollup: req("./raceRollup") };
+  return { agg: req("./disciplineAggregates"), rollup: req("./raceRollup"), legacy: () => req("./legacyData") };
 }
 
 function makeDb(seed) {
@@ -84,12 +90,21 @@ function makeDb(seed) {
         return api;
       },
       async first() { return done(rows[0] ?? null); },
+      async unique() { if (rows.length > 1) throw new Error("unique: many"); return done(rows[0] ?? null); },
       async take(k) { return done(rows.slice(0, k)); },
       async collect() { return done(rows); },
     };
     return api;
   };
-  return { tables, reads, db: { query: q } };
+  // Writes, for the end-to-end block: a row inserted now is created after
+  // every seeded one, as Convex's _creationTime would have it.
+  const db = {
+    query: q,
+    async insert(name, doc) { (tables[name] ||= []).push({ ...doc, _id: `${name}:new${n}`, _creationTime: 1e12 + n++ }); },
+    async patch(id, f) { for (const t of Object.values(tables)) { const r = t.find((x) => x._id === id); if (r) Object.assign(r, f); } },
+    async delete(id) { for (const t of Object.keys(tables)) tables[t] = tables[t].filter((x) => x._id !== id); },
+  };
+  return { tables, reads, db };
 }
 
 // ---------------------------------------------------------------- fixtures
@@ -337,6 +352,74 @@ check("ADMIN: small cells stay visible (approved 2026-08-19)", S.adminSeesSmallC
 check("ADMIN: sinceIso counts by the INCIDENT day (9/30 incident filed 10/2 is out of 'since 10/1')", S.windowByIncidentDay);
 check("ADMIN: a sinceIso instant is read as its Los Angeles day", S.windowInstantIsLaDay);
 check("ADMIN: the window includes its first day", S.windowInclusive);
+
+// ------------------------------------------- PBIS cannot steer its picture
+// Review, 2026-10-07: the snapshot counts the referrals the server stores, and
+// PBIS (a closer, never guarded) could write that store. Filing one referral
+// for a chosen child plus nine for made-up numbers moved the snapshot by ten
+// "students" and the one cell that moved was the child's race; re-pointing a
+// stored referral at the child did it with no filing and no email. Both run
+// here through the REAL legacyData:mergeSlice into the same database byRace
+// reads.
+const recentIso = () => new Date(Date.now() - 60e3).toISOString();
+async function steer(mod) {
+  const out = {};
+  const d = makeDb(seedWith(BASE));
+  const L = mod.legacy();
+  const as = (staff) => ({ db: d.db, staff, scheduler: { runAfter: async () => {} } });
+  const race = async (staff) => J(await mod.agg.byRace.handler({ db: d.db, staff }, {}));
+  const merge = (staff, rows) => L.mergeSlice.handler(as(staff),
+    { doc: "referrals", collection: "behaviorReferrals", rows: rows.map((payload) => ({ payload })), dedupeField: "id" });
+  const before = await race(PBIS);
+  const adminBefore = JSON.parse(await race(ADMIN));
+
+  const target = NUMS.white[20];
+  const fakes = Array.from({ length: 9 }, (_, i) => "x" + i);
+  const res = await merge(PBIS, [target, ...fakes].map((num, i) => ({
+    id: "PB" + i, studentNumber: num, date: "2026-10-05", submittedAt: recentIso(), status: "open",
+  })));
+  out.filed = res.inserted === 10;
+  out.pbisFilingMovesNothing = (await race(PBIS)) === before;
+  // Admins see every referral, PBIS's included: one more counted (the
+  // target), nine unmatched (numbers that belong to nobody).
+  const adminAfter = JSON.parse(await race(ADMIN));
+  out.adminStillSeesThem = adminAfter.counted === adminBefore.counted + 1 && adminAfter.unmatched === adminBefore.unmatched + 9;
+
+  // Re-pointing a stored referral (a Hispanic student's only one) at the child.
+  const victim = d.tables.legacyMirror.find((r) => r.payload.studentNumber === NUMS.hisp[0]);
+  const edit = await merge(PBIS, [{ ...victim.payload, studentNumber: target, updatedAt: recentIso() }]);
+  out.editLanded = edit.updated === 1;
+  out.pbisEditMovesNothing = (await race(PBIS)) === before
+    && d.tables.legacyMirror.find((r) => r._id === victim._id).payload.studentNumber === NUMS.hisp[0];
+
+  // A teacher's referral is an ordinary filing and still counts toward the
+  // next step, so the snapshot is not frozen for good.
+  await merge({ email: "t@school.org", role: "teacher" }, NUMS.black.slice(20, 30).map((num, i) => ({
+    id: "T" + i, studentNumber: num, date: "2026-10-05", submittedAt: recentIso(), status: "open", filedByEmail: "t@school.org",
+  })));
+  out.teacherFilingsStillCount = JSON.parse(await race(PBIS)).snapshotStudents === 50;
+  return out;
+}
+
+console.log("\nPBIS cannot steer its own picture (through the real write path)");
+{
+  const st = await steer(M);
+  check("PBIS files a referral for one child plus nine made-up numbers (inserted)", st.filed);
+  check("...and no PBIS figure moves: referrals PBIS filed are not in PBIS's picture", st.pbisFilingMovesNothing);
+  check("...while admins still see them (one counted, nine unmatched)", st.adminStillSeesThem);
+  check("PBIS re-points a stored referral at the child: the edit lands but the student does not change", st.editLanded && st.pbisEditMovesNothing);
+  check("ten new students a TEACHER referred still move the snapshot (40 -> 50)", st.teacherFilingsStillCount);
+
+  const unPbis = load({ disciplineAggregates: (src) => src.replace("const snap = pbisSnapshot(pbisCountable(referrals));", "const snap = pbisSnapshot(referrals);") });
+  check("TEETH: counting PBIS's own filings lets one filing move the picture", (await steer(unPbis)).pbisFilingMovesNothing === false);
+  const unPinned = load({ referralAccessRules: (src) => src.replace(
+    "export const WRITE_ONCE_FIELDS: readonly string[] = [...OWNER_FIELDS, ...SUBJECT_FIELDS];",
+    "export const WRITE_ONCE_FIELDS: readonly string[] = [...OWNER_FIELDS];") });
+  check("TEETH: a student number that can be rewritten lets an edit move the picture", (await steer(unPinned)).pbisEditMovesNothing === false);
+  const unStamped = load({ legacyData: (src) => src.replace(
+    '...(doc === "referrals" ? { insertedByRole: String(me.role ?? "").trim().toLowerCase() } : {}),', "") });
+  check("TEETH: without the role recorded at insert, PBIS's filing moves the picture", (await steer(unStamped)).pbisFilingMovesNothing === false);
+}
 
 console.log("\nWho may call it, and what it accepts");
 {

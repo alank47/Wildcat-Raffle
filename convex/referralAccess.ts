@@ -50,11 +50,19 @@ async function writeSwitch(
   // pilot list must not need retyping `enabled`, and switching off must not
   // forget who the pilot was.
   const prev = normalizeSwitch(row?.value);
+  const listed = a.pilotEmails?.map((e) => normalizeEmail(e)).filter(Boolean);
+  // A PILOT LIST OF BLANKS IS A MISTAKE, NOT "EVERYONE" (review, 2026-10-07).
+  // `'{"pilotEmails":["'$T1'"]}'` with T1 unset sends [""], which normalises
+  // to [] -- and [] means the whole school. Refused, so the pilot command
+  // fails loudly instead of switching everybody on. [] typed on purpose is
+  // still how the switch is opened to everyone.
+  if (a.pilotEmails !== undefined && a.pilotEmails.length > 0 && listed!.length === 0) {
+    throw new Error(`${key}: pilotEmails named ${a.pilotEmails.length} entr${a.pilotEmails.length === 1 ? "y" : "ies"} ` +
+      "but none is an email. Nothing was changed. Send [] to mean everyone.");
+  }
   const next = {
     enabled: a.enabled ?? prev.enabled,
-    pilotEmails: a.pilotEmails !== undefined
-      ? a.pilotEmails.map((e) => normalizeEmail(e)).filter(Boolean)
-      : prev.pilotEmails,
+    pilotEmails: listed !== undefined ? listed : prev.pilotEmails,
   };
   const at = new Date().toISOString();
   if (row) await ctx.db.patch(row._id, { value: next, mirroredAt: at });

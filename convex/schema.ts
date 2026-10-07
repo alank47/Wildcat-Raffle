@@ -1002,6 +1002,11 @@ export default defineSchema({
     key: v.optional(v.string()),
     payload: v.any(),
     mirroredAt: v.string(),
+    // Referrals only, written by legacyData:mergeSlice on insert: the role
+    // of the signed-in account that filed the row, from its verified token,
+    // never from the payload. Absent on every other row and on referrals
+    // stored before 2026-10-07. See disciplineAggregates.ts pbisCountable.
+    insertedByRole: v.optional(v.string()),
   })
     .index("by_doc", ["doc"])
     .index("by_doc_collection", ["doc", "collection"]),

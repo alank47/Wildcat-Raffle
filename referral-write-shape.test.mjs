@@ -194,6 +194,7 @@ const L = load();
 
 // THE CLOSE GUARD (1D), through the real handler and its real return value.
 const ADMIN = { _id: "a1", email: "admin@school.org", name: "An Admin", role: "admin" };
+const PBIS = { _id: "p1", email: "pbis@school.org", name: "A Pbis", role: "pbis" };
 const GUARD_ON = [{ key: "referralCloseGuard", value: { enabled: true }, mirroredAt: "x" }];
 const recent = () => new Date(Date.now() - 60e3).toISOString();
 async function guardBehaviour(L) {
@@ -228,6 +229,41 @@ async function guardBehaviour(L) {
     out.adminSeesSchoolTotal = res.stored === 3;
   }
   {
+    // The detention total is not a teacher's to read either (review,
+    // 2026-10-07): loadDoc serves them no detentions at all.
+    const d = makeDb(seed());
+    const res = await L.mergeSlice.handler({ ...d.ctx, __me: TEACHER }, { doc: "secondary", collection: "detentions",
+      rows: [{ payload: { id: "detention_2" } }], dedupeField: "id" });
+    out.teacherSeesNoDetentionTotal = !("stored" in res) && res.inserted === 1;
+    const a = await L.mergeSlice.handler({ ...d.ctx, __me: ADMIN }, { doc: "secondary", collection: "detentions",
+      rows: [], dedupeField: "id" });
+    out.adminSeesDetentionTotal = a.stored === 1;
+  }
+  {
+    // WHO FILED IT, AS THE SERVER KNOWS IT, and WHICH CHILD IT IS ABOUT
+    // (review, 2026-10-07). PBIS is never guarded; the race breakdown needs
+    // to know which referrals PBIS put there, and a stored referral must not
+    // be re-pointed at another child.
+    const d = makeDb({ ...seed(), legacyMirror: [...seed().legacyMirror,
+      mirror("referrals", "behaviorReferrals", { id: "R5", status: "open", studentNumber: "1001", studentName: "Kid One",
+        filedByEmail: TEACHER.email, updatedAt: "2026-10-01T00:00:00.000Z" })] });
+    await L.mergeSlice.handler({ ...d.ctx, __me: PBIS }, { doc: "referrals", collection: "behaviorReferrals",
+      rows: [{ payload: { id: "R9", status: "open", studentNumber: "1234", insertedByRole: "teacher" } }], dedupeField: "id" });
+    await L.mergeSlice.handler({ ...d.ctx, __me: TEACHER }, { doc: "referrals", collection: "behaviorReferrals",
+      rows: [{ payload: { id: "R10", status: "open", filedByEmail: TEACHER.email } }], dedupeField: "id" });
+    await L.mergeSlice.handler({ ...d.ctx, __me: PBIS }, { doc: "secondary", collection: "hallPasses",
+      rows: [{ payload: { id: "p9" } }], dedupeField: "id" });
+    const row = (id) => d.tables.legacyMirror.find((r) => r.payload.id === id);
+    out.insertRoleRecorded = row("R9").insertedByRole === "pbis" && row("R10").insertedByRole === "teacher"
+      && row("R9").payload.insertedByRole === "teacher";   // a payload field is just a payload field
+    out.otherSlicesUnstamped = !("insertedByRole" in row("p9"));
+    const res = await L.mergeSlice.handler({ ...d.ctx, __me: PBIS }, { doc: "referrals", collection: "behaviorReferrals",
+      rows: [{ payload: { ...row("R5").payload, studentNumber: "1234", studentName: "Someone Else", description: "edit",
+        updatedAt: recent() } }], dedupeField: "id" });
+    const r5 = row("R5").payload;
+    out.studentPinned = res.updated === 1 && r5.description === "edit" && r5.studentNumber === "1001" && r5.studentName === "Kid One";
+  }
+  {
     // Switch row absent: a teacher's close lands exactly as today.
     const d = makeDb(seed());
     await L.mergeSlice.handler({ ...d.ctx, __me: TEACHER }, { doc: "referrals", collection: "behaviorReferrals",
@@ -248,6 +284,12 @@ console.log("\nThe close guard, through the real handler (switch 'referralCloseG
   check("a teacher's referral save no longer reports the school's referral total", g.teacherSeesNoSchoolTotal);
   check("...an admin's still does", g.adminSeesSchoolTotal);
   check("the guard's four counters are in the return", g.countersReturned);
+  check("a teacher's detention save does not report the school's detention total", g.teacherSeesNoDetentionTotal);
+  check("...an admin's still does", g.adminSeesDetentionTotal);
+  check("a new referral records the filer's role from the token, beside the payload (PBIS -> 'pbis')", g.insertRoleRecorded);
+  check("...and no other slice's rows carry one", g.otherSlicesUnstamped);
+  check("a newer copy (PBIS's) cannot re-point a stored referral at another child; its real edit lands", g.studentPinned);
+
   // Any other slice keeps `stored`, for anyone.
   const d = makeDb(seed());
   const res = await L.mergeSlice.handler({ ...d.ctx, __me: TEACHER }, { doc: "secondary", collection: "hallPasses",
@@ -273,7 +315,12 @@ console.log("\nTEETH: each refusal, removed, fails a check above");
     ["the insert guard removed", "if (closeGuard && doc === \"referrals\") {\n        const plan = planReferralInsert", "if (false) {\n        const plan = planReferralInsert", "colleagueRefiledRefused"],
     ["the referral-detention guard removed", "if (closeGuard && doc === \"secondary\" && madeFromReferral(r.payload)) {", "if (false) {", "referralDetentionRefused"],
     ["closers guarded too", "&& !canCloseReferrals(me.role)\n", "\n", "adminCloseLands"],
-    ["the school total returned to everyone", "...(doc === \"referrals\" && !seesAllReferrals(me.role)", "...(false", "teacherSeesNoSchoolTotal"],
+    ["the school total returned to everyone", "...((doc === \"referrals\" || (doc === \"secondary\" && collection === \"detentions\"))\n          && !seesAllReferrals(me.role)",
+      "...(false", "teacherSeesNoSchoolTotal"],
+    ["the detention total returned to everyone", "(doc === \"referrals\" || (doc === \"secondary\" && collection === \"detentions\"))\n          && !seesAllReferrals",
+      "(doc === \"referrals\")\n          && !seesAllReferrals", "teacherSeesNoDetentionTotal"],
+    ["the filer's role not recorded", "...(doc === \"referrals\" ? { insertedByRole: String(me.role ?? \"\").trim().toLowerCase() } : {}),", "",
+      "insertRoleRecorded"],
     ["the switch ignored (always on)", "&& switchAllows(await readReferralSwitch(ctx, REFERRAL_CLOSE_GUARD_KEY), me.email);", ";", "offIsToday"],
   ];
   for (const [what, from, to, key] of guardBreaks) {

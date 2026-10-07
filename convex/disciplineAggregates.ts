@@ -178,6 +178,15 @@ export function numbersSince(referrals: Array<{ payload: unknown }>, sinceIso?: 
  *
  * Deterministic and read-only: the same rows give the same snapshot, and
  * nothing is written to compute it. Null until ten students have referrals.
+ *
+ * WHAT THIS DOES NOT HIDE (review, 2026-10-07; an owner decision, not fixed
+ * here). PBIS knows which students each step added, and the counts are exact,
+ * so comparing two pictures shows the make-up of the step: a step in which
+ * all ten students fall in one group says that group for each of them. Any
+ * exact, deterministic picture has this property, and choosing the step by
+ * its make-up would leak through WHEN it moves instead. Closing it means
+ * coarser figures (rounded counts or bands, or term reports) or keyed noise,
+ * each of which changes what PBIS sees; that choice belongs to the owner.
  */
 export function pbisSnapshot<T extends { payload: unknown; _creationTime: number }>(referrals: T[]) {
   const ordered = referrals.slice().sort((a, b) => a._creationTime - b._creationTime);
@@ -193,6 +202,32 @@ export function pbisSnapshot<T extends { payload: unknown; _creationTime: number
   if (instant === null) return null;
   const at = instant;
   return { rows: ordered.filter((r) => r._creationTime <= at), students };
+}
+
+/**
+ * THE REFERRALS PBIS'S PICTURE IS BUILT FROM: every stored referral except
+ * the ones PBIS filed (review, 2026-10-07).
+ *
+ * PBIS may file referrals, and nothing guards a closer's insert. So PBIS
+ * could file one for a chosen child and nine for made-up numbers: ten new
+ * "students" move the snapshot, nine match nobody, and the one cell that
+ * moves is that child's race -- the same attack the browser-sent list
+ * allowed, by another door. legacyData:mergeSlice records the inserting
+ * account's role on the row, outside the payload where no browser can reach
+ * it, and PBIS's ladder and table leave PBIS-filed rows out. Admins still see
+ * them. (Which child a stored referral is about cannot be changed afterwards
+ * either: referralAccessRules.ts SUBJECT_FIELDS.)
+ *
+ * The cost: a referral a PBIS member files is in the admins' breakdown and
+ * not in PBIS's. Rows stored before the role was recorded carry none and are
+ * counted, as they always were.
+ *
+ * NOT "only numbers on the roster". Filtering by today's roster would let a
+ * withdrawal shift the snapshot by one student, and the step between two
+ * pictures would then be a single named child.
+ */
+export function pbisCountable<T extends { insertedByRole?: string }>(referrals: T[]): T[] {
+  return referrals.filter((r) => String(r.insertedByRole ?? "").trim().toLowerCase() !== "pbis");
 }
 
 type RosterRow = { studentNumber: string };
@@ -372,7 +407,7 @@ export const byRace = query({
     let studentNumbers: string[];
     let snapshotStudents = 0;
     if (isPbis) {
-      const snap = pbisSnapshot(referrals);
+      const snap = pbisSnapshot(pbisCountable(referrals));
       if (!snap) {
         return {
           allowed: true,
@@ -473,7 +508,8 @@ export const compareByRace = internalQuery({
       else unresolved++;
     }
 
-    const snap = pbisSnapshot(referrals);
+    const countable = pbisCountable(referrals);
+    const snap = pbisSnapshot(countable);
     const restricted = await ctx.db.query("psRestricted").collect();
     const base = {
       referrals: referrals.length,
@@ -481,9 +517,10 @@ export const compareByRace = internalQuery({
       resolvedByLookup,
       unresolved,
       listsIdentical: JSON.stringify(server.numbers) === JSON.stringify(browser),
+      pbisRowsFiledByPbis: referrals.length - countable.length,
       pbisSnapshotStudents: snap ? snap.students : 0,
       pbisRowsInSnapshot: snap ? snap.rows.length : 0,
-      pbisRowsAfterSnapshot: snap ? referrals.length - snap.rows.length : referrals.length,
+      pbisRowsAfterSnapshot: snap ? countable.length - snap.rows.length : countable.length,
     };
     if (!restricted.length) return { ...base, loaded: false };
 

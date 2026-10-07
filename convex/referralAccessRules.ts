@@ -170,6 +170,21 @@ export function browserRuleOwns(payload: unknown, viewer: { email?: unknown; nam
 export const OWNER_FIELDS: readonly string[] = ["id", "filedByEmail", "referredByEmail", "submittedAt"];
 
 /**
+ * WHICH CHILD A REFERRAL IS ABOUT is written once too (review, 2026-10-07).
+ * No screen ever changes the student on a referral after filing. But the
+ * race breakdown PBIS reads (disciplineAggregates.ts) counts the stored
+ * referrals by studentNumber, and PBIS, as a closer, is never guarded: a
+ * newer copy of any referral with studentNumber set to one chosen child moved
+ * that child into the picture and out again, and the cell that moved was the
+ * child's race. Pinned for everyone, admins included -- nothing legitimate
+ * sends a different student.
+ */
+export const SUBJECT_FIELDS: readonly string[] = ["studentId", "studentNumber", "studentName"];
+
+/** Everything pinOwnerFields keeps at its stored value. */
+export const WRITE_ONCE_FIELDS: readonly string[] = [...OWNER_FIELDS, ...SUBJECT_FIELDS];
+
+/**
  * Everything closing a referral or closing its loop writes (script.js
  * confirmCloseReferral and confirmCloseLoop; updatedAt aside). The test greps
  * those two functions and fails if one starts writing a field missing here,
@@ -195,13 +210,14 @@ export function filingDefaults(): Record<string, unknown> {
 }
 
 /**
- * The owner fields go back to what is stored; a key the stored row does not
- * have is removed. Anything else in `merged` is left exactly as it is.
+ * The owner fields and the student fields (WRITE_ONCE_FIELDS) go back to what
+ * is stored; a key the stored row does not have is removed. Anything else in
+ * `merged` is left exactly as it is.
  */
 export function pinOwnerFields(stored: unknown, merged: unknown): unknown {
   if (!isObj(stored) || !isObj(merged)) return merged;
   const out: Record<string, unknown> = { ...merged };
-  for (const k of OWNER_FIELDS) {
+  for (const k of WRITE_ONCE_FIELDS) {
     if (hasOwn(stored, k)) out[k] = stored[k];
     else delete out[k];
   }
@@ -287,7 +303,7 @@ export type InsertPlan =
  *
  * GUARD OFF (the switch, or a closer): today's rule exactly -- the copy lands
  * only if it was touched later than the stored one, as {...stored, ...incoming}
- * -- plus the owner pin, which is always on.
+ * -- plus the owner and student pin, which is always on.
  *
  * GUARD ON, caller not a closer:
  *   - someone else's referral: not written ('notYours'). An old tab re-sends
@@ -295,9 +311,10 @@ export type InsertPlan =
  *   - the stored copy is as new or newer: not written ('stale'). Counted apart
  *     from a close attempt, because it is what every tab that has not pulled
  *     since an admin closed one of its referrals sends on every save;
- *   - otherwise the filer's own edit lands WITHOUT the close and owner fields,
- *     which keep their stored values, with stamps clamped to the server's
- *     clock. If that leaves nothing but updatedAt changed, nothing is written:
+ *   - otherwise the filer's own edit lands WITHOUT the close, owner and
+ *     student fields, which keep their stored values, with stamps clamped to
+ *     the server's clock. If that leaves nothing but updatedAt changed,
+ *     nothing is written:
  *     'keptCloseFields' when the copy tried to change a close field (a teacher
  *     clicking Close in an old tab), else 'noChange'. So an unchanged row is
  *     not rewritten on every save.
@@ -326,7 +343,7 @@ export function planReferralUpdate(
   }
   const editable: Record<string, unknown> = { ...timed };
   for (const k of CLOSE_FIELDS) delete editable[k];
-  for (const k of OWNER_FIELDS) delete editable[k];
+  for (const k of WRITE_ONCE_FIELDS) delete editable[k];
   const merged: Record<string, unknown> = { ...stored, ...editable };
   const triedClose = triedToChangeCloseFields(incoming, stored);
   if (onlyUpdatedAtDiffers(stored, merged)) {
@@ -382,12 +399,19 @@ export type ReferralSwitch = { enabled: boolean; pilotEmails: string[] };
  * convention). A pilotEmails that is present but not a list is a hand-edited
  * row nobody can read the intent of, and it reads as OFF -- today's behaviour
  * -- rather than as "everyone", which an empty list would mean.
+ *
+ * So does a list that NAMED someone but holds no usable email (review,
+ * 2026-10-07): [""] from a pilot command whose shell variable was unset, or
+ * [123, null]. Read as "the pilot list is empty", either turned the switch on
+ * for the whole school, and the non-pilot teacher who must not change would
+ * have changed without anybody noticing. writeSwitch refuses to store one.
  */
 export function normalizeSwitch(value: unknown): ReferralSwitch {
   if (!isObj(value)) return { enabled: false, pilotEmails: [] };
   const raw = value.pilotEmails;
   if (raw !== undefined && raw !== null && !Array.isArray(raw)) return { enabled: false, pilotEmails: [] };
   const pilotEmails = Array.isArray(raw) ? raw.map(emailOf).filter(Boolean) : [];
+  if (Array.isArray(raw) && raw.length > 0 && pilotEmails.length === 0) return { enabled: false, pilotEmails: [] };
   return { enabled: value.enabled === true, pilotEmails };
 }
 

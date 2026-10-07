@@ -143,6 +143,19 @@ function suite(R) {
     return !("filedByEmail" in p) && p.referredBy === T1.name;
   });
   t("pin: non-objects pass straight through", () => R.pinOwnerFields("a", "b") === "b" && R.pinOwnerFields(null, R_T1) === R_T1);
+  // Which child a referral is about is written once, for EVERY caller (review,
+  // 2026-10-07): PBIS is never guarded, and re-pointing a stored referral at a
+  // chosen child moved that child in and out of PBIS's race picture.
+  t("pin: which child a referral is about is kept (studentNumber, studentId, studentName)", () => {
+    const p = R.pinOwnerFields({ ...R_T1, studentId: "S1" },
+      { ...R_T1, studentId: "S2", studentNumber: "1234", studentName: "Someone Else", description: "x" });
+    return p.studentId === "S1" && p.studentNumber === R_T1.studentNumber && p.studentName === R_T1.studentName
+      && p.description === "x";
+  });
+  t("pin: a student field the stored row lacks is removed, not taken from the copy", () => {
+    const { studentNumber, ...noNumber } = R_T1;
+    return !("studentNumber" in R.pinOwnerFields(noNumber, { ...noNumber, studentNumber: "1234" }));
+  });
 
   // ---- updates, guard ON for a non-closer
   const G = { guard: true, nowMs: NOW };
@@ -173,6 +186,12 @@ function suite(R) {
       submittedAt: later, id: "R99", description: "edit", updatedAt: later }, T1, G);
     return p.write === true && p.payload.filedByEmail === T1.email && p.payload.referredByEmail === T1.email
       && p.payload.submittedAt === R_T1.submittedAt && p.payload.id === "R1" && p.payload.description === "edit";
+  });
+  t("update: a teacher's own edit cannot re-point the referral at another child", () => {
+    const p = R.planReferralUpdate(R_T1, { ...R_T1, studentNumber: "1234", studentName: "Someone Else",
+      description: "edit", updatedAt: later }, T1, G);
+    return p.write === true && p.payload.studentNumber === R_T1.studentNumber
+      && p.payload.studentName === R_T1.studentName && p.payload.description === "edit";
   });
   t("update: a 9999 updatedAt is clamped to the server's clock", () => {
     const p = R.planReferralUpdate(R_T1, { ...R_T1, description: "edit", updatedAt: "9999-01-01T00:00:00.000Z" }, T1, G);
@@ -256,6 +275,16 @@ function suite(R) {
   });
   t("switch: a pilotEmails that is not a list reads as OFF, never as everyone", () =>
     !R.normalizeSwitch({ enabled: true, pilotEmails: T1.email }).enabled);
+  // A pilot list that NAMED people but holds no usable email (an unset shell
+  // variable in the pilot command gives [""]) is not "everyone" (review,
+  // 2026-10-07).
+  t("switch: a pilot list of blanks or non-emails reads as OFF, never as everyone", () =>
+    [[""], ["   "], [7, null], ["", " "]].every((pilotEmails) => {
+      const sw = R.normalizeSwitch({ enabled: true, pilotEmails });
+      return sw.enabled === false && !R.switchAllows(sw, T1.email);
+    }));
+  t("switch: an EMPTY list is still everyone (how the switch is opened to the school)", () =>
+    R.switchAllows(R.normalizeSwitch({ enabled: true, pilotEmails: [] }), T2.email));
   t("switch: off with a pilot list is still off", () => !R.switchAllows(R.normalizeSwitch({ enabled: false, pilotEmails: [T1.email] }), T1.email));
   t("switch: a null switch allows nobody", () => !R.switchAllows(null, T1.email) && !R.switchAllows(undefined, T1.email));
   return out;
@@ -366,6 +395,15 @@ console.log("\nTEETH: each rule, broken once, fails a check above");
       "insert: a copy carrying no email at all (a deleted pre-email referral) is refused, not re-filed as mine"],
     ["a truthy enabled turns the switch on", "enabled: value.enabled === true", "enabled: !!value.enabled",
       "switch: only a real true turns it on"],
+    ["the student fields not pinned", "export const WRITE_ONCE_FIELDS: readonly string[] = [...OWNER_FIELDS, ...SUBJECT_FIELDS];",
+      "export const WRITE_ONCE_FIELDS: readonly string[] = [...OWNER_FIELDS];",
+      "pin: which child a referral is about is kept (studentNumber, studentId, studentName)"],
+    ["the student fields editable under the guard", "for (const k of WRITE_ONCE_FIELDS) delete editable[k];",
+      "for (const k of OWNER_FIELDS) delete editable[k];",
+      "update: a teacher's own edit cannot re-point the referral at another child"],
+    ["a pilot list of blanks reads as everyone",
+      "  if (Array.isArray(raw) && raw.length > 0 && pilotEmails.length === 0) return { enabled: false, pilotEmails: [] };\n", "",
+      "switch: a pilot list of blanks or non-emails reads as OFF, never as everyone"],
     ["a malformed pilot list reads as everyone", "if (raw !== undefined && raw !== null && !Array.isArray(raw)) return { enabled: false, pilotEmails: [] };", "",
       "switch: a pilotEmails that is not a list reads as OFF, never as everyone"],
   ];
