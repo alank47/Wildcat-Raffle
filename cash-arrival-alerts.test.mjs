@@ -41,6 +41,10 @@ const SRC = {
   auditLog: src("auditLog.ts"),
   cashRecount: src("cashRecount.ts"),
   cashRecountRules: src("cashRecountRules.ts"),
+  // legacyData.ts imports the referral rules (2026-10-07). Without this entry
+  // the shim dies with "no module ./referralAccessRules" and every test after
+  // this one in the chain never runs.
+  referralAccessRules: src("referralAccessRules.ts"),
 };
 
 class ConvexError extends Error {}
@@ -229,6 +233,11 @@ console.log("\nARRIVAL RECORDS; IT NEVER PAYS\n");
   await M.legacy.mergeSlice.handler(dRef.ctx, { doc: "referrals", collection: "behaviorReferrals",
     rows: [{ payload: { id: "r1", studentId: "12101", submittedAt: iso(NOW) } }], dedupeField: "id" });
   check("a non-cash slice records nothing", alerts(dRef).length === 0);
+  // The referral still lands for a teacher with no referral switch row at all
+  // (2026-10-07): an absent switch is today's behaviour.
+  check("...and the teacher's referral itself is inserted, with no switch row present",
+    (dRef.tables.legacyMirror || []).filter((r) => r.doc === "referrals").length === 1
+    && !(dRef.tables.appState || []).some((r) => /^referral/.test(r.key)));
 }
 
 console.log("\nA ROW SOME PAYER ALREADY PAID IS NOT RECORDED\n");

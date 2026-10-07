@@ -43,8 +43,12 @@ const tsBody = src.slice(handlerStart, handlerEnd)
   // never from `payload`, which is v.any() and caller-chosen. Stubbed rather
   // than stripped, so the handler still binds `me` and the mail call below is
   // really executed.
+  //
+  // ctx.__me picks who is calling (2026-10-07): the referral rules depend on
+  // the caller's role and email. The default is a teacher, which is what the
+  // stub always effectively was.
   .replace(/const me = await requireStaff\(ctx\);/,
-           'const me = { email: "filer@example.org", name: "Test Filer" };')
+           'const me = ctx.__me ?? { email: "filer@example.org", name: "Test Filer", role: "teacher" };')
   .replace(/await requireStaff\(ctx\);/, "")
   // The one substitution: the indexed query becomes the fake db's collect().
   .replace(/const existing = await ctx\.db[\s\S]*?\.collect\(\);/,
@@ -104,17 +108,33 @@ const touchedJs = ts.transpileModule(moduleScopeTs, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
 }).outputText;
 
-const runNew = new Function("ctx", "doc", "collection", "rows", "dedupeField",
-  "MAX_ROWS_PER_SLICE", "notifyNewReferrals",
+// THE REFERRAL RULES (2026-10-07), the SHIPPED module, transpiled and passed
+// in under the names legacyData.ts imports them by. It imports nothing, so it
+// needs no shim. ConvexError is a real class here so a refusal can be told
+// apart from a ReferenceError: an undefined ConvexError would also "throw".
+const rulesSrc = readFileSync(new URL("./referralAccessRules.ts", import.meta.url), "utf8");
+const RULES = (() => {
+  const m = { exports: {} };
+  new Function("module", "exports", "require", ts.transpileModule(rulesSrc, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText)(m, m.exports, (p) => { throw new Error("unexpected import " + p); });
+  return m.exports;
+})();
+class ConvexError extends Error {}
+
+const runNew = new Function("RULES", "ConvexError",
+  "return function (ctx, doc, collection, rows, dedupeField, MAX_ROWS_PER_SLICE, notifyNewReferrals) {" +
   touchedJs +
   // The arrival credit (2026-09-30) runs inside mergeSlice after the inserts.
   // Stubbed as its switch-OFF behaviour, so this file still proves the MERGE
-  // is row-for-row what it always was; cash-arrival-credit.test.mjs runs the
+  // is row-for-row what it always was; cash-arrival-alerts.test.mjs runs the
   // real one.
   "const noteArrivedCash = async () => null;\n" +
+  "const { pinOwnerFields } = RULES;\n" +
   "return (async () => {" + js +
   "\nreturn { inserted: toInsert.length, updated: toUpdate.length, deleted, refusedAsHistory, keptCancelledReceipts };" +
-  "})();");
+  "})();" +
+  "};")(RULES, ConvexError);
 
 /** The OLD algorithm, verbatim. The thing the new one must still agree with. */
 function referenceMerge(existing, rows, dedupeField, keyedHint) {
@@ -373,8 +393,14 @@ console.log("\nThe referral email fires on the insert, and only on the insert");
     // Every other slice in the app goes through this same mutation.
     const r = await run([], [row({ id: "T1" })], "main", "wildcatCashRewards");
     check("no other collection triggers referral mail", r.mailed.length === 0);
-    const r2 = await run([], [row({ id: "T2" })], "referrals", "somethingElse");
-    check("nor a different collection in the referrals doc", r2.mailed.length === 0);
+    // A different collection under doc 'referrals' is now refused outright
+    // (2026-10-07; no real tab sends one), so it mails nobody by throwing.
+    const spy2 = mailSpy();
+    const f2 = fakeDb([]);
+    const threw2 = await runNew({ db: { ...f2.ctx.db } }, "referrals", "somethingElse", [row({ id: "T2" })], "id",
+      MAX_ROWS_PER_SLICE, spy2.fn).then(() => null, (e) => e);
+    check("nor a different collection in the referrals doc (refused, so nobody is mailed)",
+      threw2 instanceof ConvexError && spy2.mailed().length === 0);
   }
 }
 
@@ -605,6 +631,87 @@ console.log("\nA cancelled store receipt is final (2026-10-02)");
     check("the rule is the store receipts' alone: other lists merge as before",
       r.final[0].payload.status === "issued");
   }
+}
+
+console.log("\nForged referral shapes are refused; the app's own call is untouched (2026-10-07)");
+{
+  // THE HOLES. mergeSlice took any doc, collection and dedupeField from any
+  // staff member. Three shapes the app never sends could each damage every
+  // referral in the school; they are now refused before anything is read.
+  // The app's ONE referral write -- mergeLegacySlice('referrals',
+  // 'behaviorReferrals', list, 'id') with unkeyed rows -- must merge exactly
+  // as it did.
+  const seeded = () => [
+    row({ id: "R1", status: "open", updatedAt: "2026-09-20T10:00:00.000Z" }),
+    row({ id: "R2", status: "open", updatedAt: "2026-09-20T10:00:00.000Z" }),
+    row({ id: "R3", status: "closed", updatedAt: "2026-09-20T10:00:00.000Z" }),
+    row({ id: "R4", status: "closed", updatedAt: "2026-09-20T10:00:00.000Z" }),
+  ];
+  const attempt = async (collection, rows, dedupeField, existing = seeded()) => {
+    const f = fakeDb(existing);
+    const ctx = { db: { ...f.ctx.db } };
+    const spy = mailSpy();
+    const err = await runNew(ctx, "referrals", collection, rows, dedupeField, MAX_ROWS_PER_SLICE, spy.fn)
+      .then(() => null, (e) => e);
+    return { err, final: f.ctx.rowsInOrder(), cost: f.cost(), mailed: spy.mailed() };
+  };
+  const refusedProperly = (e) => e instanceof ConvexError && /behaviorReferrals by id only/.test(e.message);
+
+  let a = await attempt("behaviorReferrals", [], "status");
+  check("dedupeField 'status' is refused with the readable reason", refusedProperly(a.err), a.err && a.err.message);
+  check("...and every seeded referral is still there (it used to delete 2 of 4 here, 16 of 18 in prod)",
+    a.final.length === 4 && a.cost.writes === 0);
+  check("...and nothing was even read", a.cost.reads === 0);
+
+  a = await attempt("behaviorReferrals", [row({ id: "R9", status: "open" }, "k1")], "id");
+  check("a keyed referral row is refused", refusedProperly(a.err));
+  check("...and nothing is written or mailed", a.final.length === 4 && a.cost.writes === 0 && a.mailed.length === 0);
+
+  a = await attempt("other", [row({ id: "R9" })], "id");
+  check("another collection under doc 'referrals' is refused", refusedProperly(a.err));
+
+  a = await attempt("behaviorReferrals", [row({ id: "R9" })], "entryId");
+  check("any dedupeField but 'id' is refused, not only 'status'", refusedProperly(a.err));
+
+  // THE CLAIM. Ownership is matched on these emails, so a newer copy that
+  // names you must not make a colleague's referral yours.
+  const t1 = "2026-09-20T10:00:00.000Z", t2 = "2026-09-21T10:00:00.000Z";
+  const theirs = row({ id: "R1", filedByEmail: "them@school.org", referredByEmail: "them@school.org",
+    submittedAt: t1, updatedAt: t1, status: "open", description: "old" });
+  a = await attempt("behaviorReferrals", [row({ ...theirs.payload, filedByEmail: "me@school.org",
+    referredByEmail: "me@school.org", submittedAt: t2, id: "R1", description: "new", updatedAt: t2 })], "id", [theirs]);
+  const landed = a.final[0].payload;
+  check("a newer copy naming a different filer lands its other edits", !a.err && landed.description === "new");
+  check("...but keeps the stored filedByEmail, referredByEmail and submittedAt",
+    landed.filedByEmail === "them@school.org" && landed.referredByEmail === "them@school.org" && landed.submittedAt === t1);
+
+  // THE APP'S REAL CALL: every outcome counted as before, by the same rule.
+  const realShape = [
+    [[row({ id: "R1", status: "open", updatedAt: t1 })], [row({ id: "R1", status: "closed", updatedAt: t2 })], { inserted: 0, updated: 1, deleted: 0 }],
+    [[row({ id: "R1", status: "closed", updatedAt: t2 })], [row({ id: "R1", status: "open", updatedAt: t1 })], { inserted: 0, updated: 0, deleted: 0 }],
+    [[row({ id: "R1", updatedAt: t1 })], [row({ id: "R1", updatedAt: t1 }), row({ id: "R2", updatedAt: t2 })], { inserted: 1, updated: 0, deleted: 0 }],
+    [[row({ id: "R1" }), row({ id: "R1" })], [], { inserted: 0, updated: 0, deleted: 1 }],
+    [[], [row({ id: "R5" }), row({ id: "R6" })], { inserted: 2, updated: 0, deleted: 0 }],
+  ];
+  let allSame = true;
+  for (const [existing, rows, want] of realShape) {
+    const f = fakeDb(existing);
+    const res = await runNew({ db: { ...f.ctx.db } }, "referrals", "behaviorReferrals", rows, "id", MAX_ROWS_PER_SLICE, mailSpy().fn);
+    if (res.inserted !== want.inserted || res.updated !== want.updated || res.deleted !== want.deleted) allSame = false;
+  }
+  check("the app's own call shape gives the same inserted/updated/deleted as before", allSame);
+
+  // CONTROLS: the refusal is the referrals doc's alone.
+  const ok = async (doc, collection, rows, dedupeField) => {
+    const f = fakeDb([]);
+    return runNew({ db: { ...f.ctx.db } }, doc, collection, rows, dedupeField, MAX_ROWS_PER_SLICE, mailSpy().fn)
+      .then((r) => r.inserted, (e) => "threw " + e.message);
+  };
+  check("control: secondary detentions still merge", (await ok("secondary", "detentions", [row({ id: "d1" })], "id")) === 1);
+  check("control: store receipts still merge", (await ok("secondary", "cashReceipts", [row({ id: "WC-1" })], "id")) === 1);
+  check("control: a cash week still merges", (await ok("cash_tx_2026_W40", "transactions", [row({ id: "t1" })], "id")) === 1);
+  check("control: keyed ticket history still merges", (await ok("ticket_history_ms", "histories", [row([{ entryId: "a" }], "s1")], "entryId")) === 1);
+  check("control: an audit week on entryId still merges", (await ok("audit_log_2026_W40", "auditLog", [row({ entryId: "e1" })], "entryId")) === 1);
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

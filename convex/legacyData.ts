@@ -1,8 +1,9 @@
 import { query, mutation } from "./_generated/server";
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { requireStaff } from "./identity";
 import { notifyNewReferrals } from "./referralMail";
 import { noteArrivedCash } from "./cashArrival";
+import { pinOwnerFields } from "./referralAccessRules";
 
 /**
  * The app-facing half of the legacy mirror.
@@ -423,6 +424,28 @@ export const mergeSlice = mutation({
     // is the only thing notifyNewReferrals will mail.
     const me = await requireStaff(ctx);
 
+    // REFERRALS MERGE INTO behaviorReferrals BY id, AND ONLY THAT (2026-10-07).
+    //
+    // The app makes exactly one referral write: saveData sends
+    // mergeLegacySlice('referrals', 'behaviorReferrals', behaviorReferrals,
+    // 'id'), an array, so every row arrives unkeyed. Any other shape is
+    // hand-made, and each one was a way for any signed-in staff member to
+    // damage the whole school's discipline record:
+    //   - dedupeField "status" makes every open referral a duplicate of the
+    //     first open one and every closed one of the first closed one, and
+    //     the stored "duplicates" are deleted below: 16 of 18 gone, no trace;
+    //   - one row with a `key` makes the slice a keyed one, and loadDoc then
+    //     rebuilds it as a map of the keyed rows alone, so every browser shows
+    //     zero referrals;
+    //   - another collection under this doc is not a referral at all.
+    // Thrown, not skipped, because no real tab can ever send these: a refusal
+    // here cannot block a teacher's genuine filing. Every refusal that a real
+    // (if stale) tab CAN trigger is a per-row skip instead.
+    if (doc === "referrals" && (collection !== "behaviorReferrals" || dedupeField !== "id"
+        || rows.some((r) => r.key !== undefined))) {
+      throw new ConvexError("Referrals merge into behaviorReferrals by id only.");
+    }
+
     // THE CUTOFF IS THE SERVER'S, not the caller's. Stored in appState by
     // legacyPurge:setHistoryCutoff, read once per save. A client cannot send
     // it, raise it or clear it -- the whole point is that a stale client has
@@ -534,10 +557,17 @@ export const mergeSlice = mutation({
           continue;
         }
         if (stored && touchedAt(r.payload) > touchedAt(stored.payload)) {
+          const merged = keepServerStock(collection, stored.payload,
+            mergeRowFields(stored.payload, r.payload), r.payload);
           toUpdate.push({
             id: stored._id,
-            payload: keepServerStock(collection, stored.payload,
-              mergeRowFields(stored.payload, r.payload), r.payload),
+            // WHO FILED A REFERRAL, AND WHEN, IS WRITTEN ONCE (2026-10-07).
+            // id, filedByEmail, referredByEmail and submittedAt keep their
+            // stored values whoever sends the copy. Ownership is matched on
+            // those emails, so without this a newer copy naming yourself
+            // would make a colleague's referral yours -- and be served to
+            // you. Always on: no screen ever changes them after filing.
+            payload: doc === "referrals" ? pinOwnerFields(stored.payload, merged) : merged,
           });
         }
         continue;
@@ -657,6 +687,14 @@ export const saveSlice = mutation({
   },
   handler: async (ctx, { doc, collection, rows }) => {
     await requireStaff(ctx);
+
+    // REFERRALS ARE NEVER REPLACED (2026-10-07). This handler deletes every
+    // stored row of the slice and writes the caller's list, so
+    // saveSlice('referrals', 'behaviorReferrals', []) from any staff member's
+    // console deleted every referral in the school, with no tombstone. The app
+    // never replaces referrals -- it merges them through mergeSlice, the one
+    // call in saveData -- so refusing the doc outright costs nothing.
+    if (doc === "referrals") throw new ConvexError("Referrals are merged, never replaced.");
 
     if (rows.length > MAX_ROWS_PER_SLICE) {
       throw new Error(
