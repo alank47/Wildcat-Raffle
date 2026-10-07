@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20261006e">
-    <link rel="icon" href="favicon.ico?v=20261006e" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20261006e" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20261006e" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20261007a">
+    <link rel="icon" href="favicon.ico?v=20261007a" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20261007a" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20261007a" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20261006e">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20261007a">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20261006e">
+    <link rel="stylesheet" href="styles.css?v=20261007a">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20261006e">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20261007a">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20261006e">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20261007a">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20261006e" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20261007a" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -184,7 +184,7 @@
                      asset, so there is one logo to replace when the school
                      changes it. -->
                 <div class="wp-brand">
-                    <img src="assets/westbrook-logo.png?v=20261006e"
+                    <img src="assets/westbrook-logo.png?v=20261007a"
                          alt="Westbrook Academy" class="wp-brandlogo" id="wpBrandLogo">
                     <!-- The product's name, which appeared nowhere on the
                          student's screen while the teacher's topbar has said
@@ -412,7 +412,7 @@
         <header class="app-topbar">
             <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-menu"></use></svg></button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20261006e" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20261007a" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -3070,13 +3070,15 @@
             </div>
 
             <div id="disciplineContent" style="display: none;">
-                <h2 style="margin-bottom: 20px; color: #f59e0b;">Discipline Mode - Behavior Referral System</h2>
-                <p style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; border-radius: 4px; margin-bottom: 25px;">
-                    <strong>Discipline Mode:</strong> Comprehensive behavior tracking, referral management, and student discipline analytics.
-                </p>
+                <!-- The old "Discipline Mode - Behavior Referral System" heading
+                     and yellow note sat here, above every Discipline tab, from
+                     before the sidebar (removed 2026-10-07): the sidebar names
+                     the tab and each tab has its own title.
 
-                <!-- Discipline Subtabs -->
-                <div class="subtab-bar">
+                     LEGACY SUBTAB BUTTONS. Hidden (the sidebar replaced them);
+                     kept because switchDisciplineTab still colours them by id.
+                     The bar itself is hidden too, so its empty row takes no space. -->
+                <div class="subtab-bar wc-disc-legacy-bar">
                     <button class="subtab-button active" onclick="switchDisciplineTab('submit')" id="submitTabBtn">
                         ✍️ Submit Referral
                     </button>
@@ -3509,272 +3511,245 @@
                 <!-- ATTENDANCE SUBTAB.
                      Chronic absence and tardiness, from the PowerSchool
                      attendance sync. The tiers, the denominator and the
-                     ranking are all WildcatRoster.attendanceRanking; this is
-                     only the frame. Rendered by renderAttendanceWatch(). -->
+                     ranking are all WildcatRoster's; this is only the frame.
+
+                     ONE TAB PER QUESTION (2026-10-07): Year so far | Week or
+                     month | Trends | Perfect attendance | Student groups. The
+                     view keys are the old ones where a tab kept its job
+                     (setAttendanceView in script.js). -->
                 <div id="behaviorAttendance" class="discipline-subtab hidden">
                     <div class="page-header">
                         <div>
-                            <h2 class="page-title">📅 Attendance Watch</h2>
-                            <p class="page-subtitle" id="attViewSubtitle">Chronic absence and tardiness, worst first</p>
+                            <h2 class="page-title"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-calendar"></use></svg> Attendance Watch</h2>
+                            <p class="page-subtitle">Who is missing school, whether attendance is getting better, and who has perfect attendance.</p>
                         </div>
-                        <button type="button" class="btn btn-secondary" onclick="refreshAttendanceView()">Refresh</button>
+                        <!-- THE ONE REFRESH, aimed at the tab on screen (refreshAttendanceView). -->
+                        <button type="button" class="btn btn-secondary" onclick="refreshAttendanceView()"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-refresh"></use></svg> Refresh</button>
                     </div>
 
-                    <!-- WHICH HALF OF THE SCREEN, AT THE TOP OF IT.
-                         Perfect attendance shipped at the bottom of this tab,
-                         below the basis card, the run chart, four tier cards
-                         and a list of up to 671 children -- so reaching the
-                         one panel that is good news meant scrolling past
-                         everything that is not. These are two different
-                         questions asked of the same data, and neither is a
-                         footnote to the other, so they get equal billing and
-                         only one is on screen at a time. -->
-                    <div class="subtab-bar analytics-tabs wc-att-views" id="attViewSwitch" role="group"
-                         aria-label="Which attendance view to show">
-                        <button type="button" class="analytics-tab active" data-attview="watch"
-                                aria-pressed="true"
-                                onclick="setAttendanceView('watch')">Who is missing</button>
-                        <button type="button" class="analytics-tab" data-attview="perfect"
-                                aria-pressed="false"
-                                onclick="setAttendanceView('perfect')">Perfect attendance</button>
-                        <button type="button" class="analytics-tab" data-attview="subgroup"
-                                aria-pressed="false"
-                                onclick="setAttendanceView('subgroup')">By student group</button>
-                        <button type="button" class="analytics-tab" data-attview="rate"
-                                aria-pressed="false"
-                                onclick="setAttendanceView('rate')">Attendance rate</button>
+                    <!-- THE TAB BAR, scoped by id and NOT .analytics-tabs:
+                         Discipline's switchAnalyticsTab clears .active on every
+                         '.analytics-tabs .analytics-tab' on the page. Student
+                         groups is hidden by setAttendanceView for anyone
+                         outside admin, superadmin and PBIS. -->
+                    <div class="subtab-bar wc-att-views" id="attViewSwitch" role="group" aria-label="Attendance Watch views">
+                        <button type="button" class="analytics-tab active" data-attview="watch" aria-pressed="true"
+                                onclick="setAttendanceView('watch')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-history"></use></svg> Year so far</button>
+                        <button type="button" class="analytics-tab" data-attview="window" aria-pressed="false"
+                                onclick="setAttendanceView('window')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-clock"></use></svg> Week or month</button>
+                        <button type="button" class="analytics-tab" data-attview="rate" aria-pressed="false"
+                                onclick="setAttendanceView('rate')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-trending-up"></use></svg> Trends</button>
+                        <button type="button" class="analytics-tab" data-attview="perfect" aria-pressed="false"
+                                onclick="setAttendanceView('perfect')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-award"></use></svg> Perfect attendance</button>
+                        <button type="button" class="analytics-tab" data-attview="subgroup" aria-pressed="false" hidden
+                                onclick="setAttendanceView('subgroup')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-group"></use></svg> Student groups</button>
                     </div>
+                    <p class="wc-cash-words"><button type="button" class="wc-insight-link" onclick="openAttGlossary(this)">What do these words mean?</button></p>
 
-                    <!-- A BARE DIV, NOT A CARD. `hidden` is beaten by any
-                         author rule that sets `display`, which is how a red
-                         unsaved-referral bar shipped visible to everybody on
-                         2026-09-08. A wrapper with no class of its own cannot
-                         be caught by that. -->
-                    <div id="attWatchView">
+                    <!-- WHAT MOVED WHERE: once per person on this browser, with
+                         the wording for this person's role (the view-only grant
+                         never had By student group). A BARE DIV, so `hidden`
+                         cannot be beaten by a display rule. -->
+                    <div id="attMovedNote" hidden></div>
+                    <!-- Where this tab's numbers come from and when; the amber
+                         line when the school-day count is late or unknown; the
+                         admins' rebuild verdict. Filled by renderAttDataLine. -->
+                    <div id="attDataLine"></div>
 
-                    <!-- WHICH PERIOD, at the top of the view it scopes.
-                         Asked for 2026-09-23: the year to date answers "who is
-                         chronically absent"; a week or a month answers "who
-                         was out", which is what a Monday meeting and a
-                         monthly report ask. The year stays the default and
-                         keeps its chronic tiers; a week or a month gets plain
-                         bands, because "severe" in a five-day week would be
-                         any child absent once. -->
-                    <div class="subtab-bar analytics-tabs wc-att-period" id="attPeriod" role="group"
-                         aria-label="Which period to show">
-                        <button type="button" class="analytics-tab active" data-attwin="ytd" aria-pressed="true"
-                                onclick="setAttendanceWindow('ytd')">Year to date</button>
-                        <button type="button" class="analytics-tab" data-attwin="thisWeek" aria-pressed="false"
-                                onclick="setAttendanceWindow('thisWeek')">This week</button>
-                        <button type="button" class="analytics-tab" data-attwin="lastWeek" aria-pressed="false"
-                                onclick="setAttendanceWindow('lastWeek')">Last week</button>
-                        <button type="button" class="analytics-tab" data-attwin="thisMonth" aria-pressed="false"
-                                onclick="setAttendanceWindow('thisMonth')">This month</button>
-                        <button type="button" class="analytics-tab" data-attwin="lastMonth" aria-pressed="false"
-                                onclick="setAttendanceWindow('lastMonth')">Last month</button>
-                    </div>
+                    <!-- YEAR SO FAR and WEEK OR MONTH share this pane; its
+                         data-attview says which section shows. A BARE DIV:
+                         `hidden` is beaten by any author rule that sets
+                         `display`, which is how a red unsaved-referral bar
+                         shipped visible to everybody on 2026-09-08. -->
+                    <div id="attWatchView" data-attview="watch">
+                        <section data-asec="watch">
+                            <p class="wc-view-q">Who has missed the most school this year?</p>
+                            <p class="wc-trend-note">Ranked worst first. Chronic means missing 10% or more of school days; today that is <b id="attChronicDays">&hellip;</b> days.</p>
+                            <div class="wc-card panel-card">
+                                <div id="attYearChips"></div>
+                                <!-- The old tier cards, now the filter: band
+                                     chips with their counts. Filled by
+                                     renderAttendanceWatch. -->
+                                <div class="wc-band-row" id="attYearBands" role="group" aria-label="Show students in this band"></div>
+                                <div class="wc-att-controls">
+                                    <div class="wc-att-controls-end wc-att-controls-all">
+                                        <label class="wc-att-grade-wrap" for="attYearKind">
+                                            <span class="wc-att-grade-label">Kind of absence</span>
+                                            <select id="attYearKind" class="wc-att-grade" onchange="setAttendanceYearKind(this.value)"></select>
+                                        </label>
+                                        <!-- Options are built from the data:
+                                             the school is 6-12 today and that is
+                                             not this file's fact to hardcode. -->
+                                        <label class="wc-att-grade-wrap" for="attYearGrade">
+                                            <span class="wc-att-grade-label">Grade (app roster)</span>
+                                            <select id="attYearGrade" class="wc-att-grade" onchange="setAttendanceGradeFilter(this.value)">
+                                                <option value="all">All grades</option>
+                                            </select>
+                                        </label>
+                                        <input type="search" id="attYearSearch" class="wc-att-search" placeholder="Search everyone: name or student number"
+                                               aria-label="Search every student on this tab" oninput="renderAttendanceWatch()">
+                                    </div>
+                                </div>
+                                <div id="attYearTable"></div>
+                                <p class="wc-att-foot" id="attYearFoot"></p>
+                                <div id="attYearFold"></div>
+                            </div>
+                        </section>
 
-                    <!-- THE DENOMINATOR IS ON SCREEN, NOT BURIED.
-                         Every percentage below is days absent over days in
-                         session, and in September that divisor is small enough
-                         that two absences read as 10%. Showing the count, and
-                         letting it be corrected for holidays, is what keeps the
-                         percentage honest rather than authoritative. -->
-                    <div class="wc-card wc-att-basis">
-                        <div class="wc-att-basis-row">
-                            <label for="attFirstDay">School year started</label>
-                            <input type="date" id="attFirstDay" value="2026-08-12" onchange="renderAttendanceWatch()">
+                        <section data-asec="window">
+                            <p class="wc-view-q">Who was out on the last school day, last week, or this month?</p>
+                            <p class="wc-trend-note">Finished school days only, up to yesterday. Today&rsquo;s attendance is still being taken.</p>
+                            <div class="wc-card panel-card">
+                                <div class="wc-att-pills" id="attWinPick" role="group" aria-label="Which period to show">
+                                    <button type="button" class="analytics-tab" data-attwin="lastDay" aria-pressed="false"
+                                            onclick="setAttendanceWindow('lastDay')">Last school day</button>
+                                    <button type="button" class="analytics-tab active" data-attwin="lastWeek" aria-pressed="true"
+                                            onclick="setAttendanceWindow('lastWeek')">Last week</button>
+                                    <button type="button" class="analytics-tab" data-attwin="thisWeek" aria-pressed="false"
+                                            onclick="setAttendanceWindow('thisWeek')">This week so far</button>
+                                    <button type="button" class="analytics-tab" data-attwin="lastMonth" aria-pressed="false"
+                                            onclick="setAttendanceWindow('lastMonth')">Last month</button>
+                                    <button type="button" class="analytics-tab" data-attwin="thisMonth" aria-pressed="false"
+                                            onclick="setAttendanceWindow('thisMonth')">This month so far</button>
+                                </div>
+                                <div id="attWinChips"></div>
+                                <div class="wc-band-row" id="attWinBands" role="group" aria-label="Show students who missed at least this much"></div>
+                                <p class="wc-trend-note" id="attWinOneDay" hidden></p>
+                                <div class="wc-att-controls">
+                                    <div class="wc-att-controls-end wc-att-controls-all">
+                                        <label class="wc-att-grade-wrap" for="attWinKind">
+                                            <span class="wc-att-grade-label">Kind of absence</span>
+                                            <select id="attWinKind" class="wc-att-grade" onchange="setAttendanceWindowKind(this.value)"></select>
+                                        </label>
+                                        <label class="wc-att-grade-wrap" for="attWinGrade">
+                                            <span class="wc-att-grade-label">Grade</span>
+                                            <select id="attWinGrade" class="wc-att-grade" onchange="setAttendanceGradeFilter(this.value)">
+                                                <option value="all">All grades</option>
+                                            </select>
+                                        </label>
+                                        <input type="search" id="attWinSearch" class="wc-att-search" placeholder="Search everyone: name or student number"
+                                               aria-label="Search every student on this tab" oninput="renderAttendanceWindow()">
+                                    </div>
+                                </div>
+                                <div id="attWinTable"></div>
+                                <div id="attWinFold"></div>
+                            </div>
+                        </section>
+                    </div><!-- /attWatchView -->
+
+                    <!-- TRENDS: both run charts, under one question. A BARE DIV. -->
+                    <div id="attRateView" hidden>
+                        <p class="wc-view-q">Is attendance getting better?</p>
+                        <p class="wc-trend-note">Each chart draws a middle line (the median). A long run of points on one side of it means a real change, not chance. The two charts measure different things: the first counts <b>whole days</b> only, the second counts <b>any missed period</b>, so they can disagree.</p>
+                        <!-- ATTENDANCE RATE OVER TIME (2026-09-23).
+                             A run chart of a RATE that resets each week (and two
+                             monthly measures), for the whole school and each grade
+                             band, against a median that can be FROZEN once a
+                             baseline shows no signal. Freezing and marking dates
+                             sit in a closed fold (renderAttendanceRateBody). -->
+                        <div class="wc-card panel-card wc-rc-card wc-ar-card">
+                            <div class="page-header wc-rc-header">
+                                <h3 class="wc-rc-title">Attendance rate over time</h3>
+                            </div>
+                            <div class="wc-att-pills" id="attRateMeasure" role="group" aria-label="Which measure to chart">
+                                <button type="button" class="analytics-tab active" data-armeasure="weeklyRate" aria-pressed="true"
+                                        onclick="setAttendanceRateMeasure('weeklyRate')">Weekly rate</button>
+                                <button type="button" class="analytics-tab" data-armeasure="monthlyAvgAbsent" aria-pressed="false"
+                                        onclick="setAttendanceRateMeasure('monthlyAvgAbsent')">Days absent per student</button>
+                                <button type="button" class="analytics-tab" data-armeasure="monthlyChronic" aria-pressed="false"
+                                        onclick="setAttendanceRateMeasure('monthlyChronic')">Chronic that month</button>
+                            </div>
+                            <div class="wc-chips"><span class="wc-chip">This school year and last &middot; finished weeks and months</span><span class="wc-chip wc-chip-unit">whole days only: a day missing some periods counts as attended</span></div>
+                            <p class="wc-att-answer" id="attRateAnswer"></p>
+                            <div id="attRateBody"></div>
                         </div>
-                        <div class="wc-att-basis-row">
-                            <label for="attNonSchoolDays">Holidays &amp; non-school weekdays since then</label>
-                            <input type="number" id="attNonSchoolDays" min="0" max="60" step="1" value="2" onchange="renderAttendanceWatch()">
-                        </div>
-                        <p class="wc-att-basis-note" id="attBasisNote"></p>
-                    </div>
 
-                    <!-- THE TREND, ABOVE THE TIERS.
-                         The tiers answer "who is absent a lot". This answers
-                         "is it getting better or worse", which is the question
-                         any intervention is actually judged on. A run chart
-                         plots the measure against its MEDIAN and applies
-                         published signal rules, so a real change is told apart
-                         from ordinary bouncing rather than eyeballed. -->
-                    <div class="wc-card panel-card wc-rc-card">
-                        <div class="page-header wc-rc-header">
-                            <h3 class="wc-rc-title">Trend</h3>
-                            <div class="subtab-bar analytics-tabs" id="attRunToggle">
-                                <!-- ONE SERIES AT A TIME: a run chart reads
-                                     against ONE median, and two lines make it
-                                     ambiguous which one the rules are testing. -->
-                                <button type="button" class="analytics-tab active" data-run="full"
+                        <!-- DAILY ABSENCES, moved here from the top of Who is
+                             missing. Finished days only: today's half-taken day
+                             was a false dip. -->
+                        <div class="wc-card panel-card wc-rc-card">
+                            <div class="page-header wc-rc-header">
+                                <h3 class="wc-rc-title">Daily absences, last 30 finished school days</h3>
+                            </div>
+                            <!-- ONE SERIES AT A TIME: a run chart reads against
+                                 ONE median, and two lines make it ambiguous
+                                 which one the rules are testing. -->
+                            <div class="wc-att-pills" id="attRunToggle" role="group" aria-label="Which absences to chart">
+                                <button type="button" class="analytics-tab active" data-run="full" aria-pressed="true"
                                         onclick="setAbsenceRunSeries('full')">Whole days</button>
-                                <button type="button" class="analytics-tab" data-run="partial"
+                                <button type="button" class="analytics-tab" data-run="partial" aria-pressed="false"
                                         onclick="setAbsenceRunSeries('partial')">Partial days</button>
-                                <button type="button" class="analytics-tab" data-run="all"
+                                <button type="button" class="analytics-tab" data-run="all" aria-pressed="false"
                                         onclick="setAbsenceRunSeries('all')">All absences</button>
-                                <button type="button" class="analytics-tab wc-rc-refresh"
-                                        onclick="renderAbsenceRunChart(true)">Refresh</button>
                             </div>
+                            <div id="attRunChips"></div>
+                            <p class="wc-att-answer" id="attRunAnswer"></p>
+                            <div id="attRunChart"></div>
+                            <div id="attRunFold"></div>
                         </div>
-                        <div id="attRunChart"></div>
-                    </div>
+                    </div><!-- /attRateView -->
 
-                    <div class="wc-att-tiers" id="attTierCards"></div>
+                    <div id="attPerfectView" hidden>
+                    <!-- PERFECT ATTENDANCE.
+                         Everything else here names the children the school is
+                         worried about. This is the only panel that names the
+                         ones it is not, and it exists because the owner asked
+                         for an award list: no missed classes and no tardies.
 
-                    <div class="wc-card panel-card">
-                        <div class="wc-att-controls">
-                            <div class="subtab-bar analytics-tabs" id="attTierFilter">
-                                <button type="button" class="analytics-tab active" data-atier="chronicPlus"
-                                        onclick="setAttendanceTierFilter('chronicPlus')">Chronic &amp; severe</button>
-                                <button type="button" class="analytics-tab" data-atier="severe"
-                                        onclick="setAttendanceTierFilter('severe')">Severe only</button>
-                                <button type="button" class="analytics-tab" data-atier="at-risk"
-                                        onclick="setAttendanceTierFilter('at-risk')">At risk</button>
-                                <!-- FULL DAYS IS ITS OWN VIEW, because the rate
-                                     above cannot separate them: a student who
-                                     misses Promise Time every morning and one
-                                     who never comes in reach the same
-                                     percentage. Measured school-wide, 46% of
-                                     absent days are whole days and 54% are
-                                     partial. -->
-                                <button type="button" class="analytics-tab" data-atier="fullDays"
-                                        onclick="setAttendanceTierFilter('fullDays')">Full days</button>
-                                <!-- And the mirror of it: on this list, with a
-                                     real absence rate, and never one whole day
-                                     missed. 139 students on 2026-09-21. -->
-                                <button type="button" class="analytics-tab" data-atier="partialOnly"
-                                        onclick="setAttendanceTierFilter('partialOnly')">Never a full day</button>
-                                <button type="button" class="analytics-tab" data-atier="tardy"
-                                        onclick="setAttendanceTierFilter('tardy')">Tardies</button>
-                                <button type="button" class="analytics-tab" data-atier="all"
-                                        onclick="setAttendanceTierFilter('all')">Everyone</button>
+                         THE WEEK IS THE LAST FINISHED ONE, not a rolling five
+                         days and not the current week -- the same week Week or
+                         month calls "Last week". An award list has to hold
+                         still while somebody reads it out. -->
+                        <p class="wc-view-q">Who had no absences and no unexcused tardies?</p>
+                        <p class="wc-trend-note">An award list. Excused tardies never count.</p>
+                        <div class="wc-card panel-card wc-pa-card">
+                            <div class="page-header wc-pa-header">
+                                <h3 class="wc-pa-title">Perfect attendance</h3>
+                                <!-- Prints exactly the list below, in the order on
+                                     screen. See openPerfectAttendanceSheet(). -->
+                                <button type="button" class="btn btn-secondary" onclick="openPerfectAttendanceSheet()"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-printer"></use></svg> Print / PDF</button>
                             </div>
-                            <!-- THE SAME QUESTIONS FOR A WEEK OR A MONTH, without
-                                 the chronic tiers. Shown in place of the row
-                                 above when a week or month is picked. -->
-                            <div class="subtab-bar analytics-tabs" id="attWindowFilter" style="display:none">
-                                <button type="button" class="analytics-tab active" data-awin="absent"
-                                        onclick="setAttendanceWindowFilter('absent')">Missed a day</button>
-                                <button type="button" class="analytics-tab" data-awin="every"
-                                        onclick="setAttendanceWindowFilter('every')">Every day</button>
-                                <button type="button" class="analytics-tab" data-awin="half"
-                                        onclick="setAttendanceWindowFilter('half')">Half or more</button>
-                                <button type="button" class="analytics-tab" data-awin="fullDays"
-                                        onclick="setAttendanceWindowFilter('fullDays')">Full days</button>
-                                <button type="button" class="analytics-tab" data-awin="partialOnly"
-                                        onclick="setAttendanceWindowFilter('partialOnly')">Never a full day</button>
-                                <button type="button" class="analytics-tab" data-awin="tardy"
-                                        onclick="setAttendanceWindowFilter('tardy')">Tardies</button>
-                                <button type="button" class="analytics-tab" data-awin="all"
-                                        onclick="setAttendanceWindowFilter('all')">Everyone</button>
+                            <div class="wc-att-pills" id="attPerfectWindow" role="group" aria-label="Which period">
+                                <button type="button" class="analytics-tab active" data-pa="week" aria-pressed="true"
+                                        onclick="setPerfectWindow('week')">Last week</button>
+                                <button type="button" class="analytics-tab" data-pa="month" aria-pressed="false"
+                                        onclick="setPerfectWindow('month')">A month</button>
+                                <button type="button" class="analytics-tab" data-pa="year" aria-pressed="false"
+                                        onclick="setPerfectWindow('year')">Year to date</button>
                             </div>
-                            <!-- GRADE SCOPES THE WHOLE SCREEN, not just the
-                                 list. Picking a grade re-tiers and re-counts
-                                 the four cards above too: cards reading 196
-                                 severe over a list of thirty looks like a bug
-                                 rather than a filter. Options are built from
-                                 the data by renderAttendanceWatch, because the
-                                 school is 6-12 today and that is not this
-                                 file's fact to hardcode. -->
-                            <!-- Grade and search travel together. Left as two
-                                 loose flex children, space-between put the
-                                 grade hard right and dropped the search onto a
-                                 row of its own, so the two controls that narrow
-                                 the same list read as unrelated. -->
-                            <div class="wc-att-controls-end">
-                                <label class="wc-att-grade-wrap" for="attGradeFilter">
-                                    <span class="wc-att-grade-label">Grade</span>
-                                    <select id="attGradeFilter" class="wc-att-grade"
+                            <div id="attPerfectChips"></div>
+                            <div class="wc-pa-controls wc-att-controls-all">
+                                <!-- ANY MONTH OF THE YEAR (owner, 2026-10-01: "not
+                                     just 'this month'"). Shown on the Month tab
+                                     only, newest first, starting on this month so
+                                     the tab opens where it always did. Filled by
+                                     syncPerfectMonthPicker(). -->
+                                <label class="wc-att-grade-wrap" id="attPerfectMonthWrap" for="attPerfectMonth"
+                                       style="display:none">
+                                    <span class="wc-att-grade-label">Month</span>
+                                    <select id="attPerfectMonth" class="wc-att-grade"
+                                            onchange="setPerfectMonth(this.value)"
+                                            aria-label="Which month to show perfect attendance for"></select>
+                                </label>
+                                <!-- STRICT BY DEFAULT. EXCUSED ABSENCES ONLY since
+                                     2026-10-01: excused tardies never count. -->
+                                <label class="wc-pa-check" title="Excused tardies never count, whichever way this is set.">
+                                    <input type="checkbox" id="attPerfectExcused" checked
+                                           onchange="renderPerfectAttendance()">
+                                    <span>Excused absences still break it</span>
+                                </label>
+                                <label class="wc-att-grade-wrap" for="attPerfectGrade">
+                                    <span class="wc-att-grade-label">Grade (PowerSchool)</span>
+                                    <select id="attPerfectGrade" class="wc-att-grade"
                                             onchange="setAttendanceGradeFilter(this.value)">
                                         <option value="all">All grades</option>
                                     </select>
                                 </label>
-                                <input type="search" id="attSearch" class="wc-att-search" placeholder="Search name or student number"
-                                       oninput="renderAttendanceWatch()">
+                                <input type="search" id="attPerfectSearch" class="wc-att-search" placeholder="Search: name or student number"
+                                       aria-label="Search the perfect attendance list" oninput="renderPerfectAttendance()">
                             </div>
+                            <div id="attPerfectBody"></div>
                         </div>
-                        <div id="attendanceList" class="wc-att-list"></div>
-                        <p class="wc-att-foot" id="attFoot"></p>
-                    </div>
-
-                    </div><!-- /attWatchView -->
-
-                    <div id="attPerfectView" hidden>
-                    <!-- PERFECT ATTENDANCE.
-                         Everything above this point names the children the
-                         school is worried about. This is the only panel on the
-                         screen that names the ones it is not, and it exists
-                         because the owner asked for an award list: no missed
-                         classes and no tardies.
-
-                         THE WEEK IS THE LAST COMPLETED ONE, not a rolling five
-                         days and not the current week. An award list has to
-                         hold still while somebody reads it out, and "this
-                         week" on a Monday morning is a one-day window almost
-                         everyone wins. -->
-                    <div class="wc-card panel-card wc-pa-card">
-                        <div class="page-header wc-pa-header">
-                            <h3 class="wc-pa-title">Perfect attendance</h3>
-                            <div class="subtab-bar analytics-tabs" id="attPerfectWindow">
-                                <button type="button" class="analytics-tab active" data-pa="week"
-                                        onclick="setPerfectWindow('week')">Last full week</button>
-                                <button type="button" class="analytics-tab" data-pa="month"
-                                        onclick="setPerfectWindow('month')">Month</button>
-                                <button type="button" class="analytics-tab" data-pa="year"
-                                        onclick="setPerfectWindow('year')">Year to date</button>
-                                <button type="button" class="analytics-tab wc-rc-refresh"
-                                        onclick="renderPerfectAttendance(true)">Refresh</button>
-                                <!-- Prints exactly the list below, filters and
-                                     order included. See openPerfectAttendanceSheet(). -->
-                                <button type="button" class="analytics-tab"
-                                        onclick="openPerfectAttendanceSheet()"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-printer"></use></svg> Print / PDF</button>
-                            </div>
-                        </div>
-                        <div class="wc-pa-controls">
-                            <!-- ANY MONTH OF THE YEAR (owner, 2026-10-01: "not
-                                 just 'this month'"). Shown on the Month tab
-                                 only, newest first, starting on this month so
-                                 the tab opens where it always did. Filled by
-                                 syncPerfectMonthPicker(). -->
-                            <label class="wc-att-grade-wrap" id="attPerfectMonthWrap" for="attPerfectMonth"
-                                   style="display:none">
-                                <span class="wc-att-grade-label">Month</span>
-                                <select id="attPerfectMonth" class="wc-att-grade"
-                                        onchange="setPerfectMonth(this.value)"
-                                        aria-label="Which month to show perfect attendance for"></select>
-                            </label>
-                            <!-- STRICT BY DEFAULT. Measured 2026-09-22: year to
-                                 date the choice is 35 students against 60.
-                                 EXCUSED ABSENCES ONLY since 2026-10-01: the
-                                 owner settled excused tardies, which never
-                                 count, so they left the box (and the 35/60
-                                 above, measured with them in it). -->
-                            <label class="wc-pa-check" title="Excused tardies never count, whichever way this is set.">
-                                <input type="checkbox" id="attPerfectExcused" checked
-                                       onchange="renderPerfectAttendance()">
-                                <span>Excused absences still break it</span>
-                            </label>
-                            <select id="attPerfectGrade" class="wc-att-grade"
-                                    onchange="renderPerfectAttendance()"
-                                    aria-label="Filter perfect attendance by grade">
-                                <option value="all">All grades</option>
-                            </select>
-                            <!-- The first option is the order the list has
-                                 always had. -->
-                            <label class="wc-att-grade-wrap" for="attPerfectSort">
-                                <span class="wc-att-grade-label">Sort</span>
-                                <select id="attPerfectSort" class="wc-att-grade"
-                                        onchange="renderPerfectAttendance()"
-                                        aria-label="Sort the perfect attendance list">
-                                    <option value="grade" selected>Grade, then last name</option>
-                                    <option value="last">Last name</option>
-                                    <option value="first">First name</option>
-                                    <option value="id">Student ID</option>
-                                </select>
-                            </label>
-                        </div>
-                        <div id="attPerfectBody"></div>
-                    </div>
                     </div><!-- /attPerfectView -->
 
                     <div id="attSubgroupView" hidden>
@@ -3789,49 +3764,21 @@
                          Pacific Islander students" at a school with two of
                          them is a sentence about one specific child.
 
+                         ADMINS, SUPERADMINS AND PBIS ONLY: the button is
+                         hidden for anyone else and the server refuses them.
+
                          THE BASELINE LEADS. Measured 2026-09-22: 52.4% of the
                          whole school is chronically absent, so a 55% subgroup
                          rate reads as alarming until you see it. -->
-                    <div class="wc-card panel-card wc-sg-card">
-                        <div class="page-header wc-sg-header">
-                            <h3 class="wc-sg-title">Chronic absence by student group</h3>
-                            <button type="button" class="analytics-tab wc-rc-refresh"
-                                    onclick="renderAttendanceSubgroups(true)">Refresh</button>
-                        </div>
-                        <div id="attSubgroupBody"></div>
-                    </div>
-                    </div><!-- /attSubgroupView -->
-
-                    <div id="attRateView" hidden>
-                    <!-- ATTENDANCE RATE OVER TIME (2026-09-23).
-                         A run chart of a RATE that resets each week (and two
-                         monthly measures), for the whole school and each grade
-                         band, against a median that can be FROZEN once a
-                         baseline shows no signal. Unlike the Trend chart on
-                         "Who is missing", which plots counts because it has no
-                         daily enrolment, this has enrolment for every school
-                         day of both years, last year included. -->
-                    <div class="wc-card panel-card wc-rc-card wc-ar-card">
-                        <div class="page-header wc-rc-header">
-                            <h3 class="wc-rc-title">Attendance rate over time</h3>
-                            <div class="subtab-bar analytics-tabs" id="attRateMeasure" role="group"
-                                 aria-label="Which measure to chart">
-                                <button type="button" class="analytics-tab active" data-armeasure="weeklyRate"
-                                        aria-pressed="true"
-                                        onclick="setAttendanceRateMeasure('weeklyRate')">Weekly rate</button>
-                                <button type="button" class="analytics-tab" data-armeasure="monthlyAvgAbsent"
-                                        aria-pressed="false"
-                                        onclick="setAttendanceRateMeasure('monthlyAvgAbsent')">Days absent per student</button>
-                                <button type="button" class="analytics-tab" data-armeasure="monthlyChronic"
-                                        aria-pressed="false"
-                                        onclick="setAttendanceRateMeasure('monthlyChronic')">Chronic that month</button>
-                                <button type="button" class="analytics-tab wc-rc-refresh"
-                                        onclick="renderAttendanceRate(true)">Refresh</button>
+                        <p class="wc-view-q">Is chronic absence higher for some groups than for the school as a whole?</p>
+                        <p class="wc-trend-note">Race and ethnicity, and English Learner groups, year to date, against the whole school. Groups under 10 students are never shown.</p>
+                        <div class="wc-card panel-card wc-sg-card">
+                            <div class="page-header wc-sg-header">
+                                <h3 class="wc-sg-title">Chronic absence by student group</h3>
                             </div>
+                            <div id="attSubgroupBody"></div>
                         </div>
-                        <div id="attRateBody"></div>
-                    </div>
-                    </div><!-- /attRateView -->
+                    </div><!-- /attSubgroupView -->
                 </div>
 
                 <!-- Early Warning Subtab
@@ -3851,11 +3798,11 @@
                      histogram puts a workable number of children at the top:
                      31 in Act now, 49 in Watch, out of 679.
 
-                     THE DENOMINATOR LIVES ON ATTENDANCE WATCH, deliberately.
+                     THE DENOMINATOR IS ATTENDANCE WATCH'S, deliberately.
                      Both screens divide absences by days in session, and two
-                     inputs would let one child be chronic on one screen and
-                     fine on the other. This reads the same two fields and
-                     says where to change them.
+                     counts would let one child be chronic on one screen and
+                     fine on the other. Both read the same school-day count:
+                     the days PowerSchool took attendance (2026-10-07).
                      =============================================== -->
                 <div id="behaviorEarlyWarning" class="discipline-subtab hidden">
                     <div class="page-header">
@@ -3863,7 +3810,7 @@
                             <h2 class="page-title">🎯 Early Warning</h2>
                             <p class="page-subtitle">Attendance, behaviour and course performance combined, worst first</p>
                         </div>
-                        <button type="button" class="btn btn-secondary" onclick="renderEarlyWarning(true)">Refresh</button>
+                        <button type="button" class="btn btn-secondary" onclick="openEarlyWarning(true)">Refresh</button>
                     </div>
 
                     <!-- WHAT THIS SCREEN CANNOT SEE, SAID OUT LOUD AND FIRST.
@@ -3876,7 +3823,10 @@
 
                     <div class="wc-card panel-card">
                         <div class="wc-att-controls">
-                            <div class="subtab-bar analytics-tabs" id="ewTierFilter">
+                            <!-- NOT .analytics-tabs: Discipline > Analytics clears
+                                 .active on every '.analytics-tabs .analytics-tab'
+                                 on the page, which took this row's highlight. -->
+                            <div class="subtab-bar wc-att-pills" id="ewTierFilter">
                                 <button type="button" class="analytics-tab active" data-etier="actWatch"
                                         onclick="setEarlyWarningTierFilter('actWatch')">Act now &amp; watch</button>
                                 <button type="button" class="analytics-tab" data-etier="act"
@@ -3999,7 +3949,8 @@
 
                     <div class="wc-card panel-card">
                         <div class="wc-att-controls">
-                            <div class="subtab-bar analytics-tabs" id="uvViewFilter">
+                            <!-- NOT .analytics-tabs, for the same reason as #ewTierFilter. -->
+                            <div class="subtab-bar wc-att-pills" id="uvViewFilter">
                                 <button type="button" class="analytics-tab active" data-uvview="today"
                                         onclick="setUniformView('today')">Today</button>
                                 <button type="button" class="analytics-tab" data-uvview="repeat"
@@ -5704,6 +5655,53 @@
         </div>
     </div>
 
+    <!-- ATTENDANCE WATCH: WHAT THE WORDS MEAN (2026-10-07). One list, opened
+         from "What do these words mean?" under the Attendance Watch tab bar.
+         The thresholds quoted here (5%, 10%, 20%, 10 points, 6 and 5 in a
+         row, 25%) are WildcatRoster's; attendance-nav.test.mjs checks they
+         still agree. -->
+    <div id="attGlossaryModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="attGlossaryTitle"
+         onclick="if (event.target === this) closeAttGlossary()">
+        <div class="modal-content wc-glossary" style="max-width: 680px;">
+            <div class="wc-glossary-head">
+                <h2 id="attGlossaryTitle">What the words mean</h2>
+                <button type="button" class="wc-moved-x" id="attGlossaryClose" aria-label="Close the word list" onclick="closeAttGlossary()"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-x"></use></svg></button>
+            </div>
+            <dl class="wc-glossary-list">
+                <dt>School day</dt>
+                <dd>A day PowerSchool took attendance. Holidays have no attendance, so they drop out by themselves; nobody types them in. Today joins the count once PowerSchool&rsquo;s midday copy holds today&rsquo;s attendance (about noon); before then the count runs to yesterday.</dd>
+                <dt>Finished day</dt>
+                <dd>A school day that is over and fully copied from PowerSchool. Week or month and the daily chart count finished days only, up to yesterday.</dd>
+                <dt>Absent (any period)</dt>
+                <dd>Missed at least one period that day. Year so far and Week or month count a day absent this way.</dd>
+                <dt>Whole day, partial day</dt>
+                <dd>A whole day is every block that ran that day missed. A partial day is some blocks missed but at least one attended, often an arrival problem rather than truancy.</dd>
+                <dt>Tardy</dt>
+                <dd>Arrived late. PowerSchool records a tardy as present. Excused tardies never count against Perfect attendance.</dd>
+                <dt>Excused</dt>
+                <dd>An absence or tardy PowerSchool marks as excused. On Perfect attendance an excused absence still breaks the record unless you untick the box.</dd>
+                <dt>Promise Time</dt>
+                <dd>The advisory block at the start (AM) and end (PM) of each day. It meets every day, so a late arrival shows up there first.</dd>
+                <dt>Chronic</dt>
+                <dd>Missed 10% or more of school days so far this year. <span id="attGlossaryChronic"></span></dd>
+                <dt>Severe, at risk, satisfactory</dt>
+                <dd>Severe is 20% or more. At risk is 5% up to 10%. Satisfactory is under 5%.</dd>
+                <dt>Run chart</dt>
+                <dd>Points in time order drawn against their middle line, read with a few published rules so that a real change can be told from ordinary bouncing.</dd>
+                <dt>Median</dt>
+                <dd>The middle value: half the points sit above it and half below.</dd>
+                <dt>Signal</dt>
+                <dd>A pattern chance rarely makes: 6 or more points in a row on one side of the median (a shift), 5 or more in a row going the same way (a trend), or too few or too many runs. A signal says something changed, never why.</dd>
+                <dt>Baseline</dt>
+                <dd>A stretch of at least 10 weeks with no signal whose median is frozen, so later weeks are judged against how things were. Set by administrators and the PBIS team.</dd>
+                <dt>Short week</dt>
+                <dd>A week with more than 25% fewer (or more) student-days than usual, such as a holiday week. By default it is merged into the week after.</dd>
+                <dt>Sorting a table</dt>
+                <dd>Click a column heading to sort by it, and click again to reverse. Number columns start with the highest. Blanks and dashes always sit at the bottom. Sorting never changes a number, and it covers the whole list, not only the rows shown.</dd>
+            </dl>
+        </div>
+    </div>
+
     <div id="editTeacherModal" class="modal hidden">
         <div class="modal-content" style="max-width: 500px;">
             <h2><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-edit"></use></svg> Edit Teacher</h2>
@@ -6431,24 +6429,24 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20261006e"></script>
+    <script src="wildcat-auth.js?v=20261007a"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
     <!-- The icon sprite. Injected at load, before anything renders, so an
          icon is never a blank square for a frame. -->
-    <script src="wildcat-icons.js?v=20261006e"></script>
-    <script src="wildcat-motion.js?v=20261006e"></script>
-    <script src="wildcat-discipline.js?v=20261006e"></script>
-    <script src="wildcat-audit.js?v=20261006e"></script>
-    <script src="wildcat-cashaudit.js?v=20261006e"></script>
-    <script src="wildcat-dirty.js?v=20261006e"></script>
-    <script src="wildcat-update.js?v=20261006e"></script>
-    <script src="wildcat-modes.js?v=20261006e"></script>
-    <script src="wildcat-merge.js?v=20261006e"></script>
-    <script src="wildcat-savequeue.js?v=20261006e"></script>
-    <script src="wildcat-roster.js?v=20261006e"></script>
-    <script src="wildcat-store.js?v=20261006e"></script>
-    <script src="script.js?v=20261006e"></script>
+    <script src="wildcat-icons.js?v=20261007a"></script>
+    <script src="wildcat-motion.js?v=20261007a"></script>
+    <script src="wildcat-discipline.js?v=20261007a"></script>
+    <script src="wildcat-audit.js?v=20261007a"></script>
+    <script src="wildcat-cashaudit.js?v=20261007a"></script>
+    <script src="wildcat-dirty.js?v=20261007a"></script>
+    <script src="wildcat-update.js?v=20261007a"></script>
+    <script src="wildcat-modes.js?v=20261007a"></script>
+    <script src="wildcat-merge.js?v=20261007a"></script>
+    <script src="wildcat-savequeue.js?v=20261007a"></script>
+    <script src="wildcat-roster.js?v=20261007a"></script>
+    <script src="wildcat-store.js?v=20261007a"></script>
+    <script src="script.js?v=20261007a"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -6458,7 +6456,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20261006e').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20261007a').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {

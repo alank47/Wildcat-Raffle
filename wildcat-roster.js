@@ -1376,32 +1376,52 @@
    * than as a finished result, and a completed-month rule would show nothing
    * at all for the first week of October.
    */
+  /**
+   * "LAST WEEK", ONE RULE FOR EVERY SCREEN (2026-10-07): the last Monday to
+   * Friday that has finished.
+   *
+   * ON A WEEKEND, THE WEEK JUST GONE IS ALREADY FINISHED. Stepping back a
+   * further week on a Saturday would show the week before last, so a school
+   * looking on Friday evening and again on Saturday morning would see the
+   * list go BACKWARDS. Monday to Friday has run its course by Saturday; on a
+   * weekday it has not, and the last finished week is the one before.
+   *
+   * WHY ONE FUNCTION. Perfect attendance had this rule and "Who is missing"
+   * did not: on a Sunday its "Last week" was the week before, so a PBIS lead
+   * preparing on Sunday night for a Monday meeting saw two different weeks
+   * under the same name (review, 2026-10-06). Both now ask this.
+   */
+  function lastFinishedWeek(todayIso) {
+    var today = dayFrom(todayIso);
+    if (!today) return null;
+    var iso = isoOf(today);
+    // Back up to the most recent Monday. getUTCDay is 0 for Sunday, so the
+    // shift is (dow + 6) % 7 rather than dow - 1.
+    var dow = today.getUTCDay();
+    var thisMonday = shiftDays(iso, -((dow + 6) % 7));
+    var weekend = (dow === 0 || dow === 6);
+    var from = weekend ? thisMonday : shiftDays(thisMonday, -7);
+    return { from: from, to: shiftDays(from, 4) };
+  }
+
   function perfectWindows(todayIso, yearStartIso) {
     var today = dayFrom(todayIso);
     if (!today) return null;
     var iso = isoOf(today);
 
-    // Back up to the most recent Monday. getUTCDay is 0 for Sunday, so the
-    // shift is (dow + 6) % 7 rather than dow - 1.
-    var dow = today.getUTCDay();
-    var daysSinceMonday = (dow + 6) % 7;
-    var thisMonday = shiftDays(iso, -daysSinceMonday);
-
-    // ON A WEEKEND, THE WEEK JUST GONE IS ALREADY FINISHED. Stepping back a
-    // further week on a Saturday would show the week before last, so a school
-    // looking on Friday evening and again on Saturday morning would see the
-    // list go BACKWARDS. Monday to Friday has run its course by Saturday;
-    // on a weekday it has not, and the last completed week is the one before.
-    var weekend = (dow === 0 || dow === 6);
-    var lastMonday = weekend ? thisMonday : shiftDays(thisMonday, -7);
-    var lastFriday = shiftDays(lastMonday, 4);
+    // The same week Week or month calls "Last week" (lastFinishedWeek).
+    var lw = lastFinishedWeek(iso);
+    var lastMonday = lw.from;
+    var lastFriday = lw.to;
 
     var monthStart = iso.slice(0, 8) + '01';
     var yearStart = /^\d{4}-\d{2}-\d{2}$/.test(String(yearStartIso || ''))
       ? String(yearStartIso).slice(0, 10) : null;
 
     return {
-      week: { key: 'week', from: lastMonday, to: lastFriday, label: 'Last full week' },
+      // "Last week", the name Week or month uses for the same Monday to
+      // Friday (it was "Last full week" until 2026-10-07).
+      week: { key: 'week', from: lastMonday, to: lastFriday, label: 'Last week' },
       month: { key: 'month', from: monthStart, to: iso, label: 'This month so far' },
       year: { key: 'year', from: yearStart, to: iso, label: 'Year to date' }
     };
@@ -1773,13 +1793,18 @@
   }
 
   /**
-   * This week, last week, this month, last month -- from today.
+   * Last school day, last week, this week so far, last month, this month so
+   * far -- from today.
    *
-   * A WEEK IS MONDAY TO FRIDAY. On a Saturday or Sunday "this week" is the one
-   * just finished (Monday to Friday has run its course) and "last week" the
-   * one before. So on a weekend, "This week" here is the week the Perfect
-   * attendance panel calls "Last full week"; on a weekday the two panels' "last
-   * week" are the same week.
+   * A WEEK IS MONDAY TO FRIDAY, and "Last week" is lastFinishedWeek: the same
+   * week Perfect attendance calls "Last week", weekends included (2026-10-07;
+   * before, on a Saturday or Sunday this said the week before). "This week so
+   * far" is the week after it, so on a weekend it is the coming week and has
+   * no finished day yet -- an empty window, which the screen says in words.
+   *
+   * LAST SCHOOL DAY (2026-10-07) is the morning question, "who was out
+   * yesterday?": `lastSchoolDay` is the newest finished date school ran, from
+   * the school-day calendar. Without it, the last finished weekday.
    *
    * ONLY COMPLETED DAYS. `completeThrough` is the last day whose attendance
    * is fully in -- yesterday, at the latest: the 06:30 sync carries yesterday,
@@ -1789,15 +1814,15 @@
    * would make today a "school day" two children missed. A window that runs
    * past `completeThrough` ends there; one that starts after it is empty.
    */
-  function absenceWindows(todayIso, completeThrough) {
+  function absenceWindows(todayIso, completeThrough, lastSchoolDay) {
     var today = dayFrom(todayIso);
     if (!today) return null;
     var iso = isoOf(today);
-    var dow = today.getUTCDay();
-    var thisMonday = shiftDays(iso, -((dow + 6) % 7));
+    var lw = lastFinishedWeek(iso);
+    var lastMonday = lw.from;
+    var lastFriday = lw.to;
+    var thisMonday = shiftDays(lastMonday, 7);
     var thisFriday = shiftDays(thisMonday, 4);
-    var lastMonday = shiftDays(thisMonday, -7);
-    var lastFriday = shiftDays(lastMonday, 4);
     var monthStart = iso.slice(0, 8) + '01';
     var prevMonthEnd = shiftDays(monthStart, -1);
     var prevMonthStart = prevMonthEnd.slice(0, 8) + '01';
@@ -1809,12 +1834,369 @@
       var capped = to > through;
       return { key: key, from: from, to: capped ? through : to, label: label, capped: capped, through: through };
     };
+    // Without the calendar, the last WEEKDAY up to `through`: on a Monday
+    // that is Friday, not the Sunday before (review, 2026-10-07).
+    var lastDay = through;
+    for (var back = 0; back < 2 && [0, 6].indexOf(dayFrom(lastDay).getUTCDay()) >= 0; back++) lastDay = shiftDays(lastDay, -1);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(lastSchoolDay || '')) && String(lastSchoolDay).slice(0, 10) <= through) {
+      lastDay = String(lastSchoolDay).slice(0, 10);
+    }
     return {
-      thisWeek: mk('thisWeek', thisMonday, thisFriday, 'This week'),
+      lastDay: mk('lastDay', lastDay, lastDay, 'Last school day'),
       lastWeek: mk('lastWeek', lastMonday, lastFriday, 'Last week'),
-      thisMonth: mk('thisMonth', monthStart, lastDayOfMonth(monthStart), 'This month'),
-      lastMonth: mk('lastMonth', prevMonthStart, lastDayOfMonth(prevMonthStart), 'Last month')
+      thisWeek: mk('thisWeek', thisMonday, thisFriday, 'This week so far'),
+      lastMonth: mk('lastMonth', prevMonthStart, lastDayOfMonth(prevMonthStart), 'Last month'),
+      thisMonth: mk('thisMonth', monthStart, lastDayOfMonth(monthStart), 'This month so far')
     };
+  }
+
+  // =====================================================================
+  // THE SCHOOL-DAY COUNT (2026-10-07)
+  //
+  // Every year-to-date percentage on Attendance Watch, Early Warning's
+  // attendance points and Student groups divide by "school days so far". It
+  // was two boxes on Attendance Watch -- a start date and a holiday count --
+  // that were saved nowhere, reset to 12 Aug and 2 on every page load, could
+  // be changed by a view-only reader, and went wrong after every holiday
+  // unless somebody retyped them.
+  //
+  // IT IS COUNTED NOW, from psAbsenceDayTotals: one row per date PowerSchool
+  // took attendance, written by the twice-daily absence rebuild. The same
+  // table already gives Week or month its school days and the referral
+  // chaser its calendar, so a holiday drops out by itself.
+  //
+  // THE RULE: dates before today that have a row, PLUS TODAY ONCE THE YEAR
+  // TOTALS HOLD IT. A future date PowerSchool already holds absences for never
+  // counts. Measured 2026-10-07: 38 before today, the same as the old boxes'
+  // 40 weekdays less 4 Sep and 7 Sep.
+  //
+  // WHY TODAY JOINS AT LUNCHTIME (review, 2026-10-07). The count is a
+  // DIVISOR, and what it divides is PowerSchool's year total
+  // (psAttendance.daysAbsentYtd), which counts every absence date on file --
+  // today's included. The 12:00 copy of those totals carries today's
+  // absences, so from then on a count that left today out divided 39 days of
+  // absences by 38 days and over-flagged: replayed on past afternoons whose
+  // count was a multiple of 5, Chronic and severe read 334 against 278 (25
+  // Sep) and 315 against 188 (26 Aug). So today counts exactly when the
+  // totals' own stamp (`totalsAt`, schoolAttendance's lastSyncedAt) is today
+  // at or after 10:00 in Los Angeles, and today is a school day: it has a row,
+  // or the absence rebuild has not yet copied today (12:00 to 12:30) and it
+  // is a weekday -- counting a day there is the safe direction. The old boxes
+  // also counted today from noon. Without the stamp, today is not counted.
+  //
+  // WHEN THE COPY IS LATE, judged by the rebuild's OWN stamp, not a clock
+  // rule. Every good rebuild rewrites every row with its time (syncedAt); a
+  // refused or failed run writes nothing and leaves the last good copy. A
+  // copy taken after 10:00 in Los Angeles has seen that day's attendance
+  // (the 12:30 run), one taken before it (the 06:30 run) has only seen the
+  // day before. Weekdays after the last day a good copy has seen, up to
+  // yesterday, with no row, are the only days nobody can vouch for: they are
+  // counted as school days (the safe direction -- a larger divisor flags
+  // fewer children, never more) and listed, so the screen says so. In normal
+  // running that list is always empty, so nothing moves: a missed morning
+  // run changes nothing, and the 18-hour gap overnight is not "late".
+  //
+  // UNKNOWN IS SAID, NOT GUESSED: a refusal, an empty table (it is emptied
+  // and refilled in two writes by each rebuild, and an empty table carries
+  // no stamp), a read cut short, no stamp, or far fewer days than weekdays.
+  // Each comes back known: false with the reason in words. A good copy with
+  // no school day on file up to today (before the first day of school) is
+  // KNOWN, and is 0.
+  // =====================================================================
+
+  /** A copy stamped at or after this hour (Los Angeles) has seen that day's attendance. */
+  var CALENDAR_SEEN_HOUR = 10;
+
+  /** The Los Angeles calendar day and hour of an instant, or null. */
+  function laDayHour(ms) {
+    if (!isFinite(ms)) return null;
+    try {
+      var parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', hourCycle: 'h23'
+      }).formatToParts(new Date(ms));
+      var get = function (t) {
+        for (var i = 0; i < parts.length; i++) if (parts[i].type === t) return parts[i].value;
+        return '';
+      };
+      var hour = Number(get('hour'));
+      return { day: get('year') + '-' + get('month') + '-' + get('day'), hour: hour === 24 ? 0 : hour };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * The school days so far, from attendanceList:dailyAbsenceSeries (asked
+   * with today's date, so nothing after today is in it). PURE.
+   *
+   * `totalsAt` is the stamp of the year totals the count will divide
+   * (schoolAttendance's lastSyncedAt): today counts once they hold it.
+   *
+   * Returns, always:
+   *   known            false when the count cannot be trusted; `reason` says why
+   *   status           'ok' | 'estimated' (weekdays counted because the copy is late) | 'unknown'
+   *   days             school days before today, plus today when `todayCounted`; null when unknown
+   *   todayCounted     true when today is in `days` (the totals' copy holds today)
+   *   first            the first school day on file ("YYYY-MM-DD")
+   *   weekdays, off    weekdays from `first` to the last day counted, and those that were not school days
+   *   estimated        the weekdays counted without a row, oldest first
+   *   lastSchoolDay    the newest FINISHED school day (Week or month's "Last school day")
+   *   finishedThrough  the last day whose figures are complete: before both today
+   *                    and the newest copy's own date (absenceWindow's `through`)
+   *   confirmedThrough the last day a good copy has seen
+   *   lastGoodRun      the newest copy's stamp
+   * { first, weekdays, off, days } is the shape attendanceSchoolDays() always had.
+   */
+  function schoolCalendar(res, todayIso, totalsAt) {
+    var out = {
+      known: false, status: 'unknown', days: null, todayCounted: false, first: null, weekdays: 0, off: 0,
+      estimated: [], lastSchoolDay: null, finishedThrough: null, confirmedThrough: null,
+      lastGoodRun: null, onFile: 0, reason: ''
+    };
+    var unknown = function (why) { out.reason = why; return out; };
+    var today = realDay(todayIso);
+    if (!today) return unknown('Today’s date could not be read.');
+    if (!res) return unknown('The school days have not loaded yet.');
+    if (res.allowed === false) {
+      return unknown(String(res.reason || 'The school days are not available to your access level.'));
+    }
+    if (res.truncated) {
+      return unknown('The school-day table is longer than this screen reads, so it cannot be counted. Tell an administrator.');
+    }
+    var dates = [];
+    var seen = {};
+    (res.points || []).forEach(function (p) {
+      var d = realDay(p && p.date);
+      if (d && !seen[d]) { seen[d] = true; dates.push(d); }
+    });
+    dates.sort();
+    var onFile = Number(res.schoolDaysOnFile);
+    if (!(isFinite(onFile) && onFile >= 0)) onFile = dates.length;
+    var stampMs = Date.parse(String(res.syncedAt || ''));
+    var la = laDayHour(stampMs);
+    // AN EMPTIED TABLE CARRIES NO STAMP: the server stamps the answer from
+    // its rows, and the rebuild deletes them all in one write before it
+    // writes them again.
+    // NOBODY IS ASKED TO PRESS ANYTHING (review, 2026-10-07): the loader
+    // never keeps an emptied read as fresh, so the next draw asks again.
+    if (!onFile && !la) {
+      return unknown('No school days are on file right now. Before the first day of school that is expected. '
+        + 'Otherwise the twice-daily copy from PowerSchool is part-way through, and the count comes back by itself '
+        + 'the next time this tab is opened.');
+    }
+    if (!la) return unknown('The school days carry no copy time, so nothing can vouch for them.');
+
+    var yesterday = shiftDays(today, -1);
+    var confirmed = la.hour >= CALENDAR_SEEN_HOUR ? la.day : shiftDays(la.day, -1);
+    if (confirmed > yesterday) confirmed = yesterday;
+    var finished = shiftDays(la.day, -1);
+    if (finished > yesterday) finished = yesterday;
+    if (!onFile) {
+      // BEFORE THE FIRST DAY OF SCHOOL (review, 2026-10-07): a good, stamped
+      // copy with no school day up to today -- its only rows are absences
+      // entered ahead. That is a fact, not a fault: 0 school days so far.
+      out.known = true;
+      out.status = 'ok';
+      out.days = 0;
+      out.finishedThrough = finished;
+      out.confirmedThrough = confirmed;
+      out.lastGoodRun = String(res.syncedAt);
+      out.reason = 'School has not started yet: PowerSchool has no attendance on file up to today.';
+      return out;
+    }
+    var first = realDay(res.firstDate) || (dates.length && dates.length >= onFile ? dates[0] : null);
+    if (!first) return unknown('The first school day could not be read.');
+
+    // Rows dated today or later: never counted as days BEFORE today.
+    var notYet = dates.filter(function (d) { return d >= today; }).length;
+    var before = Math.max(0, onFile - notYet);
+    var estimated = [];
+    for (var d = shiftDays(confirmed, 1), n = 0; d && d <= yesterday && n < 400; d = shiftDays(d, 1), n++) {
+      var dow = dayFrom(d).getUTCDay();
+      if (dow !== 0 && dow !== 6 && !seen[d] && d >= first) estimated.push(d);
+    }
+    // TODAY, ONCE THE YEAR TOTALS HOLD IT (see THE RULE above): their copy is
+    // stamped today at or after 10:00, and today is a school day -- it has a
+    // row, or the absence rebuild has not copied today yet and it is a weekday.
+    var totals = laDayHour(Date.parse(String(totalsAt || '')));
+    var rebuildSawToday = la.day === today && la.hour >= CALENDAR_SEEN_HOUR;
+    var todayDow = dayFrom(today).getUTCDay();
+    var todayCounted = !!totals && totals.day === today && totals.hour >= CALENDAR_SEEN_HOUR && today >= first
+      && (seen[today] === true || (!rebuildSawToday && todayDow !== 0 && todayDow !== 6));
+    var days = before + estimated.length + (todayCounted ? 1 : 0);
+    var countedTo = todayCounted ? today : yesterday;
+    var weekdays = countedTo >= first ? schoolDaysElapsed(first, countedTo) : 0;
+    if (weekdays >= 10 && days < weekdays * 0.5) {
+      return unknown('Far fewer school days are on file (' + days + ') than weekdays since the first one ('
+        + weekdays + '), so the count cannot be trusted. Tell an administrator.');
+    }
+    var lastSchoolDay = null;
+    dates.forEach(function (x) { if (x <= finished) lastSchoolDay = x; });
+    out.known = true;
+    out.status = estimated.length ? 'estimated' : 'ok';
+    out.days = days;
+    out.todayCounted = todayCounted;
+    out.first = first;
+    out.weekdays = weekdays;
+    out.off = Math.max(0, weekdays - days);
+    out.estimated = estimated;
+    out.lastSchoolDay = lastSchoolDay;
+    out.finishedThrough = finished;
+    out.confirmedThrough = confirmed;
+    out.lastGoodRun = String(res.syncedAt);
+    out.onFile = before;
+    return out;
+  }
+
+  /**
+   * The daily series cut to FINISHED days (2026-10-07): before both today and
+   * the newest copy's own date, the rule Week or month already used. The
+   * chart plotted today's half-taken day as a false dip (6 whole-day
+   * absences against a median of 42 at the 12:30 copy), and before the 06:30
+   * copy yesterday's lunchtime half-day too. `last` most recent, oldest first.
+   */
+  function finishedSeries(points, cal, last) {
+    if (!cal || !cal.finishedThrough) return [];
+    var through = cal.finishedThrough;
+    var rows = (points || []).filter(function (p) {
+      var d = String(p && p.date || '').slice(0, 10);
+      return d.length === 10 && d <= through;
+    });
+    var n = Number(last) > 0 ? Math.floor(Number(last)) : rows.length;
+    return rows.slice(-n);
+  }
+
+  // =====================================================================
+  // THE LISTS: BANDS AND KINDS OF ABSENCE (2026-10-07)
+  //
+  // Year so far and Week or month each had one row of seven buttons that
+  // mixed two questions -- HOW MUCH (chronic and severe, severe only, at risk)
+  // and WHAT KIND (full days, never a full day, tardies) -- so only one could
+  // be chosen at a time. They are two controls now: band chips (the old tier
+  // cards, clickable) and a "Kind of absence" select, and they combine.
+  //
+  // EVERY OLD LIST IS STILL ONE CHOICE AWAY, with the same students in the
+  // same order (attendance-nav.test.mjs runs the old filters against these):
+  //   Chronic & severe   band chronicPlus                Severe only   band severe
+  //   At risk            band at-risk                    Everyone      band all
+  //   Full days          band all + Has whole days       Tardies       band all + Has tardies
+  //   Never a full day   band all + Only partial days
+  //   (a week or month)  Missed a day / Half or more / Every day = the band chips.
+  //
+  // A row here is { daysAbsent, daysTardy, whole, splitAbsent, tier | band }:
+  // `whole` is the whole days out of school, or null where the
+  // period-by-period record cannot say (never a zero for unknown).
+  // =====================================================================
+
+  var ATTENDANCE_KINDS = [
+    { key: 'any', label: 'Any absence' },
+    { key: 'whole', label: 'Has whole days' },
+    { key: 'partial', label: 'Only partial days' },
+    { key: 'tardy', label: 'Has tardies' }
+  ];
+
+  function attendanceKindMatch(kind, row) {
+    var r = row || {};
+    if (kind === 'whole') return r.whole !== null && r.whole !== undefined && r.whole > 0;
+    if (kind === 'partial') {
+      return r.whole !== null && r.whole !== undefined && r.whole === 0 && (Number(r.splitAbsent) || 0) > 0;
+    }
+    if (kind === 'tardy') return (Number(r.daysTardy) || 0) > 0;
+    return true;
+  }
+
+  /** The year's bands: the chronic tiers, plus "chronic and severe" (the default) and everyone. */
+  var YEAR_BANDS = [
+    { key: 'chronicPlus', label: 'Chronic and severe', sub: '10% or more' },
+    { key: 'severe', label: 'Severe', sub: '20% or more' },
+    { key: 'chronic', label: 'Chronic', sub: '10% to 20%' },
+    { key: 'at-risk', label: 'At risk', sub: '5% to 10%' },
+    { key: 'satisfactory', label: 'Satisfactory', sub: 'under 5%' },
+    { key: 'all', label: 'Everyone', sub: '' }
+  ];
+
+  function yearBandMatch(band, row) {
+    var t = row && row.tier ? (row.tier.key || row.tier) : null;
+    if (band === 'all') return true;
+    if (band === 'chronicPlus') return t === 'severe' || t === 'chronic';
+    return t === band;
+  }
+
+  /** A week's or month's "at least" bands: plain words, never the year's chronic labels. */
+  var WINDOW_CHIPS = [
+    { key: 'some', label: 'Missed a day', one: 'Missed the day' },
+    { key: 'half', label: 'Missed half or more' },
+    { key: 'every', label: 'Missed every day' },
+    { key: 'tardy', label: 'Late at least once', one: 'Late' },
+    { key: 'all', label: 'Everyone' }
+  ];
+
+  function windowBandMatch(band, row) {
+    var r = row || {};
+    var b = r.band ? (r.band.key || r.band) : 'none';
+    if (band === 'all') return true;
+    if (band === 'tardy') return (Number(r.daysTardy) || 0) > 0;
+    if (band === 'some') return (Number(r.daysAbsent) || 0) > 0;
+    if (band === 'half') return b === 'every' || b === 'half';
+    if (band === 'every') return b === 'every';
+    return false;
+  }
+
+  /**
+   * A list's own order before anyone clicks a heading: the order the old
+   * button gave, exactly. `rows` arrive in the ranking's order (year:
+   * attendanceRanking, worst first; window: windowAbsenceList). A new array.
+   *
+   *   year   any / partial  as ranked            whole  most whole days first
+   *          tardy          most tardies first   (ties keep the ranked order)
+   *   window any            out of school first: most days, then whole days,
+   *                         then FEWER tardies (a child late every morning is in school)
+   *          whole / tardy  most of that, then most days absent
+   *          partial        as listed
+   */
+  function attendanceListOrder(rows, view, kind) {
+    var list = (rows || []).slice();
+    var num = function (v) { return (typeof v === 'number' && isFinite(v)) ? v : 0; };
+    var wholeOr = function (r, dflt) { return (r.whole === null || r.whole === undefined) ? dflt : r.whole; };
+    var stable = function (cmp) {
+      return list.map(function (r, i) { return { r: r, i: i }; })
+        .sort(function (a, b) { return cmp(a.r, b.r) || (a.i - b.i); })
+        .map(function (x) { return x.r; });
+    };
+    if (view === 'window') {
+      if (kind === 'whole') return stable(function (a, b) { return (wholeOr(b, 0) - wholeOr(a, 0)) || (num(b.daysAbsent) - num(a.daysAbsent)); });
+      if (kind === 'tardy') return stable(function (a, b) { return (num(b.daysTardy) - num(a.daysTardy)) || (num(b.daysAbsent) - num(a.daysAbsent)); });
+      if (kind === 'partial') return list;
+      return stable(function (a, b) {
+        return (num(b.daysAbsent) - num(a.daysAbsent)) || (wholeOr(b, -1) - wholeOr(a, -1))
+          || (num(a.daysTardy) - num(b.daysTardy)) || (num(b.rate) - num(a.rate));
+      });
+    }
+    if (kind === 'whole') return stable(function (a, b) { return wholeOr(b, 0) - wholeOr(a, 0); });
+    if (kind === 'tardy') return stable(function (a, b) { return num(b.daysTardy) - num(a.daysTardy); });
+    return list;
+  }
+
+  /**
+   * SEARCH LOOKS AT EVERYONE ON THE TAB, not only the chosen band (2026-10-07):
+   * a child outside "Chronic and severe" used to answer "No students match
+   * this filter" until somebody thought to press Everyone. `rows` is every row
+   * in the grade scope; each match says whether it is inside the band and
+   * kind on screen, so the table can shade the ones that are not.
+   */
+  function attendanceSearch(rows, query, inside) {
+    var q = String(query || '').trim().toLowerCase();
+    if (!q) return null;
+    var hits = [];
+    (rows || []).forEach(function (r) {
+      var st = (r && r.student) || {};
+      var name = ((st.firstName || '') + ' ' + (st.lastName || '')).toLowerCase();
+      var num = String(st.studentNumber || (r && r.studentNumber) || '').toLowerCase();
+      if (name.indexOf(q) !== -1 || num.indexOf(q) !== -1) hits.push(r);
+    });
+    var outside = typeof inside === 'function' ? hits.filter(function (r) { return !inside(r); }).length : 0;
+    return { rows: hits, outside: outside };
   }
 
   /** The band a window row falls in. Plain words, no chronic labels. */
@@ -2725,6 +3107,18 @@
     PERFECT_SORTS: PERFECT_SORTS,
     perfectSort: perfectSort,
     absenceWindows: absenceWindows,
+    lastFinishedWeek: lastFinishedWeek,
+    CALENDAR_SEEN_HOUR: CALENDAR_SEEN_HOUR,
+    schoolCalendar: schoolCalendar,
+    finishedSeries: finishedSeries,
+    ATTENDANCE_KINDS: ATTENDANCE_KINDS,
+    attendanceKindMatch: attendanceKindMatch,
+    YEAR_BANDS: YEAR_BANDS,
+    yearBandMatch: yearBandMatch,
+    WINDOW_CHIPS: WINDOW_CHIPS,
+    windowBandMatch: windowBandMatch,
+    attendanceListOrder: attendanceListOrder,
+    attendanceSearch: attendanceSearch,
     WINDOW_BANDS: WINDOW_BANDS,
     windowBand: windowBand,
     windowAbsenceList: windowAbsenceList,

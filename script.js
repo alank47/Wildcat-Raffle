@@ -17746,6 +17746,8 @@
         var WC_VIEW_KEY = 'wc_view_tab';
         /** The Cash Analytics tab open inside Analytics (2026-10-06): same lifetime, same reasons. */
         var WC_CASH_VIEW_KEY = 'wcCashAnalyticsView';
+        /** Attendance Watch's open tab and Week or month period (2026-10-07): the same lifetime, and whose they were. */
+        var WC_ATT_VIEW_KEY = 'wcAttendanceView';
 
         function wcRememberTab(tabName) {
             try {
@@ -17758,6 +17760,8 @@
             // And the Analytics tab inside it, or the next person on a shared
             // Chromebook would open Cash Analytics on the last one's choice.
             try { window.sessionStorage.removeItem(WC_CASH_VIEW_KEY); } catch (e) { /* as above */ }
+            // And Attendance Watch's tab, for the same reason.
+            try { window.sessionStorage.removeItem(WC_ATT_VIEW_KEY); } catch (e) { /* as above */ }
         }
 
         /**
@@ -32936,13 +32940,48 @@
             return items.map(x => x.i);
         }
 
-        /** A heading pressed: the same column reverses, another starts ascending. */
-        function wcSortSet(tableId, col, hint) {
+        /**
+         * A heading pressed: the same column reverses; another starts ascending,
+         * or descending where the heading says its first press is "highest
+         * first" (`first` 'desc', data-sort-first: Attendance Watch's numbers,
+         * 2026-10-07, so one click on Tardies shows the most tardies).
+         */
+        function wcSortSet(tableId, col, hint, first) {
             const prev = _wcSortState.get(tableId);
-            const dir = (prev && prev.col === col && prev.dir === 'asc') ? 'desc' : 'asc';
+            const dir = (prev && prev.col === col)
+                ? (prev.dir === 'asc' ? 'desc' : 'asc')
+                : (first === 'desc' ? 'desc' : 'asc');
             const st = { col: col, dir: dir, type: hint || '' };
             _wcSortState.set(tableId, st);
             return st;
+        }
+
+        /**
+         * TABLES THAT ARE REDRAWN, NOT REORDERED (2026-10-07). A table that
+         * shows only the first rows of a longer list (Attendance Watch's first
+         * 50), or whose order something else reuses (Perfect attendance's
+         * printed sheet), registers its drawing here. A heading press then sorts
+         * the WHOLE list and redraws it: reordering only the rows on screen
+         * would quietly show the wrong "top 50". Cash's tables register nothing
+         * and keep the in-place reorder.
+         */
+        const _wcSortRedraw = new Map();
+
+        /**
+         * A list in the order its table is sorted in, as an ARRAY: the same keys
+         * and rules as wcSortRowsHtml, for a list that is sorted first and cut
+         * after. `textOf(item, col)` is the cell's sort text (its data-sort, or
+         * what it shows). Unsorted, the list comes back as given; ties keep it.
+         */
+        function wcSortItems(tableId, items, textOf) {
+            const list = Array.isArray(items) ? items.slice() : [];
+            const st = _wcSortState.get(tableId);
+            if (!st || list.length < 2 || typeof textOf !== 'function') return list;
+            const texts = list.map(it => {
+                const t = textOf(it, st.col);
+                return wcSortCellText(t == null ? '' : String(t));
+            });
+            return wcSortOrder(texts, st.dir, st.type).map(i => list[i]);
         }
 
         /** One sortable heading for a table drawn as a string, showing the sort it is in. */
@@ -32953,7 +32992,8 @@
             return '<th scope="col"' + (opt.cls ? ' class="' + opt.cls + '"' : '') + (opt.attrs || '') +
                 (on ? ' aria-sort="' + (st.dir === 'asc' ? 'ascending' : 'descending') + '"' : '') + '>' +
                 '<button type="button" class="wc-sort-btn" data-sort-table="' + tableId + '" data-sort-col="' + col + '"' +
-                (opt.type ? ' data-sort-type="' + opt.type + '"' : '') + ' onclick="wcSortClick(this)">' + labelHtml +
+                (opt.type ? ' data-sort-type="' + opt.type + '"' : '') +
+                (opt.first === 'desc' ? ' data-sort-first="desc"' : '') + ' onclick="wcSortClick(this)">' + labelHtml +
                 '<span class="wc-sort-arrow" aria-hidden="true">' + (on ? WC_SORT_ARROWS[st.dir] : WC_SORT_ARROWS.none) + '</span>' +
                 '</button></th>';
         }
@@ -33040,7 +33080,23 @@
             const tableId = btn.getAttribute('data-sort-table');
             const col = parseInt(btn.getAttribute('data-sort-col'), 10);
             if (!tableId || !isFinite(col)) return;
-            wcSortSet(tableId, col, btn.getAttribute('data-sort-type') || '');
+            wcSortSet(tableId, col, btn.getAttribute('data-sort-type') || '', btn.getAttribute('data-sort-first') || '');
+            // A table that is redrawn sorts its whole list (see _wcSortRedraw),
+            // and the pressed heading gets the focus back after the redraw.
+            const redraw = _wcSortRedraw.get(tableId);
+            if (typeof redraw === 'function') {
+                const refocus = () => {
+                    if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
+                    const again = document.querySelector('.wc-sort-btn[data-sort-table="' + tableId + '"][data-sort-col="' + col + '"]');
+                    if (again && typeof again.focus === 'function') again.focus();
+                };
+                // A drawing that waits on its data (Week or month) redraws a
+                // moment later: the focus goes back after it, not before.
+                const drawn = redraw();
+                if (drawn && typeof drawn.then === 'function') drawn.then(refocus, () => {});
+                else refocus();
+                return;
+            }
             const table = typeof btn.closest === 'function' ? btn.closest('table') : null;
             if (table) wcSortApplyDom(table, tableId);
         }
@@ -33075,6 +33131,12 @@
             // The static tables' arrows (and Latest 100's order chip) back to
             // unsorted; the drawn tables are redrawn from the state on open.
             ['teacherActivity', 'interventionStudents', 'teacherInteractionDetails'].forEach(id => wcSortMarkHead(document, id));
+            // Attendance Watch's named lists and Student groups go too
+            // (wipeAttendanceViews). Last, and on its own, so the Cash part
+            // above has always run.
+            try {
+                if (typeof wipeAttendanceViews === 'function') wipeAttendanceViews();
+            } catch (e) { /* the next open draws the right lists */ }
             return true;
         }
 
@@ -35631,12 +35693,14 @@
                 if (typeof initializeDetentionForm === 'function') initializeDetentionForm();
                 if (typeof updateDetentionLists === 'function') updateDetentionLists();
             } else if (subtab === 'attendance') {
-                // setAttendanceView draws the half it shows, so this is one
-                // call rather than three, and it honours whichever half the
-                // reader was last looking at.
-                setAttendanceView(_attView);
+                // setAttendanceView draws the tab it shows, once the school-day
+                // count is in hand, and honours the tab this person was last
+                // looking at in this browser tab (attRememberedView).
+                setAttendanceView(attRememberedView());
             } else if (subtab === 'earlyWarning') {
-                renderEarlyWarning();
+                // THE SAME SCHOOL-DAY COUNT AS ATTENDANCE WATCH, loaded before
+                // the first draw so the tiers do not appear and then jump.
+                openEarlyWarning(false);
             } else if (subtab === 'uniform') {
                 openUniformViolations();
             } else if (subtab === 'history') {
@@ -35665,123 +35729,456 @@
         // 10-20% another 164, and sorting worst-first puts the child who has
         // missed a quarter of the year at the top where they belong. The flat
         // 10% line is still drawn, and still counted, as "chronic and severe".
+        //
+        // ONE TAB PER QUESTION (owner, 2026-10-07: "build", on the preview of
+        // the five-tab layout). The page answered about six questions on one
+        // long screen, with four rows of identical buttons and a first name
+        // 1,315px down on a Chromebook. Now:
+        //   Year so far        who has missed the most school this year (default, unchanged list)
+        //   Week or month      who was out on the last school day, last week, this month
+        //   Trends             is attendance getting better (both run charts)
+        //   Perfect attendance who had no absences and no unexcused tardies
+        //   Student groups     admins, superadmins and PBIS only, exactly as before
+        // Every count, threshold and role gate is the one it was.
         // ========================================
 
         /** Cached response, so switching filters does not re-hit the server. */
         let _attCache = null;
-        let _attTierFilter = 'chronicPlus';
-        // 'all', a grade level as a string, or '(none)' for the students the
-        // roster has no grade for. Not a number: grades arrive as strings and
+        // THE GRADE: ONE CHOSEN VALUE, shared by Year so far, Week or month and
+        // Perfect attendance (2026-10-07). Each tab builds its own options and
+        // counts from its own rows, and a grade a tab does not have reads "All
+        // grades" there without changing the choice. 'all', a grade level as a
+        // string, or '(none)'. Not a number: grades arrive as strings and
         // comparing '9' to 9 across a re-render is a bug waiting to be written.
         let _attGradeFilter = 'all';
         let _attBusy = false;
 
         /**
-         * WHICH HALF OF ATTENDANCE WATCH IS ON SCREEN.
+         * WHICH TAB OF ATTENDANCE WATCH IS ON SCREEN. The keys are the old
+         * view names where a tab kept its job ('watch' is Year so far, 'rate'
+         * is Trends, 'subgroup' is Student groups), so every caller still
+         * lands; the old Trend chart's 'trend' and a few spoken names arrive
+         * through ATT_VIEW_ALIASES.
          *
-         * Perfect attendance shipped at the bottom of the tab, under the basis
-         * card, the run chart, four tier cards and a list of up to 671
-         * children. Reaching the one panel on the screen that is good news
-         * meant scrolling past every child the school is worried about, so it
-         * was effectively unreachable. These are two questions asked of the
-         * same data and neither is a footnote to the other.
-         *
-         * IT REMEMBERS, for the session. Somebody reading out an award list
-         * moves between this tab and a student's profile repeatedly, and being
-         * dropped back on the absence ranking every time is the kind of small
-         * friction that stops a feature being used at all.
+         * IT REMEMBERS, for the browser tab (sessionStorage, cleared at
+         * sign-out by wcForgetTab) and for the person who chose it: somebody
+         * reading out an award list moves between this tab and a student's
+         * profile repeatedly, and being dropped back on the absence ranking
+         * every time is the kind of small friction that stops a feature
+         * being used at all.
          */
         let _attView = 'watch';
+        /** The five tabs, in bar order. Student groups last, so the first four sit in the same place for everyone. */
+        const ATT_VIEWS = ['watch', 'window', 'rate', 'perfect', 'subgroup'];
+        const ATT_VIEW_ALIASES = { trend: 'rate', trends: 'rate', ytd: 'watch', year: 'watch', missing: 'watch',
+                                   week: 'window', month: 'window', groups: 'subgroup' };
 
-        const ATT_VIEW_SUBTITLES = {
-            watch: 'Chronic absence and tardiness, worst first',
-            perfect: 'Students with no absences and no unexcused tardies',
-            subgroup: 'Chronic absence by student group, against the school\'s own rate',
-            rate: 'Attendance rate by week and month, against its median'
-        };
-        const ATT_VIEWS = ['watch', 'perfect', 'subgroup', 'rate'];
+        /** A tab name as a key: aliases resolved, anything unknown is Year so far. */
+        function attViewKey(view) {
+            const v = String(view == null ? '' : view);
+            const k = Object.prototype.hasOwnProperty.call(ATT_VIEW_ALIASES, v) ? ATT_VIEW_ALIASES[v] : v;
+            return ATT_VIEWS.indexOf(k) === -1 ? 'watch' : k;
+        }
+
+        /**
+         * Student groups (a race, ethnicity and English Learner breakdown) and
+         * every change on Trends are for admins, superadmins and PBIS. A
+         * per-person Attendance Watch grant reads, never sets, and never sees
+         * Student groups (the server refuses it too, convex/attendanceSubgroups.ts).
+         */
+        function attGroupsAllowed() {
+            const D = window.WildcatDiscipline;
+            return !!(D && typeof D.canEditInsightSettings === 'function'
+                && D.canEditInsightSettings(currentUser && currentUser.role));
+        }
+
+        /** Remember the tab and the Week or month period, for this browser tab and this person. Names, never. */
+        function attRememberView() {
+            // NOT IN TEACHER VIEW (review, 2026-10-07): there currentUser is the
+            // person being previewed, and writing their id over the admin's
+            // would drop the admin back on Year so far once the preview ends.
+            if (typeof isPreviewingTeacher === 'function' && isPreviewingTeacher()) return;
+            try {
+                window.sessionStorage.setItem(WC_ATT_VIEW_KEY, JSON.stringify({
+                    who: String((currentUser && currentUser.id) || ''), view: _attView, win: _attWindow
+                }));
+            } catch (e) { /* private mode: Year so far next time */ }
+        }
+
+        /**
+         * The tab to open on: the one this person last had in this browser tab,
+         * else Year so far. Restores their Week or month period too. Never
+         * trusted for the gate: setAttendanceView decides.
+         */
+        function attRememberedView() {
+            let saved = null;
+            try { saved = JSON.parse(window.sessionStorage.getItem(WC_ATT_VIEW_KEY) || 'null'); } catch (e) { saved = null; }
+            if (!saved || typeof saved !== 'object') return 'watch';
+            if (String(saved.who || '') !== String((currentUser && currentUser.id) || '')) return 'watch';
+            if (ATT_WINDOWS.indexOf(saved.win) !== -1) _attWindow = saved.win;
+            return attViewKey(saved.view);
+        }
+
+        /**
+         * A DIFFERENT PERSON ON THIS PAGE (review, 2026-10-07). Sign-out does
+         * not reload the page, so the last person's named lists -- and an
+         * admin's Student groups -- sat hidden in the DOM under the next
+         * person to sign in. Emptied here, as Cash empties its staff views
+         * (wipeStaffCashViews); the next open draws the right ones. Run by
+         * cashViewerChanged on every change of person: sign-in, sign-out and
+         * teacher view.
+         */
+        function wipeAttendanceViews() {
+            ['attSubgroupBody', 'attYearTable', 'attWinTable', 'attPerfectBody'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.innerHTML = '';
+            });
+            _sgCache = null;
+            _attView = 'watch';
+            // THE NEXT PERSON STARTS CLEAN (final review, 2026-10-07): logging
+            // out does not reload the page, so on a shared Chromebook the last
+            // person's band, grade, kind, roster box, windows and search text
+            // would otherwise greet whoever signs in next.
+            _attYearBand = 'chronicPlus'; _attYearKind = 'any'; _attYearRosterOnly = false; _attYearAll = false;
+            _attGradeFilter = 'all';
+            _attWindow = 'lastWeek'; _attWinBand = 'some'; _attWinKind = 'any'; _attWinAll = false;
+            _paWindow = 'week'; _paMonth = null;
+            ['attYearSearch', 'attWinSearch', 'attPerfectSearch'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.value = '';
+            });
+        }
 
         function setAttendanceView(view) {
-            _attView = ATT_VIEWS.indexOf(view) === -1 ? 'watch' : view;
-            // "By student group" is a race/ethnicity breakdown, limited to
+            _attView = attViewKey(view);
+            // "Student groups" is a race/ethnicity breakdown, limited to
             // admin, superadmin and PBIS by the approval record; a per-person
             // Attendance Watch grant does not include it (the server refuses
             // it too, convex/attendanceSubgroups.ts).
-            const groupsOk = window.WildcatDiscipline.canEditInsightSettings(currentUser && currentUser.role);
+            const groupsOk = attGroupsAllowed();
             if (_attView === 'subgroup' && !groupsOk) _attView = 'watch';
             document.querySelectorAll('#attViewSwitch [data-attview="subgroup"]').forEach(b => { b.hidden = !groupsOk; });
+            // What actually opened is what is remembered: a grant holder's
+            // stored Student groups becomes Year so far here.
+            attRememberView();
 
-            const watchEl = document.getElementById('attWatchView');
-            const perfectEl = document.getElementById('attPerfectView');
-            const subgroupEl = document.getElementById('attSubgroupView');
-            const rateEl = document.getElementById('attRateView');
             // `hidden` rather than a display rule, and on a wrapper with no
             // class of its own: an author `display` declaration outranks the
             // user-agent `[hidden] { display: none }`, which is exactly how a
             // red unsaved-referral bar shipped visible to every user.
-            if (watchEl) watchEl.hidden = (_attView !== 'watch');
+            // YEAR SO FAR AND WEEK OR MONTH SHARE ONE PANE (#attWatchView);
+            // its data-attview says which section shows (styles.css).
+            const watchEl = document.getElementById('attWatchView');
+            const perfectEl = document.getElementById('attPerfectView');
+            const subgroupEl = document.getElementById('attSubgroupView');
+            const rateEl = document.getElementById('attRateView');
+            const listView = _attView === 'watch' || _attView === 'window';
+            if (watchEl) {
+                watchEl.hidden = !listView;
+                watchEl.setAttribute('data-attview', _attView === 'window' ? 'window' : 'watch');
+            }
             if (perfectEl) perfectEl.hidden = (_attView !== 'perfect');
             if (subgroupEl) subgroupEl.hidden = (_attView !== 'subgroup');
             if (rateEl) rateEl.hidden = (_attView !== 'rate');
 
+            // SCOPED BY ID, never by class: Discipline's switchAnalyticsTab
+            // clears .active on every '.analytics-tabs .analytics-tab' on the
+            // page, so this bar does not carry that container class.
             document.querySelectorAll('#attViewSwitch [data-attview]').forEach(b => {
                 const on = b.getAttribute('data-attview') === _attView;
                 b.classList.toggle('active', on);
-                // aria-pressed, not just a class: the switch is two buttons
-                // rather than a tablist, so the state has to be announced.
+                // aria-pressed, not just a class: the switch is a row of
+                // buttons rather than a tablist, so the state has to be announced.
                 b.setAttribute('aria-pressed', on ? 'true' : 'false');
             });
 
-            const sub = document.getElementById('attViewSubtitle');
-            if (sub) sub.textContent = ATT_VIEW_SUBTITLES[_attView] || ATT_VIEW_SUBTITLES.watch;
-
-            // Draw whichever half just appeared. Both are cached, so this
-            // costs nothing after the first time, and a panel that was never
-            // opened is fetched the moment it is.
-            if (_attView === 'perfect') renderPerfectAttendance();
-            else if (_attView === 'subgroup') renderAttendanceSubgroups();
-            else if (_attView === 'rate') renderAttendanceRate();
-            else { renderAttendanceWatch(); renderAbsenceRunChart(); }
+            renderAttMovedNote();
+            renderAttDataLine();
+            return drawAttendanceView(false);
         }
 
-        /** The header Refresh, aimed at whichever half is actually showing. */
+        /**
+         * Draw the tab on screen, once the school-day count is in hand: Year so
+         * far, Student groups, Perfect attendance's months and Early Warning
+         * divide by it, so a first draw without it would be redrawn a moment
+         * later with different numbers. A chart is drawn only while its tab
+         * shows, so its hover readout never measures a hidden chart.
+         */
+        async function drawAttendanceView(force) {
+            const view = _attView;
+            if (typeof fetchAttendanceRebuildHealth === 'function') {
+                Promise.resolve(fetchAttendanceRebuildHealth(force === true)).then(() => renderAttDataLine(), () => {});
+            }
+            await ensureSchoolCalendar(force === true);
+            // Another tab was chosen while the count was on its way: that one draws itself.
+            if (_attView !== view) return;
+            renderAttDataLine();
+            if (view === 'perfect') await renderPerfectAttendance(force === true);
+            else if (view === 'subgroup') await renderAttendanceSubgroups(force === true);
+            // The daily chart's data is the school-day calendar, just loaded above.
+            else if (view === 'rate') await Promise.all([renderAttendanceRate(force === true), renderAbsenceRunChart(false)]);
+            else if (view === 'window') await renderAttendanceWindow(force === true);
+            else await renderAttendanceWatch(force === true);
+            renderAttDataLine();
+        }
+
+        /**
+         * THE ONE REFRESH, in the header, aimed at the tab on screen. It reloads
+         * the school-day count too (Year so far and Week or month divide by it),
+         * and on Trends both charts. The data also refreshes itself when the tab
+         * sits idle, so nobody is ever asked to press it.
+         */
         function refreshAttendanceView() {
-            if (_attView === 'perfect') renderPerfectAttendance(true);
-            else if (_attView === 'subgroup') renderAttendanceSubgroups(true);
-            else if (_attView === 'rate') renderAttendanceRate(true);
-            else { renderAttendanceWatch(true); renderAbsenceRunChart(true); }
+            return drawAttendanceView(true);
         }
 
-        function setAttendanceTierFilter(tier) {
-            _attTierFilter = tier;
-            document.querySelectorAll('#attTierFilter .analytics-tab').forEach(b => {
-                b.classList.toggle('active', b.getAttribute('data-atier') === tier);
-            });
-            renderAttendanceWatch();
+        // ---- What moved where: once per person on this browser (2026-10-07)
+
+        /** People who closed the note in this page, for when storage will not remember it. */
+        const _attMovedNoteGone = new Set();
+
+        /** Per PERSON, not per browser: on a shared Chromebook the first to sign in must not use it up for everyone. */
+        function attMovedNoteKey(user) {
+            return 'wcAttNavNote:' + String((user && user.id) || '');
         }
 
-        function setAttendanceGradeFilter(grade) {
-            _attGradeFilter = String(grade == null ? 'all' : grade);
-            renderAttendanceWatch();
+        /** The note's words, by role: the view-only grant never had By student group. */
+        function attMovedNoteHtml(groupsOk) {
+            const words = 'Who is missing is now two tabs, <b>Year so far</b> and <b>Week or month</b>. '
+                + 'The Trend chart moved to <b>Trends</b>, next to Attendance rate. '
+                + (groupsOk ? 'By student group is now <b>Student groups</b>. ' : '')
+                + 'The start date and holiday boxes are gone: the school days are counted from PowerSchool.';
+            return '<div class="wc-moved" role="note"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-info"></use></svg>' +
+                '<p><b>What moved where.</b> ' + words + '</p>' +
+                '<button type="button" class="wc-moved-x" aria-label="Close this note" onclick="dismissAttMovedNote()">' +
+                '<svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-x"></use></svg></button></div>';
+        }
+
+        function renderAttMovedNote() {
+            const host = document.getElementById('attMovedNote');
+            if (!host) return;
+            let seen = !currentUser || _attMovedNoteGone.has(String(currentUser.id));
+            if (!seen) {
+                try { seen = localStorage.getItem(attMovedNoteKey(currentUser)) === '1'; } catch (e) { seen = false; }
+            }
+            if (seen) { host.hidden = true; host.innerHTML = ''; return; }
+            host.innerHTML = attMovedNoteHtml(attGroupsAllowed());
+            host.hidden = false;
+        }
+
+        function dismissAttMovedNote() {
+            if (currentUser) {
+                _attMovedNoteGone.add(String(currentUser.id));
+                try { localStorage.setItem(attMovedNoteKey(currentUser), '1'); } catch (e) { /* this page still remembers */ }
+            }
+            const host = document.getElementById('attMovedNote');
+            if (host) { host.hidden = true; host.innerHTML = ''; }
+        }
+
+        // ---- The word list: one dialog, opened from under the tab bar (2026-10-07)
+
+        let _attGlossaryOpener = null;
+
+        function openAttGlossary(opener) {
+            const modal = document.getElementById('attGlossaryModal');
+            if (!modal) return;
+            _attGlossaryOpener = opener || null;
+            // The chronic line in days, from the count on screen today.
+            const cal = attendanceSchoolDays();
+            const el = document.getElementById('attGlossaryChronic');
+            if (el) {
+                el.textContent = cal.known && cal.days > 0
+                    ? 'With ' + cal.days + ' school days so far, that is ' + (cal.days * 0.10).toFixed(1) + ' days.'
+                    : '';
+            }
+            modal.classList.remove('hidden');
+            const close = document.getElementById('attGlossaryClose');
+            if (close && typeof close.focus === 'function') close.focus();
+        }
+
+        function closeAttGlossary() {
+            const modal = document.getElementById('attGlossaryModal');
+            if (modal) modal.classList.add('hidden');
+            const back = _attGlossaryOpener;
+            _attGlossaryOpener = null;
+            if (back && typeof back.focus === 'function') back.focus();
+        }
+
+        /** Escape closes the word list wherever focus is, like the app's other dialogs. */
+        function attGlossaryKeydown(ev) {
+            if (!ev || ev.key !== 'Escape') return;
+            const modal = document.getElementById('attGlossaryModal');
+            if (modal && !modal.classList.contains('hidden')) closeAttGlossary();
+        }
+        try {
+            if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+                document.addEventListener('keydown', attGlossaryKeydown);
+            }
+        } catch (e) { /* no document: no dialog */ }
+
+        // ---- The data line: where each tab's numbers come from, and when
+
+        /** "today at 12:31 PM", "Tue, Oct 6 at 12:31 PM", or '' for nothing readable. */
+        function attCopiedAt(iso) {
+            const t = Date.parse(String(iso || ''));
+            if (!isFinite(t)) return '';
+            const when = new Date(t);
+            const time = when.toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' });
+            const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(when);
+            return day === attTodayIso() ? 'today at ' + time : attShortDay(day) + ' at ' + time;
+        }
+
+        /** The newest stamp on the attendance-rate chart's days, or ''. */
+        function attRateBuiltAt(res) {
+            let newest = '';
+            ((res && res.days) || []).forEach(d => { if (d && d.syncedAt && d.syncedAt > newest) newest = d.syncedAt; });
+            return newest;
+        }
+
+        /**
+         * THE LINE UNDER THE TAB BAR, built from what is in hand. PURE: the tab,
+         * the school-day count, each source's own copy time, and the admin's
+         * rebuild verdict in; markup out.
+         *
+         * EACH TAB NAMES ITS OWN SOURCE (critique, 2026-10-06): Year so far reads
+         * PowerSchool's totals (the 06:00 and 12:00 SIS sync), Week or month and
+         * Perfect attendance the twice-daily absence rebuild, Trends' rate chart
+         * a nightly build. One "copied at" for all of them would be wrong on
+         * three tabs.
+         *
+         * THE AMBER LINE IS FOR EVERYONE who can open the tab, not only admins:
+         * a late copy changes the numbers they are reading. It shows only when a
+         * weekday is being counted without PowerSchool's say-so (the copy is
+         * late) or the count is unknown -- never on a clock rule.
+         */
+        function attDataLineHtml(view, cal, src, health) {
+            const c = cal || {};
+            const s = src || {};
+            const at = (iso) => { const w = attCopiedAt(iso); return w ? ', ' + w : ''; };
+            const days = c.known
+                ? '<b>' + c.days + ' school day' + (c.days === 1 ? '' : 's') + '</b> so far ('
+                  + escapeHtml(attDaysRange(c)) + '), counted from the days PowerSchool took attendance'
+                : 'school days: <b>unknown right now</b>';
+            const finished = c.known && c.finishedThrough ? 'finished days up to ' + escapeHtml(attShortDay(c.finishedThrough)) : 'finished days only';
+            const lines = {
+                watch: 'From PowerSchool&rsquo;s attendance totals' + at(s.ytd) + ' &middot; ' + days,
+                window: 'From the twice-daily absence rebuild' + at(s.marks) + ' &middot; ' + finished,
+                rate: 'Attendance rate: built overnight from PowerSchool' + at(s.rate)
+                    + ' &middot; Daily absences: the twice-daily absence rebuild' + at(s.daily),
+                perfect: 'From the twice-daily absence rebuild' + at(s.marks) + ' &middot; ' + days,
+                subgroup: 'Group data read from PowerSchool' + at(s.subgroups) + ' &middot; ' + days
+            };
+            let html = '<div class="wc-att-data"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-clock"></use></svg>'
+                + '<p>' + (lines[view] || lines.watch) + '.</p>';
+            if (view !== 'rate') {
+                if (!c.known && c.reason) {
+                    html += '<p class="wc-att-stale" role="status"><b>The number of school days is unknown right now.</b> '
+                        + escapeHtml(c.reason) + ' The year&rsquo;s percentages wait for it rather than guess.</p>';
+                } else if (c.known && c.status === 'estimated') {
+                    const n = c.estimated.length;
+                    html += '<p class="wc-att-stale" role="status"><b>School days last confirmed '
+                        + escapeHtml(attShortDay(c.confirmedThrough)) + '.</b> PowerSchool&rsquo;s newest copy is late (the last good one was '
+                        + escapeHtml(attCopiedAt(c.lastGoodRun) || 'unknown') + '), so the count keeps the days already confirmed and adds the '
+                        + n + ' weekday' + (n === 1 ? '' : 's') + ' since (' + c.estimated.map(d => escapeHtml(attShortDay(d))).join(', ')
+                        + '). Holidays already on file stay out. Nothing to do: it corrects itself when the next copy arrives.</p>';
+                }
+            }
+            if (health && health.headline) {
+                html += '<div class="wc-att-health' + (health.level === 'ok' ? ' is-ok' : '') + '">'
+                    + '<span>Twice-daily absence rebuild: <b>' + escapeHtml(health.headline) + '</b></span>'
+                    + '<button type="button" class="wc-insight-link" onclick="openAttendanceRebuildPanel()">Settings &gt; Integrations</button>'
+                    + '<span class="wc-chip">admins only</span></div>';
+            }
+            return html + '</div>';
+        }
+
+        function renderAttDataLine() {
+            const host = document.getElementById('attDataLine');
+            if (!host) return;
+            const admin = !!currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin');
+            let health = null;
+            if (admin && typeof attendanceRebuildVerdict === 'function') {
+                const v = attendanceRebuildVerdict();
+                if (v && v.headline) health = v;
+            }
+            host.innerHTML = attDataLineHtml(_attView, attendanceSchoolDays(), {
+                ytd: _attCache && _attCache.lastSyncedAt,
+                marks: _paCache && _paCache.lastSyncedAt,
+                rate: attRateBuiltAt(_arCache),
+                daily: _runCache && _runCache.syncedAt,
+                subgroups: _sgCache && _sgCache.res && _sgCache.res.lastSyncedAt
+            }, health);
+        }
+
+        // ---- The school-day count (WildcatRoster.schoolCalendar)
+        //
+        // One read, attendanceList:dailyAbsenceSeries, serves the count and the
+        // daily chart on Trends: the count, the first day, the newest copy's
+        // stamp and the dates. Its answer lives in _runCache (dropped on the
+        // idle refresh, like every Attendance Watch cache) and in _attCalHeld,
+        // which is NOT dropped, so a screen redrawn between the drop and the
+        // next fetch -- Early Warning's search box, say -- still divides by the
+        // count it showed a moment ago instead of by nothing.
+
+        /** The newest answer (a refusal never replaces a good one). Holds no names. */
+        let _attCalHeld = null;
+        let _runFetchedAt = 0;
+        let _runFor = '';
+        let _runLoading = null;
+        let _attTotalsLoading = null;
+
+        /**
+         * The count, loaded if it is not in hand for today, or is half an hour
+         * old, or `force`. One load at a time; a second caller waits for it.
+         *
+         * THE TOTALS' COPY TIME TOO (review, 2026-10-07): today joins the count
+         * once PowerSchool's year totals hold it (attendanceSchoolDays), so the
+         * tabs that never read those totals themselves -- Week or month,
+         * Trends, Perfect attendance -- have them read once here. Without it,
+         * after lunch the count on screen hung on which tab was opened first:
+         * 38 there, 39 on Year so far. The tabs that show the totals refresh them.
+         */
+        async function ensureSchoolCalendar(force) {
+            if (!_attCache && !_attTotalsLoading) {
+                _attTotalsLoading = Promise.resolve(loadAttendanceRows(false))
+                    .finally(() => { _attTotalsLoading = null; });
+            }
+            const totals = _attTotalsLoading;
+            const today = attTodayIso();
+            const fresh = !!_runCache && _runFor === today && Date.now() - _runFetchedAt < 30 * 60 * 1000;
+            if (!(fresh && force !== true) && !_runLoading) {
+                _runLoading = (async () => {
+                    try { await loadAbsenceSeries(true); }
+                    finally { _runLoading = null; }
+                })();
+            }
+            const series = (fresh && force !== true) ? null : _runLoading;
+            try { await series; } catch (e) { /* the count says what went wrong */ }
+            try { await totals; } catch (e) { /* without the stamp, today is simply not counted */ }
+            return attendanceSchoolDays();
         }
 
         // =====================================================================
-        // "WHO IS MISSING" FOR A WEEK OR A MONTH (2026-09-23)
+        // WEEK OR MONTH (2026-09-23; its own tab since 2026-10-07)
         //
         // The owner asked for Attendance Watch to filter by week and by month,
-        // particularly the "Who is missing" half. The year to date stays the
-        // default and is untouched; a week or a month is drawn by
+        // particularly the "Who is missing" half. It is drawn by
         // renderAttendanceWindow, from the per-date marks (who was absent or
         // late on which date) and, for whole versus partial days, the
         // attendanceList:absenceWindow query. The rules -- which dates make a
         // week, the bands, the denominator -- are WildcatRoster's, and tested
-        // there.
+        // there. "Last school day" (2026-10-07) answers the morning question,
+        // "who was out yesterday?".
         // =====================================================================
-        const ATT_WINDOWS = ['ytd', 'thisWeek', 'lastWeek', 'thisMonth', 'lastMonth'];
-        let _attWindow = 'ytd';
-        let _attWinFilter = 'absent';
+        const ATT_WINDOWS = ['lastDay', 'lastWeek', 'thisWeek', 'lastMonth', 'thisMonth'];
+        let _attWindow = 'lastWeek';
+        let _attWinBand = 'some';
+        let _attWinKind = 'any';
+        let _attWinAll = false;
         const _attWinCache = new Map();
         let _attWinSeq = 0;
+        /** The rows each list shows first; "Show all" lifts it. The order applies to the whole list before the cut. */
+        const ATT_LIST_CAP = 50;
 
         /**
          * Today as the SCHOOL'S calendar day, "YYYY-MM-DD", from the browser's
@@ -35797,38 +36194,44 @@
         }
 
         function setAttendanceWindow(key) {
-            _attWindow = ATT_WINDOWS.indexOf(key) === -1 ? 'ytd' : key;
-            document.querySelectorAll('#attPeriod [data-attwin]').forEach(b => {
-                const on = b.getAttribute('data-attwin') === _attWindow;
-                b.classList.toggle('active', on);
-                b.setAttribute('aria-pressed', on ? 'true' : 'false');
-            });
-            // INLINE display, not `hidden`: these carry classes that set
-            // display, and an author display rule beats the [hidden] default --
-            // the way a red bar once shipped visible to everybody.
-            const ytd = _attWindow === 'ytd';
-            const tierBar = document.getElementById('attTierFilter');
-            const winBar = document.getElementById('attWindowFilter');
-            if (tierBar) tierBar.style.display = ytd ? '' : 'none';
-            if (winBar) winBar.style.display = ytd ? 'none' : '';
-            // The start date and holiday count set the YEAR's denominator only;
-            // a week or month counts the days school actually ran.
-            document.querySelectorAll('#attWatchView .wc-att-basis-row').forEach(r => {
-                r.style.display = ytd ? '' : 'none';
-            });
+            _attWindow = ATT_WINDOWS.indexOf(key) === -1 ? 'lastWeek' : key;
+            _attWinAll = false;
+            attRememberView();
             // A CHANGE OF PERIOD RETIRES ANY LOAD STILL IN FLIGHT. Without this,
-            // a week that finished loading after "Year to date" was clicked
-            // painted itself under the Year to date button (review, 2026-09-23).
+            // a week that finished loading after another period was clicked
+            // painted itself under that period's button (review, 2026-09-23).
             _attWinSeq++;
-            renderAttendanceWatch();
+            return renderAttendanceWindow();
         }
 
-        function setAttendanceWindowFilter(f) {
-            _attWinFilter = f || 'absent';
-            document.querySelectorAll('#attWindowFilter [data-awin]').forEach(b => {
-                b.classList.toggle('active', b.getAttribute('data-awin') === _attWinFilter);
-            });
-            renderAttendanceWatch();
+        function setAttendanceWindowBand(band) {
+            _attWinBand = String(band || 'some');
+            _attWinAll = false;
+            return renderAttendanceWindow();
+        }
+
+        /** Kind of absence: the old Full days / Never a full day / Tardies lists, now combined with the band. */
+        function setAttendanceWindowKind(kind) {
+            _attWinKind = String(kind || 'any');
+            _attWinAll = false;
+            // The kind's own order takes over (most whole days, most tardies first).
+            _wcSortState.delete('attWin');
+            return renderAttendanceWindow();
+        }
+
+        function showAllAttendanceWindow(on) {
+            _attWinAll = !!on;
+            return renderAttendanceWindow();
+        }
+
+        /** The shared grade, from whichever tab's select changed it; the tab on screen redraws. */
+        function setAttendanceGradeFilter(grade) {
+            _attGradeFilter = String(grade == null ? 'all' : grade);
+            _attYearAll = false;
+            _attWinAll = false;
+            if (_attView === 'window') return renderAttendanceWindow();
+            if (_attView === 'perfect') return renderPerfectAttendance();
+            return renderAttendanceWatch();
         }
 
         async function loadAbsenceWindow(win, today, force) {
@@ -35858,22 +36261,134 @@
                 .toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
         }
 
-        async function renderAttendanceWindow(force) {
-            const list = document.getElementById('attendanceList');
-            const cards = document.getElementById('attTierCards');
-            const note = document.getElementById('attBasisNote');
-            const foot = document.getElementById('attFoot');
-            if (!list) return;
+        /** "Grade 7", "No grade on file", "All grades". */
+        function attGradeName(key) {
+            return key === 'all' ? 'All grades' : key === '(none)' ? 'No grade on file' : 'Grade ' + key;
+        }
+
+        /**
+         * A tab's Grade select, built from THAT tab's rows (critique, 2026-10-06):
+         * each tab counts its own population. Rebuilt only when the options
+         * changed, so a keystroke in the search box never closes it. Returns
+         * the grade this tab draws: the shared choice, or 'all' where this tab
+         * has nobody in it.
+         */
+        function attFillGradeSelect(sel, counts, total) {
+            const keys = attGradeOrder(Object.keys(counts || {}));
+            const grade = (_attGradeFilter === 'all' || (counts && Object.prototype.hasOwnProperty.call(counts, _attGradeFilter)))
+                ? _attGradeFilter : 'all';
+            if (sel) {
+                const wanted = ['all=All grades (' + total + ')']
+                    .concat(keys.map(k => k + '=' + attGradeName(k) + ' (' + counts[k] + ')'))
+                    .join('|');
+                if (sel.getAttribute('data-built') !== wanted) {
+                    sel.innerHTML = wanted.split('|').map(pair => {
+                        const eq = pair.indexOf('=');
+                        return '<option value="' + escapeHtml(pair.slice(0, eq)) + '">' +
+                               escapeHtml(pair.slice(eq + 1)) + '</option>';
+                    }).join('');
+                    sel.setAttribute('data-built', wanted);
+                }
+                if (sel.value !== grade) sel.value = grade;
+            }
+            return grade;
+        }
+
+        /**
+         * The "Kind of absence" select, each option with its count inside the
+         * chosen band. Whole and partial are disabled, with the reason, when
+         * the whole/partial split could not be loaded (never offered as an
+         * empty list that reads as "nobody").
+         */
+        function attFillKindSelect(sel, counts, chosen, splitWhy) {
             const R = window.WildcatRoster;
-            if (!R || typeof R.windowAbsenceList !== 'function' || typeof R.absenceWindows !== 'function') {
-                list.innerHTML = '<p class="wu-absent">Attendance rules did not load. Refresh the page.</p>';
+            const kinds = (R && R.ATTENDANCE_KINDS) || [];
+            const off = k => !!splitWhy && (k === 'whole' || k === 'partial');
+            const want = kinds.map(k => k.key + '=' + k.label + (off(k.key) ? ' (' + splitWhy + ')' : ' (' + (counts[k.key] || 0) + ')')
+                + (off(k.key) ? '|off' : '')).join(';');
+            if (sel) {
+                if (sel.getAttribute('data-built') !== want) {
+                    sel.innerHTML = kinds.map(k => '<option value="' + escapeHtml(k.key) + '"' + (off(k.key) ? ' disabled' : '') + '>'
+                        + escapeHtml(k.label + (off(k.key) ? ' (' + splitWhy + ')' : ' (' + (counts[k.key] || 0) + ')')) + '</option>').join('');
+                    sel.setAttribute('data-built', want);
+                }
+                if (sel.value !== chosen) sel.value = chosen;
+            }
+        }
+
+        /** The band chips: the counts are the old tier cards', and pressing one filters the list. */
+        function attBandChipsHtml(chips, counts, pressed, setter) {
+            return chips.map(c =>
+                '<button type="button" class="wc-band' + (c.cls ? ' ' + c.cls : '') + '" aria-pressed="' + (c.key === pressed ? 'true' : 'false') + '"'
+                + ' data-band="' + escapeHtml(c.key) + '" onclick="' + setter + '(\'' + escapeHtml(c.key) + '\')">'
+                + '<b>' + (counts[c.key] || 0) + '</b><span class="wc-band-l">' + escapeHtml(c.label) + '</span>'
+                + (c.sub ? '<span class="wc-band-s">' + c.sub + '</span>' : '') + '</button>').join('');
+        }
+
+        /** "Sorted by Tardies, highest first", or the list's own order in words. */
+        function attOrderWords(tableId, cols, fallback) {
+            const st = _wcSortState.get(tableId);
+            if (!st || !cols[st.col]) return fallback;
+            const c = cols[st.col];
+            const how = c.type === 'text' ? (st.dir === 'asc' ? 'A to Z' : 'Z to A')
+                : (st.dir === 'desc' ? 'highest first' : 'lowest first');
+            return 'Sorted by ' + c.label + ', ' + how;
+        }
+
+        /** The row above a list: the order it is in, and how many of how many are shown. */
+        function attTableBarHtml(orderWords, countWords) {
+            return '<div class="wc-att-tablebar"><div class="wc-chips"><span class="wc-chip">' + escapeHtml(orderWords)
+                + '</span></div><span>' + countWords + '</span></div>';
+        }
+
+        /** "Show all 386", or back to the first 50, under a capped list. */
+        function attShowMoreHtml(shown, total, all, fn) {
+            if (shown < total) {
+                return '<p class="wc-att-more"><button type="button" class="btn btn-secondary" onclick="' + fn + '(true)">Show all '
+                    + total + '</button> <span>The order above applies to all ' + total + ', not only the first ' + shown + '.</span></p>';
+            }
+            return (all && total > ATT_LIST_CAP)
+                ? '<p class="wc-att-more"><button type="button" class="btn btn-secondary" onclick="' + fn + '(false)">Show the first '
+                  + ATT_LIST_CAP + '</button></p>' : '';
+        }
+
+        /** Week or month's columns: the heading, its kind, which press comes first, and each row's sort text. */
+        const ATT_WIN_COLS = [
+            { label: 'Student', type: 'text', text: r => ((r.student.firstName || '') + ' ' + (r.student.lastName || '')).trim() || ('Student ' + r.studentNumber) },
+            { label: 'Grade', type: 'num', text: r => attGradeKey(r.student) === '(none)' ? '' : attGradeKey(r.student) },
+            { label: 'Days absent', type: 'num', first: 'desc', text: r => String(r.daysAbsent) },
+            { label: 'Whole days', type: 'num', first: 'desc', text: r => r.whole === null ? '' : String(r.whole) },
+            { label: 'Tardies', type: 'num', first: 'desc', text: r => String(r.daysTardy) },
+            { label: 'Band', type: 'num', first: 'desc', text: r => String({ every: 4, half: 3, some: 2, none: 1 }[r.band.key] || 0) }
+        ];
+
+        async function renderAttendanceWindow(force) {
+            const host = document.getElementById('attWinTable');
+            if (!host) return;
+            const pick = document.getElementById('attWinPick');
+            const chipsEl = document.getElementById('attWinChips');
+            const bandsEl = document.getElementById('attWinBands');
+            const oneEl = document.getElementById('attWinOneDay');
+            const foldEl = document.getElementById('attWinFold');
+            const R = window.WildcatRoster;
+            if (!R || typeof R.windowAbsenceList !== 'function' || typeof R.absenceWindows !== 'function'
+                || typeof R.windowBandMatch !== 'function') {
+                host.innerHTML = '<p class="wu-absent">Attendance rules did not load. They arrive with the next update.</p>';
                 return;
             }
+            if (pick) {
+                pick.querySelectorAll('[data-attwin]').forEach(b => {
+                    const on = b.getAttribute('data-attwin') === _attWindow;
+                    b.classList.toggle('active', on);
+                    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+                });
+            }
             const today = attTodayIso();
-            const wins = R.absenceWindows(today);
+            const cal = attendanceSchoolDays();
+            const wins = R.absenceWindows(today, null, cal.known ? cal.lastSchoolDay : null);
             let win = wins && wins[_attWindow];
             if (!win) {
-                list.innerHTML = '<p class="wu-absent">That period could not be worked out.</p>';
+                host.innerHTML = '<p class="wu-absent">That period could not be worked out.</p>';
                 return;
             }
 
@@ -35882,15 +36397,15 @@
             const seq = ++_attWinSeq;
             const winKey = win.key + '|' + win.from + '|' + win.to + '|' + today;
             if (force || !_paCache || !_attWinCache.has(winKey)) {
-                list.innerHTML = '<p class="wu-absent">Loading attendance&hellip;</p>';
+                host.innerHTML = '<p class="wu-absent">Loading attendance&hellip;</p>';
             }
             const both = await Promise.all([loadPerfectMarks(force === true), loadAbsenceWindow(win, today, force === true)]);
             if (seq !== _attWinSeq || _attWindow !== win.key) return;
             const marks = both[0], wres = both[1];
             if (!marks || marks.allowed === false) {
-                if (cards) cards.innerHTML = '';
-                if (foot) foot.textContent = '';
-                list.innerHTML = '<p class="wu-absent">' +
+                if (bandsEl) bandsEl.innerHTML = '';
+                if (chipsEl) chipsEl.innerHTML = '';
+                host.innerHTML = '<p class="wu-absent">' +
                     escapeHtml((marks && marks.reason) || 'Attendance is not available to your access level.') + '</p>';
                 return;
             }
@@ -35900,7 +36415,7 @@
             // THE SERVER KNOWS WHICH DAY IS COMPLETE: before the morning sync
             // has run, not even yesterday is. Its answer narrows the window.
             if (splitOk && wres.through && wres.through < win.through) {
-                const narrowed = R.absenceWindows(today, wres.through);
+                const narrowed = R.absenceWindows(today, wres.through, cal.known ? cal.lastSchoolDay : null);
                 if (narrowed && narrowed[win.key]) win = narrowed[win.key];
             }
             // The days school ran. From the server when it answered; otherwise
@@ -35933,81 +36448,6 @@
                 });
             }
 
-            const full = R.windowAbsenceList(markRows, schoolDays, win);
-            const allRows = full.rows.map(r => {
-                const m = markBy[r.studentNumber] || {};
-                const st = byNumber[r.studentNumber]
-                    || { studentNumber: r.studentNumber, firstName: m.firstName || '', lastName: m.lastName || '',
-                         grade: m.gradeLevel || '' };
-                return Object.assign({}, r, { student: st });
-            });
-
-            // GRADE: the same control and the same rule as the year view -- the
-            // options come from the data, and a grade scopes the cards too.
-            const gradeCounts = {};
-            allRows.forEach(r => { const k = attGradeKey(r.student); gradeCounts[k] = (gradeCounts[k] || 0) + 1; });
-            const gradeKeys = attGradeOrder(Object.keys(gradeCounts));
-            const gradeSel = document.getElementById('attGradeFilter');
-            if (gradeSel) {
-                if (_attGradeFilter !== 'all' && !gradeCounts[_attGradeFilter]) _attGradeFilter = 'all';
-                const wanted = ['all=All grades (' + allRows.length + ')']
-                    .concat(gradeKeys.map(k => k + '=' +
-                        (k === '(none)' ? 'No grade on file' : 'Grade ' + k) + ' (' + gradeCounts[k] + ')'))
-                    .join('|');
-                if (gradeSel.getAttribute('data-built') !== wanted) {
-                    gradeSel.innerHTML = wanted.split('|').map(pair => {
-                        const eq = pair.indexOf('=');
-                        return '<option value="' + escapeHtml(pair.slice(0, eq)) + '">' +
-                               escapeHtml(pair.slice(eq + 1)) + '</option>';
-                    }).join('');
-                    gradeSel.setAttribute('data-built', wanted);
-                }
-                if (gradeSel.value !== _attGradeFilter) gradeSel.value = _attGradeFilter;
-            }
-            const rows = _attGradeFilter === 'all' ? allRows
-                : allRows.filter(r => attGradeKey(r.student) === _attGradeFilter);
-
-            const nDays = full.schoolDays.length;
-            const c = { every: 0, half: 0, some: 0, tardy: 0 };
-            rows.forEach(r => {
-                if (r.band.key === 'every') c.every++;
-                if (r.band.key === 'every' || r.band.key === 'half') c.half++;
-                if (r.daysAbsent > 0) c.some++;
-                if (r.daysTardy > 0) c.tardy++;
-            });
-
-            if (note) {
-                const empty = win.from > win.to;
-                const span = empty ? '' : (win.from === win.to ? attShortDay(win.from)
-                    : attShortDay(win.from) + ' \u2013 ' + attShortDay(win.to)) + '. ';
-                const pending = win.capped
-                    ? ' Days count once their attendance is complete, so the latest counted is '
-                      + attShortDay(win.through) + (win.through === R.absenceWindows(today).thisWeek.through
-                        ? ' (yesterday); today\u2019s attendance is still being taken.' : '.')
-                    : '';
-                note.textContent = win.label + ': ' + span + (empty
-                    ? 'No completed school days in this period yet.' + pending
-                      + (win.key === 'thisWeek' ? ' Last week is one click away.' : '')
-                    : (nDays
-                        ? nDays + ' school day' + (nDays === 1 ? '' : 's')
-                          + ', counted from the days attendance was taken, so holidays drop out by themselves.' + pending
-                        : 'No school days on record in this period.' + pending));
-            }
-
-            if (cards) {
-                cards.innerHTML = [
-                    ['severe', 'Every day', 'missed class on all ' + nDays + ' day' + (nDays === 1 ? '' : 's'), c.every],
-                    ['chronic', 'Half or more', 'of the school days', c.half],
-                    ['at-risk', 'Missed a day', 'missed class at least once', c.some],
-                    ['satisfactory', 'Late', 'at least once', c.tardy]
-                ].map(t =>
-                    '<div class="wc-att-tier wc-att-' + t[0] + '">' +
-                        '<div class="wc-att-tier-n">' + t[3] + '</div>' +
-                        '<div class="wc-att-tier-l">' + escapeHtml(t[1]) + '</div>' +
-                        '<div class="wc-att-tier-s">' + escapeHtml(t[2]) + '</div>' +
-                    '</div>').join('');
-            }
-
             // THE SPLIT ONLY WHERE IT COVERS EVERY ABSENT DAY. The day counts
             // come from the marks, which agree with PowerSchool's own
             // year-to-date total for 616 of 618 students (measured 2026-09-23);
@@ -36015,103 +36455,159 @@
             // few students hold far fewer days (3 of 14). A "full days" figure
             // built from a partial record would understate a child, so where
             // the two disagree the split is not shown for that student.
-            const spOf = r => {
-                const sp = splitBy[r.studentNumber] || null;
-                return sp && sp.absentDays === r.daysAbsent ? sp : null;
-            };
-            // WORST FIRST, and "worst" means out of school: at the same number
-            // of days, whole days out come before a missed period, and fewer
-            // tardies before more. Ranked by days alone, children late every
-            // morning led the week above children who never came in.
-            const fullOf = r => { const sp = spOf(r); return sp ? sp.fullDays : -1; };
-            const worstFirst = (a, b) => (b.daysAbsent - a.daysAbsent) || (fullOf(b) - fullOf(a))
-                || (a.daysTardy - b.daysTardy) || (b.rate - a.rate);
-            let shown = rows.slice().sort(worstFirst);
-            if (_attWinFilter === 'absent') shown = shown.filter(r => r.daysAbsent > 0);
-            else if (_attWinFilter === 'every') shown = shown.filter(r => r.band.key === 'every');
-            else if (_attWinFilter === 'half') shown = shown.filter(r => r.band.key === 'every' || r.band.key === 'half');
-            else if (_attWinFilter === 'fullDays') {
-                shown = rows.filter(r => { const sp = spOf(r); return sp && sp.fullDays > 0; })
-                    .slice().sort((a, b) => (spOf(b).fullDays - spOf(a).fullDays) || (b.daysAbsent - a.daysAbsent));
-            } else if (_attWinFilter === 'partialOnly') {
-                shown = rows.filter(r => { const sp = spOf(r); return sp && sp.absentDays > 0 && sp.fullDays === 0; });
-            } else if (_attWinFilter === 'tardy') {
-                shown = rows.filter(r => r.daysTardy > 0).slice()
-                    .sort((a, b) => (b.daysTardy - a.daysTardy) || (b.daysAbsent - a.daysAbsent));
-            }
-            const search = ((document.getElementById('attSearch') || {}).value || '').trim().toLowerCase();
-            if (search) {
-                shown = shown.filter(r => {
-                    const st = r.student || {};
-                    return (((st.firstName || '') + ' ' + (st.lastName || '')).toLowerCase().indexOf(search) !== -1)
-                        || String(st.studentNumber || '').toLowerCase().indexOf(search) !== -1;
-                });
+            const full = R.windowAbsenceList(markRows, schoolDays, win);
+            const allRows = full.rows.map(r => {
+                const m = markBy[r.studentNumber] || {};
+                const st = byNumber[r.studentNumber]
+                    || { studentNumber: r.studentNumber, firstName: m.firstName || '', lastName: m.lastName || '',
+                         grade: m.gradeLevel || '' };
+                const sp0 = splitBy[r.studentNumber] || null;
+                const sp = sp0 && sp0.absentDays === r.daysAbsent ? sp0 : null;
+                return Object.assign({}, r, { student: st, whole: sp ? sp.fullDays : null, splitAbsent: sp ? sp.absentDays : 0 });
+            });
+
+            // GRADE: the same shared choice as the other tabs; the options and
+            // counts are this tab's own, and a grade scopes the chips too.
+            const gradeCounts = {};
+            allRows.forEach(r => { const k = attGradeKey(r.student); gradeCounts[k] = (gradeCounts[k] || 0) + 1; });
+            const grade = attFillGradeSelect(document.getElementById('attWinGrade'), gradeCounts, allRows.length);
+            const rows = grade === 'all' ? allRows : allRows.filter(r => attGradeKey(r.student) === grade);
+
+            const nDays = full.schoolDays.length;
+            const empty = win.from > win.to;
+            const span = empty ? '' : (win.from === win.to ? attShortDay(win.from)
+                : attShortDay(win.from) + ' to ' + attShortDay(win.to));
+            if (chipsEl) {
+                chipsEl.innerHTML = cashChipsHtml(escapeHtml(empty ? win.label + ': no finished school day yet'
+                        : span + ((win.key === 'thisWeek' || win.key === 'thisMonth') ? ' (so far)' : '')
+                          + ' · ' + nDays + ' school day' + (nDays === 1 ? '' : 's')),
+                    'days with any period missed');
             }
 
-            const CAP = 150;
-            const clipped = shown.length > CAP;
-            const view = clipped ? shown.slice(0, CAP) : shown;
-            const bandClass = { every: 'severe', half: 'chronic', some: 'at-risk', none: 'satisfactory' };
+            // "AT LEAST" CHIPS, one colour ramp: they nest (every day is inside
+            // half or more is inside missed a day), so they are not drawn as
+            // separate tiers. A ONE-DAY PERIOD HAS ONE ABSENCE BAND: half and
+            // every day would be the same list as "missed the day".
+            const one = nDays === 1;
+            if (one && (_attWinBand === 'half' || _attWinBand === 'every')) _attWinBand = 'some';
+            const RAMP = { some: 'wc-ramp-1', half: 'wc-ramp-2', every: 'wc-ramp-4', tardy: 'wc-ramp-late', all: '' };
+            const chips = (R.WINDOW_CHIPS || []).filter(c => !one || (c.key !== 'half' && c.key !== 'every')).map(c => ({
+                key: c.key, cls: RAMP[c.key] || '', label: one && c.one ? c.one : c.label,
+                sub: c.key === 'some' ? (one ? 'any period' : 'at least one')
+                    : c.key === 'half' ? Math.ceil(nDays / 2) + ' or more of ' + nDays
+                    : c.key === 'every' ? 'all ' + nDays
+                    : c.key === 'tardy' ? (one ? 'that day' : 'any tardy') : 'on today&rsquo;s roster'
+            }));
+            if (!chips.some(c => c.key === _attWinBand)) _attWinBand = 'some';
+            const bandCounts = {};
+            chips.forEach(c => { bandCounts[c.key] = rows.filter(r => R.windowBandMatch(c.key, r)).length; });
+            if (bandsEl) bandsEl.innerHTML = empty ? '' : attBandChipsHtml(chips, bandCounts, _attWinBand, 'setAttendanceWindowBand');
+            if (oneEl) {
+                oneEl.hidden = !one;
+                oneEl.textContent = one ? win.label + ' is 1 school day (' + attShortDay(win.from) + '), so “missed half” and '
+                    + '“missed every day” would be the same list as “missed the day”. They come back for a longer period.' : '';
+            }
 
-            if (!view.length) {
-                const where = _attGradeFilter === 'all' ? ''
-                    : (_attGradeFilter === '(none)' ? ' among students with no grade on file' : ' in grade ' + _attGradeFilter);
-                list.innerHTML = '<p class="wu-absent">' + escapeHtml(
-                    (nDays ? 'No students match this filter' + where + '.'
-                           : 'No completed school days in this period yet.')) + '</p>';
+            const inBand = rows.filter(r => R.windowBandMatch(_attWinBand, r));
+            const kindCounts = {};
+            (R.ATTENDANCE_KINDS || []).forEach(k => { kindCounts[k.key] = inBand.filter(r => R.attendanceKindMatch(k.key, r)).length; });
+            const splitWhy = splitOk ? '' : 'not available just now';
+            if (!splitOk && (_attWinKind === 'whole' || _attWinKind === 'partial')) _attWinKind = 'any';
+            attFillKindSelect(document.getElementById('attWinKind'), kindCounts, _attWinKind, splitWhy);
+
+            if (empty) {
+                host.innerHTML = '<p class="wu-absent">' + escapeHtml(win.label + ' has no finished school day yet. '
+                    + 'Days count once their attendance is complete, so today is not counted until tomorrow.')
+                    + ' <button type="button" class="wc-insight-link" onclick="setAttendanceWindow(\'lastDay\')">Last school day</button>'
+                    + ' and <button type="button" class="wc-insight-link" onclick="setAttendanceWindow(\'lastWeek\')">Last week</button>'
+                    + ' are one click away.</p>';
             } else {
-                list.innerHTML = view.map(r => {
+                // SEARCH LOOKS AT EVERYONE ON THIS TAB, not only the chosen band.
+                const q = ((document.getElementById('attWinSearch') || {}).value || '').trim();
+                const inside = r => R.windowBandMatch(_attWinBand, r) && R.attendanceKindMatch(_attWinKind, r);
+                const found = R.attendanceSearch(rows, q, inside);
+                const bandName = (chips.find(c => c.key === _attWinBand) || {}).label || '';
+                const list = found ? found.rows : inBand.filter(r => R.attendanceKindMatch(_attWinKind, r));
+                // WORST FIRST, and "worst" means out of school: at the same number
+                // of days, whole days out come before a missed period, and fewer
+                // tardies before more (WildcatRoster.attendanceListOrder).
+                const ordered = wcSortItems('attWin', R.attendanceListOrder(list, 'window', _attWinKind),
+                    (r, col) => ATT_WIN_COLS[col] ? ATT_WIN_COLS[col].text(r) : '');
+                _wcSortRedraw.set('attWin', () => renderAttendanceWindow());
+                const shown = (_attWinAll || found) ? ordered : ordered.slice(0, ATT_LIST_CAP);
+                const fallback = _attWinKind === 'whole' ? 'Most whole days first' : _attWinKind === 'tardy' ? 'Most tardies first' : 'Worst first';
+                const countWords = found
+                    ? 'Searching everyone' + (grade === 'all' ? '' : ' in ' + escapeHtml(attGradeName(grade).toLowerCase())) + ': '
+                      + found.rows.length + ' match' + (found.rows.length === 1 ? '' : 'es')
+                      + (found.outside ? ', ' + found.outside + ' of them outside &ldquo;' + escapeHtml(bandName) + '&rdquo;'
+                        + (_attWinKind !== 'any' ? ' with this kind of absence' : '') + ' (shaded)' : '') + '.'
+                    : (shown.length < ordered.length ? 'The first ' + shown.length + ' of ' + ordered.length + ' shown' : 'All ' + ordered.length + ' shown');
+                const bandClass = { every: 'every', half: 'half', some: 'some', none: 'none' };
+                const rowsHtml = shown.map(r => {
                     const st = r.student || {};
                     const name = escapeHtml(((st.firstName || '') + ' ' + (st.lastName || '')).trim()
                                             || ('Student ' + (st.studentNumber || '?')));
-                    const meta = [st.grade ? 'Grade ' + st.grade : '', st.studentNumber || '',
-                                  r.enrolledSince ? 'enrolled ' + attShortDay(r.enrolledSince) : '']
-                        .filter(Boolean).map(escapeHtml).join('  &middot;  ');
-                    const sp = spOf(r);
+                    const out = !!found && !inside(r);
+                    const sub = ['#' + escapeHtml(String(st.studentNumber || '')),
+                        r.enrolledSince ? 'enrolled ' + escapeHtml(attShortDay(r.enrolledSince)) : '']
+                        .filter(Boolean).join(' &middot; ');
+                    const band = one && r.band.key === 'every' ? 'Missed the day' : r.band.label;
                     const openable = ' onclick="openAttendanceDetail(\'' +
-                        escapeHtml(String(st.studentNumber || '')) + '\')"';
-                    return '<button type="button" class="wc-att-row wc-att-' + (bandClass[r.band.key] || 'satisfactory') + '"' + openable + '>' +
-                        '<span class="wc-att-name">' + name +
-                            (meta ? '<span class="wc-att-meta">' + meta + '</span>' : '') + '</span>' +
-                        '<span class="wc-att-figs">' +
-                            '<span class="wc-att-pct">' + r.daysAbsent + '/' + r.schoolDays + '</span>' +
-                            '<span class="wc-att-days">missed class on ' + r.daysAbsent + ' of ' + r.schoolDays + ' day' + (r.schoolDays === 1 ? '' : 's') +
-                                (sp ? '  &middot;  ' + sp.fullDays + ' full' : '') +
-                                (r.daysTardy ? '  &middot;  ' + r.daysTardy + ' tardy' : '') + '</span>' +
-                        '</span>' +
-                        '<span class="wc-att-badge">' + escapeHtml(r.band.label) + '</span>' +
-                    '</button>';
+                        escapeHtml(String(st.studentNumber || '')) + '\', \'window\')"';
+                    return '<tr' + (out ? ' class="wc-att-out"' : '') + '><th scope="row" class="wc-pin">'
+                        + '<button type="button" class="wc-att-open"' + openable + '>' + name + '</button>'
+                        + '<span class="wc-att-sub">' + sub + (out ? ' <span class="wc-att-out-tag">not in ' + escapeHtml(bandName) + '</span>' : '') + '</span></th>'
+                        + '<td>' + (attGradeKey(st) === '(none)' ? '&mdash;' : escapeHtml(attGradeKey(st))) + '</td>'
+                        + '<td data-sort="' + r.daysAbsent + '"><b>' + r.daysAbsent + '</b> of ' + r.schoolDays + '</td>'
+                        + '<td>' + (r.whole === null ? '&mdash;' : r.whole) + '</td>'
+                        + '<td>' + r.daysTardy + '</td>'
+                        + '<td class="wc-att-' + (bandClass[r.band.key] || 'none') + '"><span class="wc-att-badge">' + escapeHtml(band) + '</span></td></tr>';
                 }).join('');
+                const heads = ATT_WIN_COLS.map((c, i) => wcSortTh('attWin', i,
+                    i === 2 ? 'Days absent (of ' + nDays + ')' : escapeHtml(c.label),
+                    { type: c.type, first: c.first, cls: i === 0 ? 'wc-pin' : '' })).join('');
+                host.innerHTML = (ordered.length || found)
+                    ? attTableBarHtml(attOrderWords('attWin', ATT_WIN_COLS, fallback), countWords)
+                      + (shown.length
+                        ? '<div class="wu-scroll-x"><table class="student-table wc-trend-table wc-names-table wc-att-table"><thead><tr>'
+                          + heads + '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>'
+                          + (found ? '' : attShowMoreHtml(shown.length, ordered.length, _attWinAll, 'showAllAttendanceWindow'))
+                        : '<p class="wu-absent">No students match that search' + (grade === 'all' ? '' : ' in ' + escapeHtml(attGradeName(grade).toLowerCase())) + '.</p>')
+                    : '<p class="wu-absent">' + escapeHtml(nDays
+                        ? 'No students match this filter' + (grade === 'all' ? '' : ' in ' + attGradeName(grade).toLowerCase()) + '.'
+                        : 'No school days on record in this period.') + '</p>';
             }
 
-            if (foot) {
+            if (foldEl) {
                 const bits = [];
-                if (_attGradeFilter !== 'all') {
-                    bits.push(_attGradeFilter === '(none)'
-                        ? 'Scoped to students with no grade on file; the counts above cover only those students.'
-                        : 'Scoped to grade ' + _attGradeFilter + '; the counts above cover only that grade.');
-                }
-                if (clipped) bits.push('Showing the first ' + CAP + ' of ' + shown.length + '. Search to narrow.');
+                bits.push('<p class="wc-trend-note"><b>Finished days only.</b> Today&rsquo;s attendance is still being taken, so the latest day '
+                    + 'counted is ' + escapeHtml(attShortDay(win.through)) + '. Before the 6:30 AM copy has run, yesterday is not finished either.</p>');
+                bits.push('<p class="wc-trend-note"><b>School days are the days PowerSchool took attendance</b>, so a holiday drops out by itself. '
+                    + 'The same calendar counts Year so far.</p>');
+                bits.push('<p class="wc-trend-note"><b>&ldquo;Last week&rdquo; is the last finished Monday to Friday</b>, the same week as Perfect '
+                    + 'attendance&rsquo;s &ldquo;Last week&rdquo;. On a Saturday or Sunday that is the week just finished, and &ldquo;This week so '
+                    + 'far&rdquo; has no finished day until Tuesday.</p>');
+                bits.push('<p class="wc-trend-note"><b>Grade</b> comes from the app&rsquo;s roster, or PowerSchool&rsquo;s where the app has no record of the student.</p>');
                 const late = rows.filter(r => r.enrolledSince).length;
-                if (late) bits.push(late + ' student' + (late === 1 ? '' : 's') + ' enrolled during this period and ' +
-                    (late === 1 ? 'is' : 'are') + ' counted from the day they started.');
+                if (late) bits.push('<p class="wc-trend-note">' + late + ' student' + (late === 1 ? '' : 's') + ' enrolled during this period and '
+                    + (late === 1 ? 'is' : 'are') + ' counted from the day they started.</p>');
                 // SAID, because a number that ignores data should say so.
                 let ahead = 0;
                 markRows.forEach(m => (m.absentDates || []).forEach(d => { if (String(d).slice(0, 10) > win.through) ahead++; }));
-                if (ahead) bits.push(ahead + ' absence' + (ahead === 1 ? ' is' : 's are') +
-                    ' already entered for today or later and ' + (ahead === 1 ? 'is' : 'are') + ' not counted until the day is complete.');
-                if (!splitOk) bits.push('Full and partial days could not be worked out for this period just now; the day counts are unaffected.');
-                else {
-                    if (wres.truncated) bits.push('This period had more attendance records than this screen reads, so the full-day figures are incomplete. Tell an administrator.');
-                    const gaps = rows.filter(r => r.daysAbsent > 0 && !spOf(r)).length;
-                    if (gaps) bits.push('Full and partial days are not shown for ' + gaps + ' student' + (gaps === 1 ? '' : 's') +
-                        ' whose period-by-period records do not cover every day they were absent.');
+                if (ahead) bits.push('<p class="wc-trend-note">' + ahead + ' absence' + (ahead === 1 ? ' is' : 's are')
+                    + ' already entered for today or later and ' + (ahead === 1 ? 'is' : 'are') + ' not counted until the day is complete.</p>');
+                if (!splitOk) {
+                    bits.push('<p class="wc-trend-note">Full and partial days could not be worked out for this period just now; the day counts are unaffected.</p>');
+                } else {
+                    if (wres.truncated) bits.push('<p class="wc-trend-note">This period had more attendance records than this screen reads, so the full-day figures are incomplete. Tell an administrator.</p>');
+                    const gaps = rows.filter(r => r.daysAbsent > 0 && r.whole === null).length;
+                    if (gaps) bits.push('<p class="wc-trend-note">Full and partial days are not shown for ' + gaps + ' student' + (gaps === 1 ? '' : 's')
+                        + ' whose period-by-period records do not cover every day they were absent.</p>');
                 }
-                if (_attWinFilter === 'fullDays') bits.push('Ranked by whole days out of school in this period.');
-                if (marks.truncated) bits.push('The attendance table was larger than this screen reads. Tell an administrator.');
-                if (marks.lastSyncedAt) bits.push('Last synced ' + String(marks.lastSyncedAt).slice(0, 16).replace('T', ' ') + '.');
-                foot.textContent = bits.join(' ');
+                if (marks.truncated) bits.push('<p class="wc-trend-note">The attendance table was larger than this screen reads. Tell an administrator.</p>');
+                foldEl.innerHTML = cashFoldHtml('att-win-how', 'How these numbers are counted', bits.join(''));
             }
+            renderAttDataLine();
         }
 
         /** A student's grade as a filter key. '(none)' is a real bucket, not a miss. */
@@ -36144,24 +36640,37 @@
         }
 
         /**
-         * Days school has been in session, from the start date on screen.
+         * School days so far: WildcatRoster.schoolCalendar over the copy in
+         * hand. EVERY CONSUMER ASKS HERE -- Year so far's bands, Student groups
+         * (sent to the server), Perfect attendance's months and year, and Early
+         * Warning's attendance points -- so one child cannot be chronic on one
+         * screen and fine on the other.
          *
-         * The holiday subtraction is a number a human types, because no school
-         * calendar exists in this app -- bellScheduleDays is empty, and
-         * inventing one from weekday arithmetic would be a guess dressed as a
-         * fact. Left alone it counts every weekday, which makes the denominator
-         * slightly too LARGE and therefore every rate slightly too SMALL. That
-         * is the safe direction to be wrong in: it under-flags rather than
-         * telling a family their child is chronically absent when they are not.
+         * It replaced two boxes, "School year started" and "Holidays", that were
+         * saved nowhere and reset on every load (2026-10-07). It is the days
+         * PowerSchool took attendance before today, PLUS TODAY once the year
+         * totals in hand (_attCache, the numbers every rate divides) were copied
+         * after today's attendance was taken: those totals count today's
+         * absences, so the divisor must count today too (review, 2026-10-07).
+         * Absences entered ahead of time never count as days. When it cannot be
+         * trusted it says so (known: false, with the reason) rather than fall
+         * back to a number. The { first, weekdays, off, days } shape is the one
+         * this always returned.
          */
         function attendanceSchoolDays() {
             const R = window.WildcatRoster;
-            const firstEl = document.getElementById('attFirstDay');
-            const offEl = document.getElementById('attNonSchoolDays');
-            const first = (firstEl && firstEl.value) || '2026-08-12';
-            const off = Math.max(0, Number(offEl && offEl.value) || 0);
-            const weekdays = R && R.schoolDaysElapsed ? R.schoolDaysElapsed(first, new Date()) : 0;
-            return { first: first, weekdays: weekdays, off: off, days: Math.max(0, weekdays - off) };
+            if (!R || typeof R.schoolCalendar !== 'function') {
+                return { known: false, status: 'unknown', days: null, first: null, weekdays: 0, off: 0, estimated: [],
+                         reason: 'The attendance rules did not load yet. They arrive with the next update.' };
+            }
+            return R.schoolCalendar(_runCache || _attCalHeld, attTodayIso(), (_attCache && _attCache.lastSyncedAt) || null);
+        }
+
+        /** The days the count covers, in words: "Wed, Aug 12 to today" (or "to yesterday"). */
+        function attDaysRange(cal) {
+            const c = cal || {};
+            if (!c.first) return 'no school day on file yet';
+            return attShortDay(c.first) + (c.todayCounted ? ' to today' : ' to yesterday');
         }
 
         // =====================================================================
@@ -36205,7 +36714,9 @@
             _paWindow = String(key || 'week');
             document.querySelectorAll('#attPerfectWindow .analytics-tab').forEach(b => {
                 const k = b.getAttribute('data-pa');
-                if (k) b.classList.toggle('active', k === _paWindow);
+                if (!k) return;
+                b.classList.toggle('active', k === _paWindow);
+                b.setAttribute('aria-pressed', k === _paWindow ? 'true' : 'false');
             });
             renderPerfectAttendance();
         }
@@ -36316,7 +36827,30 @@
             const body = document.getElementById('attSubgroupBody');
             if (!body) return;
 
+            // THE TOTALS' COPY TIME FIRST: the server divides PowerSchool's
+            // LIVE year totals, and today is in the count exactly when the
+            // copy in hand holds today (review, 2026-10-07). So whenever the
+            // groups are about to be asked for, the totals are read again
+            // first: a copy from 06:00, held since the morning, would leave
+            // today out while the server divided the 12:00 totals that hold
+            // it -- one day short, and chronic absence overstated. An answer
+            // already in hand is drawn against the count it was asked with.
+            const held = attendanceSchoolDays();
+            const asking = force === true || !_sgCache || !held.known || _sgCache.forDays !== held.days;
+            await loadAttendanceRows(asking);
             const basis = attendanceSchoolDays();
+            // THE SAME COUNT AS EVERY OTHER TAB, sent to the server, which
+            // works out who is chronic. Unknown is said, never sent as a guess.
+            if (!basis.known) {
+                body.innerHTML = '<p class="wu-absent">' + escapeHtml('Student groups need the number of school days so far, '
+                    + 'and it is unknown right now. ' + (basis.reason || '')) + '</p>';
+                return;
+            }
+            if (!basis.days) {
+                body.innerHTML = '<p class="wu-absent">' + escapeHtml('No school days are counted yet, so there is no rate to compare. '
+                    + (basis.reason || '')) + '</p>';
+                return;
+            }
             let res = (_sgCache && _sgCache.forDays === basis.days) ? _sgCache.res : null;
             if (!res || force) {
                 if (_sgBusy) return;
@@ -36335,7 +36869,8 @@
             const base = res.baseline || {};
             const pct = v => (v === null || v === undefined) ? '&mdash;' : escapeHtml(String(v)) + '%';
 
-            let html = '';
+            let html = cashChipsHtml(escapeHtml(attDaysRange(basis) + ' \u00b7 ' + res.schoolDays + ' school days'),
+                'share of students chronically absent', 'admins and the PBIS team only');
             // THE SCHOOL'S OWN RATE, FIRST AND BIGGEST.
             html += '<div class="wc-sg-baseline">'
                 + '<div class="wc-sg-base-n">' + pct(base.chronicPct) + '</div>'
@@ -36407,18 +36942,20 @@
                 html += '</div>';
             });
 
-            // GROUPS THE QUESTION NAMED THAT THIS APP CANNOT ANSWER.
-            // A group missing from an equity breakdown reads as a group with
-            // no disparity, which is the most misleading way to be absent.
+            // GROUPS THE QUESTION NAMED THAT THIS APP CANNOT ANSWER, and the
+            // footnotes, in one fold (2026-10-07). A group missing from an
+            // equity breakdown reads as a group with no disparity, which is the
+            // most misleading way to be absent, so the fold is named for it.
+            let about = '';
             if ((res.unavailable || []).length) {
-                html += '<h4 class="wc-sg-axis">Not available yet</h4>';
-                html += '<div class="wc-sg-gaps">';
+                about += '<h4 class="wc-sg-axis">Groups the school asked about that cannot be shown yet</h4>';
+                about += '<div class="wc-sg-gaps">';
                 res.unavailable.forEach(u => {
-                    html += '<div class="wc-sg-gap"><strong>' + escapeHtml(u.group) + '</strong>'
+                    about += '<div class="wc-sg-gap"><strong>' + escapeHtml(u.group) + '</strong>'
                         + '<div class="wc-sub">' + escapeHtml(u.reason) + '</div>'
                         + '<div class="wc-sub wc-sg-fix">What would fix it: ' + escapeHtml(u.fix) + '</div></div>';
                 });
-                html += '</div>';
+                about += '</div>';
             }
 
             const notes = [];
@@ -36434,12 +36971,18 @@
                 notes.push(res.unclassified + ' could not be placed in any category at all.');
             }
             if ((res.unmappedRaceCodes || []).length) {
-                notes.push('Unrecognised race codes: ' + res.unmappedRaceCodes.map(escapeHtml).join(', ') + '.');
+                // IN WORDS, not the raw code list alone (critique, 2026-10-06).
+                const codes = res.unmappedRaceCodes.map(escapeHtml).join(', ');
+                notes.push('PowerSchool sent ' + (res.unmappedRaceCodes.length === 1 ? 'a race code (' : 'race codes (') + codes
+                    + ') that the app does not recognise yet. Those students still count in the whole-school figure; '
+                    + 'the SIS administrator can say what ' + (res.unmappedRaceCodes.length === 1 ? 'it stands' : 'they stand') + ' for.');
             }
             if (res.lastSyncedAt) {
-                notes.push('Group data last read from PowerSchool ' + escapeHtml(wcClockAt(res.lastSyncedAt)) + '.');
+                notes.push('Group data last read from PowerSchool ' + escapeHtml(wcClockAt(res.lastSyncedAt))
+                    + ', against ' + res.schoolDays + ' school days.');
             }
-            if (notes.length) html += '<p class="wc-att-foot">' + notes.join(' ') + '</p>';
+            if (notes.length) about += '<p class="wc-att-foot">' + notes.join(' ') + '</p>';
+            if (about) html += cashFoldHtml('att-sg-about', 'About these numbers', about);
 
             body.innerHTML = html;
         }
@@ -36968,8 +37511,14 @@
                 html += '</div>';
             });
 
-            // --- the baseline ------------------------------------------------
-            html += '<h4 class="wc-ar-h">Baseline median</h4>'
+            // --- the baseline and the marked dates, in a fold (2026-10-07) ---
+            // ADMIN TOOLS LEAVE THE READING VIEW. Freezing, unfreezing, the
+            // From/To range and marking a date sit in one closed fold. The
+            // view-only grant reads the countdown, the baselines and the dates
+            // there as text: the range pickers exist only to freeze, which the
+            // grant cannot do, so they are never drawn for it.
+            const arCanEdit = window.WildcatDiscipline.canEditInsightSettings(currentUser && currentUser.role);
+            let baseHtml = '<h4 class="wc-ar-h">Baseline median</h4>'
                 + '<p class="wc-att-basis-note">' + escapeHtml(
                     'Once a stretch of at least 10 ' + meta.period + 's shows no signal, its median can be frozen. '
                     + 'A frozen median does not move when new ' + meta.period + 's arrive, and that is deliberate: later '
@@ -37026,19 +37575,20 @@
                         tail = ': about ' + left + ' more.';
                     }
                 }
-                html += '<p class="wc-ar-countdown">' + escapeHtml(arYearLabel(model.newestYear) + ' has '
+                baseHtml += '<p class="wc-ar-countdown">' + escapeHtml(arYearLabel(model.newestYear) + ' has '
                     + (thisYear.length ? thisYear.length : 'no') + ' finished ' + meta.period + (thisYear.length === 1 ? '' : 's')
                     + (thisYear.length ? '' : ' yet') + '. Its own normal can be frozen at 10' + who + tail) + '</p>';
             }
-            html += '<div class="wc-ar-range">'
-                + '<label>From <select onchange="setAttendanceRateCandidate(\'from\', this.value)">' + opts(fromShown) + '</select></label>'
-                + '<label>to <select onchange="setAttendanceRateCandidate(\'to\', this.value)">' + opts(toShown) + '</select></label>'
-                + '</div>';
+            if (arCanEdit) {
+                baseHtml += '<div class="wc-ar-range">'
+                    + '<label>From <select onchange="setAttendanceRateCandidate(\'from\', this.value)">' + opts(fromShown) + '</select></label>'
+                    + '<label>to <select onchange="setAttendanceRateCandidate(\'to\', this.value)">' + opts(toShown) + '</select></label>'
+                    + '</div>';
+            }
             // Read-only for a per-person Attendance Watch grant: the server
             // refuses these changes to anyone but the roles, so the buttons
             // are not drawn rather than failing when pressed.
-            const arCanEdit = window.WildcatDiscipline.canEditInsightSettings(currentUser && currentUser.role);
-            html += '<ul class="wc-ar-bases">' + model.series.map(s => {
+            baseHtml += '<ul class="wc-ar-bases">' + model.series.map(s => {
                 const info = arSeriesInfo(s.series);
                 const b = s.baseline;
                 const c = s.candidate;
@@ -37053,7 +37603,7 @@
                 } else {
                     row += escapeHtml('not frozen.');
                 }
-                if (c) {
+                if (c && arCanEdit) {
                     row += '<div class="wc-ar-cand">' + escapeHtml('The range above: ' + c.n + ' ' + meta.period + 's'
                         + (c.median !== null ? ', median ' + arFmt(c.median, measure) : '') + '. '
                         + (c.canFreeze ? 'No signal in it' + (c.astronomical ? ' (one or more points far from the rest; worth a look first).' : '.')
@@ -37068,9 +37618,9 @@
             }).join('') + '</ul>';
 
             // --- dates marked --------------------------------------------------
-            html += '<h4 class="wc-ar-h">Dates marked on the chart</h4>';
+            baseHtml += '<h4 class="wc-ar-h">Dates marked on the chart</h4>';
             if (model.notes.length) {
-                html += '<ol class="wc-ar-notes">' + model.notes.map(nt =>
+                baseHtml += '<ol class="wc-ar-notes">' + model.notes.map(nt =>
                     '<li><strong>' + escapeHtml(nt.date) + '</strong> ' + escapeHtml(nt.label)
                     + (nt.note ? '<span class="wc-sub"> — ' + escapeHtml(nt.note) + '</span>' : '')
                     + '<span class="wc-sub"> (' + escapeHtml(nt.createdBy || '') + ')</span>'
@@ -37078,22 +37628,23 @@
                     + (arCanEdit ? ' <button type="button" class="analytics-tab wc-ar-btn" onclick="removeAttendanceRateNote(\''
                     + escapeHtml(String(nt.id)) + '\')">Remove</button>' : '') + '</li>').join('') + '</ol>';
             } else {
-                html += '<p class="wc-att-basis-note">None yet. Mark the day something changed — a new incentive, '
+                baseHtml += '<p class="wc-att-basis-note">None yet. Mark the day something changed — a new incentive, '
                     + 'a schedule change — so a signal after it can be read against it.</p>';
             }
-            html += arCanEdit ? ('<div class="wc-ar-addnote">'
+            baseHtml += arCanEdit ? ('<div class="wc-ar-addnote">'
                 + '<input type="date" id="arNoteDate" value="' + escapeHtml(st.realToday || st.today || '') + '" aria-label="Date to mark">'
                 + '<input type="text" id="arNoteLabel" maxlength="80" placeholder="What happened (e.g. attendance raffle started)" aria-label="What happened">'
                 + '<input type="text" id="arNoteText" maxlength="500" placeholder="Details (optional)" aria-label="Details">'
                 + '<button type="button" class="analytics-tab wc-ar-btn" onclick="addAttendanceRateNote()">Mark this date</button>'
                 + '</div>')
                 : '<p class="wc-att-basis-note">Baselines and marked dates are set by administrators and the PBIS team.</p>';
+            html += cashFoldHtml('att-rate-base', arCanEdit ? 'Baseline and marked dates' : 'Baseline and marked dates (read only)', baseHtml);
 
             // --- how it is counted ----------------------------------------------
             const foot = [];
             if (measure === 'weeklyRate') {
                 foot.push('Attendance rate: 1 minus whole days absent, divided by the student-days enrolled that week. '
-                    + 'A day missing only some periods counts as attended; it is on the "Who is missing" tab.');
+                    + 'A day missing only some periods counts as attended; the daily chart below, Year so far and Week or month count it.');
             } else if (measure === 'monthlyAvgAbsent') {
                 foot.push('Whole days absent that month, divided by the students enrolled at any point in it.');
             } else {
@@ -37130,7 +37681,8 @@
                     + 'is drawn across it. The nightly update tries it again.');
             }
             if (res.truncated) foot.push('There is more history than this screen reads; tell an administrator.');
-            html += '<p class="wc-att-basis-note">' + escapeHtml(foot.join(' ')) + '</p>';
+            html += cashFoldHtml('att-rate-how', 'How this chart is counted',
+                '<p class="wc-att-basis-note">' + escapeHtml(foot.join(' ')) + '</p>');
             return { html: html, model: model };
         }
 
@@ -37248,6 +37800,32 @@
             _arModel = out.model;
             host.innerHTML = out.html;
             wireAttendanceRateHover();
+            // THE CARD'S ONE-LINE ANSWER, above the chart (2026-10-07).
+            const ans = document.getElementById('attRateAnswer');
+            if (ans) ans.textContent = arAnswerText(out.model);
+        }
+
+        /**
+         * The rate chart's answer in one line, for the whole-school line (or
+         * the first line shown): a shift or a trend in words, or "no signal".
+         * The full reading, line by line, stays under the chart.
+         */
+        function arAnswerText(model) {
+            if (!model || !model.series || !model.series.length || !model.meta) return '';
+            const s = model.series.find(x => x.series === 'all') || model.series[0];
+            const a = s.analysis || {};
+            const label = arSeriesInfo(s.series).label;
+            const period = model.meta.period;
+            const shift = (a.shifts || [])[0];
+            const trend = (a.trends || [])[0];
+            if (shift) return label + ': ' + shift.length + ' ' + period + 's in a row ' + shift.side + ' the median. That is a real change, not chance.';
+            if (trend) return label + ': ' + trend.length + ' ' + period + 's in a row going ' + trend.direction + '. That is a real change, not chance.';
+            if (a.runsVerdict === 'too few' || a.runsVerdict === 'too many') {
+                return label + ': ' + a.runs + ' runs, where ' + a.runsLimits.low + ' to ' + a.runsLimits.high
+                    + ' would be expected. Something is changing; see what the chart says below.';
+            }
+            if (a.median === null || a.median === undefined) return label + ': no finished ' + period + ' to judge yet.';
+            return label + ': no signal. Ordinary variation, not a change.';
         }
 
         /**
@@ -37374,9 +37952,27 @@
             }
         }
 
+        /**
+         * Perfect attendance's columns (2026-10-07), replacing the Sort select:
+         * every old order is a heading press away -- First name, Last name,
+         * Student ID -- and "Grade, then last name" is the list's own order
+         * until one is pressed. The printed sheet takes the order on screen.
+         */
+        const ATT_PERFECT_COLS = [
+            // SHARED NAMES ORDER BY THE OTHER NAME, as the old Sort did
+            // (PERFECT_SORTS: last then first, first then last). A blank name
+            // still sorts last. Review, 2026-10-07: four students sharing a
+            // surname came out in grade order on a list read aloud.
+            { label: 'First name', type: 'text', text: s => s.firstName ? s.firstName + ' ' + (s.lastName || '') : '' },
+            { label: 'Last name', type: 'text', text: s => s.lastName ? s.lastName + ' ' + (s.firstName || '') : '' },
+            { label: 'Grade', type: 'num', text: s => String(s.gradeLevel == null ? '' : s.gradeLevel).trim() },
+            { label: 'Student ID', type: 'num', text: s => String(s.studentNumber == null ? '' : s.studentNumber) }
+        ];
+
         async function renderPerfectAttendance(force) {
             const body = document.getElementById('attPerfectBody');
             if (!body) return;
+            const chipsEl = document.getElementById('attPerfectChips');
             // PRINTABLE EXACTLY WHILE A LIST IS ON SCREEN (review, 2026-10-01).
             // _paShown is cleared where the card stops showing a list -- the
             // loading line, a refusal, a period that cannot be worked out --
@@ -37413,13 +38009,14 @@
                 _paShown = null;
                 _paWhyNot = (res && res.reason) || 'Perfect attendance is not available to your access level.';
                 body.innerHTML = '<p class="wu-absent">' + escapeHtml(_paWhyNot) + '</p>';
+                if (chipsEl) chipsEl.innerHTML = '';
                 return;
             }
 
             const basis = attendanceSchoolDays();
             // The school's calendar day, not UTC (see attTodayIso): after 5pm in
             // Los Angeles UTC is already tomorrow, and on a Friday evening this
-            // panel's "last full week" disagreed with Who is missing's.
+            // panel's "last week" disagreed with Week or month's.
             const today = attTodayIso();
             const windows = R.perfectWindows(today, basis.first);
             // The Month tab draws the month picked, read again after the load
@@ -37429,47 +38026,44 @@
                 : windows && windows[_paWindow];
             if (!win || !win.from) {
                 _paShown = null;
-                _paWhyNot = 'That period could not be worked out. Check the school year start date.';
-                body.innerHTML = '<p class="wu-absent">That period could not be worked out. '
-                    + 'Check the school year start date above.</p>';
+                // SAID HERE, NOT "above": the start-date box this used to point
+                // at is gone, and the first school day comes from PowerSchool.
+                _paWhyNot = basis.first
+                    ? 'That period could not be worked out.'
+                    : 'That period could not be worked out: the first school day is not known right now. ' + (basis.reason || '');
+                body.innerHTML = '<p class="wu-absent">' + escapeHtml(_paWhyNot) + '</p>';
+                if (chipsEl) chipsEl.innerHTML = '';
                 return;
             }
 
             const strict = !!(document.getElementById('attPerfectExcused') || {}).checked;
             const rows = res.rows || [];
 
-            // The grade dropdown is rebuilt from the data rather than hard
-            // coded, so a new year group appears by itself.
-            const sel = document.getElementById('attPerfectGrade');
-            let grade = 'all';
-            if (sel) {
-                grade = sel.value || 'all';
-                const keys = [];
-                rows.forEach(r => {
-                    const g = paGradeKey(r);
-                    if (keys.indexOf(g) === -1) keys.push(g);
-                });
-                const want = ['all'].concat(attGradeOrder(keys));
-                const have = Array.from(sel.options).map(o => o.value);
-                if (want.join('|') !== have.join('|')) {
-                    sel.innerHTML = want.map(k => '<option value="' + escapeHtml(k) + '">'
-                        + escapeHtml(paGradeName(k)) + '</option>').join('');
-                    sel.value = want.indexOf(grade) === -1 ? 'all' : grade;
-                    grade = sel.value;
-                }
-            }
+            // THE GRADE: the shared choice, with this tab's own options and
+            // counts -- how many in each grade had perfect attendance in this
+            // period. Every grade on PowerSchool's roster is offered, even at 0,
+            // so the dropdown is the same list all year.
+            const everyone = R.perfectList(rows, win, { countExcused: strict });
+            const gradeCounts = {};
+            rows.forEach(r => { gradeCounts[paGradeKey(r)] = 0; });
+            everyone.students.forEach(s => { const g = paGradeKey(s); gradeCounts[g] = (gradeCounts[g] || 0) + 1; });
+            const grade = attFillGradeSelect(document.getElementById('attPerfectGrade'), gradeCounts, everyone.students.length);
 
             // ONE grade key for the filter here and the per-grade pages of the
             // printed sheet, so the two can never sort a child differently.
             const scoped = grade === 'all' ? rows : rows.filter(r => paGradeKey(r) === grade);
 
-            const out = R.perfectList(scoped, win, { countExcused: strict });
+            const out = grade === 'all' ? everyone : R.perfectList(scoped, win, { countExcused: strict });
             const c = out.counts;
-            // THE ORDER IS A CHOICE (2026-10-01). Sorted once, here, and the
-            // printed sheet reuses this exact array rather than sorting again.
-            const sort = (document.getElementById('attPerfectSort') || {}).value || 'grade';
-            const students = R.perfectSort(out.students, sort);
-            _paShown = { res: res, win: win, grade: grade, strict: strict, sort: sort,
+            // THE ORDER: the award list's own, grade then last name, until a
+            // heading is pressed; then that column over the WHOLE list. Sorted
+            // once, here, and the printed sheet reuses this exact array rather
+            // than sorting again, so paper and screen cannot disagree.
+            const students = wcSortItems('attPerfect', R.perfectSort(out.students, 'grade'),
+                (s, col) => ATT_PERFECT_COLS[col] ? ATT_PERFECT_COLS[col].text(s) : '');
+            _wcSortRedraw.set('attPerfect', () => renderPerfectAttendance());
+            const orderWords = attOrderWords('attPerfect', ATT_PERFECT_COLS, 'Grade, then last name');
+            _paShown = { res: res, win: win, grade: grade, strict: strict, sort: orderWords, sortLabel: orderWords,
                          rows: scoped, counts: c, students: students };
             _paWhyNot = '';
 
@@ -37479,6 +38073,18 @@
                 return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2]))
                     .toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
             };
+
+            // THE WINDOW, SAID ON A CHIP. A month or the year runs to TODAY,
+            // whose attendance is still being taken; Week or month stops at
+            // yesterday. Labelled rather than changed (the owner's call).
+            if (chipsEl) {
+                const toToday = win.to === today;
+                const words = win.key === 'week' ? 'the last finished Monday to Friday'
+                    : toToday ? 'runs through today' : 'a finished month';
+                chipsEl.innerHTML = cashChipsHtml(escapeHtml(fmt(win.from) + ' to ' + (toToday ? 'today' : fmt(win.to)) + ' · ' + words),
+                    'no absences and no unexcused tardies',
+                    toToday ? 'counts today, still being taken; Week or month stops at yesterday' : '');
+            }
 
             let html = '';
             html += '<p class="wc-att-basis-note">'
@@ -37509,19 +38115,27 @@
                 return;
             }
 
-            html += '<div class="wc-att-list wc-pa-list">';
-            students.forEach(st => {
-                const name = ((st.firstName || '') + ' ' + (st.lastName || '')).trim()
-                    || ('Student ' + st.studentNumber);
-                html += '<div class="wc-att-row wc-pa-row">'
-                    + '<div class="wc-att-name">' + escapeHtml(name)
-                    + '<div class="cell-sub">'
-                    + (st.gradeLevel ? 'Grade ' + escapeHtml(String(st.gradeLevel)) + ' &middot; ' : '')
-                    + 'ID ' + escapeHtml(String(st.studentNumber)) + '</div></div>'
-                    + '<div class="wc-pa-badge">Perfect</div>'
-                    + '</div>';
-            });
-            html += '</div>';
+            // SEARCH (2026-10-07) finds a name on the list. It never changes
+            // what prints: the sheet is the whole list, in this order.
+            const q = ((document.getElementById('attPerfectSearch') || {}).value || '').trim();
+            const found = q && typeof R.attendanceSearch === 'function'
+                ? R.attendanceSearch(students.map(s => ({ student: s })), q).rows.map(x => x.student) : null;
+            const onScreen = found || students;
+            html += attTableBarHtml(orderWords, found
+                ? found.length + ' of ' + students.length + ' match the search. Print / PDF prints all ' + students.length + '.'
+                : 'Print / PDF prints these ' + students.length + ' in this order.');
+            if (onScreen.length) {
+                html += '<div class="wu-scroll-x"><table class="student-table wc-trend-table wc-att-table wc-pa-table"><thead><tr>'
+                    + ATT_PERFECT_COLS.map((col, i) => wcSortTh('attPerfect', i, escapeHtml(col.label), { type: col.type })).join('')
+                    + '</tr></thead><tbody>'
+                    + onScreen.map(st => '<tr><td>' + escapeHtml(st.firstName || '') + '</td>'
+                        + '<td><b>' + escapeHtml(st.lastName || (st.firstName ? '' : 'Student ' + st.studentNumber)) + '</b></td>'
+                        + '<td>' + (String(st.gradeLevel == null ? '' : st.gradeLevel).trim() ? escapeHtml(String(st.gradeLevel)) : '&mdash;') + '</td>'
+                        + '<td>' + escapeHtml(String(st.studentNumber)) + '</td></tr>').join('')
+                    + '</tbody></table></div>';
+            } else {
+                html += '<p class="wu-absent">Nobody on this list matches that search.</p>';
+            }
 
             // WHAT THE LIST COSTS, said out loud. Lateness is doing most of
             // the filtering and a headteacher looking at a short list should
@@ -37664,7 +38278,6 @@
             if (!sheet || !view || !R || sheet.getAttribute('data-sheet') !== 'perfect') return;
             const res = view.res || {};
             const period = R.perfectPeriodName(view.win);
-            const sortSpec = (R.PERFECT_SORTS || []).filter(s => s.key === view.sort)[0];
             const printedAt = new Date().toLocaleString([], { month: 'short', day: 'numeric', year: 'numeric',
                                                               hour: 'numeric', minute: '2-digit' });
             // A date as well as a time: paper is read on other days.
@@ -37755,7 +38368,9 @@
                           'onchange="setPerfectSheetByGrade(this.checked)"> Start each grade on a new page</label></div>'
                         : '') +
                     '<p class="receipt-meta">The list on screen: ' + escapeHtml(paGradeName(view.grade)) +
-                        (sortSpec ? '. Order: ' + escapeHtml(sortSpec.label) : '') + '. ' +
+                        // THE ORDER ON SCREEN, which is the order printed: the
+                        // column a heading sorted by, or the list's own.
+                        '. Order: ' + escapeHtml(view.sortLabel || 'Grade, then last name') + '. ' +
                         'To get a PDF: press Print, then choose “Save as PDF” as the destination.</p>' +
                 '</div>';
             sheet.innerHTML = toolbar + '<div class="print-pages">' + pages.map(pageHtml).join('') + '</div>';
@@ -37836,18 +38451,69 @@
             }
         }
 
+        // =====================================================================
+        // YEAR SO FAR (the default tab; "Who is missing" until 2026-10-07)
+        //
+        // The same list as before -- the same tiers, thresholds and
+        // worst-first order, opening on Chronic and severe -- drawn as a table
+        // whose headings sort. The four tier cards became band chips that
+        // filter, and the row of seven buttons became the chips plus a "Kind
+        // of absence" select (WildcatRoster.attendanceListOrder says which old
+        // button each combination is).
+        // =====================================================================
+        let _attYearBand = 'chronicPlus';
+        let _attYearKind = 'any';
+        /** "Only today's roster": leaves out the students PowerSchool still totals who are not enrolled in the app. Off, as before. */
+        let _attYearRosterOnly = false;
+        let _attYearAll = false;
+
+        function setAttendanceYearBand(band) {
+            _attYearBand = String(band || 'chronicPlus');
+            _attYearAll = false;
+            return renderAttendanceWatch();
+        }
+
+        /** The old Full days / Never a full day / Tardies lists, now combined with the band; the kind's own order takes over. */
+        function setAttendanceYearKind(kind) {
+            _attYearKind = String(kind || 'any');
+            _attYearAll = false;
+            _wcSortState.delete('attYear');
+            return renderAttendanceWatch();
+        }
+
+        function setAttendanceRosterOnly(on) {
+            _attYearRosterOnly = !!on;
+            _attYearAll = false;
+            return renderAttendanceWatch();
+        }
+
+        function showAllAttendanceYear(on) {
+            _attYearAll = !!on;
+            return renderAttendanceWatch();
+        }
+
+        /** Year so far's columns. Numbers start highest first; Band sorts by severity, not A to Z. */
+        const ATT_YEAR_COLS = [
+            { label: 'Student', type: 'text', text: r => ((r.student.firstName || '') + ' ' + (r.student.lastName || '')).trim() || ('Student ' + (r.student.studentNumber || '')) },
+            { label: 'Grade', type: 'num', text: r => attGradeKey(r.student) === '(none)' ? '' : attGradeKey(r.student) },
+            { label: '% of days missed', type: 'num', first: 'desc', text: r => String(r.rate * 100) },
+            { label: 'Days absent', type: 'num', first: 'desc', text: r => String(r.daysAbsent) },
+            { label: 'Whole days', type: 'num', first: 'desc', text: r => r.whole === null ? '' : String(r.whole) },
+            { label: 'Tardies this term', type: 'num', first: 'desc', text: r => r.daysTardy === null || r.daysTardy === undefined ? '' : String(r.daysTardy) },
+            { label: 'Band', type: 'num', first: 'desc', text: r => String({ severe: 4, chronic: 3, 'at-risk': 2, satisfactory: 1 }[r.tier ? r.tier.key : ''] || 0) }
+        ];
+
         async function renderAttendanceWatch(force) {
-            // A WEEK OR A MONTH is its own renderer; the year to date below is
-            // exactly as it was.
-            if (_attWindow !== 'ytd') return renderAttendanceWindow(force);
-            const list = document.getElementById('attendanceList');
-            const cards = document.getElementById('attTierCards');
-            const note = document.getElementById('attBasisNote');
-            const foot = document.getElementById('attFoot');
-            if (!list) return;
+            const host = document.getElementById('attYearTable');
+            if (!host) return;
+            const bandsEl = document.getElementById('attYearBands');
+            const chipsEl = document.getElementById('attYearChips');
+            const foldEl = document.getElementById('attYearFold');
+            const footEl = document.getElementById('attYearFoot');
+            const daysEl = document.getElementById('attChronicDays');
             const R = window.WildcatRoster;
-            if (!R || typeof R.attendanceRanking !== 'function') {
-                list.innerHTML = '<p class="wu-absent">Attendance rules did not load. Refresh the page.</p>';
+            if (!R || typeof R.attendanceRanking !== 'function' || typeof R.yearBandMatch !== 'function') {
+                host.innerHTML = '<p class="wu-absent">Attendance rules did not load. They arrive with the next update.</p>';
                 return;
             }
 
@@ -37861,55 +38527,42 @@
             if (!res || force) {
                 if (_attBusy) return;
                 _attBusy = true;
-                list.innerHTML = '<p class="wu-absent">Loading attendance&hellip;</p>';
+                host.innerHTML = '<p class="wu-absent">Loading attendance&hellip;</p>';
                 try { res = await loadAttendanceRows(force === true); }
                 finally { _attBusy = false; }
-                // Somebody picked a week or a month while this was loading: that
-                // view owns the screen now, and painting the year over it would
-                // put year figures under a week's button.
-                if (_attWindow !== 'ytd') return;
             }
 
+            const clear = () => {
+                if (bandsEl) bandsEl.innerHTML = '';
+                if (chipsEl) chipsEl.innerHTML = '';
+                if (footEl) footEl.textContent = '';
+            };
             if (!res || res.allowed === false) {
-                if (cards) cards.innerHTML = '';
-                if (foot) foot.textContent = '';
-                list.innerHTML = '<p class="wu-absent">' +
+                clear();
+                host.innerHTML = '<p class="wu-absent">' +
                     escapeHtml((res && res.reason) || 'Attendance is not available to your access level.') + '</p>';
                 return;
             }
 
+            // THE SCHOOL-DAY COUNT, said plainly when it is unknown: every
+            // percentage and band here divides by it, and a guessed divisor
+            // would put a child in the wrong band without saying so.
             const basis = attendanceSchoolDays();
-            if (note) {
-                // SCHOOL-WIDE SPLIT, stated on the screen that drives the
-                // intervention list, because it changes how every number below
-                // it reads. Measured 2026-09-21: 46% of absent days are full
-                // days and 54% partial.
-                //
-                // COMPUTED FROM res.rows, NOT from splitByNumber, and that is
-                // deliberate: splitByNumber is built further down, so reading
-                // it here would be a temporal dead zone -- the exact crash
-                // class that shipped from this repo once already.
-                let splitNote = '';
-                if (res.splitCoverage) {
-                    let f = 0, p = 0, only = 0;
-                    (res.rows || []).forEach(row => {
-                        const sp = (R && typeof R.absenceSplit === 'function') ? R.absenceSplit(row.split, {}) : null;
-                        if (!sp) return;
-                        f += sp.fullDays; p += sp.partialDays;
-                        if (sp.absentDays > 0 && sp.fullDays === 0) only += 1;
-                    });
-                    if (f + p > 0) {
-                        splitNote = ' Of ' + (f + p) + ' absent days, ' + f + ' were whole days out of school and '
-                            + p + ' were partial. ' + only + ' student' + (only === 1 ? ' has' : 's have')
-                            + ' never missed a whole day.';
-                    }
-                }
-                note.textContent = (basis.days > 0
-                    ? basis.days + ' school days so far (' + basis.weekdays + ' weekdays'
-                      + (basis.off ? ', less ' + basis.off + ' non-school' : '') + '). '
-                      + 'Chronic starts at ' + (basis.days * 0.10).toFixed(1) + ' days absent.'
-                    : 'No school days counted yet, so no rate can be worked out. Check the start date.')
-                    + splitNote;
+            if (daysEl) daysEl.textContent = basis.known && basis.days ? (basis.days * 0.10).toFixed(1) : '—';
+            if (!basis.known) {
+                clear();
+                host.innerHTML = '<p class="wu-absent">' + escapeHtml('The number of school days so far is unknown right now, so no '
+                    + 'student’s share of days missed can be worked out. ' + (basis.reason || '')) + '</p>';
+                return;
+            }
+            // NO SCHOOL DAY YET (before the first day of school) is a fact, not
+            // a fault, and it is said: a share of zero days is no share at all,
+            // and "No students match this filter" would read as a fault.
+            if (!basis.days) {
+                clear();
+                host.innerHTML = '<p class="wu-absent">' + escapeHtml('No school days are counted yet, so there is no share of '
+                    + 'days missed to rank. ' + (basis.reason || '')) + '</p>';
+                return;
             }
 
             // studentNumber -> the app's own student record, for the name. The
@@ -37919,12 +38572,6 @@
                 const n = st && st.studentNumber ? String(st.studentNumber) : '';
                 if (n) byNumber[n] = st;
             });
-
-            const allRows = (res.rows || []).map(r => ({
-                student: byNumber[String(r.studentNumber)] || { studentNumber: r.studentNumber },
-                daysAbsent: r.daysAbsent,
-                daysTardy: r.daysTardy
-            }));
             // THE FULL/PARTIAL SPLIT, looked up beside the ranking rather than
             // threaded through it. attendanceRanking returns its own row shape
             // and is pinned by two test files; widening it to carry a field
@@ -37935,7 +38582,20 @@
                 if (sp) splitByNumber[String(r.studentNumber)] = sp;
             });
 
-            // THE GRADE OPTIONS COME FROM THE DATA, and their counts come from
+            // ON TODAY'S ROSTER, said rather than hidden (critique, 2026-10-06):
+            // PowerSchool's totals still hold students the app's roster no
+            // longer enrols. They are counted here, as they always were; the
+            // box leaves them out, and then the counts match Student groups.
+            const onRoster = st => !!(st && st.id && st.enrolled !== false);
+            const everyRow = (res.rows || []).map(r => ({
+                student: byNumber[String(r.studentNumber)] || { studentNumber: r.studentNumber },
+                daysAbsent: r.daysAbsent,
+                daysTardy: r.daysTardy
+            }));
+            const offRoster = everyRow.filter(r => !onRoster(r.student)).length;
+            const allRows = _attYearRosterOnly ? everyRow.filter(r => onRoster(r.student)) : everyRow;
+
+            // THE GRADE OPTIONS COME FROM THE DATA, and their counts from
             // allRows rather than from what is currently shown. Counting the
             // filtered set would put "(0)" beside every grade but the chosen
             // one, which reads as "that grade has nobody" instead of "you are
@@ -37945,175 +38605,138 @@
                 const k = attGradeKey(r.student);
                 gradeCounts[k] = (gradeCounts[k] || 0) + 1;
             });
-            const gradeKeys = attGradeOrder(Object.keys(gradeCounts));
-            const gradeSel = document.getElementById('attGradeFilter');
-            if (gradeSel) {
-                // A grade that has left the data cannot stay selected, or the
-                // list is empty for a reason the screen does not explain.
-                if (_attGradeFilter !== 'all' && !gradeCounts[_attGradeFilter]) _attGradeFilter = 'all';
-                const wanted = ['all=All grades (' + allRows.length + ')']
-                    .concat(gradeKeys.map(k => k + '=' +
-                        (k === '(none)' ? 'No grade on file' : 'Grade ' + k) + ' (' + gradeCounts[k] + ')'))
-                    .join('|');
-                // Rebuilt only when the options actually changed, so a render
-                // triggered by a keystroke does not reset the open dropdown.
-                if (gradeSel.getAttribute('data-built') !== wanted) {
-                    gradeSel.innerHTML = wanted.split('|').map(pair => {
-                        const eq = pair.indexOf('=');
-                        const val = pair.slice(0, eq);
-                        return '<option value="' + escapeHtml(val) + '">' +
-                               escapeHtml(pair.slice(eq + 1)) + '</option>';
-                    }).join('');
-                    gradeSel.setAttribute('data-built', wanted);
-                }
-                if (gradeSel.value !== _attGradeFilter) gradeSel.value = _attGradeFilter;
-            }
+            const grade = attFillGradeSelect(document.getElementById('attYearGrade'), gradeCounts, allRows.length);
 
-            // FILTERED BEFORE RANKING, on purpose. The tiers, the four cards,
+            // FILTERED BEFORE RANKING, on purpose. The tiers, the band chips,
             // the counts and the "no attendance on file" line all come out of
             // attendanceRanking, so scoping here is what makes a grade filter
             // scope the screen instead of just the list underneath it.
-            const rows = _attGradeFilter === 'all'
+            const rows = grade === 'all'
                 ? allRows
-                : allRows.filter(r => attGradeKey(r.student) === _attGradeFilter);
+                : allRows.filter(r => attGradeKey(r.student) === grade);
 
             const ranked = R.attendanceRanking(rows, basis.days);
+            // Whole days beside each row, or null where the per-date rebuild
+            // has not covered the student (null is not zero).
+            const listed = ranked.ranked.map(r => {
+                const sp = splitByNumber[String((r.student || {}).studentNumber || '')] || null;
+                return Object.assign({}, r, { whole: sp ? sp.fullDays : null, splitAbsent: sp ? sp.absentDays : 0 });
+            });
 
-            if (cards) {
-                const c = ranked.counts;
-                cards.innerHTML = [
-                    ['severe',  'Severe',  '20% or more', c.severe],
-                    ['chronic', 'Chronic', '10&ndash;19%',  c.chronic],
-                    ['at-risk', 'At risk', '5&ndash;9%',    c['at-risk']],
-                    ['satisfactory', 'Satisfactory', 'Under 5%', c.satisfactory]
-                ].map(t =>
-                    '<div class="wc-att-tier wc-att-' + t[0] + '">' +
-                        '<div class="wc-att-tier-n">' + t[3] + '</div>' +
-                        // NOT escaped: these four labels are literals three
-                        // lines up, and escaping them turns the &ndash; into a
-                        // visible "&ndash;" on the card.
-                        '<div class="wc-att-tier-l">' + t[1] + '</div>' +
-                        '<div class="wc-att-tier-s">' + t[2] + '</div>' +
-                    '</div>').join('');
+            if (chipsEl) {
+                chipsEl.innerHTML = cashChipsHtml(escapeHtml(attDaysRange(basis) + ' \u00b7 ' + basis.days + ' school days'),
+                    'share of school days missed, any period counts');
             }
 
-            const search = ((document.getElementById('attSearch') || {}).value || '').trim().toLowerCase();
-            let shown = ranked.ranked;
-            if (_attTierFilter === 'chronicPlus') {
-                shown = shown.filter(r => r.tier && (r.tier.key === 'chronic' || r.tier.key === 'severe'));
-            } else if (_attTierFilter === 'severe' || _attTierFilter === 'at-risk') {
-                shown = shown.filter(r => r.tier && r.tier.key === _attTierFilter);
-            } else if (_attTierFilter === 'fullDays') {
-                // RANKED BY WHOLE DAYS OUT OF SCHOOL, which the absence rate
-                // cannot show: a student who misses Promise Time every morning
-                // and one who never comes in reach the same rate.
-                shown = shown.filter(r => {
-                    const sp = splitByNumber[String((r.student || {}).studentNumber || '')];
-                    return sp && sp.fullDays > 0;
-                }).slice().sort((a, b) => {
-                    const A = splitByNumber[String((a.student || {}).studentNumber || '')] || { fullDays: 0 };
-                    const B = splitByNumber[String((b.student || {}).studentNumber || '')] || { fullDays: 0 };
-                    return B.fullDays - A.fullDays;
-                });
-            } else if (_attTierFilter === 'partialOnly') {
-                // THE 139. On this list, with a real absence rate, and not one
-                // whole day missed. A different conversation entirely, and
-                // until now indistinguishable from truancy.
-                shown = shown.filter(r => {
-                    const sp = splitByNumber[String((r.student || {}).studentNumber || '')];
-                    return sp && sp.absentDays > 0 && sp.fullDays === 0;
-                }).slice().sort((a, b) => (b.daysAbsent || 0) - (a.daysAbsent || 0));
-            } else if (_attTierFilter === 'tardy') {
-                // Tardies are their own axis. A student can be punctual-but-absent
-                // or present-but-always-late, and the second never appears on an
-                // absence ranking at all.
-                shown = shown.filter(r => (r.daysTardy || 0) > 0)
-                             .slice().sort((a, b) => (b.daysTardy || 0) - (a.daysTardy || 0));
-            }
-            if (search) {
-                shown = shown.filter(r => {
-                    const st = r.student || {};
-                    return (((st.firstName || '') + ' ' + (st.lastName || '')).toLowerCase().indexOf(search) !== -1)
-                        || String(st.studentNumber || '').toLowerCase().indexOf(search) !== -1;
-                });
+            // THE BAND CHIPS: the old tier cards, with their counts, now the
+            // filter too. "Chronic and severe" (the old default) and
+            // "Everyone" sit either side of the four tiers.
+            const TIER_CLS = { chronicPlus: 'wc-att-both', severe: 'wc-att-severe', chronic: 'wc-att-chronic',
+                               'at-risk': 'wc-att-at-risk', satisfactory: 'wc-att-satisfactory', all: '' };
+            const chips = (R.YEAR_BANDS || []).map(b => ({ key: b.key, label: b.label, cls: TIER_CLS[b.key] || '',
+                sub: b.key === 'all' ? (offRoster && !_attYearRosterOnly ? offRoster + ' not on today&rsquo;s roster'
+                    : (_attYearRosterOnly ? 'on today&rsquo;s roster' : '')) : escapeHtml(b.sub) }));
+            if (!chips.some(c => c.key === _attYearBand)) _attYearBand = 'chronicPlus';
+            const bandCounts = {};
+            chips.forEach(c => { bandCounts[c.key] = listed.filter(r => R.yearBandMatch(c.key, r)).length; });
+            if (bandsEl) {
+                bandsEl.innerHTML = attBandChipsHtml(chips, bandCounts, _attYearBand, 'setAttendanceYearBand')
+                    + '<label class="wc-att-check" title="Leaves out the students PowerSchool still totals who are not on today&rsquo;s roster'
+                    + (attGroupsAllowed() ? '; the counts then match Student groups' : '') + '">'
+                    + '<input type="checkbox" id="attRosterOnly"' + (_attYearRosterOnly ? ' checked' : '')
+                    + ' onchange="setAttendanceRosterOnly(this.checked)"> Only today&rsquo;s roster</label>';
             }
 
-            const CAP = 150;
-            const clipped = shown.length > CAP;
-            const view = clipped ? shown.slice(0, CAP) : shown;
+            const inBand = listed.filter(r => R.yearBandMatch(_attYearBand, r));
+            const kindCounts = {};
+            (R.ATTENDANCE_KINDS || []).forEach(k => { kindCounts[k.key] = inBand.filter(r => R.attendanceKindMatch(k.key, r)).length; });
+            // Null is not zero: before the per-date rebuild has run, nobody can
+            // be listed by whole or partial days.
+            const splitWhy = res.splitCoverage === 0 ? 'not worked out yet' : '';
+            if (splitWhy && (_attYearKind === 'whole' || _attYearKind === 'partial')) _attYearKind = 'any';
+            attFillKindSelect(document.getElementById('attYearKind'), kindCounts, _attYearKind, splitWhy);
 
-            if (!view.length) {
-                const where = _attGradeFilter === 'all' ? ''
-                    : (_attGradeFilter === '(none)' ? ' among students with no grade on file'
-                                                    : ' in grade ' + _attGradeFilter);
-                list.innerHTML = '<p class="wu-absent">' +
-                    escapeHtml('No students match this filter' + where + '.') + '</p>';
-            } else {
-                list.innerHTML = view.map(r => {
-                    const st = r.student || {};
-                    const name = escapeHtml(((st.firstName || '') + ' ' + (st.lastName || '')).trim()
-                                            || ('Student ' + (st.studentNumber || '?')));
-                    const meta = [st.grade ? 'Grade ' + st.grade : '', st.studentNumber || '']
-                        .filter(Boolean).map(escapeHtml).join('  &middot;  ');
-                    const pct = Math.round(r.rate * 100);
-                    const sp = splitByNumber[String(st.studentNumber || '')] || null;
-                    const tierKey = r.tier ? r.tier.key : 'satisfactory';
-                    // OPENS THE ABSENCE BREAKDOWN, NOT THE PROFILE. The profile
-                    // opened on its Points tab, where the only attendance
-                    // content was a badge awarded at five attendance RAFFLE
-                    // TICKETS, and the real figures were a further click away
-                    // and restated this very row. The profile is still one
-                    // button away inside the new view.
-                    //
-                    // AND IT PASSES studentNumber, NOT st.id, which is a fix:
-                    // st.id is absent for any student whose PowerSchool number
-                    // does not match a local record, and their row still looked
-                    // clickable, took keyboard focus and did nothing at all.
-                    const openable = ' onclick="openAttendanceDetail(\'' +
-                        escapeHtml(String(st.studentNumber || '')) + '\')"';
-                    return '<button type="button" class="wc-att-row wc-att-' + tierKey + '"' + openable + '>' +
-                        '<span class="wc-att-name">' + name +
-                            (meta ? '<span class="wc-att-meta">' + meta + '</span>' : '') + '</span>' +
-                        '<span class="wc-att-figs">' +
-                            '<span class="wc-att-pct">' + pct + '%</span>' +
-                            // FULL DAYS BESIDE THE TOTAL, because the total counts a
-                            // date as absent if any period is missed. Measured
-                            // school-wide: 46% of absent days are full and 54%
-                            // partial, and 139 students have never missed a whole
-                            // day while still appearing on this list. "0 full" is
-                            // the most informative thing this row can say about
-                            // such a student, so it is said rather than omitted.
-                            '<span class="wc-att-days">' + r.daysAbsent + ' absent' +
-                                (sp ? '  &middot;  ' + sp.fullDays + ' full' : '') +
-                                (r.daysTardy ? '  &middot;  ' + r.daysTardy + ' tardy' : '') + '</span>' +
-                        '</span>' +
-                        '<span class="wc-att-badge">' + escapeHtml(r.tier ? r.tier.label : '') + '</span>' +
-                    '</button>';
-                }).join('');
-            }
+            // SEARCH LOOKS AT EVERYONE ON THIS TAB (in the grade chosen), not
+            // only the band: a match outside it is shown, shaded, and said.
+            const q = ((document.getElementById('attYearSearch') || {}).value || '').trim();
+            const inside = r => R.yearBandMatch(_attYearBand, r) && R.attendanceKindMatch(_attYearKind, r);
+            const found = R.attendanceSearch(listed, q, inside);
+            const bandName = (chips.find(c => c.key === _attYearBand) || {}).label || '';
+            const list = found ? found.rows : inBand.filter(r => R.attendanceKindMatch(_attYearKind, r));
+            // WORST FIRST, as ranked; "Has whole days" and "Has tardies" rank
+            // by those, highest first, exactly as the old buttons did. A
+            // heading press re-sorts the WHOLE list before the first 50 are cut.
+            const ordered = wcSortItems('attYear', R.attendanceListOrder(list, 'year', _attYearKind),
+                (r, col) => ATT_YEAR_COLS[col] ? ATT_YEAR_COLS[col].text(r) : '');
+            _wcSortRedraw.set('attYear', () => renderAttendanceWatch());
+            const shown = (_attYearAll || found) ? ordered : ordered.slice(0, ATT_LIST_CAP);
+            const fallback = _attYearKind === 'whole' ? 'Most whole days first' : _attYearKind === 'tardy' ? 'Most tardies first' : 'Worst first';
+            const countWords = found
+                ? 'Searching everyone' + (grade === 'all' ? '' : ' in ' + escapeHtml(attGradeName(grade).toLowerCase())) + ': '
+                  + found.rows.length + ' match' + (found.rows.length === 1 ? '' : 'es')
+                  + (found.outside ? ', ' + found.outside + ' of them outside &ldquo;' + escapeHtml(bandName) + '&rdquo;'
+                    + (_attYearKind !== 'any' ? ' with this kind of absence' : '') + ' (shaded)' : '') + '.'
+                : (shown.length < ordered.length ? 'The first ' + shown.length + ' of ' + ordered.length + ' shown' : 'All ' + ordered.length + ' shown');
 
-            if (foot) {
+            const rowsHtml = shown.map(r => {
+                const st = r.student || {};
+                const name = escapeHtml(((st.firstName || '') + ' ' + (st.lastName || '')).trim()
+                                        || ('Student ' + (st.studentNumber || '?')));
+                const tierKey = r.tier ? r.tier.key : 'satisfactory';
+                const out = !!found && !inside(r);
+                // OPENS THE ABSENCE BREAKDOWN, NOT THE PROFILE. The profile
+                // opened on its Points tab, where the only attendance content
+                // was a badge awarded at five attendance RAFFLE TICKETS. The
+                // profile is still one button away inside the new view.
+                //
+                // AND IT PASSES studentNumber, NOT st.id, which is a fix:
+                // st.id is absent for any student whose PowerSchool number
+                // does not match a local record, and their row still looked
+                // clickable, took keyboard focus and did nothing at all.
+                const openable = ' onclick="openAttendanceDetail(\'' +
+                    escapeHtml(String(st.studentNumber || '')) + '\')"';
+                const sub = onRoster(st) ? '#' + escapeHtml(String(st.studentNumber || '')) : 'not on today&rsquo;s roster';
+                return '<tr' + (out ? ' class="wc-att-out"' : '') + '><th scope="row" class="wc-pin">'
+                    + '<button type="button" class="wc-att-open"' + openable + '>' + name + '</button>'
+                    + '<span class="wc-att-sub">' + sub + (out ? ' <span class="wc-att-out-tag">not in ' + escapeHtml(bandName) + '</span>' : '') + '</span></th>'
+                    + '<td>' + (attGradeKey(st) === '(none)' ? '&mdash;' : escapeHtml(attGradeKey(st))) + '</td>'
+                    + '<td data-sort="' + (r.rate * 100) + '"><b>' + Math.round(r.rate * 100) + '%</b></td>'
+                    + '<td>' + r.daysAbsent + '</td>'
+                    // FULL DAYS BESIDE THE TOTAL, because the total counts a
+                    // date as absent if any period is missed. A dash where the
+                    // per-date record cannot say, never a zero.
+                    + '<td>' + (r.whole === null ? '&mdash;' : r.whole) + '</td>'
+                    + '<td>' + (r.daysTardy === null || r.daysTardy === undefined ? '&mdash;' : r.daysTardy) + '</td>'
+                    + '<td class="wc-att-' + tierKey + '"><span class="wc-att-badge">' + escapeHtml(r.tier ? r.tier.label : '') + '</span></td></tr>';
+            }).join('');
+            const heads = ATT_YEAR_COLS.map((c, i) => wcSortTh('attYear', i, escapeHtml(c.label),
+                { type: c.type, first: c.first, cls: i === 0 ? 'wc-pin' : '' })).join('');
+            const where = grade === 'all' ? '' : ' in ' + attGradeName(grade).toLowerCase();
+            host.innerHTML = (ordered.length || found)
+                ? attTableBarHtml(attOrderWords('attYear', ATT_YEAR_COLS, fallback), countWords)
+                  + (shown.length
+                    ? '<div class="wu-scroll-x"><table class="student-table wc-trend-table wc-names-table wc-att-table"><thead><tr>'
+                      + heads + '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>'
+                      + (found ? '' : attShowMoreHtml(shown.length, ordered.length, _attYearAll, 'showAllAttendanceYear'))
+                    : '<p class="wu-absent">' + escapeHtml('No students match that search' + where + '.') + '</p>')
+                : '<p class="wu-absent">' + escapeHtml('No students match this filter' + where + '.') + '</p>';
+
+            // WHAT A READER MUST NOT MISS, under the list rather than in the
+            // fold: the grade scope, children with no attendance, and a read
+            // that was cut short.
+            if (footEl) {
                 const bits = [];
-                // Said before the rest: it explains why every other number on
-                // the screen is smaller than it was a moment ago.
-                if (_attGradeFilter !== 'all') {
-                    bits.push(_attGradeFilter === '(none)'
-                        ? 'Scoped to students with no grade on file; the tiers and counts above cover only those students.'
-                        : 'Scoped to grade ' + _attGradeFilter + '; the tiers and counts above cover only that grade.');
+                if (grade !== 'all') {
+                    bits.push(grade === '(none)'
+                        ? 'Scoped to students with no grade on file; the bands and counts above cover only those students.'
+                        : 'Scoped to grade ' + grade + '; the bands and counts above cover only that grade.');
                 }
-                if (clipped) bits.push('Showing the first ' + CAP + ' of ' + shown.length + '. Search to narrow.');
                 // Said out loud rather than silently dropped. A student with no
                 // attendance row is not a student with perfect attendance, and
                 // the difference is the whole point of the null.
                 if (ranked.noData.length) {
                     bits.push(ranked.noData.length + ' student' + (ranked.noData.length === 1 ? '' : 's') +
                               ' have no attendance on file and are not ranked.');
-                }
-                if (_attTierFilter === 'fullDays') {
-                    bits.push('Ranked by whole days out of school, worst first, not by absence rate.');
-                } else if (_attTierFilter === 'partialOnly') {
-                    bits.push('Every student here has a real absence rate and has never missed a whole day. '
-                        + 'That is usually an arrival problem rather than truancy.');
                 }
                 // Null is not zero: a student the per-date rebuild has not
                 // reached must not read as having no full days.
@@ -38122,10 +38745,51 @@
                 }
                 if (res.splitTruncated) bits.push('The full-day totals were larger than this screen reads. Tell an administrator.');
                 if (res.truncated) bits.push('The attendance table was larger than this screen reads. Tell an administrator.');
-                if (res.lastSyncedAt) bits.push('Last synced ' + String(res.lastSyncedAt).slice(0, 16).replace('T', ' ') + '.');
                 // textContent, so nothing here can be escaped twice or not at all.
-                foot.textContent = bits.join(' ');
+                footEl.textContent = bits.join(' ');
             }
+
+            if (foldEl) {
+                // SCHOOL-WIDE SPLIT, stated on the screen that drives the
+                // intervention list, because it changes how every number above
+                // it reads. Measured 2026-09-21: 46% of absent days are full
+                // days and 54% partial. COMPUTED FROM res.rows, NOT from the
+                // list built above, so it is the whole school's whatever the
+                // filters say.
+                let splitNote = '';
+                if (res.splitCoverage) {
+                    let f = 0, p = 0, only = 0;
+                    (res.rows || []).forEach(row => {
+                        const sp = (R && typeof R.absenceSplit === 'function') ? R.absenceSplit(row.split, {}) : null;
+                        if (!sp) return;
+                        f += sp.fullDays; p += sp.partialDays;
+                        if (sp.absentDays > 0 && sp.fullDays === 0) only += 1;
+                    });
+                    if (f + p > 0) {
+                        splitNote = 'Of ' + (f + p) + ' absent days, ' + f + ' were whole days out of school and '
+                            + p + ' were partial. ' + only + ' student' + (only === 1 ? ' has' : 's have')
+                            + ' never missed a whole day.';
+                    }
+                }
+                const tail = [];
+                tail.push('<p class="wc-trend-note"><b>School days: ' + basis.days + ' so far, ' + escapeHtml(attDaysRange(basis))
+                    + '.</b> Counted from the days PowerSchool took attendance (' + basis.weekdays + ' weekdays'
+                    + (basis.off ? ', less ' + basis.off + ' when school did not run' : '') + '). Today counts once PowerSchool&rsquo;s totals '
+                    + 'include today&rsquo;s absences (the lunchtime copy), and a holiday drops out by itself. Chronic starts at ' + (basis.days * 0.10).toFixed(1) + ' days absent.</p>');
+                tail.push('<p class="wc-trend-note"><b>Absent means any period missed that day.</b> ' + escapeHtml(splitNote)
+                    + ' A dash in Whole days means the period-by-period record does not cover that student yet.</p>');
+                tail.push('<p class="wc-trend-note"><b>Why ' + everyRow.length + ' here and fewer on the other tabs.</b> This tab reads '
+                    + 'PowerSchool&rsquo;s year totals, which still hold ' + offRoster + ' student' + (offRoster === 1 ? '' : 's')
+                    + ' who ' + (offRoster === 1 ? 'is' : 'are') + ' not on today&rsquo;s roster; they show as &ldquo;Student&rdquo; and a number, '
+                    + 'with no grade. Tick &ldquo;Only today&rsquo;s roster&rdquo; to leave them out'
+                    + (attGroupsAllowed() ? ', and the counts then match Student groups' : '') + '.</p>');
+                tail.push('<p class="wc-trend-note"><b>Grade</b> on this tab comes from the app&rsquo;s roster. '
+                    + '<b>Tardies</b> are this term&rsquo;s, as PowerSchool totals them.</p>');
+                if (res.lastSyncedAt) tail.push('<p class="wc-trend-note">PowerSchool&rsquo;s totals were copied ' + escapeHtml(attCopiedAt(res.lastSyncedAt) || String(res.lastSyncedAt))
+                    + '. They can move during the day as attendance is taken.</p>');
+                foldEl.innerHTML = cashFoldHtml('att-year-how', 'How these numbers are counted', tail.join(''));
+            }
+            renderAttDataLine();
         }
 
         // ========================================
@@ -38154,32 +38818,83 @@
             _runWhich = String(which || 'full');
             const bar = document.getElementById('attRunToggle');
             if (bar) Array.prototype.forEach.call(bar.querySelectorAll('.analytics-tab'), b => {
-                b.classList.toggle('active', b.getAttribute('data-run') === _runWhich);
+                const on = b.getAttribute('data-run') === _runWhich;
+                b.classList.toggle('active', on);
+                b.setAttribute('aria-pressed', on ? 'true' : 'false');
             });
             renderAbsenceRunChart();
         }
 
+        /**
+         * THE SCHOOL-DAY CALENDAR AND THE DAILY CHART, ONE READ (2026-10-07).
+         * Asked with today's date, so nothing after today arrives, and for the
+         * newest 120 school days: the chart shows the last 30 finished ones, and
+         * the count (WildcatRoster.schoolCalendar) needs every day on file and
+         * the first. Past about 120 school days (February) the first day is no
+         * longer among them, so the read steps back once more from the oldest
+         * it has; a school year is under 200 school days, so three steps is a
+         * guard, not a policy.
+         *
+         * A refusal or a failure never replaces a good answer held for the
+         * count (_attCalHeld): it is returned, and said, by whoever asked.
+         */
         async function loadAbsenceSeries(force) {
             if (_runCache && !force) return _runCache;
+            const keep = (res) => {
+                if (res && res.allowed !== false) _attCalHeld = res;
+                else if (!_attCalHeld || _attCalHeld.allowed === false) _attCalHeld = res;
+                return res;
+            };
             const auth = window.WildcatAuth;
             const session = auth && auth.getSession && auth.getSession();
             if (!auth || !session) {
-                return { allowed: false, needsSignIn: true, points: [],
-                         reason: 'The attendance trend comes from the SIS, which needs a Microsoft sign-in.' };
+                return keep({ allowed: false, needsSignIn: true, points: [],
+                              reason: 'The school days come from the SIS, which needs a Microsoft sign-in.' });
             }
-            const today = wcIsoDay ? wcIsoDay(new Date()) : new Date().toISOString().slice(0, 10);
+            const today = attTodayIso();
             try {
                 const res = await auth.convexQuery('attendanceList:dailyAbsenceSeries',
-                    { today: today, days: 30 }, session.idToken);
-                _runCache = res;
-                return res;
+                    { today: today, days: 120 }, session.idToken);
+                // THE REBUILD'S EMPTY MOMENT (review, 2026-10-07): it deletes
+                // every row in one write and writes them again in the next, and
+                // a read between the two is empty and unstamped. It never
+                // replaces a copy that has rows, and is never kept as fresh, so
+                // the next draw asks again instead of showing "unknown" for half
+                // an hour.
+                const emptied = !!res && res.allowed !== false && !(res.points || []).length
+                    && !(Number(res.schoolDaysOnFile) > 0) && !res.syncedAt;
+                if (emptied) {
+                    if (_attCalHeld && _attCalHeld.allowed !== false && (_attCalHeld.points || []).length) return _attCalHeld;
+                    return keep(res);
+                }
+                if (res && res.allowed !== false) {
+                    const pts = res.points || [];
+                    const whole = (list, of) => list.length && list.length >= (Number(of) || 0);
+                    let firstDate = whole(pts, res.schoolDaysOnFile) ? String(pts[0].date).slice(0, 10) : null;
+                    let oldest = pts.length ? String(pts[0].date).slice(0, 10) : null;
+                    for (let step = 0; !firstDate && oldest && step < 3; step++) {
+                        const d = new Date(oldest + 'T12:00:00');
+                        d.setDate(d.getDate() - 1);
+                        const more = await auth.convexQuery('attendanceList:dailyAbsenceSeries',
+                            { today: attTodayIso(d), days: 120 }, session.idToken);
+                        const back = (more && more.allowed !== false && more.points) || [];
+                        if (!back.length) break;
+                        if (whole(back, more.schoolDaysOnFile)) firstDate = String(back[0].date).slice(0, 10);
+                        else oldest = String(back[0].date).slice(0, 10);
+                    }
+                    res.firstDate = firstDate;
+                    _runCache = res;
+                    _runFor = today;
+                    _runFetchedAt = Date.now();
+                }
+                return keep(res);
             } catch (e) {
                 const msg = (e && e.message) || String(e);
                 if (/\b401\b|unauthor/i.test(msg)) {
-                    return { allowed: false, needsSignIn: true, points: [],
-                             reason: 'Your sign-in expired. Sign in again to load the trend.' };
+                    return keep({ allowed: false, needsSignIn: true, points: [],
+                                  reason: 'Your sign-in expired. Sign in again to load the school days.' });
                 }
-                return { allowed: false, points: [], reason: 'The trend could not be loaded: ' + msg };
+                return keep({ allowed: false, points: [], reason: 'The school days could not be loaded: ' + msg });
             }
         }
 
@@ -38235,13 +38950,26 @@
             //
             // tabindex="0" because a keyboard user has the same question a
             // mouse user does, and focus fires the same handler.
+            // HOVER COLUMNS, NOT CIRCLES (owner's report, 2026-10-07: "when I
+            // put my mouse over a point it shows the point next to where my
+            // mouse is"). Two faults made that. (1) The 11-unit hit circles
+            // were wider than the gap between days (about 17 units at 40 days,
+            // less every week), so they overlapped and the later one, drawn on
+            // top, won: pointing just right of a dot picked tomorrow. (2) The
+            // hit came AFTER its dot, so the CSS ".wc-rc-hit:hover + .wc-rc-dot"
+            // grew the NEXT day's dot. Each day now owns the column from the
+            // midpoint before it to the midpoint after it -- touching, never
+            // overlapping, so the nearest day always wins -- and the hit comes
+            // immediately BEFORE its own dot.
+            const n = series.length;
+            const colL = i => (i === 0 ? L : (x(i - 1) + x(i)) / 2);
+            const colR = i => (i === n - 1 ? W - Rr : (x(i) + x(i + 1)) / 2);
             const dots = series.map((p, i) => {
                 const above = p.value > sig.median ? 'above' : p.value < sig.median ? 'below' : 'on';
                 const label = p.date + ': ' + p.value + ' ' + label0
                     + ', ' + above + ' the median of ' + sig.median;
-                return '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(p.value).toFixed(1) + '" r="'
-                    + (inSpan[i] ? 4 : 3) + '" class="wc-rc-dot' + (inSpan[i] ? ' wc-rc-sig' : '') + '"/>'
-                    + '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(p.value).toFixed(1) + '" r="11"'
+                return '<rect x="' + colL(i).toFixed(1) + '" y="' + T + '" width="' + (colR(i) - colL(i)).toFixed(1)
+                    + '" height="' + ph + '"'
                     + ' class="wc-rc-hit" tabindex="0" role="img"'
                     + ' aria-label="' + escapeHtml(label) + '"'
                     + ' data-rc-i="' + i + '"'
@@ -38251,7 +38979,10 @@
                     + ' data-rc-partial="' + escapeHtml(String(p.partial)) + '"'
                     + ' data-rc-total="' + escapeHtml(String(p.studentsAbsent)) + '"'
                     + ' data-rc-side="' + above + '"'
-                    + ' data-rc-signal="' + (inSpan[i] ? '1' : '') + '"/>';
+                    + ' data-rc-signal="' + (inSpan[i] ? '1' : '') + '"/>'
+                    + '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(p.value).toFixed(1) + '" r="'
+                    + (inSpan[i] ? 4 : 3) + '" class="wc-rc-dot' + (inSpan[i] ? ' wc-rc-sig' : '') + '"'
+                    + ' data-rc-dot="' + i + '"/>';
             }).join('');
             // Sparse labels: every date would be unreadable at this width.
             const step = Math.max(1, Math.ceil(series.length / 6));
@@ -38388,7 +39119,12 @@
 
                 // Positioned from the real rectangles, then clamped so a point
                 // at either end does not push the tooltip off the card.
-                const hr = hit.getBoundingClientRect();
+                // Anchored to the day's own dot: the hit is now a full-height
+                // column, so its rectangle would put the tip at the chart's top.
+                const dot = hit.nextElementSibling;
+                const anchor = (dot && typeof dot.getAttribute === 'function'
+                    && dot.getAttribute('data-rc-dot') === hit.getAttribute('data-rc-i')) ? dot : hit;
+                const hr = anchor.getBoundingClientRect();
                 const pr = plot.getBoundingClientRect();
                 const tr = tip.getBoundingClientRect();
                 let left = (hr.left - pr.left) + hr.width / 2 - tr.width / 2;
@@ -38417,24 +39153,72 @@
             const host = document.getElementById('attRunChart');
             if (!host) return;
             const R = window.WildcatRoster;
-            if (!R || typeof R.runChartSignals !== 'function') {
-                host.innerHTML = '<p class="wc-att-basis-note">Trend rules did not load. Refresh the page.</p>';
+            if (!R || typeof R.runChartSignals !== 'function' || typeof R.finishedSeries !== 'function') {
+                host.innerHTML = '<p class="wc-att-basis-note">Trend rules did not load. They arrive with the next update.</p>';
                 return;
             }
             // THE GUARD IS ON THE FETCH, NOT THE RENDER, so a toggle pressed
-            // during the load is not dropped and never retried.
-            let res = _runCache;
+            // during the load is not dropped and never retried. The fetch is
+            // the school-day calendar's, shared with every other tab; a
+            // refusal already in hand is drawn, not asked for again.
+            let res = _runCache || _attCalHeld;
             if (!res || force) {
                 if (_runBusy) return;
                 _runBusy = true;
                 host.innerHTML = '<p class="wc-att-basis-note">Loading the trend&hellip;</p>';
-                try { res = await loadAbsenceSeries(force === true); }
+                try { await ensureSchoolCalendar(force === true); res = _runCache || _attCalHeld; }
                 finally { _runBusy = false; }
             }
-            host.innerHTML = renderRunChartBody(res, R, _runWhich, riskSettings);
+            // FINISHED DAYS ONLY (2026-10-07): before both today and the newest
+            // copy's own date, the rule Week or month uses. Today's half-taken
+            // day was plotted as a false dip (6 whole-day absences against a
+            // median of 42 at the 12:30 copy).
+            const today = attTodayIso();
+            const cal = R.schoolCalendar(res, today);
+            const y = new Date(today + 'T12:00:00');
+            y.setDate(y.getDate() - 1);
+            const through = cal.finishedThrough || attTodayIso(y);
+            const ok = !!res && res.allowed !== false;
+            const pts = ok ? R.finishedSeries(res.points, { finishedThrough: through }, 30) : [];
+            const finishedOnFile = ok ? Math.max(pts.length, (cal.known ? cal.onFile : pts.length)
+                - (res.points || []).filter(p => String(p.date).slice(0, 10) > through && String(p.date).slice(0, 10) < today).length) : 0;
+            const body = renderRunChartBody(ok ? Object.assign({}, res, { points: pts, schoolDaysOnFile: finishedOnFile }) : res,
+                R, _runWhich, riskSettings);
+            // The counting note goes in the card's fold; the chart and its verdict stay.
+            const cut = body.lastIndexOf('<p class="wc-att-basis-note">');
+            host.innerHTML = cut > 0 ? body.slice(0, cut) : body;
             // After the markup exists, and idempotent: the host survives every
             // re-render, so this binds once and never stacks.
             wireRunChartHover();
+
+            const chips = document.getElementById('attRunChips');
+            if (chips) {
+                chips.innerHTML = pts.length ? cashChipsHtml(escapeHtml(attShortDay(pts[0].date) + ' to ' + attShortDay(pts[pts.length - 1].date)
+                    + ' \u00b7 ' + pts.length + ' finished school day' + (pts.length === 1 ? '' : 's')), 'students absent: counts, not rates') : '';
+            }
+            const ans = document.getElementById('attRunAnswer');
+            if (ans) {
+                let text = '';
+                if (pts.length >= 5) {
+                    const sig = R.runChartSignals(R.absenceSeriesValues(pts, riskSettings, _runWhich));
+                    const who = { full: 'Whole-day absences: ', partial: 'Partial-day absences: ', all: 'All absences: ' }[_runWhich] || '';
+                    text = who + (sig.signals.length
+                        ? sig.signals[0].text + (sig.signals.length > 1 ? ' (' + (sig.signals.length - 1) + ' more signal'
+                            + (sig.signals.length > 2 ? 's' : '') + ' below the chart.)' : '')
+                        : 'No signal: ordinary variation, not a change.');
+                }
+                ans.textContent = text;
+            }
+            const fold = document.getElementById('attRunFold');
+            if (fold) {
+                const todayRow = ok && (res.points || []).some(p => String(p.date).slice(0, 10) === today);
+                fold.innerHTML = cashFoldHtml('att-run-how', 'How this chart is counted', (cut > 0 ? body.slice(cut) : '')
+                    + '<p class="wc-att-basis-note">' + escapeHtml('Up to ' + attShortDay(through) + ', the last finished day: only days '
+                    + 'before both today and the newest copy\u2019s own date are plotted, the same rule as Week or month.'
+                    + (todayRow ? ' Today is left off while its attendance is still being taken.' : '')
+                    + ' This chart counts any missed period; the rate chart above counts whole days only, so the two can disagree.') + '</p>');
+            }
+            renderAttDataLine();
         }
 
         // ========================================
@@ -38475,8 +39259,19 @@
          * local record -- their row still looked clickable, took keyboard
          * focus, and did nothing at all.
          */
-        async function openAttendanceDetail(studentNumber) {
+        async function openAttendanceDetail(studentNumber, from) {
             const num = String(studentNumber || '').trim();
+            // OPENED FROM WEEK OR MONTH, the period on screen goes with it, so
+            // its dates can be shaded in Day by day (the figures stay the
+            // whole year, and say so).
+            let win = null;
+            if (from === 'window') {
+                const R0 = window.WildcatRoster;
+                const cal = attendanceSchoolDays();
+                const wins = R0 && R0.absenceWindows ? R0.absenceWindows(attTodayIso(), null, cal.known ? cal.lastSchoolDay : null) : null;
+                const w = wins && wins[_attWindow];
+                if (w && w.from <= w.to) win = { from: w.from, to: w.to, label: w.label };
+            }
             const R = window.WildcatRoster;
             // The name comes from the roster the browser already holds, the
             // same way the row gets it. The server sends no names.
@@ -38521,9 +39316,13 @@
                 return;
             }
 
+            // A new child, a new table: the By period and Day by day sorts
+            // start from the dialog's own order every time it opens.
+            _wcSortState.delete('attDetailPeriods');
+            _wcSortState.delete('attDetailDays');
             const pick = await _wcDialog({
                 kind: 'info', title: who, wide: true,
-                body: renderAttendanceDetail(res, R),
+                body: renderAttendanceDetail(res, R, { win: win }),
                 buttons: st.id
                     ? [{ label: 'Full profile', cls: 'btn-secondary' }, { label: 'Close', cls: 'btn-primary' }]
                     : [{ label: 'Close', cls: 'btn-primary' }],
@@ -38538,7 +39337,7 @@
          * and the rules module and returns markup, so a test can run it
          * without a DOM or a network.
          */
-        function renderAttendanceDetail(res, R) {
+        function renderAttendanceDetail(res, R, opts) {
             if (!res || res.allowed === false) {
                 return '<p class="wc-ad-note">' + escapeHtml((res && res.reason) || 'Not available to your access level.') + '</p>';
             }
@@ -38578,15 +39377,23 @@
                     rows, {})
                 : null;
 
+            // EACH FIGURE NAMES ITS WINDOW (2026-10-07): days absent are the
+            // year's, tardies this term's, side by side -- unlabelled, the two
+            // read as the same stretch of time.
+            const win = opts && opts.win && opts.win.from && opts.win.to ? opts.win : null;
             const head = [
+                '<div class="wc-chips wc-ad-chips"><span class="wc-chip">Whole year so far</span>'
+                    + (win ? '<span class="wc-chip wc-chip-unit">' + escapeHtml('Opened from ' + (win.label || 'Week or month') + ': '
+                        + (win.from === win.to ? win.from : win.from + ' to ' + win.to) + ', shaded in Day by day') + '</span>' : '')
+                    + '</div>',
                 '<div class="wc-ad-figs">',
                 '<div class="wc-ad-fig"><span class="wc-ad-n">' +
-                    (absentDays === null ? '&mdash;' : absentDays) + '</span><span class="wc-ad-l">days absent</span></div>',
+                    (absentDays === null ? '&mdash;' : absentDays) + '</span><span class="wc-ad-l">days absent, year to date</span></div>',
                 '<div class="wc-ad-fig"><span class="wc-ad-n">' +
                     (typeof day.daysTardyTerm === 'number' ? day.daysTardyTerm : '&mdash;') +
-                    '</span><span class="wc-ad-l">days tardy</span></div>',
+                    '</span><span class="wc-ad-l">days tardy, this term</span></div>',
                 '<div class="wc-ad-fig"><span class="wc-ad-n">' + periodDays +
-                    '</span><span class="wc-ad-l">periods missed</span></div>',
+                    '</span><span class="wc-ad-l">periods missed, year to date</span></div>',
                 perDay === null ? ''
                     : '<div class="wc-ad-fig"><span class="wc-ad-n">' + perDay +
                       '</span><span class="wc-ad-l">periods per absent day</span></div>',
@@ -38651,7 +39458,14 @@
                 return (a.cls.order || 0) - (b.cls.order || 0);
             });
 
-            const list = labelled.map(x => {
+            // BY PERIOD, A TABLE WHOSE HEADINGS SORT (2026-10-07): Period,
+            // Times absent, Tardies, Last absent. Worst first as drawn; the
+            // whole table is on screen, so a press reorders it in place.
+            const sortHead = (table, col, label, type, first) => '<th scope="col"><button type="button" class="wc-sort-btn"'
+                + ' data-sort-table="' + table + '" data-sort-col="' + col + '" data-sort-type="' + type + '"'
+                + (first ? ' data-sort-first="desc"' : '') + ' onclick="wcSortClick(this)">' + label
+                + '<span class="wc-sort-arrow" aria-hidden="true">\u21c5</span></button></th>';
+            const list = labelled.map((x, i) => {
                 const r = x.r, cls = x.cls;
                 // NEVER TAKEN IS NOT ZERO. 1,631 of 5,563 rows have no
                 // attendance joined at all, and calling that "0 absences"
@@ -38660,26 +39474,30 @@
                 const neverTaken = r.attendanceRows === 0;
                 const abs = neverTaken ? 'not taken'
                     : (typeof r.daysAbsent === 'number' ? r.daysAbsent : '&mdash;');
-                const bits = [];
-                if (!neverTaken && r.daysTardy) bits.push(r.daysTardy + ' tardy');
-                if (!neverTaken && r.lastAbsenceDate) bits.push('last ' + escapeHtml(String(r.lastAbsenceDate)));
-                if (neverTaken) bits.push('attendance was never taken in this class');
                 // THE RAW SLOT STAYS ON THE ROW, so a wrong period mapping is
                 // visible to the first teacher who opens this and correctable,
                 // rather than silently wrong forever.
                 const slot = r.sectionExpression ? escapeHtml(String(r.sectionExpression)) : '';
-                return '<li class="wc-ad-row' + (neverTaken ? ' wc-ad-unknown' : '') + '">'
-                    + '<span class="wc-ad-per">' + escapeHtml(cls.label || '')
-                        + (slot ? '<span class="wc-ad-slot">' + slot + '</span>' : '') + '</span>'
-                    + '<span class="wc-ad-abs">' + abs + '</span>'
-                    + '<span class="wc-ad-sub">' + bits.join('  &middot;  ') + '</span>'
-                    + '</li>';
+                const last = (!neverTaken && r.lastAbsenceDate) ? escapeHtml(String(r.lastAbsenceDate)) : '';
+                // wc-ad-prow, NOT the old list's wc-ad-row: that class is a
+                // two-area grid, and on a table row it put each value beside
+                // or under the wrong heading (review, 2026-10-07).
+                return '<tr class="wc-ad-prow' + (neverTaken ? ' wc-ad-unknown' : '') + '" data-sort-i="' + i + '">'
+                    + '<th scope="row" class="wc-ad-per">' + escapeHtml(cls.label || '')
+                        + (slot ? '<span class="wc-ad-slot">' + slot + '</span>' : '') + '</th>'
+                    + '<td class="wc-ad-abs" data-sort="' + (neverTaken ? '' : (typeof r.daysAbsent === 'number' ? r.daysAbsent : '')) + '">' + abs
+                        + (neverTaken ? '<span class="wc-ad-sub">attendance was never taken in this class</span>' : '') + '</td>'
+                    + '<td data-sort="' + (neverTaken ? '' : (Number(r.daysTardy) || 0)) + '">' + (neverTaken ? '&mdash;' : (Number(r.daysTardy) || 0)) + '</td>'
+                    + '<td data-sort="' + last + '">' + (last || '&mdash;') + '</td>'
+                    + '</tr>';
             }).join('');
 
             const foot = [
                 res.daysTruncated ? 'More dates exist than this screen shows. ' : '',
                 res.day && res.day.syncedAt
-                    ? 'From PowerSchool, synced ' + escapeHtml(String(res.day.syncedAt).slice(0, 16).replace('T', ' ')) + '. '
+                    // Local time, as the tab's own data line says it (final
+                    // review, 2026-10-07): the raw stamp is UTC.
+                    ? 'From PowerSchool, synced ' + escapeHtml(((typeof attCopiedAt === 'function') && attCopiedAt(res.day.syncedAt)) || String(res.day.syncedAt).slice(0, 16).replace('T', ' ')) + '. '
                     : '',
                 'Counts only: there is no per-period percentage, because the timetable is a block one and '
                 + 'nothing records how many times each period actually met.',
@@ -38689,11 +39507,19 @@
             // see what kind of day it was. Worst first, capped, and each date
             // names the blocks missed so a verdict can be checked rather than
             // taken on trust.
+            //
+            // IN A FOLD, CLOSED (2026-10-07), with every date, newest first: it
+            // made the dialog about 1,650px tall. Opened from Week or month,
+            // that period's dates are shaded and tagged.
             let dayList = '';
             if (tally && tally.dates.length) {
-                const DCAP = 40;
-                const shown = tally.dates.filter(d => d.kind && d.kind.key !== 'none').slice(0, DCAP);
-                dayList = '<h4 class="wc-ad-h">Day by day</h4><ul class="wc-ad-list wc-ad-days">'
+                const shown = tally.dates.filter(d => d.kind && d.kind.key !== 'none').slice()
+                    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+                const inWin = d => !!win && String(d.date) >= win.from && String(d.date) <= win.to;
+                const winCount = shown.filter(inWin).length;
+                dayList = '<details class="wc-fold" data-fold="att-detail-days"><summary>Day by day (' + shown.length + ' date'
+                    + (shown.length === 1 ? '' : 's') + (win ? ', ' + winCount + ' in ' + escapeHtml(win.label || 'the period') : '')
+                    + ')</summary><div class="wc-fold-body"><h4 class="wc-ad-h">Day by day</h4><ul class="wc-ad-list wc-ad-days">'
                     + shown.map(d => {
                         const slots = (d.absentSlots || []).map(sl => {
                             const c = (R && R.classifySection) ? R.classifySection({ period: sl, courseName: '' }) : null;
@@ -38702,24 +39528,27 @@
                         const bits = [d.absentBlocks + ' of ' + d.blocksThatDay + ' blocks'];
                         if (d.presentBlocks) bits.push(d.presentBlocks + ' marked present');
                         if (d.unrecordedBlocks) bits.push(d.unrecordedBlocks + ' not recorded');
-                        return '<li class="wc-ad-row wc-ad-day-' + d.kind.key + (d.flagged ? ' wc-ad-flagged' : '') + '">'
+                        return '<li class="wc-ad-row wc-ad-day-' + d.kind.key + (d.flagged ? ' wc-ad-flagged' : '') + (inWin(d) ? ' wc-att-hl' : '') + '">'
                             + '<span class="wc-ad-per">' + escapeHtml(String(d.date))
+                                + (inWin(d) ? ' <span class="wc-chip wc-chip-unit">' + escapeHtml(win.label || 'this period') + '</span>' : '')
                                 + '<span class="wc-ad-slot">' + escapeHtml(slots.join(', ').slice(0, 90)) + '</span></span>'
                             + '<span class="wc-ad-abs">' + escapeHtml(d.kind.label)
                                 + (d.flagged ? ' &#9873;' : '') + '</span>'
                             + '<span class="wc-ad-sub">' + escapeHtml(bits.join('  \u00b7  ')) + '</span>'
                             + '</li>';
                     }).join('')
-                    + '</ul>'
-                    + (tally.dates.length > DCAP
-                        ? '<p class="wc-ad-note">Showing the first ' + DCAP + ' of ' + tally.dates.length + ' dates.</p>'
-                        : '');
+                    + '</ul></div></details>';
             }
 
             return head
                 + (reading ? '<p class="wc-ad-read">' + escapeHtml(reading) + '</p>' : '')
                 + '<h4 class="wc-ad-h">By period</h4>'
-                + '<ul class="wc-ad-list">' + list + '</ul>'
+                + '<div class="wu-scroll-x"><table class="student-table wc-trend-table wc-att-table wc-ad-table"><thead><tr>'
+                + sortHead('attDetailPeriods', 0, 'Period', 'text', false)
+                + sortHead('attDetailPeriods', 1, 'Times absent', 'num', true)
+                + sortHead('attDetailPeriods', 2, 'Tardies', 'num', true)
+                + sortHead('attDetailPeriods', 3, 'Last absent', 'date', true)
+                + '</tr></thead><tbody>' + list + '</tbody></table></div>'
                 + dayList
                 + '<p class="wc-ad-note">' + foot + '</p>';
         }
@@ -38956,6 +39785,17 @@
             return _ewCache;
         }
 
+        /**
+         * Open, or Refresh, Early Warning: Attendance Watch's school-day count
+         * first, then the list, so the tiers are never drawn against no count
+         * and redrawn a moment later with different numbers (critique,
+         * 2026-10-06). The renderer itself stays synchronous about the count.
+         */
+        async function openEarlyWarning(force) {
+            await ensureSchoolCalendar(force === true);
+            return renderEarlyWarning(force === true);
+        }
+
         async function renderEarlyWarning(force) {
             const list = document.getElementById('earlyWarningList');
             const cards = document.getElementById('ewTierCards');
@@ -39014,16 +39854,33 @@
             // and are the admin's until then.
             if (!_ewSettingsHydrated) hydrateRiskSettingsInputs(settings);
             applyRiskSettingsLock();
-            // The SAME denominator Attendance Watch uses, read from the same
-            // two inputs, so one child cannot be chronic on one screen and
-            // fine on the other.
+            // The SAME denominator Attendance Watch uses, from the same count
+            // (attendanceSchoolDays), so one child cannot be chronic on one
+            // screen and fine on the other.
             const basis = attendanceSchoolDays();
+            // UNKNOWN IS SAID, and nothing is scored against a guess: without
+            // the count every child's attendance points would go dark at once
+            // and the tiers would empty for a reason no one could see.
+            if (basis.known === false) {
+                if (cards) cards.innerHTML = '';
+                if (foot) foot.textContent = '';
+                if (note) note.textContent = 'The number of school days so far is unknown right now, so attendance cannot be scored. '
+                    + (basis.reason || '');
+                list.innerHTML = '<p class="wu-absent">Early Warning waits for the school-day count rather than score attendance '
+                    + 'against a guess. Press Refresh to try again.</p>';
+                return;
+            }
 
             if (note) {
                 const bits = [];
                 bits.push(basis.days > 0
-                    ? basis.days + ' school days so far, set on Attendance Watch.'
-                    : 'No school days counted yet, so no absence rate can be worked out. Set the start date on Attendance Watch.');
+                    ? basis.days + ' school days so far: the days PowerSchool took attendance, the same count Attendance Watch uses.'
+                    : 'No school days counted yet, so no absence rate can be worked out.');
+                if (basis.status === 'estimated' && Array.isArray(basis.estimated) && basis.estimated.length) {
+                    bits.push('PowerSchool\u2019s newest copy is late, so ' + basis.estimated.length + ' weekday'
+                        + (basis.estimated.length === 1 ? '' : 's') + ' since its last one ' + (basis.estimated.length === 1 ? 'is' : 'are')
+                        + ' counted as school days until it arrives.');
+                }
                 // WHAT THIS SCREEN CANNOT SEE, SAID OUT LOUD. A dark axis
                 // rendering as "no incidents" would be a claim about a child
                 // that nobody made.

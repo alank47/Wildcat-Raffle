@@ -69,7 +69,7 @@ console.log("\nthe view body, run as a pure function");
 // runs with no DOM and no network. That is the point: the uniform screen's
 // dead-zone crash got past 98 text-matching assertions.
 const renderDetail = (() => {
-  const start = script.indexOf("function renderAttendanceDetail(res, R)");
+  const start = script.indexOf("function renderAttendanceDetail(res, R, opts)");
   const end = script.indexOf("\n        // ========================================\n        // EARLY WARNING", start);
   const src = script.slice(start, end);
   return new Function("escapeHtml", `${src}\nreturn renderAttendanceDetail;`)(
@@ -749,34 +749,40 @@ console.log("\nthe main tab now carries full days");
   check("fullShare is a share of ABSENT days, not of the year",
     R.absenceSplit(sp({ fullDaysStrict: 5, misrecordDaysByGap: [0, 0, 0], partialDays: 5 }), {}).fullShare === 0.5);
 
-  // The screen.
-  check("the row prints the full-day count beside the total",
-    /sp\.fullDays \+ ' full'/.test(script2));
+  // The screen. Since 2026-10-07 Year so far is a table: whole days have
+  // their own column, and the old Full days / Never a full day buttons are
+  // the "Kind of absence" select, run below against the rules that decide them.
+  const year = script2.slice(script2.indexOf("        async function renderAttendanceWatch(force) {"),
+                             script2.indexOf("        // THE ATTENDANCE RUN CHART"));
+  check("the row prints the whole days beside the total, a dash where unknown (never a zero)",
+    /'<td>' \+ \(r\.whole === null \? '&mdash;' : r\.whole\) \+ '<\/td>'/.test(year));
   check("the split is looked up beside the ranking, not threaded through it",
-    /splitByNumber\[String\(st\.studentNumber/.test(script2),
+    /splitByNumber\[String\(\(r\.student \|\| \{\}\)\.studentNumber/.test(year) && /R\.attendanceRanking\(rows, basis\.days\)/.test(year),
     "attendanceRanking is pinned by two test files; widening its row shape is the invasive change");
-  check("a Full days view exists and ranks by whole days",
-    /_attTierFilter === 'fullDays'/.test(script2) && /B\.fullDays - A\.fullDays/.test(script2));
-  check("a Never-a-full-day view exists, for the students the rate cannot separate",
-    /_attTierFilter === 'partialOnly'/.test(script2) && /sp\.fullDays === 0/.test(script2));
-  check("both buttons are in the markup and wired",
-    /data-atier="fullDays"/.test(html2) && /data-atier="partialOnly"/.test(html2)
-    && /setAttendanceTierFilter\('fullDays'\)/.test(html2)
-    && /setAttendanceTierFilter\('partialOnly'\)/.test(html2));
-  check("the basis note states the school-wide split",
+  {
+    const rowsIn = [
+      { student: { studentNumber: "A" }, daysAbsent: 9, daysTardy: 0, whole: 1, splitAbsent: 9 },
+      { student: { studentNumber: "B" }, daysAbsent: 8, daysTardy: 3, whole: 6, splitAbsent: 8 },
+      { student: { studentNumber: "C" }, daysAbsent: 7, daysTardy: 1, whole: 0, splitAbsent: 7 },
+      { student: { studentNumber: "D" }, daysAbsent: 6, daysTardy: 2, whole: null, splitAbsent: 0 },
+    ];
+    const whole = R.attendanceListOrder(rowsIn.filter((r) => R.attendanceKindMatch("whole", r)), "year", "whole");
+    check("'Has whole days' (the old Full days view) lists only students with whole days, most first",
+      whole.map((r) => r.student.studentNumber).join(",") === "B,A");
+    check("'Only partial days' (the old Never-a-full-day view) is the students the rate cannot separate",
+      rowsIn.filter((r) => R.attendanceKindMatch("partial", r)).map((r) => r.student.studentNumber).join(",") === "C");
+    check("...and a student with no split is in neither: unknown is not zero",
+      !R.attendanceKindMatch("whole", rowsIn[3]) && !R.attendanceKindMatch("partial", rowsIn[3]));
+  }
+  check("both are options of the Kind of absence select, which is in the markup and wired",
+    R.ATTENDANCE_KINDS.some((k) => k.key === "whole") && R.ATTENDANCE_KINDS.some((k) => k.key === "partial")
+    && /<select id="attYearKind"[^>]*onchange="setAttendanceYearKind\(this\.value\)"/.test(html2));
+  check("the counting note states the school-wide split",
     /were whole days out of school and/.test(script2));
-  // THE ORDERING TRAP: the note is built before splitByNumber exists, so it
-  // must read res.rows. Getting this wrong is a temporal dead zone, which is
-  // the crash class that shipped from this repo once already.
-  check("the note reads res.rows, NOT the later splitByNumber",
-    script2.indexOf("splitNote = ' Of '") < script2.indexOf("const splitByNumber = {}"),
-    "the note runs first; reading splitByNumber there would be a dead-zone crash");
-  // The comment sits ABOVE the declaration, so look at the window around it
-  // rather than after it.
-  check("and it says so in a comment, so the next edit does not undo it",
-    /temporal dead zone/.test(
-      script2.slice(Math.max(0, script2.indexOf("let splitNote") - 900),
-                    script2.indexOf("let splitNote") + 200)));
+  // THE WHOLE SCHOOL'S SPLIT, whatever the filters: it is summed over
+  // res.rows, never over the list the filters left.
+  check("the note sums res.rows, NOT the filtered list",
+    /let f = 0, p = 0, only = 0;\s*\(res\.rows \|\| \[\]\)\.forEach\(row =>/.test(year));
   check("a missing rebuild is announced rather than shown as zero full days",
     /not worked out yet; they appear after the next rebuild/.test(script2));
 

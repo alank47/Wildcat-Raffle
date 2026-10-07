@@ -129,7 +129,10 @@ console.log("\nThe screens: two tabs, view only");
     && /canOpenDisciplineTab\(currentUser && currentUser\.role, subtab, currentUser\)/.test(s));
   check("run-chart freeze/unfreeze/notes are drawn only for the roles",
     /const arCanEdit = window\.WildcatDiscipline\.canEditInsightSettings\(/.test(s)
-    && /if \(c\.canFreeze && arCanEdit\)/.test(s) && /html \+= arCanEdit \? \('<div class="wc-ar-addnote">'/.test(s));
+    && /if \(c\.canFreeze && arCanEdit\)/.test(s) && /baseHtml \+= arCanEdit \? \('<div class="wc-ar-addnote">'/.test(s)
+    // Since 2026-10-07 the From/To range pickers (they exist only to freeze)
+    // and the "the range above" lines are not drawn for the grant either.
+    && /if \(arCanEdit\) \{\s*baseHtml \+= '<div class="wc-ar-range">'/.test(s) && /if \(c && arCanEdit\) \{/.test(s));
   check("Early Warning thresholds are greyed out and unsaveable for the grant",
     /el\.disabled = !canEdit;/.test(s) && /async function saveRiskSettings\(\) \{\s*if \(!window\.WildcatDiscipline\.canEditInsightSettings/.test(s));
   const save = s.slice(s.indexOf("async function saveTeacherEdit()"), s.indexOf("async function deleteTeacher"));

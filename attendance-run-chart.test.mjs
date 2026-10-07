@@ -199,8 +199,12 @@ console.log("\nthe chart body, run as a pure function");
 console.log("\nthe wiring");
 
 check("the chart host exists in the pane", /id="attRunChart"/.test(html));
-check("and sits ABOVE the tier cards, since the trend frames the tiers",
-  html.indexOf('id="attRunChart"') < html.indexOf('id="attTierCards"'));
+// MOVED 2026-10-07: to Trends, beside the rate chart, under "Is attendance
+// getting better?" -- off the top of the list it pushed below the fold.
+check("and sits on Trends, after the rate chart, not above the year list",
+  html.indexOf('id="attRunChart"') > html.indexOf('<div id="attRateView" hidden>')
+  && html.indexOf('id="attRunChart"') > html.indexOf('id="attRateBody"')
+  && html.indexOf('id="attRunChart"') > html.indexOf('id="attYearTable"'));
 check("the series toggle is present and wired",
   /data-run="full"/.test(html) && /setAbsenceRunSeries\('partial'\)/.test(html));
 // THE CHAIN, not one direct call. The tab handler used to call the three
@@ -208,12 +212,13 @@ check("the series toggle is present and wired",
 // draws whichever half is showing. Both links are asserted, so the chart
 // cannot be orphaned by either end changing.
 check("opening the tab applies the remembered view",
-  /subtab === 'attendance'\)\s*\{[\s\S]{0,320}setAttendanceView\(_attView\)/.test(script));
-check("...and showing the absence half draws the run chart",
-  /function setAttendanceView[\s\S]{0,2600}else \{ renderAttendanceWatch\(\); renderAbsenceRunChart\(\); \}/
-    .test(script));
-check("...and the header Refresh reaches it too",
-  /function refreshAttendanceView[\s\S]{0,400}renderAbsenceRunChart\(true\)/.test(script));
+  /subtab === 'attendance'\)\s*\{[\s\S]{0,320}setAttendanceView\(attRememberedView\(\)\)/.test(script));
+check("...and showing Trends draws the run chart, once its tab is on screen",
+  /function setAttendanceView[\s\S]{0,3600}return drawAttendanceView\(false\);/.test(script)
+  && /else if \(view === 'rate'\) await Promise\.all\(\[renderAttendanceRate\(force === true\), renderAbsenceRunChart\(false\)\]\);/.test(script));
+check("...and the header Refresh reaches it too, through the calendar it reads",
+  /function refreshAttendanceView\(\) \{\s*return drawAttendanceView\(true\);/.test(script)
+  && /await ensureSchoolCalendar\(force === true\);\s*\/\/ Another tab was chosen/.test(script));
 check("the fetch is guarded, not the render",
   /if \(!res \|\| force\) \{\s*\n\s*if \(_runBusy\) return;/.test(script));
 check("every handler named in the markup is a real function",
@@ -384,8 +389,14 @@ check("it sends counts, no names",
 // Day 2026-09-07, so two weekdays in the window were not school days. The box
 // said one, which divided every absence by a day too many and made every rate
 // slightly low.
-check("the non-school-days default counts BOTH days school did not run",
-  /id="attNonSchoolDays"[^>]*value="2"/.test(html),
+// THE BOX IS GONE (2026-10-07): the school days are COUNTED from this same
+// table, so 2026-09-04 and Labor Day 2026-09-07, which have no attendance
+// rows, drop out by themselves (attendance-nav.test.mjs runs the count).
+check("the typed non-school-days box is gone; the days are counted",
+  !/attNonSchoolDays|attFirstDay/.test(html) && !/attNonSchoolDays|attFirstDay/.test(script)
+  // The third argument is the year totals' copy time: today joins the count
+  // once those totals hold it (attendance-nav.test.mjs runs the rule).
+  && /R\.schoolCalendar\(_runCache \|\| _attCalHeld, attTodayIso\(\), \(_attCache && _attCache\.lastSyncedAt\) \|\| null\)/.test(script),
   "2026-09-04 and Labor Day 2026-09-07 both have zero attendance rows");
 
 
@@ -407,8 +418,32 @@ console.log("\nhovering a point shows the day behind it");
 
   check("every point carries a hit target", (out.match(/class="wc-rc-hit"/g) || []).length === rows.length,
     String((out.match(/class="wc-rc-hit"/g) || []).length));
-  check("the hit target is larger than the dot, so a trackpad can reach it",
-    /r="11"[^>]*class="wc-rc-hit"/.test(out) || /class="wc-rc-hit"/.test(out) && out.includes('r="11"'));
+  // HOVER COLUMNS (owner's report, 2026-10-07: the tip showed the point next
+  // to the mouse). Each day owns the column between the midpoints either side
+  // of it: touching, never overlapping, each holding its own dot, and the hit
+  // comes immediately before its own dot so ".wc-rc-hit:hover + .wc-rc-dot"
+  // grows the right one.
+  const cols = (html) => {
+    const hits = [...html.matchAll(/<rect x="([\d.]+)" y="[\d.]+" width="([\d.]+)"[^>]*class="wc-rc-hit"[^>]*data-rc-i="(\d+)"[^>]*\/><circle cx="([\d.]+)"[^>]*class="wc-rc-dot[^"]*" data-rc-dot="(\d+)"/g)];
+    return hits.map((m) => ({ x: +m[1], w: +m[2], i: +m[3], cx: +m[4], dot: +m[5] }));
+  };
+  const c = cols(out);
+  check("every day's hover column is followed directly by its OWN dot", c.length === rows.length && c.every((k) => k.i === k.dot),
+    JSON.stringify(c.slice(0, 3)));
+  check("the columns touch and never overlap, so the nearest day always wins",
+    c.every((k, j) => j === 0 || Math.abs(c[j - 1].x + c[j - 1].w - k.x) < 0.11));
+  check("each column holds its own dot", c.every((k) => k.cx >= k.x - 0.05 && k.cx <= k.x + k.w + 0.05));
+  check("the columns are wider than a dot, so a trackpad can reach them", c.every((k) => k.w > 8));
+  // With many days the old 11-unit circles overlapped their neighbours: 60 days
+  // leaves about 11 units between dots, and every column is still disjoint.
+  const many = [];
+  for (let i = 1; i <= 60; i++) many.push(day(((i - 1) % 28) + 1, 100 + (i % 9), 40 + (i % 5) * 3));
+  const c60 = cols(body({ allowed: true, points: many, schoolDaysOnFile: 60 }, R, "full", {}));
+  check("at 60 days the columns still never overlap", c60.length === 60 &&
+    c60.every((k, j) => j === 0 || c60[j - 1].x + c60[j - 1].w <= k.x + 0.11));
+  check("TEETH: the dot is never drawn before its own hit (the old order grew the next day's dot)",
+    !/class="wc-rc-dot[^"]*"[^>]*\/><rect[^>]*class="wc-rc-hit"[^>]*data-rc-i="0"/.test(out));
+  check("the dot lets the pointer through to its column", /\.wc-rc-dot \{[^}]*pointer-events: none/.test(css));
   // NO <title>: an SVG title is the accessible name but ALSO fires the
   // browser's own slow tooltip, so keeping it shows two tooltips at once.
   check("the old native <title> tooltip is gone", !out.includes("<title>"),
@@ -509,6 +544,24 @@ console.log("\nthe hover handler, executed against a fake DOM");
   check("it is positioned within the plot, not off the card",
     parseFloat(tip.style.left) >= 4 && parseFloat(tip.style.left) <= 700 - 160 - 4,
     tip.style.left);
+
+  // The hit is a full-height column now, so the tip anchors to the day's OWN
+  // dot (its next sibling): above the dot, not at the top of the chart.
+  const col = mkEl({ "data-rc-i": "5", "data-rc-date": "2026-09-16", "data-rc-value": "40",
+                     "data-rc-full": "40", "data-rc-partial": "30", "data-rc-total": "70", "data-rc-side": "below" });
+  col.getBoundingClientRect = () => ({ left: 300, top: 12, width: 17, height: 174 });
+  const dot5 = mkEl({ "data-rc-dot": "5" });
+  dot5.getBoundingClientRect = () => ({ left: 305, top: 150, width: 6, height: 6 });
+  col.nextElementSibling = dot5;
+  listeners.mouseover.forEach((fn) => fn({ target: col }));
+  check("the tip sits above the hovered day's dot, not at the top of its column",
+    parseFloat(tip.style.top) === 150 - 90 - 10, tip.style.top);
+  const wrongDot = mkEl({ "data-rc-dot": "6" });
+  wrongDot.getBoundingClientRect = () => ({ left: 330, top: 40, width: 6, height: 6 });
+  col.nextElementSibling = wrongDot;
+  listeners.mouseover.forEach((fn) => fn({ target: col }));
+  check("a sibling that is another day's dot is never used as the anchor", parseFloat(tip.style.top) !== 40 - 90 - 10, tip.style.top);
+  listeners.mouseout.forEach((fn) => fn({ target: col }));
 
   // Leaving hides it again.
   listeners.mouseout.forEach((fn) => fn({ target: hit }));
@@ -671,8 +724,9 @@ console.log("\nthe chart goes stale on its own, without anyone pressing anything
 
   // The explicit Refresh button stays: an admin who has just fixed something
   // upstream should not have to wait for a timer.
+  // ONE Refresh since 2026-10-07, in the header, aimed at the tab on screen.
   check("the Refresh button still forces a fetch",
-    /onclick="renderAbsenceRunChart\(true\)"/.test(html));
+    /onclick="refreshAttendanceView\(\)"/.test(html) && !/onclick="renderAbsenceRunChart\(true\)"/.test(html));
   check("and force bypasses the cache", /if \(_runCache && !force\) return _runCache;/.test(script));
 }
 

@@ -587,8 +587,11 @@ check("and that pane element actually exists in index.html",
     ids.length === [...panes.matchAll(/pane: '/g)].length, `${ids.length} vs ${[...panes.matchAll(/pane: '/g)].length}`);
 }
 // CHECKLIST 06: opening the tab must actually load it.
-check("opening the tab calls the renderer",
-  /subtab === 'earlyWarning'\)\s*\{\s*renderEarlyWarning\(\);/.test(script));
+// Since 2026-10-07 through openEarlyWarning, which loads Attendance Watch's
+// school-day count first and then draws, so the tiers never draw and jump.
+check("opening the tab calls the renderer, after the school-day count",
+  /subtab === 'earlyWarning'\)\s*\{[\s\S]{0,240}openEarlyWarning\(false\);/.test(script)
+  && /async function openEarlyWarning\(force\) \{\s*await ensureSchoolCalendar\(force === true\);\s*return renderEarlyWarning\(force === true\);/.test(script));
 
 // Every handler named in the pane's markup must be a real top-level function.
 {

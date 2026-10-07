@@ -689,7 +689,8 @@ console.log("\nTHE FROZEN MEDIAN IS EXPLAINED WHERE SOMEONE WOULD 'FIX' IT\n");
 console.log("\nTHE SCREEN\n");
 {
   check("a fourth view on the switch", /data-attview="rate"/.test(htmlSrc) && /id="attRateView" hidden/.test(htmlSrc) && /id="attRateBody"/.test(htmlSrc));
-  check("the switch knows it", /ATT_VIEWS = \['watch', 'perfect', 'subgroup', 'rate'\]/.test(script) && /rateEl\.hidden = \(_attView !== 'rate'\)/.test(script));
+  // The five tabs of 2026-10-07: 'rate' is Trends, third in the bar.
+  check("the switch knows it", /ATT_VIEWS = \['watch', 'window', 'rate', 'perfect', 'subgroup'\]/.test(script) && /rateEl\.hidden = \(_attView !== 'rate'\)/.test(script));
   check("the three measures are buttons", ["weeklyRate", "monthlyAvgAbsent", "monthlyChronic"].every((k) => htmlSrc.includes(`data-armeasure="${k}"`)));
 
   const liftFn = (name) => {
@@ -717,9 +718,14 @@ console.log("\nTHE SCREEN\n");
   // The renderer asks the REAL WildcatDiscipline whether the signed-in user
   // may change baselines and notes, so it runs as someone: an admin by default
   // (the checks below were written for the person who freezes medians).
+  // The folds (2026-10-07: the baseline tools and the footnotes) are the
+  // shared cashFoldHtml, lifted with its per-person memory.
   const screen = new Function("R", "window", `
     let currentUser = null;
+    const _cashOpenFolds = new Set();
     ${liftFn("escapeHtml")}
+    ${liftFn("cashFoldKey")}
+    ${liftFn("cashFoldHtml")}
     ${liftConst("AR_SERIES")}
     ${liftConst("AR_POLICY_WORDS")}
     ${["arSeriesInfo", "arYearLabel", "arPeriodLabel", "arFmt", "arDefaultRange", "renderAttendanceRateBody"].map(liftFn).join("\n")}
@@ -760,6 +766,11 @@ console.log("\nTHE SCREEN\n");
   const EDIT = [/Freeze this median/, /Unfreeze/, />Remove</, /Mark this date/];
   check("an admin is drawn every change button (so the checks below are not vacuous)",
     EDIT.every((re) => re.test(out.html + fr.html)));
+  check("...and the From/To range, inside the closed 'Baseline and marked dates' fold",
+    /<details class="wc-fold" data-fold="att-rate-base"><summary>Baseline and marked dates<\/summary>[\s\S]*wc-ar-range/.test(out.html)
+    && !/data-fold="att-rate-base" open/.test(out.html));
+  check("the counting notes are in their own closed fold",
+    /data-fold="att-rate-how"><summary>How this chart is counted<\/summary>[\s\S]*at least one class that met/.test(out.html));
   check("PBIS and superadmin are drawn them too: the same three roles as the server's change gate",
     ["pbis", "superadmin"].every((role) => { const as = bodyAs({ role, email: role + "@x" }); const h = as(res, R, st).html + as(frozenRes, R, st).html;
       return EDIT.every((re) => re.test(h)); }));
@@ -770,6 +781,12 @@ console.log("\nTHE SCREEN\n");
       /<svg/.test(g.html) && g.model && g.model.candidateRange.from === out.model.candidateRange.from && /frozen at 95\.5%/.test(gf.html));
     check(`...but no Freeze, Unfreeze, Remove or Mark-a-date button, and is told who sets them`,
       EDIT.every((re) => !re.test(g.html) && !re.test(gf.html)) && /set by administrators and the PBIS team/.test(g.html));
+    // 2026-10-07: the From/To range exists only to freeze, so it is not drawn
+    // for the grant at all, nor the "the range above" lines that read it.
+    check(`...and no From/To range pickers or 'the range above' lines (a ${who.role} cannot freeze)`,
+      !/wc-ar-range/.test(g.html + gf.html) && !/<select onchange="setAttendanceRateCandidate/.test(g.html + gf.html)
+      && !/The range above/.test(g.html + gf.html));
+    check(`...and the fold says it is read only`, /Baseline and marked dates \(read only\)/.test(g.html));
   }
   check("a frozen median is drawn solid over its baseline and dashed after", /wc-ar-frozen/.test(fr.html) && /wc-ar-extended/.test(fr.html));
   const empty = body({ allowed: true, days: [], months: [], baselines: [], annotations: [] }, R, st);

@@ -309,8 +309,10 @@ console.log("\nWHAT IS MISSING SAYS SO\n");
     res.unavailable.some((u) => /plugin/i.test(u.fix) && /re-install/i.test(u.fix)));
   check("IEP and 504 are named too, with their own different reason",
     /IEP/.test(names) && res.unavailable.some((u) => /unconfirmed/i.test(u.reason)));
+  // Since 2026-10-07 inside the "About these numbers" fold, named for what it holds.
   check("the screen renders the gaps rather than dropping them",
-    /Not available yet/.test(scriptSrc) && /What would fix it/.test(scriptSrc),
+    /Groups the school asked about that cannot be shown yet/.test(scriptSrc) && /What would fix it/.test(scriptSrc)
+    && /cashFoldHtml\('att-sg-about', 'About these numbers'/.test(scriptSrc),
     "a group missing from an equity report reads as a group with no disparity");
 }
 
@@ -340,25 +342,30 @@ console.log("\nTHE SCREEN\n");
 {
   check("it is a third view on the switch, not another thing to scroll past",
     /data-attview="subgroup"/.test(htmlSrc) && /id="attSubgroupView" hidden/.test(htmlSrc));
+  // THE FIVE TABS (2026-10-07): "By student group" is "Student groups", last
+  // in the bar, and still hidden from anyone outside the three roles.
   check("the switch button says what it shows",
-    /setAttendanceView\('subgroup'\)">By student group</.test(htmlSrc));
-  check("all three views are known to the switch",
-    // A PREFIX, not the whole list: the attendance-rate view (2026-09-23)
-    // was added after these three, and a fourth view must not fail this one.
-    /ATT_VIEWS = \['watch', 'perfect', 'subgroup'[,\]]/.test(scriptSrc));
+    /setAttendanceView\('subgroup'\)"><svg[^>]*><use href="#wci-group"><\/use><\/svg> Student groups</.test(htmlSrc));
+  check("...and it starts hidden, so a grant holder never sees it flash",
+    /data-attview="subgroup" aria-pressed="false" hidden/.test(htmlSrc));
+  check("every view is known to the switch, Student groups last",
+    /ATT_VIEWS = \['watch', 'window', 'rate', 'perfect', 'subgroup'\]/.test(scriptSrc));
   check("an unknown view still falls back to the absence list",
-    /ATT_VIEWS\.indexOf\(view\) === -1 \? 'watch' : view/.test(scriptSrc));
-  check("all three halves are toggled, so two cannot show at once",
-    ["watchEl", "perfectEl", "subgroupEl"].every((n) =>
-      new RegExp(n + "\\.hidden = \\(_attView !== ").test(scriptSrc)));
+    /return ATT_VIEWS\.indexOf\(k\) === -1 \? 'watch' : k;/.test(scriptSrc));
+  check("every pane is toggled, so two cannot show at once",
+    ["perfectEl", "subgroupEl", "rateEl"].every((n) =>
+      new RegExp(n + "\\.hidden = \\(_attView !== ").test(scriptSrc)) && /watchEl\.hidden = !listView;/.test(scriptSrc));
   check("the wrapper carries no class that could defeat `hidden`",
     !/<div id="attSubgroupView"[^>]*class=/.test(htmlSrc));
-  check("the subtitle changes for it too", /subgroup: 'Chronic absence by student group/.test(scriptSrc));
+  check("it asks its own question at the top of the tab",
+    /Is chronic absence higher for some groups than for the school as a whole\?/.test(htmlSrc));
   check("its cache is dropped on the idle refresh", /_sgCache = null/.test(scriptSrc));
   check("the cache is keyed on the denominator, so correcting holidays re-asks",
     /_sgCache\.forDays === (schoolDays|basis\.days)/.test(scriptSrc),
     "otherwise the old divisor's rates stay on screen");
-  check("the header Refresh reaches this view", /renderAttendanceSubgroups\(true\)/.test(scriptSrc));
+  check("the header Refresh reaches this view",
+    /function refreshAttendanceView\(\) \{\s*return drawAttendanceView\(true\);/.test(scriptSrc)
+    && /else if \(view === 'subgroup'\) await renderAttendanceSubgroups\(force === true\);/.test(scriptSrc));
   check("every class the panel uses is in the stylesheet",
     ["wc-sg-card", "wc-sg-baseline", "wc-sg-base-n", "wc-sg-axis", "wc-sg-row",
      "wc-sg-figs", "wc-sg-pct", "wc-sg-delta", "wc-sg-fragile", "wc-sg-gap", "wc-sg-fix",

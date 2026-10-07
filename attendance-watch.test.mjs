@@ -342,39 +342,51 @@ console.log("\n-- the screen --");
   // THE CHAIN, since 2026-09-22. The tab handler no longer calls the renderer
   // itself: it applies the remembered view, and the absence half draws this.
   // Both links are asserted so neither end can drop it silently.
+  // Since 2026-10-07 the tab this person last had, in this browser tab.
   check("opening the tab applies the remembered view",
-    /subtab === 'attendance'\)\s*\{[\s\S]{0,320}setAttendanceView\(_attView\)/.test(script));
-  check("...and the absence half is what this tab defaults to",
+    /subtab === 'attendance'\)\s*\{[\s\S]{0,320}setAttendanceView\(attRememberedView\(\)\)/.test(script));
+  check("...and the absence list (Year so far) is what this tab defaults to",
     /let _attView = 'watch';/.test(script),
     "a reader opening Attendance Watch expects the absence list, not the award list");
-  check("...and showing it renders the list",
-    /function setAttendanceView[\s\S]{0,2600}else \{ renderAttendanceWatch\(\); renderAbsenceRunChart\(\); \}/
-      .test(script));
+  check("...and showing it renders the list, once the school-day count is in hand",
+    /function setAttendanceView[\s\S]{0,3600}return drawAttendanceView\(false\);/.test(script)
+    && /await ensureSchoolCalendar\(force === true\);[\s\S]{0,900}else await renderAttendanceWatch\(force === true\);/.test(script));
   check("the sidebar lists it", /id: 'attendance', fn: 'switchDisciplineTab'/.test(script));
 
   // EVERY id the renderer touches must exist. This exact class of bug -- a
   // getElementById on an element that was renamed or never added -- has broken
   // sign-in twice and shipped once.
   const fn = script.slice(script.indexOf("async function renderAttendanceWatch"),
-                          script.indexOf("// At most one roster fetch"));
+                          script.indexOf("// THE ATTENDANCE RUN CHART"));
   const ids = [...fn.matchAll(/getElementById\('([^']+)'\)/g)].map(m => m[1]);
   check("the renderer reads at least five elements", ids.length >= 5);
   ids.forEach(id => check(`#${id} exists in index.html`, html.includes(`id="${id}"`)));
 
-  // The denominator is a judgement call this school has to be able to see and
-  // correct. No school calendar exists in the app (bellScheduleDays is empty),
-  // so a hidden weekday count would be a guess presented as a measurement.
-  check("the school days count is shown on screen", /id="attBasisNote"/.test(html));
-  check("the start date can be corrected", /id="attFirstDay"/.test(html) && /2026-08-12/.test(html));
-  check("holidays can be subtracted", /id="attNonSchoolDays"/.test(html));
-  check("the note states the chronic threshold in days",
-    /Chronic starts at ' \+ \(basis\.days \* 0\.10\)/.test(script));
+  // THE DENOMINATOR IS COUNTED NOW, NOT TYPED (2026-10-07): the days
+  // PowerSchool took attendance before today, plus today once the year totals
+  // hold it (attendance-nav.test.mjs runs the rule). It stays on screen: the
+  // chip, the help line and the fold, each naming the days it covers
+  // (attDaysRange: "Wed, Aug 12 to yesterday", or "to today" after lunch).
+  check("the start-date and holiday boxes are gone", !/id="attFirstDay"/.test(html) && !/id="attNonSchoolDays"/.test(html));
+  check("the school days count is shown on screen, on the chip and in the fold",
+    /escapeHtml\(attDaysRange\(basis\) \+ ' \\u00b7 ' \+ basis\.days \+ ' school days'\)/.test(fn)
+    && /<b>School days: ' \+ basis\.days \+ ' so far, ' \+ escapeHtml\(attDaysRange\(basis\)\)/.test(fn));
+  check("the chronic threshold is stated in days, in the help line and the fold",
+    /id="attChronicDays"/.test(html) && /\(basis\.days \* 0\.10\)\.toFixed\(1\)/.test(fn)
+    && /Chronic starts at ' \+ \(basis\.days \* 0\.10\)/.test(fn));
+  check("an unknown count is said, and nothing is ranked against a guess",
+    /if \(!basis\.known\) \{[\s\S]{0,300}unknown right now/.test(fn));
 
   check("students with no attendance are named in the footer, not dropped",
     /no attendance on file and are not ranked/.test(script));
 
-  const filters = ["chronicPlus", "severe", "at-risk", "tardy", "all"];
-  filters.forEach(f => check(`the ${f} filter is wired`, script.includes(`'${f}'`) && html.includes(`data-atier="${f}"`)));
+  // THE OLD FILTER BUTTONS ARE BAND CHIPS (2026-10-07), drawn from
+  // WildcatRoster.YEAR_BANDS; Tardies is "Has tardies" in Kind of absence.
+  const bands = R.YEAR_BANDS.map(b => b.key);
+  ["chronicPlus", "severe", "at-risk", "all"].forEach(f => check(`the ${f} filter is a band chip`, bands.includes(f)));
+  check("the tardy filter is a kind of absence", R.ATTENDANCE_KINDS.some(k => k.key === "tardy"));
+  check("the chips call the setter", /attBandChipsHtml\(chips, bandCounts, _attYearBand, 'setAttendanceYearBand'\)/.test(fn));
+  check("Chronic and severe is still the default", /let _attYearBand = 'chronicPlus';/.test(script));
 }
 
 console.log("\n-- the styles --");
@@ -440,7 +452,7 @@ console.log("\n-- the grade filter --");
   const fn = script.slice(script.indexOf("async function renderAttendanceWatch(force)"));
   const body = fn.slice(0, fn.indexOf("\n        }\n"));
   const rankAt = body.indexOf("R.attendanceRanking(rows, basis.days)");
-  const filterAt = body.indexOf("_attGradeFilter === 'all'\n                ? allRows");
+  const filterAt = body.indexOf("const rows = grade === 'all'\n                ? allRows");
   check("the grade filter is applied BEFORE the ranking", filterAt !== -1 && filterAt < rankAt);
   check("the ranking is fed the filtered rows", /R\.attendanceRanking\(rows, basis\.days\)/.test(body));
 
@@ -448,23 +460,26 @@ console.log("\n-- the grade filter --");
   // "(0)" beside every other grade and reads as "that grade has nobody".
   check("option counts are taken from allRows", /gradeCounts\[k\] = \(gradeCounts\[k\] \|\| 0\) \+ 1/.test(body) &&
     /allRows\.forEach\(r => \{/.test(body));
+  // The select is built by the shared attFillGradeSelect (2026-10-07: one
+  // chosen grade across Year so far, Week or month and Perfect attendance).
+  const filler = script.slice(script.indexOf("function attFillGradeSelect("), script.indexOf("function attFillKindSelect("));
   check("the options are rebuilt only when they changed, so typing does not close the dropdown",
-    /data-built/.test(body));
+    /attFillGradeSelect\(document\.getElementById\('attYearGrade'\), gradeCounts, allRows\.length\)/.test(body) && /data-built/.test(filler));
   check("a selected grade that leaves the data falls back to all",
-    /!gradeCounts\[_attGradeFilter\]\) _attGradeFilter = 'all'/.test(body));
+    /Object\.prototype\.hasOwnProperty\.call\(counts, _attGradeFilter\)\)\)\s*\? _attGradeFilter : 'all'/.test(filler));
 
   // The screen has to say it is scoped, or the smaller tier numbers look wrong.
   check("the footer says which grade the screen is scoped to", /Scoped to grade/.test(body));
-  check("and says the cards followed the filter", /the tiers and counts above cover only that grade/.test(body));
-  check("the empty state names the grade", /No students match this filter/.test(body) && /' in grade ' \+ _attGradeFilter/.test(body));
+  check("and says the band chips followed the filter", /the bands and counts above cover only that grade/.test(body));
+  check("the empty state names the grade", /No students match this filter/.test(body) && /' in ' \+ attGradeName\(grade\)\.toLowerCase\(\)/.test(body));
 
   // The control exists, is labelled, and is wired.
-  const controls = html.slice(html.indexOf('class="wc-att-controls"'), html.indexOf('id="attendanceList"'));
-  check("the markup carries a grade select", /<select id="attGradeFilter"/.test(controls));
+  const controls = html.slice(html.indexOf('<section data-asec="watch">'), html.indexOf('id="attYearTable"'));
+  check("the markup carries a grade select", /<select id="attYearGrade"/.test(controls));
   check("it is wired to the setter", /onchange="setAttendanceGradeFilter\(this\.value\)"/.test(controls));
-  check("it has a visible label, not a bare dropdown of numbers",
-    /<span class="wc-att-grade-label">Grade<\/span>/.test(controls));
-  check("the label points at the select", /for="attGradeFilter"/.test(controls));
+  check("it has a visible label, not a bare dropdown of numbers, and says where grades come from",
+    /<span class="wc-att-grade-label">Grade \(app roster\)<\/span>/.test(controls));
+  check("the label points at the select", /for="attYearGrade"/.test(controls));
   // The grades are NOT hardcoded here: production is 6-12 and that can change.
   check("no grade numbers are hardcoded in the markup",
     !/<option value="(6|7|8|9|10|11|12)"/.test(controls));

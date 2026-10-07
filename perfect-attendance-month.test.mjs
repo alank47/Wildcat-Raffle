@@ -138,7 +138,6 @@ function makeDom() {
     attPerfectBody: new El("div"),
     attPerfectGrade: new Select('<option value="all">All grades</option>'),
     attPerfectExcused: Object.assign(new El("input"), { checked: true }),
-    attPerfectSort: new Select(['grade', 'last', 'first', 'id'].map((k) => `<option value="${k}">${k}</option>`).join("")),
     attPerfectMonth: new Select(""),
     attPerfectMonthWrap: Object.assign(new El("label"), { style: { display: "none" } }),
     // What logout() touches.
@@ -179,7 +178,25 @@ const SCREEN_FNS = ["escapeHtml", "attGradeOrder", "wcClockAt", "paGradeKey", "p
   "renderPerfectAttendanceSheet", "printPerfectAttendanceSheet", "beginPerfectAttendancePrint",
   "endPerfectAttendancePrint", "perfectAttendanceSheetOpen", "perfectAttendanceBeforePrint",
   "unhookPerfectAttendanceSheet", "closePerfectAttendanceSheet", "printPurchaseList", "closePurchaseListSheet",
-  "logout"];
+  "logout",
+  // Since 2026-10-07: the shared grade select, the table's sortable headings
+  // (the shared wcSort* helper) and the bar above it.
+  "attGradeName", "attFillGradeSelect", "attOrderWords", "attTableBarHtml", "cashChipsHtml",
+  "wcSortCellText", "wcSortValue", "wcSortColumnType", "wcSortOrder", "wcSortSet", "wcSortTh", "wcSortItems"];
+
+/** A multi-line const out of script.js, brackets matched. */
+function liftConstBlock(src, name) {
+  const i = src.indexOf("const " + name + " = ");
+  if (i < 0) throw new Error("missing const " + name);
+  const open = src.slice(i).search(/[\[{]/) + i;
+  const close = src[open] === "[" ? "]" : "}";
+  let depth = 0;
+  for (let k = open; k < src.length; k++) {
+    if (src[k] === src[open]) depth++;
+    else if (src[k] === close) { depth--; if (depth === 0) return src.slice(i, k + 1) + ";"; }
+  }
+  throw new Error("unbalanced const " + name);
+}
 
 /**
  * The panel, built from script.js (or a broken copy of it). `env.today` and
@@ -197,9 +214,24 @@ function buildScreen(src, env, Roster) {
     // logout()'s neighbours, stubbed: it is lifted for what it does to the sheet.
     "wcForgetTab", "showConfirm", "clearSession", "showStudentLogin",
     `let currentUser = { id: "t1" }, currentStudent = null, _sidebarModeApplied = true;
+    let _attGradeFilter = 'all';
+    const _wcSortState = new Map(), _wcSortRedraw = new Map();
+    ${liftConstBlock(src, "WC_SORT_ARROWS")}
+    ${liftConstBlock(src, "ATT_PERFECT_COLS")}
     ${state}\n${fns}\nreturn {
       ${SCREEN_FNS.join(", ")},
       set cache(v) { _paCache = v; },
+      /** The shared Grade select's choice (setAttendanceGradeFilter sets this and redraws). */
+      setGrade(g) { _attGradeFilter = String(g); },
+      /** A heading pressed: the column, and how many times (a second press reverses). */
+      pressHeading(col, times) {
+        for (let i = 0; i < (times || 1); i++) {
+          wcSortSet('attPerfect', col, ATT_PERFECT_COLS[col].type, ATT_PERFECT_COLS[col].first || '');
+        }
+        const redraw = _wcSortRedraw.get('attPerfect');
+        return redraw ? redraw() : null;
+      },
+      get redraws() { return _wcSortRedraw.has('attPerfect'); },
       get shown() { return _paShown; },
       get month() { return _paMonth; },
     };`,
@@ -209,7 +241,11 @@ function buildScreen(src, env, Roster) {
   return { app: api, dom };
 }
 
-const screenIds = (dom) => [...dom.fixed.attPerfectBody.innerHTML.matchAll(/ID ([^<]+)<\/div><\/div>/g)].map((m) => decode(m[1]));
+// The table's rows (2026-10-07): First name, Last name, Grade, Student ID.
+const screenIds = (dom) => [...dom.fixed.attPerfectBody.innerHTML
+  .matchAll(/<tr><td>[^<]*<\/td><td><b>[^<]*<\/b><\/td><td>[^<]*<\/td><td>([^<]+)<\/td><\/tr>/g)].map((m) => decode(m[1]));
+/** The four old Sort choices, as heading presses: the default needs none. */
+const PRESS = { grade: null, last: 1, first: 0, id: 3 };
 const sheetOf = (dom) => dom.sheets()[0];
 const sheetPages = (dom) => (sheetOf(dom).innerHTML.split('<section class="print-page">').slice(1));
 const pageRows = (page) => [...page.matchAll(/<tr><td>(\d+)<\/td><td>(.*?)<\/td><td>(.*?)<\/td><td>(.*?)<\/td><\/tr>/g)]
@@ -472,12 +508,19 @@ console.log("\nTHE SCREEN: MONTH PICKER AND SORT\n");
   app.setPerfectWindow("month");
   check("coming back remembers September", app.shown.win.month === "2026-09" && monthSel.value === "2026-09");
 
-  for (const [key, want] of [["grade", "1002,1001,1005,1004,999,1008"], ["last", "1002,1004,1001,1008,1005,999"],
+  // THE FOUR OLD ORDERS, by heading (2026-10-07): the Sort select is gone.
+  check("the list opens in the award list's own order, grade then last name",
+    screenIds(dom).join(",") === "1002,1001,1005,1004,999,1008", screenIds(dom).join(","));
+  check("...and the table registers its redraw, so a heading sorts the WHOLE list and Print follows", app.redraws);
+  for (const [key, want] of [["last", "1002,1004,1001,1008,1005,999"],
                              ["first", "1001,1002,999,1004,1005,1008"], ["id", "999,1001,1002,1004,1005,1008"]]) {
-    dom.fixed.attPerfectSort.value = key;
-    await app.renderPerfectAttendance();
-    check(`the screen draws the '${key}' order`, screenIds(dom).join(",") === want, screenIds(dom).join(","));
+    await app.pressHeading(PRESS[key]);
+    check(`the '${key}' heading draws the old '${key}' order`, screenIds(dom).join(",") === want, screenIds(dom).join(","));
   }
+  await app.pressHeading(PRESS.id);
+  check("pressed again, Student ID runs highest first", screenIds(dom).join(",") === "1008,1005,1004,1002,1001,999",
+    screenIds(dom).join(","));
+  check("...and the bar says so in words", /Sorted by Student ID, highest first/.test(dom.fixed.attPerfectBody.innerHTML));
 
   // THE REMEMBERED MONTH IS GONE: the school year start moved past it.
   app.setPerfectMonth("2026-08");
@@ -495,9 +538,9 @@ console.log("\nTHE SHEET IS THE SCREEN, ON PAPER\n");
   app.cache = MARKS;
   app.setPerfectWindow("month");
   app.setPerfectMonth("2026-09");
-  dom.fixed.attPerfectSort.value = "last";
-  await app.renderPerfectAttendance();
+  await app.pressHeading(PRESS.last);
   const onScreen = screenIds(dom);
+  check("the screen is in Last name order before printing", onScreen.join(",") === "1002,1004,1001,1008,1005,999", onScreen.join(","));
 
   app.openPerfectAttendanceSheet();
   const sheet = sheetOf(dom);
@@ -542,11 +585,12 @@ console.log("\nTHE SHEET IS THE SCREEN, ON PAPER\n");
   check("EVERY NAME IS ESCAPED: markup in a name prints as text",
     pageRows(pages[0]).some((r) => r.name === "Ortiz &lt;i&gt;, Gil &amp; &quot;Co&quot;") && !/<i>/.test(sheet.innerHTML));
   check("the file name the PDF will get", app.perfectSheetFileName(app.shown) === "Perfect Attendance - September 2026 - All grades");
+  check("the sheet says which order it is in", /Order: Sorted by Last name, A to Z\./.test(sheetOf(dom).innerHTML));
   app.closePerfectAttendanceSheet();
   check("Close removes the sheet", dom.sheets().length === 0);
 
   // ONE GRADE, FORGIVING: what the screen shows, and the rule says so.
-  dom.fixed.attPerfectGrade.value = "7";
+  app.setGrade("7");
   dom.fixed.attPerfectExcused.checked = false;
   await app.renderPerfectAttendance();
   app.openPerfectAttendanceSheet();
@@ -582,7 +626,7 @@ console.log("\nPRINTING LEAVES NOTHING BEHIND\n");
   app.cache = MARKS;
   app.setPerfectWindow("month");
   app.setPerfectMonth("2026-09");
-  dom.fixed.attPerfectGrade.value = "7";
+  app.setGrade("7");
   await app.renderPerfectAttendance();
   app.openPerfectAttendanceSheet();
 
@@ -809,7 +853,7 @@ console.log("\nA REFUSED REFRESH LEAVES NOTHING PRINTABLE\n");
     plain.sheets === 0 && plain.alerts.length === 1 && /sign-in expired/.test(plain.alerts[0]), plain.alerts.join(" / "));
   const mid = await refusedRefresh(scriptSrc, true);
   check("a tab clicked WHILE the Refresh loads redraws the old list, and the refusal still wins the card",
-    mid.screen.includes("Your sign-in expired") && !/wc-pa-row/.test(mid.screen));
+    mid.screen.includes("Your sign-in expired") && !/<table/.test(mid.screen));
   check("...and Print then opens no sheet of the earlier list (it used to, with no alert)",
     mid.sheets === 0 && mid.alerts.length === 1 && /sign-in expired/.test(mid.alerts[0]), `${mid.sheets} sheet(s)`);
   const again = await secondRefresh(scriptSrc);
@@ -972,23 +1016,29 @@ console.log("\nTHE WIRING\n");
 {
   const card = htmlSrc.slice(htmlSrc.indexOf('<div id="attPerfectView" hidden>'), htmlSrc.indexOf("<!-- /attPerfectView -->"));
   check("the perfect attendance card was found", card.length > 500);
-  // PINNED THE OLD TAB: the button now reads "Month".
-  check("the tab reads 'Month' and still calls setPerfectWindow('month')",
-    /data-pa="month"\s+onclick="setPerfectWindow\('month'\)">Month<\/button>/.test(card));
+  // RENAMED 2026-10-07: "Last week" (Week or month's name for the same week)
+  // and "A month" (any month of the year). The keys are the old ones.
+  check("the tab reads 'A month' and still calls setPerfectWindow('month')",
+    /data-pa="month" aria-pressed="false"\s+onclick="setPerfectWindow\('month'\)">A month<\/button>/.test(card));
   check("'This month' is gone from the tab bar", !/>This month</.test(card));
-  check("'Last full week' and 'Year to date' are unchanged",
-    /data-pa="week"\s+onclick="setPerfectWindow\('week'\)">Last full week<\/button>/.test(card) &&
-    /data-pa="year"\s+onclick="setPerfectWindow\('year'\)">Year to date<\/button>/.test(card));
+  check("'Last week' (was 'Last full week') and 'Year to date'",
+    /data-pa="week" aria-pressed="true"\s+onclick="setPerfectWindow\('week'\)">Last week<\/button>/.test(card) &&
+    /data-pa="year" aria-pressed="false"\s+onclick="setPerfectWindow\('year'\)">Year to date<\/button>/.test(card) &&
+    !/Last full week/.test(card));
   check("the month picker has a label for screen readers and starts hidden",
     /<label class="wc-att-grade-wrap" id="attPerfectMonthWrap" for="attPerfectMonth"\s+style="display:none">/.test(card) &&
     /<select id="attPerfectMonth"[^>]*aria-label="[^"]+"/.test(card.replace(/\s+/g, " ")));
   check("...and is the only place a month is chosen", /onchange="setPerfectMonth\(this\.value\)"/.test(card));
-  const sortSel = (card.match(/<select id="attPerfectSort"[\s\S]*?<\/select>/) || [""])[0];
-  check("the sort dropdown has a label and the four orders, today's first and selected",
-    /aria-label="[^"]+"/.test(sortSel) &&
-    [...sortSel.matchAll(/<option value="(\w+)"( selected)?>([^<]+)</g)].map((m) => m[1] + (m[2] ? "*" : "") + "=" + m[3]).join("|") ===
-      "grade*=Grade, then last name|last=Last name|first=First name|id=Student ID");
-  check("...and its labels are the module's", R.PERFECT_SORTS.every((s) => sortSel.includes(`>${s.label}<`)));
+  // THE SORT SELECT IS GONE (2026-10-07): its four orders are the default
+  // and three sortable headings.
+  check("no Sort select is left in the card", !/attPerfectSort/.test(card) && !/attPerfectSort/.test(scriptSrc));
+  check("...and the headings are the module's three other orders",
+    ["Last name", "First name", "Student ID"].every((l) => R.PERFECT_SORTS.some((s) => s.label === l)
+      && new RegExp("label: '" + l + "'").test(liftConstBlock(scriptSrc, "ATT_PERFECT_COLS"))));
+  check("the grade select is labelled with where its grades come from",
+    /<span class="wc-att-grade-label">Grade \(PowerSchool\)<\/span>\s*<select id="attPerfectGrade"/.test(card));
+  check("Print / PDF sits in the card's header, not in the row of period buttons",
+    card.indexOf("openPerfectAttendanceSheet()") < card.indexOf('id="attPerfectWindow"'));
   check("the Print / PDF button is in the card", /onclick="openPerfectAttendanceSheet\(\)"[^>]*>[\s\S]{0,200}Print \/ PDF<\/button>/.test(card));
 
   const render = lift(scriptSrc, "renderPerfectAttendance");
@@ -997,8 +1047,8 @@ console.log("\nTHE WIRING\n");
   check("the Month tab's window is the picked month",
     /_paWindow === 'month'\s*\? R\.perfectMonthWindow\(syncPerfectMonthPicker\(\), today, basis\.first\)/.test(render));
   check("the list is sorted ONCE and that array is what both the screen and Print use",
-    /const students = R\.perfectSort\(out\.students, sort\);/.test(render) &&
-    /_paShown = \{[^}]*students: students \};/.test(render) && /students\.forEach\(st =>/.test(render));
+    /const students = wcSortItems\('attPerfect', R\.perfectSort\(out\.students, 'grade'\),/.test(render) &&
+    /_paShown = \{[^}]*students: students \};/.test(render) && /const onScreen = found \|\| students;/.test(render));
   const sheetFn = lift(scriptSrc, "renderPerfectAttendanceSheet");
   check("the sheet never fetches or re-sorts (no silent refetch)",
     !/loadPerfectMarks|convexQuery|perfectSort|_paCache/.test(sheetFn + lift(scriptSrc, "openPerfectAttendanceSheet")));
@@ -1101,8 +1151,7 @@ console.log("\nDO THE ASSERTIONS HAVE TEETH?\n");
   app.cache = MARKS;
   app.setPerfectWindow("month");
   app.setPerfectMonth("2026-09");
-  dom.fixed.attPerfectSort.value = "id";
-  await app.renderPerfectAttendance();
+  await app.pressHeading(PRESS.id);
   app.setPerfectSheetByGrade(false);
   app.openPerfectAttendanceSheet();
   check("TEETH: a sheet that re-derives its list prints a different order from the screen",

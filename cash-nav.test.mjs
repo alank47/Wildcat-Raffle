@@ -147,6 +147,8 @@ const CONSTS = [
   "CASH_COUNT_UNIT_KEY", "CASH_PART_DAY_QUESTION_FROM", "QUIET_WINDOW_DAYS",
   "CASH_VIEW_KEYS", "CASH_VIEW_ALIASES", "CASH_VIEW_BUTTONS", "CASH_VIEW_PANES", "WC_CASH_VIEW_KEY",
   "_cashMovedNoteGone", "_cashOpenFolds", "_wcSortState", "WC_SORT_ARROWS", "_cashViewOwner",
+  // Attendance Watch's capped tables register a redraw here (2026-10-07); Cash's register none.
+  "_wcSortRedraw",
 ];
 /** Counts each build of the expectation balance, so "never on a gate run" can be checked. */
 const countBalance = (src) => breakOnce(src, "        function cashExpectationBalance(o) {\n",

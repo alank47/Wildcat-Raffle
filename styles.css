@@ -9684,7 +9684,7 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 /* The median is the reference every rule is read against, so it is drawn as a
    reference and not as a second data line. */
 .wc-rc-median { stroke: var(--wc-gray-text, #9ca3af); stroke-width: 1; stroke-dasharray: 4 4; }
-.wc-rc-dot { fill: var(--wc-blue, #2563eb); }
+.wc-rc-dot { fill: var(--wc-blue, #2563eb); pointer-events: none; }
 /* A point inside a shift or a trend. Marked because a signal a reader has to
    find for themselves is not much better than no signal. */
 .wc-rc-sig { fill: #dc2626; }
@@ -9873,17 +9873,130 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     .wc-pa-controls .wc-att-grade { width: 100%; }
 }
 
-/* The two halves of Attendance Watch, switched at the top of the tab rather
-   than reached by scrolling past 671 children. Slightly more presence than the
-   filter pills further down, because this one changes the whole screen. */
-.wc-att-views {
-    margin: 0 0 16px;
-    flex-wrap: wrap;
-}
+/* ---- Attendance Watch: one tab per question (2026-10-07) -----------------
+   The five-tab bar, the house pill with an icon, scoped by id and never
+   .analytics-tabs (Discipline's switchAnalyticsTab clears .active on every
+   '.analytics-tabs .analytics-tab' on the page). It wraps on a phone. */
+.wc-att-views { margin: 0 0 8px; flex-wrap: wrap; scroll-margin-top: calc(var(--wc-topbar-h) + 8px); }
 .wc-att-views .analytics-tab {
-    padding: 9px 18px;
-    font-size: 13.5px;
-    font-weight: 600;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 9px 16px; font-size: 13.5px; font-weight: 600;
+}
+.wc-att-views .analytics-tab .wc-icon { width: 15px; height: 15px; vertical-align: 0; }
+.wc-att-views .analytics-tab[hidden] { display: none; }
+/* In-card pill rows keep the 18px gap .analytics-tabs gave them, without the class. */
+.wc-att-pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.wc-att-pills .analytics-tab { padding: 8px 14px; }
+/* Year so far and Week or month share one pane: the tab says which section shows. */
+#attWatchView[data-attview="watch"] [data-asec="window"],
+#attWatchView[data-attview="window"] [data-asec="watch"] { display: none; }
+/* The old Discipline subtab row: every button in it is hidden, so the empty row is too. */
+#disciplineContent > .wc-disc-legacy-bar { display: none; }
+/* Band chips: the old tier cards, now buttons that filter. */
+.wc-band-row { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; margin: 0 0 10px; }
+.wc-band {
+    display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 112px;
+    padding: 8px 12px 8px 11px; border: 1px solid #d7dde5; border-left: 4px solid var(--wc-line, #E7ECF2);
+    border-radius: 10px; background: #fff; cursor: pointer; font-family: inherit; text-align: left; color: var(--wc-ink, #14171C);
+    transition: background .15s, border-color .15s, box-shadow .15s;
+}
+.wc-band:hover { border-color: var(--wc-blue, #2F67A7); }
+.wc-band:focus-visible { outline: 2px solid var(--wc-blue, #2F67A7); outline-offset: 2px; }
+.wc-band b { font-size: 20px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.wc-band .wc-band-l { font-size: 12.5px; font-weight: 650; }
+.wc-band .wc-band-s { font-size: 11px; color: var(--wc-gray-text, #8892a0); }
+.wc-band[aria-pressed="true"] {
+    background: var(--wc-blue-mist, #EAF1FA); border-color: var(--wc-blue, #2F67A7);
+    box-shadow: inset 0 0 0 1px var(--wc-blue, #2F67A7);
+}
+.wc-band.wc-att-severe { border-left-color: #dc2626; }
+.wc-band.wc-att-chronic { border-left-color: #f59e0b; }
+.wc-band.wc-att-at-risk { border-left-color: #64748b; }
+.wc-band.wc-att-both { border-left-color: #b45309; }
+/* "At least" chips on Week or month: one colour ramp, because they nest, not the year's tier colours. */
+.wc-band.wc-ramp-1 { border-left-color: #93B4DC; }
+.wc-band.wc-ramp-2 { border-left-color: #5F8FC9; }
+.wc-band.wc-ramp-4 { border-left-color: #0C447C; }
+.wc-band.wc-ramp-late { border-left-color: #8A93A3; }
+.wc-att-check {
+    display: inline-flex; align-items: center; gap: 8px; margin: 0 0 0 4px; align-self: center;
+    font-size: 13px; font-weight: 600; color: var(--wu-fg, #14161B); cursor: pointer;
+}
+.wc-att-controls-all { justify-content: flex-start; flex: 1 1 100%; }
+/* The data line: which source, copied when, under the tab bar. */
+.wc-att-data {
+    display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px 10px; margin: 0 0 14px;
+    font-size: 12.5px; color: var(--wc-gray-text, #5F5E5A);
+}
+.wc-att-data .wc-icon { width: 14px; height: 14px; flex: none; margin-top: 2px; }
+.wc-att-data p { margin: 0; flex: 1 1 300px; }
+.wc-att-health { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.wc-att-health .wc-insight-link { display: inline; margin: 0; }
+.wc-att-health .wc-chip { white-space: nowrap; }
+.wc-att-health.is-ok b { color: #2E7D52; }
+.wc-att-data .wc-att-stale {
+    flex-basis: 100%; margin: 2px 0 0; padding: 8px 12px; border-radius: 8px;
+    background: #FFF6E5; border-left: 3px solid #C08A2E; color: #8A5A00; font-size: 13px;
+}
+/* The row above a list: the order it is in, the count. Show all under it. */
+.wc-att-tablebar {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px;
+    margin: 0 0 8px; font-size: 12.5px; color: var(--wc-gray-text, #5F5E5A);
+}
+.wc-att-tablebar .wc-chips { margin: 0; }
+.wc-att-more { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0 0; font-size: 12.5px; color: var(--wc-gray-text, #5F5E5A); }
+.wc-att-more .btn { padding: 8px 14px; font-size: 13px; }
+.wc-att-table td { font-variant-numeric: tabular-nums; }
+.wc-att-table th.wc-pin { min-width: 10.5em; }
+.wc-att-open {
+    padding: 0; border: 0; background: none; cursor: pointer; font: inherit; font-weight: 650;
+    color: var(--wc-ink, #14171C); text-align: left;
+}
+.wc-att-open:hover { color: var(--wc-blue, #2F67A7); text-decoration: underline; }
+.wc-att-open:focus-visible { outline: 2px solid var(--wc-blue, #2F67A7); outline-offset: 2px; border-radius: 4px; }
+.wc-att-sub { display: block; font-size: 11.5px; font-weight: 500; color: var(--wc-gray-text, #5F5E5A); }
+.wc-att-table .wc-att-badge { white-space: nowrap; }
+.wc-att-table td.wc-att-at-risk .wc-att-badge { background: #EEF1F5; color: #475569; }
+.wc-att-table td.wc-att-satisfactory .wc-att-badge,
+.wc-att-table td.wc-att-none .wc-att-badge { background: #F1F5F9; color: #64748b; }
+.wc-att-table td.wc-att-half .wc-att-badge,
+.wc-att-table td.wc-att-every .wc-att-badge { background: #DCE8F6; color: #0C447C; }
+.wc-att-table td.wc-att-some .wc-att-badge { background: #EAF1FA; color: #2F67A7; }
+.wc-att-table tr.wc-att-out td,
+.wc-att-table tr.wc-att-out th { background: #FAFBFC; }
+.wc-att-out-tag {
+    display: inline-block; margin-left: 4px; padding: 1px 7px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; background: #FFF6E5; color: #8A5A00;
+}
+/* Each Trends card's one-line answer. */
+.wc-att-answer {
+    margin: 0 0 12px; padding: 8px 12px; border-left: 3px solid var(--wc-blue, #2F67A7);
+    background: var(--wc-blue-mist, #EAF1FA); border-radius: 0 8px 8px 0;
+    font-size: 13.5px; font-weight: 600; color: var(--wc-blue-deep, #0C447C);
+}
+.wc-att-answer:empty { display: none; }
+/* The breakdown dialog: the period it was opened from, shaded in Day by day. */
+.wc-att-hl { background: #FFF8E1; }
+.wc-ad-table { font-size: 13px; }
+.wc-ad-table .wc-ad-per { font-weight: 650; }
+.wc-ad-table .wc-ad-slot { display: block; }
+/* By period is a table (2026-10-07): its rows are wc-ad-prow, never the old
+   list's grid, and its count is table-sized, with the never-taken note under it. */
+.wc-ad-table tr.wc-ad-prow { display: table-row; }
+.wc-ad-table .wc-ad-abs { font-size: inherit; }
+.wc-ad-table .wc-ad-sub { display: block; white-space: normal; }
+.wc-ad-chips { margin: 0 0 10px; }
+.wc-pa-controls.wc-att-controls-all { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 12px; }
+.wc-pa-card .wc-pa-header .btn,
+#behaviorAttendance .page-header .btn { display: inline-flex; align-items: center; gap: 6px; }
+#behaviorAttendance .page-header .btn .wc-icon { width: 15px; height: 15px; }
+#behaviorAttendance .page-title .wc-icon { vertical-align: -2px; }
+@media (max-width: 600px) {
+    .wc-band { min-width: 0; flex: 1 1 calc(50% - 8px); }
+    .wc-att-search { max-width: none; flex: 1 1 100%; }
+    .wc-att-grade-wrap { flex: 1 1 100%; }
+    .wc-att-grade-wrap .wc-att-grade { flex: 1 1 auto; }
+    .wc-att-check { margin-left: 0; }
 }
 
 /* ---------------------------------------------------------------------------
